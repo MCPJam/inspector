@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - .github/scripts/preview-cleanup.test.mjs
+      - .github/scripts/railway-preview-origin.mjs
+      - .github/scripts/railway-preview-origin.test.mjs
       - .github/scripts/railway-env.sh
       - .github/scripts/reap-preview-envs.sh
       - .github/workflows/preview-close.yml
@@ -13,6 +15,8 @@ on:
     branches: [main]
     paths:
       - .github/scripts/preview-cleanup.test.mjs
+      - .github/scripts/railway-preview-origin.mjs
+      - .github/scripts/railway-preview-origin.test.mjs
       - .github/scripts/railway-env.sh
       - .github/scripts/reap-preview-envs.sh
       - .github/workflows/preview-close.yml
@@ -24,12 +28,14 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Blacksmith, not GitHub's shared 60-job pool; this job holds no secret or
+    # write token. TEST_RUNNER=ubuntu-latest moves it back during an outage.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: node --test .github/scripts/preview-cleanup.test.mjs
+      - run: node --test .github/scripts/preview-cleanup.test.mjs .github/scripts/railway-preview-origin.test.mjs
       - run: bash -n .github/scripts/railway-env.sh .github/scripts/reap-preview-envs.sh

@@ -19,6 +19,7 @@
  * client probes then closes; no `Mcp-Session-Id` (stateless).
  */
 import { Hono } from "hono";
+import { handleNativeForwarding } from "./harness-forwarding.js";
 import "../../types/hono";
 import {
   EVIDENCE_UNAVAILABLE_MESSAGE,
@@ -30,6 +31,17 @@ import {
   withManager,
   type ManagerCallerContext,
 } from "./auth";
+import { authorizeProxyTurn } from "../../utils/harness/proxy-turn.js";
+import {
+  authorizeSessionRequest,
+  sameSessionTurn,
+} from "../../utils/harness/session-proxy-request.js";
+import { SESSION_GRANT_HEADER } from "../../utils/harness/session-grant.js";
+import {
+  cancelSessionCall,
+  trackSessionCall,
+} from "../../utils/harness/session-proxy-cancel.js";
+import { cancelledRequestId } from "../../utils/harness/forwarding/native-wire.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal";
 import { evaluateHarnessProxyToolPolicy } from "../../utils/harness/harness-proxy-policy-enforcement";
@@ -214,6 +226,7 @@ function armToolCallEvidence(
 }
 
 async function handle(c: any) {
+  if (c.req.query("native") === "1") return handleNativeForwarding(c);
   const serverId = c.req.param("serverId");
 
   // Token is REQUIRED here (unlike adapter-http's validate-when-present) — it
@@ -226,13 +239,31 @@ async function handle(c: any) {
   // stays Convex's. A bare token keeps today's path byte-for-byte.
   const presentedToken = readProxyToken(c);
   const sealed = unsealHarnessProxyToken(presentedToken, serverId);
-  const claims = verifyHarnessProxyToken(
-    sealed?.token ?? presentedToken,
-    serverId
-  );
+  // A session envelope carries the lane's handle, not a turn's token: the live
+  // turn and its bound policy come from the backend on every request.
+  const sessionEnvelope = sealed?.session ? sealed : undefined;
+  const boxGrant = c.req.header(SESSION_GRANT_HEADER) || undefined;
+  const session = sessionEnvelope
+    ? await authorizeSessionRequest(sessionEnvelope, serverId, boxGrant)
+    : undefined;
+  if (session instanceof Response) return session;
+  const claims =
+    session?.claims ??
+    verifyHarnessProxyToken(sealed?.token ?? presentedToken, serverId);
   if (!claims || !claims.externalId || !claims.orgId) {
     return c.json({ error: "Unauthorized" }, 401);
   }
+  const correlationId = session?.turnId ?? readScopeStepUpCorrelationId(c);
+
+  const turn = sealed?.turn;
+  const checkTurn = turn
+    ? () => authorizeProxyTurn(turn, claims)
+    : sessionEnvelope && session
+      ? () =>
+          sameSessionTurn(sessionEnvelope, serverId, boxGrant, session.turnId)
+      : undefined;
+  const denied = turn ? await checkTurn?.() : undefined;
+  if (denied) return denied;
 
   if (rateLimited(`${claims.userId}:${serverId}`)) {
     return c.json({ error: "Rate limited" }, 429);
@@ -300,6 +331,19 @@ async function handle(c: any) {
     return c.json(validation.response, validation.status as 400);
   }
   const body = validation.body;
+  // A session client cancels with a separate request; it stops the call only
+  // where that call runs.
+  const cancelled = session ? cancelledRequestId(body) : undefined;
+  if (session && cancelled !== undefined) {
+    cancelSessionCall(session.laneId, serverId, cancelled);
+    return c.body("Accepted", 202);
+  }
+  const call =
+    session &&
+    body.method &&
+    (typeof body.id === "string" || typeof body.id === "number")
+      ? trackSessionCall(session.laneId, serverId, body.id)
+      : undefined;
 
   // Rebuild the user's authorized connection server-side via the acting-as
   // service-token exchange (no browser bearer in the sandbox). Convex baked the
@@ -318,10 +362,11 @@ async function handle(c: any) {
         "", // bearer ignored on the workos_api_key path
         claims.projectId,
         [serverId],
-        HARNESS_MCP_TIMEOUT_MS,
+        sealed?.profile?.timeout ?? HARNESS_MCP_TIMEOUT_MS,
         undefined,
-        undefined,
+        sealed?.profile?.clientCapabilities,
         {
+          ...(sealed?.profile ? { initializePins: sealed.profile } : {}),
           // Per-server XAA works on the harness proxy (configured servers
           // mint instead of 500ing). KNOWN LIMITATION: the host's
           // enterprise-managed POLICY is NOT enforced here — the harness
@@ -356,7 +401,7 @@ async function handle(c: any) {
               logger.warn(
                 `[harness-mcp] rpc log publish failed serverId=${sid}: ${
                   error instanceof Error ? error.message : error
-                }`
+                }`,
               );
             }
             enqueueHarnessRpcLog({
@@ -391,13 +436,16 @@ async function handle(c: any) {
               logger.warn(
                 `[harness-mcp] http log publish failed serverId=${
                   exchange.serverId
-                }: ${error instanceof Error ? error.message : error}`
+                }: ${error instanceof Error ? error.message : error}`,
               );
             }
           },
-        }
+        },
       ),
       async (manager) => {
+        // Connecting to a slow server can outlive the message that requested it.
+        const refused = await checkTurn?.();
+        if (refused) return refused;
         // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
         // reach `executeTool`. Only `tools/call` is gated, `tools/list` stays
         // unfiltered, and a block is a success envelope carrying the marker —
@@ -411,7 +459,7 @@ async function handle(c: any) {
           });
           if (block) {
             logger.info(
-              `[harness-mcp] tool policy blocked serverId=${serverId} tool=${block.marker.toolName} reason=${block.marker.reason}`
+              `[harness-mcp] tool policy blocked serverId=${serverId} tool=${block.marker.toolName} reason=${block.marker.reason}`,
             );
             // Report the refusal to the RUN, not just to the model: the harness
             // adapter flattens this result's content blocks to a bare string, so
@@ -426,10 +474,9 @@ async function handle(c: any) {
               classification: block.marker.classification,
               at: Date.now(),
             };
-            const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessPolicyBlock(
               correlationId,
-              event
+              event,
             );
             if (
               !deliveredLocally &&
@@ -438,7 +485,7 @@ async function handle(c: any) {
             ) {
               const relay = buildCrossInstanceHarnessPolicyBlockMessage(
                 correlationId,
-                event
+                event,
               );
               if (relay) {
                 enqueueHarnessRpcLog({
@@ -458,16 +505,14 @@ async function handle(c: any) {
           }
         }
         return handleJsonRpc(serverId, body, manager, "adapter", {
+          ...(call ? { signal: call.signal } : {}),
           // Inert unless this token carries an authorized eval scope AND the
           // harness named a turn — so playground traffic and capture-off runs
           // pay nothing and behave identically.
           ...(evidenceHook ? { toolCallEvidence: evidenceHook } : {}),
           // Bridge failures answer 200 with a JSON-RPC error envelope —
           // invisible to http.request.failed; this is their typed record.
-          failureReporter: createRequestStreamFailureReporter(
-            c,
-            "harness-mcp",
-          ),
+          failureReporter: createRequestStreamFailureReporter(c, "harness-mcp"),
           onToolCallError: async (context) => {
             const info = scopeStepUpInfoFromToolError(context);
             if (!info) return;
@@ -478,10 +523,9 @@ async function handle(c: any) {
                 ? { toolInput: context.toolInput }
                 : {}),
             };
-            const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessScopeStepUp(
               correlationId,
-              event
+              event,
             );
             if (
               deliveredLocally ||
@@ -493,7 +537,7 @@ async function handle(c: any) {
 
             const relay = buildCrossInstanceHarnessScopeStepUpMessage(
               correlationId,
-              event
+              event,
             );
             if (!relay) return;
             enqueueHarnessRpcLog({
@@ -511,13 +555,17 @@ async function handle(c: any) {
             await new Promise((resolve) =>
               setTimeout(
                 resolve,
-                CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS
-              )
+                CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS,
+              ),
             );
           },
         });
-      }
+      },
     );
+    if (response instanceof Response) return response;
+    // A tool already running at Stop may finish. Never return its data to a later turn.
+    const finished = await checkTurn?.();
+    if (finished) return finished;
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);
     return c.json(response);
@@ -550,6 +598,8 @@ async function handle(c: any) {
       },
       200
     );
+  } finally {
+    call?.done();
   }
 }
 

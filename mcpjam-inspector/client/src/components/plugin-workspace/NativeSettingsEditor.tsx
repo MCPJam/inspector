@@ -9,6 +9,7 @@ import type { PluginSettingsField } from "@/shared/plugin-settings";
 import type { NativeSettingsController } from "./native-settings-controller";
 type NativeSettingsAction = {
   name: string;
+  title?: string;
   kind: "tool" | "app" | "unavailable";
 };
 import { Loader2 } from "lucide-react";
@@ -35,7 +36,7 @@ export function NativeSettingsEditor({
   actions?:
     | readonly NativeSettingsAction[]
     | (() => readonly NativeSettingsAction[]);
-  onAction?: (tool: string) => void;
+  onAction?: (tool: string, button: HTMLButtonElement) => void;
   actionPending?: string;
   actionResult?: { tool: string; text: string; failed: boolean };
   appActionsAvailable?: boolean;
@@ -64,6 +65,9 @@ export function NativeSettingsEditor({
                 const action = currentActions.find(
                   (action) => action.name === item.tool,
                 );
+                // The referenced tool names the button; a layout title is
+                // deprecated and ignored.
+                const title = action?.title ?? item.tool;
                 const available =
                   Boolean(onAction) &&
                   (action?.kind === "tool" ||
@@ -77,7 +81,7 @@ export function NativeSettingsEditor({
                     className="flex items-center justify-between gap-4 px-4 py-3"
                   >
                     <div className="min-w-0 flex-1 space-y-0.5">
-                      <p className="text-sm">{item.title}</p>
+                      <p className="text-sm">{title}</p>
                       {item.description && (
                         <p className="text-xs text-muted-foreground">
                           {item.description}
@@ -95,7 +99,7 @@ export function NativeSettingsEditor({
                           role="status"
                           className="text-xs text-muted-foreground"
                         >
-                          Running {item.title}…
+                          Running {title}…
                         </p>
                       ) : result ? (
                         <p
@@ -123,7 +127,9 @@ export function NativeSettingsEditor({
                         Boolean(busy) ||
                         Boolean(actionPending)
                       }
-                      onClick={() => onAction?.(item.tool)}
+                      onClick={(event) =>
+                        onAction?.(item.tool, event.currentTarget)
+                      }
                       title={
                         result
                           ? result.text
@@ -140,7 +146,7 @@ export function NativeSettingsEditor({
                           className="size-4 animate-spin"
                         />
                       )}
-                      {item.title}
+                      {title}
                     </Button>
                   </div>
                 );

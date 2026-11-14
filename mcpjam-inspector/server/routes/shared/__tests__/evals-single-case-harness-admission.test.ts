@@ -119,13 +119,13 @@ describe("prepareSingleCaseExecution — hosted harness admission", () => {
   it("refuses an approval host: nobody can answer one in an eval", async () => {
     const error = await refusal(request({ requireToolApproval: true }));
     expect(error.details).toMatchObject({ reason: "HARNESS_UNAVAILABLE" });
-    expect(error.message).toContain("unattended run");
+    expect(error.message).toContain("cannot wait for tool approval in evals or swarms");
   });
 
   it("refuses a model the harness has not verified", async () => {
     const error = await refusal(request({}, "anthropic/claude-fable-5"));
     expect(error.details).toMatchObject({ reason: "HARNESS_UNAVAILABLE" });
-    expect(error.message).toMatch(/^not verified for claude-code /);
+    expect(error.message).toMatch(/has not been verified for the Claude Code client/);
   });
 
   it("refuses a declared browser: the single-case box is only a terminal", async () => {

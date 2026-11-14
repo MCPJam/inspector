@@ -148,6 +148,8 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
+  extractAuthChallenge,
+  attachAuthChallenge,
   isMCPAuthError,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
@@ -239,6 +241,7 @@ export {
   SkillsExtRequestMethods,
   SKILL_NOT_FOUND_ERROR_CODE,
   getSkillExt,
+  getSkillResultExt,
   isSkillNotFoundError,
   listSkillsExt,
   readResourceDirectoryExt,
@@ -246,6 +249,7 @@ export {
 export type {
   SkillEntry,
   SkillResourceRef,
+  SkillsExtGetResult,
   SkillsExtListResult,
   SkillsDirectoryEntry,
   SkillsDirectoryReadResult,
@@ -264,6 +268,7 @@ export {
   isMCPSkillsWireError,
   assertSkillsListResult,
   assertSkillEntry,
+  assertSkillsGetEnvelope,
   assertSkillsGetResult,
   assertDirectoryReadResult,
 } from "./skills-ext-guards.js";
@@ -334,11 +339,17 @@ export {
 } from "./task-lifecycle-adapters.js";
 // Node-only (Ajv compiles via `new Function`); not re-exported from browser.
 export { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
+export {
+  OPENAI_ELICITATION_EXTENSION,
+  selectElicitationFormSchema,
+  type ElicitationFormSchemaSelection,
+} from "./elicitation-form-schema.js";
 
 // `input_required` driver — routes a task's embedded elicitation / roots /
 // sampling requests through the SAME trust rules as the standalone path.
 export {
   TASK_INPUT_METHODS,
+  validateEmbeddedClientRequest,
   isTaskInputMethod,
   TaskInputRejectedError,
   collectTaskInputResponses,
@@ -535,10 +546,12 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrLegMiddleware,
   MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,
   ElicitationContentValidator,
+  ElicitationFormSchemaSelector,
   RunInputRequiredOptions,
   InputRequiredResult,
   InputRequests,
@@ -553,6 +566,7 @@ export type {
 // a second answer to "is this tool definition valid".
 export {
   buildMcpParamHeaders,
+  findMcpHeaderIssues,
   classifyMcpHeader,
   decodeMcpHeaderValue,
   encodeMcpHeaderValue,

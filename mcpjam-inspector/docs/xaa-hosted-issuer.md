@@ -51,18 +51,24 @@ issuer (`https://app.mcpjam.com/api/web/xaa`) is mintable by anyone with an
 MCPJam session — treat it as throwaway/test-only and prefer the scoped issuer
 whenever you register MCPJam in a real authorization server.
 
-## Known limitation: runtime XAA connect still uses the unscoped issuer
+## Which issuer a real connection mints under
 
-The **debugger** advertises and mints under the org-scoped issuer
-(`…/o/<orgId>`). The **runtime** XAA connect path (a normal server connection
-that authenticates via XAA, in `server/routes/web/auth.ts` /
-`server/utils/local-server-resolver.ts`) still mints under the unscoped issuer
-(`resolveXaaIssuer` → `/api/web/xaa`). So a customer who registers the
-org-scoped issuer from the debugger can pass the debugger but have a real
-connect/token-exchange fail on `iss` mismatch. Plumbing org-scoped issuers into
-runtime connect (with the same membership gate) is a follow-up; until then, for
-a live connection register the unscoped issuer, or use the debugger only for
-issuer/JWKS validation.
+A server connection that authenticates with XAA mints its own ID-JAG each time
+it connects. The issuer it names depends on where the connection runs:
+
+| Connection | Issuer (`iss`) |
+| --- | --- |
+| Hosted chat, eval runs, environments and swarms | `https://app.mcpjam.com/api/web/xaa/o/<org-id>`, or `…/g/<org-id>` for a guest |
+| Hosted scheduled eval runs, GitHub PR checks and Connector Bench runs | The same issuer, built from the deployment's `MCPJAM_INSPECTOR_PUBLIC_URL` (see `worker-deployment.md`) |
+| Local inspector, Servers tab | `<local origin>/api/web/xaa/o/<org-id>` for a project in an organization, else `<local origin>/api/mcp/xaa` |
+| Local inspector, eval runs and chat | `<local origin>/api/mcp/xaa` |
+
+Hosted connections fall back to the unscoped `…/api/web/xaa` only when the
+authorization response names no organization. For a live hosted connection,
+register the org-scoped issuer, the one the debugger shows on app.mcpjam.com
+or with the toggle on. The two local rows can disagree, and a cloud
+authorization server can reach neither of them, which is the setup the toggle
+is for.
 
 ## Notes and limits
 

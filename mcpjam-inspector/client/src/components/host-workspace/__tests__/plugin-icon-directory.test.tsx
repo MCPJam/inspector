@@ -6,6 +6,7 @@ import {
   entrypointIconSources,
   isRawServerId,
   pluginIconsById,
+  pluginDisplayNamesById,
   serverDisplayName,
   serverIconSources,
   useServerIconSources,
@@ -151,4 +152,22 @@ describe("server display names", () => {
     expect(serverDisplayName(undefined, directory)).toBe("App");
     expect(serverDisplayName("  ", directory)).toBe("App");
   });
+});
+
+it("uses manifest labels for generated plugin servers without renaming saved servers", () => {
+  const runtimeName = "bits-and-bolts:server:bits-and-bolts@2cc7fa5b";
+  const pluginNames = pluginDisplayNamesById([
+    { pluginId: "bits", name: "bits-and-bolts", displayName: "Bits & Bolts" },
+    { pluginId: "plain", name: "fallback", displayName: " " },
+  ]);
+  expect(pluginNames.get("plain")).toBe("fallback");
+  const directory: PluginIconDirectory = {
+    plugins: new Map(), pluginNames,
+    servers: { server: { name: runtimeName, pluginId: "bits" } },
+  };
+  expect(serverDisplayName("server", directory)).toBe("Bits & Bolts");
+  expect(serverDisplayName(runtimeName, directory)).toBe("Bits & Bolts");
+  expect(serverDisplayName("server", directory, [{ serverId: "server", name: "My CAD" }])).toBe("My CAD");
+  expect(directory.servers.server.name).toBe(runtimeName);
+  expect(serverDisplayName(runtimeName, { ...directory, pluginNames: new Map() })).toBe(runtimeName);
 });

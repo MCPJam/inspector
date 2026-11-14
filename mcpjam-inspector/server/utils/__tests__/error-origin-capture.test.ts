@@ -116,6 +116,20 @@ describe("mcpjam_internal boundary", () => {
     }
     expect(captureException).not.toHaveBeenCalled();
   });
+
+  it("does not page the guest input cap the stream handler reports at this hop", () => {
+    // A 413 is not a recognized denial, so the backend-stream site still
+    // declares `mcpjam_internal`. The slug's `user_config` origin keeps it off
+    // Sentry.
+    const decision = maybeCaptureOriginError(
+      new Error("guest_input_too_large"),
+      normalizedFor("account/guest_input_too_large"),
+      { source: "mcp.chat-v2.backend-stream", boundary: "mcpjam_internal" },
+    );
+
+    expect(decision.captured).toBe(false);
+    expect(captureException).not.toHaveBeenCalled();
+  });
 });
 
 describe("mcpjam_request_construction boundary", () => {

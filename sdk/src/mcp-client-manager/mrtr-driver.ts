@@ -10,8 +10,8 @@
  * ## Why a serializable stepper (not just an async loop)
  *
  * Hosted MCPJam is horizontally scaled: a modern `input_required` can arrive
- * mid-tool-execution while a worker holds an SSE stream open, and §12.5.2
- * forbids blocking a worker while a human thinks. The loop is therefore split
+ * mid-tool-execution while a worker holds an SSE stream open. Durable
+ * suspension is a platform choice. The loop is therefore split
  * into a **pure data state** ({@link MrtrOperationState}) and pure step
  * functions ({@link executeInputRequiredLeg} / {@link
  * resumeInputRequiredOperation}). A local/CLI surface layers the convenience
@@ -157,9 +157,25 @@ export type MrtrLegResult<TResult> =
  * cache) and their own retry/timeout wrappers; the driver is the inner leaf.
  */
 export type MrtrLegSender<TResult = unknown> = (
-  request: { readonly method: MrtrMethod; readonly params: Record<string, unknown> },
-  ctx: { readonly round: number; readonly signal?: AbortSignal }
+  request: {
+    readonly method: MrtrMethod;
+    readonly params: Record<string, unknown>;
+  },
+  ctx: {
+    readonly opId?: string;
+    readonly round: number;
+    readonly signal?: AbortSignal;
+  }
 ) => Promise<TResult | InputRequiredResult>;
+
+/** Host authorization around each actual attempt, including retry attempts. */
+export type MrtrLegMiddleware = <T>(args: {
+  operationId: string;
+  round: number;
+  request: Parameters<MrtrLegSender>[0];
+  signal?: AbortSignal;
+  send: () => Promise<T>;
+}) => Promise<T>;
 
 /**
  * Validates collected elicitation content against the request's
@@ -171,6 +187,16 @@ export type ElicitationContentValidator = (
   requestedSchema: unknown,
   content: unknown
 ) => { valid: boolean; error?: string };
+
+/**
+ * Picks the schema an accepted form answer is validated against from the
+ * request's params. Defaults to the core `requestedSchema`; a host whose forms
+ * carry their schema elsewhere (see `selectElicitationFormSchema`) injects
+ * this so retry validation matches what the user was shown. Throws to refuse.
+ */
+export type ElicitationFormSchemaSelector = (
+  params: Record<string, unknown> | undefined
+) => unknown;
 
 /** Collects responses for one round's embedded requests. */
 export type MrtrInputCollector = (request: {
@@ -392,7 +418,8 @@ export function validateInputRequests(
 export function validateRoundResponses(
   state: MrtrOperationState,
   responses: InputResponses,
-  validateContent?: ElicitationContentValidator
+  validateContent?: ElicitationContentValidator,
+  selectFormSchema?: ElicitationFormSchemaSelector
 ): void {
   const pending = state.pendingInputRequests;
   const pendingKeys = Object.keys(pending);
@@ -423,7 +450,9 @@ export function validateRoundResponses(
     if (res?.action !== "accept") {
       continue;
     }
-    const requestedSchema = req.params?.requestedSchema;
+    const requestedSchema = selectFormSchema
+      ? selectFormSchema(req.params)
+      : req.params?.requestedSchema;
     // URL-mode consent carries no content schema.
     if (requestedSchema === undefined || validateContent === undefined) {
       continue;
@@ -479,6 +508,7 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
   currentRoundResponses?: InputResponses;
   signal?: AbortSignal;
   validateContent?: ElicitationContentValidator;
+  selectFormSchema?: ElicitationFormSchemaSelector;
   supportedElicitationModes?: MrtrSupportedModes;
 }): Promise<MrtrLegResult<TResult>> {
   const {
@@ -487,12 +517,18 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
     currentRoundResponses,
     signal,
     validateContent,
+    selectFormSchema,
     supportedElicitationModes = SUPPORTED_ELICITATION_MODES,
   } = args;
 
   // Validate this round's responses before they leave the process.
   if (currentRoundResponses !== undefined) {
-    validateRoundResponses(state, currentRoundResponses, validateContent);
+    validateRoundResponses(
+      state,
+      currentRoundResponses,
+      validateContent,
+      selectFormSchema
+    );
   } else if (Object.keys(state.pendingInputRequests).length > 0) {
     throw new MrtrInputValidationError(
       "This round has pending input requests but no responses were supplied."
@@ -505,7 +541,7 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
       : undefined;
   const params = buildRetryParams(state, safeResponses);
 
-  const raw = await sender({ method: state.method, params }, { round: state.round, signal });
+  const raw = await sender({ method: state.method, params }, { opId: state.opId, round: state.round, signal });
 
   if (!isInputRequiredResult(raw)) {
     return { status: "complete", result: raw as TResult };
@@ -567,6 +603,7 @@ export function resumeInputRequiredOperation<TResult = unknown>(
     requestOptions?: RequestOptions;
     signal?: AbortSignal;
     validateContent?: ElicitationContentValidator;
+    selectFormSchema?: ElicitationFormSchemaSelector;
     supportedElicitationModes?: MrtrSupportedModes;
   }
 ): Promise<MrtrLegResult<TResult>> {
@@ -583,6 +620,7 @@ export function resumeInputRequiredOperation<TResult = unknown>(
     currentRoundResponses: responses,
     signal: config?.signal,
     validateContent: config?.validateContent,
+    selectFormSchema: config?.selectFormSchema,
     supportedElicitationModes: config?.supportedElicitationModes,
   });
 }
@@ -612,6 +650,9 @@ export interface RunInputRequiredOptions<TResult = unknown> {
   validateResponse?: MrtrValidateResponse<TResult>;
   /** Strict content validator for accepted elicitation input. */
   validateContent?: ElicitationContentValidator;
+  /** Schema the validator checks a form answer against; defaults to the core
+   *  `requestedSchema`. */
+  selectFormSchema?: ElicitationFormSchemaSelector;
   supportedElicitationModes?: MrtrSupportedModes;
   /** MCPJam-owned round cap; defaults to {@link DEFAULT_MAX_MRTR_ROUNDS}. */
   maxRounds?: number;
@@ -682,6 +723,7 @@ export async function runInputRequiredOperation<TResult = unknown>(
       currentRoundResponses: responses,
       signal: options.signal,
       validateContent: options.validateContent,
+      selectFormSchema: options.selectFormSchema,
       supportedElicitationModes: options.supportedElicitationModes,
     });
   }

@@ -24,6 +24,7 @@ export type EvalTraceSpan = {
   status?: EvalTraceSpanStatus;
   toolCallId?: string;
   toolName?: string;
+  toolOrigin?: "mcp" | "native" | "builtin" | "unknown";
   serverId?: string;
   connectionId?: string;
   modelId?: string;
@@ -206,6 +207,14 @@ export type PromptTraceSummary = {
     mismatchedArguments: string[];
   }>;
   /**
+   * Failed calls this turn's matcher graded as part of a later identical call
+   * rather than as extras. Indexes are into `actualToolCalls`. Absent ⇒ none,
+   * including on every trace recorded before retries were graded.
+   */
+  retries?: Array<
+    PromptTurnToolCall & { actualIndex: number; retriedByIndex: number }
+  >;
+  /**
    * Per-turn deterministic check verdicts for this turn (scope.kind === "turn",
    * scope.promptIndex === this turn). Absent/empty ⇒ the turn authored no
    * checks. Case-level predicate results live on the iteration, not here.
@@ -340,6 +349,7 @@ export type EvalTraceWidgetToolCall = {
  * plus the transient base64 screenshot until finalize uploads it.
  */
 export type RunnerWidgetRenderObservation = {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   toolName: string;
   serverId: string; // friendly MCP server name; backend resolves to Id<'servers'>
@@ -372,6 +382,7 @@ export type EvalTraceScriptedAssertion = {
 };
 
 export type RunnerBrowserInteractionStep = {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   stepIndex: number; // monotonic per (toolCallId), stamped by the runner
   promptIndex: number; // stamped by the runner
@@ -573,6 +584,7 @@ export const evalTraceSpanZ = z.object({
   status: z.enum(["ok", "error"]).optional(),
   toolCallId: z.string().optional(),
   toolName: z.string().optional(),
+  toolOrigin: z.enum(["mcp", "native", "builtin", "unknown"]).optional(),
   serverId: z.string().optional(),
   connectionId: z.string().optional(),
   modelId: z.string().optional(),
@@ -625,6 +637,14 @@ const promptTraceSummaryZ = z.object({
       mismatchedArguments: z.array(z.string()),
     }),
   ),
+  retries: z
+    .array(
+      traceToolCallZ.extend({
+        actualIndex: z.number().int().nonnegative(),
+        retriedByIndex: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
 });
 
 const evalTraceWidgetSnapshotZ = z.object({

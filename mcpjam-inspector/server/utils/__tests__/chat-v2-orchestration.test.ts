@@ -31,6 +31,14 @@ import {
 import { getSkillToolsAndPrompt } from "../skill-tools";
 import { listCloudSkills } from "../computers/cloud-skills";
 import {
+  resolveTurnSkills,
+  turnSkillsFromLegacySource,
+} from "../../services/environments/turn-skills";
+import {
+  namePin,
+  preparedRunSkills,
+} from "../../test/support/skill-delivery";
+import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
 } from "../built-in-tools/exa-web-search";
@@ -38,7 +46,7 @@ import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
   resolveActiveToolNames,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 
 function mockManager(tools: Record<string, unknown>) {
   return {
@@ -604,6 +612,36 @@ describe("prepareChatV2", () => {
     expect(rewrittenTool._meta).toEqual(baselineTool._meta);
   });
 
+  describe("MCP tool names Anthropic rejects", () => {
+    const anthropicModel = {
+      id: "anthropic/claude-sonnet-4.5",
+      provider: "anthropic",
+    } as any;
+
+    it("prepares a direct or hosted turn, which aliases them on the wire", async () => {
+      const result = await prepareChatV2({
+        mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
+        selectedServers: ["shop"],
+        modelDefinition: anthropicModel,
+        systemPrompt: "Base prompt.",
+      });
+
+      expect(Object.keys(result.allTools)).toContain("cart.add");
+    });
+
+    it("refuses a harness turn, which builds its own tool names", async () => {
+      await expect(
+        prepareChatV2({
+          mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
+          selectedServers: ["shop"],
+          modelDefinition: anthropicModel,
+          systemPrompt: "Base prompt.",
+          harness: "claude-code",
+        }),
+      ).rejects.toThrow("Invalid tool name(s) for Anthropic: 'cart.add'");
+    });
+  });
+
   describe("progressive discovery", () => {
     function manyToolsManager(count: number) {
       const tools: Record<string, unknown> = {};
@@ -751,12 +789,16 @@ describe("prepareChatV2", () => {
         (m: any) => m.name === "asana_task_17"
       );
       expect(target).toBeDefined();
-      const targetToolId: string = target.toolId;
+      // The model only ever sees the name — no id to call the tool by.
+      expect(target).not.toHaveProperty("toolId");
 
-      // 2. Model loads the target by id; state must reflect the new id.
+      // 2. Model loads the target by name; state stages its catalog id.
       const load = (result.allTools as any).load_mcp_tools.execute;
-      const loadRes = await load({ toolIds: [targetToolId] }, {} as any);
-      expect(loadRes.loaded.map((l: any) => l.toolId)).toEqual([targetToolId]);
+      const loadRes = await load({ names: ["asana_task_17"] }, {} as any);
+      expect(loadRes.loaded).toEqual([{ name: "asana_task_17" }]);
+      const targetToolId = result.progressivePlan.catalog.find(
+        (entry) => entry.modelName === "asana_task_17"
+      )!.toolId;
       expect(result.discoveryState.newlyLoadedToolIds.has(targetToolId)).toBe(
         true
       );
@@ -909,7 +951,7 @@ describe("prepareChatV2 built-in tools", () => {
             execute: async () => ({}),
           },
         } as any,
-        skillsSource: {
+        skills: turnSkillsFromLegacySource({
           kind: "resolved",
           capabilities: {
             ...emptyCapabilities(),
@@ -926,7 +968,7 @@ describe("prepareChatV2 built-in tools", () => {
               },
             ],
           },
-        },
+        }),
       })
     ).rejects.toThrow(/loadSkill.*collides/);
   });
@@ -1617,7 +1659,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
       selectedServers: ["server-a"],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      skillsSource: { kind: "none" },
+      skills: turnSkillsFromLegacySource({ kind: "none" }),
     });
     expect(manager.getSkillsSupport).not.toHaveBeenCalled();
     expect(result.allTools).not.toHaveProperty("loadSkill");
@@ -1625,10 +1667,10 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
 
   // The throw is a CALLER contract (the two delivery channels are disjoint), not
   // a claim that a harness cannot take pinned skills — it can, and does, as
-  // SKILL.md on the box. Callers route pins to `pinnedHarnessSkills` and pass
-  // `{ kind: "none" }` here; `resolveIterationSkillsSource` is the eval side of
-  // that, and `sessionSimulation/runner.ts` the swarm side.
-  it("THROWS on harness + skillsSource pinned (harness pinned skills must ride the harness path, never this branch)", async () => {
+  // SKILL.md on the box. Callers route pins to `pinnedHarnessSkills` and plan
+  // the turn for the harness; `iterationTurnSkills` is the eval side of that,
+  // and `sessionTurnSkills` the swarm side.
+  it("THROWS on a harness turn handed MCPJam's agent's pinned tools (they ride the harness path, never this branch)", async () => {
     const manager = mockManager({});
     await expect(
       prepareChatV2({
@@ -1637,14 +1679,28 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
         modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
         systemPrompt: "Base prompt.",
         harness: "claude-code" as any,
-        skillsSource: {
-          kind: "pinned",
-          skills: [
-            { name: "s", description: "d", content: "c", contentHash: "h" },
-          ],
-        },
+        skills: resolveTurnSkills({
+          source: (await preparedRunSkills([namePin("s")])).pinnedSkillSource,
+          runtime: { kind: "agent" },
+        }),
       })
-    ).rejects.toThrow(/receive skills on box via `pinnedHarnessSkills`/);
+    ).rejects.toThrow(/deliberately disjoint/);
+  });
+
+  it("THROWS on MCPJam's agent handed a harness's plan, which would leave it without the planned skills", async () => {
+    const manager = mockManager({});
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        selectedServers: [],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        skills: resolveTurnSkills({
+          source: { kind: "none" },
+          runtime: { kind: "harness", harnessId: "claude-code" },
+        }),
+      })
+    ).rejects.toThrow(/planned for a different engine/);
   });
 
   it("REFUSES a live resolved source on a harness turn, flag or no flag", async () => {
@@ -1660,16 +1716,16 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
         modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
         systemPrompt: "Base prompt.",
         harness: "claude-code" as any,
-        skillsSource: {
+        skills: turnSkillsFromLegacySource({
           kind: "resolved",
           capabilities: emptyCapabilities(),
           composeLiveServerSkills: true,
-        },
+        }),
       })
     ).rejects.toThrow(/deliberately disjoint/);
   });
 
-  it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {
+  it("accepts a harness turn with no skill plan (a deliberately skill-less env target)", async () => {
     const manager = mockManager({});
     const result = await prepareChatV2({
       mcpClientManager: manager,
@@ -1677,7 +1733,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
       harness: "claude-code" as any,
-      skillsSource: { kind: "none" },
+      skills: turnSkillsFromLegacySource({ kind: "none" }),
     });
     expect(Object.keys(result.allTools)).toEqual([]);
   });
@@ -1713,13 +1769,13 @@ describe("prepareChatV2 — a live resolved source", () => {
       selectedServers: [],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: liveSet([
           { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
         ]),
         composeLiveServerSkills: true,
-      },
+      }),
     });
     expect(result.enhancedSystemPrompt).toContain("## Skills");
     expect(result.enhancedSystemPrompt).toContain("**pdf-tools**");
@@ -1736,11 +1792,11 @@ describe("prepareChatV2 — a live resolved source", () => {
       selectedServers: [],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: emptyCapabilities(),
         composeLiveServerSkills: true,
-      },
+      }),
     });
     expect(result.allTools).not.toHaveProperty("loadSkill");
     expect(result.allTools).not.toHaveProperty("listSkills");
@@ -1748,7 +1804,7 @@ describe("prepareChatV2 — a live resolved source", () => {
   });
 
   it("keeps skill tools under the host's approval rule, unlike a pinned source", async () => {
-    // `resolved` is an interactive turn; only the pinned kinds bypass approval,
+    // A live plan is an interactive turn; only frozen plans bypass approval,
     // and that divergence is the whole reason they are separate kinds.
     const result = await prepareChatV2({
       mcpClientManager: mockManager({}),
@@ -1756,13 +1812,13 @@ describe("prepareChatV2 — a live resolved source", () => {
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
       requireToolApproval: true,
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: liveSet([
           { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
         ]),
         composeLiveServerSkills: true,
-      },
+      }),
     });
     expect(
       (result.allTools as Record<string, { needsApproval?: unknown }>).loadSkill
@@ -2100,5 +2156,59 @@ describe("prepareChatV2 tool-listing budget", () => {
     });
 
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("prepareChatV2 isolated plugin servers", () => {
+  const down = new TypeError("fetch failed");
+
+  /** `chosen` and `plugin` each list one tool; `failing` refuse to. */
+  function managerWith(failing: string[]) {
+    const manager = mockManager({});
+    const list = async (keys: string[]) => {
+      const dead = keys.find((key) => failing.includes(key));
+      if (dead) throw down;
+      return Object.fromEntries(
+        keys.map((key) => [
+          key,
+          { [`${key}_tool`]: { description: key, _serverId: key } },
+        ]),
+      );
+    };
+    manager.getToolsForAiSdkByServer = vi.fn(list);
+    manager.getToolsForAiSdk = vi.fn(async (keys: string[]) =>
+      Object.assign({}, ...Object.values(await list(keys))),
+    );
+    return manager;
+  }
+
+  const turn = (failing: string[], isolatedServers?: string[]) =>
+    prepareChatV2({
+      mcpClientManager: managerWith(failing),
+      selectedServers: ["chosen", "plugin"],
+      ...(isolatedServers ? { isolatedServers } : {}),
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+    });
+
+  it("runs the turn without a plugin server that cannot list its tools", async () => {
+    const result = await turn(["plugin"], ["plugin"]);
+    expect(Object.keys(result.allTools)).toContain("chosen_tool");
+    expect(Object.keys(result.allTools)).not.toContain("plugin_tool");
+    expect([...(result.unavailableServers ?? new Map())]).toEqual([
+      ["plugin", down],
+    ]);
+  });
+
+  it("still fails the turn for a server it does not isolate", async () => {
+    await expect(turn(["plugin"])).rejects.toThrow("fetch failed");
+    await expect(turn(["chosen"], ["plugin"])).rejects.toThrow("fetch failed");
+  });
+
+  it("reports nothing when every isolated server listed", async () => {
+    const result = await turn([], ["plugin"]);
+    expect(Object.keys(result.allTools)).toEqual(
+      expect.arrayContaining(["chosen_tool", "plugin_tool"]),
+    );
+    expect(result.unavailableServers?.size).toBe(0);
   });
 });

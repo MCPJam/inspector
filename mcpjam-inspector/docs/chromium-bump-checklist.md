@@ -77,6 +77,13 @@ merely re-run:
   `<input type="password">` — the fact the secret-placeholder masking depends
   on.
 
+The local Browser's sandbox refusal depends on wording too.
+`server/services/browserd/local/launch-failure.ts` recognises a Chromium that
+could not start its sandbox by Playwright's "Chromium sandboxing failed!" or
+Chromium's own "No usable sandbox!". `launch-failure.test.ts` checks
+Playwright's. On a host that restricts user namespaces (Ubuntu 24.04 or later),
+launch the new build once and confirm its error still contains Chromium's.
+
 ## 4. The prose
 
 `pinned-chromium.test.ts` walks these and fails if any names a different build:

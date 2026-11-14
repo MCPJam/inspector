@@ -83,6 +83,29 @@ describe("describeSwarmAttemptFailure", () => {
       severity: "info", oneLine: "Sign in again.", rawMessage: "Sign in again.", rawCode: "xaa_reauth_required",
     });
   });
+  it.each([
+    "Setup couldn't create this target's test data, so its conversations didn't run. Run it again.",
+    "Setup created more test data than it can track, so this target's conversations didn't run.",
+    "Setup made more tool calls than it can track, so this target's conversations didn't run.",
+    "Setup ran out of time before this target's test data was ready, so its conversations didn't run. Run it again.",
+    "Setup couldn't reach the MCP server, so this target's conversations didn't run. Check the server's connection, then run it again.",
+    "MCPJam couldn't run setup for this target, so its conversations didn't run. Run it again later.",
+  ])("cards a setup stop with its own sentence: %s", (sentence) => {
+    const error = describeSwarmAttemptFailure(
+      sentence,
+      "prerequisites_unavailable",
+      "Your provider",
+    );
+    expect(error).toMatchObject({
+      title: "Setup stopped this target",
+      oneLine: sentence,
+      likelyCauses: [],
+      nextSteps: [],
+      rawCode: "prerequisites_unavailable",
+      docsAnchor: "/troubleshooting/error-codes",
+    });
+    expect(JSON.stringify(error)).not.toContain("New error class");
+  });
   it("retains a failure's humanized meaning and machine code", () => {
     const error = describeSwarmAttemptFailure("Runner stopped.", "execution_failed", "Your provider");
     expect(error.title).toBe("Session failed");
@@ -315,5 +338,106 @@ describe("describeSwarmAttemptFailure provider_not_allowlisted", () => {
     expect(result.oneLine).toBe(
       "The provider is not enabled on MCPJam's gateway. Retrying or changing your API key won't help.",
     );
+  });
+});
+
+describe("describeSwarmAttemptFailure organization AI-key refusals", () => {
+  it("cards org_keys_required as configuration, never a credential or credit failure", () => {
+    const error = describeSwarmAttemptFailure(
+      "This organization requires its own provider keys for AI features.",
+      "org_keys_required",
+      "Anthropic",
+    );
+    expect(error).toMatchObject({
+      slug: "swarm/ai_refused",
+      title: "Organization provider required",
+      severity: "warning",
+      rawCode: "org_keys_required",
+      nextSteps: ["Choose a model from an organization provider."],
+    });
+    expect(error.oneLine).not.toMatch(/credit|top up/i);
+  });
+
+  it("reads the code out of the raw message when the row has none", () => {
+    expect(
+      describeSwarmAttemptFailure(
+        "provider_auth_failed: 401 from the provider",
+        null,
+        "OpenAI",
+      ),
+    ).toMatchObject({
+      slug: "swarm/ai_refused",
+      rawCode: "provider_auth_failed",
+      nextSteps: [
+        "Ask an organization admin to update the provider's API key.",
+      ],
+    });
+  });
+
+  it("keeps the row's own code when the message only mentions a refusal", () => {
+    expect(
+      describeSwarmAttemptFailure(
+        "Rate limited while retrying after org_keys_required",
+        "rate_limited",
+        "Anthropic",
+      ).slug,
+    ).not.toBe("swarm/ai_refused");
+  });
+
+  it("does not blame the AI provider for a throttled server sign-in", () => {
+    const stored =
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.';
+    const card = describeSwarmAttemptFailure(
+      stored,
+      "xaa_authorization_rejected",
+      "Your provider",
+    );
+
+    expect(card.oneLine).toBe(stored);
+    expect(card.oneLine).not.toMatch(/rate-limited this key|switch models/i);
+    expect(card.slug).toBe("swarm/attempt_failed");
+    // Nothing on the card is the provider-quota entry's.
+    expect([...card.likelyCauses, ...card.nextSteps].join(" ")).not.toMatch(
+      /provider|plan|quota|rate limit/i,
+    );
+    expect(card.nextSteps).toContain("Check the server's auth settings.");
+    expect(card.docsAnchor).not.toBe(ERROR_CATALOG["provider/quota"].docsAnchor);
+  });
+
+  it("offers another run for a transient refusal", () => {
+    expect(
+      describeSwarmAttemptFailure("busy", "provider_unavailable", "OpenAI"),
+    ).toMatchObject({
+      severity: "info",
+      nextSteps: ["Run the session again in a moment."],
+    });
+  });
+});
+
+describe("describeSwarmAttemptFailure declined card", () => {
+  // What the runner stores after a declined card paused auto-reload: the
+  // backend's sentence under the generic code, with the refusal reason gone.
+  const DECLINED =
+    "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.";
+
+  it("names the card instead of an empty balance or a hold", () => {
+    const result = describeSwarmAttemptFailure(
+      DECLINED,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Update your declined card");
+    expect(result.oneLine).toMatch(/update your payment method/i);
+    expect(result.slug).toBe(ERROR_CATALOG["provider/mcpjam_limit"].slug);
+    expect(result.rawMessage).toBe(DECLINED);
+  });
+
+  it("reads the structured reason over a held-credits sentence", () => {
+    const result = describeSwarmAttemptFailure(
+      'Backend stream error: 429 {"code":"user_rate_limit","refusalReason":"auto_topup_declined","error":"MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits."}',
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Update your declined card");
   });
 });

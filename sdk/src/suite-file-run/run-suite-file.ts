@@ -1,3 +1,9 @@
+import {
+  startEvalRun,
+  EvalRunStartError,
+  type EvalRunContext,
+} from "../eval-run-start.js";
+import { EvalBillingError } from "../eval-iteration-payment.js";
 /**
  * `runSuiteFile` — execute a suite file locally and decide it with the v2
  * verdict policy.
@@ -64,6 +70,8 @@ import { assertImportedToolReferences } from "./import-gate.js";
 import {
   attributingModelFactory,
   isTerminalRefusal,
+  orgPolicyRefusalCode,
+  orgPolicyRefusalMessage,
   refusalMessage,
   resolveInferenceCredentials,
   type ResolvedInferenceCredentials,
@@ -91,9 +99,14 @@ import {
   createLocalToolPolicyGate,
   type LocalToolPolicyGate,
 } from "./tool-policy-gate.js";
+import {
+  createLocalAuthChallengeObserver,
+  type LocalAuthChallengeObserver,
+} from "./auth-challenge-observer.js";
 import { observeIteration, unstartedIteration } from "./trial-observation.js";
 import type {
   RunSuiteFileOptions,
+  SuiteFileAuthRequired,
   SuiteFileCaseRun,
   SuiteFileIterationEvidence,
   SuiteFileRefusalAttribution,
@@ -214,9 +227,13 @@ function transportOf(config: MCPServerConfig): "stdio" | "http" {
 
 type IterationContext = {
   gate?: LocalToolPolicyGate;
+  /** Sign-in challenges this iteration's tool calls hit (never acted on). */
+  authChallenges: LocalAuthChallengeObserver;
   refusals: SuiteFileRefusalAttribution[];
   /** What the provider or platform said when it stopped the run. */
   refusalError?: string;
+  /** The policy code behind an `orgPolicy` refusal, for the run's issue. */
+  orgPolicyCode?: string;
 };
 
 type CaseOutcome = {
@@ -322,6 +339,18 @@ async function executeSuiteFile(
         },
       };
     }
+
+    const started = await startEvalRun({
+      surface: options.surface, clientVersion: options.clientVersion,
+      mcpjamAuth: credentials.mcpjam,
+      mcpjam: credentials.mcpjam ? {
+        baseUrl: credentials.mcpjam.baseUrl, project: credentials.mcpjam.projectId,
+      } : undefined,
+      plannedIterations: plan.cases.reduce((total, entry) => total + entry.testCase.iterations, 0),
+      providers: plan.cases.map((entry) => entry.model.provider),
+      usedClientProfile: Boolean(plan.host), signal: runController.signal,
+    });
+    progress({ type: "identity", organizationId: started.organizationId, projectId: started.projectId });
 
     manager = runtime.createClientManager
       ? runtime.createClientManager()
@@ -431,6 +460,7 @@ async function executeSuiteFile(
     }
     const frozenTools = Object.freeze({ ...merged }) as ToolSet;
     const toolNames = Object.keys(frozenTools);
+    const toolServers: ReadonlyMap<string, string> = new Map(ownerOf);
 
     if (plan.toolPolicy) {
       try {
@@ -515,6 +545,17 @@ async function executeSuiteFile(
           if (error instanceof SuiteFileRunError) throw error;
           if (error instanceof McpjamLeaseError) {
             const kind = classifyMcpjamLeaseError(error);
+            if (kind === "policy") {
+              // The organization's AI-key policy, not the credential: the
+              // fix is choosing an organization model, so it reads as a run
+              // this configuration cannot do (usage), never as `credentials`.
+              throw new SuiteFileRunError({
+                code: "AI_POLICY_REFUSED",
+                phase: "setup",
+                category: "unsupported",
+                message: `${orgPolicyRefusalMessage(model, orgPolicyRefusalCode(error))} (${messageOf(error)})`,
+              });
+            }
             throw new SuiteFileRunError({
               code:
                 kind === "billing"
@@ -546,7 +587,9 @@ async function executeSuiteFile(
     // ── 6. execute ───────────────────────────────────────────────────────────
     executed = await executeCases({
       plan,
+      runContext: started,
       tools: frozenTools,
+      toolServers,
       snapshot,
       credentials,
       leaseScope,
@@ -587,6 +630,14 @@ async function executeSuiteFile(
     }
   }
   if (failure !== undefined) {
+    if (failure instanceof EvalRunStartError) {
+      throw new SuiteFileRunError({
+        code: failure.code === "CREDENTIALS_MISSING" ? "CREDENTIALS_MISSING"
+          : failure.code === "PLATFORM_UNAVAILABLE" ? "PLATFORM_UNAVAILABLE" : "CREDENTIALS_REJECTED",
+        phase: "setup", category: failure.code === "PLATFORM_UNAVAILABLE" ? "setup" : "credentials",
+        message: failure.message, cause: failure,
+      });
+    }
     if (failure instanceof SuiteFileRunError) {
       throw new SuiteFileRunError({
         code: failure.code,
@@ -646,7 +697,9 @@ async function executeSuiteFile(
 
 async function executeCases(args: {
   plan: SuiteFilePlan;
+  runContext: EvalRunContext;
   tools: ToolSet;
+  toolServers: ReadonlyMap<string, string>;
   snapshot: ToolPolicySnapshot | undefined;
   credentials: ResolvedInferenceCredentials;
   leaseScope: McpjamModelLeaseScope | undefined;
@@ -786,10 +839,34 @@ function notStartedCase(
   };
 }
 
+/**
+ * One line per challenged server and case. Only the challenge's short tokens
+ * (`error`, `scope`) are quoted; its free-text description stays on the
+ * iteration evidence.
+ */
+function authRequiredIssueMessage(
+  first: SuiteFileAuthRequired,
+  challengedIterations: number,
+  totalIterations: number
+): string {
+  const server =
+    first.server !== undefined ? `Server "${first.server}"` : "A target server";
+  const detail = [
+    `${challengedIterations} of ${totalIterations} iteration${totalIterations === 1 ? "" : "s"}`,
+    first.challenge.error,
+    first.challenge.requiredScope !== undefined
+      ? `scope "${first.challenge.requiredScope}"`
+      : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return `${server} asked for sign-in when "${first.toolName}" was called (${detail.join("; ")}). A local run never signs in: bind a credential for ${first.server !== undefined ? `"${first.server}"` : "that server"} and run again.`;
+}
+
 async function executeCase(args: {
   plan: SuiteFilePlan;
+  runContext: EvalRunContext;
   planned: PlannedCase;
   tools: ToolSet;
+  toolServers: ReadonlyMap<string, string>;
   snapshot: ToolPolicySnapshot | undefined;
   credentials: ResolvedInferenceCredentials;
   leaseScope: McpjamModelLeaseScope | undefined;
@@ -817,7 +894,10 @@ async function executeCase(args: {
   const baseFactory = args.runtime.createLanguageModel ?? createModelFromString;
   const connection = args.credentials.mcpjam;
   const root = new HostRunner({
-    ...(plan.host ? { host: plan.host.json } : {}),
+    // A template that leaves Progressive tools unset means Auto by it.
+    ...(plan.host
+      ? { host: plan.host.json, progressiveToolDiscoveryWhenUnset: "auto" }
+      : {}),
     model: model.effectiveModel,
     tools: args.tools,
     apiKey:
@@ -845,7 +925,15 @@ async function executeCase(args: {
   } as ConstructorParameters<typeof HostRunner>[0]);
 
   const cloneFor = (overrides: Record<string, unknown>): HostExecutor => {
-    const context: IterationContext = { refusals: [] };
+    const context: IterationContext = {
+      refusals: [],
+      authChallenges: createLocalAuthChallengeObserver({
+        serverOf: (toolName) => args.toolServers.get(toolName),
+      }),
+    };
+    // Innermost, so it sees exactly what the server answered; a call the
+    // policy gate refuses never reaches it.
+    const observedTools = context.authChallenges.wrap(args.tools);
     if (args.snapshot) {
       context.gate = createLocalToolPolicyGate({
         snapshot: args.snapshot,
@@ -859,10 +947,10 @@ async function executeCase(args: {
       ...overrides,
       ...(context.gate
         ? {
-            tools: context.gate.wrap(args.tools),
+            tools: context.gate.wrap(observedTools),
             policyBlockedToolCallIds: context.gate.blockedToolCallIds,
           }
-        : {}),
+        : { tools: observedTools }),
       createLanguageModel: attributingModelFactory(
         baseFactory,
         model.rail,
@@ -871,13 +959,21 @@ async function executeCase(args: {
           if (isTerminalRefusal(kind)) {
             // Kept, because the abort below cancels this iteration's own
             // promise before its error can be recorded (see the loop below).
-            context.refusalError ??= refusalMessage(error);
+            if (kind === "orgPolicy") {
+              context.orgPolicyCode ??= orgPolicyRefusalCode(error);
+            }
+            context.refusalError ??=
+              kind === "orgPolicy"
+                ? `${orgPolicyRefusalMessage(model.effectiveModel, context.orgPolicyCode)} (${refusalMessage(error)})`
+                : refusalMessage(error);
             args.onStop(kind);
             caseController.abort(
               new Error(
                 kind === "credentials"
                   ? "stopped: the model credentials were rejected"
-                  : "stopped: inference was refused for a billing reason"
+                  : kind === "orgPolicy"
+                    ? "stopped: the organization requires its own provider keys"
+                    : "stopped: inference was refused for a billing reason"
               )
             );
           }
@@ -915,6 +1011,7 @@ async function executeCase(args: {
 
   const issues: SuiteFileRunIssue[] = [];
   let details: IterationResult[] = [];
+  let billingRefused = false;
   let evaluationConfig = planned.test.getEvaluationConfigSnapshot();
   try {
     const result = await planned.test.run(executor, {
@@ -924,9 +1021,10 @@ async function executeCase(args: {
       timeoutMs: plan.settings.iterationTimeoutMs,
       // Explicit: a local run never reports, whatever MCPJAM_API_KEY says.
       mcpjam: { enabled: false },
-      // Nor phones home: telemetry belongs to the caller, and the CLI's
+      // Analytics belong to the caller, and the CLI's
       // opt-outs (`--no-telemetry`, a persisted choice) are invisible here.
       __suppressTelemetry: true,
+      __evalRunContext: args.runContext,
       signal: caseController.signal,
       onProgress: (completed, total) =>
         args.progress({ type: "iteration", caseId, completed, total }),
@@ -943,10 +1041,16 @@ async function executeCase(args: {
       });
     }
   } catch (error) {
+    const billing = error instanceof EvalBillingError;
+    if (billing) {
+      billingRefused = true;
+      details = planned.test.getResults()?.iterationDetails ?? [];
+      args.onStop("billing");
+    }
     issues.push({
-      code: "INTERNAL_ERROR",
+      code: billing ? "BILLING_REFUSED" : "INTERNAL_ERROR",
       phase: "execution",
-      category: "internal",
+      category: billing ? "billing" : "internal",
       message: `The case could not be executed: ${messageOf(error)}`,
       caseId,
     });
@@ -958,9 +1062,20 @@ async function executeCase(args: {
   const evidence: SuiteFileIterationEvidence[] = [];
   const blocks: SuiteFileToolPolicyBlock[] = [];
   const refusals: SuiteFileRefusalAttribution[] = [];
+  let orgPolicyCode: string | undefined;
+  const challenged = new Map<
+    string,
+    { first: SuiteFileAuthRequired; iterations: number[] }
+  >();
   for (let index = 0; index < planned.testCase.iterations; index += 1) {
     const iterationNumber = index + 1;
     const recorded = details[index];
+    if (!recorded && billingRefused) {
+      const unstarted = unstartedIteration(iterationNumber, "skipped");
+      observations.push(unstarted.observation);
+      evidence.push(unstarted.evidence);
+      continue;
+    }
     if (!recorded) {
       // EvalTest itself failed: nothing about this iteration was observed.
       const unstarted = unstartedIteration(iterationNumber, "skipped");
@@ -1059,10 +1174,40 @@ async function executeCase(args: {
       });
     }
     observations.push(observed.observation);
-    evidence.push(observed.evidence);
+    const authRequired = context?.authChallenges.authRequired();
+    evidence.push(
+      authRequired ? { ...observed.evidence, authRequired } : observed.evidence
+    );
+    if (authRequired) {
+      const key = authRequired.server ?? "";
+      const entry = challenged.get(key);
+      if (entry) entry.iterations.push(iterationNumber);
+      else
+        challenged.set(key, {
+          first: authRequired,
+          iterations: [iterationNumber],
+        });
+    }
     blocks.push(...iterationBlocks);
-    if (refusal !== undefined && iteration.status !== "completed")
+    if (refusal !== undefined && iteration.status !== "completed") {
       refusals.push(refusal);
+      if (refusal === "orgPolicy") orgPolicyCode ??= context?.orgPolicyCode;
+    }
+  }
+
+  for (const { first, iterations } of challenged.values()) {
+    issues.push({
+      code: "AUTHORIZATION_REQUIRED",
+      phase: "execution",
+      category: "authorization",
+      message: authRequiredIssueMessage(
+        first,
+        iterations.length,
+        planned.testCase.iterations
+      ),
+      caseId,
+      ...(iterations.length === 1 ? { iterationNumber: iterations[0] } : {}),
+    });
   }
 
   for (const kind of new Set(refusals)) {
@@ -1072,6 +1217,14 @@ async function executeCase(args: {
         phase: "execution",
         category: "credentials",
         message: `The ${model.rail === "mcpjam" ? "MCPJam platform" : `${model.provider} provider`} rejected the credentials for ${model.effectiveModel}; the remaining work was not started.`,
+        caseId,
+      });
+    } else if (kind === "orgPolicy") {
+      issues.push({
+        code: "AI_POLICY_REFUSED",
+        phase: "execution",
+        category: "unsupported",
+        message: `${orgPolicyRefusalMessage(model.effectiveModel, orgPolicyCode)} The remaining work was not started.`,
         caseId,
       });
     } else if (kind === "billing") {

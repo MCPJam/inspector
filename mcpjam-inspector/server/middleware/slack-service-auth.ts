@@ -29,7 +29,9 @@ import {
   SlackBackendUnavailable,
 } from "../services/slack-backend.js";
 import { logger } from "../utils/logger.js";
+import { scrubCredentialUrl } from "../../shared/credential-urls.js";
 import { setRequestLogContext } from "../utils/request-logger.js";
+import { logConvexId } from "../utils/log-convex-id.js";
 import {
   composeAllowedPaths,
   SLACK_ALLOWED_PATH_DELTAS,
@@ -239,8 +241,11 @@ export async function handleSlackServiceAuth(
   // error text.
   if (!isAllowedSlackPath(c.req.path)) {
     logger.warn("Slack service token used on a non-allowlisted path", {
-      // Bounded and newline-stripped: this is request-derived.
-      path: c.req.path.slice(0, 200).replace(/[\r\n]/g, ""),
+      // Bounded and newline-stripped: this is request-derived. Scrubbed
+      // before it is cut, so a credential segment is recognized whole.
+      path: scrubCredentialUrl(c.req.path)
+        .slice(0, 200)
+        .replace(/[\r\n]/g, ""),
     });
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
@@ -294,8 +299,7 @@ export async function handleSlackServiceAuth(
     // their account — they would follow the instruction, re-link, and still
     // fail. This distinction is the whole reason the resolver throws instead
     // of returning null.
-    logger.error("Slack account-link lookup failed", {
-      error: error instanceof Error ? error.message : String(error),
+    logger.error("Slack account-link lookup failed", error, {
       is_backend_unavailable: error instanceof SlackBackendUnavailable,
     });
     return c.json(
@@ -330,7 +334,7 @@ export async function handleSlackServiceAuth(
   // `bearer-auth.ts`. Every branch that resolves an org sets it, so `orgId` is
   // a field an operator can rely on rather than one that happens to be present
   // depending on which credential the caller used.
-  setRequestLogContext(c, { orgId: link.organizationId });
+  setRequestLogContext(c, { orgId: logConvexId(link.organizationId) });
   // The CANONICAL surface trio, and nothing Slack-named beside it. Routes
   // read only these three, so a second wrapper (Discord) is a new auth branch
   // that sets the same three names and nothing downstream changes. Context

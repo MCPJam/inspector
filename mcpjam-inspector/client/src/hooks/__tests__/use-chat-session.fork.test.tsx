@@ -49,9 +49,10 @@ const mockState = vi.hoisted(() => ({
 }));
 
 const baseModel = {
-  id: "gpt-4.1-mini",
+  id: "openai/gpt-4.1-mini",
   name: "GPT-4.1 Mini",
   provider: "openai" as const,
+  hosted: true,
 };
 
 vi.mock("@/lib/config", () => ({
@@ -91,9 +92,9 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
-    selectedModelId: "gpt-4.1-mini",
+    selectedModelId: "openai/gpt-4.1-mini",
     setSelectedModelId: mockState.setSelectedModelId,
-    selectedModelIds: ["gpt-4.1-mini"],
+    selectedModelIds: ["openai/gpt-4.1-mini"],
     setSelectedModelIds: vi.fn(),
     multiModelEnabled: false,
     setMultiModelEnabled: vi.fn(),

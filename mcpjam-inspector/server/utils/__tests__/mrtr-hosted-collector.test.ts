@@ -48,6 +48,34 @@ function makeState(
 }
 
 describe("buildInputRequestDisplays", () => {
+  it("shows the schema the injected selector picks, and lets it refuse", () => {
+    const extended = { type: "object", properties: { n: { type: "string" } } };
+    const requests = {
+      form: {
+        method: "elicitation/create",
+        params: {
+          mode: "form",
+          message: "Pick",
+          requestedSchema: { type: "object", properties: {} },
+          _meta: { "openai/elicitation": { requestedSchema: extended } },
+        },
+      },
+    };
+    const pick = (params?: Record<string, unknown>) =>
+      (params?._meta as { "openai/elicitation": { requestedSchema: unknown } })[
+        "openai/elicitation"
+      ].requestedSchema;
+    expect(
+      buildInputRequestDisplays(requests, undefined, undefined, pick),
+    ).toEqual([
+      { key: "form", mode: "form", message: "Pick", requestedSchema: extended },
+    ]);
+    expect(() =>
+      buildInputRequestDisplays(requests, undefined, undefined, () => {
+        throw new Error("PLUGIN_FORM_SCHEMA_MISSING");
+      }),
+    ).toThrow("PLUGIN_FORM_SCHEMA_MISSING");
+  });
   it("scrubs to a safe display and drops non-elicitation methods", () => {
     const displays = buildInputRequestDisplays({
       q1: {
@@ -765,6 +793,34 @@ describe("resumeMrtrContinuationLeg", () => {
     });
     expect(outcome).toMatchObject({ outcome: "cancelled", status: 409 });
     expect(driveLeg).not.toHaveBeenCalled();
+  });
+
+  it("recognizes an already finalized failed continuation without retaining a retry", async () => {
+    const store = makeFakeStore({ continuationId: "cont-1", state: makeState() });
+    const driveLeg = vi.fn();
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b", submission, bindingFingerprint: "fp", ...store.deps,
+      claim: async () => ({ ok: true, status: "failed", stateVersion: 2 }),
+      driveLeg,
+    });
+    expect(outcome).toMatchObject({ outcome: "failed", terminal: true });
+    expect(driveLeg).not.toHaveBeenCalled();
+  });
+
+  it("classifies a final admission refusal before delivery as a known failure", async () => {
+    const store = makeFakeStore({ continuationId: "cont-1", state: makeState(), sideEffecting: true });
+    const driveLeg = vi.fn();
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b", submission, bindingFingerprint: "fp", ...store.deps,
+      prepareLeg: async (_state, responses) => ({ responses, commit: async () => { throw new Error("admission unavailable"); } }),
+      driveLeg,
+    });
+    expect(outcome).toMatchObject({ outcome: "failed", reason: "admission unavailable", terminal: true });
+    expect(driveLeg).not.toHaveBeenCalled();
+    expect(store.calls.markWireStarted).toBe(1);
+    expect(store.calls.cancel).toEqual([]);
+    expect(store.calls.finalize).toHaveLength(1);
+    expect(store.calls.finalize[0]).toBe("failed");
   });
 
   it("transitions a side-effecting op to indeterminate when the leg throws", async () => {

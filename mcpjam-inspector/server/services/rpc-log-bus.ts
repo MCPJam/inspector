@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk";
+import { redactRpcMessageForLog } from "@mcpjam/sdk/events";
 import { logger } from "../utils/logger";
 import { nextRpcLogEventId } from "./rpc-log-event-id";
 import {
@@ -9,6 +10,7 @@ import {
 
 /** A JSON-RPC frame. `kind` is optional so existing publishers are unchanged. */
 export type RpcMessageLogEvent = {
+  scopeId?: string;
   kind?: "rpc";
   /** Stamped by {@link RpcLogBus.publish} — publishers never set it. */
   eventId?: string;
@@ -29,6 +31,7 @@ export type RpcMessageLogEvent = {
  * headers to the wrong one.
  */
 export type HttpExchangeBusEvent = {
+  scopeId?: string;
   kind: "http";
   /** Stamped by {@link RpcLogBus.publish} — publishers never set it. */
   eventId?: string;
@@ -71,6 +74,18 @@ function stampEventId<E extends RpcLogEvent>(
   eventId: string,
 ): E & { eventId: string } {
   return { ...event, eventId };
+}
+
+function redactFrame(event: RpcMessageLogEvent): RpcMessageLogEvent {
+  let message: unknown;
+  try {
+    message = redactRpcMessageForLog(event.message);
+  } catch {
+    // A frame the redactor cannot walk is dropped to a marker rather than
+    // published unredacted.
+    message = { redacted: true, reason: "unredactable_frame" };
+  }
+  return message === event.message ? event : { ...event, message };
 }
 
 export function isRpcMessageLogEvent(
@@ -155,7 +170,18 @@ class RpcLogBus {
   private readonly bufferByServer = new Map<string, ServerBuffer>();
   private truncatedFrames = 0;
 
-  publish(event: RpcLogEvent): void {
+  publish(input: RpcLogEvent): void {
+    // Redaction backstop (contract C8). The SDK's logging transport already
+    // redacts webhook secrets before any logger sees a frame, but not every
+    // publisher goes through it — the harness MCP-proxy planes publish frames
+    // they relay themselves. Running the same stateless redactor here means a
+    // `delivery.secret` (or a `whsec_` value quoted back in an error) can never
+    // reach the replay buffer or a Logs subscriber from ANY path. It returns
+    // the frame itself when nothing needs redacting, so the common case costs
+    // one shallow check.
+    const event: RpcLogEvent = isRpcMessageLogEvent(input)
+      ? redactFrame(input)
+      : input;
     const probed = probeSerializedSize(
       isRpcMessageLogEvent(event) ? event.message : event.exchange,
       MAX_MESSAGE_BYTES,
@@ -216,10 +242,14 @@ class RpcLogBus {
   subscribe(
     serverIds: string[],
     listener: (event: DeliveredRpcLogEvent) => void,
+    scopeIds?: Record<string, string>,
   ): () => void {
     const filter = new Set(serverIds);
     const handler = (event: DeliveredRpcLogEvent) => {
-      if (filter.size === 0 || filter.has(event.serverId)) {
+      if (
+        (filter.size === 0 || filter.has(event.serverId)) &&
+        event.scopeId === scopeIds?.[event.serverId]
+      ) {
         // Isolate subscribers: EventEmitter.emit re-throws synchronously, so
         // an unguarded listener would propagate into the PRODUCER — turning a
         // logging side-effect into an RPC failure (e.g. failing a harness-mcp
@@ -243,7 +273,9 @@ class RpcLogBus {
     const all: DeliveredRpcLogEvent[] = [];
     for (const [serverId, buf] of this.bufferByServer.entries()) {
       if (filter.size > 0 && !filter.has(serverId)) continue;
-      for (const entry of buf.entries) all.push(entry.event);
+      for (const entry of buf.entries) {
+        if (entry.event.scopeId === undefined) all.push(entry.event);
+      }
     }
     // If limit is 0, return empty array (no replay)
     if (limit === 0) return [];

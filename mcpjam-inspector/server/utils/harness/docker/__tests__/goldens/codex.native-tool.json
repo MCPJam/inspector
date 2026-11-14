@@ -90,6 +90,7 @@
                     ],
                     "cwd": "."
                   },
+                  "providerExecuted": true,
                   "toolCallId": "<id-2>",
                   "toolName": "bash",
                   "type": "tool-call"
@@ -131,7 +132,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "bash"
+              "toolName": "bash",
+              "toolOrigin": "native"
             },
             {
               "category": "llm",
@@ -212,6 +214,7 @@
                     ],
                     "cwd": "."
                   },
+                  "providerExecuted": true,
                   "toolCallId": "<id-2>",
                   "toolName": "bash",
                   "type": "tool-call"
@@ -262,7 +265,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "bash"
+              "toolName": "bash",
+              "toolOrigin": "native"
             },
             {
               "category": "llm",
@@ -358,6 +362,7 @@
               ],
               "cwd": "."
             },
+            "providerExecuted": true,
             "toolCallId": "<id-2>",
             "toolName": "bash",
             "type": "tool-call"

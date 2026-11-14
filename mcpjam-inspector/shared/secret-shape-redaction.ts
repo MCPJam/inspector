@@ -26,11 +26,28 @@ export const authHeaderLike = () =>
  */
 export const tokenLike = () => /\bBearer\s+[A-Za-z0-9._~\-+/=]+\b/gi;
 
+/** Credential-bearing protocol offered alongside the public local form protocol. */
+export const localSessionProtocolLike = () => /(?<![A-Za-z0-9])mcpjam-session\.[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_-])/g;
+
 /**
  * `sk-` keys, including segmented ones (`sk-proj-…`, `sk-ant-api03-…`). The
  * 16-character floor on the last segment keeps hyphenated prose out.
  */
 export const skKeyLike = () => /\bsk-(?:[A-Za-z0-9]+-)*[A-Za-z0-9]{16,}\b/g;
+
+/**
+ * Provider and host tokens with a fixed prefix: GitHub (stateless
+ * `ghs_APPID_JWT` installation tokens first, so the JWT goes with them),
+ * GitLab, Slack, AWS access key ids (long-term and temporary), Hugging Face,
+ * Groq, xAI and Google OAuth access tokens. A token starts after any
+ * non-alphanumeric character, not at `\b`, which fails after an underscore
+ * and would leave `TOKEN_ghp_…` its token. Each length floor sits well above
+ * a prefix named in prose (`hf_`, `xai-`). The backend's
+ * `BARE_CREDENTIAL_SHAPES` covers the same prefixes, and both repos' tests use
+ * the same synthetic examples so the two cannot drift apart.
+ */
+export const providerTokenLike = () =>
+  /(?<![A-Za-z0-9])(?:ghs_[A-Za-z0-9_.-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_.-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|A[KS]IA[0-9A-Z]{16}(?![A-Za-z0-9])|hf_[A-Za-z0-9]{30,}|gsk_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]{20,})/g;
 
 /** A JWT: three base64url segments, which nothing else looks like. */
 export const jwtLike = () =>
@@ -82,8 +99,10 @@ function redactSegment(text: string, replacement: string): string {
   return text
     .replace(authHeaderLike(), `$1${replacement}`)
     .replace(tokenLike(), `Bearer ${replacement}`)
+    .replace(localSessionProtocolLike(), replacement)
     .replace(jwtLike(), replacement)
     .replace(urlBasicAuthLike(), `$1${replacement}@`)
     .replace(skKeyLike(), replacement)
+    .replace(providerTokenLike(), replacement)
     .replace(secretParamLike(), `$1${replacement}`);
 }

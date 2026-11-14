@@ -1,5 +1,5 @@
 /**
- * "Did it accomplish the goal?" — in a sentence, with its score and its role.
+ * "Did it accomplish the goal?" — in a word, with its role.
  *
  * This is the first grader a case has, and on the observe-first flow it is the
  * only one until a run produces evidence to harden from. So it says what it
@@ -15,6 +15,7 @@
 import { Gavel } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
+import { RoleChip } from "@/components/evals/scorer-role-control";
 import type { JudgeCase } from "@/components/evals/goal-completion-presentation";
 
 export type JudgeAnswerState =
@@ -38,16 +39,42 @@ function answerWord(passed: boolean, score: number, threshold: number): string {
 
 export function JudgeAnswerRow({
   state,
+  model,
+  inline = false,
   onRetry,
   onOpenSuiteSettings,
   children,
 }: {
   state: JudgeAnswerState;
+  /** The judge model's display name, when the run recorded one. */
+  model?: string;
+  /** Sits in the scorecard row's Judge cell: no box, no question. */
+  inline?: boolean;
   onRetry?: () => void;
   onOpenSuiteSettings?: () => void;
   /** The existing verdict/review panel, hosted as this row's body. */
   children?: React.ReactNode;
 }) {
+  if (inline) {
+    return (
+      <div
+        data-testid="judge-answer-row"
+        data-judge-state={state.kind}
+        className="space-y-1.5"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Gavel className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <Body
+            state={state}
+            model={model}
+            onRetry={onRetry}
+            onOpenSuiteSettings={onOpenSuiteSettings}
+          />
+        </div>
+        {state.kind === "withheld" ? children : null}
+      </div>
+    );
+  }
   return (
     <div
       data-testid="judge-answer-row"
@@ -72,10 +99,12 @@ export function JudgeAnswerRow({
 
 function Body({
   state,
+  model,
   onRetry,
   onOpenSuiteSettings,
 }: {
   state: JudgeAnswerState;
+  model?: string;
   onRetry?: () => void;
   onOpenSuiteSettings?: () => void;
 }) {
@@ -104,13 +133,11 @@ function Body({
           {word}
         </span>
         <span className="text-[11px] tabular-nums text-muted-foreground">
-          {judgeCase.score.toFixed(2)}
-          {judgeCase.passed ? " ≥ " : " < "}
-          {threshold.toFixed(2)}
+          {Math.round(judgeCase.score * 100)}%
+          {model ? ` · ${model}` : null}
         </span>
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-          {gating ? "Required" : "Advisory — does not change the result"}
-        </span>
+        {/* The chip's tooltip says what the role decides. */}
+        <RoleChip role={gating ? "required" : "advisory"} />
       </>
     );
   }
@@ -208,7 +235,7 @@ export function judgeAnswerState(input: {
   gating: boolean;
 }): JudgeAnswerState {
   // Fails closed and FIRST: a label recorded as blind beside a visible
-  // verdict is not calibration data, and calibration gates other builds.
+  // verdict is not calibration data, and would inflate the agreement rate.
   // Only a verdict is withheld: every later state reads `judgeCase` alone,
   // and without one there is nothing to leak and no label control to lift
   // the mask, so "hidden until you label" would never clear.

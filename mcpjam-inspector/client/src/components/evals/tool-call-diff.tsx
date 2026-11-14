@@ -21,12 +21,13 @@ export function ToolCallDiff({
   expectedToolCalls: _expectedToolCalls,
   actualToolCalls,
 }: ToolCallDiffProps) {
-  const { missing, extra, outOfOrder, argumentMismatches } = result;
+  const { missing, extra, outOfOrder, argumentMismatches, retries } = result;
   const hasAnything =
     missing.length > 0 ||
     extra.length > 0 ||
     outOfOrder.length > 0 ||
-    argumentMismatches.length > 0;
+    argumentMismatches.length > 0 ||
+    retries.length > 0;
   if (!hasAnything) return null;
 
   return (
@@ -84,6 +85,24 @@ export function ToolCallDiff({
         </DiffSection>
       ) : null}
 
+      {retries.length > 0 ? (
+        <DiffSection
+          label="Retried"
+          description="Failed, then called again with the same arguments"
+          tone="retry"
+        >
+          {retries.map((c, i) => (
+            <ToolPill
+              key={`retry-${i}`}
+              toolName={c.toolName}
+              args={c.arguments}
+              tone="retry"
+              suffix={`#${c.actualIndex + 1} → #${c.retriedByIndex + 1}`}
+            />
+          ))}
+        </DiffSection>
+      ) : null}
+
       {outOfOrder.length > 0 ? (
         <DiffSection
           label="Out of order"
@@ -130,7 +149,7 @@ export function ToolCallDiff({
   );
 }
 
-type Tone = "missing" | "extra" | "order" | "arg";
+type Tone = "missing" | "extra" | "order" | "arg" | "retry";
 
 function DiffSection({
   label,
@@ -220,6 +239,8 @@ function toneClass(tone: Tone): string {
       return "bg-warning/50 text-foreground";
     case "arg":
       return "bg-warning/50 text-foreground";
+    case "retry":
+      return "bg-muted text-foreground";
   }
 }
 
@@ -233,6 +254,8 @@ function toneBorderClass(tone: Tone): string {
       return "border-warning/50 border-dashed";
     case "arg":
       return "border-warning/50";
+    case "retry":
+      return "border-border";
   }
 }
 

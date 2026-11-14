@@ -447,14 +447,15 @@ function writeSelectedModelSelections(
 }
 
 /**
- * Persist the v2 line-up. Event-free for the same reason as
- * `saveSelectedModelIds`: in-app writes come from React state that already
- * holds the value, and a same-tab echo would race pending updates.
+ * Persist the v2 line-up. The compare owner receives no echo of its own
+ * write; lead readers are notified so same-id connection changes propagate.
  */
 export function saveSelectedModelSelections(
   selections: readonly RequestedModelSelection[],
 ): void {
   writeSelectedModelSelections(selections);
+  // Refresh the lead reader without echoing into the compare-array owner.
+  dispatchChanged(loadSelectedModelId());
 }
 
 /**

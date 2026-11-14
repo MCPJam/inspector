@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ModelSelection } from "@mcpjam/sdk";
 import {
   fallbackProhibitedRefusal,
+  ModelResolutionRefusalError,
+  ORG_KEYS_REQUIRED_REASON,
   readStoredModelSelection,
   requestedModelSelection,
   resolveLocalModelSelection,
@@ -142,6 +144,233 @@ describe("resolveLocalModelSelection", () => {
       hasLocalKey: noKeys,
     });
     expect(result.ok && result.plan.wireModelId).toBe("llama3.2:latest");
+  });
+});
+
+describe("resolveLocalModelSelection — the organization requires its own keys", () => {
+  const orgOpenAi: ModelSelection = {
+    modelId: "openai/gpt-5-mini",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "orgprov_openai" },
+    nativeModelId: "gpt-5-mini",
+    fallback: none,
+  };
+
+  function expectOrgKeysRequired(
+    result: ReturnType<typeof resolveLocalModelSelection>,
+  ) {
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.refusals).toHaveLength(1);
+    expect(result.refusals[0]?.code).toBe("org_keys_required");
+    expect(result.refusals[0]?.reason).toBe(ORG_KEYS_REQUIRED_REASON);
+  }
+
+  it("refuses a hosted selection before any request is built", () => {
+    expectOrgKeysRequired(
+      resolveLocalModelSelection({
+        selection: {
+          modelId: "anthropic/claude-haiku-4.5",
+          source: "hosted",
+          fallback: none,
+        },
+        purpose: "evalTarget",
+        hasOrgTarget: true,
+        hasLocalKey: noKeys,
+        requireOrgKeys: true,
+      }),
+    );
+  });
+
+  it("refuses a local selection even when this machine has the key", () => {
+    expectOrgKeysRequired(
+      resolveLocalModelSelection({
+        selection: {
+          modelId: "openai/gpt-5-mini",
+          source: "local",
+          connectionRef: { kind: "localProvider", providerKey: "openai" },
+          fallback: none,
+        },
+        purpose: "evalTarget",
+        hasOrgTarget: true,
+        hasLocalKey: () => true,
+        requireOrgKeys: true,
+      }),
+    );
+  });
+
+  it("refuses an org connection the backend calls ineligible, with its code and message", () => {
+    const result = resolveLocalModelSelection({
+      selection: {
+        ...orgOpenAi,
+        connectionRef: { kind: "orgProvider", id: "orgprov_or" },
+      },
+      purpose: "evalTarget",
+      orgProviderKey: "openrouter",
+      hasOrgTarget: true,
+      orgProviders: [
+        {
+          providerKey: "openrouter",
+          policyEligibility: {
+            eligible: false,
+            code: "org_keys_required",
+            message: "Use a direct provider connection.",
+          },
+        },
+      ],
+      hasLocalKey: noKeys,
+      requireOrgKeys: true,
+    });
+    expect(result).toEqual({
+      ok: false,
+      refusals: [
+        {
+          code: "org_keys_required",
+          reason: "Use a direct provider connection.",
+          evidence: { connectionId: "orgprov_or", providerKey: "openrouter" },
+        },
+      ],
+    });
+  });
+
+  it("keeps the backend's configuration code (a disabled connection)", () => {
+    const result = resolveLocalModelSelection({
+      selection: orgOpenAi,
+      purpose: "evalTarget",
+      orgProviderKey: "openai",
+      hasOrgTarget: true,
+      orgProviders: [
+        {
+          providerKey: "openai",
+          policyEligibility: { eligible: false, code: "credential_missing" },
+        },
+      ],
+      hasLocalKey: noKeys,
+      requireOrgKeys: true,
+    });
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.refusals[0]?.code).toBe("credential_missing");
+    expect(result.refusals[0]?.reason).toBe(ORG_KEYS_REQUIRED_REASON);
+  });
+
+  it("refuses a connection the backend sent no verdict for (an older backend)", () => {
+    // Whatever the Inspector could guess from the row (a direct cloud
+    // provider here), only the backend's verdict admits a connection.
+    expectOrgKeysRequired(
+      resolveLocalModelSelection({
+        selection: orgOpenAi,
+        purpose: "evalTarget",
+        orgProviderKey: "openai",
+        hasOrgTarget: true,
+        orgProviders: [{ providerKey: "openai" }],
+        hasLocalKey: noKeys,
+        requireOrgKeys: true,
+      }),
+    );
+  });
+
+  it("refuses an org selection when no connection rows came with the policy", () => {
+    expectOrgKeysRequired(
+      resolveLocalModelSelection({
+        selection: orgOpenAi,
+        purpose: "evalTarget",
+        orgProviderKey: "openai",
+        hasOrgTarget: true,
+        hasLocalKey: noKeys,
+        requireOrgKeys: true,
+      }),
+    );
+  });
+
+  it("follows the backend when it calls a custom connection eligible", () => {
+    expect(
+      resolveLocalModelSelection({
+        selection: orgCustom,
+        purpose: "evalTarget",
+        orgProviderKey: "custom:acme",
+        hasOrgTarget: true,
+        orgProviders: [
+          {
+            providerKey: "custom:acme",
+            modelIds: ["llama-3"],
+            policyEligibility: { eligible: true },
+          },
+        ],
+        hasLocalKey: noKeys,
+        requireOrgKeys: true,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("resolves an org selection on a connection the backend calls eligible", () => {
+    const result = resolveLocalModelSelection({
+      selection: orgOpenAi,
+      purpose: "evalTarget",
+      orgProviderKey: "openai",
+      hasOrgTarget: true,
+      orgProviders: [
+        { providerKey: "openai", policyEligibility: { eligible: true } },
+      ],
+      hasLocalKey: noKeys,
+      requireOrgKeys: true,
+    });
+    expect(result).toEqual({
+      ok: true,
+      plan: {
+        rail: "org",
+        wireModelId: "gpt-5-mini",
+        providerKey: "openai",
+        connectionRef: { kind: "orgProvider", id: "orgprov_openai" },
+        fallback: none,
+      },
+    });
+  });
+
+  it("changes nothing when the policy is off", () => {
+    for (const policyEligibility of [
+      undefined,
+      { eligible: false, code: "org_keys_required" as const },
+    ]) {
+      expect(
+        resolveLocalModelSelection({
+          selection: {
+            ...orgOpenAi,
+            connectionRef: { kind: "orgProvider", id: "orgprov_or" },
+          },
+          purpose: "evalTarget",
+          orgProviderKey: "openrouter",
+          hasOrgTarget: true,
+          orgProviders: [
+            {
+              providerKey: "openrouter",
+              ...(policyEligibility ? { policyEligibility } : {}),
+            },
+          ],
+          hasLocalKey: noKeys,
+          requireOrgKeys: false,
+        }).ok,
+      ).toBe(true);
+    }
+  });
+
+  it("carries the code on the thrown refusal", () => {
+    const result = resolveLocalModelSelection({
+      selection: {
+        modelId: "anthropic/claude-haiku-4.5",
+        source: "hosted",
+        fallback: none,
+      },
+      purpose: "judge",
+      hasOrgTarget: true,
+      hasLocalKey: noKeys,
+      requireOrgKeys: true,
+    });
+    if (result.ok) throw new Error("expected a refusal");
+    const error = new ModelResolutionRefusalError(result.refusals);
+    expect(error.code).toBe("org_keys_required");
+    expect(error.message).toBe(
+      `org_keys_required: ${ORG_KEYS_REQUIRED_REASON}`,
+    );
   });
 });
 

@@ -22,6 +22,9 @@ beforeEach(() => {
     hasPendingLimit: false,
     outOfCreditsHit: false,
     outOfCreditsOrganizationId: null,
+    outOfCreditsDismissed: false,
+    outOfCreditsDismissedOrganizationId: null,
+    balanceOutByOrganization: {},
     isOpen: false,
     intent: null,
     organizationId: null,
@@ -348,6 +351,67 @@ describe("isMCPJamModelLimitError", () => {
     await expect(response.text()).resolves.toContain("mcpjam_rate_limit");
   });
 
+  it("leaves a declined card to a caller that shows it, and opens the dialog elsewhere", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    const declined = {
+      code: "user_rate_limit",
+      refusalReason: "auto_topup_declined",
+      limitKind: "total",
+      error:
+        "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.",
+    };
+    const respond = () =>
+      new Response(JSON.stringify(declined), { status: 429 });
+
+    // Chat shows its Card declined banner instead.
+    await expect(
+      notifyMCPJamLimitErrorFromResponse(respond(), undefined, {
+        showsDeclinedCard: true,
+      }),
+    ).resolves.toBe(false);
+    expect(
+      notifyMCPJamLimitError({
+        message: declined.error,
+        showsDeclinedCard: true,
+      }),
+    ).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+
+    // Evals and the agent panel have no such UI: the dialog is their prompt.
+    await expect(notifyMCPJamLimitErrorFromResponse(respond())).resolves.toBe(
+      true,
+    );
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("still opens for a new exhaustion that quotes an earlier decline", () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    expect(
+      notifyMCPJamLimitError({
+        code: "user_rate_limit",
+        message: "Monthly MCPJam model limit reached.",
+        details: {
+          previous:
+            "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.",
+        },
+        showsDeclinedCard: true,
+      }),
+    ).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
   it("forwards limitKind from response payload so concurrency is suppressed", async () => {
     useMCPJamLimitDialogStore.setState({
       authStatus: "signedIn",
@@ -620,6 +684,96 @@ describe("credits held by in-flight requests", () => {
       }),
     ).toBe(true);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+});
+
+describe("a dismissed out-of-credits dialog", () => {
+  const EXHAUSTED =
+    "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.";
+  const exhausted = (organizationId?: string) =>
+    notifyMCPJamLimitError({
+      code: "user_rate_limit",
+      message: EXHAUSTED,
+      ...(organizationId ? { organizationId } : {}),
+    });
+  const store = useMCPJamLimitDialogStore;
+  const dismissFirst = (organizationId?: string) => {
+    store.getState().setAuthStatus("signedIn");
+    exhausted(organizationId);
+    expect(store.getState().isOpen).toBe(true);
+    store.getState().dismiss();
+  };
+
+  it("stays closed for the next blocked send, but still locks the models", () => {
+    dismissFirst();
+    store.getState().clearOutOfCreditsHit();
+
+    exhausted();
+    expect(store.getState().isOpen).toBe(false);
+    expect(store.getState().outOfCreditsHit).toBe(true);
+  });
+
+  it("does not hold a notice while auth loads, to open it at sign-in", () => {
+    dismissFirst();
+    store.getState().setAuthStatus("loading");
+
+    exhausted();
+    store.getState().setAuthStatus("signedIn");
+    expect(store.getState().isOpen).toBe(false);
+  });
+
+  it("still opens for a shortfall, which is about one request", () => {
+    dismissFirst();
+
+    notifyMCPJamLimitError({ message: INSUFFICIENT_BODY });
+    expect(store.getState().isOpen).toBe(true);
+    expect(store.getState().shortfall).toEqual({
+      creditsRemaining: 23,
+      creditsRequired: 30,
+    });
+  });
+
+  it("still opens when the user asks for it", () => {
+    dismissFirst();
+
+    store.getState().notifyLimitHit({ userInitiated: true });
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("opens again once a purchase begins", () => {
+    dismissFirst("org-a");
+    store.getState().forgetNotifiedWaves("org-a");
+
+    exhausted("org-a");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("opens again once credits come back", () => {
+    dismissFirst("org-a");
+    store.getState().observeBalance("org-a", true);
+    store.getState().observeBalance("org-a", false);
+
+    exhausted("org-a");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("still opens for another organization", () => {
+    dismissFirst("org-a");
+
+    exhausted("org-b");
+    expect(store.getState().isOpen).toBe(true);
+  });
+
+  it("is not set by closing a shortfall, or by a close the user did not make", () => {
+    store.getState().setAuthStatus("signedIn");
+    notifyMCPJamLimitError({ message: INSUFFICIENT_BODY });
+    store.getState().dismiss();
+    exhausted();
+    expect(store.getState().isOpen).toBe(true);
+
+    store.getState().close();
+    exhausted();
+    expect(store.getState().isOpen).toBe(true);
   });
 });
 

@@ -364,3 +364,30 @@ describe("self-hosted (no service credential)", () => {
     );
   });
 });
+
+describe("saved account routing", () => {
+  it("keeps the same pin on creation, recovery, status reports and removal", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { ok: true, tasks: [] }));
+    const pinned = { ...options, serverId: "srv_1", connectionId: "account-b" };
+    await recordHostedTask(
+      { ...event, identity: { ...event.identity, connectionId: "account-b" } },
+      options,
+    );
+    await listRegistryTasks(pinned);
+    await reportTaskStatuses(pinned, [
+      { wire: "extension", taskId: "task-1", status: "working" },
+    ]);
+    await deleteRegistryTask(pinned, { wire: "extension", taskId: "task-1" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    for (const [, init] of fetchMock.mock.calls) {
+      const body = JSON.parse(init.body);
+      expect(body).toMatchObject({
+        projectId: "proj_1",
+        serverId: "srv_1",
+        connectionId: "account-b",
+      });
+      expect(body).not.toHaveProperty("ownerUserId");
+      expect(body).not.toHaveProperty("authContextKey");
+    }
+  });
+});

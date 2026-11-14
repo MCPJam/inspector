@@ -21,29 +21,34 @@
  */
 
 import { scrubSensitiveUrl } from "./credential-url";
+import { scrubCredentialsInText } from "./credential-urls";
 
 export type TelemetryRecording = "full" | "masked" | "off";
 export type TelemetryIdentity = "full" | "id_only";
+export type TelemetryContent = "full" | "strict";
 
 export interface TelemetryPolicy {
   recording: TelemetryRecording;
   identity: TelemetryIdentity;
+  content: TelemetryContent;
 }
 
 export const CONSERVATIVE_TELEMETRY_POLICY: Readonly<TelemetryPolicy> =
-  Object.freeze({ recording: "masked", identity: "id_only" });
+  Object.freeze({ recording: "off", identity: "id_only", content: "strict" });
 
 export const FULL_TELEMETRY_POLICY: Readonly<TelemetryPolicy> = Object.freeze({
   recording: "full",
   identity: "full",
+  content: "full",
 });
 
 export function isTelemetryPolicy(value: unknown): value is TelemetryPolicy {
   if (typeof value !== "object" || value === null) return false;
-  const { recording, identity } = value as Record<string, unknown>;
+  const { recording, identity, content } = value as Record<string, unknown>;
   return (
     (recording === "full" || recording === "masked" || recording === "off") &&
-    (identity === "full" || identity === "id_only")
+    (identity === "full" || identity === "id_only") &&
+    (content === "full" || content === "strict")
   );
 }
 
@@ -63,6 +68,7 @@ export function mostRestrictivePolicy(
 ): TelemetryPolicy {
   let recording: TelemetryRecording = "full";
   let identity: TelemetryIdentity = "full";
+  let content: TelemetryContent = "full";
   if (policies.length === 0) return { ...CONSERVATIVE_TELEMETRY_POLICY };
   for (const policy of policies) {
     if (!isTelemetryPolicy(policy)) {
@@ -75,8 +81,9 @@ export function mostRestrictivePolicy(
       recording = policy.recording;
     }
     if (policy.identity === "id_only") identity = "id_only";
+    if (policy.content === "strict") content = "strict";
   }
-  return { recording, identity };
+  return { recording, identity, content };
 }
 
 // ── Capture-context stamp ──────────────────────────────────────────────
@@ -111,11 +118,12 @@ export interface TelemetryCaptureContext {
 
 /** The stamp as it travels: short keys, a version. */
 export interface TelemetryContextStamp {
-  v: 1;
+  v: 2;
   p: string[];
   o: string[];
   r: TelemetryRecording;
   i: TelemetryIdentity;
+  c: TelemetryContent;
 }
 
 function cleanIds(ids: ReadonlyArray<string | null | undefined>): string[] {
@@ -137,11 +145,12 @@ export function encodeCaptureContext(
   context: TelemetryCaptureContext,
 ): TelemetryContextStamp {
   return {
-    v: 1,
+    v: 2,
     p: cleanIds(context.projectIds),
     o: cleanIds(context.organizationIds),
     r: context.policy.recording,
     i: context.policy.identity,
+    c: context.policy.content,
   };
 }
 
@@ -156,8 +165,8 @@ export function decodeCaptureContext(
     return null;
   }
   const stamp = value as Record<string, unknown>;
-  if (stamp.v !== 1) return null;
-  const policy = { recording: stamp.r, identity: stamp.i };
+  if (stamp.v !== 2) return null;
+  const policy = { recording: stamp.r, identity: stamp.i, content: stamp.c };
   if (!isTelemetryPolicy(policy)) return null;
   const ids = (raw: unknown): string[] | null => {
     if (!Array.isArray(raw) || raw.length > MAX_TELEMETRY_CONTEXT_IDS) {
@@ -194,8 +203,7 @@ export function captureContextKey(
 
 /**
  * Person properties that name a human. Never sent while identity is
- * `id_only`; the relay removes them from restricted events, and the client
- * clears them from a PostHog person once identity becomes restrictive.
+ * `id_only`; the relay removes them from restricted events.
  */
 export const IDENTIFYING_PERSON_PROPERTIES: readonly string[] = [
   "email",
@@ -329,10 +337,17 @@ export const MASKED_REPLAY_KEPT_ATTRIBUTES: ReadonlySet<string> = new Set([
 
 export const MASKED_ATTRIBUTE_VALUE = "***";
 
+/**
+ * `maskAttributeFn` at `masked`: a kept attribute keeps its value minus any
+ * credential URL (`scrubCredentialsInText`, credential-urls.ts), and `style`
+ * is masked as a style; every other attribute is masked.
+ */
 export function maskReplayAttribute(name: string, value: string): string {
   const key = name.toLowerCase();
   if (!MASKED_REPLAY_KEPT_ATTRIBUTES.has(key)) return MASKED_ATTRIBUTE_VALUE;
-  return key === "style" ? maskReplayStyle(value) : value;
+  return key === "style"
+    ? maskReplayStyle(value)
+    : scrubCredentialsInText(value);
 }
 
 /** Text masked the way rrweb masks it: every visible character a `*`. */
@@ -386,6 +401,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "byok",
   "callback",
   "capabilities",
+  "cases",
   "chat",
   "ci-evals",
   "client-config",
@@ -404,12 +420,15 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "eval-server",
   "evals",
   "evaluate",
+  "evaluators",
+  "events",
   "github",
   "github-checks",
   "home",
   "host-compare",
   "hosts",
   "integrations",
+  "iterations",
   "learning",
   "login",
   "members",
@@ -425,6 +444,8 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "profile",
   "project-settings",
   "prompts",
+  "readiness",
+  "redeem",
   "registry",
   "resources",
   "results",
@@ -446,6 +467,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "test",
   "tools",
   "tracing",
+  "triggers",
   "usage",
   "user-testing",
   "webmcp",
@@ -599,6 +621,7 @@ const KNOWN_QUERY_KEYS = new Set([
   "run",
   "case",
   "suite",
+  "target",
   "persona",
   "iteration",
   "checks",
@@ -636,12 +659,12 @@ function scrubQueryParam(key: string, value: string): string {
  * are dropped (they can hold anything, OAuth responses included). Credential
  * path segments go first, through the credential-URL sanitizer
  * (`scrubSensitiveUrl`), because a share token looks like an id. A value
- * that is not a URL or path is returned unchanged; one that fails to parse
- * becomes the placeholder. Idempotent.
+ * that is not a URL or path loses only its credentials; one that fails to
+ * parse becomes the placeholder. Idempotent.
  */
 export function scrubNamesFromUrl(input: string): string {
   const isAbsolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(input);
-  if (!isAbsolute && !input.startsWith("/")) return input;
+  if (!isAbsolute && !input.startsWith("/")) return scrubSensitiveUrl(input);
   const value = scrubSensitiveUrl(input);
   try {
     const url = new URL(

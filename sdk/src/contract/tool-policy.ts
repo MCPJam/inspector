@@ -261,9 +261,8 @@ export class UnmatchedToolPolicyNameError extends Error {
  *
  * An unmatched `deny` throws {@link UnmatchedToolPolicyNameError}, unless the
  * name is in `deferredToolNames` — a tool that exists but cannot be listed
- * until run start — which is a warning instead. An unmatched `allow` is always
- * a warning: allowing a tool that is not there changes nothing. Returns the
- * warnings.
+ * until run start — which is a warning instead. An unmatched `allow` is a
+ * warning unless explicitly deferred by the runner. Returns the warnings.
  */
 export function validateToolPolicyNames(args: {
   policy: EvalSuiteFileToolPolicy;
@@ -288,7 +287,7 @@ export function validateToolPolicyNames(args: {
         ]
       : [];
   const unmatchedAllow = (args.policy.allow ?? []).filter(
-    (name) => !availableNames.has(name)
+    (name) => !availableNames.has(name) && !deferredNames.has(name)
   );
   if (unmatchedAllow.length > 0) {
     warnings.push(

@@ -38,14 +38,17 @@ import {
 import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { HostStyleTokens } from "./HostStyleTokens";
+import { SameOriginAppIframeCard } from "./SameOriginAppIframeCard";
 import {
   PLUGIN_EXTENSION_CAPABILITY_KEYS,
   PLUGIN_EXTENSION_CAPABILITY_LABELS,
   pluginExtensionsForHost,
+  readPluginExtensionBehavior,
   setPluginExtensionCapabilityOnDraft,
   setPluginExtensionsEnabledOnDraft,
 } from "@/lib/client-config-v2-plugin-extensions";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
+import { parseModelContextPolicyDoc } from "@/lib/client-config-v2-model-context-policy";
 
 interface AppsExtensionTabProps {
   draft: HostConfigInputV2;
@@ -108,6 +111,9 @@ const SEGMENT_BUTTON_CLASSES =
  *                                    4 SEP-blessed features
  *   sandbox.browserStorage            observed browser storage APIs in the
  *                                    sandboxed iframe (not an MCP concept)
+ *   sandbox.sameOriginAppIframe       whether the app iframe shares the
+ *                                    sandbox page's origin (not an MCP
+ *                                    concept; `false` = opaque origin)
  *
  * Inspector-internal resolver fields (`mode`, `extensions`) stay out of
  * the JSON entirely — they're owned by the structured editor and preserved
@@ -165,6 +171,12 @@ type SandboxDoc = {
     sessionStorage?: boolean;
     indexedDB?: boolean;
   };
+  /**
+   * Observed: whether the app iframe shares the sandbox page's origin.
+   * `false` mounts the app in an opaque origin. Not an MCP
+   * capability.
+   */
+  sameOriginAppIframe?: boolean;
   /**
    * Inspector-only: extra tokens for the proxy iframe's HTML `sandbox=`
    * attribute, on top of the spec-required `allow-scripts allow-same-origin`.
@@ -225,6 +237,13 @@ type AppsDoc = {
    */
   pluginExtensions?: NonNullable<
     NonNullable<HostConfigMcpProfileV1["apps"]>["pluginExtensions"]
+  >;
+  /**
+   * Round-trips with `mcpProfile.apps.modelContextPolicy`, the client's
+   * plugin App context budgets. Present only when the client saved one.
+   */
+  modelContextPolicy?: NonNullable<
+    NonNullable<HostConfigMcpProfileV1["apps"]>["modelContextPolicy"]
   >;
 };
 
@@ -287,6 +306,9 @@ function sandboxFromPolicy(
   // a portable MCP Apps field.
   if (policy.browserStorage !== undefined) {
     out.browserStorage = { ...policy.browserStorage };
+  }
+  if (policy.sameOriginAppIframe !== undefined) {
+    out.sameOriginAppIframe = policy.sameOriginAppIframe;
   }
 
   // Inspector-only knobs round-trip with their full undefined-vs-empty
@@ -402,13 +424,15 @@ function liftSandboxIntoPolicy(args: {
   const nextSandboxAttrs = incoming?.iframeSandboxAttrs;
   const nextAllowFeatures = incoming?.permissionsPolicy;
   const nextBrowserStorage = incoming?.browserStorage;
+  const nextSameOriginAppIframe = incoming?.sameOriginAppIframe;
 
   if (
     !cspNonEmpty &&
     !permsNonEmpty &&
     nextSandboxAttrs === undefined &&
     nextAllowFeatures === undefined &&
-    nextBrowserStorage === undefined
+    nextBrowserStorage === undefined &&
+    nextSameOriginAppIframe === undefined
   ) {
     return undefined;
   }
@@ -418,6 +442,9 @@ function liftSandboxIntoPolicy(args: {
   if (nextSandboxAttrs !== undefined) next.sandboxAttrs = nextSandboxAttrs;
   if (nextAllowFeatures !== undefined) next.allowFeatures = nextAllowFeatures;
   if (nextBrowserStorage !== undefined) next.browserStorage = nextBrowserStorage;
+  if (nextSameOriginAppIframe !== undefined) {
+    next.sameOriginAppIframe = nextSameOriginAppIframe;
+  }
   return next;
 }
 
@@ -509,6 +536,10 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   if (pluginExtensions !== undefined) {
     doc.pluginExtensions = pluginExtensions;
   }
+  const modelContextPolicy = draft.mcpProfile?.apps?.modelContextPolicy;
+  if (modelContextPolicy !== undefined) {
+    doc.modelContextPolicy = modelContextPolicy;
+  }
 
   return doc;
 }
@@ -516,7 +547,7 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
 /**
  * Soft-validate a hand-edited `pluginExtensions` block: `enabled` must be a
  * boolean (otherwise the block is dropped), and only known extension keys
- * with boolean values survive.
+ * with boolean values, and known behavior fields with known values, survive.
  */
 function parsePluginExtensionsDoc(
   value: unknown
@@ -531,9 +562,12 @@ function parsePluginExtensionsDoc(
       if (typeof entry === "boolean") capabilities[key] = entry;
     }
   }
-  return Object.keys(capabilities).length > 0
-    ? { enabled: value.enabled, capabilities }
-    : { enabled: value.enabled };
+  const behavior = readPluginExtensionBehavior(value.behavior);
+  return {
+    ...(Object.keys(behavior).length > 0 ? { behavior } : {}),
+    ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
+    enabled: value.enabled,
+  };
 }
 
 export function applyJsonToDraft(
@@ -843,6 +877,9 @@ export function applyJsonToDraft(
         // earlier measurement when the JSON block is saved.
         parsedSandbox.browserStorage = storage;
       }
+      if (typeof sandboxBlock.sameOriginAppIframe === "boolean") {
+        parsedSandbox.sameOriginAppIframe = sandboxBlock.sameOriginAppIframe;
+      }
       incomingSandbox = parsedSandbox;
     }
   }
@@ -934,6 +971,12 @@ export function applyJsonToDraft(
   );
   if (nextPluginExtensions !== undefined) {
     appsBlock.pluginExtensions = nextPluginExtensions;
+  }
+  const nextModelContextPolicy = parseModelContextPolicyDoc(
+    parsed.modelContextPolicy,
+  );
+  if (nextModelContextPolicy !== undefined) {
+    appsBlock.modelContextPolicy = nextModelContextPolicy;
   }
   const hasApps = Object.keys(appsBlock).length > 0;
 
@@ -2074,8 +2117,9 @@ function WidgetToolResultsCard({
 /**
  * `mcpProfile.apps.pluginExtensions` — which OpenAI plugin extensions this
  * client offers. Defaults follow the client style (on for ChatGPT and Codex,
- * off for everything else). Turning one extension off removes only that
- * extension; the master switch turns them all off.
+ * Display modes only for Claude, off for everything else). Turning one
+ * extension off removes only that extension; the master switch turns them
+ * all off.
  */
 function PluginExtensionsCard({
   draft,
@@ -2205,6 +2249,10 @@ export function AppsExtensionTab({
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
         <BrowserStorageCard draft={draft} onDraftChange={onDraftChange} />
+        <SameOriginAppIframeCard
+          draft={draft}
+          onDraftChange={onDraftChange}
+        />
         <WidgetToolResultsCard draft={draft} onDraftChange={onDraftChange} />
         <PluginExtensionsCard draft={draft} onDraftChange={onDraftChange} />
         {/* Read-only companion to the two matrices: the capability rows say

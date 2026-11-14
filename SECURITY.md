@@ -70,6 +70,19 @@ version number, so the same rule applies to it. Releases are frequent, so
 upgrading to the latest version is usually the fastest route to a fix. We do
 not backport security fixes to older minors.
 
+## Telemetry and credential links
+
+Some MCPJam links are credentials: share links, handoff links, and sign-in or
+authorization callbacks. What the app sends to analytics, error reporting and
+logs, how those links are kept out of it, and how to opt out are described in
+[Telemetry & privacy](https://docs.mcpjam.com/inspector/telemetry-privacy). The
+implementation notes for contributors are in
+[`mcpjam-inspector/docs/session-replay-masking.md`](./mcpjam-inspector/docs/session-replay-masking.md).
+
+A credential that reaches a telemetry service unredacted is in scope. Report it
+as above, with the route and the service it reached, and leave the credential
+itself out of the report.
+
 ## Testing safely
 
 Test against your own accounts, projects and data. Do not access, modify or

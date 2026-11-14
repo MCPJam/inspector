@@ -47,6 +47,7 @@ vi.mock("@/lib/guest-session", () => ({
   forceRefreshGuestSessionOrThrow: vi.fn(),
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: () => null,
+  subscribeGuestSessionChanges: () => () => {},
 }));
 
 const CLIENT_ID = "client_01CONTRACT0000000000000000";

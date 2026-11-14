@@ -1,3 +1,4 @@
+import { PLUGIN_FILE_METADATA_HEADER } from "../shared/plugin-file-headers.js";
 /**
  * Server configuration constants
  */
@@ -105,76 +106,14 @@ export const SCHEDULED_EVALS_WRITE_ENABLED =
  * a LOCAL browser, and the route refuses that explicitly rather than by being
  * unreachable.
  *
- * Hosted reachability is a second, independent gate — see
- * `webmcpInspectorHostedEnabled` — and client visibility follows the
- * deployment's `local-browser-enabled` / `hosted-browser-enabled` rollout.
+ * Who may start one on the hosted browser is the backend's `hosted-browser`
+ * gate, which the desktop reservation and the browser token both enforce, so
+ * the PostHog flag decides launch here as on every other hosted-browser path.
+ * This switch is the inspector's own off switch, independent of PostHog: off,
+ * the route answers 404 and chat stops advertising any page's tools.
  */
 export const WEBMCP_INSPECTOR_ENABLED =
   process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
-
-/**
- * May a hosted replica serve the WebMCP Inspector at all?
- *
- * A SEPARATE environment variable from `HOSTED_BROWSER_TOOLS_ENABLED`, and
- * that separation is the whole point. Both switches lead to the same hosted
- * browser, but they expose it to different consumers: this one lets a PERSON
- * drive their own page from the inspector, while `HOSTED_BROWSER_TOOLS_ENABLED`
- * hands six `browser_*` tools to a MODEL. The inspector's blast radius is one
- * member's own tab; the catalog's includes co-tenancy with bash and approval
- * threading on four chat surfaces. Rolling the first out must never imply the
- * second, and one shared variable would make it imply exactly that.
- *
- * READ AT CALL TIME, like `hostedBrowserEnabled`: flipped per-process in
- * staging and per-test, and a module constant would freeze whatever the
- * environment said when the module first loaded.
- */
-export function webmcpInspectorHostedEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return HOSTED_MODE && env.MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED === "1";
-}
-
-/**
- * Can a WebMCP Inspector SESSION exist on this deployment at all?
- *
- * The kill switch and the hosted-reachability switch, composed — the same
- * question the inspector router answers with a 404, asked by anything that
- * must not offer a capability the session behind it cannot provide. The chat
- * routes ask it before advertising a page's tools to a model: a turn that
- * offered them where no session can exist would strand on a call nothing can
- * fulfil.
- *
- * Lives HERE rather than in the router so a caller can ask without importing
- * a Hono app.
- */
-export function webmcpInspectorReachable(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  if (!WEBMCP_INSPECTOR_ENABLED) return false;
-  return !HOSTED_MODE || webmcpInspectorHostedEnabled(env);
-}
-
-/**
- * Is the hosted browser (E2B Desktop + browserd) reachable at all?
- *
- * The dark switch the hosted runtime ships behind until the durable backend
- * exposure gate opens (W7). READ AT CALL TIME, not captured at import: this is
- * flipped per-process in staging and per-test, and a module constant would
- * freeze whatever the environment happened to say when the module first
- * loaded.
- *
- * Two callers must agree on it — the built-in tool registry, which decides
- * whether the MODEL gets browser tools, and the WebMCP Inspector route, which
- * decides whether a person may run their inspector session on a hosted
- * browser. Both reserve a desktop computer and both bill for it, so a second
- * copy of this literal is how one of them stays reachable after the other is
- * turned off.
- */
-export function hostedBrowserEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env.HOSTED_BROWSER_TOOLS_ENABLED === "1";
-}
 
 /**
  * How a page's WebMCP tools reach the model.
@@ -193,7 +132,7 @@ export function hostedBrowserEnabled(
  * because the two positions are no longer "new thing on/off" — `verbs` is a
  * named behaviour somebody may deliberately choose, not merely an absence.
  *
- * READ AT CALL TIME, like `hostedBrowserEnabled` beside it: flipped
+ * READ AT CALL TIME, like `browserShapeRedactionEnabled` below it: flipped
  * per-process in staging and per-test, and a module constant would freeze
  * whatever the environment said when this module first loaded.
  */
@@ -293,6 +232,7 @@ export const CORS_OPTIONS = {
     "x-mcpjam-error-origin",
     "X-MCPJam-Session",
     "x-mcpjam-failure-captured",
+    PLUGIN_FILE_METADATA_HEADER,
   ],
 };
 
@@ -309,6 +249,7 @@ export {
 // Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
 // derived from the call timeout, and a re-export does not bind the name here.
 import { WEB_CALL_TIMEOUT_MS } from "../shared/hosted-web-timeouts.js";
+import { sandboxOriginOf } from "../shared/sandbox-origin.js";
 
 // ── Hosted elicitation (MCP 2025-11-25) ─────────────────────────────────────
 // An elicitation blocks a `tools/call` on a HUMAN, so these are human-scale.
@@ -491,15 +432,22 @@ export const SANDBOX_HOSTS = parseSandboxHosts(
  * Whether widget content is isolated from the app, as far as the DEPLOY can
  * tell.
  *
- *   "ok"          — at least one sandbox hostname, none of them the app's own.
- *   "same-origin" — the app's own host is listed as a sandbox host. Widgets
- *                   share cookies and storage with the app, and the partition
- *                   makes that hostname stop serving the app.
- *   "unset"       — no sandbox hostname is configured, or MCPJAM_HOSTED_ORIGIN
- *                   could not be parsed to compare against. Either way the
- *                   isolation is unconfirmed.
+ *   "ok"            — at least one sandbox hostname, none of them the app's
+ *                     own, and MCPJAM_SANDBOX_ORIGIN, when set, names one of
+ *                     them.
+ *   "same-origin"   — the app's own host is a sandbox host: listed in
+ *                     SANDBOX_HOSTS, which makes that hostname stop serving
+ *                     the app, or named by MCPJAM_SANDBOX_ORIGIN. Widgets
+ *                     share cookies and storage with the app.
+ *   "unpartitioned" — MCPJAM_SANDBOX_ORIGIN names a host SANDBOX_HOSTS does
+ *                     not list, so the host widgets load from still serves
+ *                     the app shell and /api.
+ *   "unset"         — no sandbox hostname is configured, or
+ *                     MCPJAM_HOSTED_ORIGIN could not be parsed to compare
+ *                     against. Either way the isolation is unconfirmed.
  */
-export type SandboxIsolationStatus = "ok" | "same-origin" | "unset";
+export type SandboxIsolationStatus =
+  "ok" | "same-origin" | "unpartitioned" | "unset";
 
 /**
  * A browser cannot answer this. A page served at sandbox.mcpjam.com with
@@ -512,6 +460,9 @@ export type SandboxIsolationStatus = "ok" | "same-origin" | "unset";
 export function resolveSandboxIsolation(
   sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
   hostedOrigin: string = MCPJAM_HOSTED_ORIGIN,
+  sandboxOrigin: string | null = sandboxOriginOf(
+    process.env.MCPJAM_SANDBOX_ORIGIN,
+  ),
 ): SandboxIsolationStatus {
   if (sandboxHosts.size === 0) {
     return "unset";
@@ -526,5 +477,11 @@ export function resolveSandboxIsolation(
     return "unset";
   }
 
-  return sandboxHosts.has(appHost) ? "same-origin" : "ok";
+  if (sandboxHosts.has(appHost)) return "same-origin";
+  // An invalid MCPJAM_SANDBOX_ORIGIN is ignored here as it is in the browser,
+  // which then uses its build-time value; this process cannot see that one.
+  if (sandboxOrigin === null) return "ok";
+  const sandboxHost = new URL(sandboxOrigin).hostname.toLowerCase();
+  if (sandboxHost === appHost) return "same-origin";
+  return sandboxHosts.has(sandboxHost) ? "ok" : "unpartitioned";
 }

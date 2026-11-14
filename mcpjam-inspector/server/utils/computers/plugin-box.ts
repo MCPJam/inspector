@@ -1,3 +1,4 @@
+import { attachRunningSandbox } from "./attach-sandbox.js";
 /**
  * The E2B side of hosted plugin-stdio execution: put files in a box, run a
  * command, start the shim, and name the public port it listens on.
@@ -8,11 +9,11 @@
  * pipeline's tests exercise the real policy against a stubbed vendor rather
  * than mocking the pipeline's own functions.
  *
- * The same rules the exec path follows apply here: `Sandbox.connect` attaches
+ * The same rules the exec path follows apply here: The attachment module connects
  * to an ALREADY-awake box (the control plane owns provisioning, waking and
  * teardown) and nothing here ever stops or destroys one.
  */
-import { CommandExitError, Sandbox } from "e2b";
+import { CommandExitError } from "e2b";
 import type {
   PluginBoxConnector,
   PluginBoxHandle,
@@ -58,7 +59,7 @@ function parseReadyLine(line: string): ShimReadyLine | null {
 }
 
 export const e2bPluginBoxConnector: PluginBoxConnector = async (box) => {
-  const sandbox = await Sandbox.connect(box.sandboxId);
+  const sandbox = await attachRunningSandbox(box.sandboxId);
 
   const handle: PluginBoxHandle = {
     writeFiles: async (files) => {

@@ -1,3 +1,4 @@
+import { TELEMETRY_POLICY_HEADER } from "../../shared/strict-posthog.js";
 import { launchEngagementSchema } from "../../shared/launch-engagement.js";
 import { promisify } from "node:util";
 import { gunzip, gzip } from "node:zlib";
@@ -5,21 +6,30 @@ import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
 import { POSTHOG_PROJECT_KEY } from "../utils/analytics.js";
+import { telemetryOptedOut } from "../../shared/sentry-identity.js";
 import { createFixedWindowMap } from "../middleware/passthrough-rate-limit.js";
 import {
   edgeAttestationConfigured,
   getAttestedClientIp,
   getClientIp,
   ipRateLimitKey,
+  resolveTrustedClientIpHeader,
 } from "../utils/client-ip.js";
 import { getSystemLogger } from "../utils/request-logger.js";
 import { resolveTelemetryPolicy } from "../services/telemetry-privacy-policy.js";
 import {
   applyEventPolicy,
+  disableEventGeoip,
+  restrictPoliciesAtSend,
   decideEventPolicies,
   isRestricted,
   type PolicyDecision,
 } from "./relay-privacy.js";
+import {
+  ReplayCredentialInspector,
+  scrubEventCredentials,
+  scrubForwardedSearch,
+} from "./relay-credentials.js";
 
 /**
  * Same-origin PostHog reverse proxy.
@@ -52,6 +62,11 @@ import {
  * relay drops replay the policy turns `off`, and restricted replay whose
  * stamp does not declare it masked. No bearer, no stamp, or no answer means
  * the conservative policy. The bearer and the stamp never reach PostHog.
+ *
+ * Credential pass (relay-credentials.ts): at every policy, `full` included,
+ * no credential URL reaches PostHog through the relay. Each event that passes
+ * the gate goes through the credential walker, a replay event holding a
+ * credential is dropped, and the query string is scrubbed.
  */
 
 const INGEST_HOST = "https://us.i.posthog.com";
@@ -67,10 +82,13 @@ const REPLAY_MAX_BODY_BYTES = 20 * 1024 * 1024;
 // Hop-by-hop and app-specific headers that must not reach PostHog. Host is
 // derived by fetch() from the target URL; cookie may carry our session;
 // accept-encoding is dropped so undici negotiates (and transparently
-// decompresses) its own encoding.
+// decompresses) its own encoding. Referer is the page posthog-js runs on,
+// sent in full because the relay is same-origin: on a share link or an OAuth
+// callback that URL is the credential (`/results/<token>`, `?code=`).
 const STRIPPED_REQUEST_HEADERS = new Set([
   "host",
   "cookie",
+  "referer",
   "connection",
   "content-length",
   "accept-encoding",
@@ -144,6 +162,13 @@ const stats = {
   privacyRejected: 0,
   privacyUnresolved: 0,
   privacyReplayDropped: 0,
+  // Credential pass: requests refused because an event could not be shown
+  // clean (400, counted apart from a project rejection), and replay events
+  // dropped because one held a credential or its nested data could not be
+  // decoded.
+  scrubDrops: 0,
+  replayCredentialDrops: 0,
+  replayUndecodableDrops: 0,
   latenciesMs: [] as number[],
 };
 
@@ -184,6 +209,9 @@ export function flushRelayStats(): void {
     privacyRejected: stats.privacyRejected,
     privacyUnresolved: stats.privacyUnresolved,
     privacyReplayDropped: stats.privacyReplayDropped,
+    scrubDrops: stats.scrubDrops,
+    replayCredentialDrops: stats.replayCredentialDrops,
+    replayUndecodableDrops: stats.replayUndecodableDrops,
     latencyP50Ms: percentile(sorted, 50),
     latencyP95Ms: percentile(sorted, 95),
   });
@@ -204,6 +232,9 @@ export function flushRelayStats(): void {
   stats.privacyRejected = 0;
   stats.privacyUnresolved = 0;
   stats.privacyReplayDropped = 0;
+  stats.scrubDrops = 0;
+  stats.replayCredentialDrops = 0;
+  stats.replayUndecodableDrops = 0;
   stats.latenciesMs = [];
 }
 
@@ -771,7 +802,9 @@ function collectPayloadTokens(payload: unknown, tokens: unknown[]): void {
 // element of a top-level array, or an element of a top-level `batch` array.
 // Every occurrence is recorded, a repeated key included, and a value that is
 // not a string is recorded as null so it never matches. Malformed or
-// truncated JSON throws.
+// truncated JSON throws. Every string it reads, keys included, can also go
+// to a visitor, which is how nested replay data is read for credentials
+// without being built (relay-credentials.ts).
 // ---------------------------------------------------------------------------
 
 const JSON_OBJECT = 1;
@@ -921,6 +954,7 @@ export async function scanPayloadTokens(
   bytes: Buffer,
   tokens: unknown[],
   layout?: PayloadLayout,
+  visitString?: (value: string) => void | Promise<void>,
 ): Promise<void> {
   const kinds = new Uint8Array(SCAN_MAX_DEPTH);
   const eventOpenAt = [-1, -1, -1];
@@ -981,6 +1015,10 @@ export async function scanPayloadTokens(
       }
       if (end !== QUOTE) throw new Error("control character in a string");
       inside = IN_NOTHING;
+      if (visitString) {
+        const visiting = visitString(decodeString(bytes, stringOpen, i));
+        if (visiting) await visiting;
+      }
       if (stringIsKey) {
         const level = depth - 1;
         if (level < TRACKED_KEY_DEPTH) {
@@ -1200,7 +1238,8 @@ async function decodeCaptureBody(
   }
   const data = await formDataParam(text);
   if (data === null) throw new Error("no capture payload");
-  return dataParamBytes(data.toString("utf8"));
+  const value = data.toString("utf8");
+  return dataParamBytes(value);
 }
 
 // Parses a large payload from the event ranges its scan recorded.
@@ -1309,7 +1348,7 @@ function checkProjectTokens(subpath: string, url: URL): ProjectCheck {
 }
 
 type CaptureOutcome =
-  | { kind: "busy" | "unreadable" | "other" | "restricted" }
+  | { kind: "busy" | "unreadable" | "other" | "restricted" | "scrub_drop" }
   | {
       kind: "forward";
       /** Replay events the policy did not allow, dropped from the payload. */
@@ -1365,8 +1404,6 @@ async function admitted<T>(
   }
 }
 
-// Each event's policy, asked of the backend as the request's bearer. Only a
-// request with a bearer asks, so only one waits on the budget above.
 async function waitForPolicies(
   events: readonly unknown[],
   token: string | null,
@@ -1389,9 +1426,14 @@ async function waitForPolicies(
   }
 }
 
-// Rewrites each event under its policy and serializes the payload: a POST
-// body gzip-compressed the way posthog-js sends it, a GET's `data` as JSON.
-// A request left with no event to forward is `restricted`.
+// The relay's JSON scanner as the replay credential check reads nested data.
+const scanJsonStrings = (
+  json: Buffer,
+  visit: (value: string) => void | Promise<void>,
+) => scanPayloadTokens(json, [], undefined, visit);
+
+// Rebuild policy-restricted rows and remove credentials before serialization.
+// Unreadable payloads fail closed; a fully dropped batch is restricted.
 async function rewriteCapture(
   url: URL,
   method: string,
@@ -1399,26 +1441,55 @@ async function rewriteCapture(
   decision: PolicyDecision,
 ): Promise<CaptureOutcome> {
   const events: Record<string, unknown>[] = [];
+  const replay = new ReplayCredentialInspector(scanJsonStrings);
   let dropped = 0;
+  let credentialDropped = 0;
+  let envelope: Record<string, unknown>;
+  try {
+    envelope = decision.policies.some((policy) => policy.content === "strict")
+      ? { api_key: POSTHOG_PROJECT_KEY } : scrubEventCredentials(payload.envelope);
+  } catch {
+    return { kind: "scrub_drop" };
+  }
   for (let i = 0; i < payload.events.length; i++) {
     const event = applyEventPolicy(
       payload.events[i],
       decision.policies[i],
-      decision.declared[i],
-    );
-    if (event === null) dropped++;
-    else events.push(event as Record<string, unknown>);
+      decision.declared[i], decision.actorIds[i]);
+    if (event === null) {
+      dropped++;
+    } else if ((event as Record<string, unknown>).event === "$snapshot") {
+      const verdict = await replay.inspect(event);
+      if (verdict === "clean") events.push(event as Record<string, unknown>);
+      else {
+        credentialDropped++;
+        if (verdict === "credential") stats.replayCredentialDrops++;
+        else stats.replayUndecodableDrops++;
+      }
+    } else {
+      try {
+        events.push(scrubEventCredentials(event as Record<string, unknown>));
+      } catch {
+        return { kind: "scrub_drop" };
+      }
+    }
     if (i > 0 && i % 64 === 0) await yieldToEventLoop();
   }
-  if (events.length === 0 && dropped > 0) return { kind: "restricted" };
-  const serialized = await serializeCapture({ ...payload, events });
+  if (events.length === 0 && dropped + credentialDropped > 0) {
+    return { kind: "restricted" };
+  }
+  if (decision.policies.some(isRestricted)) events.forEach(disableEventGeoip);
+  const serialized = await serializeCapture({ ...payload, envelope, events });
   const isGet = method === "GET" || method === "HEAD";
-  const params = new URLSearchParams(url.search);
+  const params = new URLSearchParams(decision.policies.some((policy) => policy.content === "strict") ? "" : url.search);
   if (isGet) {
     params.delete("compression");
     params.set("data", serialized);
   } else {
     params.set("compression", "gzip-js");
+    // The body is the payload; a `data=` in a POST's query would be a second
+    // one that nothing checked.
+    params.delete("data");
   }
   const query = params.toString();
   return {
@@ -1441,6 +1512,7 @@ async function processCapture(
   method: string,
   body: ArrayBuffer | undefined,
   token: string | null,
+  livePolicy: string | undefined,
 ): Promise<CaptureOutcome> {
   const tokens = queryTokens(subpath, url);
   const payloadTokens: unknown[] = [];
@@ -1493,13 +1565,22 @@ async function processCapture(
   const decision = await waitForPolicies(read.events, token, textBytes);
   if (decision === BUSY) return { kind: "busy" };
 
-  const outcome = await admitted(large, () =>
-    rewriteCapture(url, method, read, decision),
-  );
+  const policy = restrictPoliciesAtSend(decision, livePolicy);
+  const outcome = await admitted(large, () => rewriteCapture(url, method, read, policy));
   return outcome === BUSY ? { kind: "busy" } : outcome;
 }
 
 const relayRoutes = new Hono();
+
+// DO_NOT_TRACK: the relay forwards nothing, whatever a page sends it. The
+// browser learns the opt-out from its runtime config and sends nothing; this
+// holds for a page that did not. A 4xx, which posthog-js does not retry.
+relayRoutes.use("*", async (c, next) => {
+  if (telemetryOptedOut(process.env.DO_NOT_TRACK)) {
+    return c.json({ error: "telemetry_disabled" }, 403);
+  }
+  await next();
+});
 
 // Anonymous by design, like PostHog capture, and charged to the same ingest
 // budget. Bounded and validated separately from the opaque PostHog proxy;
@@ -1546,19 +1627,23 @@ relayRoutes.all("*", async (c) => {
     : INGEST_HOST;
   const method = c.req.method;
 
-  // Logs carry console output, which the gate can neither mask nor tie to a
-  // capture context. The client never enables them; nothing forwards them.
-  if (/^\/i\/v1\/logs\/?$/.test(subpath)) {
+  // OTLP logs and metrics have arbitrary attributes and no capture-policy
+  // stamp. They are not approved families at this boundary.
+  if (/^\/i\/v1\/(logs|metrics)\/?$/.test(subpath)) {
     stats.privacyRejected++;
     recordResponseStatus(403);
     return c.json({ error: "telemetry_restricted" }, 403);
   }
 
   const headers = new Headers();
+  // The header an operator's ingress writes the client address into is one
+  // more client address, whatever its name.
+  const trustedClientIpHeader = resolveTrustedClientIpHeader();
   for (const [key, value] of Object.entries(c.req.header())) {
     const name = key.toLowerCase();
     if (
       !STRIPPED_REQUEST_HEADERS.has(name) &&
+      name !== trustedClientIpHeader &&
       !name.startsWith(STRIPPED_REQUEST_HEADER_PREFIX)
     ) {
       headers.set(key, value);
@@ -1592,12 +1677,19 @@ relayRoutes.all("*", async (c) => {
         method,
         body as ArrayBuffer | undefined,
         token,
+        c.req.header(TELEMETRY_POLICY_HEADER),
       );
       if (capture.kind === "busy") {
         stats.busyRejects++;
         recordResponseStatus(503);
         c.header("Retry-After", "1");
         return c.json({ error: "relay_busy" }, 503);
+      }
+      // An event the credential walker could not finish: not forwarded.
+      if (capture.kind === "scrub_drop") {
+        stats.scrubDrops++;
+        recordResponseStatus(400);
+        return c.json({ error: "unreadable_payload" }, 400);
       }
       // Nothing the policy allows: a 4xx, which posthog-js does not retry.
       if (capture.kind === "restricted") {
@@ -1666,7 +1758,9 @@ relayRoutes.all("*", async (c) => {
     // unaffected in practice: every runtime script is compiled into the
     // client bundle (client/src/lib/posthog-bundled-extensions.ts).
     // Update the supported request set alongside SDK endpoint changes.
-    const target = `${upstreamBase}${subpath}${search}`;
+    // Every query parameter but the payload and the project key loses its
+    // credentials (relay-credentials.ts).
+    const target = `${upstreamBase}${subpath}${scrubForwardedSearch(search)}`;
     try {
       upstream = await fetch(target, {
         method,
@@ -1702,7 +1796,6 @@ relayRoutes.all("*", async (c) => {
   stats.latenciesMs.push(Date.now() - startedAt);
   recordResponseStatus(upstream.status);
 
-  // Stream the upstream body through (recorder.js is ~300KB).
   return new Response(upstream.body, {
     status: upstream.status,
     headers: responseHeaders,

@@ -1,15 +1,9 @@
+import { readNativeForwardingResult, type NativeForwardingSelection } from "./forwarding/native-turn.js";
+import type { ForwardingOwner } from "./forwarding/execution-control.js";
+import { inspectorAiRequestHeaders } from "../ai-request-headers.js";
 /**
- * Header-broker start/revoke client — the ONLY harness credential delivery
- * path since COMP-23 (the raw-key `harness-model-credential.ts` client, which
- * returned a real unmetered key to inject into the sandbox env, was removed).
- *
- * The broker NEVER hands the inspector a lease. Convex mints it, locks the
- * sandbox's egress to the proxy host, and installs it into E2B's egress header
- * transform — so the lease is injected OUTSIDE the VM and the inspector/sandbox
- * never hold it. We get back only the proxy base URL + runId; the harness CLIs
- * run with DUMMY local creds pointed at that proxy.
- *
- * Backed by `convex/http.ts:/web/harness/model-broker/{start,revoke}`.
+ * Broker credentials stay in the E2B network transform. The sandbox receives
+ * dummy credentials and the proxy endpoint.
  */
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
@@ -19,7 +13,7 @@ import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
 import { bearerHeader, getConvexHttpUrl } from "./harness-broker-http.js";
 import {
   orgLeaseUpstreamFrom,
-  orgSelectionField,
+  leaseSelectionField,
   orgBindingUnconfirmed,
   type HarnessOrgLeaseUpstream,
 } from "./harness-org-lease.js";
@@ -62,6 +56,7 @@ export type HarnessBrokerStartResult =
       delivery: "e2b-network-transform";
       /** Present exactly when the lease runs on the org's own key. */
       orgUpstream?: HarnessOrgLeaseUpstream;
+      forwarding?: { owners: ForwardingOwner[]; origin: string };
     }
   | {
       ok: false;
@@ -158,7 +153,7 @@ export type HarnessBrokerBox =
  * the project and the scope are fields of the `computer` arm, so the sandbox
  * path has no branch that could emit them and no way to regress into one.
  */
-function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown> {
+export function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown> {
   return box.kind === "computer"
     ? {
         projectId: box.projectId,
@@ -191,6 +186,7 @@ export async function startHarnessModelBroker(args: {
    * is refused (`byok_connection_changed`) if the key was replaced since.
    */
   expectedCredentialRevision?: string;
+  nativeForwarding?: NativeForwardingSelection;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -215,11 +211,13 @@ export async function startHarnessModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
         ...boxRequestFields(args.box),
         harnessId: args.harnessId,
+        ...(args.nativeForwarding ? { nativeForwarding: args.nativeForwarding } : {}),
         ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         ...(args.runId ? { runId: args.runId } : {}),
@@ -229,7 +227,7 @@ export async function startHarnessModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
         ...(args.modelSelection?.source === "org" &&
         args.expectedCredentialRevision
           ? { expectedCredentialRevision: args.expectedCredentialRevision }
@@ -295,7 +293,13 @@ export async function startHarnessModelBroker(args: {
     };
   }
 
+  const forwarding = readNativeForwardingResult(payload, args.nativeForwarding);
+  if (forwarding === null) {
+    await revokeHarnessModelBroker({ runId: payload.runId, ...(args.box.kind === "computer" ? { projectId: args.box.projectId } : {}), bearer: args.bearer });
+    return { ok: false, status: 502, error: "Native forwarding owner binding was not confirmed." };
+  }
   return {
+    ...(forwarding ? { forwarding } : {}),
     ok: true,
     runId: payload.runId,
     expiresAt: payload.expiresAt,
@@ -348,6 +352,7 @@ export async function registerLocalInstance(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -428,6 +433,7 @@ export async function startLoopbackModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -451,7 +457,7 @@ export async function startLoopbackModelBroker(args: {
         ...(args.reasoningEffort
           ? { reasoningEffort: args.reasoningEffort }
           : {}),
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
       }),
       ...(args.signal ? { signal: args.signal } : {}),
     });
@@ -552,6 +558,7 @@ export async function revokeHarnessModelBroker(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -633,6 +640,7 @@ export async function reserveHarnessBox(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -646,7 +654,7 @@ export async function reserveHarnessBox(args: {
         runId: args.runId,
         // An org selection is resolved HERE, before the box installs
         // anything: a disabled or mismatched connection fails early.
-        ...orgSelectionField(args.modelSelection),
+        ...leaseSelectionField(args.modelSelection),
       }),
       signal: args.signal,
     });
@@ -706,6 +714,7 @@ export async function renewHarnessBoxReservation(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({
@@ -765,6 +774,7 @@ export async function releaseHarnessBoxReservation(args: {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...inspectorAiRequestHeaders("harness"),
         authorization: bearerHeader(args.bearer),
       },
       body: JSON.stringify({

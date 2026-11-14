@@ -274,13 +274,20 @@ describe("useProjectRouteCoordinator", () => {
   });
 
   it("does not surface a rejected switch as a crash", async () => {
-    const switchProject = vi.fn().mockRejectedValue(new Error("nope"));
+    // Rejects once, then never settles, so the hook has to swallow the
+    // rejection, retry, and still be resolving. A switch that rejected every
+    // time can hit the attempt cap between two polls of waitFor on a fast
+    // machine; that path is the "keeps rejecting" test below.
+    const switchProject = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("nope"))
+      .mockReturnValue(new Promise(() => {}));
     const { result } = renderHook(
       () => useProjectRouteCoordinator(inputFor({ switchProject })),
       { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     await waitFor(
-      () => expect(switchProject).toHaveBeenCalled(),
+      () => expect(switchProject).toHaveBeenCalledTimes(2),
       RESOLUTION_TIMEOUT,
     );
     expect(result.current.status).toBe("resolving");

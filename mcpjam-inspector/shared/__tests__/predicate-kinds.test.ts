@@ -108,7 +108,7 @@ describe("toolInputMatches", () => {
       formatCriterion({
         predicate: { type: "toolInputMatches", toolName: "x" } as never,
       }),
-    ).toBe("Tool input matches pattern(s) (x)");
+    ).toBe("Tool input matches regex (x)");
   });
 });
 
@@ -151,11 +151,11 @@ describe("toolResultMatches", () => {
       formatCriterion({
         predicate: { type: "toolResultMatches" } as never,
       }),
-    ).toBe("Tool output matches pattern(s)");
+    ).toBe("Tool output matches regex");
     expect(
       formatCriterion({
         predicate: { type: "toolResultMatches", toolName: "x" } as never,
       }),
-    ).toBe("Tool output matches pattern(s) (x)");
+    ).toBe("Tool output matches regex (x)");
   });
 });

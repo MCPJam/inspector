@@ -5,6 +5,7 @@ import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
+import { SuiteAccountsRow } from "./suite-accounts-row";
 import type { ReactNode } from "react";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -29,6 +30,12 @@ import {
 } from "@mcpjam/sdk/contract";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
+import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
+import {
+  allModelsOutOfCredits,
+  OUT_OF_CREDITS_MODEL_REASON,
+} from "@/components/chat-v2/shared/available-models";
+import { preflightTargets } from "../evaluate/suite-run-preflight";
 import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
@@ -83,7 +90,6 @@ import {
   RUBRIC_CHECK_ROW_IDENTITY_HINT,
 } from "./judge-rubric-editor";
 import { areRubricChecksValid } from "./rubric-checks-model";
-import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
 import {
   PerCaseIterationsControl,
@@ -107,6 +113,11 @@ import { RunComparisonPage } from "../evaluate/run-comparison-page";
 import { resolveSuitePassThreshold } from "../evaluate/run-compare-lanes-model";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
 import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
+import {
+  RunResultPage,
+  type RunResultCrumbs,
+} from "../evaluate/run-result-pages/run-result-page";
+import { useRunResultPagesEnabled } from "@/hooks/use-run-result-pages-enabled";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
@@ -128,7 +139,6 @@ import {
 } from "@/hooks/use-suite-capabilities";
 import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
-  CAPABILITY_REASON_COPY,
   CI_OWNED_REASON_COPY,
   featureDisabledReason,
   PERMISSION_REASON_COPY,
@@ -141,7 +151,11 @@ import type {
   EvalSuiteRunListItem,
   SuiteAggregate,
 } from "./types";
-import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
+import type {
+  EvalRoute,
+  SuiteOverviewView,
+  SuiteSettingsTab,
+} from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   canCommit,
@@ -170,6 +184,10 @@ import {
 import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
 import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
+import {
+  useSuiteSettingsTabs,
+  useSuiteSettingsTabsFlag,
+} from "./suite-settings-tabs";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Button } from "@mcpjam/design-system/button";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
@@ -184,6 +202,7 @@ import {
   type EvalExportDraftInput,
 } from "@/lib/evals/eval-export";
 import { sameRunTarget } from "@/lib/eval-target-key";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
@@ -211,7 +230,12 @@ export interface SuiteNavigation {
       fromEvalServer?: string;
     },
   ) => void;
-  toSuiteEdit: (suiteId: string, fromCaseChecks?: string) => void;
+  toSuiteEdit: (
+    suiteId: string,
+    fromCaseChecks?: string,
+    tab?: SuiteSettingsTab,
+    options?: { replace?: boolean },
+  ) => void;
 }
 
 const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
@@ -370,13 +394,6 @@ export function sortRunsNewestFirst(
   return [...runs].sort((a, b) => compareRunsBySequence(b, a));
 }
 
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
 /**
  * S6 — the run a rubric edit can be backtested against.
  *
@@ -391,7 +408,7 @@ export function pickBacktestableRun(
   return (
     sortRunsNewestFirst(runs).find(
       (run) =>
-        TERMINAL_RUN_STATUSES.has(run.status ?? "") &&
+        isEvalRunTerminalStatus(run.status) &&
         (run.judgeScore != null ||
           ("goalCompletion" in run && run.goalCompletion != null)),
     ) ?? null
@@ -475,9 +492,13 @@ export function SuiteIterationsView({
   deletingSuiteId,
   deletingRunId: _deletingRunId,
   availableModels,
+  requireOrgKeys = false,
+  onManageOrgProviders,
+  onAddProvider,
   route,
   userMap,
   projectId = null,
+  organizationId,
   navigation,
   onSetupCi,
   onCreateTestCase: onCreateTestCaseProp,
@@ -503,8 +524,8 @@ export function SuiteIterationsView({
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
-  evaluateObserveFirst = false,
   onGeneratingChange,
+  onResultCrumbsChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
@@ -567,6 +588,18 @@ export function SuiteIterationsView({
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
@@ -670,12 +703,12 @@ export function SuiteIterationsView({
    * today. Only `EvaluateTab` passes it.
    */
   evaluateCaseEditor?: boolean;
-  /** Observe-first authoring: the spine, Run test, and run-derived checks. */
-  evaluateObserveFirst?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
   ) => void;
+  /** Breadcrumbs for an open run result page; see {@link RunResultPage}. */
+  onResultCrumbsChange?: (crumbs: RunResultCrumbs | null) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -700,10 +733,11 @@ export function SuiteIterationsView({
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
   const selectedRunState = useSelectedRun(suite._id, selectedRunId);
   const selectedRunDetails = selectedRunState.run;
-  const { runs: groupRuns, loadGroup } = useRunGroupSummaries(
-    suite._id,
-    listedRuns,
-  );
+  const {
+    runs: groupRuns,
+    loadGroup,
+    groupStatus,
+  } = useRunGroupSummaries(suite._id, listedRuns);
   const runs = useMemo(() => {
     if (route.type !== "run-detail") return listedRuns;
     if (!selectedRunDetails) return groupRuns;
@@ -735,13 +769,9 @@ export function SuiteIterationsView({
   //
   // The cost is one `getSuiteCapabilities` read per suite view. It is a
   // one-shot query keyed on the suite and its revision, not a subscription.
-  // Bumped by a judge-gate acknowledgement, which changes what the gate switch
-  // may do WITHOUT changing the suite's revision — the acknowledgement is
-  // stored on the suite but is not a settings edit, so nothing else re-asks.
-  const [capabilitiesRefresh, setCapabilitiesRefresh] = useState(0);
   const { state: capabilitiesState, capabilities } = useSuiteCapabilities(
     suite._id,
-    `${suite.revisionNumber ?? "none"}:${capabilitiesRefresh}`,
+    suite.revisionNumber ?? "none",
   );
   // The ONE rule every row below shares: when capabilities could not be read,
   // behave exactly as the page did before they existed. Capabilities make a
@@ -882,13 +912,9 @@ export function SuiteIterationsView({
   const onRerunWithOverride = useCallback(
     (
       s: EvalSuite,
-      opts?: {
+      opts?: CaseRunLaunchOptions & {
         matchOptionsOverride?: EvalMatchOptions;
-        iterationOverride?: number;
-        ephemeralEnvironment?: boolean;
-        throwOnFailure?: boolean;
         caseIds?: string[];
-        skipJudge?: boolean;
       },
     ) => onRerun(s, opts),
     [onRerun],
@@ -1027,8 +1053,21 @@ export function SuiteIterationsView({
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
   // every later navigation, ⌘S saves from the run list, and
   // the edits they were told they were leaving behind are still there.
-  useUnsavedChangesGuard(hasUnsavedSettings, () =>
-    dispatchDraft({ type: "discard" }),
+  const settingsTabs = useSuiteSettingsTabs({
+    enabled: useSuiteSettingsTabsFlag() && isEditMode,
+    route,
+    suiteId: suite._id,
+    toSuiteEdit: navigation.toSuiteEdit,
+    hasUnsavedChanges: hasUnsavedSettings,
+    isCommitting,
+    onDiscard: () => dispatchDraft({ type: "discard" }),
+  });
+  useUnsavedChangesGuard(
+    hasUnsavedSettings,
+    () => dispatchDraft({ type: "discard" }),
+    undefined,
+    isCommitting,
+    settingsTabs.isSamePage,
   );
 
   // The suite moved under us. An untouched row simply refreshes; a row the
@@ -1193,6 +1232,19 @@ export function SuiteIterationsView({
     [perRunMode, selectedRunDetails, runs, previousCompletedRunForSelectedRun],
   );
   const detailRows = useRunsIterations(detailRunIds, perRunMode);
+  // A result page can name a sibling column, so it waits for the launch's
+  // full membership; an unknown sibling is a failed read, not a missing result.
+  const launchGroupId = selectedRunDetails?.runGroupId;
+  const launchGroupStatus = launchGroupId
+    ? groupStatus(launchGroupId)
+    : "ready";
+  const resultPageFailedRunIds = useMemo(
+    () =>
+      launchGroupStatus === "failed" && selectedRunDetails
+        ? new Set(detailRows.failedRunIds).add(selectedRunDetails._id)
+        : detailRows.failedRunIds,
+    [launchGroupStatus, selectedRunDetails, detailRows.failedRunIds],
+  );
   // A draft case has no row yet, so it has no history to read — and its
   // `draft:` id would fail the query's `v.id("testCase")` check.
   const historyTestCaseId =
@@ -1280,11 +1332,6 @@ export function SuiteIterationsView({
     suite,
     projectEnvironments ?? undefined,
   );
-  const evalRunsDisabledReason =
-    evalRunsDisabledReasonProp ??
-    (suitePinsSandboxImage && ephemeralCloudAvailable === false
-      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
-      : null);
   // A LOOKUP feeding `hostNamesById` below — nothing here offers a client to
   // pick, so it opts into private scenario-backing clients. Naming and
   // offering are different questions: a run that already resolved against a
@@ -1295,6 +1342,40 @@ export function SuiteIterationsView({
     projectId: projectId ?? null,
     includePrivateBacking: true,
   });
+  const evalRunsDisabledReason =
+    evalRunsDisabledReasonProp ??
+    (suitePinsSandboxImage && ephemeralCloudAvailable === false
+      ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
+      : null);
+  // Out of credits, a run whose every model is a locked MCPJam one could only
+  // be refused, so its buttons say so before the click. Each control asks
+  // about the cases it launches: the suite for Run all, one case for its Run.
+  // The editor asks about its own draft models.
+  const outOfCreditsReason = useOutOfCreditsReason(organizationId);
+  const creditsReasonFor = useCallback(
+    (runCases: readonly EvalCase[]) =>
+      allModelsOutOfCredits(
+        preflightTargets({
+          suite,
+          cases: runCases,
+          environments: projectEnvironments ?? [],
+          hosts: namableHosts,
+          environmentServerRefs: [],
+        }).models,
+        availableModels,
+      )
+        ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
+        : null,
+    [suite, projectEnvironments, namableHosts, availableModels, outOfCreditsReason],
+  );
+  const caseRunOutOfCreditsReason = useCallback(
+    (testCase: EvalCase) => creditsReasonFor([testCase]),
+    [creditsReasonFor],
+  );
+  const suiteRunsDisabledReason = useMemo(
+    () => evalRunsDisabledReason ?? creditsReasonFor(cases),
+    [evalRunsDisabledReason, creditsReasonFor, cases],
+  );
 
   // Use custom hooks for data calculations
   const legacySuiteData = useSuiteData(
@@ -1497,6 +1578,8 @@ export function SuiteIterationsView({
 
   const selectedRunTestCaseId =
     route.type === "run-detail" ? (route.testCaseId ?? null) : null;
+  // Old `?case=` and `?iteration=` links open their page once this is on.
+  const resultPagesEnabled = useRunResultPagesEnabled();
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -1898,6 +1981,7 @@ export function SuiteIterationsView({
         rerunningSuiteId || replayingRunId || evalRunsDisabledReason,
       )}
       runTestCaseDisabledReason={evalRunsDisabledReason}
+      runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
       connectedServerNames={connectedServerNames}
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
@@ -2046,9 +2130,11 @@ export function SuiteIterationsView({
       {showSuiteHeader ? (
         <div className="shrink-0">
           <SuiteHeader
+            settingsTabStrip={settingsTabs.strip}
             settingsActions={
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <Button
+                  hidden={settingsTabs.enabled}
                   variant="ghost"
                   size="sm"
                   onClick={() => navigation.toSuiteOverview(suite._id)}
@@ -2078,7 +2164,10 @@ export function SuiteIterationsView({
                         ? [
                             {
                               message: passOrFailRowError.message,
-                              onFix: () => openSetting("passOrFail"),
+                              onFix: () =>
+                                settingsTabs.goToSetting("passOrFail", openSetting, {
+                                  fromFix: true,
+                                }),
                             },
                           ]
                         : []),
@@ -2122,7 +2211,7 @@ export function SuiteIterationsView({
             onGenerateTestCases={onGenerateTestCases}
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
-            evalRunsDisabledReason={evalRunsDisabledReason}
+            evalRunsDisabledReason={suiteRunsDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
@@ -2162,6 +2251,8 @@ export function SuiteIterationsView({
                 className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
               >
                 <TestTemplateEditor
+                  outOfCreditsReason={outOfCreditsReason}
+                  runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
                   suiteId={suite._id}
                   selectedTestCaseId={selectedTestId}
                   readOnly={editingDisabled}
@@ -2176,6 +2267,9 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   projectId={projectId}
                   availableModels={availableModels}
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
+                  onAddProvider={onAddProvider}
                   suiteIterations={caseIterations}
                   suiteRuns={runs}
                   // The same opt-in and project gate the decision card beside
@@ -2185,7 +2279,6 @@ export function SuiteIterationsView({
                     evaluateDecisionSummary && projectId,
                   )}
                   simpleCaseEditor={evaluateCaseEditor}
-                  observeFirst={evaluateObserveFirst}
                   onRunCase={onRunCase}
                   launchReview={{
                     projectId,
@@ -2241,6 +2334,7 @@ export function SuiteIterationsView({
                       route.type === "test-edit" && route.checks
                         ? selectedTestId
                         : undefined,
+                      "evaluators",
                     )
                   }
                 />
@@ -2291,6 +2385,52 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : route.type === "run-detail" &&
+              (route.resultPage ||
+                (resultPagesEnabled === true &&
+                  (route.testCaseId || route.iteration))) &&
+              suiteDetailOverview &&
+              !selectedRunState.isUnavailable ? (
+              <RunResultPage
+                key={`${contentKey}-result`}
+                suiteId={suite._id}
+                runId={route.runId}
+                resultPage={
+                  route.resultPage ?? {
+                    caseKey: route.testCaseId ?? "",
+                    iterationId: route.iteration,
+                  }
+                }
+                fromOldLink={!route.resultPage}
+                run={selectedRunDetails ?? null}
+                runs={runs}
+                allIterations={allIterations}
+                hostNamesById={hostNamesById}
+                // This launch's rows only, so a sibling column resolves and
+                // a comparison run's read does not hold the page.
+                loading={
+                  !selectedRunDetails
+                    ? !selectedRunState.isUnavailable
+                    : launchGroupStatus === "loading" ||
+                      launchRuns(selectedRunDetails, runs).some(
+                        ({ _id: id }) =>
+                          !detailRows.byRun.has(id) &&
+                          !detailRows.failedRunIds.has(id),
+                      )
+                }
+                failedRunIds={resultPageFailedRunIds}
+                projectId={projectId}
+                decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
+                onEditCase={
+                  editingDisabled
+                    ? undefined
+                    : (testCaseId) =>
+                        onEditTestCase
+                          ? onEditTestCase(testCaseId)
+                          : navigation.toTestEdit(suite._id, testCaseId)
+                }
+                onCrumbsChange={onResultCrumbsChange}
+              />
             ) : selectedRunId && selectedRunState.isLoading ? (
               <RowsLoading key={contentKey} label="Loading run..." />
             ) : selectedRunId && selectedRunState.isUnavailable ? (
@@ -2349,7 +2489,7 @@ export function SuiteIterationsView({
                       ? undefined
                       : () => navigation.toSuiteEdit(suite._id),
                     disabledReason:
-                      evalRunsDisabledReason ??
+                      suiteRunsDisabledReason ??
                       (rerunningSuiteId ? "A run is already starting." : null),
                   }}
                   run={selectedRunDetails}
@@ -2479,7 +2619,7 @@ export function SuiteIterationsView({
                   rerunningSuiteId={rerunningSuiteId}
                   replayingRunId={replayingRunId}
                   runningTestCaseId={runningTestCaseId}
-                  evalRunsDisabledReason={evalRunsDisabledReason}
+                  evalRunsDisabledReason={suiteRunsDisabledReason}
                   readOnlyConfig={readOnlyConfig}
                   configLocked={configLocked}
                   onDuplicateSuite={onDuplicateSuite}
@@ -2656,6 +2796,7 @@ export function SuiteIterationsView({
                         evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
+                      runTestCaseOutOfCreditsReason={caseRunOutOfCreditsReason}
                       connectedServerNames={connectedServerNames}
                       onGenerateTestCases={onGenerateTestCases}
                       canGenerateTestCases={canGenerateTestCases}
@@ -2732,11 +2873,16 @@ export function SuiteIterationsView({
 
       {isEditMode && (
         <div ref={settingsScrollRef} className="flex-1 min-h-0 overflow-auto">
-          <div className="mx-auto w-full max-w-5xl space-y-6 px-6 py-8">
+          <div
+            className="group/settings mx-auto w-full max-w-5xl space-y-8 px-6 py-8"
+            data-settings-layout={settingsTabs.enabled ? "inline" : undefined}
+          >
+            {settingsTabs.dialog}
             {configLocked ? (
               <SuiteCiOwnedNotice onDuplicate={onDuplicateSuite} />
             ) : null}
             <fieldset
+              hidden={settingsTabs.hiddenUnless("settings")}
               disabled={editingDisabled}
               className="m-0 min-w-0 space-y-8 border-0 p-0"
               data-testid={
@@ -3031,6 +3177,18 @@ export function SuiteIterationsView({
                   ) : null}
                 </SuiteSettingsRow>
               ) : null}
+            </fieldset>
+            {/* Each person's own choice, not suite configuration, so the CI
+                lock stops here: a CI-owned suite keeps its Run controls, and a
+                run started from it uses the starter's accounts. */}
+            <div hidden={settingsTabs.hiddenUnless("settings")}>
+              <SuiteAccountsRow suite={suite} projectId={projectId} />
+            </div>
+            <fieldset
+              hidden={settingsTabs.hiddenUnless("settings")}
+              disabled={editingDisabled}
+              className="m-0 min-w-0 space-y-8 border-0 p-0"
+            >
               <BudgetSettingRow
                 settingKey="turnTimeoutMs"
                 label="Per-turn timeout"
@@ -3146,14 +3304,15 @@ export function SuiteIterationsView({
                   />
                 }
               />
+            </fieldset>
+            <fieldset
+              hidden={settingsTabs.hiddenUnless("evaluators")}
+              disabled={editingDisabled}
+              className="m-0 min-w-0 border-0 p-0"
+            >
               <div data-setting-key="passOrFail" className="space-y-4">
                 <SuitePassOrFailSection
                   capabilities={capabilitiesReady ? capabilities : null}
-                  unavailableReason={
-                    capabilitiesState === "unavailable"
-                      ? CAPABILITY_REASON_COPY.flag_unavailable
-                      : undefined
-                  }
                   stageFacts={{
                     connection: (
                       <SuiteStageFactsList
@@ -3162,7 +3321,9 @@ export function SuiteIterationsView({
                         projectServers={factsProjectServers}
                         isAuthenticated={isAuthenticated}
                         composeCapable={composeCapable}
-                        onGoToWhereItRuns={() => openSetting("environments")}
+                        onGoToWhereItRuns={() =>
+                          settingsTabs.goToSetting("environments", openSetting)
+                        }
                       />
                     ),
                     discovery: (
@@ -3172,7 +3333,9 @@ export function SuiteIterationsView({
                         projectServers={factsProjectServers}
                         isAuthenticated={isAuthenticated}
                         composeCapable={composeCapable}
-                        onGoToWhereItRuns={() => openSetting("environments")}
+                        onGoToWhereItRuns={() =>
+                          settingsTabs.goToSetting("environments", openSetting)
+                        }
                       />
                     ),
                   }}
@@ -3195,28 +3358,9 @@ export function SuiteIterationsView({
                     })
                   }
                   availableModels={availableModels}
-                  judgeAccessory={
-                    <JudgeGatePanel
-                      suiteId={suite._id}
-                      judge={capabilitiesReady ? capabilities.judge : undefined}
-                      unavailableReason={
-                        capabilitiesState === "unavailable"
-                          ? CAPABILITY_REASON_COPY.flag_unavailable
-                          : undefined
-                      }
-                      judgeConfig={draft.current.judgeConfig}
-                      onJudgeConfigChange={(next) =>
-                        dispatchDraft({
-                          type: "edit",
-                          key: "judgeConfig",
-                          value: next,
-                        })
-                      }
-                      onAcknowledged={() =>
-                        setCapabilitiesRefresh((n) => n + 1)
-                      }
-                    />
-                  }
+                  requireOrgKeys={requireOrgKeys}
+                  onManageOrgProviders={onManageOrgProviders}
+                  onAddProvider={onAddProvider}
                   rubricEditor={
                     <JudgeInstructionsEditor
                       value={draft.current.judgeRubric}

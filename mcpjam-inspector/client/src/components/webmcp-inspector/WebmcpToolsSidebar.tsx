@@ -128,7 +128,7 @@ export function WebmcpToolsSidebar({
                 onClick={onClose}
                 variant="ghost"
                 size="sm"
-                className="h-7 w-7 p-0"
+                className="hidden md:inline-flex h-7 w-7 p-0"
                 title="Hide sidebar"
               >
                 <PanelLeftClose className="h-3.5 w-3.5" />

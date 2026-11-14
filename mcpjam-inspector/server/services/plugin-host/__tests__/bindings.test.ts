@@ -103,6 +103,7 @@ describe("private server binding identity", () => {
     const host = {
       hostId: "host",
       hostConfigId: "config-1",
+      configHash: "a".repeat(64),
       modelId: "model",
       systemPrompt: "",
       temperature: 0,
@@ -116,10 +117,16 @@ describe("private server binding identity", () => {
     ) => ({
       ...host,
       hostConfigId: "config-2",
+      configHash: "b".repeat(64),
       mcpProfile: { profileVersion: 1, apps, ...extra },
     });
     it("keeps the previous spelling for a config without mutable permissions", () => {
-      const { hostConfigId: _id, requireToolApproval: _a, ...bare } = host;
+      const {
+        hostConfigId: _id,
+        configHash: _hash,
+        requireToolApproval: _a,
+        ...bare
+      } = host;
       expect(pluginHostBindingDigest(bare)).toBe(pluginBindingDigest(bare));
     });
     it("ignores the client's extension and App permission toggles", () => {
@@ -160,6 +167,23 @@ describe("private server binding identity", () => {
         ),
       );
     });
+    it("ignores the client's App context budgets", () => {
+      const before = pluginHostBindingDigest(host);
+      const budgets = {
+        modelContextPolicy: { maxBlocks: 256, updateMaxBytes: 2_548_000 },
+      };
+      expect(pluginHostBindingDigest(withProfile(budgets))).toBe(before);
+      // Beside a bound setting, only the bound setting counts.
+      expect(
+        pluginHostBindingDigest(
+          withProfile({ ...budgets, mcpAppsOverrides: { openLinks: false } }),
+        ),
+      ).toBe(
+        pluginHostBindingDigest(
+          withProfile({ mcpAppsOverrides: { openLinks: false } }),
+        ),
+      );
+    });
     it.each([
       ["harness", { harness: "codex" }],
       ["host style", { hostStyle: "claude" }],
@@ -171,6 +195,47 @@ describe("private server binding identity", () => {
       expect(pluginHostBindingDigest({ ...host, ...change })).not.toBe(
         pluginHostBindingDigest(host),
       );
+    });
+    describe("one host read two ways", () => {
+      // Shaped like the backend's host projection. The execution-context read
+      // returns it as is; `/web/host/runtime-config` adds the server selection.
+      const executionContext = {
+        hostId: "host",
+        localBrowserEnabled: false,
+        hostConfigId: "config-1",
+        modelId: "openai/gpt-5.4-mini",
+        systemPrompt: "",
+        temperature: 0,
+        requireToolApproval: true,
+        hostStyle: "chatgpt",
+        builtInToolIds: [],
+        computer: { kind: "personal" },
+        harness: "codex",
+        executionScope: { kind: "project", projectId: "project" },
+        actorKind: "member",
+        accessKind: "project_member",
+        mcpProfile: {
+          profileVersion: 1,
+          apps: { pluginExtensions: { enabled: true } },
+        },
+      };
+      const runtimeConfig = {
+        ...executionContext,
+        selectedServerIds: ["server-a", "server-b"],
+      };
+      it("binds both reads of an unchanged host alike", () => {
+        expect(pluginHostBindingDigest(runtimeConfig)).toBe(
+          pluginHostBindingDigest(executionContext),
+        );
+      });
+      it("still changes for a host change carried alongside the selection", () => {
+        expect(
+          pluginHostBindingDigest({ ...runtimeConfig, harness: "claude-code" }),
+        ).not.toBe(pluginHostBindingDigest(executionContext));
+        expect(
+          pluginHostBindingDigest({ ...runtimeConfig, modelId: "other" }),
+        ).not.toBe(pluginHostBindingDigest(executionContext));
+      });
     });
   });
 

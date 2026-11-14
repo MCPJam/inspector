@@ -5,6 +5,7 @@ import type {
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
 import {
+  blockedResult,
   errorMessage,
   eraSkipMessage,
   failedResult,
@@ -249,6 +250,7 @@ export async function runTransportChecks(
   ctx: RawHttpCheckContext,
   selectedCheckIds: Set<MCPCheckId>,
 ): Promise<MCPCheckResult[]> {
+  ctx.config.signal?.throwIfAborted();
   const results: MCPCheckResult[] = [];
   // Membership in the metadata record, NOT a name-prefix test: a prefix
   // predicate silently drops any new transport id that doesn't happen to match
@@ -303,6 +305,7 @@ export async function runTransportChecks(
     try {
       session = await initializeSession(ctx);
     } catch (error) {
+      ctx.config.signal?.throwIfAborted();
       if (selectedCheckIds.has("server-sse-polling-session")) {
         results.push(
           failedResult(
@@ -325,10 +328,16 @@ export async function runTransportChecks(
       ] as const) {
         if (selectedCheckIds.has(id)) {
           results.push(
-            couldNotRunResult(
-              TRANSPORT_CHECK_METADATA[id],
-              `Skipping check because the Streamable HTTP session could not be initialized: ${errorMessage(error)}`,
-            ),
+            selectedCheckIds.has("server-sse-polling-session")
+              ? blockedResult(
+                  TRANSPORT_CHECK_METADATA[id],
+                  TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
+                  { reason: errorMessage(error) },
+                )
+              : couldNotRunResult(
+                  TRANSPORT_CHECK_METADATA[id],
+                  `Skipping check because the Streamable HTTP session could not be initialized: ${errorMessage(error)}`,
+                ),
           );
         }
       }
@@ -433,10 +442,17 @@ export async function runTransportChecks(
       ] as const) {
         if (selectedCheckIds.has(id)) {
           results.push(
-            couldNotRunResult(
-              TRANSPORT_CHECK_METADATA[id],
-              "Streamable HTTP session could not be initialized",
-            ),
+            selectedCheckIds.has("server-sse-polling-session")
+              ? blockedResult(
+                  TRANSPORT_CHECK_METADATA[id],
+                  TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
+                  { status: session.status },
+                )
+              : couldNotRunResult(
+                  TRANSPORT_CHECK_METADATA[id],
+                  "Streamable HTTP session could not be initialized",
+                  { status: session.status },
+                ),
           );
         }
       }
@@ -649,6 +665,7 @@ export async function runTransportChecks(
               ),
         );
       } catch (error) {
+        ctx.config.signal?.throwIfAborted();
         results.push(
           couldNotRunResult(
             TRANSPORT_CHECK_METADATA["notification-post-accepted"],
@@ -693,6 +710,7 @@ export async function runTransportChecks(
               ),
         );
       } catch (error) {
+        ctx.config.signal?.throwIfAborted();
         results.push(
           couldNotRunResult(
             TRANSPORT_CHECK_METADATA["get-stream-or-405"],

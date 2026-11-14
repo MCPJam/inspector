@@ -1,13 +1,13 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const rootDir = process.cwd();
 const expectedMcpV2PackageVersions = {
-  "@modelcontextprotocol/client": "2.2.0",
-  "@modelcontextprotocol/node": "2.0.0",
-  "@modelcontextprotocol/server": "2.2.0",
+  "@modelcontextprotocol/client": "2.3.1",
+  "@modelcontextprotocol/node": "2.1.2",
+  "@modelcontextprotocol/server": "2.3.1",
 };
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
@@ -87,7 +87,9 @@ try {
   }
 
   if (packageSpecs.inspector.publish) {
+    await assertPackedServerBytes(installDir);
     await smokeInspectorStartup(installDir);
+    await smokeAskMcpjam(installDir);
   }
 } finally {
   rmSync(tmpRoot, { recursive: true, force: true });
@@ -118,6 +120,28 @@ async function smokeLocalTest(installDir, tmpRoot) {
     workDir,
   });
   console.log("mcpjam test local smoke passed against the installed package.");
+}
+
+/**
+ * One signed-in Ask MCPJam turn through the INSTALLED Inspector with no
+ * service token. Shared with Build and Test's run against the built checkout
+ * so the two cannot drift.
+ */
+async function smokeAskMcpjam(installDir) {
+  const { runAskMcpjamSmoke } = await import(
+    path.join(rootDir, ".github", "scripts", "ask-mcpjam-smoke.mjs")
+  );
+  await runAskMcpjamSmoke({
+    inspectorBin: path.join(
+      installDir,
+      "node_modules",
+      "@mcpjam",
+      "inspector",
+      "bin",
+      "start.js",
+    ),
+    cwd: installDir,
+  });
 }
 
 function boolEnv(name) {
@@ -263,6 +287,21 @@ function collectDependencyVersions(node, packageName, versions = []) {
   }
 
   return versions;
+}
+
+/** The tarball holds the server bytes whose maps `build:server` verified, and no maps. */
+async function assertPackedServerBytes(installDir) {
+  const { verifyServerSourcemaps } = await import(
+    path.join(rootDir, "mcpjam-inspector", "scripts", "server-sourcemaps.mjs")
+  );
+  const built = path.join(rootDir, "mcpjam-inspector", "dist", "server");
+  const packed = path.join(installDir, "node_modules", "@mcpjam", "inspector", "dist", "server");
+  for (const { file, debugId } of verifyServerSourcemaps(built)) {
+    if (!readFileSync(path.join(packed, file)).equals(readFileSync(path.join(built, file))))
+      throw new Error(`packed dist/server/${file} is not the verified build`);
+    if (existsSync(path.join(packed, `${file}.map`))) throw new Error(`the tarball ships ${file}.map`);
+    console.log(`Packed dist/server/${file} carries debug ID ${debugId}, verified against its map.`);
+  }
 }
 
 async function smokeInspectorStartup(installDir) {

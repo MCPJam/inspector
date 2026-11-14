@@ -1,0 +1,347 @@
+{
+  "flowId": "claude-connector",
+  "capturedAt": "2026-11-13",
+  "checkedAgainstScreenshots": false,
+  "note": "The Claude portal's MCP connector form and review page as text, transcribed from captures of the live portal. Set checkedAgainstScreenshots to true only after a person has compared every line with the captures. Left out on purpose: the connector list and the Company step's prefilled values (they showed a real account) and the test-setup placeholder (it holds an email address).",
+  "title": "Submit an MCP connector",
+  "steps": [
+    {
+      "id": "connection",
+      "title": "Connection",
+      "intro": "Connect the server you want listed. We read its tools, resources, and auth from the live connection."
+    },
+    {
+      "id": "tools",
+      "title": "Tools",
+      "intro": "Review the tools we found and their annotations. Fix anything flagged on your server, then reconnect."
+    },
+    {
+      "id": "listing",
+      "title": "Listing",
+      "intro": "How your MCP server appears in the directory. You can edit this after you submit."
+    },
+    {
+      "id": "useCases",
+      "title": "Use cases",
+      "intro": "Up to three things people can do with your MCP server, what they need before connecting, and whether it reads or writes. Shown to reviewers, not on your listing."
+    },
+    {
+      "id": "company",
+      "title": "Company",
+      "intro": "Tell us about the company or organization behind this MCP server."
+    },
+    {
+      "id": "authentication",
+      "title": "Authentication",
+      "intro": "Configure how users authenticate with your server. What you set here is applied to connections exactly as entered."
+    },
+    {
+      "id": "dataHandling",
+      "title": "Data handling",
+      "intro": "Tell reviewers what the MCP server reads, writes, and sends off-platform."
+    },
+    {
+      "id": "testLaunch",
+      "title": "Test & launch",
+      "intro": "Give reviewers a way in, and confirm you’ve tested every tool."
+    },
+    {
+      "id": "compliance",
+      "title": "Compliance",
+      "intro": "Confirm that your MCP server meets Anthropic’s directory policies. All items are required."
+    },
+    {
+      "id": "review",
+      "title": "Review and submit",
+      "intro": "Confirm the details, then submit. Review can take a few weeks, and approval isn’t guaranteed."
+    }
+  ],
+  "fields": {
+    "connection.serverUrl": {
+      "label": "Server URL",
+      "helper": "Servers already in the directory aren’t shown.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "connection.differentUrls": {
+      "label": "Users connect to different URLs",
+      "helper": "Leave this unchecked if every user connects to the same server URL."
+    },
+    "listing.name": {
+      "label": "Name",
+      "placeholder": "My MCP server",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.slug": {
+      "label": "Slug",
+      "placeholder": "my-mcp-server",
+      "helper": "Permanent after submission. Lowercase letters, numbers, and hyphens.",
+      "errors": {
+        "required": "Slug is required"
+      }
+    },
+    "listing.oneLiner": {
+      "label": "One-liner",
+      "placeholder": "A short tagline for your MCP server",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.description": {
+      "label": "Description",
+      "placeholder": "Describe what your MCP server does and its key features…",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.categories": {
+      "label": "Categories",
+      "placeholder": "Select categories",
+      "helper": "Categories are used to filter MCP servers in the directory. Select up to 5.",
+      "errors": {
+        "required": "Select at least one category"
+      }
+    },
+    "listing.authorName": {
+      "label": "Author name",
+      "reviewLabel": "Author",
+      "placeholder": "Acme Inc.",
+      "helper": "Shown as “by …” on the listing.",
+      "errors": {
+        "required": "An author is required to submit — add one on the Listing step, or fill in your company name and an https:// website to use those"
+      }
+    },
+    "listing.authorUrl": {
+      "label": "Author URL",
+      "placeholder": "https://example.com",
+      "helper": "If left blank, these default to your company name and website."
+    },
+    "listing.iconUrl": {
+      "label": "Icon",
+      "helper": "The directory and Claude show the favicon from your server’s URL; we recommend leaving it at that. A custom icon replaces it in the directory listing only."
+    },
+    "listing.documentationUrl": {
+      "label": "Documentation",
+      "placeholder": "https://docs.example.com",
+      "helper": "Public-facing docs shown to users. IT admins often review these when deciding whether to approve an MCP server.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.enterpriseAuthDocsUrl": {
+      "label": "Enterprise managed auth documentation",
+      "placeholder": "https://docs.example.com/setup",
+      "helper": "Setup instructions for admins configuring enterprise managed auth for this connector. Linked from the admin setup flow."
+    },
+    "listing.support": {
+      "label": "Support",
+      "reviewLabel": "Support URL",
+      "placeholder": "support@example.com or https://support.example.com",
+      "helper": "A support URL or email address.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.privacyPolicyUrl": {
+      "label": "Privacy policy",
+      "placeholder": "https://example.com/privacy",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "useCases.pairs": {
+      "label": "Use cases",
+      "helper": "Shown to reviewers, not on your public listing.",
+      "errors": {
+        "required": "Add at least one use case with an example prompt"
+      }
+    },
+    "useCases.prerequisites": {
+      "label": "Prerequisites",
+      "placeholder": "A paid Acme account with admin permissions",
+      "helper": "The accounts, permissions or setup a user needs before connecting. Shown to reviewers.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "useCases.access": {
+      "label": "Read/write capabilities",
+      "helper": "Based on what your tools do; we check it against their annotations.",
+      "options": [
+        ["Read only", "Retrieves data but never modifies it"],
+        ["Write only", "Creates or modifies data but does not read it"],
+        ["Read and write", "Both retrieves and modifies data"]
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.name": {
+      "label": "Company name",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.website": {
+      "label": "Company website",
+      "placeholder": "https://example.com",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.contactName": {
+      "label": "Full name",
+      "reviewLabel": "Primary contact",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.contactEmail": {
+      "label": "Email",
+      "reviewLabel": "Contact email",
+      "helper": "Prefilled from your Claude account.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.role": {
+      "label": "Role",
+      "placeholder": "Software Engineer"
+    },
+    "company.anthropicContact": {
+      "label": "Anthropic contact",
+      "placeholder": "Name or email (optional)",
+      "helper": "If you’ve been working with someone at Anthropic, let us know who."
+    },
+    "authentication.requirement": {
+      "label": "Authentication requirement",
+      "options": [
+        [
+          "Always required",
+          "Users connect and sign in before any tools or resources are available."
+        ],
+        [
+          "Required when the server asks",
+          "Claude connects without credentials first, then prompts to sign in if the server requires it."
+        ],
+        [
+          "None",
+          "Anyone can use this server without signing in or providing credentials."
+        ]
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "authentication.oauthClient": {
+      "label": "OAuth client",
+      "options": [
+        [
+          "Dynamic Client Registration",
+          "Clients register themselves with the server (RFC 7591)"
+        ],
+        [
+          "Client ID Metadata Document",
+          "The server accepts a published client metadata URL"
+        ],
+        [
+          "Anthropic-held client credentials",
+          "Anthropic stores one client ID used for every connection"
+        ],
+        [
+          "Installers bring their own OAuth client",
+          "Each organization supplies a client ID it registered with the server"
+        ]
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "dataHandling.apiOwnership": {
+      "label": "API ownership",
+      "options": [
+        ["We own the API", "The MCP server calls our own production APIs"],
+        [
+          "We proxy a partner’s API with permission",
+          "Calls go to a third-party API we’re authorized to integrate (e.g. Zapier-style)"
+        ],
+        [
+          "Calls a third-party API we don’t control",
+          "Typically blocks listing — explain in Additional notes"
+        ]
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "dataHandling.healthData": {
+      "label": "Personal health data",
+      "helper": "Does this MCP server access, process, or store personal health information?",
+      "options": [["No"], ["Yes"], ["Other / depends on configuration"]],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "dataHandling.sponsored": {
+      "label": "Sponsored or promoted content",
+      "reviewLabel": "Sponsored content",
+      "helper": "Sponsored, promoted, and advertising content is prohibited in the directory. Does this MCP server surface any?",
+      "options": [["No"], ["Yes"], ["Other"]],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "testLaunch.instructions": {
+      "label": "Test setup instructions",
+      "helper": "We reserve the right to manually review all servers. Provide clear test-account setup and access instructions. We’re working to automate this process to reduce the time it takes to get your server into the directory — write these instructions so they contain every link, credential, and step needed to autonomously access the MCP server. For enterprise accounts or servers that require a fully populated account, provide test credentials that grant access to a fully populated account for review."
+    },
+    "testLaunch.selfTested": {
+      "label": "I have run every tool via MCP Inspector or as a custom connector in Claude",
+      "reviewLabel": "Self-tested"
+    },
+    "compliance.acknowledgments": {
+      "label": "Policy acknowledgements",
+      "reviewLabel": "Policies acknowledged",
+      "options": [
+        ["I have read and understand the MCP Directory developer guidelines."],
+        [
+          "My server calls our own first-party APIs (or APIs we legitimately proxy with permission)."
+        ],
+        [
+          "My MCP server does not transfer money, cryptocurrency, or other financial assets on a user’s behalf."
+        ],
+        [
+          "My MCP server does not use AI models to generate images, video, or audio."
+        ],
+        [
+          "Tool descriptions contain no instructions about model behavior, other tools, or external instruction sources, and no hidden or encoded text."
+        ],
+        [
+          "My MCP server does not collect conversation data beyond what is needed for its function."
+        ],
+        [
+          "Public documentation for this MCP server will be live by the publish date."
+        ]
+      ],
+      "errors": {
+        "required": "All policy items must be acknowledged",
+        "tooFew": "All policy items must be acknowledged"
+      }
+    },
+    "compliance.additionalNotes": {
+      "label": "Additional notes",
+      "reviewLabel": "Additional information",
+      "helper": "Optional. Anything else the review team should know about your MCP server."
+    }
+  },
+  "reviewRows": [
+    {
+      "label": "Captured tool list",
+      "error": "A captured tool list is required to submit. Connect your server on the Connection step, or reconnect it in Settings → Connectors, to capture it."
+    }
+  ],
+  "reviewFootnote": "Some steps are missing required fields — submit to highlight them."
+}

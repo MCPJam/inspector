@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { comparisonKey } from "@mcpjam/sdk/browser";
-import { mergePickedRows, type CompareCard } from "@/lib/compare-cards";
+import {
+  mergePickedRows,
+  resolveCompareCards,
+  resolveCompareSelectionRow,
+  type CompareCard,
+} from "@/lib/compare-cards";
 import type { ModelDefinition } from "@/shared/types";
 
 const fallback = { provider: "none", model: "none" } as const;
@@ -34,6 +39,52 @@ const card = (model: ModelDefinition, selection: typeof gpt5Selection) =>
     selection,
     editableSelection: selection,
   }) as unknown as CompareCard;
+
+describe("resolveCompareSelectionRow", () => {
+  const orgGrok: ModelDefinition = {
+    id: "grok-3",
+    name: "Grok 3 (org)",
+    provider: "xai",
+    hosted: false,
+  } as ModelDefinition;
+  const localGrok: ModelDefinition = {
+    id: "grok-3",
+    name: "Grok 3 (local)",
+    provider: "xai",
+    hosted: false,
+  } as ModelDefinition;
+  const legacy = {
+    source: "legacy" as const,
+    modelId: "grok-3",
+    provider: "xai",
+  };
+
+  it("resolves a stored legacy card to its one own-key row", () => {
+    expect(resolveCompareSelectionRow(legacy, [gpt5, orgGrok], undefined)).toBe(
+      orgGrok,
+    );
+  });
+
+  it("renders the first enabled own-key row when two share provider and id", () => {
+    // compareSelectionForRow stores both rows as this same legacy entry, so a
+    // pick of either must still produce a card; both run on the user's key.
+    expect(
+      resolveCompareSelectionRow(legacy, [orgGrok, localGrok], undefined),
+    ).toBe(orgGrok);
+    expect(
+      resolveCompareSelectionRow(
+        legacy,
+        [{ ...orgGrok, disabled: true }, localGrok],
+        undefined,
+      ),
+    ).toBe(localGrok);
+    expect(
+      resolveCompareCards([legacy], [orgGrok, localGrok], undefined).map(
+        (card) => card.model,
+      ),
+    ).toEqual([orgGrok]);
+  });
+});
 
 describe("mergePickedRows", () => {
   it("keeps a saved card whose row has not loaded yet", () => {

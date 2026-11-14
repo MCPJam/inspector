@@ -131,13 +131,11 @@ npx @mcpjam/inspector@latest
 
 The launcher opens a private access link automatically. To sign in from another browser, use the link printed in your terminal. Docker users can retrieve it with `docker logs <container>`. Keep it private; a new link is generated on restart unless `MCPJAM_SESSION_TOKEN` is configured. See the [network access instructions](mcpjam-inspector/README.md) for remote addresses and remapped ports.
 
-**Docker**: There is no published image, so build one from source first. Bound to localhost for security. Available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, reach host MCP servers via `http://host.docker.internal:PORT`.
+**Docker**: Bound to localhost for security. Available at `http://127.0.0.1:6274`. Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to keep the inspector local-only. On macOS/Windows, reach host MCP servers via `http://host.docker.internal:PORT`.
 
 ```bash
-git clone https://github.com/MCPJam/inspector.git
-cd inspector
-docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
-docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
+docker pull mcpjam/mcp-inspector
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
 ```
 
 # 👨‍💻 Contributing
@@ -146,7 +144,7 @@ We're grateful you're considering it. Read the [contributing guide](CONTRIBUTING
 
 # 🌍 Community & links
 
-[Website](https://www.mcpjam.com/) · [Blog](https://www.mcpjam.com/blog) · [Pricing](https://www.mcpjam.com/pricing) · [Docs](https://docs.mcpjam.com/) · [Discord](https://discord.gg/JEnDtz8X6z) · [𝕏 (Twitter)](https://x.com/mcpjams) · [LinkedIn](https://www.linkedin.com/company/mcpjam)
+[Website](https://www.mcpjam.com/) · [Blog](https://www.mcpjam.com/blog) · [Pricing](https://www.mcpjam.com/pricing) · [Docs](https://docs.mcpjam.com/) · [Discord](https://discord.gg/JEnDtz8X6z) · [𝕏 (Twitter)](https://x.com/mcpjams) · [LinkedIn](https://www.linkedin.com/company/mcpjam) · [YouTube](https://www.youtube.com/@MCPJam) · [Instagram](https://www.instagram.com/mcpjam.official) · [TikTok](https://www.tiktok.com/@mcpjam.official)
 
 # 📄 License
 

@@ -13,6 +13,11 @@ import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 import { QUALITY_GATE_REASON_HINT } from "../suite-quality-gate-section";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 const mocks = vi.hoisted(() => ({
   applySuiteSettings: vi.fn(async () => ({ revisionNumber: 4 })),
   updateTestSuite: vi.fn(async () => ({})),
@@ -73,7 +78,7 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
-vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => true }));
+vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: (flag: string) => flag !== "eval-suite-settings-tabs" }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
   useEnsureAdhocEnvironments: () => vi.fn(),
@@ -131,7 +136,6 @@ function readyCapabilities() {
         canUpgrade: true,
       },
       judge: {
-        gating: { enabled: false, reason: "not_enabled_on_deployment" },
         role: "advisory",
         hasRubric: false,
         agreement: {
@@ -139,12 +143,7 @@ function readyCapabilities() {
           agreements: 0,
           rate: null,
           lowerBound: null,
-          threshold: 0.8,
-          minReviews: 20,
-          eligible: false,
-          reasons: ["insufficient_reviews"],
         },
-        acknowledgement: null,
       },
       qualityGate: { storage: true, evaluator: true },
       revisionNumber: 1,

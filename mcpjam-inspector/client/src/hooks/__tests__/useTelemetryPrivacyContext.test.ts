@@ -21,8 +21,8 @@ import {
   type TelemetryPrivacyContextInput,
 } from "../useTelemetryPrivacyContext";
 
-const FULL = { recording: "full", identity: "full" };
-const MASKED = { recording: "masked", identity: "id_only" };
+const FULL = { recording: "full", identity: "full", content: "full" };
+const MASKED = { recording: "off", identity: "id_only", content: "strict" };
 
 function input(
   overrides: Partial<TelemetryPrivacyContextInput> = {},
@@ -66,6 +66,11 @@ describe("useTelemetryPrivacyContext", () => {
     });
   });
 
+  it("asks the backend to restrict share-link contexts", () => {
+    render(input({ sharedLink: true }));
+    expect(server.subscriptions.at(-1)).toMatchObject({ shareLink: true });
+  });
+
   it("does not ask while the actor is still resolving", () => {
     const { result } = render(input({ actor: undefined }));
     expect(result.current.policy).toBeUndefined();
@@ -98,7 +103,7 @@ describe("useTelemetryPrivacyContext", () => {
   });
 
   it("passes an off answer through", () => {
-    const OFF = { recording: "off", identity: "id_only" };
+    const OFF = { recording: "off", identity: "id_only", content: "strict" };
     server.answer.mockReturnValue(OFF);
     expect(render(input()).result.current).toMatchObject({
       policy: OFF,
@@ -164,6 +169,9 @@ describe("telemetryMembershipKey", () => {
     const base = [{ _id: "b" }, { _id: "a", myRole: "admin" }];
     expect(telemetryMembershipKey(base)).toBe(
       telemetryMembershipKey([...base].reverse()),
+    );
+    expect(telemetryMembershipKey(base)).not.toBe(
+      telemetryMembershipKey([{ _id: "b", sessionReplayOff: true }, base[1]]),
     );
     expect(telemetryMembershipKey(base)).not.toBe(
       telemetryMembershipKey([...base, { _id: "c" }]),

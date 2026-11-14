@@ -15,6 +15,9 @@ import {
 } from "@mcpjam/design-system/collapsible";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
+  AUTO_TOPUP_DECLINED_CODE,
+  AUTO_TOPUP_DECLINED_MESSAGE,
+  AUTO_TOPUP_DECLINED_TITLE,
   isMCPJamModelLimitError,
   isSpendBudgetReachedCode,
   SPEND_BUDGET_REACHED_MESSAGE,
@@ -23,6 +26,13 @@ import {
   describeProviderNotAllowlisted,
   isProviderNotAllowlistedCode,
 } from "@/lib/provider-not-allowlisted";
+import {
+  ASK_ORG_ADMIN,
+  describeOrgKeysRefusal,
+  isRetryableOrgKeysRefusal,
+  MANAGE_AI_PROVIDERS,
+  orgKeysRefusalCodeOf,
+} from "@/lib/org-keys-refusal";
 import { cn } from "@/lib/utils";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -60,6 +70,13 @@ interface ErrorBoxProps {
    * — the caller owns navigation, this component owns the button.
    */
   onChangeProtocolVersion?: () => void;
+  /**
+   * Opens Organization → AI providers. Passed only when the viewer may manage
+   * them (`useOrgModelsHandoff`); an organization AI-key refusal then offers
+   * "Manage AI providers", and without it the banner tells a member to ask an
+   * organization admin.
+   */
+  onManageOrgProviders?: () => void;
 }
 
 const parseErrorDetails = (details: string | undefined) => {
@@ -89,6 +106,7 @@ export function ErrorBox({
   limitKind,
   retryAfterMs,
   onChangeProtocolVersion,
+  onManageOrgProviders,
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   // Only a mounted `ModelSelector` acts on the providers-tab nonce. Hosted
@@ -115,6 +133,128 @@ export function ErrorBox({
         {canTopUp && onTopUp && <Button variant="outline" onClick={onTopUp}>{creditActionLabel}</Button>}
       </div>
     </div>;
+  }
+
+  if (refusalCode === "free_tier_model_restricted") {
+    return (
+      <div
+        role="alert"
+        className="flex flex-col gap-2 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
+      >
+        <p>
+          This model isn’t included in your free daily allowance.{" "}
+          {canTopUp && onTopUp ? "Upgrade your plan or use an organization API key." : "Use an organization API key."}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {canTopUp && onTopUp && (
+            <Button variant="outline" onClick={onTopUp}>
+              Compare plans
+            </Button>
+          )}
+          {onManageOrgProviders && (
+            <Button variant="outline" onClick={onManageOrgProviders}>
+              {MANAGE_AI_PROVIDERS}
+            </Button>
+          )}
+        </div>
+        {!onManageOrgProviders && <p>Ask an organization admin to add an API key for this model.</p>}
+        {onResetChat && <Button variant="outline" onClick={onResetChat}>Reset chat</Button>}
+      </div>
+    );
+  }
+
+  // /stream/org uses provider_auth_error when the upstream provider rejects
+  // the organization's key. Other 401s can be session or MCP server errors.
+  const orgKeysCode = refusalCode === "provider_auth_error"
+    ? "provider_auth_failed"
+    : orgKeysRefusalCodeOf(refusalCode);
+  const missingSharedModel = refusalCode === "shared_models_unconfigured";
+  if (orgKeysCode || missingSharedModel) {
+    // The organization requires its own provider keys (or its provider
+    // refused). Configuration, not credits: never a top-up, and a retry only
+    // for the two refusals that lift on their own.
+    const canManage = !!onManageOrgProviders;
+    const described = missingSharedModel
+      ? {
+          title: "Choose an organization model",
+          body: canManage
+            ? "Choose an organization model or add a provider in AI providers."
+            : "Choose an organization model or ask an organization admin to add a provider.",
+          remediation: "choose_org_model",
+        }
+      : describeOrgKeysRefusal(orgKeysCode, canManage ? "admin" : "member");
+    const retryable = isRetryableOrgKeysRefusal(orgKeysCode);
+    const memberCanAskAdmin =
+      !canManage &&
+      [
+        "choose_org_model",
+        "add_org_provider",
+        "configure_org_model_role",
+        "fix_org_credentials",
+      ].includes(described.remediation) &&
+      !/organization admin/i.test(described.body);
+    return (
+      <div
+        role="alert"
+        data-testid="chat-error-org-keys"
+        data-refusal-code={orgKeysCode ?? refusalCode}
+        className="flex flex-col gap-3 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
+      >
+        {/* The actions wrap under the text once both no longer fit on one
+            line (a narrow chat pane), so the text keeps a readable width
+            instead of shrinking to a word per line. */}
+        <div
+          className="flex flex-wrap items-start gap-3"
+          data-testid="chat-error-org-keys-layout"
+        >
+          <CircleAlert className="h-6 w-6 flex-shrink-0 text-warning" />
+          <div className="min-w-0 grow basis-64">
+            <p className="text-sm font-medium leading-6">{described.title}</p>
+            <p className="text-sm leading-6 opacity-90">{described.body}</p>
+            {memberCanAskAdmin ? (
+              <p className="text-xs leading-5 opacity-90">{ASK_ORG_ADMIN}.</p>
+            ) : null}
+          </div>
+          <div
+            className="ml-auto flex flex-wrap items-center gap-2"
+            data-testid="chat-error-org-keys-actions"
+          >
+            {described.remediation === "choose_org_model" &&
+            canOpenProvidersTab ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  useModelPickerIntentStore.getState().requestOpenProvidersTab()
+                }
+              >
+                Choose an organization model
+              </Button>
+            ) : null}
+            {canManage ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onManageOrgProviders}
+              >
+                {MANAGE_AI_PROVIDERS}
+              </Button>
+            ) : null}
+            {retryable && onRetry ? (
+              <Button type="button" variant="outline" onClick={onRetry}>
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            ) : null}
+            {onResetChat ? (
+              <Button type="button" variant="outline" onClick={onResetChat}>
+                Reset chat
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (isProviderNotAllowlistedCode(refusalCode)) {
@@ -263,7 +403,11 @@ export function ErrorBox({
     );
   }
 
-  if (isSpendBudgetReached) {
+  // A declined card stopped auto-reload. Retrying meets the same refusal, so
+  // like a budget the banner names the fix (the card, or adding credits)
+  // rather than offering a retry.
+  const isDeclinedCard = code === AUTO_TOPUP_DECLINED_CODE;
+  if (isSpendBudgetReached || isDeclinedCard) {
     // An owner or admin capped what this organization may spend per billing
     // window, and the window is spent. Buying credits does not clear it and
     // retrying sends the same request into the same cap, so this banner
@@ -273,9 +417,15 @@ export function ErrorBox({
         <div className="flex items-start gap-3">
           <ShieldAlert className="h-6 w-6 flex-shrink-0 text-warning" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium leading-6">Spend budget reached</p>
+            <p className="text-sm font-medium leading-6">
+              {isDeclinedCard
+                ? AUTO_TOPUP_DECLINED_TITLE
+                : "Spend budget reached"}
+            </p>
             <p className="text-sm leading-6 opacity-90">
-              {SPEND_BUDGET_REACHED_MESSAGE}
+              {isDeclinedCard
+                ? AUTO_TOPUP_DECLINED_MESSAGE
+                : SPEND_BUDGET_REACHED_MESSAGE}
             </p>
           </div>
           {onResetChat ? (

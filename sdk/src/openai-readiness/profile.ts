@@ -15,6 +15,13 @@
  * Pure data. Safe from the browser entry.
  */
 
+import {
+  AGENT_LEGACY_MANIFEST_PATH,
+  CLAUDE_MANIFEST_PATH,
+  CODEX_MANIFEST_PATH,
+} from "../plugin-bundle/layout.js";
+import { PLUGIN_MANIFEST_PATH } from "../plugin-bundle/manifest.js";
+import { PLUGIN_NAME_MAX_LENGTH } from "../plugin-bundle/plugin-name.js";
 import { openaiPolicySource } from "./manifest.js";
 
 /**
@@ -35,16 +42,19 @@ export const OPENAI_ARCHIVE_LIMITS = {
 } as const;
 
 /**
- * Where the plugin manifest may live inside the package.
+ * Where the plugin manifest may live inside the package, relative to the
+ * plugin root that `plugin-bundle/plugin-root.ts` finds.
  *
  * `.codex-plugin/` is canonical. The other two are accepted and NORMALISED —
  * recorded as an assumption on the evidence rather than silently rewritten,
  * because a submitter whose package works only after a normalisation we applied
- * has not been told the truth about their package.
+ * has not been told the truth about their package. Agent Plugins' root
+ * `plugin.json`, the layout OpenAI recommends, is read as written too.
  */
 export const OPENAI_MANIFEST_LOCATIONS = {
-  canonical: ".codex-plugin/plugin.json",
-  accepted: [".agent-plugin/plugin.json", ".claude-plugin/plugin.json"],
+  portable: PLUGIN_MANIFEST_PATH,
+  canonical: CODEX_MANIFEST_PATH,
+  accepted: [AGENT_LEGACY_MANIFEST_PATH, CLAUDE_MANIFEST_PATH],
 } as const;
 
 /** Where a skill's own metadata lives, relative to its skill directory. */
@@ -61,6 +71,8 @@ export const OPENAI_AGENT_METADATA_PATH = "agents/openai.yaml";
  */
 export const OPENAI_FIELD_LIMITS = {
   nameMaxLength: 100,
+  /** The manifest's `name`; the import parser's limit too. */
+  pluginNameMaxLength: PLUGIN_NAME_MAX_LENGTH,
   displayNameMaxLength: 100,
   shortDescriptionMaxLength: 255,
   descriptionMaxLength: 2_000,

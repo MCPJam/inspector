@@ -48,6 +48,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     command: "cloud projects servers connect-cancel",
   },
   get_project_server: { command: "cloud projects servers get" },
+  list_server_revisions: { command: "cloud projects servers revisions" },
+  get_server_revision: { command: "cloud projects servers revision" },
+  diff_server_revisions: { command: "cloud projects servers revision-diff" },
+  // `default` runs the same operation as `rename`, with `isDefault` in place
+  // of a name.
+  list_server_accounts: { command: "cloud server-accounts list" },
+  get_server_account: { command: "cloud server-accounts show" },
+  upload_server_account_tokens: { command: "cloud server-accounts set" },
+  update_server_account: { command: "cloud server-accounts rename" },
+  delete_server_account: { command: "cloud server-accounts delete" },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },
   show_servers: { command: "cloud projects status" },
@@ -393,23 +403,28 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_readiness_run: { command: "readiness status" },
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
+  resume_readiness_run: { command: "readiness resume" },
   get_readiness_report: { command: "readiness report" },
-  start_conformance_run: {
-    excluded:
-      "Hosted conformance runs dial the platform's view of a saved server and persist results for the app; the local `mcpjam conformance` commands grade what this machine reaches without a project row. Different surfaces, and only the hosted run leaves a durable record agents can poll.",
+  // `readiness flows` lists the flows, or shows the one it is given.
+  list_directory_flows: { command: "readiness flows" },
+  get_directory_flow: { command: "readiness flows" },
+  create_directory_submission: { command: "readiness submission create" },
+  list_directory_submissions: { command: "readiness submission list" },
+  get_directory_submission: { command: "readiness submission get" },
+  update_directory_submission: { command: "readiness submission set" },
+  delete_directory_submission: { command: "readiness submission delete" },
+  start_directory_submission_run: { command: "readiness submission run" },
+  get_directory_submission_results: {
+    command: "readiness submission results",
   },
-  get_conformance_run: {
-    excluded:
-      "No `conformance runs` poll command yet — run history and status live in the hosted app and agent surfaces until a CLI subcommand mirrors list/status against saved servers.",
-  },
-  list_conformance_runs: {
-    excluded:
-      "Listing persisted conformance runs is an app/agent concern today; the CLI's conformance commands are one-shot local runs, not a hosted run ledger.",
-  },
-  get_conformance_report: {
-    excluded:
-      "Report projection for agents is sized for model context on the platform API; the CLI already emits full suite output locally via `mcpjam conformance` and does not need a second report fetch path.",
-  },
+  // Hosted conformance, beside the local `mcpjam conformance` commands: those
+  // grade what this machine reaches and record nothing in a project, these
+  // run on the platform against a saved server and leave a run to poll.
+  start_conformance_run: { command: "cloud conformance run" },
+  get_conformance_run: { command: "cloud conformance status" },
+  list_conformance_runs: { command: "cloud conformance runs" },
+  get_conformance_report: { command: "cloud conformance report" },
+  get_conformance_check: { command: "cloud conformance check" },
 
   // ── Covered by the surrounding session, not a command ────────────────────
   get_me: {

@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PLUGIN_INSTANCE_CONTEXT_BYTES } from "../../../shared/plugin-invocation-receipts.js";
 import {
+  MODEL_CONTEXT_POLICY_CEILINGS,
+  MODEL_CONTEXT_POLICY_DEFAULTS,
+} from "@mcpjam/sdk/host-config/internal";
+import {
   createPluginSession,
   reducePluginSession,
   pluginContextForTurn,
@@ -10,11 +14,23 @@ import {
 } from "@mcpjam/sdk/internal/plugin-host";
 import {
   parsePluginModelContext,
-  pluginContextAttachments,
+  type PluginContextLimits,
+  type PluginContextRemoveAllResult,
   type PluginContextSnapshot,
   type PluginModelContext,
 } from "../../../shared/plugin-model-context.js";
 import { PluginInvocationError } from "./invocation.js";
+import {
+  contextRemovalSnapshot,
+  decideContextRemoveAll,
+  NO_CONTEXT_REMOVALS,
+  persistedRemovalCursorSchema,
+  PLUGIN_CONTEXT_REMOVAL_WINDOW,
+  recordContextRemoveAll,
+  recordContextUserAttach,
+  type PluginContextRemovalCursor,
+  type PluginContextRemoveAll,
+} from "./context-removal.js";
 
 type Cursor = {
   operationId: string;
@@ -29,16 +45,7 @@ export type PluginContextUpdate = {
   /** The person was using the App when it sent this (see `held` below). */
   attach?: "user";
 };
-export type PluginContextRemoval = {
-  operationId: string;
-  updateId: string;
-  index: number;
-};
-/** Removal receipts kept for idempotent retries. Older receipts are compacted
- * away: a retry of a compacted removal is refused as stale (its updateId no
- * longer matches), never applied twice, so the window bounds storage without
- * ever stopping context. */
-export const PLUGIN_CONTEXT_REMOVAL_WINDOW = 256;
+export { PLUGIN_CONTEXT_REMOVAL_WINDOW, type PluginContextRemoveAll };
 const safeCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const persistedContextSchema = z
   .object({
@@ -63,6 +70,8 @@ const persistedContextSchema = z
       .array(z.tuple([z.string().min(1).max(128), z.string().max(160)]))
       .max(PLUGIN_CONTEXT_REMOVAL_WINDOW),
     held: z.literal(true).optional(),
+    // Absent in context saved before remove-all existed: no removals yet.
+    removal: persistedRemovalCursorSchema.optional(),
   })
   .strict();
 
@@ -80,8 +89,17 @@ export class PluginContextWorkspace {
    * (an update marked `attach: "user"`), its updates are refused.
    */
   private readonly held = new Set<string>();
+  private readonly removalCursors = new Map<
+    string,
+    PluginContextRemovalCursor
+  >();
   constructor(workspaceId: string) {
     this.state = createPluginSession(workspaceId);
+  }
+
+  /** Whether `operationId` is the update this App's context last applied. */
+  isRetry(instanceId: string, operationId: string) {
+    return this.cursors.get(instanceId)?.operationId === operationId;
   }
 
   attach(
@@ -129,6 +147,9 @@ export class PluginContextWorkspace {
         : null,
       removals: [...(this.removals.get(instanceId) ?? [])],
       ...(this.held.has(instanceId) ? { held: true } : {}),
+      ...(this.removal(instanceId).cursor
+        ? { removal: this.removal(instanceId) }
+        : {}),
     });
     if (Buffer.byteLength(json, "utf8") > PLUGIN_INSTANCE_CONTEXT_BYTES)
       throw new PluginInvocationError("INSTANCE_CONTEXT_TOO_LARGE");
@@ -160,7 +181,12 @@ export class PluginContextWorkspace {
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_INVALID");
     if (saved.context) {
-      const params = parsePluginModelContext(saved.context.params);
+      // Admitted when it was stored, under whatever policy and `_meta` cap
+      // held then.
+      const params = parsePluginModelContext(saved.context.params, {
+        ...MODEL_CONTEXT_POLICY_CEILINGS,
+        metaMaxBytes: MODEL_CONTEXT_POLICY_CEILINGS.updateMaxBytes,
+      });
       const next = reducePluginSession(this.state, {
         type: "context",
         instanceId,
@@ -178,6 +204,11 @@ export class PluginContextWorkspace {
     this.removals.set(instanceId, new Map(saved.removals));
     if (saved.held) this.held.add(instanceId);
     else this.held.delete(instanceId);
+    this.removalCursors.set(instanceId, saved.removal ?? NO_CONTEXT_REMOVALS);
+  }
+
+  private removal(instanceId: string) {
+    return this.removalCursors.get(instanceId) ?? NO_CONTEXT_REMOVALS;
   }
 
   /** Mutations prepare on a separate core session; failed storage never leaks optimism. */
@@ -193,8 +224,14 @@ export class PluginContextWorkspace {
     return copy;
   }
 
-  /** The caller validates the private lease and fresh authority before this commit. */
-  update(instanceId: string, generation: number, request: PluginContextUpdate) {
+  /** The caller validates the private lease and fresh authority before this
+   * commit. `limits` are the budgets this new update is admitted against. */
+  update(
+    instanceId: string,
+    generation: number,
+    request: PluginContextUpdate,
+    limits: PluginContextLimits = MODEL_CONTEXT_POLICY_DEFAULTS,
+  ) {
     const instance = this.state.instances[instanceId];
     if (
       !instance ||
@@ -202,7 +239,7 @@ export class PluginContextWorkspace {
       instance.generation !== generation
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
-    const params = parsePluginModelContext(request.params);
+    const params = parsePluginModelContext(request.params, limits);
     const fingerprint = createHash("sha256")
       .update(JSON.stringify(params))
       .digest("hex");
@@ -242,6 +279,11 @@ export class PluginContextWorkspace {
       throw new PluginInvocationError(transition.rejection);
     this.state = transition.state;
     this.held.delete(instanceId);
+    if (request.attach === "user")
+      this.removalCursors.set(
+        instanceId,
+        recordContextUserAttach(this.removal(instanceId)),
+      );
     this.revisions.set(instanceId, (this.revisions.get(instanceId) ?? 0) + 1);
     this.cursors.set(instanceId, {
       operationId: request.operationId,
@@ -274,62 +316,61 @@ export class PluginContextWorkspace {
                 : {}),
             }) as NonNullable<PluginContextSnapshot["state"]>)
           : null,
+      ...contextRemovalSnapshot(
+        this.held.has(instanceId),
+        this.removal(instanceId),
+      ),
     };
   }
 
-  /** An explicit composer action removes one current visible block, never app-supplied replacement data. */
-  remove(
+  /**
+   * The person removed this App's context from the chat: clear all of it
+   * (visible blocks, assistant-only blocks and structured content) and hold
+   * the App until they use it again. A retry with the same operation is
+   * decided by its basis (`decideContextRemoveAll`); only an applied removal
+   * changes anything.
+   */
+  removeAll(
     instanceId: string,
     generation: number,
-    request: PluginContextRemoval,
-  ) {
-    const snapshot = this.snapshot(instanceId, generation);
-    const fingerprint = JSON.stringify([request.updateId, request.index]);
+    request: PluginContextRemoveAll,
+  ): PluginContextRemoveAllResult {
+    this.snapshot(instanceId, generation);
     const receipts = this.removals.get(instanceId) ?? new Map<string, string>();
-    const previous = receipts.get(request.operationId);
-    if (previous) {
-      if (previous !== fingerprint)
-        throw new PluginInvocationError("INSTANCE_CONTEXT_DUPLICATE_MISMATCH");
-      // A retry cannot resurrect the earlier snapshot after a later app update.
-      return snapshot;
-    }
-    if (!request.operationId || request.operationId.length > 128)
-      throw new PluginInvocationError("INSTANCE_CONTEXT_REMOVAL_INVALID");
-    if (
-      !snapshot.state ||
-      snapshot.state.updateId !== request.updateId ||
-      !Number.isSafeInteger(request.index) ||
-      !pluginContextAttachments(snapshot).some(
-        (item) => item.index === request.index,
-      )
-    )
-      throw new PluginInvocationError("INSTANCE_CONTEXT_REMOVAL_STALE");
-    const current = this.state.instances[instanceId].context!;
+    const decision = decideContextRemoveAll({
+      request,
+      receipt: receipts.get(request.operationId),
+      held: this.held.has(instanceId),
+      removal: this.removal(instanceId),
+    });
+    if (decision !== "apply")
+      return {
+        outcome: decision,
+        snapshot: this.snapshot(instanceId, generation),
+      };
     const transition = reducePluginSession(this.state, {
       type: "context",
       instanceId,
       generation,
       updateId: randomUUID(),
-      content: current.content.filter((_, index) => index !== request.index),
-      structuredContent:
-        request.index === current.content.length
-          ? undefined
-          : current.structuredContent,
-      metadata: current.metadata,
+      content: [],
+      structuredContent: undefined,
+      metadata: undefined,
     });
     if (transition.rejection)
       throw new PluginInvocationError(transition.rejection);
     this.state = transition.state;
-    this.revisions.set(instanceId, snapshot.revision + 1);
-    receipts.set(request.operationId, fingerprint);
-    // Compact: keep the most recent window in insertion order.
-    for (const key of receipts.keys()) {
-      if (receipts.size <= PLUGIN_CONTEXT_REMOVAL_WINDOW) break;
-      receipts.delete(key);
-    }
+    this.revisions.set(instanceId, (this.revisions.get(instanceId) ?? 0) + 1);
+    this.removalCursors.set(
+      instanceId,
+      recordContextRemoveAll(receipts, request, this.removal(instanceId)),
+    );
     this.removals.set(instanceId, receipts);
     this.held.add(instanceId);
-    return this.snapshot(instanceId, generation);
+    return {
+      outcome: "applied",
+      snapshot: this.snapshot(instanceId, generation),
+    };
   }
 
   contexts(threadId: string): PluginModelContext[] {
@@ -353,6 +394,7 @@ export class PluginContextWorkspace {
     this.revisions.delete(instanceId);
     this.removals.delete(instanceId);
     this.held.delete(instanceId);
+    this.removalCursors.delete(instanceId);
     const instance = this.state.instances[instanceId];
     if (instance?.lifecycle === "closed") {
       // The enclosing owner revoked/removed this UUID lease before release.

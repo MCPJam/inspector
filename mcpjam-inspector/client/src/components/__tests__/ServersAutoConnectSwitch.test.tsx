@@ -20,11 +20,11 @@ describe("ServersAutoConnectSwitch", () => {
     localStorage.clear();
   });
 
-  it("defaults to on, matching the auto-connect preference", () => {
+  it("defaults to off, matching the auto-connect preference", () => {
     renderSwitch();
     expect(screen.getByRole("switch", { name: SWITCH_NAME })).toHaveAttribute(
       "data-state",
-      "checked",
+      "unchecked",
     );
   });
 
@@ -36,6 +36,7 @@ describe("ServersAutoConnectSwitch", () => {
   });
 
   it("writes autoConnectServersEnabled=false when toggled off", async () => {
+    localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, "true");
     const user = userEvent.setup();
     const onToggled = vi.fn();
     renderSwitch(onToggled);

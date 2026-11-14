@@ -9,6 +9,7 @@ import {
   runChatEngineLoop,
   STEP_LIMIT_NOTE,
 } from "../mcpjam-stream-handler";
+import { handleHostedOrgChatModel } from "../org-model-stream-handler";
 import { buildPageTools } from "../chat-v2-orchestration";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
@@ -167,6 +168,59 @@ describe("mcpjam-stream-handler", () => {
     // A service token left stubbed by one test changes how later tests sign
     // and claim their approvals.
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["openai/gpt-5-mini", "gpt-5-mini", "openai"],
+    ["anthropic/claude-sonnet-4.5", "claude-sonnet-4-5", "anthropic"],
+    ["azure/my-deployment", "my-deployment", "azure"],
+  ])("org delegation preserves %s and its native model on every step", async (modelId, nativeModelId, providerKey) => {
+    const modelSelection = { modelId, nativeModelId, source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "conn-selected" },
+      fallback: { provider: "none" as const, model: "none" as const },
+      settings: { reasoningEffort: "high" as const } };
+    vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+    await handleHostedOrgChatModel({
+      projectId: "project-1", modelId, nativeModelId: "stale-native", providerKey, modelSelection,
+      messages: [{ role: "user", content: "go" }], systemPrompt: "", tools: {},
+      reasoningEffort: "high", maxSteps: 2, heartbeatIntervalMs: 0,
+      mcpClientManager: { getAllToolsMetadata: vi.fn().mockReturnValue({}) } as never,
+      extraBodyFields: { model: "wrong", providerKey: "wrong", nativeModelId: "wrong",
+        modelSelection: { ...modelSelection, connectionRef: { kind: "orgProvider", id: "wrong" } } },
+    });
+    await lastExecution;
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    for (const [url, init] of vi.mocked(global.fetch).mock.calls) {
+      expect(String(url)).toBe("https://test-convex.example.com/stream/org");
+      const body = JSON.parse(String(init!.body));
+      expect(body).toMatchObject({ model: nativeModelId, modelSelection, providerKey, reasoningEffort: "high" });
+      expect(body).not.toHaveProperty("nativeModelId");
+    }
+  });
+
+  it("hosted aliases keep the selection authoritative over extra fields", async () => {
+    const modelSelection = { modelId: "openai/gpt-5-mini", source: "hosted" as const,
+      fallback: { provider: "none" as const, model: "none" as const } };
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "go" }], modelId: "gpt-5-mini", provider: "openai",
+      modelSelection, systemPrompt: "", tools: {}, heartbeatIntervalMs: 0,
+      mcpClientManager: { getAllToolsMetadata: vi.fn().mockReturnValue({}) } as never,
+      extraBodyFields: { model: "other", modelSelection: { ...modelSelection, source: "org" }, nativeModelId: "other" },
+    });
+    await lastExecution;
+    const body = JSON.parse(String(vi.mocked(global.fetch).mock.calls[0]![1]!.body));
+    expect(body).toMatchObject({ model: modelSelection.modelId, modelSelection });
+    expect(body).not.toHaveProperty("nativeModelId");
+  });
+
+  it("refuses a mismatched stream selection before any provider attempt", async () => {
+    await expect(handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "go" }], modelId: "other/model",
+      modelSelection: { modelId: "openai/gpt-5-mini", source: "hosted", fallback: { provider: "none", model: "none" } },
+      systemPrompt: "", tools: {},
+      mcpClientManager: { getAllToolsMetadata: vi.fn() } as never,
+    })).rejects.toThrow(/modelSelection/);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("awaits durable intent before allowing a provider invocation", async () => {
@@ -345,6 +399,81 @@ describe("mcpjam-stream-handler", () => {
     expect(
       (fetchBody.tools as Array<{ name: string }>).map((t) => t.name),
     ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
+  });
+
+  it("sends the backend provider-safe tool names and restores them in its reply", async () => {
+    const toolDef = {
+      description: "Add",
+      inputSchema: { type: "object" } as any,
+    };
+    vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
+      { name: "cart.add", inputSchema: { type: "object" } },
+      { name: "cart_add", inputSchema: { type: "object" } },
+    ]);
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "tool-input-start", toolCallId: "c2", toolName: "cart_add_2" },
+        {
+          type: "tool-input-available",
+          toolCallId: "c2",
+          toolName: "cart_add_2",
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "tool-calls",
+          totalUsage: { inputTokens: 1, outputTokens: 1 },
+        },
+      ]),
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [
+        { role: "user", content: "add it" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "cart.add",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "cart.add",
+              output: { type: "text", value: "added" },
+            },
+          ],
+        },
+      ] as any,
+      modelId: "anthropic/claude-sonnet-4.5",
+      systemPrompt: "",
+      tools: { "cart.add": toolDef, cart_add: toolDef },
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+    });
+    await lastExecution;
+
+    const fetchBody = JSON.parse(
+      String(vi.mocked(global.fetch).mock.calls[0]![1]!.body),
+    );
+    expect(
+      (fetchBody.tools as Array<{ name: string }>).map((t) => t.name),
+    ).toEqual(["cart_add_2", "cart_add"]);
+    expect(fetchBody.messages).toContain('"toolName":"cart_add_2"');
+    expect(fetchBody.messages).not.toContain("cart.add");
+    const forwardedNames = writtenChunks
+      .filter((chunk) => chunk?.type === "tool-input-available")
+      .map((chunk) => chunk.toolName);
+    expect(forwardedNames).toEqual(["cart.add"]);
   });
 
   it("scrubs backend-only approval parts while preserving full history for completion callbacks", async () => {

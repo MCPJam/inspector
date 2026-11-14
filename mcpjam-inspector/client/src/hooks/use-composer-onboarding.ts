@@ -1,4 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useReducedMotion } from "framer-motion";
 import { useTypewriterString } from "./use-typewriter-string";
 
@@ -14,7 +21,7 @@ export interface UseComposerOnboardingOptions {
 
 export interface UseComposerOnboardingReturn {
   input: string;
-  setInput: (value: string) => void;
+  setInput: Dispatch<SetStateAction<string>>;
   handleInputChange: (nextInput: string) => void;
   isGuidedInputPristine: boolean;
   submitGatedByServer: boolean;

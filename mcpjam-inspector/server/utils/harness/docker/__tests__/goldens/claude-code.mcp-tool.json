@@ -86,6 +86,7 @@
                 },
                 {
                   "input": {},
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "delivery_probe"
@@ -138,7 +139,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-3>",
-              "toolName": "ping"
+              "toolName": "ping",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
@@ -168,7 +170,7 @@
       "type": "text-start"
     },
     {
-      "delta": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+      "delta": "TOOL RESULT RECEIVED: PROBE_MCP_OK\n<system-reminder>\n<total_tokens>N tokens left</total_tokens>\n</system-reminder>",
       "id": "<id-7>",
       "type": "text-delta"
     },
@@ -206,6 +208,7 @@
                 },
                 {
                   "input": {},
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "delivery_probe"
@@ -245,7 +248,7 @@
             {
               "content": [
                 {
-                  "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+                  "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK\n<system-reminder>\n<total_tokens>N tokens left</total_tokens>\n</system-reminder>",
                   "type": "text"
                 }
               ],
@@ -267,7 +270,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-3>",
-              "toolName": "ping"
+              "toolName": "ping",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
@@ -358,6 +362,7 @@
           },
           {
             "input": {},
+            "providerExecuted": true,
             "providerOptions": {
               "mcpjam": {
                 "serverId": "delivery_probe"
@@ -397,7 +402,7 @@
       {
         "content": [
           {
-            "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+            "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK\n<system-reminder>\n<total_tokens>N tokens left</total_tokens>\n</system-reminder>",
             "type": "text"
           }
         ],

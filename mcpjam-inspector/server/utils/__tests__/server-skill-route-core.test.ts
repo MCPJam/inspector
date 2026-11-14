@@ -80,6 +80,7 @@ async function makeManager(
     }),
     listServerSkills: vi.fn(async () => ({ skills: [entry] })),
     getServerSkill: vi.fn(async () => entry),
+    getServerSkillResult: vi.fn(async () => ({ skill: entry })),
     readResource: vi.fn(async (_id: string, read: { uri: string }) => ({
       contents: [
         {

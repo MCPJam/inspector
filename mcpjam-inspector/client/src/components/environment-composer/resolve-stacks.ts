@@ -39,11 +39,11 @@ import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+
 import {
-  ExternalCredentialMissingError,
-  externalCredentialSecretSelection,
-  type ExternalCredentialSecret,
-} from "@/shared/external-credential-selection";
+  orgKeyHarnessName,
+  orgKeySurfaceRefusal,
+} from "@/shared/org-key-surfaces";
 
 /** One composition, in the shape `ensureAdhocEnvironments` accepts. */
 export type AdhocStackInput = {
@@ -51,12 +51,6 @@ export type AdhocStackInput = {
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   computerEnvironmentId?: string;
-  /**
-   * The secrets the environment grants. Set for a client that signs in with the
-   * customer's own account (Cursor): its brokered `CURSOR_API_KEY` reaches a box
-   * only through this, and there is no model lease to rescue a missing one.
-   */
-  secretSelection?: { mode: "explicit"; secretIds: string[] };
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
   /** Saved selection behind `modelId` (only with `modelSelectionsEnabled`). */
@@ -76,9 +70,8 @@ export type ComposerResolveErrorCode =
   | "TOO_MANY_TARGETS"
   | "UNRESOLVED_ENVIRONMENT"
   | "ADHOC_UNAVAILABLE"
-  /** A Cursor client with no usable `CURSOR_API_KEY` to grant. */
-  | "MISSING_CREDENTIAL"
-  /** A client's settings could not be read, so its credential can't be checked. */
+  /** A client that can't run here (Cursor in User Testing), or unreadable. */
+  | "CLIENT_UNSUPPORTED"
   | "CLIENT_UNREADABLE"
   | "BACKEND_REJECTED";
 
@@ -250,14 +243,10 @@ export async function resolveComposerEnvironments(args: {
    * must not send `modelId` — an older validator would reject the arg.
    */
   modelMatrixEnabled?: boolean;
-  /**
-   * EVAL surfaces only. An eval run takes its servers from the environment's
-   * server group alone, so a target without one (and without a plugin pin
-   * contributing servers) would run with no tools; refuse it here instead of
-   * minting it. Journeys, scenarios and swarms fall back to the client's own
-   * servers and leave this off.
-   */
+  /** Require a selected group or pinned plugin server source. */
   requireServerAttachment?: boolean;
+  /** Evals may explicitly select none/local; swarms require actual servers. */
+  allowEmptyServerSelection?: boolean;
   /**
    * The harness a client runs (`null` = emulated). Injected, like the
    * mutation, so this module stays pure. Only consulted for clients with
@@ -272,18 +261,11 @@ export async function resolveComposerEnvironments(args: {
    */
   modelSelectionsEnabled?: boolean;
   /**
-   * The project's secrets as the composer sees them (shared rows plus their own
-   * personal ones), for a client that runs an external-account harness. A cell
-   * for such a client is minted with the key's grant, or refused here when there
-   * is none. `undefined` ⇒ not loaded: a Cursor cell is then refused rather than
-   * minted without a key it cannot be told it has.
+   * The cells will run in User Testing, which never runs a client on the
+   * organization's vendor key (Cursor): such a client is refused here, before
+   * anything is minted, with the copy its turn would give.
    */
-  projectSecrets?: readonly ExternalCredentialSecret[];
-  /**
-   * The cells will be run by people other than the composer (User Testing), so
-   * the key must be project-shared: a personal key reaches only its owner.
-   */
-  requireSharedExternalCredential?: boolean;
+  refuseOrgKeyClients?: boolean;
 }): Promise<ResolveComposerResult> {
   const {
     projectId,
@@ -295,10 +277,10 @@ export async function resolveComposerEnvironments(args: {
     max,
     modelMatrixEnabled = false,
     requireServerAttachment = false,
+    allowEmptyServerSelection = true,
     loadHostHarness,
     modelSelectionsEnabled = false,
-    projectSecrets,
-    requireSharedExternalCredential = false,
+    refuseOrgKeyClients = false,
   } = args;
 
   const live = liveEnvironments.filter((e) => !e.archivedAt);
@@ -322,12 +304,15 @@ export async function resolveComposerEnvironments(args: {
           "One of the selected environments is no longer available. Remove it and pick another.",
         );
       }
-      if (requireServerAttachment && lacksEvalServerSource(env)) {
+      if (
+        requireServerAttachment &&
+        lacksServerSource(env, allowEmptyServerSelection)
+      ) {
         throw new ComposerResolveError(
           "NO_SERVER_GROUP",
           `"${environmentLabel(
             env,
-          )}" has no server group, so an eval run on it would connect no servers. Pick a server group for it first.`,
+          )}" has no selected servers. Pick a server or group before continuing.`,
         );
       }
       environments.push(env);
@@ -395,7 +380,7 @@ export async function resolveComposerEnvironments(args: {
   if (requireServerAttachment && !fields.serverAttachmentId) {
     throw new ComposerResolveError(
       "NO_SERVER_GROUP",
-      "Pick a server or group. An eval run takes its servers from the group alone, so without one it would connect no servers.",
+      "Pick a server or group before continuing.",
     );
   }
 
@@ -472,52 +457,31 @@ export async function resolveComposerEnvironments(args: {
     { environment: ProjectEnvironmentView; created?: boolean }
   >();
   if (toMint.length > 0) {
-    // `computerEnvironmentId` is omitted rather than sent as null — the mutation
-    // types it `string?` and Convex rejects an explicit null at the validator.
-    // Same for inherit-cell `modelId`.
-    // A client that signs in with the customer's own account needs its key
-    // granted by the environment it runs in. Looked up once per client. With
-    // no loader at all the harness is unknown and the client is treated as
-    // having none, as before this existed; a loader that FAILS is refused,
-    // because a Cursor cell minted on that guess would carry no key and be
-    // refused at its first turn with nothing pointing back here.
-    const credentialGrantByHost = new Map<
-      string,
-      { mode: "explicit"; secretIds: string[] } | undefined
-    >();
-    for (const hostId of new Set(toMint.map((cell) => cell.hostId))) {
-      let harness: HarnessModelTarget | null = null;
-      if (loadHostHarness) {
+    if (refuseOrgKeyClients && loadHostHarness) {
+      for (const hostId of new Set(toMint.map((cell) => cell.hostId))) {
+        let harnessId: string | undefined;
         try {
-          harness = await loadHostHarness(hostId);
+          harnessId = (await loadHostHarness(hostId))?.harnessId;
         } catch {
           throw new ComposerResolveError(
             "CLIENT_UNREADABLE",
-            "Couldn't read one of these clients' settings to check whether it needs a key. Try again.",
+            "Couldn't read one of these clients' settings. Try again.",
+          );
+        }
+        const name = orgKeyHarnessName(harnessId);
+        if (name) {
+          throw new ComposerResolveError(
+            "CLIENT_UNSUPPORTED",
+            orgKeySurfaceRefusal(name, "study"),
           );
         }
       }
-      try {
-        credentialGrantByHost.set(
-          hostId,
-          externalCredentialSecretSelection(
-            { harness: harness?.harnessId },
-            projectSecrets,
-            { requireShared: requireSharedExternalCredential },
-          ),
-        );
-      } catch (error) {
-        if (error instanceof ExternalCredentialMissingError) {
-          throw new ComposerResolveError("MISSING_CREDENTIAL", error.message);
-        }
-        throw error;
-      }
     }
+    // `computerEnvironmentId` is omitted rather than sent as null — the mutation
+    // types it `string?` and Convex rejects an explicit null at the validator.
+    // Same for inherit-cell `modelId`.
     const stacks: AdhocStackInput[] = toMint.map((cell) => ({
       hostId: cell.hostId,
-      ...(credentialGrantByHost.get(cell.hostId)
-        ? { secretSelection: credentialGrantByHost.get(cell.hostId)! }
-        : {}),
       ...(fields.serverAttachmentId
         ? { serverAttachmentId: fields.serverAttachmentId }
         : {}),
@@ -635,37 +599,37 @@ export function describeSkippedModelCells(
 }
 
 /**
- * An environment an EVAL run would launch with no servers: no server group,
- * and no plugin pin contributing one. The backend refuses to launch these
- * (`ENV_NO_SERVERS`); eval surfaces refuse to create them first.
+ * Selection guard shared by evals and swarms. Swarms cannot select none/local.
  */
-export function lacksEvalServerSource(
+export function lacksServerSource(
   env: Pick<
     ProjectEnvironmentView,
     "serverAttachmentId" | "pluginVersionIds" | "serverSelection"
   >,
+  allowEmptyServerSelection = true,
 ): boolean {
   if (env.serverSelection?.mode === "unresolved") return true;
   if (
-    env.serverSelection?.mode === "none" ||
-    env.serverSelection?.mode === "local"
+    allowEmptyServerSelection &&
+    (env.serverSelection?.mode === "none" ||
+      env.serverSelection?.mode === "local")
   )
     return false;
   return !env.serverAttachmentId && !(env.pluginVersionIds?.length ?? 0);
 }
 
 /**
- * Whether a composer state names an eval target that would run with no
- * servers — the check an eval form gates submit on, before resolution.
+ * Whether any composer target lacks the server source required by its surface.
  */
 export function composerMissingServerGroup(
   state: EnvironmentComposerState,
   liveEnvironments: readonly ProjectEnvironmentView[],
+  allowEmptyServerSelection = true,
 ): boolean {
   if (isComposeMode(state)) return !state.stack.serverAttachmentId;
   return state.environmentIds.some((id) => {
     const env = liveEnvironments.find((e) => e.environmentId === id);
-    return env ? lacksEvalServerSource(env) : false;
+    return env ? lacksServerSource(env, allowEmptyServerSelection) : false;
   });
 }
 

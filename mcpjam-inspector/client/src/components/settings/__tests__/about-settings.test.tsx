@@ -30,4 +30,12 @@ it("shows app identity, cached GitHub stars, version, and resource links", () =>
     "href",
     "https://trust.mcpjam.com",
   );
+  expect(screen.getByRole("link", { name: /Privacy Policy/ })).toHaveAttribute(
+    "href",
+    "https://www.mcpjam.com/privacy-policy",
+  );
+  expect(screen.getByRole("link", { name: /Terms of Use/ })).toHaveAttribute(
+    "href",
+    "https://www.mcpjam.com/terms-of-use",
+  );
 });

@@ -1,5 +1,15 @@
+import { useOrgUsagePages } from "./org-usage-pages";
 import { useCallback, useState } from "react";
 import { useQuery, useAction } from "convex/react";
+import {
+  orgRequiresOwnKeys,
+  type PolicyEligibility,
+} from "@/shared/org-ai-key-policy";
+import type {
+  GatewayApi,
+  GatewayLastTest,
+  GatewayModel,
+} from "@/shared/gateway-connection";
 
 export interface OrgModelProvider {
   /**
@@ -16,20 +26,49 @@ export interface OrgModelProvider {
   displayName?: string;
   selectedModels?: string[];
   hasSecret: boolean;
+  /**
+   * Where the connection runs (`cloud`: MCPJam calls the provider; `local`:
+   * an Inspector does), as the backend reports it. Display only: whether the
+   * connection may serve AI requests is `policyEligibility`.
+   */
+  runtimeLocation?: "cloud" | "local";
+  /**
+   * The backend's verdict on whether AI requests may run on this connection
+   * while the organization requires its own keys. Read it only through
+   * `connectionPolicyEligibility` (`@/shared/org-ai-key-policy`), which fails
+   * closed when an older backend sent none.
+   */
+  policyEligibility?: PolicyEligibility;
+  /**
+   * A gateway connection's APIs, models and last Test. Read only for
+   * `custom:*` rows: built-in rows carry values filled in for compatibility.
+   * Absent from older backends.
+   */
+  apis?: GatewayApi[];
+  models?: GatewayModel[];
+  lastTest?: GatewayLastTest;
 }
+
+export type UpsertOrgProviderArgs = {
+  providerKey: string;
+  secret?: string;
+  baseUrl?: string;
+  protocol?: string;
+  modelIds?: string[];
+  displayName?: string;
+  selectedModels?: string[];
+  /** The gateway editor always sends where calls come from. */
+  runtimeLocation?: "cloud" | "local";
+  apis?: GatewayApi[];
+  models?: GatewayModel[];
+};
 
 export interface OrgModelConfigResult {
   providers: OrgModelProvider[] | undefined;
+  /** The organization requires its own keys for AI features. */
+  requireOrgKeys: boolean;
   isLoading: boolean;
-  upsertProvider: (args: {
-    providerKey: string;
-    secret?: string;
-    baseUrl?: string;
-    protocol?: string;
-    modelIds?: string[];
-    displayName?: string;
-    selectedModels?: string[];
-  }) => Promise<{ success: true }>;
+  upsertProvider: (args: UpsertOrgProviderArgs) => Promise<{ success: true }>;
   deleteProvider: (providerKey: string) => Promise<{ success: true }>;
   isSaving: boolean;
   error: string | null;
@@ -91,23 +130,7 @@ export function useOrgModelUsageSummary(
   organizationId: string | null,
   options: { enabled?: boolean; rangeDays?: number } = {}
 ): { summary: OrgModelUsageSummary | undefined; isLoading: boolean } {
-  const enabled = options.enabled ?? true;
-  const shouldQuery = !!organizationId && enabled;
-
-  const summary = useQuery(
-    "organizationModelProviders:getUsageSummary" as any,
-    shouldQuery
-      ? ({
-          organizationId,
-          rangeDays: options.rangeDays ?? 30,
-        } as any)
-      : "skip"
-  ) as OrgModelUsageSummary | undefined;
-
-  return {
-    summary,
-    isLoading: shouldQuery && summary === undefined,
-  };
+  return useOrgUsagePages(organizationId, options.enabled ?? true, options.rangeDays ?? 30);
 }
 
 export function useOrgModelConfig(
@@ -118,7 +141,7 @@ export function useOrgModelConfig(
   const config = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,
     shouldQuery ? ({ organizationId } as any) : "skip"
-  ) as { providers: OrgModelProvider[] } | undefined;
+  ) as { providers: OrgModelProvider[]; aiKeyPolicy?: unknown } | undefined;
 
   const upsertProviderAction = useAction(
     "organizationModelProviders:upsertProvider" as any
@@ -131,15 +154,7 @@ export function useOrgModelConfig(
   const [error, setError] = useState<string | null>(null);
 
   const upsertProvider = useCallback(
-    async (args: {
-      providerKey: string;
-      secret?: string;
-      baseUrl?: string;
-      protocol?: string;
-      modelIds?: string[];
-      displayName?: string;
-      selectedModels?: string[];
-    }): Promise<{ success: true }> => {
+    async (args: UpsertOrgProviderArgs): Promise<{ success: true }> => {
       if (!organizationId) throw new Error("Organization is required");
       setIsSaving(true);
       setError(null);
@@ -186,6 +201,7 @@ export function useOrgModelConfig(
 
   return {
     providers: config?.providers,
+    requireOrgKeys: orgRequiresOwnKeys(config),
     isLoading: shouldQuery && config === undefined,
     upsertProvider,
     deleteProvider,

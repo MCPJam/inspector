@@ -216,3 +216,7 @@ It rejects a `Release` run, because there the smoke is a job of the release
 itself rather than its own run — a stronger guarantee than this after-the-fact
 check, since the tag cannot be pushed unless that job passed. These tags are
 separate from Inspector's application releases.
+
+### Eval identity
+
+This action runs the authenticated hosted CLI workflow and already passes its `api-key` input as `MCPJAM_API_KEY`. For local eval workflows adopting CLI 6 or SDK 10, provide an organization `sk_` key even when using your own provider keys and disabling result uploads. These upcoming versions record one online start per run; planned iterations are not completed or billed usage. Deploy the backend endpoint before publishing them. See [local eval identity](../../docs/cli/local-evals.mdx#eval-identity-and-local-data).

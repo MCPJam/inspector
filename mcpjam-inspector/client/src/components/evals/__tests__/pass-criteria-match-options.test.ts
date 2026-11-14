@@ -151,4 +151,24 @@ describe("computeIterationPassed honors snapshot matchOptions", () => {
     });
     expect(computeIterationPassed(iter)).toBe(true);
   });
+
+  it("does not count a retried failure against a bounded no-expectation case", () => {
+    const failedThenRetried = [{ ...tc("a"), failed: true }, tc("a")];
+    expect(
+      computeIterationPassed(
+        makeIteration({
+          actual: failedThenRetried,
+          matchOptions: { maxExtraToolCalls: 1 },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      computeIterationPassed(
+        makeIteration({
+          actual: [tc("a"), tc("a")],
+          matchOptions: { maxExtraToolCalls: 1 },
+        }),
+      ),
+    ).toBe(false);
+  });
 });

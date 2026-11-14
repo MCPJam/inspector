@@ -200,6 +200,12 @@ export async function POST(request: Request) {
   // both fired when only one did.
   const results: { workflow: string; ok: boolean; error?: string }[] = [];
 
+  // Who clicked, for the #engineering deploy post: the run itself belongs to
+  // the write token's owner. First name only, because the inspector repo is
+  // public and its run logs show these inputs.
+  const firstName = user.firstName?.trim();
+  const requestedBy = firstName ? `${firstName} via Soundcheck` : "Soundcheck";
+
   if (releaseWorkflow) {
     // Workflow dispatch inputs go over the wire as strings. The flags mean the
     // same thing to both workflows: prepare-release.yml writes them into the
@@ -209,6 +215,9 @@ export async function POST(request: Request) {
       deploy_webapp: String(parsed.deploy_webapp),
       skip_verify: String(effectiveSkipVerify)
     };
+    // prepare-release.yml declares no such input, and GitHub rejects a
+    // dispatch with one. Its release names whoever merges the version PR.
+    if (releaseWorkflow === "release.yml") inputs.requested_by = requestedBy;
     try {
       await dispatchWorkflow(
         "MCPJam",
@@ -236,7 +245,7 @@ export async function POST(request: Request) {
         "inspector",
         "deploy-mcp-prod.yml",
         "main",
-        {},
+        { requested_by: requestedBy },
         writeToken
       );
       results.push({ workflow: "deploy-mcp-prod.yml", ok: true });

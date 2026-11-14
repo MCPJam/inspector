@@ -1,8 +1,17 @@
 import { z } from "zod";
 import {
-  OpenAIUiToolMetadataSchema,
+  OpenAIUiEntrypointSchema,
   type OpenAIUiEntrypoint,
 } from "@openai/mcp-extensions/server";
+import {
+  pluginDiagnostic,
+  type PluginDiagnostic,
+} from "./plugin-diagnostics.js";
+import {
+  entrypointIssues,
+  quickActionsShown,
+  type EntrypointBehavior,
+} from "./plugin-entry-checks.js";
 
 export type PluginEntrypointTool = {
   name: string;
@@ -33,14 +42,52 @@ export type PluginEntrypointSelector = z.infer<
 >;
 export class PluginActivationError extends Error {}
 
-/** Catalog metadata is presentation, not a source of execution authority. */
+const entrypointListSchema = z.object({ entrypoints: z.array(z.unknown()) });
+
+/** Catalog metadata is presentation, not a source of execution authority.
+ * Each declaration is read on its own, so one this host does not recognize
+ * (such as a removed kind) drops only itself, never the tool's other
+ * entrypoints. */
+function readEntrypoints(tool: { _meta?: Record<string, unknown> }) {
+  const list = entrypointListSchema.safeParse(tool._meta?.["openai/ui"]);
+  if (!list.success) return { entrypoints: [], ignored: 0 };
+  const entrypoints = list.data.entrypoints.flatMap((entry) => {
+    const parsed = OpenAIUiEntrypointSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+  return {
+    entrypoints,
+    ignored: list.data.entrypoints.length - entrypoints.length,
+  };
+}
+
 export function pluginEntrypointDeclarations(tool: {
   _meta?: Record<string, unknown>;
 }): OpenAIUiEntrypoint[] {
-  const metadata = OpenAIUiToolMetadataSchema.safeParse(
-    tool._meta?.["openai/ui"],
+  return readEntrypoints(tool).entrypoints;
+}
+
+/** One Logs row naming the tools whose unrecognized declarations were ignored. */
+export function pluginEntrypointDiagnostics(
+  tools: readonly { name: string; _meta?: Record<string, unknown> }[],
+  serverId: string,
+): PluginDiagnostic[] {
+  const names = tools.flatMap((tool) =>
+    readEntrypoints(tool).ignored ? [tool.name] : [],
   );
-  return metadata.success ? (metadata.data.entrypoints ?? []) : [];
+  if (!names.length) return [];
+  return [
+    {
+      ...pluginDiagnostic(
+        "warning",
+        "PLUGIN_ENTRYPOINT_UNRECOGNIZED",
+        "Entrypoint declaration ignored",
+        'Some `_meta["openai/ui"].entrypoints` items aren\'t a valid global, thread or file entrypoint, so MCPJam ignored them. The tools\' other entrypoints still work. Fix each ignored item, or remove it if it is the retired `type: "settings"` (declare structured settings with the `openai/settings` server capability instead).',
+        { tools: names.slice(0, 16) },
+      ),
+      serverId,
+    },
+  ];
 }
 
 export function pluginEntrypointTitle(tool: PluginEntrypointTool): string {
@@ -53,13 +100,11 @@ export function pluginEntrypointTitle(tool: PluginEntrypointTool): string {
 
 export function pluginEntrypointKinds(tool: {
   _meta?: Record<string, unknown>;
-}): ("global" | "thread" | "settings")[] {
+}): ("global" | "thread")[] {
   return [
     ...new Set(
       pluginEntrypointDeclarations(tool).flatMap(({ type }) =>
-        type === "global" || type === "thread" || type === "settings"
-          ? [type]
-          : [],
+        type === "global" || type === "thread" ? [type] : [],
       ),
     ),
   ];
@@ -73,30 +118,6 @@ export function pluginQuickAction(tool: { _meta?: Record<string, unknown> }) {
       : [],
   );
   return actions.length === 1 ? structuredClone(actions[0]) : undefined;
-}
-
-/** Use only a single authorized server's catalog; names never cross servers. */
-export function pluginSettingsEntrypoints(
-  tools: readonly PluginEntrypointTool[],
-  search = "",
-) {
-  const query = search.trim().toLocaleLowerCase();
-  return tools.flatMap((tool) => {
-    const declarations = pluginEntrypointDeclarations(tool).filter(
-      (entrypoint) => entrypoint.type === "settings",
-    );
-    if (!declarations.length) return [];
-    const title = pluginEntrypointTitle(tool);
-    const searchTerms = [
-      ...new Set(
-        declarations.flatMap((entrypoint) => entrypoint.searchTerms ?? []),
-      ),
-    ];
-    const matches = [title, tool.name, ...searchTerms].some((term) =>
-      term.toLocaleLowerCase().includes(query),
-    );
-    return matches ? [{ toolName: tool.name, title, searchTerms }] : [];
-  });
 }
 
 /** Declaration-only registry. A match does not grant access to a file. */
@@ -121,16 +142,23 @@ export function pluginFileEntrypoints(tools: readonly PluginEntrypointTool[]) {
   });
 }
 
-/** Resolve only a declaration received from the authorized server's catalog. */
+/** Resolve only a declaration received from the authorized server's catalog.
+ * `behavior` is the client's entry-point rules when it opens one; an App
+ * already open re-resolves without them, as launcher toggles never close it. */
 export function pluginEntrypointPlan(
   tool: { name: string; _meta?: Record<string, unknown> },
   selection: PluginEntrypointSelector,
+  behavior?: EntrypointBehavior,
 ) {
   const selector = pluginEntrypointSelectorSchema.parse(selection);
   if (selector.kind === "file")
     throw new PluginActivationError("PLUGIN_FILE_SOURCE_REQUIRED");
+  const issues = entrypointIssues(tool, behavior);
   if (selector.kind === "quick-action") {
-    const action = pluginQuickAction(tool);
+    const action =
+      quickActionsShown(behavior) && !issues.hidden
+        ? pluginQuickAction(tool)
+        : undefined;
     if (!action)
       throw new PluginActivationError("PLUGIN_QUICK_ACTION_UNAVAILABLE");
     return {
@@ -142,8 +170,15 @@ export function pluginEntrypointPlan(
       scope: { kind: "global" as const },
     };
   }
-  if (!pluginEntrypointKinds(tool).includes(selector.kind))
+  // A settings selector names MCPJam's structured-settings surface, which no
+  // tool declares as an entrypoint.
+  if (
+    selector.kind === "settings" ||
+    !pluginEntrypointKinds(tool).includes(selector.kind)
+  )
     throw new PluginActivationError("PLUGIN_ENTRYPOINT_UNAVAILABLE");
+  if (issues.unopenable)
+    throw new PluginActivationError("PLUGIN_ENTRYPOINT_UNOPENABLE");
   return {
     selector,
     params: { name: tool.name, arguments: {} },

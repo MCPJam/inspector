@@ -21,7 +21,10 @@ vi.mock("convex/react", () => ({
     Object.fromEntries(
       Object.entries(queries).map(([key, { args }]) => {
         state.calls.push({ name: "plugins:resolveActivePlugins", args });
-        return [key, state.next];
+        return [
+          key,
+          typeof state.next === "function" ? state.next(args) : state.next,
+        ];
       }),
     ),
 }));
@@ -115,6 +118,8 @@ describe("useActivePlugins", () => {
     expect(state.calls).toEqual([]);
     expect(hook.current.plugins).toEqual([]);
     expect(hook.current.isLoading).toBe(false);
+    // Not asked is not an answer of no plugins.
+    expect(hook.current.answered).toBe(false);
   });
 
   it("does not ask while the flag is still loading", () => {
@@ -137,6 +142,7 @@ describe("useActivePlugins", () => {
       projectId: PROJECT_ID,
       content: false,
       runtimeVenue: "local",
+      componentAdmission: true,
     });
 
     state.hostedMode = true;
@@ -145,6 +151,7 @@ describe("useActivePlugins", () => {
       projectId: PROJECT_ID,
       content: false,
       runtimeVenue: "hosted",
+      componentAdmission: true,
     });
   });
 
@@ -154,6 +161,7 @@ describe("useActivePlugins", () => {
       projectId: PROJECT_ID,
       content: false,
       runtimeVenue: "hosted",
+      componentAdmission: true,
     });
   });
 
@@ -161,6 +169,7 @@ describe("useActivePlugins", () => {
     const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
     expect(hook.current.isLoading).toBe(true);
     expect(hook.current.failed).toBe(false);
+    expect(hook.current.answered).toBe(false);
   });
 
   it("splits active plugins from skipped ones and lists only active servers", () => {
@@ -182,6 +191,90 @@ describe("useActivePlugins", () => {
       },
     ]);
     expect(hook.current.isLoading).toBe(false);
+    expect(hook.current.answered).toBe(true);
+  });
+
+  it("leaves out a server the member can't use yet", () => {
+    state.next = result([
+      {
+        ...bits,
+        servers: [
+          ...bits.servers,
+          {
+            serverId: "srv_crm",
+            name: "bits-crm",
+            componentKey: "crm",
+            placement: "remote",
+            unavailable: "needs_auth",
+          },
+        ],
+      },
+    ]);
+    const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
+    expect(hook.current.activeServers.map((s) => s.serverId)).toEqual([
+      "srv_bits",
+    ]);
+  });
+
+  // What the browser client throws: the deployment's message between its
+  // `[CONVEX Q(…)]` prefix and "Called by client" line.
+  const thrown = (body: string) =>
+    new Error(
+      `[CONVEX Q(plugins:resolveActivePlugins)] [Request ID: 6f2c3a9b1d4e5f60] ${body}\n  Called by client`,
+    );
+
+  it.each([
+    [
+      "development",
+      thrown(
+        "Server Error\nArgumentValidationError: Object contains extra field `componentAdmission` that is not in the validator.",
+      ),
+    ],
+    ["production", thrown("Server Error")],
+  ])(
+    "asks a backend from before component admission the old way, without failing (%s)",
+    (_deployment, refusal) => {
+      state.next = (args: { componentAdmission?: boolean }) =>
+        args.componentAdmission ? refusal : result([bits]);
+      const { result: hook, rerender } = renderHook(() =>
+        useActivePlugins(PROJECT_ID),
+      );
+      expect(state.calls.at(-1)?.args).not.toHaveProperty("componentAdmission");
+      expect(hook.current.failed).toBe(false);
+      expect(hook.current.activePlugins.map((p) => p.pluginId)).toEqual([
+        "plg_bits",
+      ]);
+      // The new read answering again takes over: one failure never pins the
+      // old view, which skips a plugin with an unusable server whole.
+      state.next = (args: { componentAdmission?: boolean }) =>
+        args.componentAdmission
+          ? result([{ ...bits, pluginId: "plg_admitted" }])
+          : result([bits]);
+      rerender();
+      expect(state.calls.at(-1)?.args).toHaveProperty(
+        "componentAdmission",
+        true,
+      );
+      expect(hook.current.activePlugins.map((p) => p.pluginId)).toEqual([
+        "plg_admitted",
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "another error naming the field",
+      thrown("Server Error\nUncaught Error: componentAdmission needs a venue"),
+    ],
+    [
+      "a ConvexError",
+      Object.assign(thrown("Server Error"), { data: { code: "FORBIDDEN" } }),
+    ],
+  ])("fails without asking again on %s", (_case, error) => {
+    state.next = error;
+    const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
+    expect(state.calls.at(-1)?.args).toHaveProperty("componentAdmission", true);
+    expect(hook.current.failed).toBe(true);
   });
 
   it("reads a gate denial as no plugins", () => {
@@ -189,6 +282,7 @@ describe("useActivePlugins", () => {
     const { result: hook } = renderHook(() => useActivePlugins(PROJECT_ID));
     expect(hook.current.plugins).toEqual([]);
     expect(hook.current.activeServers).toEqual([]);
+    expect(hook.current.answered).toBe(true);
   });
 
   it("reads a backend without the function as no plugins instead of throwing", () => {
@@ -201,5 +295,6 @@ describe("useActivePlugins", () => {
     expect(hook.current.isLoading).toBe(false);
     // Distinguishable from "no plugins" for a caller that must not guess.
     expect(hook.current.failed).toBe(true);
+    expect(hook.current.answered).toBe(false);
   });
 });

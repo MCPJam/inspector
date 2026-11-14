@@ -12,8 +12,8 @@
  * by `__tests__/schema-snapshot.test.ts` — so an upstream REMOVAL fails a unit
  * test here rather than a turn inside a sandbox.
  *
- * Shapes below are taken from the 0.149.1 snapshot in
- * `.spike-codex-appserver/schema/0.149.1/`, with two corrections observed on a
+ * Shapes below are checked against the pinned snapshot in
+ * `../__fixtures__/schema/`, with two corrections observed on a
  * live server and noted at their fields (`availableDecisions`, and the fact
  * that `decline` is accepted even when unlisted).
  */
@@ -98,7 +98,9 @@ export type CodexSandboxPolicy =
 
 export type TurnStartParams = {
   threadId: string;
-  input: Array<{ type: "text"; text: string }>;
+  input: Array<
+    { type: "text"; text: string } | { type: "image"; url: string }
+  >;
   model?: string;
   effort?: string;
   summary?: "auto" | "concise" | "detailed" | "none";
@@ -276,6 +278,7 @@ export type ThreadItem =
       action?: unknown;
       results?: unknown[] | null;
     }
+  | { type: "imageView"; id: string; path: string }
   | { type: "contextCompaction"; id: string }
   | { type: string; id: string; [key: string]: unknown };
 
@@ -309,6 +312,7 @@ export const USED_CLIENT_METHODS = [
   "initialize",
   "thread/start",
   "thread/resume",
+  "thread/fork",
   "turn/start",
   "turn/interrupt",
   "thread/compact/start",
@@ -347,4 +351,4 @@ export const USED_NOTIFICATIONS = [
 ] as const;
 
 /** The codex version the snapshot and these types were taken from. */
-export const PINNED_CODEX_VERSION = "0.149.1";
+export const PINNED_CODEX_VERSION = "0.163.0";

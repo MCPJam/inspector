@@ -8,6 +8,7 @@ import {
   compareSelectionForRow,
   mergePickedRows,
   resolveCompareCards,
+  resolveCompareSelectionRow,
   setCompareCardEffort,
   MAX_COMPARE_SELECTIONS,
   type CompareCard,
@@ -23,14 +24,18 @@ import {
 } from "react";
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
+import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
   useOrganizationQueries,
 } from "@/hooks/useOrganizations";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
-import type { ContentBlock } from "@modelcontextprotocol/client";
+import {
+  OrgAiRefusalHandoffProvider,
+  orgAiRefusalHandoff,
+} from "@/contexts/org-ai-refusal-context";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
@@ -110,24 +115,32 @@ import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-sessio
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
 import { isSpendBudgetReachedCode } from "@/lib/mcpjam-limit";
+import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
+  getChatHistoryState,
+  type ChatHistoryStateSession,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
+import {
+  presendStateIsCurrent,
+  withPresendSyncTimeout,
+} from "@/lib/chat-history-presend";
 import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { HOSTED_MODE } from "@/lib/config";
-import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -151,8 +164,7 @@ import {
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
 import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
 
 interface ChatTabProps {
@@ -242,7 +254,7 @@ export function ChatTabV2({
   onEvalChatHandoffConsumed,
   renderAssistantTurnActions,
 }: ChatTabProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useInspectorAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
@@ -269,9 +281,8 @@ export function ChatTabV2({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
     []
   );
@@ -387,6 +398,15 @@ export function ChatTabV2({
   // The model picker's "Your providers" footer points at the org whose keys back
   // this chat, so hosted surfaces (no org page to reach) get no footer.
   const manageOrgProviders = useOrgModelsHandoff(modelConfigOrganizationId);
+  // A hosted page's reader is a visitor: no organization configuration.
+  const refusalHandoff = useMemo(
+    () =>
+      orgAiRefusalHandoff({
+        visitor: Boolean(hostedContext?.projectId),
+        onManageOrgProviders: manageOrgProviders,
+      }),
+    [hostedContext?.projectId, manageOrgProviders],
+  );
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
@@ -407,20 +427,8 @@ export function ChatTabV2({
         .filter((serverId): serverId is string => !!serverId),
     [selectedConnectedServerNames, serversByName]
   );
-  const hostedOAuthTokens = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        selectedConnectedServerNames,
-        (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token
-      ),
-    [selectedConnectedServerNames, serversByName, appState.servers]
-  );
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedScenarioId
-    ? undefined
-    : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
@@ -490,6 +498,7 @@ export function ChatTabV2({
     urlElicitationRequired,
     dismissUrlElicitationRequired,
     autoResumeNotice,
+    harnessStartupPhase,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     // A scenario / share-link turn runs the host's own config; the visitor's
@@ -497,11 +506,11 @@ export function ChatTabV2({
     reasoningEffortEnabled: !hostedContext?.scenarioId,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
+    selectionIntent: hostedContext?.hostId || hostedContext?.executionTarget ? "inherit" : "picked",
     hostedContext: {
       ...hostedContext,
       projectId: effectiveHostedProjectId,
       selectedServerIds: effectiveHostedSelectedServerIds,
-      oauthTokens: effectiveHostedOAuthTokens,
     },
     executionConfig,
     // Phase 3: forward the resolved chat-tab host style so direct
@@ -804,13 +813,12 @@ export function ChatTabV2({
         turnTraces?: ChatHistoryTurnTrace[];
       }
     ) => {
-      // Resolved BEFORE the load so the pinned effort seeds for the model the
-      // session restores, not the one the picker is on now.
+      // Resolve history before seeding its saved effort.
       const restoredModel =
         ((options?.shouldRestoreComposerState?.() ?? true) && detail.modelId
-          ? // By `modelSource` as well as id: an OpenRouter id can also be a
-            // hosted row, and this thread must reopen on the one it ran on (#5472).
-            resolveRestoredModel(
+          ? detail.modelSelection
+            ? resolveCompareSelectionRow(detail.modelSelection, availableModels, hostedOrgModelConfig)
+            : resolveRestoredModel(
               availableModels,
               detail.modelId,
               detail.modelSource
@@ -829,13 +837,14 @@ export function ChatTabV2({
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
           restoredModel,
+          restoredSelection: detail.modelSelection,
         }
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
       }
-      if (restoredModel) {
-        setSelectedModel(restoredModel);
+      if ((options?.shouldRestoreComposerState?.() ?? true) && (restoredModel || detail.modelSelection)) {
+        setSelectedModel(restoredModel ?? selectedModel, { selection: detail.modelSelection, persist: false });
       }
       setActiveHistorySessionId(detail._id);
       setLoadedThreadOwnerUserId(detail.userId ?? null);
@@ -849,12 +858,16 @@ export function ChatTabV2({
     },
     [
       availableModels,
+      hostedOrgModelConfig,
+      selectedModel,
       loadChatSession,
       markHistorySessionRead,
       setSelectedModel,
       syncResumedVersion,
     ]
   );
+
+  const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, effectiveHostedProjectId);
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
@@ -868,11 +881,17 @@ export function ChatTabV2({
 
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
+          const detail = await getChatHistoryState({
             sessionId: activeHistorySessionId ?? undefined,
             chatSessionId,
             projectId: effectiveHostedProjectId ?? undefined,
           });
+          if (
+            !isCurrentHistoryTarget({ chatSessionId, projectId: effectiveHostedProjectId }) ||
+            detail.session.chatSessionId !== chatSessionId
+          ) {
+            return null;
+          }
           setActiveHistorySessionId(detail.session._id);
           setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
@@ -903,6 +922,7 @@ export function ChatTabV2({
       chatSessionId,
       effectiveHostedProjectId,
       hasConversationMessages,
+      isCurrentHistoryTarget,
       markHistorySessionRead,
       showHistoryRail,
       syncResumedVersion,
@@ -969,9 +989,21 @@ export function ChatTabV2({
   ]);
 
   const ensureThreadReadyForSend = useCallback(async () => {
-    let detail: ChatHistoryDetailSession | null = null;
+    if (
+      presendStateIsCurrent({
+        activeHistorySessionId,
+        chatSessionId,
+        live: reactiveHistorySession,
+        resumedVersion,
+        visibility: pendingDirectVisibility,
+      })
+    ) {
+      return true;
+    }
+    const target = { chatSessionId, projectId: effectiveHostedProjectId };
+    let detail: ChatHistoryStateSession | null = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
     } catch (error) {
       console.error(
         "[ChatTabV2] Failed to sync chat history before send",
@@ -982,6 +1014,11 @@ export function ChatTabV2({
     }
     if (detail) {
       return true;
+    }
+    // Another thread opened while the read was in flight: this send belonged
+    // to the one that closed, so drop it rather than detach the open thread.
+    if (!isCurrentHistoryTarget(target)) {
+      return false;
     }
 
     if (activeHistorySessionId) {
@@ -994,8 +1031,14 @@ export function ChatTabV2({
     return true;
   }, [
     activeHistorySessionId,
+    chatSessionId,
     detachHistorySession,
+    effectiveHostedProjectId,
+    isCurrentHistoryTarget,
+    pendingDirectVisibility,
+    reactiveHistorySession,
     refreshCurrentHistorySession,
+    resumedVersion,
   ]);
 
   const handleSelectThread = useCallback(
@@ -1174,8 +1217,11 @@ export function ChatTabV2({
         session._id === activeHistorySessionId
       ) {
         try {
+          const target = { chatSessionId, projectId: effectiveHostedProjectId };
           const detail = await refreshCurrentHistorySession();
-          if (!detail) {
+          // No row is "no longer shared" only while that thread is still the
+          // open one; a read that outlived it says nothing about the new one.
+          if (!detail && isCurrentHistoryTarget(target)) {
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread."
             );
@@ -1185,7 +1231,14 @@ export function ChatTabV2({
         }
       }
     },
-    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession]
+    [
+      activeHistorySessionId,
+      chatSessionId,
+      detachHistorySession,
+      effectiveHostedProjectId,
+      isCurrentHistoryTarget,
+      refreshCurrentHistorySession,
+    ]
   );
 
   const previousSelectedServerNamesRef = useRef(selectedServerNames);
@@ -1287,10 +1340,11 @@ export function ChatTabV2({
   const collapseCompareSelectionsTo = useCallback(
     (model: ModelDefinition) => {
       if (!compareSelections) return;
-      const selection = compareSelectionForRow(model, hostedOrgModelConfig);
+      const selection = compareCards?.find((card) => modelRowKey(card.model) === modelRowKey(model))?.selection ??
+        compareSelectionForRow(model, hostedOrgModelConfig);
       setCompareSelections(selection ? [selection] : []);
     },
-    [compareSelections, hostedOrgModelConfig, setCompareSelections]
+    [compareCards, compareSelections, hostedOrgModelConfig, setCompareSelections]
   );
   // What the grid renders: the v2 cards, else one card per v1 model (keyed by
   // its id, no per-card effort — exactly the v1 behaviour).
@@ -1686,21 +1740,6 @@ export function ChatTabV2({
     setWidgetStateQueue([]);
   }, [status, widgetStateQueue, setMessages]);
 
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      }
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context)
-      );
-    },
-    []
-  );
-
   const activeElicitation = elicitationQueue[0] ?? null;
 
   // Elicitation SSE listener
@@ -1789,7 +1828,13 @@ export function ChatTabV2({
   };
 
   // Submit blocking with server check
-  const submitBlocked = baseSubmitBlocked;
+  // A compare card on a saved model the organization's AI key policy no
+  // longer allows never sends (its picker warns on the trigger): a personal
+  // key in local mode has no server-side check to refuse it.
+  const compareHasDisallowedModel =
+    isMultiModelMode &&
+    modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model));
+  const submitBlocked = baseSubmitBlocked || compareHasDisallowedModel;
   const { isStreamingActive, stopActiveChat } = useChatStopControls({
     // Chat tab doesn't have a multi-host axis — its compare mode is
     // exactly multi-model. Pass through directly.
@@ -2004,8 +2049,15 @@ export function ChatTabV2({
   //
   // Gated on the formatter's own code, not on `isRetryable`: the server sets
   // that flag on failures a blind resend cannot help with.
+  //
+  // The organization AI-key policy's two temporary refusals
+  // (`ai_key_policy_unavailable`, `provider_unavailable`) lift on their own, so
+  // they get the same resend. Every other policy refusal needs a
+  // configuration change first and offers no Retry.
   const canRetryLastMessage =
-    isConcurrencyThrottle || errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE;
+    isConcurrencyThrottle ||
+    errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE ||
+    isRetryableOrgKeysRefusal(errorMessage?.code);
   const errorRetryHandler = canRetryLastMessage
     ? handleRetryLastMessage
     : undefined;
@@ -2387,7 +2439,7 @@ export function ChatTabV2({
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
-    onTemperatureChange: setTemperature,
+    onTemperatureChange: (value: number) => setTemperature(value, true),
     // In compare mode the chip edits the lead card's effort (each card has
     // its own chip too); before the v2 migration ran, cards carry no effort,
     // so the chip is withheld rather than shown doing nothing.
@@ -2397,7 +2449,7 @@ export function ChatTabV2({
           reasoningEffortLevels,
           onReasoningEffortChange: hostedContext?.scenarioId
             ? undefined
-            : setReasoningEffort,
+            : (effort: ModelReasoningEffort | undefined) => setReasoningEffort(effort, true),
         }
       : leadCompareCard?.editableSelection
       ? {
@@ -2458,6 +2510,7 @@ export function ChatTabV2({
         : undefined,
     onAttachScenarioServer: onEnableScenarioOptionalServer,
     onManageOrgProviders: manageOrgProviders,
+    requireOrgKeys: orgRequiresOwnKeys(hostedOrgModelConfig),
   };
 
   // Off on the hosted study page — see `shouldShowStarterPrompts` for why.
@@ -2468,7 +2521,7 @@ export function ChatTabV2({
     hostedScenarioId,
   });
 
-  return (
+  const surface = (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
       <ResizablePanelGroup
         direction="horizontal"
@@ -2582,6 +2635,7 @@ export function ChatTabV2({
                       errorMessage ? (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2717,6 +2771,8 @@ export function ChatTabV2({
                           compareId={key}
                           compareLabel={label}
                           model={model}
+                          selection={card?.selection}
+                          hostedOrgModelConfig={hostedOrgModelConfig}
                           reasoningEffort={card?.reasoningEffort}
                           effort={
                             card?.editableSelection
@@ -2771,7 +2827,6 @@ export function ChatTabV2({
                             ...hostedContext,
                             projectId: effectiveHostedProjectId,
                             selectedServerIds: effectiveHostedSelectedServerIds,
-                            oauthTokens: effectiveHostedOAuthTokens,
                           }}
                           onOAuthRequired={handleOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
@@ -2869,6 +2924,7 @@ export function ChatTabV2({
                         {errorMessage && (
                           <div className="max-w-4xl mx-auto px-4 pt-4">
                             <TopupGatedErrorBox
+                              onManageOrgProviders={manageOrgProviders}
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -2921,6 +2977,7 @@ export function ChatTabV2({
                     <div className="relative flex-1 min-h-0">
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
+                          harnessStartupPhase={harnessStartupPhase}
                           chatSessionId={chatSessionId}
                           messages={messages}
                           sendFollowUpMessage={(text: string) => {
@@ -3022,6 +3079,7 @@ export function ChatTabV2({
                       {errorMessage && (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
                           <TopupGatedErrorBox
+                            onManageOrgProviders={manageOrgProviders}
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -3304,5 +3362,13 @@ export function ChatTabV2({
         />
       )}
     </div>
+  );
+
+  // Parts of the thread that show a policy refusal (the web search tool
+  // card) read who is reading it, and the fix, from here.
+  return (
+    <OrgAiRefusalHandoffProvider value={refusalHandoff}>
+      {surface}
+    </OrgAiRefusalHandoffProvider>
   );
 }

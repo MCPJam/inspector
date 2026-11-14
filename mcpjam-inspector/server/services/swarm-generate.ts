@@ -36,6 +36,7 @@ export interface GenerateSwarmPersonaResult {
 /** Free-text audience description + dedup hints, both optional and both
  * forwarded verbatim to the backend prompts. */
 export interface SwarmGenerationGrounding {
+  inspectorRequestId?: string;
   description?: string;
   existingPersonas?: { name: string; role: string }[];
 }
@@ -52,13 +53,15 @@ async function postGenerate<T>(
   url: string,
   bearer: string,
   body: unknown,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  inspectorRequestId?: string
 ): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${bearer}`,
+      ...(inspectorRequestId ? { "x-mcpjam-request-id": inspectorRequestId } : {}),
     },
     body: JSON.stringify(body),
     signal: signal
@@ -173,7 +176,8 @@ export async function generateSwarmPersona(
         ? { existingPersonas: args.existingPersonas }
         : {}),
     },
-    args.signal
+    args.signal,
+    args.inspectorRequestId
   );
   if (
     !data.ok ||
@@ -248,7 +252,8 @@ export async function generateSwarmPersonaBatch(
         ? { existingPersonas: args.existingPersonas }
         : {}),
     },
-    args.signal
+    args.signal,
+    args.inspectorRequestId
   );
 
   const rawEntries = Array.isArray(data.personas)
@@ -321,7 +326,8 @@ export async function generateSwarmJourneys(
       persona: args.persona,
       ...(args.description ? { description: args.description } : {}),
     },
-    args.signal
+    args.signal,
+    args.inspectorRequestId
   );
   if (!data.ok || !isGeneratedJourneyList(data.journeys)) {
     throw new SwarmAgentError(

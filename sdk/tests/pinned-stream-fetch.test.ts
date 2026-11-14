@@ -381,6 +381,10 @@ describe("resources it must not leak", () => {
     // delivers, so the QUEUE decides how much is held rather than the reader.
     // A consumer that reads one chunk and pauses should leave the rest on the
     // socket.
+    //
+    // The bridge's byte cap counts what it took off the socket, so it measures
+    // the queue directly. Counting the server's writes instead measured the
+    // kernel's loopback buffers, which on some CI runners hold the whole body.
     const chunk = Buffer.alloc(64 * 1024, 7);
     let written = 0;
     const { origin } = await startServer((_req, res) => {
@@ -399,17 +403,20 @@ describe("resources it must not leak", () => {
       pump();
     });
 
-    const response = await loopbackFetch()(`${origin}/firehose`);
+    // A quarter of the 12.5 MiB body: far above the few chunks a paused bridge
+    // holds, far below what a bridge without backpressure takes in 150 ms.
+    const response = await loopbackFetch({
+      maxResponseBytes: 50 * chunk.length,
+    })(`${origin}/firehose`);
     const reader = response.body!.getReader();
     await reader.read();
     // Give the socket room to run away if nothing is holding it back.
     await new Promise((resolve) => setTimeout(resolve, 150));
-    const seen = written;
-    await reader.cancel();
 
-    // The exact number depends on socket buffers; the point is that it is
-    // bounded rather than "all 200 chunks".
-    expect(seen).toBeLessThan(200);
+    // A bridge that kept reading would have crossed the cap and errored the
+    // stream, so this read would reject with the byte-cap error.
+    await expect(reader.read()).resolves.toMatchObject({ done: false });
+    await reader.cancel();
   });
 });
 

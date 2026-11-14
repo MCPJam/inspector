@@ -1,6 +1,19 @@
 import { messagePartPlainText } from "@/shared/plugin-message";
 import { looksLikeErrorPage } from "@/shared/error-page";
 import { PROVIDER_NOT_ALLOWLISTED_CODE } from "@/lib/provider-not-allowlisted";
+import {
+  AUTO_TOPUP_DECLINED_CODE,
+  AUTO_TOPUP_DECLINED_MESSAGE,
+} from "@/lib/mcpjam-limit";
+import { isDeclinedCardLimit } from "@/shared/credit-exhaustion";
+import {
+  opensWithDeclinedCardSentence,
+  parseJsonEnvelope,
+} from "@/shared/swarm-attempt-error";
+import {
+  formatOrgKeysRefusalEnvelope,
+  formatPrefixedOrgKeysRefusal,
+} from "./org-keys-error";
 import { generateId, type UIMessage } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "../chat-input/skills/skill-types";
@@ -429,6 +442,13 @@ function summarizeEmptyModelResponse(message: unknown): FormattedError | null {
   };
 }
 
+const DECLINED_CARD_ERROR: FormattedError = {
+  code: AUTO_TOPUP_DECLINED_CODE,
+  message: AUTO_TOPUP_DECLINED_MESSAGE,
+  isRetryable: false,
+  isMCPJamPlatformError: true,
+};
+
 export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
@@ -481,6 +501,16 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         Number.isFinite(parsed.retryAfter)
           ? parsed.retryAfter
           : undefined;
+
+      const orgKeysRefusal = formatOrgKeysRefusalEnvelope(
+        parsed,
+        message,
+        details,
+      );
+      if (orgKeysRefusal) return orgKeysRefusal;
+
+      // A declined card, not a spent allowance: the top-up dialog would hide it.
+      if (isDeclinedCardLimit(parsed)) return DECLINED_CARD_ERROR;
 
       if (isMCPJamModelLimit(code, message, details)) {
         return formatMCPJamModelLimit(
@@ -561,9 +591,22 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     // Return as-is
   }
 
+  // A stream error carries the backend's refusal as JSON behind a prefix, or as
+  // its sentence alone. A sentence quoted inside another error is not its cause.
+  const envelope = parseJsonEnvelope(errorString);
+  if (
+    envelope
+      ? isDeclinedCardLimit(envelope)
+      : opensWithDeclinedCardSentence(errorString)
+  )
+    return DECLINED_CARD_ERROR;
+
   if (isMCPJamModelLimit(undefined, errorString)) {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
+
+  const prefixedOrgKeysRefusal = formatPrefixedOrgKeysRefusal(errorString);
+  if (prefixedOrgKeysRefusal) return prefixedOrgKeysRefusal;
 
   const protocolPin = summarizeProtocolVersionPin(errorString);
   if (protocolPin) return protocolPin;

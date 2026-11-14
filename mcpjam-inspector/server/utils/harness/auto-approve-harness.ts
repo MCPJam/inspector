@@ -4,12 +4,15 @@ import type {
   HarnessV1PromptControl,
   HarnessV1PromptTurnOptions,
 } from "@ai-sdk/harness";
+import { coerceToolInput } from "./tool-input.js";
 
 /** Pre-approve native requests only. Framework host-tool gates remain intact. */
 export function withAutoApprovedNativeRequests<T extends HarnessV1>(
   harness: T,
   onApproval?: (approvalId: string) => void,
   pendingApprovalIds: ReadonlySet<string> = new Set(),
+  /** Sees the call's input too: some runtimes name the server only there. */
+  shouldApprove?: (toolName: string | undefined, input: unknown) => boolean,
 ): T {
   return new Proxy(harness, {
     get(target, key) {
@@ -32,6 +35,7 @@ export function withAutoApprovedNativeRequests<T extends HarnessV1>(
                 HarnessV1PromptTurnOptions | HarnessV1ContinueTurnOptions,
             ) => {
               const seen = new Set<string>();
+              const toolCalls = new Map<string, { name: string; input: unknown }>();
               const queued: string[] = [];
               let control: HarnessV1PromptControl | undefined;
               let pending = Promise.resolve();
@@ -56,11 +60,20 @@ export function withAutoApprovedNativeRequests<T extends HarnessV1>(
                 void pending.catch(fail);
               };
               const emit: typeof options.emit = (part) => {
+                if (part.type === "tool-call") {
+                  if (toolCalls.size >= 1024) toolCalls.delete(toolCalls.keys().next().value!);
+                  toolCalls.set(part.toolCallId, {
+                    name: part.toolName,
+                    input: coerceToolInput(part.input),
+                  });
+                }
                 if (part.type !== "tool-approval-request") {
                   options.emit(part);
                   return;
                 }
-                if (pendingApprovalIds.has(part.approvalId)) {
+                const call = toolCalls.get(part.toolCallId);
+                if (pendingApprovalIds.has(part.approvalId) ||
+                    (shouldApprove && !shouldApprove(call?.name, call?.input))) {
                   options.emit(part);
                   return;
                 }

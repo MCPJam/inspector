@@ -70,6 +70,11 @@ export interface McpAppsModalProps {
    */
   widgetToolResult: ToolResultPolicy | undefined;
   widgetBrowserStorage: BrowserStoragePolicy | undefined;
+  /**
+   * The inline view's mount mode, so a modal over the same resource mounts
+   * the same way (opaque for a client whose app iframe is not same-origin).
+   */
+  widgetMountMode?: "write" | "srcdoc" | "opaque";
   hostContextRef: React.RefObject<McpUiHostContext | null>;
   serverId: string;
   resourceUri: string;
@@ -146,6 +151,7 @@ export function McpAppsModal({
   widgetClientContext,
   widgetToolResult,
   widgetBrowserStorage,
+  widgetMountMode,
   hostContextRef,
   serverId,
   resourceUri,
@@ -167,6 +173,8 @@ export function McpAppsModal({
   const appToolsRegistry = useAppToolsRegistryApi();
   const Modal = host.components?.Modal;
   const [modalHtml, setModalHtml] = useState<string | null>(null);
+  const [sourceReceipt, setSourceReceipt] = useState<string | undefined>();
+  const [sandboxSource, setSandboxSource] = useState({ serverId, resourceUri, toolCallId });
   const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
   const modalBridgeRef = useRef<AppBridge | null>(null);
   // SEP-1865 App-Provided Tools: per-modal-bridge identity. Distinct
@@ -199,12 +207,14 @@ export function McpAppsModal({
         modalAppToolsBridgeIdRef.current = null;
       }
       setModalHtml(null);
+      setSourceReceipt(undefined);
       return;
     }
 
+    let active = true;
     const fetchModalHtml = async () => {
       try {
-        const { html } = await host.services.fetchWidgetContent({
+        const { html, sourceReceipt: receipt } = await host.services.fetchWidgetContent({
           serverId,
           forceWebEndpoint: webManagedServers,
           resourceUri,
@@ -219,13 +229,17 @@ export function McpAppsModal({
           viewMode: "modal",
           viewParams: params,
         });
+        if (!active) return;
         setModalHtml(html);
+        setSourceReceipt(receipt);
+        setSandboxSource({ serverId, resourceUri, toolCallId });
       } catch (err) {
         console.error("[MCP Apps] Failed to fetch modal HTML", err);
       }
     };
 
     fetchModalHtml();
+    return () => { active = false; };
   }, [
     appToolsRegistry,
     open,
@@ -321,8 +335,7 @@ export function McpAppsModal({
         );
       }
 
-      const appCaps = bridge.getAppCapabilities();
-      if (appCaps?.tools) {
+      {
         const bridgeId =
           modalAppToolsBridgeIdRef.current ?? crypto.randomUUID();
         modalAppToolsBridgeIdRef.current = bridgeId;
@@ -378,7 +391,7 @@ export function McpAppsModal({
           // `onReceive` hook so a `tool.update()` / `enable()` /
           // `disable()` from the modal app is reflected in the chat
           // snapshot's advertised aliases.
-          if (method === "notifications/tools/list_changed") {
+          if (method === "notifications/tools/list_changed" || method === "ui/notifications/sandbox-tools-changed") {
             const bridgeId = modalAppToolsBridgeIdRef.current;
             if (bridgeId) {
               void refreshAppProvidedTools(bridge, bridgeId, {
@@ -485,6 +498,15 @@ export function McpAppsModal({
           <SandboxedIframe
             ref={modalSandboxRef}
             html={modalHtml}
+            viewAdmission={host.services.prepareSandboxView ? {
+              services: host.services,
+              request: {
+                source: sandboxSource, sourceReceipt, html: modalHtml,
+                policy: { csp: widgetCsp, cspDirectives: widgetCspDirectives,
+                  cspSubtypePolicy: widgetCspSubtypePolicy, permissive: widgetPermissive },
+                mode: widgetPermissive || Object.keys(widgetCspDirectives ?? {}).length > 0 ? "debugger" : "declared",
+              },
+            } : undefined}
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
             csp={widgetCsp}
             permissions={widgetPermissions}
@@ -504,7 +526,7 @@ export function McpAppsModal({
             title={`MCP App Modal: ${title}`}
             hostedMode={host.surface.hostedMode}
             sandboxOrigin={host.surface.sandboxOrigin}
-            mountMode={host.surface.viewMountMode}
+            mountMode={widgetMountMode ?? host.surface.viewMountMode}
             viewSubdomainsEnabled={host.surface.viewSubdomainsEnabled}
             className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
             style={{

@@ -1,0 +1,100 @@
+---
+title: "IP Allowlisting"
+description: "The addresses hosted MCPJam connects from, for firewalls and IP allowlists on your MCP and OAuth servers"
+icon: "network"
+---
+
+If your MCP server only accepts traffic from known addresses, allow the ones
+below. They apply to the hosted app at [app.mcpjam.com](https://app.mcpjam.com).
+The [local inspector](/installation) connects from your own machine and needs
+none of them.
+
+<Warning>
+These addresses are shared with other customers of our cloud providers. They
+are not exclusive to MCPJam. Keep authentication on your server and use the
+allowlist as an extra layer, not as access control on its own.
+</Warning>
+
+## Your MCP server
+
+Hosted MCPJam connects to MCP servers from these IPv4 addresses:
+
+| Address |
+| --- |
+| `162.220.234.241` |
+| `152.55.180.241` |
+| `152.55.180.243` |
+
+This covers connecting, OAuth discovery and client registration, tool calls,
+chat, evals and scheduled runs. Allow all three: any of them may be in use, and
+which one changes over time. These connections use IPv4 only.
+
+## Your OAuth authorization server
+
+You only need this section if your OAuth authorization server is itself
+IP-restricted. A hosted identity provider such as Okta, Auth0 or Microsoft
+Entra ID usually needs no changes.
+
+MCPJam's backend exchanges authorization codes for tokens, refreshes them,
+and revokes them when needed. It runs on [Convex](https://www.convex.dev) in
+AWS US East and connects from Convex's published ranges:
+
+| Range | Type |
+| --- | --- |
+| `216.235.222.0/24` | IPv4 |
+| `2600:1f18:77e:2300::/56` | IPv6 |
+| `2600:1f10:4a09:7c00::/56` | IPv6 |
+
+Allow both the IPv4 and the IPv6 ranges. If your server accepts IPv6, token
+requests usually arrive over it. These ranges are shared by every Convex
+deployment in the region, and
+[Convex's networking page](https://docs.convex.dev/production/networking) is
+their source of truth.
+
+Your MCP server does not need these ranges. One exception: when refreshing an
+older connection, the backend may first read your MCP server's OAuth metadata.
+If that refresh fails behind your allowlist, reconnect the server once.
+
+## Machine-readable list
+
+The same addresses are published as JSON at
+[`https://app.mcpjam.com/egress-ips.json`](https://app.mcpjam.com/egress-ips.json),
+in CIDR notation:
+
+| Key | Contains |
+| --- | --- |
+| `mcp_servers` | The addresses for your MCP server. |
+| `authorization_servers` | The ranges for your OAuth authorization server, and a link to their source. |
+| `updated` | The date the list last changed. |
+
+Each list has an `ipv4` and an `ipv6` array. To keep a firewall rule in sync,
+fetch the file on a schedule instead of copying addresses by hand:
+
+```bash
+curl -s https://app.mcpjam.com/egress-ips.json | jq -r '.mcp_servers.ipv4[]'
+```
+
+## Not covered
+
+- **Requests from your browser.** The hosted app may contact your MCP server
+  directly from your browser, for example to check it before connecting. That
+  request comes from your own network. If your allowlist blocks it, the
+  connection still goes through MCPJam.
+- **The local inspector and the desktop app.** They connect from your machine.
+- **Computers.** Commands and browsing on a Project Computer, or in a harness
+  client's sandbox, use the sandbox provider's addresses. Calls to your MCP
+  servers made through MCPJam are covered.
+- **Private networks.** The hosted app doesn't connect to private, loopback or
+  link-local addresses. Use the [local inspector](/installation) for those.
+
+## Changes
+
+When we plan to add an address, we add it here and to `egress-ips.json` before
+any traffic uses it, and announce it in the [changelog](/changelog/overview).
+Our providers can occasionally reassign addresses without notice; when that
+happens, we update this page as soon as we learn of it. Removing an address
+never breaks your allowlist, so we may remove one without notice.
+
+## Support
+
+Email [support@mcpjam.com](mailto:support@mcpjam.com) or your MCPJam contact.

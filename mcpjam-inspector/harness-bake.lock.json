@@ -1,27 +1,57 @@
 {
   "comment": "Recipe identities the MCPJam computer template is expected to bake. Regenerate with `node scripts/harness-bake-context.mjs --write-lock`; a change here means the template must be rebuilt from this commit and rolled out (mcpjam-backend templates/computer/README.md).",
   "pins": {
-    "node": "24.20.0",
+    "node": "24.22.1",
     "pnpm": "12.8.1"
   },
   "recipes": [
     {
       "harnessId": "claude-code",
       "bootstrapDir": ".harness-bootstrap/claude-code",
-      "identity": "a826db4a20179d27",
-      "runtimeVersion": "2.1.245"
+      "identity": "0e77cbbac102d49e",
+      "runtimeVersion": "2.1.290"
+    },
+    {
+      "harnessId": "claude-code",
+      "bootstrapDir": ".harness-bootstrap/claude-code",
+      "identity": "203dafd6164862b1",
+      "runtimeVersion": "2.1.290"
     },
     {
       "harnessId": "codex",
       "bootstrapDir": ".harness-bootstrap/codex-appserver",
-      "identity": "4c2078ff91c1ae5f",
-      "runtimeVersion": "0.149.1"
+      "identity": "4ffece006f2eed00",
+      "runtimeVersion": "0.163.0"
+    },
+    {
+      "harnessId": "codex",
+      "bootstrapDir": ".harness-bootstrap/codex-appserver",
+      "identity": "b544e21c6979bcb7",
+      "runtimeVersion": "0.163.0"
+    },
+    {
+      "harnessId": "copilot-cli",
+      "bootstrapDir": ".harness-bootstrap/copilot-cli",
+      "identity": "9cb0959e3752f327",
+      "runtimeVersion": "1.0.92"
+    },
+    {
+      "harnessId": "copilot-cli",
+      "bootstrapDir": ".harness-bootstrap/copilot-cli",
+      "identity": "7017d08a526dff54",
+      "runtimeVersion": "1.0.92"
     },
     {
       "harnessId": "cursor",
       "bootstrapDir": ".harness-bootstrap/cursor",
-      "identity": "1e02a0aee92902b9",
-      "runtimeVersion": "2026.10.01-e373342"
+      "identity": "41129fb95e869104",
+      "runtimeVersion": "2026.11.05-86047df"
+    },
+    {
+      "harnessId": "opencode",
+      "bootstrapDir": ".harness-bootstrap/opencode",
+      "identity": "1f2a417a8903bda9",
+      "runtimeVersion": "1.18.34"
     }
   ]
 }

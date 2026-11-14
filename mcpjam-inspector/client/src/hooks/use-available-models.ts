@@ -1,5 +1,6 @@
+import { useCursorModels } from "./use-cursor-models";
 import { useMemo } from "react";
-import { useConvexAuth } from "convex/react";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import type { ModelDefinition } from "@/shared/types";
 import { useSharedAppState } from "@/state/app-state-context";
 import { findProjectByAnyId } from "@/state/app-types";
@@ -8,9 +9,14 @@ import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
-import { useFreeTierOnly, useOutOfCredits } from "@/hooks/useCreditBalance";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import {
+  useFreeTierOnly,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
-import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
+import { useModelSelectionsCapability } from "@/hooks/use-project-environment-capability";
 
 /**
  * Models the current user can pick on any model-picker surface (eval suite
@@ -34,14 +40,50 @@ export function useAvailableModels(options?: {
    * project is globally active.
    */
   projectId?: string | null;
+  harnessTargets?: readonly ({ harnessId: string } | null | undefined)[];
+  /**
+   * Model ids the surface has saved. While the organization requires its own
+   * keys, one it no longer offers stays in the list as an
+   * `orgKeysDisallowedRow` instead of vanishing, so the surface keeps it
+   * selected; pickers show it only on the trigger, as a warning.
+   */
+  savedModelIds?: readonly (string | null | undefined)[];
 }): {
   availableModels: ModelDefinition[];
+  /**
+   * The scoped organization requires its own provider keys for AI features:
+   * the list holds only organization models (and may be empty).
+   */
+  requireOrgKeys: boolean;
+  /**
+   * Opens the scoped organization's AI providers. Present only while the
+   * organization requires its own keys and the viewer may manage its
+   * providers: a picker with no organization model then offers "Add a
+   * provider" instead of "Ask an organization admin". Absent otherwise, so a
+   * picker off the policy looks as it always has.
+   */
+  onManageOrgProviders?: () => void;
+  /**
+   * Opens the scoped organization's AI providers for a viewer who may manage
+   * them, under any key policy: a model search with no match offers "Add a
+   * provider" from it. `null` when that organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
   /**
    * Whether this deployment stores a saved model selection beside a model id
    * (`getCapabilities.modelSelections` for the scoped project). A picker that
    * saves a `ModelSelection` sends it only when this is true.
    */
   modelSelectionsSupported: boolean;
+  /** Why the MCPJam rows are locked ("Out of MCPJam credits · resets in
+   * 3h"), or null while the org can spend. */
+  outOfCreditsReason: string | null;
+  /**
+   * The organization's key policy has not answered yet, or it is on and the
+   * selections capability has not. `requireOrgKeys` reads false until then,
+   * so a surface that writes a model from this list waits for this to clear.
+   */
+  pending: boolean;
 } {
   const appState = useSharedAppState();
   const scopedProjectId =
@@ -51,7 +93,7 @@ export function useAvailableModels(options?: {
     scopedProject?.sharedProjectId ?? options?.projectId ?? null;
   const organizationId = scopedProject?.organizationId ?? null;
 
-  const { isAuthenticated } = useConvexAuth();
+  const isMemberActor = useIsMemberActor();
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
     organizationId,
@@ -66,16 +108,29 @@ export function useAvailableModels(options?: {
   const { customProviders } = useCustomProviders();
   const { isOllamaRunning, ollamaModels } =
     useDetectedOllamaModels(getOllamaBaseUrl);
-  const outOfCredits = useOutOfCredits(organizationId);
+  // Why the MCPJam rows are locked ("… · resets in 3h"), or null.
+  const outOfCreditsReason = useOutOfCreditsReason(organizationId);
+  const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly(organizationId);
   const { hostedCatalog } = useHostedModelCatalog();
-  const modelSelectionsSupported = useModelSelectionsSupported(convexProjectId);
+  const modelSelectionsCapability =
+    useModelSelectionsCapability(convexProjectId);
+  const modelSelectionsSupported = modelSelectionsCapability === true;
+  const manageOrgProviders = useOrgModelsHandoff(organizationId);
+  const savedModelIdsKey = (options?.savedModelIds ?? [])
+    .filter((id): id is string => typeof id === "string" && id.length > 0)
+    .join("\u0001");
+  const savedModelIds = useMemo(
+    () => (savedModelIdsKey ? savedModelIdsKey.split("\u0001") : undefined),
+    [savedModelIdsKey],
+  );
 
-  const availableModels = useMemo(
+  const cursor = useCursorModels(convexProjectId, options?.harnessTargets?.some((target) => target?.harnessId === "cursor") === true, savedModelIds);
+  const baseModels = useMemo(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
-        isAuthenticated,
+        isAuthenticated: isMemberActor === true,
         isOllamaRunning,
         ollamaModels,
         hasToken,
@@ -85,10 +140,11 @@ export function useAvailableModels(options?: {
         outOfCredits,
         freeTierOnly,
         hostedCatalog,
+        savedModelIds,
       }),
     [
       hostedOrgModelConfig,
-      isAuthenticated,
+      isMemberActor,
       isOllamaRunning,
       ollamaModels,
       hasToken,
@@ -98,8 +154,23 @@ export function useAvailableModels(options?: {
       outOfCredits,
       freeTierOnly,
       hostedCatalog,
+      savedModelIds,
     ]
   );
 
-  return { availableModels, modelSelectionsSupported };
+  const requireOrgKeys = orgRequiresOwnKeys(hostedOrgModelConfig);
+  const pending =
+    hostedOrgModelConfig?.pending === true ||
+    (requireOrgKeys && modelSelectionsCapability === undefined);
+  return {
+    availableModels: [...baseModels, ...cursor.models],
+    modelSelectionsSupported,
+    outOfCreditsReason,
+    requireOrgKeys,
+    pending: pending || cursor.pending,
+    ...(requireOrgKeys && manageOrgProviders
+      ? { onManageOrgProviders: manageOrgProviders }
+      : {}),
+    onAddProvider: manageOrgProviders ?? null,
+  };
 }

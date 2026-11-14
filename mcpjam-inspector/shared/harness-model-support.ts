@@ -1,3 +1,10 @@
+import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
+import {
+  harnessTakesOrgKeys,
+  harnessWireApi,
+  type HarnessWireApi,
+} from "./harness-connection-api";
+import { GATEWAY_API_LABELS } from "./gateway-connection";
 /**
  * Which models a harness runtime can run, keyed by the runtime's VERSION.
  *
@@ -28,10 +35,28 @@ import evidenceTable from "./harness-model-support-evidence.json" with { type: "
 
 export type HarnessModelSupportStatus = "supported" | "unsupported" | "unknown";
 
+export type HarnessDiscoveryRoute = {
+  runtimeVersion: string;
+  adapterVersion: string;
+  protocolVersion: string;
+  modelId: string;
+  delivery: "forwarded-native" | "forwarded-bridge" | "native-proxy" | "host-tools";
+  venue: "hosted" | "local";
+  surface: "chat" | "eval" | "swarm";
+  funding: "platform" | "organization";
+  upstreamProfile: HarnessUpstreamProfile;
+};
+
+export type HarnessDiscoveryEvidence = HarnessDiscoveryRoute & {
+  status: HarnessModelSupportStatus;
+  evidence: string;
+  observedAt: string;
+};
+
 /** One evidence row, exactly as it appears in the JSON table. */
 export type HarnessModelSupportRow = {
   harness: string;
-  /** `"*"` (any version, including an unknown one), `"<=A.B.x"` or `">A.B.x"`. */
+  /** `"*"` (any version, including an unknown one), `"<=A.B.x"`, `">A.B.x"` or `"A.B.x"`. */
   versionRange: string;
   /** Regular expression tested against the normalized canonical model id. */
   familyPattern: string;
@@ -39,7 +64,34 @@ export type HarnessModelSupportRow = {
   evidence: string;
   /** ISO date the evidence was observed. */
   observedAt: string;
+  nativeDiscovery?: readonly HarnessDiscoveryEvidence[];
 };
+
+/** Model compatibility alone is not proof of native discovery on a route. */
+export function harnessNativeDiscoverySupport(args: {
+  harnessId: string;
+  route: HarnessDiscoveryRoute;
+  rows?: readonly HarnessModelSupportRow[];
+}): { status: HarnessModelSupportStatus; reason: string } {
+  const modelSupport = harnessModelSupport({ harnessId: args.harnessId, modelId: args.route.modelId, runtimeVersion: args.route.runtimeVersion, rows: args.rows });
+  if (modelSupport.status !== "supported") return modelSupport;
+  const modelId = normalizeHarnessModelId(args.route.modelId);
+  for (const row of args.rows ?? HARNESS_MODEL_SUPPORT_ROWS) {
+    if (row.harness !== args.harnessId) continue;
+    for (const proof of row.nativeDiscovery ?? []) {
+      if (
+        normalizeHarnessModelId(proof.modelId) === modelId &&
+        proof.runtimeVersion === args.route.runtimeVersion &&
+        proof.adapterVersion === args.route.adapterVersion &&
+        proof.protocolVersion === args.route.protocolVersion &&
+        proof.delivery === args.route.delivery && proof.venue === args.route.venue &&
+        proof.surface === args.route.surface && proof.funding === args.route.funding &&
+        proof.upstreamProfile === args.route.upstreamProfile
+      ) return { status: proof.status, reason: proof.evidence };
+    }
+  }
+  return { status: "unknown", reason: "Native tool discovery is not qualified for this client, model and execution route." };
+}
 
 export type HarnessModelSupportVerdict = {
   status: HarnessModelSupportStatus;
@@ -78,13 +130,11 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
  * the same change that bumps an adapter.
  */
 export const HARNESS_PINNED_VERSIONS = {
-  "claude-code": "2.1.245",
-  codex: "0.149.1",
-  // The Cursor CLI build the hosted bootstrap installs (and the computer
-  // template bakes), by the version string Cursor's own installer stamps in.
-  // `server/utils/harness/cursor-bootstrap.ts` pins the download to exactly
-  // this build with a checksum per platform; bump both together.
-  cursor: "2026.10.01-e373342",
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].runtimeVersion,
+  "codex": HARNESS_DESCRIPTORS["codex"].runtimeVersion,
+  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].runtimeVersion,
+  "cursor": HARNESS_DESCRIPTORS["cursor"].runtimeVersion,
+  "opencode": HARNESS_DESCRIPTORS["opencode"].runtimeVersion,
 } as const satisfies Record<Harness, string | null>;
 
 /** The pinned runtime version for a harness id, or undefined when the harness
@@ -99,89 +149,98 @@ export function harnessPinnedVersion(harnessId: string): string | undefined {
 }
 
 /**
- * The organization upstream each BROKERED harness can run on: its own vendor's
- * native API, on the organization's key, and the runtime profile that talks to
- * it. Claude Code speaks Anthropic Messages and Codex speaks OpenAI Responses,
- * so a turn whose saved selection names an org Anthropic (resp. OpenAI)
- * connection runs on that key through MCPJam's model proxy. Cursor
- * authenticates with the customer's own Cursor account and runs on no org
- * connection.
- *
- * This is the preflight's answer from non-secret metadata; the backend still
- * resolves the connection id authoritatively at lease start and refuses a
- * mismatch (`provider_mismatch`).
+ * The upstream an org-key lease runs on, as the backend echoes it at lease
+ * start: the vendor's own API (`anthropic-native`, `openai-native`) or the
+ * organization's gateway (`org-gateway`, the gateway's own model names and no
+ * vendor rewrites). Whether a harness may run on a connection is not read
+ * from here: admission asks whether the harness takes organization keys and
+ * the connection serves its API (`harnessRunsOnConnection`).
  */
-export type HarnessOrgUpstream = {
-  provider: "anthropic" | "openai";
-  profile: "anthropic-native" | "openai-native";
-};
-
-export const HARNESS_ORG_UPSTREAM = {
-  "claude-code": { provider: "anthropic", profile: "anthropic-native" },
-  codex: { provider: "openai", profile: "openai-native" },
-  cursor: null,
-} as const satisfies Record<Harness, HarnessOrgUpstream | null>;
-
-/** The org upstream `harnessId` runs on, or null when it takes no org key. */
-export function harnessOrgUpstream(
-  harnessId: string,
-): HarnessOrgUpstream | null {
-  return Object.prototype.hasOwnProperty.call(HARNESS_ORG_UPSTREAM, harnessId)
-    ? HARNESS_ORG_UPSTREAM[harnessId as Harness]
-    : null;
-}
-
-/** Whether `harnessId` can run on an org connection to `providerKey`. */
-export function harnessRunsOnOrgProvider(
-  harnessId: string,
-  providerKey: string | undefined,
-): boolean {
-  return (
-    providerKey !== undefined &&
-    harnessOrgUpstream(harnessId)?.provider === providerKey
-  );
-}
+export type HarnessOrgUpstreamProfile =
+  "anthropic-native" | "openai-native" | "org-gateway";
 
 /**
  * Which upstream a harness runtime is configured for, as the backend resolved
- * it at lease start. Non-secret. The Gateway profile keeps the Gateway's
- * Claude model spellings and effort workarounds; a native profile talks to the
- * vendor's own API with native model ids.
+ * it at lease start. Non-secret. The Gateway profile (MCPJam's own) keeps the
+ * Gateway's Claude model spellings and effort workarounds; an org profile
+ * talks to the vendor's own API, or the organization's gateway, with the
+ * leased model id.
  */
-export type HarnessUpstreamProfile =
-  "gateway" | "anthropic-native" | "openai-native";
+export type HarnessUpstreamProfile = "gateway" | HarnessOrgUpstreamProfile;
 
-const ORG_PROVIDER_LABELS: Record<HarnessOrgUpstream["provider"], string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
+/** The provider copy names for the API a harness speaks. */
+const ORG_API_PROVIDER_LABELS: Record<HarnessWireApi, string> = {
+  anthropicMessages: "Anthropic",
+  responses: "OpenAI",
 };
 
-/** The refusal copy for an org connection the harness cannot run on. */
-export function harnessOrgProviderUnsupportedReason(harnessId: string): string {
-  const name = harnessDisplayName(harnessId);
-  const upstream = harnessOrgUpstream(harnessId);
-  return upstream
-    ? `the ${name} harness runs MCPJam-provided models or your organization's ${ORG_PROVIDER_LABELS[upstream.provider]} key`
-    : `the ${name} harness does not run on an organization's provider key`;
+/** The provider an organization key for `harnessId` comes from, as copy
+ *  names it, or undefined when the harness takes no organization key. */
+function orgKeyProviderLabel(harnessId: string): string | undefined {
+  const api = harnessWireApi(harnessId);
+  return harnessTakesOrgKeys(harnessId) && api
+    ? ORG_API_PROVIDER_LABELS[api]
+    : undefined;
 }
 
-/** Why a harness host's picker has no row it can run, and what fixes it. */
-export function harnessNoRunnableModelReason(harnessId: string): string {
+/**
+ * The organization's AI key policy, as harness copy reads it. When the
+ * organization requires its own provider keys ("Use your keys for all AI
+ * features"), MCPJam-provided models are off, so a brokered harness runs only
+ * on an organization connection that serves its API.
+ */
+export type HarnessKeyPolicy = { requireOrgKeys?: boolean };
+
+/** The refusal copy for an org connection the harness cannot run on. */
+export function harnessOrgProviderUnsupportedReason(
+  harnessId: string,
+  policy: HarnessKeyPolicy | null = {},
+): string {
   const name = harnessDisplayName(harnessId);
-  const upstream = harnessOrgUpstream(harnessId);
-  return upstream
-    ? `${name} runs MCPJam models or your organization's ${ORG_PROVIDER_LABELS[upstream.provider]} key. Add one in Organization models.`
-    : `${name} has no model it can run here.`;
+  const vendor = orgKeyProviderLabel(harnessId);
+  if (!vendor) {
+    return `The ${name} client does not support organization provider keys. Choose another client.`;
+  }
+  if (policy === null) {
+    return `The ${name} client needs a supported model and an eligible ${vendor} connection. Choose another model or contact your organization admin.`;
+  }
+  return policy.requireOrgKeys
+    ? `The ${name} client requires your organization's ${vendor} key. Choose an organization model or contact your organization admin.`
+    : `The ${name} client needs an MCPJam model or your organization's ${vendor} key. Choose a supported model.`;
+}
+
+/**
+ * Why a harness host's picker has no row it can run, and what fixes it: a
+ * vendor key, or a gateway that serves the harness's API (often an existing
+ * gateway with that API turned on). Under the key policy the picker adds the
+ * fix itself ("Add a provider", or ask an admin), so the sentence names only
+ * the connections that would run it.
+ */
+export function harnessNoRunnableModelReason(
+  harnessId: string,
+  policy: HarnessKeyPolicy = {},
+): string {
+  const name = harnessDisplayName(harnessId);
+  const vendor = orgKeyProviderLabel(harnessId);
+  const api = harnessWireApi(harnessId);
+  if (!vendor || !api) return `${name} has no model it can run here.`;
+  const gateway = `a gateway that serves ${GATEWAY_API_LABELS[api]}`;
+  return policy.requireOrgKeys
+    ? `This organization requires its own provider keys, so ${name} runs only on an organization ${vendor} provider or ${gateway}.`
+    : `${name} runs MCPJam models, your organization's ${vendor} key, or ${gateway}. Set one up in Organization models.`;
 }
 
 /** Human-facing runtime names (same values as the registry's `displayName`). */
 const HARNESS_DISPLAY_NAMES: Record<string, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  cursor: "Cursor CLI",
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].displayName,
+  codex: HARNESS_DESCRIPTORS.codex.displayName,
+  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].displayName,
+  cursor: HARNESS_DESCRIPTORS.cursor.displayName,
+  opencode: HARNESS_DESCRIPTORS.opencode.displayName,
 };
 
-function harnessDisplayName(harnessId: string): string {
+/** The runtime's human-facing name ("Claude Code"), or the id itself. */
+export function harnessDisplayName(harnessId: string): string {
   return HARNESS_DISPLAY_NAMES[harnessId] ?? harnessId;
 }
 
@@ -208,19 +267,19 @@ function compareMajorMinor(
 }
 
 type ParsedRange =
-  { kind: "any" } | { kind: "lte" | "gt"; bound: [number, number] };
+  { kind: "any" } | { kind: "lte" | "gt" | "eq"; bound: [number, number] };
 
 function parseVersionRange(range: string): ParsedRange | undefined {
   if (range === "*") return { kind: "any" };
-  const match = range.match(/^(<=|>)(\d+)\.(\d+)\.x$/);
+  const match = range.match(/^(<=|>)?(\d+)\.(\d+)\.x$/);
   if (!match) return undefined;
   return {
-    kind: match[1] === "<=" ? "lte" : "gt",
+    kind: match[1] === "<=" ? "lte" : match[1] === ">" ? "gt" : "eq",
     bound: [Number(match[2]), Number(match[3])],
   };
 }
 
-/** Is `range` well-formed (`"*"`, `"<=A.B.x"` or `">A.B.x"`)? */
+/** Is `range` well-formed (`"*"`, `"<=A.B.x"`, `">A.B.x"` or `"A.B.x"`)? */
 export function isValidHarnessVersionRange(range: string): boolean {
   return parseVersionRange(range) !== undefined;
 }
@@ -240,7 +299,7 @@ export function harnessVersionInRange(
   const parsed = parseHarnessVersion(version);
   if (!parsed) return false;
   const cmp = compareMajorMinor(parsed, parsedRange.bound);
-  return parsedRange.kind === "lte" ? cmp <= 0 : cmp > 0;
+  return parsedRange.kind === "lte" ? cmp <= 0 : parsedRange.kind === "gt" ? cmp > 0 : cmp === 0;
 }
 
 // ── Model ids ────────────────────────────────────────────────────────────────
@@ -285,18 +344,15 @@ function notVerifiedReason(
   const version =
     typeof runtimeVersion === "string" && runtimeVersion.trim()
       ? runtimeVersion.trim()
-      : "(unknown version)";
-  return `not verified for ${harnessId} ${version}`;
+      : "unknown version";
+  return `This model has not been verified for the ${harnessDisplayName(harnessId)} client (${version}). Choose a verified model or another client.`;
 }
 
 /** The refusal copy for an `unsupported` verdict — the same sentence the
  *  harness pre-flight has always used for a model the runtime can't run. */
 export function harnessModelUnsupportedReason(harnessId: string): string {
   const name = harnessDisplayName(harnessId);
-  return (
-    `the ${name} harness can't run this host's model — pick a ` +
-    `${name}-compatible model to run the real runtime`
-  );
+  return `This model isn’t supported by ${name}. Choose a supported model or switch clients.`;
 }
 
 /**

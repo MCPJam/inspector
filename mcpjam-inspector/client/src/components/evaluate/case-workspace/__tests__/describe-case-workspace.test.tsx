@@ -38,4 +38,26 @@ describe("DescribeCaseWorkspace", () => {
     expect(onTitleChange).toHaveBeenCalledWith("Refund policy");
     expect(screen.getByRole("button", { name: "Save case" })).toBeDisabled();
   });
+
+  it("offers no Ask MCPJam button when the server turns the agent off", () => {
+    window.__MCP_RUNTIME_CONFIG__ = { platformAgentDisabled: true };
+    try {
+      render(
+        <DescribeCaseWorkspace
+          title="Untitled test case"
+          onTitleChange={vi.fn()}
+          caseForm={<div>Case steps</div>}
+          onAsk={vi.fn()}
+          onSave={vi.fn()}
+          saveDisabled
+        />,
+      );
+      expect(screen.getByText("Case steps")).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Ask MCPJam" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      delete window.__MCP_RUNTIME_CONFIG__;
+    }
+  });
 });

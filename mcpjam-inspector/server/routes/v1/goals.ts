@@ -84,6 +84,13 @@ import { HOSTED_MODE } from "../../config.js";
 import { requirePersonaInProject } from "./personas.js";
 import { requireSwarmInProject } from "./swarms.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
+import {
+  goalJudgeWriteSchema,
+  judgeConfigForWrite,
+  judgeOf,
+  toGoalJudgeDto,
+  type GoalJudgeRowFields,
+} from "./goal-judge.js";
 
 const goals = new Hono();
 
@@ -181,7 +188,7 @@ function nextCursorFrom(result: {
 
 // ── Convex row shapes (hand-mirrored from convex/journeys.ts + journeyRuns.ts) ──
 
-type JourneyRow = {
+type JourneyRow = GoalJudgeRowFields & {
   _id: string;
   projectId: string;
   personaRefId: string;
@@ -194,7 +201,6 @@ type JourneyRow = {
   config:
     | { sessionsPerTarget?: number; maxTurns?: number; setupWrites?: boolean }
     | undefined;
-  judgeConfig?: unknown;
   rubric?: unknown;
   createdAt: number;
   updatedAt: number;
@@ -310,6 +316,7 @@ function toGoalDto(row: JourneyRow, surface: Surface) {
       row.config?.sessionsPerTarget ?? null,
     maxTurns: row.config?.maxTurns ?? null,
     setupWrites: row.config?.setupWrites ?? false,
+    judge: toGoalJudgeDto(row),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -489,6 +496,8 @@ function createSchemaFor(surface: Surface) {
     [surface.legacy ? "sessionsPerTarget" : "iterations"]: iterationsField,
     maxTurns: maxTurnsField,
     setupWrites: z.boolean().optional(),
+    /** The goal-completion judge; omitted means the managed defaults. */
+    judge: goalJudgeWriteSchema.optional(),
   });
 }
 
@@ -533,6 +542,7 @@ function updateSchemaFor(surface: Surface) {
       [countField]: iterationsField.optional(),
       maxTurns: maxTurnsField.optional(),
       setupWrites: z.boolean().optional(),
+      judge: goalJudgeWriteSchema.nullable().optional(),
     })
     .refine((value) => Object.keys(value).length > 0, {
       message: `Provide at least one ${noun} field to update.`,
@@ -814,6 +824,7 @@ both(
     );
     const client = createConvexClient(await getConvexBearerForRequest(c));
     const idempotencyKey = c.req.header("idempotency-key")?.trim();
+    const judge = judgeOf(body);
 
     // SCOPE THE REFERENCES, not just the path. `journeys:createJourney`
     // resolves `personaRefId` and `swarmRefId` on its own and checks
@@ -855,6 +866,9 @@ both(
               ? { setupWrites: body.setupWrites }
               : {}),
           },
+          ...(judge !== undefined
+            ? { judgeConfig: judgeConfigForWrite(judge) }
+            : {}),
           ...(idempotencyKey ? { idempotencyKey } : {}),
         } as never,
       )) as JourneyRow;
@@ -886,9 +900,15 @@ both(
       surface.legacy ? UPDATE_SCHEMAS.legacy : UPDATE_SCHEMAS.canonical,
     );
     const client = createConvexClient(await getConvexBearerForRequest(c));
-    await requireGoalInProject(client, projectId, goalId, surface);
+    const current = await requireGoalInProject(
+      client,
+      projectId,
+      goalId,
+      surface,
+    );
 
     const iterations = iterationsOf(body);
+    const judge = judgeOf(body);
     let row: JourneyRow;
     try {
       row = (await client.mutation(
@@ -916,6 +936,20 @@ both(
                     ? { setupWrites: body.setupWrites }
                     : {}),
                 },
+              }
+            : {}),
+          // `null` clears, as above; a partial judge is merged onto the
+          // stored slot because the backend replaces it wholesale. The merge
+          // reads the preflight's snapshot, so two concurrent partial judge
+          // PATCHes can lose one caller's field, the same exposure the suite
+          // judge PATCH has. Closing it means merging inside
+          // `journeys:updateJourney`, which is the backend's change to make.
+          ...(judge !== undefined
+            ? {
+                judgeConfig: judgeConfigForWrite(
+                  judge,
+                  current.judgeConfig?.goalCompletion,
+                ),
               }
             : {}),
         } as never,

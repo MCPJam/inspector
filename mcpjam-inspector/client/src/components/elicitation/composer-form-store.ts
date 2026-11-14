@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { create } from "zustand";
+import type { PluginFormOperation } from "@/shared/plugin-form-services";
 
 /**
  * Where extension forms meet the composer.
@@ -15,6 +16,7 @@ import { create } from "zustand";
  * own chat and shows it again on return.
  */
 export interface ComposerFormEntry {
+  operation?: PluginFormOperation;
   id: string;
   workspaceId: string;
   serverName: string;
@@ -59,12 +61,14 @@ function arrivalOrder(id: string) {
 }
 
 export function registerComposerForm(input: {
+  operation?: PluginFormOperation;
   id: string;
   workspaceId: string;
   serverName: string;
   cancel: () => unknown;
 }): () => void {
   const entry: ComposerFormEntry = {
+    operation: input.operation,
     id: input.id,
     workspaceId: input.workspaceId,
     serverName: input.serverName,
@@ -152,6 +156,7 @@ export function useComposerSlot(workspaceId: string | undefined) {
 /** Register one pending request while it is live. */
 export function useComposerFormRegistration(
   input: {
+    operation?: PluginFormOperation;
     id: string;
     workspaceId: string | undefined;
     serverName: string;
@@ -163,15 +168,17 @@ export function useComposerFormRegistration(
   const id = input?.id;
   const workspaceId = input?.workspaceId;
   const serverName = input?.serverName ?? "";
+  const operation = input?.operation;
   useEffect(() => {
     if (!id || !workspaceId) return;
     return registerComposerForm({
       id,
       workspaceId,
       serverName,
+      operation,
       cancel: () => cancel.current?.(),
     });
-  }, [id, workspaceId, serverName]);
+  }, [id, workspaceId, serverName, operation]);
   const forms = useComposerForms(workspaceId);
   return {
     /** First in line for its chat. */

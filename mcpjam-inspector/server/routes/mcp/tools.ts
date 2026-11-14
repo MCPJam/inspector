@@ -6,6 +6,11 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/client";
 import "../../types/hono"; // Type extensions
+import {
+  connectionEffectiveAuth,
+  stampErrorAuthChallenge,
+  toolResultAuthChallengeFields,
+} from "../../utils/connection-effective-auth.js";
 import { listTools as listToolsShared } from "../../utils/route-handlers.js";
 import {
   extractInsufficientScopeChallenge,
@@ -325,9 +330,20 @@ tools.post("/execute", async (c) => {
         });
       }
 
+      // A ChatGPT-style sign-in challenge on a completed result is reported
+      // beside it, stamped here: the browser cannot know the effective auth
+      // method, and must not start sign-in from its own parse. The tool's
+      // resolved `securitySchemes` ride along for the `_meta` trigger rule.
+      const challenged = await toolResultAuthChallengeFields(
+        manager,
+        serverId,
+        toolName,
+        next.result,
+      );
       return c.json({
         status: "completed",
         result: next.result,
+        ...challenged,
         durationMs: getExecutionDurationMs(context),
       });
     }
@@ -345,6 +361,7 @@ tools.post("/execute", async (c) => {
     );
   } catch (error) {
     resetExecution(context, () => manager.clearElicitationHandler(serverId));
+    stampErrorAuthChallenge(error, connectionEffectiveAuth(manager, serverId));
     return jsonError(c, error, 500);
   }
 });
@@ -392,9 +409,16 @@ tools.post("/respond", async (c) => {
       resetExecution(context, () =>
         c.mcpClientManager.clearElicitationHandler(context.serverId),
       );
+      const challenged = await toolResultAuthChallengeFields(
+        c.mcpClientManager,
+        context.serverId,
+        context.toolName,
+        next.result,
+      );
       return c.json({
         status: "completed",
         result: next.result,
+        ...challenged,
         durationMs: getExecutionDurationMs(context),
       });
     }
@@ -413,6 +437,10 @@ tools.post("/respond", async (c) => {
   } catch (error) {
     resetExecution(context, () =>
       c.mcpClientManager.clearElicitationHandler(context.serverId),
+    );
+    stampErrorAuthChallenge(
+      error,
+      connectionEffectiveAuth(c.mcpClientManager, context.serverId),
     );
     return jsonError(c, error, 500);
   }

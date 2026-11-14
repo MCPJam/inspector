@@ -18,6 +18,10 @@ import type { MCPClientManager } from "@mcpjam/sdk";
 import { decideToolPolicy } from "@mcpjam/sdk/contract";
 import type { ToolCall, ToolErrorRecord } from "@/shared/eval-matching";
 import type { PinnedToolCall } from "@/shared/steps";
+import {
+  annotateToolAuthChallenge,
+  classifyToolAuthChallenge,
+} from "./run-setup-signals";
 import type { BrowserSessionContext } from "../browser-session-context";
 import {
   TOOL_POLICY_BLOCK_MARKER,
@@ -168,6 +172,7 @@ export async function runPinnedTurn(
   }
 
   let rawResult: unknown;
+  let thrown: unknown;
   let toolCallOk = false;
   let toolError: ToolErrorRecord | undefined;
   const toolCallId = `pinned-${promptIndex}-${Date.now()}`;
@@ -222,11 +227,31 @@ export async function runPinnedTurn(
       toolCallOk = true;
     }
   } catch (error) {
+    thrown = error;
     toolError = {
       toolName: pinned.toolName,
       kind: "protocol-error",
       message: error instanceof Error ? error.message : String(error),
     };
+  }
+  if (toolError) {
+    // A pinned call never signs in either: a challenge is filed on the
+    // call's own error record (see `classifyToolAuthChallenge`).
+    const authChallenge = classifyToolAuthChallenge(
+      toolError.kind === "protocol-error"
+        ? { error: thrown }
+        : { result: rawResult },
+      { serverId: resolvedServerKey, toolName: pinned.toolName }
+    );
+    if (authChallenge) {
+      annotateToolAuthChallenge(toolError, {
+        ...authChallenge,
+        toolCallId,
+        toolName: pinned.toolName,
+        serverId: resolvedServerKey,
+        promptIndex,
+      });
+    }
   }
 
   if (toolCallOk) {

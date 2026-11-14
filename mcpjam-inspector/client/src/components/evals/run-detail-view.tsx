@@ -532,7 +532,12 @@ export function RunDetailView({
   // back to the active project) so hosted/BYOK orgs see the models they
   // configured, not just the managed defaults. Execution still runs on the
   // managed key in V1.
-  const { availableModels } = useAvailableModels({
+  const {
+    availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
+    onAddProvider,
+  } = useAvailableModels({
     projectId: selectedRunDetails.projectId ?? null,
   });
 
@@ -761,6 +766,9 @@ export function RunDetailView({
         onRun={(args, force) => requestGoalCompletion(args, force)}
         currentSuiteJudgeConfig={currentSuiteJudgeConfig}
         embedded={embeddedInResultsSplit}
+        requireOrgKeys={requireOrgKeys}
+        onManageOrgProviders={onManageOrgProviders}
+        onAddProvider={onAddProvider}
       />
     ) : null;
 

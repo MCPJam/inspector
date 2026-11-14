@@ -8,7 +8,9 @@ import {
   fundingHeadline,
   fundingPreviewRuns,
   fundingReviewNotice,
+  fundingUnverifiedNotice,
   fundingSplitOf,
+  launchOutOfCreditsReason,
   launchRunOverrides,
   withChosenIterations,
 } from "../swarm-funding-plan";
@@ -163,25 +165,31 @@ describe("alsoFailedNotice", () => {
 });
 
 describe("funding split copy", () => {
-  it("reads 'N sponsored conversations · M use org credits'", () => {
+  it("reads 'N sponsored · M use org credits', dropping a zero side", () => {
     expect(fundingHeadline({ sponsored: 5, credits: 10, total: 15 })).toBe(
-      "5 sponsored conversations · 10 use org credits",
+      "5 sponsored · 10 use org credits",
     );
     expect(fundingHeadline({ sponsored: 1, credits: 1, total: 2 })).toBe(
-      "1 sponsored conversation · 1 uses org credits",
+      "1 sponsored · 1 uses org credits",
     );
-    expect(fundingHeadline({ sponsored: 0, credits: 0, total: 0 })).toBe(
-      "0 sponsored conversations · 0 use org credits",
+    expect(fundingHeadline({ sponsored: 15, credits: 0, total: 15 })).toBe(
+      "15 sponsored conversations",
+    );
+    expect(fundingHeadline({ sponsored: 1, credits: 0, total: 1 })).toBe(
+      "1 sponsored conversation",
+    );
+    expect(fundingHeadline({ sponsored: 0, credits: 2, total: 2 })).toBe(
+      "2 conversations use org credits",
+    );
+    expect(fundingHeadline({ sponsored: 0, credits: 1, total: 1 })).toBe(
+      "1 conversation uses org credits",
     );
   });
 
   it("makes no claim that anything is free or guaranteed", () => {
     const texts = [
       fundingHeadline({ sponsored: 5, credits: 10, total: 15 }),
-      fundingReviewNotice({
-        shown: null,
-        now: { sponsored: 5, credits: 10, total: 15 },
-      }),
+      fundingUnverifiedNotice(),
       fundingReviewNotice({
         shown: 5,
         now: { sponsored: 0, credits: 15, total: 15 },
@@ -232,6 +240,62 @@ describe("fundingSplitOf", () => {
   it("is null when sponsorship is unsupported or the preview covers a different number of runs", () => {
     expect(fundingSplitOf(preview({ supported: false }), 1)).toBeNull();
     expect(fundingSplitOf(preview(), 2)).toBeNull();
+  });
+});
+
+describe("launchOutOfCreditsReason", () => {
+  const REASON = "Out of MCPJam credits · resets in 3h";
+  const split = (sponsored: number) => ({
+    sponsored,
+    credits: 15 - sponsored,
+    total: 15,
+  });
+
+  it("blocks a launch the split says has nothing sponsored", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: REASON,
+        split: split(0),
+        pendingGoals: 0,
+        allowanceRemaining: undefined,
+      }),
+    ).toBe(REASON);
+  });
+
+  it("blocks when no sponsored allowance is left, even before the goals exist", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: REASON,
+        split: null,
+        pendingGoals: 3,
+        allowanceRemaining: 0,
+      }),
+    ).toBe(REASON);
+  });
+
+  it("never blocks a launch that is or may be sponsored", () => {
+    for (const input of [
+      { split: split(5), pendingGoals: 0, allowanceRemaining: 5 },
+      // The new goals are not in the split yet.
+      { split: split(0), pendingGoals: 2, allowanceRemaining: undefined },
+      // Sponsorship not known here at all.
+      { split: null, pendingGoals: 0, allowanceRemaining: undefined },
+    ]) {
+      expect(
+        launchOutOfCreditsReason({ outOfCreditsReason: REASON, ...input }),
+      ).toBeNull();
+    }
+  });
+
+  it("never blocks while the org can spend", () => {
+    expect(
+      launchOutOfCreditsReason({
+        outOfCreditsReason: null,
+        split: split(0),
+        pendingGoals: 0,
+        allowanceRemaining: 0,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -359,6 +423,12 @@ describe("creditFundingExplanation", () => {
       ).toMatch(/the persona model isn't included in them/);
     });
 
+    it("names the organization's key policy as the cause", () => {
+      expect(explain([{ targetId: "a", reason: "org_keys_required" }])).toMatch(
+        /can't use sponsored conversations \(this organization requires its own provider keys\)/,
+      );
+    });
+
     // The backend names the saved SELECTION (not hosted), not where the judge
     // would run, so the copy says what the setting is.
     it("describes a judge on a model MCPJam does not host as a setting, not as where it runs", () => {
@@ -420,21 +490,21 @@ describe("creditFundingExplanation", () => {
 });
 
 describe("notices", () => {
-  it("a first look at a split says nothing was launched, a moved split says what changed", () => {
-    expect(
-      fundingReviewNotice({
-        shown: null,
-        now: { sponsored: 2, credits: 0, total: 2 },
-      }),
-    ).toMatch(/can use sponsored conversations: 2 sponsored conversations/);
+  it("a split that lost sponsored conversations says what changed and that nothing launched", () => {
     expect(
       fundingReviewNotice({
         shown: 5,
         now: { sponsored: 3, credits: 2, total: 5 },
       }),
-    ).toMatch(
-      /changed[\s\S]*5 sponsored conversations[\s\S]*3 sponsored[\s\S]*Nothing was launched/,
+    ).toBe(
+      "2 conversations will now use org credits. Press Continue to launch.",
     );
+    expect(
+      fundingReviewNotice({
+        shown: 1,
+        now: { sponsored: 0, credits: 1, total: 1 },
+      }),
+    ).toMatch(/1 conversation will now use org credits/);
   });
 
   it("a 409 notice separates none-launched from a partial launch and never says the rest will retry", () => {

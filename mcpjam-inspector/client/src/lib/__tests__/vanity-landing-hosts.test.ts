@@ -31,6 +31,10 @@ describe("isCaniuseLandingHost", () => {
 });
 
 describe("shouldSkipGuestSession", () => {
+  it("does not mint a guest for the public redemption modal", () => {
+    expect(shouldSkipGuestSession("app.mcpjam.com", "/redeem")).toBe(true);
+    expect(shouldSkipGuestSession("app.mcpjam.com", "/redeem/")).toBe(true);
+  });
   it("skips the guest bootstrap on caniuse.dev", () => {
     expect(shouldSkipGuestSession("caniuse.dev")).toBe(true);
     expect(shouldSkipGuestSession("www.caniuse.dev")).toBe(true);

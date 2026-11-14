@@ -1,5 +1,9 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
-import { isCreditExhaustion, isHoldRefusal } from "@/shared/credit-exhaustion";
+import {
+  isCreditExhaustion,
+  isDeclinedCardLimit,
+  isHoldRefusal,
+} from "@/shared/credit-exhaustion";
 import {
   AGENT_STEP_LIMIT_CODE,
   STEP_LIMIT_REFUSAL_MESSAGE,
@@ -35,6 +39,16 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
   "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
+
+/** The code chat gives a refusal after a declined card paused auto-reload. */
+export const AUTO_TOPUP_DECLINED_CODE = "auto_topup_declined";
+
+/** The title every surface gives it: the card, not a limit, is what to fix. */
+export const AUTO_TOPUP_DECLINED_TITLE = "Update your declined card";
+
+/** What every surface says for it, under that title. */
+export const AUTO_TOPUP_DECLINED_MESSAGE =
+  "Your card was declined, so auto-reload is paused. Update your payment method and turn auto-reload back on in Organization \u2192 Billing, or add credits to keep going.";
 export type MCPJamLimitKind = "total" | "concurrency";
 
 /** Which allowance ran out. Free orgs draw on a daily bucket, Team orgs on a
@@ -67,6 +81,14 @@ type MCPJamLimitErrorInput = {
   /** Which screen hit the wall; see `MCPJamLimitSurface`. Only affects which
    * actions the dialog offers, never whether it opens. */
   surface?: MCPJamLimitSurface;
+  /** A button the user pressed to see the dialog; see `MCPJamLimitNotifyInput`. */
+  userInitiated?: boolean;
+  /**
+   * The caller shows a declined card itself (chat's Card declined banner), so
+   * the dialog, which does not name the card, stays shut for one. Elsewhere
+   * the dialog is the only billing prompt and still opens.
+   */
+  showsDeclinedCard?: boolean;
 };
 
 const getStringProperty = (value: unknown, key: string): string | undefined => {
@@ -289,7 +311,11 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     useFrontierSignInDialogStore.getState().open();
     return true;
   }
-  if (!isMCPJamModelLimitError(args)) return false;
+  if (
+    !isMCPJamModelLimitError(args) ||
+    (args.showsDeclinedCard && isDeclinedCardLimit(args))
+  )
+    return false;
   const period = findMCPJamLimitPeriod(args.message);
   const shortfall = findMCPJamCreditShortfall(args);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
@@ -300,6 +326,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     ...(args.surface ? { surface: args.surface } : {}),
     ...(period ? { period } : {}),
     ...(shortfall ? { shortfall } : {}),
+    ...(args.userInitiated ? { userInitiated: true } : {}),
   });
   return true;
 }
@@ -419,19 +446,23 @@ const describeBurstRetry = (retryAfterMs: number | undefined): string => {
   return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
 };
 
-/**
- * One plain sentence for an Ask MCPJam refusal, or `null` when the error is
- * something else.
- *
- * The agent is free, so none of these is a wallet the reader can top up, and
- * the raw body they arrive as reads as a crash. The two sentences say the only
- * two things worth saying: come back after the reset, or this is ours and it is
- * temporary.
- */
+export function isGuestInputTooLargeMessage(
+  message: string | null | undefined,
+): boolean {
+  if (!message) return false;
+  const codes = new Set<string>();
+  collectCodes(message, codes);
+  return codes.has("guest_input_too_large");
+}
+
+/** Plain copy for an Ask MCPJam refusal, not its transport envelope. */
 export function describeAgentRefusalMessage(
   message: string | null | undefined,
 ): string | null {
   if (!message) return null;
+  if (isGuestInputTooLargeMessage(message)) {
+    return "This conversation is too large to send. Shorten your message, start a new chat, or disconnect servers and try again.";
+  }
   const codes = new Set<string>();
   collectCodes(message, codes);
   if (codes.has(AGENT_STEP_LIMIT_CODE)) {
@@ -491,6 +522,7 @@ export function describeMCPJamLimitMessage(
 export async function notifyMCPJamLimitErrorFromResponse(
   response: Response,
   surface?: MCPJamLimitSurface,
+  options: Pick<MCPJamLimitErrorInput, "showsDeclinedCard"> = {},
 ): Promise<boolean> {
   let details: unknown;
   let message: string | null = null;
@@ -524,5 +556,6 @@ export async function notifyMCPJamLimitErrorFromResponse(
         ? limitKind
         : undefined,
     ...(surface ? { surface } : {}),
+    ...options,
   });
 }

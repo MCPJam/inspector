@@ -1,3 +1,5 @@
+import * as memberActor from "../hooks/use-is-member-actor";
+import { projectTransitionRecovery } from "../lib/auth/project-transition-recovery";
 import { type ReactNode, useLayoutEffect, useState } from "react";
 import {
   act,
@@ -7,10 +9,15 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  captureOAuthCallbackFromUrl,
+  resetOAuthCallbackInboxForTests,
+} from "../lib/oauth-callback-inbox";
 import userEvent from "@testing-library/user-event";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import { resolveSessionPrivacy } from "@/lib/session-privacy";
 import { useApiContext } from "../hooks/hosted/use-hosted-api-context";
 import {
   beginOrganizationDeletion,
@@ -48,6 +55,16 @@ import {
   writeAppSignInReturnPath,
 } from "../lib/app-signin-return-path";
 import { getGuestSessionRefusal } from "../lib/guest-session";
+
+// The organization key policy binding has its own tests; here a template
+// seed is created as it is.
+vi.mock("@/hooks/use-org-bound-template-seed", () => ({
+  useOrgBoundTemplateSeed: () => ({
+    ready: true,
+    bind: (input: unknown) => ({ kind: "unchanged", input }),
+    prepare: (input: unknown) => ({ input }),
+  }),
+}));
 
 /** Convex-shaped project ids for the cross-organization switch cases. */
 const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
@@ -112,6 +129,7 @@ const {
     handleConnect: vi.fn(),
     handleDisconnect: vi.fn(),
     handleRuntimeDisconnect: vi.fn(),
+    clearAutoOAuthEscalation: vi.fn(),
     handleReconnect: vi.fn(),
     reconnectServerWithResult: vi
       .fn()
@@ -312,6 +330,15 @@ vi.mock("posthog-js/react", () => ({
   // These tests don't exercise that wall, so control (undefined) is fine.
   useFeatureFlagVariantKey: () => undefined,
 }));
+
+// Pass-through, so a test can see which context the shell resolved replay for.
+vi.mock("@/lib/session-privacy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/session-privacy")>();
+  return {
+    ...actual,
+    resolveSessionPrivacy: vi.fn(actual.resolveSessionPrivacy),
+  };
+});
 
 vi.mock("@/lib/analytics", () => ({
   track: mockTrack,
@@ -570,6 +597,8 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
+    projectTransitionRecovery.clear();
+    projectTransitionRecovery.observeActor("guest:reset", "/");
     mockServersById.clear();
     mockFetchServerSecrets.mockReset();
     resetSignOutLatchForTests();
@@ -783,17 +812,20 @@ describe("App hosted OAuth callback handling", () => {
 
     it("shows the setup error when storage cannot record the reload", () => {
       setup();
-      const setItem = vi
-        .spyOn(Storage.prototype, "setItem")
-        .mockImplementation(() => {
+      const storage = sessionStorage;
+      vi.stubGlobal("sessionStorage", {
+        getItem: storage.getItem.bind(storage),
+        removeItem: storage.removeItem.bind(storage),
+        setItem: () => {
           throw new Error("QuotaExceededError");
-        });
+        },
+      });
       try {
         render(<App />);
         expect(reload).not.toHaveBeenCalled();
         expect(screen.getByTestId("user-setup-error")).toBeInTheDocument();
       } finally {
-        setItem.mockRestore();
+        vi.unstubAllGlobals();
       }
     });
 
@@ -918,6 +950,45 @@ describe("App hosted OAuth callback handling", () => {
         }),
       );
     });
+  });
+
+  it("completes a scenario callback whose answer main.tsx moved into the inbox, then consumes it", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockCompleteHostedOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+      serverConfig: {
+        url: "https://mcp.asana.com/sse",
+        requestInit: { headers: { Authorization: "Bearer token" } },
+      },
+    });
+    resetOAuthCallbackInboxForTests();
+    captureOAuthCallbackFromUrl();
+    // What App sees in production: the code is no longer in the address bar.
+    expect(window.location.search).toBe("?oauth_pending=1");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({ surface: "scenario", serverId: "srv_asana" }),
+        "oauth-code",
+        expect.objectContaining({
+          authorizationHeader: "Bearer guest-bearer",
+        }),
+      );
+    });
+    // Finalizing leaves the callback route and takes the reload copy with it.
+    await waitFor(() => {
+      expect(window.location.pathname).not.toBe("/oauth/callback");
+    });
+    // The code was never written to storage.
+    expect(
+      Array.from({ length: sessionStorage.length }, (_, i) =>
+        sessionStorage.getItem(sessionStorage.key(i) ?? ""),
+      ).join("\n"),
+    ).not.toContain("oauth-code");
+    resetOAuthCallbackInboxForTests();
   });
 
   it("uses hosted completion for authenticated scenario callbacks without a hosted session id", async () => {
@@ -2248,9 +2319,11 @@ describe("App hosted OAuth callback handling", () => {
 
   it("recovers a stale scoped sign-in return without painting the unavailable screen", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const staleProjectId = "k5700000000000000000000000a";
     const currentProjectId = "k5700000000000000000000000b";
     const stalePath = `/p/${staleProjectId}/evals?view=runs#case-3`;
+    projectTransitionRecovery.remember(stalePath, "guest:old");
     writeAppSignInReturnPath(stalePath);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockUseAppState.mockImplementation(() => ({
@@ -2291,9 +2364,9 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(`${window.location.pathname}${window.location.search}`).toBe(
-        `/p/${currentProjectId}/evaluate?view=runs`,
+        `/p/${currentProjectId}/home`,
       );
-      expect(window.location.hash).toBe("#case-3");
+      expect(window.location.hash).toBe("");
     });
     expect(
       screen.queryByTestId("project-route-inaccessible"),
@@ -2302,8 +2375,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(sonnerToast.success).not.toHaveBeenCalled();
     expect(
       replaceStateSpy.mock.calls.filter(
-        ([, , target]) =>
-          target === `/p/${currentProjectId}/evals?view=runs#case-3`,
+        ([, , target]) => target === `/p/${currentProjectId}/home`,
       ),
     ).toHaveLength(1);
     expect(mockTrack).toHaveBeenCalledWith(
@@ -2318,8 +2390,10 @@ describe("App hosted OAuth callback handling", () => {
 
   it("opens a valid scoped sign-in return unchanged", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const projectId = "k5700000000000000000000000b";
     const savedPath = `/p/${projectId}/servers?view=grid#tools`;
+    projectTransitionRecovery.remember(savedPath, "guest:old");
     writeAppSignInReturnPath(savedPath);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockUseAppState.mockImplementation(() => ({
@@ -2380,8 +2454,13 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps a scoped callback loading until the database user is ready", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const staleProjectId = "k5700000000000000000000000a";
     const currentProjectId = "k5700000000000000000000000b";
+    projectTransitionRecovery.remember(
+      `/p/${staleProjectId}/servers`,
+      "guest:old",
+    );
     writeAppSignInReturnPath(`/p/${staleProjectId}/servers`);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockDbUserState.isEnsuringUser = true;
@@ -2428,9 +2507,82 @@ describe("App hosted OAuth callback handling", () => {
     view.rerender(<App />);
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe(`/p/${currentProjectId}/servers`);
+      expect(window.location.pathname).toBe(`/p/${currentProjectId}/home`);
     });
   });
+
+  it.each([
+    ["callback", undefined],
+    ["callback", false],
+    ["sibling", undefined],
+    ["sibling", false],
+  ] as const)(
+    "keeps %s recovery unresolved while member confirmation is %s",
+    async (flow, confirmed) => {
+      const member = vi
+        .spyOn(memberActor, "useIsMemberActor")
+        .mockReturnValue(confirmed);
+      clearScenarioSession();
+      mockWorkOsAuthState.user = { id: "workos-user-1" };
+      const staleProjectId = "k5700000000000000000000000a";
+      const currentProjectId = "k5700000000000000000000000b";
+      projectTransitionRecovery.remember(
+        `/p/${staleProjectId}/servers`,
+        "guest:old",
+      );
+      writeAppSignInReturnPath(`/p/${staleProjectId}/servers`);
+      const initialPath =
+        flow === "callback"
+          ? "/callback?code=oauth-code"
+          : `/p/${staleProjectId}/servers`;
+      window.history.replaceState({}, "", initialPath);
+
+      mockUseAppState.mockImplementation(() => ({
+        ...createAppStateMock(),
+        activeProjectId: currentProjectId,
+        projects: {
+          [currentProjectId]: {
+            id: currentProjectId,
+            name: "Current Project",
+            sharedProjectId: currentProjectId,
+            organizationId: "org-1",
+            servers: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        },
+      }));
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projects:getMyProjects") {
+          return [
+            {
+              _id: currentProjectId,
+              name: "Current Project",
+              organizationId: "org-1",
+              ownerId: "user-1",
+              servers: {},
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ];
+        }
+        return undefined;
+      });
+
+      const view = render(<App />);
+      expect(window.location.pathname).toBe(initialPath.split("?")[0]);
+      expect(projectTransitionRecovery.store.getState().marker).not.toBeNull();
+
+      member.mockReturnValue(true);
+      view.rerender(<App />);
+
+      await waitFor(() => {
+        expect(window.location.pathname).toBe(`/p/${currentProjectId}/home`);
+      });
+    },
+  );
+
 
   it("does not automatically recover a stale URL outside the callback", async () => {
     clearScenarioSession();
@@ -2485,9 +2637,11 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps recovery armed while a cached active project waits for membership", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const staleProjectId = "k5700000000000000000000000a";
     const currentProjectId = "k5700000000000000000000000b";
     const stalePath = `/p/${staleProjectId}/playground?model=test#chat`;
+    projectTransitionRecovery.remember(stalePath, "guest:old");
     writeAppSignInReturnPath(stalePath);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
@@ -2545,13 +2699,17 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/callback");
     expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
 
+    // A reload/remount during membership loading must keep the one-use intent.
+    view.unmount();
+    const reloaded = render(<App />);
+    expect(window.location.pathname).toBe("/callback");
     projectsLoaded = true;
-    view.rerender(<App />);
+    reloaded.rerender(<App />);
 
     await waitFor(() => {
       expect(
         `${window.location.pathname}${window.location.search}${window.location.hash}`,
-      ).toBe(`/p/${currentProjectId}/playground?model=test#chat`);
+      ).toBe(`/p/${currentProjectId}/home`);
     });
     expect(
       screen.queryByTestId("project-route-inaccessible"),
@@ -2570,10 +2728,12 @@ describe("App hosted OAuth callback handling", () => {
     vi.useFakeTimers();
     try {
       clearScenarioSession();
+      mockWorkOsAuthState.user = { id: "workos-user-1" };
       const staleProjectId = "k5700000000000000000000000a";
       const currentProjectId = "k5700000000000000000000000b";
       const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
       let projectsLoaded = false;
+      projectTransitionRecovery.remember(stalePath, "guest:old");
       writeAppSignInReturnPath(stalePath);
       window.history.replaceState({}, "", "/callback?code=oauth-code");
       mockUseAppState.mockImplementation(() => ({
@@ -2650,7 +2810,7 @@ describe("App hosted OAuth callback handling", () => {
       await waitFor(() => {
         expect(
           `${window.location.pathname}${window.location.search}${window.location.hash}`,
-        ).toBe(`/p/${currentProjectId}/servers?view=grid#tools`);
+        ).toBe(`/p/${currentProjectId}/home`);
       });
       expect(readAppSignInReturnPath()).toBeNull();
     } finally {
@@ -2660,7 +2820,12 @@ describe("App hosted OAuth callback handling", () => {
 
   it("returns a no-project account home without claiming it switched projects", async () => {
     clearScenarioSession();
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
     const staleProjectId = "k5700000000000000000000000a";
+    projectTransitionRecovery.remember(
+      `/p/${staleProjectId}/playground?model=test#chat`,
+      "guest:old",
+    );
     writeAppSignInReturnPath(`/p/${staleProjectId}/playground?model=test#chat`);
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
@@ -2784,6 +2949,9 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     sessionStorage.clear();
+    const oldPath = "/p/k5700000000000000000000000a/home";
+    projectTransitionRecovery.remember(oldPath, "guest:old");
+    writeAppSignInReturnPath(oldPath);
     persistCheckoutIntent({ plan: "team", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
     writeScenarioSignInReturnPath("/user-testing/demo/token-123");
@@ -2801,6 +2969,7 @@ describe("App hosted OAuth callback handling", () => {
         "/user-testing/demo/token-123",
       );
     });
+    expect(projectTransitionRecovery.store.getState().marker).toBeNull();
   });
 
   it("keeps billing resume behind the checkout spinner for signed-in users", async () => {
@@ -4137,7 +4306,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://mcp.example.com/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4250,7 +4419,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4296,7 +4465,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4348,7 +4517,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4411,7 +4580,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4460,7 +4629,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: 'node server.js --config "My Files/config.json" ""' },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4663,7 +4832,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4710,7 +4879,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -5284,9 +5453,17 @@ describe("App hosted OAuth callback handling", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "replacement-token" },
     });
+    expect(appState.clearAutoOAuthEscalation).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
 
     await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledOnce());
+    // Authorize clears any Auto marker this page left pending, or the retry
+    // would fail with "still returns 401 after OAuth". (A marker from before
+    // the redirect is already unreachable: it is keyed by the old page's
+    // local project id.)
+    expect(appState.clearAutoOAuthEscalation).toHaveBeenCalledWith(
+      "OAuth server",
+    );
     expect(appState.handleConnect).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "OAuth server",
@@ -5368,6 +5545,9 @@ describe("App hosted OAuth callback handling", () => {
       }),
     ).toBeInTheDocument();
     expect(appState.clearPendingDashboardOAuth).toHaveBeenCalled();
+    expect(appState.clearAutoOAuthEscalation).toHaveBeenCalledWith(
+      "OAuth server",
+    );
     expect(
       screen.queryByRole("heading", { name: "Connecting to OAuth server" }),
     ).not.toBeInTheDocument();
@@ -5440,7 +5620,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(sonnerToast.success).not.toHaveBeenCalled();
   });
 
-  it.each(["connected", "reauth"] as const)(
+  it.each(["connected", "reauth", "superseded"] as const)(
     "reconnects once when OAuth callback recovery releases with %s outcome",
     async (reconnectStatus) => {
       clearHostedOAuthPendingState();
@@ -5472,11 +5652,16 @@ describe("App hosted OAuth callback handling", () => {
         },
       };
       const appState = createAppStateMock();
-      appState.reconnectServerWithResult.mockResolvedValue({
-        status: reconnectStatus,
-        error:
-          reconnectStatus === "reauth" ? "Authorization required" : undefined,
-      });
+      let resolveReconnect: (result: {
+        status: typeof reconnectStatus;
+        error?: string;
+      }) => void = () => {};
+      appState.reconnectServerWithResult.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveReconnect = resolve;
+          }),
+      );
       appState.appState.servers = { "OAuth server": server };
       appState.projectServers = { "OAuth server": server };
       appState.pendingDashboardOAuth = {
@@ -5510,8 +5695,24 @@ describe("App hosted OAuth callback handling", () => {
 
       rerender(<App />);
       expect(appState.reconnectServerWithResult).toHaveBeenCalledOnce();
+      await act(async () => {
+        resolveReconnect({
+          status: reconnectStatus,
+          error:
+            reconnectStatus === "reauth" ? "Authorization required" : undefined,
+        });
+      });
       if (reconnectStatus === "reauth") {
         await screen.findByText("Your server needs authorization to connect.");
+      }
+      if (reconnectStatus === "superseded") {
+        // A newer connect owns the outcome: keep waiting, no false error.
+        expect(
+          screen.queryByText("Your server needs authorization to connect."),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("heading", { name: "Connecting to OAuth server" }),
+        ).toBeInTheDocument();
       }
     },
   );
@@ -5670,7 +5871,10 @@ describe("App hosted OAuth callback handling", () => {
     mockConvexAuthState.isLoading = false;
     mockWorkOsAuthState.user = null;
     // One stable object: the banner reads it as a useSyncExternalStore snapshot.
-    const refusal = { until: Date.now() + 540_000 };
+    const refusal = {
+      until: Date.now() + 540_000,
+      reason: "rate_limited" as const,
+    };
     vi.mocked(getGuestSessionRefusal).mockReturnValue(refusal);
 
     render(<App />);
@@ -5851,6 +6055,49 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
+  it.each([
+    { path: "/conformance", enabled: true },
+    { path: "/conformance/runs/saved-run", enabled: true },
+    { path: "/conformance", enabled: false },
+    { path: "/conformance/runs/saved-run", enabled: false },
+  ])(
+    "waits for the conformance flag on $path before resolving to $enabled",
+    async ({ path, enabled }) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", `${path}?view=history#saved`);
+      mockPosthogState.featureFlags.hasLoadedFlags = false;
+      let conformanceFlag: boolean | undefined;
+      mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+        flag === "mcpjam-conformance" ? conformanceFlag : false,
+      );
+
+      const { rerender } = render(<App />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(window.location.pathname).toBe(path);
+      expect(window.location.search).toBe("?view=history");
+      expect(window.location.hash).toBe("#saved");
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+      expect(screen.queryByRole("tab", { name: "Overview" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Run conformance checks" }),
+      ).toBeNull();
+
+      conformanceFlag = enabled;
+      mockPosthogState.featureFlags.hasLoadedFlags = true;
+      rerender(<App />);
+      await waitFor(() => {
+        expect(window.location.pathname).toBe(enabled ? path : "/home");
+      });
+      if (enabled) {
+        expect(window.location.search).toBe("?view=history");
+        expect(window.location.hash).toBe("#saved");
+      }
+    },
+  );
+
   it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -5864,6 +6111,60 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(window.location.pathname).toBe("/home");
     });
+  });
+
+  it.each([false, undefined])("keeps a conformance share link open when its flag is %s", async (conformanceFlag) => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance/shared/share-token");
+    mockHandleOAuthCallback.mockReset();
+
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "mcpjam-conformance" ? conformanceFlag : false,
+    );
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Conformance report" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toMatch(/^\/conformance\/shared/);
+    // A guest's replay follows the shared-link rule, not their own policy.
+    expect(vi.mocked(resolveSessionPrivacy)).toHaveBeenCalledWith(
+      expect.objectContaining({ sharedLink: true }),
+    );
+  });
+
+  it("leaves the conformance server choice to the page, so the last-selected server is restored", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance");
+    localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "mcpjam-conformance",
+    );
+    const connected = (name: string) => ({
+      name,
+      config: { transportType: "http", url: `https://${name}.example/mcp` },
+      connectionStatus: "connected",
+      enabled: true,
+      retryCount: 0,
+    });
+    const appState = createAppStateMock();
+    appState.appState.servers = {
+      alpha: connected("alpha"),
+      beta: connected("beta"),
+    };
+    appState.projectServers = appState.appState.servers;
+    appState.displayServerConfigs = appState.projectServers;
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(appState.setSelectedServer).toHaveBeenCalledWith("beta");
+    });
+    expect(appState.setSelectedServer).not.toHaveBeenCalledWith("alpha");
   });
 
   it("keeps host template deep links in place while auth is loading", async () => {

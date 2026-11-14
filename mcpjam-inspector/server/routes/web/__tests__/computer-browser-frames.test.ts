@@ -222,6 +222,43 @@ describe("browser frames socket — who may watch", () => {
     expect(f.upstreamCalls).toHaveLength(0);
   });
 
+  it.each(["live", "sleeping", "waking", "provisioning", "retiring", "reaping", "released", "leaked"] as const)(
+    "streams only a live conversation sandbox (%s)",
+    async (status) => {
+      const f = build({
+        verifyToken: async () => ({
+          userId: CLAIMS.userId,
+          projectId: CLAIMS.projectId,
+          sandboxRowId: "sandbox-row-1",
+          sessionId: "logical-1",
+        }),
+        sandboxInfo: async () => ({
+          ok: true,
+          value: {
+            provider: "e2b",
+            sandboxRowId: "sandbox-row-1",
+            providerComputerId: "sbx_1",
+            ownerUserId: CLAIMS.userId,
+            projectId: CLAIMS.projectId,
+            status,
+          },
+        }),
+        lookupSession: (async () => ({
+          reachable: true,
+          session: { ...SESSION, logicalSessionId: "logical-1" },
+        })) as BrowserFramesDeps["lookupSession"],
+      });
+      const { ws } = await f.connect();
+      if (status === "live") {
+        expect(ws.closed).toBeUndefined();
+        expect(f.upstreamCalls).toHaveLength(1);
+      } else {
+        expect(ws.closed).toMatchObject({ code: 4410 });
+        expect(f.upstreamCalls).toHaveLength(0);
+      }
+    },
+  );
+
   it("closes 4410 — not 4503 — when the box has been reclaimed", async () => {
     // A hosted browser is hibernated within a couple of minutes of nobody
     // watching, so a paused box is ORDINARY. This socket cannot wake it (that

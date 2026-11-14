@@ -178,7 +178,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
     {
       name: "ui_search_registry_directory",
       description:
-        "Search a mirrored connector directory — thousands of entries, far more than the page lists. Matches names, descriptions and tool/skill names, so 'invoice' and 'create_issue' work as well as 'Linear'. Omit 'query' to browse. Two directories, one at a time; 'source' switches, omit to keep the user's view. Drives the screen's own controls, so results are what the user sees — read them from ui_snapshot_app's `directory` block, then install with ui_connect_registry_server.",
+        "Search the Claude connector directory. Thousands of entries, far more than the page lists. Matches names, descriptions and tool/skill names, so 'invoice' and 'create_issue' work as well as 'Linear'. Omit 'query' to browse. Drives the screen's own controls, so results are what the user sees. Read them from ui_snapshot_app's `directory` block, then install with ui_connect_registry_server.",
       inputSchema: {
         type: "object",
         properties: {
@@ -189,9 +189,9 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
           },
           source: {
             type: "string",
-            enum: ["anthropic-directory", "chatgpt-directory"],
+            enum: ["anthropic-directory"],
             description:
-              "Which directory to browse. Omit to keep the one on screen.",
+              "The Claude directory. Omit to keep the view on screen.",
           },
           tier: {
             type: "string",

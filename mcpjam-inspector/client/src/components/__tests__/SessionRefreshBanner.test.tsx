@@ -36,25 +36,31 @@ describe("SessionRefreshBanner", () => {
     expect(screen.queryByTestId("session-refresh-banner")).toBeNull();
   });
 
-  it("offers an in-place retry after a transient failure", () => {
-    useSessionRefreshStore.setState({ status: "failed", kind: "transient" });
-    render(<SessionRefreshBanner />);
+  it.each(["transient", "manual"] as const)(
+    "offers an in-place retry after a %s failure",
+    (kind) => {
+      useSessionRefreshStore.setState({ status: "failed", kind });
+      render(<SessionRefreshBanner />);
 
-    expect(screen.getByText("Couldn't refresh your session.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      expect(screen.getByText("Couldn't refresh your session.")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    // The nonce bump is what re-runs Convex's setAuth.
-    expect(useSessionRefreshStore.getState().retryNonce).toBe(1);
-    expect(useSessionRefreshStore.getState().status).toBe("retrying");
-  });
+      // The nonce bump is what re-runs Convex's setAuth.
+      expect(useSessionRefreshStore.getState().retryNonce).toBe(1);
+      expect(useSessionRefreshStore.getState().status).toBe("retrying");
+    },
+  );
 
-  it("disables the button while a retry is in flight", () => {
-    useSessionRefreshStore.setState({ status: "retrying", kind: "transient" });
-    render(<SessionRefreshBanner />);
+  it.each(["transient", "manual"] as const)(
+    "disables the button while a %s retry is in flight",
+    (kind) => {
+      useSessionRefreshStore.setState({ status: "retrying", kind });
+      render(<SessionRefreshBanner />);
 
-    const button = screen.getByRole("button", { name: /Retrying/ });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
-  });
+      const button = screen.getByRole("button", { name: /Retrying/ });
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    },
+  );
 
   it("offers sign-in when the session is genuinely dead", () => {
     useSessionRefreshStore.setState({ status: "failed", kind: "signed_out" });

@@ -157,6 +157,7 @@ function makeHarness(
   );
   const h = new McpAppBrowserHarness({
     callTool,
+    readResource: vi.fn(),
     // Small paintTimeoutMs keeps the genuinely-blank fixture fast (it waits the
     // whole paint budget before concluding blank).
     budgets: {
@@ -198,6 +199,7 @@ describe("McpAppBrowserHarness — Chromium gating", () => {
     }
     const h = new NoChromiumHarness({
       callTool: async () => ({ content: [] }),
+      readResource: vi.fn(),
     });
     harnesses.push(h);
     const obs = await h.renderWidget({
@@ -215,6 +217,7 @@ describe("McpAppBrowserHarness — collectVideo (fail-soft + idempotent)", () =>
   it("returns null when the harness never launched, and stays a no-op", async () => {
     const h = new McpAppBrowserHarness({
       callTool: async () => ({ content: [] }),
+      readResource: vi.fn(),
     });
     harnesses.push(h);
     // No render → no page/video → null, never throws.

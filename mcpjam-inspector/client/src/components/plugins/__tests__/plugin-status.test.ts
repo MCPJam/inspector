@@ -41,6 +41,16 @@ describe("describePluginStatus", () => {
     ).toBe("Skipped: some new reason");
   });
 
+  it("names a server an active plugin runs without for now", () => {
+    const active = { ...base, row: { status: "active" as const } };
+    expect(
+      describePluginStatus({ ...active, unavailable: "needs_auth" }).label,
+    ).toBe("Needs sign-in");
+    expect(
+      describePluginStatus({ ...active, unavailable: "needs_setup" }).label,
+    ).toBe("Needs setup");
+  });
+
   it("is Disabled whenever the plugin is off", () => {
     expect(
       describePluginStatus({

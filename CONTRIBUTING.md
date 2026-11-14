@@ -106,6 +106,15 @@ Do not point `GUEST_JWKS_URL` anywhere: a development deployment verifies guest
 tokens with its own `/guest/jwks` by default. (The shared OSS deployment's
 pairing with the hosted guest authority is managed by operators.)
 
+Hosted Claude Code and Codex turns boot the deployment's `E2B_TEMPLATE_ID`.
+Unset, that is E2B's `base` image, which has no agent baked in, so every new
+conversation installs Claude Code or Codex first (about 11 s and 5 s on dev
+boxes, November 2026) and its first-message timings are not comparable with
+production's. To time or demo first messages, set it to a baked computer
+template your deployment's E2B team can boot
+(`npx convex env set E2B_TEMPLATE_ID <template>`). How templates are built, and
+which one staging runs, is in mcpjam-backend `templates/computer/README.md`.
+
 ### Guest sessions
 
 The Inspector never writes configuration to a backend while it runs. Guests come
@@ -176,12 +185,35 @@ WorkOS or guest cookie. `--server-port N` pins the port
 (`npm run electron:dev -w @mcpjam/inspector -- --server-port 7000`).
 
 Its `pre` step builds the SDK if `../sdk/dist` is stale and regenerates the
-gitignored bundles (`PluginShim.bundled.ts` and friends), so there is nothing to
-run first. Then it starts:
+gitignored bundles (`PluginShim.bundled.ts` and friends) and telemetry catalogs
+(`*telemetry-catalog.generated.json` and friends), so there is nothing to run
+first. Then it starts:
 
 - the Electron main process, with the embedded Hono server on the chosen port
 - Vite's dev server for the renderer, which is what the window loads
 - file watchers for the main and preload bundles
+- the telemetry catalog watcher
+
+**Telemetry catalogs** are build outputs too. The names the strict telemetry
+builders may forward (log messages, error classes, routes, source files) are
+read from source by `scripts/generate-telemetry-catalogs.mjs`, which `npm
+install`, every SDK and Inspector build, test and typecheck, and the dev loops
+(`dev`, `dev:app`, `dev:server`, `dev:client`, SDK `dev`, `electron:dev`,
+`test:watch`) run for you. A new logger message, route or error class is
+catalogued on save; there is no file to commit. Error names that dependencies
+set are not in our source: add them to `DEPENDENCY_ERRORS` in that script, or
+their errors reach Sentry and Axiom as `UnknownError`.
+
+**Does my field arrive?** Telemetry forwards only fields that have a rule, so a
+new diagnostic field can be dropped without any error. Check it in the test
+that adds it: `expectTelemetryFields(sample, ["statusCode"])` from
+`mcpjam-inspector/shared/__tests__/explain-telemetry.ts` runs the sample
+through the real log-row or server-analytics builder and fails with each
+missing field's drop reason (for example, "no field rule: declare it in
+server/utils/log-events.ts"). `explainTelemetry(sample)` returns the same
+`{ forwarded, dropped }` for a look before you write the assertion. An org,
+project or server ID arrives only from the server's request context, never
+from a payload; see `mcpjam-inspector/server/utils/LOGGING.md`.
 
 **Reload semantics**, which differ by process:
 

@@ -26,7 +26,12 @@ export function ProjectRouteBoundary() {
   // No coordinator state yet (the very first commit, or a test mounting this
   // without App). Resolving is the safe reading: it renders nothing
   // project-owned.
-  if (!state || state.status === "resolving" || state.status === "unscoped") {
+  if (
+    context?.projectTransitionPending ||
+    !state ||
+    state.status === "resolving" ||
+    state.status === "unscoped"
+  ) {
     return <LoadingScreen />;
   }
 

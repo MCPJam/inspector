@@ -151,7 +151,7 @@ export const HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON =
  *
  * DELIVERY-AWARE (COMP-39). The seal only exists to carry a policy OUT of this
  * process, into a sandbox that calls the customer's server itself. That is
- * `mcpDelivery: "native"`. A `host-executed` adapter's MCP calls never leave
+ * `mcpDelivery: "harness"`. A `host-executed` adapter's MCP calls never leave
  * this process — `projectSelectedMcpServersAsHostTools` gates them in-process
  * with the same `decideToolPolicyFromSnapshot` and the same block envelope — so
  * a deployment with a weak or absent `COMPUTERS_TERMINAL_TOKEN_SECRET` was
@@ -168,7 +168,7 @@ export function harnessToolPolicyLaunchRefusal(args: {
   harness: HarnessId | undefined;
 }): string | null {
   if (!args.hasToolPolicy || !args.harness || args.localExecution) return null;
-  if (getHarnessAdapter(args.harness).mcpDelivery !== "native") return null;
+  if (getHarnessAdapter(args.harness).mcpDelivery !== "harness") return null;
   return isHarnessProxyPolicySealAvailable()
     ? null
     : HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON;

@@ -18,23 +18,32 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const claimReadinessRun = vi.fn();
 const heartbeatReadinessRun = vi.fn();
 const finalizeReadinessRun = vi.fn();
 const failReadinessRun = vi.fn();
 const requestManagedObservations = vi.fn();
+const getReadinessRunSubmission = vi.fn();
 
-// The real class, imported rather than restated: the worker distinguishes it
-// with `instanceof`, and a look-alike would make the test pass while the
+// The real classes, imported rather than restated: the worker distinguishes
+// them with `instanceof`, and a look-alike would make the test pass while the
 // production path fell through to the failure branch.
 const { ReadinessLeaseLostError } = await import("../runner.js");
+const { ReadinessSubmissionUnreadableError } = await vi.importActual<
+  typeof import("../backend-client.js")
+>("../backend-client.js");
 
 vi.mock("../backend-client.js", () => ({
+  claimReadinessRun: (...args: unknown[]) => claimReadinessRun(...args),
   heartbeatReadinessRun: (...args: unknown[]) => heartbeatReadinessRun(...args),
   finalizeReadinessRun: (...args: unknown[]) => finalizeReadinessRun(...args),
   failReadinessRun: (...args: unknown[]) => failReadinessRun(...args),
   requestManagedObservations: (...args: unknown[]) =>
     requestManagedObservations(...args),
+  getReadinessRunSubmission: (...args: unknown[]) =>
+    getReadinessRunSubmission(...args),
   ReadinessLeaseLostError,
+  ReadinessSubmissionUnreadableError,
 }));
 
 // DYNAMIC, and it has to stay that way. `vi.mock` is hoisted, but its factory
@@ -44,6 +53,10 @@ vi.mock("../backend-client.js", () => ({
 const { executeHostedReadinessRun, summarizeReadinessResult } = await import(
   "../worker.js"
 );
+
+const { logger } = await import("../../../utils/logger.js");
+const loggerError = vi.spyOn(logger, "error");
+const loggerWarn = vi.spyOn(logger, "warn");
 
 const LEASE = { runId: "run_1", jobId: "job_1" };
 const TARGET = "https://connector.example.com/mcp";
@@ -96,6 +109,7 @@ function wireFetch(): typeof fetch {
 }
 
 beforeEach(() => {
+  claimReadinessRun.mockResolvedValue({ status: "claimed" });
   heartbeatReadinessRun.mockResolvedValue({ alive: true });
   finalizeReadinessRun.mockResolvedValue({ applied: true });
   failReadinessRun.mockResolvedValue({ applied: true });
@@ -108,6 +122,131 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+describe("the lazy-auth inputs", () => {
+  it("are threaded into the run, and the probe carries no credential", async () => {
+    const calls: Array<{ tool?: string; authorization: string | null }> = [];
+    const base = wireFetch();
+    const recording = (async (url: any, init?: any) => {
+      const body =
+        String(init?.method ?? "GET").toUpperCase() === "POST"
+          ? JSON.parse(String(init?.body ?? "{}"))
+          : {};
+      if (body.method === "tools/call") {
+        calls.push({
+          tool: body.params?.name,
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [] } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return base(url, init);
+    }) as unknown as typeof fetch;
+
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: recording,
+      mcpHeaders: { authorization: "Bearer saved-token" },
+      includeLlmObservations: false,
+      lazyAuthProbe: { enabled: true, publicToolName: "search_docs" },
+      claimedFeatures: ["lazy-authentication"],
+    });
+
+    expect(calls).toEqual([{ tool: "search_docs", authorization: null }]);
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+    const report = finalizeReadinessRun.mock.calls[0]![2] as {
+      badges?: Array<{ id: string; state: string }>;
+    };
+    // The claim reached the grader: with no protected call the probe could
+    // not decide, so the claim is what the badge reports.
+    expect(
+      report.badges?.find((b) => b.id === "claude.features.lazy-authentication")
+        ?.state,
+    ).toBe("claimed");
+  });
+});
+
+describe("the claim", () => {
+  /** A transport that records whether the run was claimed when it first dialled. */
+  function dialAfterClaim(): { fetchFn: typeof fetch; dials: boolean[] } {
+    const dials: boolean[] = [];
+    const base = wireFetch();
+    const fetchFn = (async (url: any, init?: any) => {
+      dials.push(claimReadinessRun.mock.calls.length > 0);
+      return base(url, init);
+    }) as unknown as typeof fetch;
+    return { fetchFn, dials };
+  }
+
+  it("claims the run before anything dials, then executes it", async () => {
+    const { fetchFn, dials } = dialAfterClaim();
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn,
+      includeLlmObservations: false,
+    });
+    expect(claimReadinessRun).toHaveBeenCalledWith(LEASE);
+    expect(dials.length).toBeGreaterThan(0);
+    expect(dials.every(Boolean)).toBe(true);
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["already_claimed", "lease_lost", "not_found"])(
+    "stops without executing or writing when the claim is refused (%s)",
+    async (reason) => {
+      claimReadinessRun.mockResolvedValue({ status: "refused", reason });
+      const { fetchFn, dials } = dialAfterClaim();
+      await executeHostedReadinessRun({
+        lease: LEASE,
+        publisher: "claude",
+        target: TARGET,
+        fetchFn,
+        includeLlmObservations: true,
+        submissionId: "sub_1",
+      });
+      expect(dials).toEqual([]);
+      expect(getReadinessRunSubmission).not.toHaveBeenCalled();
+      expect(requestManagedObservations).not.toHaveBeenCalled();
+      expect(finalizeReadinessRun).not.toHaveBeenCalled();
+      expect(failReadinessRun).not.toHaveBeenCalled();
+    },
+  );
+
+  it("executes unclaimed when the claim gets no answer", async () => {
+    // As before claims existed: every write is still checked against the lease.
+    claimReadinessRun.mockResolvedValue({
+      status: "unanswered",
+      detail: "HTTP 503",
+    });
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+    });
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not claim a lease a resume already took", async () => {
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      leaseClaimed: true,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+    });
+    expect(claimReadinessRun).not.toHaveBeenCalled();
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("a run that completes", () => {
@@ -286,7 +425,9 @@ describe("the failure exits", () => {
     expect(failReadinessRun).not.toHaveBeenCalled();
     expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
     const [, summary] = finalizeReadinessRun.mock.calls[0]!;
-    expect(summary.overallStatus).toBe("not-ready");
+    // Nothing answered, so the server checks are blocked rather than failed:
+    // the run is incomplete, not a verdict that the server is not ready.
+    expect(summary.overallStatus).toBe("incomplete");
   });
 
   it("fails the row when an OpenAI run declares no submission mode", async () => {
@@ -340,6 +481,117 @@ describe("the failure exits", () => {
     // against a worker that caught the finalize failure and gave up — which
     // is the exact bug the case above is meant to be paired with.
     expect(failReadinessRun).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a run that grades a directory submission", () => {
+  const FROZEN = {
+    submissionId: "sub_1",
+    submissionRevision: 4,
+    flowId: "claude-connector",
+    flowVersion: "2026-11-13",
+    answers: [
+      // Over the portal's 200 characters, so the listing check must fail.
+      { key: "listing.oneLiner", value: "x".repeat(201), origin: "set", revision: 4 },
+    ],
+  };
+
+  function run(fetchFn: typeof fetch = wireFetch()) {
+    return executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn,
+      includeLlmObservations: false,
+      submissionId: "sub_1",
+    });
+  }
+
+  function listingStatus(): string | undefined {
+    const report = finalizeReadinessRun.mock.calls[0]![2] as {
+      findings: Array<{ id: string; status: string }>;
+    };
+    return report.findings.find(
+      (finding) => finding.id === "claude.submission.listing-fields",
+    )?.status;
+  }
+
+  it("grades the frozen answers, read once before anything dials", async () => {
+    getReadinessRunSubmission.mockResolvedValue(FROZEN);
+    await run();
+
+    expect(getReadinessRunSubmission).toHaveBeenCalledTimes(1);
+    expect(getReadinessRunSubmission).toHaveBeenCalledWith(LEASE);
+    expect(failReadinessRun).not.toHaveBeenCalled();
+    expect(listingStatus()).toBe("violated");
+  });
+
+  it.each([
+    [
+      "answers that cannot be read",
+      () =>
+        getReadinessRunSubmission.mockRejectedValue(
+          new ReadinessSubmissionUnreadableError(
+            "This run's saved answers were not found, so it was not graded. Start a new run from the submission.",
+          ),
+        ),
+      /were not found/,
+    ],
+    [
+      "answers to a form this server cannot grade",
+      () =>
+        getReadinessRunSubmission.mockResolvedValue({
+          ...FROZEN,
+          flowId: "chatgpt-plugin",
+        }),
+      /chatgpt-plugin/,
+    ],
+    [
+      "answers saved against another version of the form",
+      () =>
+        getReadinessRunSubmission.mockResolvedValue({
+          ...FROZEN,
+          flowVersion: "2026-01-01",
+        }),
+      /version 2026-01-01 of the claude-connector form/,
+    ],
+  ])("fails, before dialling anything, on %s", async (_label, arrange, reason) => {
+    arrange();
+    const fetchFn = vi.fn(wireFetch());
+    await run(fetchFn as unknown as typeof fetch);
+
+    // Never graded as an empty form: nothing dialled, nothing finalized.
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(finalizeReadinessRun).not.toHaveBeenCalled();
+    const [lease, terminalReason, message] = failReadinessRun.mock.calls[0]!;
+    expect(lease).toEqual(LEASE);
+    expect(terminalReason).toBe("submission_unreadable");
+    expect(String(message)).toMatch(reason);
+    // The submission's state, not MCPJam's fault: a warning, never a capture.
+    expect(loggerError).not.toHaveBeenCalled();
+    expect(loggerWarn).toHaveBeenCalledWith(
+      "[readiness] hosted run could not read its submission",
+      expect.objectContaining({ terminalReason: "submission_unreadable" }),
+    );
+  });
+
+  it("writes nothing when the lease is lost while reading the answers", async () => {
+    getReadinessRunSubmission.mockRejectedValue(new ReadinessLeaseLostError());
+    await run();
+    expect(finalizeReadinessRun).not.toHaveBeenCalled();
+    expect(failReadinessRun).not.toHaveBeenCalled();
+  });
+
+  it("reads no answers for a run started from a server", async () => {
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+    });
+    expect(getReadinessRunSubmission).not.toHaveBeenCalled();
+    expect(listingStatus()).toBe("not-evaluated");
   });
 });
 
@@ -421,7 +673,7 @@ describe("what leaves this process", () => {
       lease: LEASE,
       publisher: "claude",
       target: TARGET,
-      headers: { authorization: "Bearer sk-live-never-stored" },
+      mcpHeaders: { authorization: "Bearer sk-live-never-stored" },
       fetchFn: wireFetch(),
       includeLlmObservations: false,
       analyticsActor,

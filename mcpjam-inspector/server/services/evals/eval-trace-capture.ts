@@ -1,3 +1,4 @@
+import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
@@ -8,6 +9,11 @@ import {
 } from "@/shared/eval-trace";
 import type { ModelMessage } from "ai";
 import { isToolPolicyBlockResult } from "./tool-policy-gate.js";
+import {
+  annotateToolAuthChallenge,
+  classifyToolAuthChallenge,
+  type ToolAuthChallengeFinding,
+} from "./run-setup-signals.js";
 
 /**
  * Pull the MCP error code off a thrown tool error. This is an MCP-LAYER code,
@@ -70,6 +76,7 @@ export type AiSdkEvalTraceContext = {
       stepNumber: number;
       startAt: number;
       serverId?: string;
+      toolOrigin?: EvalTraceSpan["toolOrigin"];
       promptIndex: number;
     }
   >;
@@ -224,6 +231,8 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
   const out: Record<string, unknown> = { ...tools };
   for (const name of Object.keys(out)) {
     const raw = out[name] as {
+      _serverId?: string;
+      _toolOrigin?: string;
       execute?: (
         input: unknown,
         options: {
@@ -240,6 +249,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
       typeof (raw as { _serverId?: unknown })._serverId === "string"
         ? ((raw as { _serverId?: string })._serverId ?? undefined)
         : undefined;
+    const origin = toolOrigin(name, raw);
     out[name] = {
       ...raw,
       execute: async (
@@ -267,28 +277,44 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           stepNumber,
           startAt: toolStartedAt,
           serverId,
+          toolOrigin: origin,
           promptIndex: resolvedPromptIndex,
         });
         let success = true;
         let policyBlocked = false;
         let mcpErrorCode: number | undefined;
+        let authChallenge: ToolAuthChallengeFinding | undefined;
         try {
           const result = await origExecute(input, options);
           policyBlocked = isToolPolicyBlockResult(result);
           if (policyBlocked) return result;
           if (isCallToolResultError(result)) {
             success = false;
+            authChallenge = classifyToolAuthChallenge(
+              { result },
+              { serverId, toolName: name },
+            );
           }
           return result;
         } catch (err) {
           success = false;
           mcpErrorCode = extractMcpErrorCode(err);
+          authChallenge = classifyToolAuthChallenge(
+            { error: err },
+            { serverId, toolName: name },
+          );
           throw err;
         } finally {
           const toolFinishedAt = Date.now();
           ctx.openTools.delete(toolCallId);
+          // The account this call ran on, as the backend-tools wrapper records it.
+          const connectionId = toolConnectionAttribution(
+            raw,
+            input,
+            toolCallId,
+          )?.connectionId;
           if (!policyBlocked) {
-            ctx.recordedSpans.push({
+            const toolSpan: EvalTraceSpan = {
               id: `tool-${toolCallId}`,
               name,
               category: "tool",
@@ -298,6 +324,8 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               toolCallId,
               toolName: name,
               serverId,
+              toolOrigin: origin,
+              ...(connectionId ? { connectionId } : {}),
               status: success ? "ok" : "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
@@ -305,7 +333,18 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
                 toolStartedAt,
                 toolFinishedAt,
               ),
-            });
+            };
+            if (authChallenge) {
+              annotateToolAuthChallenge(toolSpan, {
+                ...authChallenge,
+                toolCallId,
+                toolName: name,
+                ...(serverId ? { serverId } : {}),
+                spanId: toolSpan.id,
+                promptIndex: resolvedPromptIndex,
+              });
+            }
+            ctx.recordedSpans.push(toolSpan);
             if (!success) {
               ctx.recordedSpans.push({
                 id: `tool-err-${toolCallId}`,
@@ -317,6 +356,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
                 toolCallId,
                 toolName: name,
                 serverId,
+                ...(connectionId ? { connectionId } : {}),
                 status: "error",
                 ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
                 ...createOffsetInterval(
@@ -517,6 +557,7 @@ export function finalizeAiSdkTraceOnFailure(
       toolCallId,
       toolName: t.toolName,
       serverId: t.serverId,
+      toolOrigin: t.toolOrigin,
       status: "error",
       ...createOffsetInterval(runStartedAt, t.startAt, failAt),
     });
@@ -780,6 +821,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
         },
       ) => unknown;
       _serverId?: string;
+      _toolOrigin?: string;
     };
     if (!raw || typeof raw.execute !== "function") {
       continue;
@@ -803,19 +845,28 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             : `backend-tool-${params.stepIndex}-${startedAt}`;
         let success = true;
         let mcpErrorCode: number | undefined;
+        let authChallenge: ToolAuthChallengeFinding | undefined;
         try {
           const result = await origExecute(input, options);
           if (isCallToolResultError(result)) {
             success = false;
+            authChallenge = classifyToolAuthChallenge(
+              { result },
+              { serverId: raw._serverId, toolName: name },
+            );
           }
           return result;
         } catch (error) {
           success = false;
           mcpErrorCode = extractMcpErrorCode(error);
+          authChallenge = classifyToolAuthChallenge(
+            { error },
+            { serverId: raw._serverId, toolName: name },
+          );
           throw error;
         } finally {
           const finishedAt = Date.now();
-          params.spans.push({
+          const toolSpan: EvalTraceSpan = {
             id: `backend-tool-${toolCallId}`,
             parentId: formatBackendStepSpanId(
               params.promptIndex,
@@ -828,6 +879,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             toolCallId,
             toolName: name,
             serverId: raw._serverId,
+            toolOrigin: toolOrigin(name, raw),
             ...(toolConnectionAttribution(raw, input, toolCallId)
               ? {
                   connectionId: toolConnectionAttribution(
@@ -840,7 +892,18 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             status: success ? "ok" : "error",
             ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(params.runStartedAt, startedAt, finishedAt),
-          });
+          };
+          if (authChallenge) {
+            annotateToolAuthChallenge(toolSpan, {
+              ...authChallenge,
+              toolCallId,
+              toolName: name,
+              ...(raw._serverId ? { serverId: raw._serverId } : {}),
+              spanId: toolSpan.id,
+              promptIndex: params.promptIndex,
+            });
+          }
+          params.spans.push(toolSpan);
           if (!success) {
             params.spans.push({
               id: `backend-tool-err-${toolCallId}`,

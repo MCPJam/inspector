@@ -1,5 +1,5 @@
 /** Shared by the harness page and the spec that drives it. */
-export const HARNESS_ACTOR_ID = "user_harness_0001";
+export const HARNESS_ACTOR_ID = "user_01K00000000000000000000000";
 export const HARNESS_RELAY_TOKEN = "harness-relay-bearer-7f3c91";
 export const HARNESS_PRIVATE_ORG = "org_private_harness_000001";
 export const HARNESS_PUBLIC_ORG = "org_public_harness_0000001";

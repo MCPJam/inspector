@@ -40,21 +40,46 @@ export function useRunGroupSummaries(
   const [state, setState] = useState<{
     suiteId: string;
     groups: Map<string, EvalSuiteRunListItem[]>;
-  }>({ suiteId, groups: new Map() });
+    failed: ReadonlySet<string>;
+  }>({ suiteId, groups: new Map(), failed: new Set() });
   const loadGroup = useCallback(
     async (runGroupId: string) => {
-      const rows = await readRunGroupSummaries(
-        convex.query.bind(convex),
-        suiteId,
-        runGroupId,
-      );
-      if (currentSuite.current !== suiteId) return rows;
-      setState((previous) => ({
-        suiteId,
-        groups: new Map(
-          previous.suiteId === suiteId ? previous.groups : [],
-        ).set(runGroupId, rows),
-      }));
+      const record = (
+        update: (
+          previous: typeof state,
+        ) => Pick<typeof state, "groups" | "failed">,
+      ) => {
+        if (currentSuite.current !== suiteId) return;
+        setState((previous) => {
+          const base =
+            previous.suiteId === suiteId
+              ? previous
+              : { suiteId, groups: new Map(), failed: new Set<string>() };
+          return { suiteId, ...update(base) };
+        });
+      };
+      let rows: EvalSuiteRunListItem[];
+      try {
+        rows = await readRunGroupSummaries(
+          convex.query.bind(convex),
+          suiteId,
+          runGroupId,
+        );
+      } catch (error) {
+        record((previous) => ({
+          groups: previous.groups,
+          failed: new Set(previous.failed).add(runGroupId),
+        }));
+        throw error;
+      }
+      record((previous) => {
+        const failed = new Set(previous.failed);
+        failed.delete(runGroupId);
+        return {
+          groups: new Map(previous.groups).set(runGroupId, rows),
+          failed,
+        };
+      });
       return rows;
     },
     [convex, suiteId],
@@ -79,5 +104,14 @@ export function useRunGroupSummaries(
     for (const run of runs) merged.set(run._id, run);
     return [...merged.values()];
   }, [state, suiteId, runs]);
-  return { runs: mergedRuns, loadGroup, forgetRuns };
+  /** Whether a group's full membership is known, still loading, or failed to load. */
+  const groupStatus = useCallback(
+    (runGroupId: string): "loading" | "ready" | "failed" => {
+      if (state.suiteId !== suiteId) return "loading";
+      if (state.groups.has(runGroupId)) return "ready";
+      return state.failed.has(runGroupId) ? "failed" : "loading";
+    },
+    [state, suiteId],
+  );
+  return { runs: mergedRuns, loadGroup, forgetRuns, groupStatus };
 }

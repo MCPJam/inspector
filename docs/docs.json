@@ -23,11 +23,15 @@
   "fonts": {
     "heading": {
       "family": "Geist",
-      "weight": 500
+      "weight": 500,
+      "source": "/fonts/geist-latin-500-normal.woff2",
+      "format": "woff2"
     },
     "body": {
       "family": "Geist",
-      "weight": 400
+      "weight": 400,
+      "source": "/fonts/geist-latin-400-normal.woff2",
+      "format": "woff2"
     }
   },
   "styling": {
@@ -48,6 +52,7 @@
           "hosted/slack",
           "hosted/claude-connector",
           "hosted/sso",
+          "hosted/network",
           "github-checks",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
@@ -85,14 +90,26 @@
           {
             "group": "Authentication",
             "icon": "shield-check",
-            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+            "pages": [
+              "inspector/guided-oauth",
+              "inspector/xaa-debugger",
+              "inspector/lazy-authentication"
+            ]
           },
           {
             "group": "Primitives",
             "icon": "puzzle",
             "pages": [
               "inspector/tools-prompts-resources",
+              "inspector/events",
               "inspector/debugging"
+            ]
+          },
+          {
+            "group": "Privacy",
+            "icon": "eye-off",
+            "pages": [
+              "inspector/telemetry-privacy"
             ]
           },
           {
@@ -125,8 +142,10 @@
               "cli/apps-conformance",
               "cli/tasks",
               "cli/tasks-conformance",
+              "cli/events",
               "cli/tools-resources-prompts",
               "cli/ci",
+              "cli/self-hosted",
               "cli/telemetry"
             ]
           },
@@ -177,6 +196,7 @@
               "sdk/reference/oauth-emulation",
               "sdk/reference/apps-conformance",
               "sdk/reference/tasks-conformance",
+              "sdk/reference/events",
               "sdk/reference/host-compat",
               "sdk/reference/muse-readiness"
             ]
@@ -248,6 +268,18 @@
     {
       "source": "/inspector/views",
       "destination": "/inspector/playground"
+    },
+    {
+      "source": "/inspector/llm-playground",
+      "destination": "/inspector/playground"
+    },
+    {
+      "source": "/inspector/elicitation",
+      "destination": "/inspector/playground"
+    },
+    {
+      "source": "/inspector/server",
+      "destination": "/inspector/connecting-servers"
     },
     {
       "source": "/sdk/reference/test-agent",
@@ -457,7 +489,22 @@
       "website": "https://mcpjam.com",
       "linkedin": "https://www.linkedin.com/company/109011364/",
       "x": "https://x.com/mcpjams"
-    }
+    },
+    "links": [
+      {
+        "header": "Legal",
+        "items": [
+          {
+            "label": "Privacy Policy",
+            "href": "https://www.mcpjam.com/privacy-policy"
+          },
+          {
+            "label": "Terms of Use",
+            "href": "https://www.mcpjam.com/terms-of-use"
+          }
+        ]
+      }
+    ]
   },
   "errors": {
     "404": {

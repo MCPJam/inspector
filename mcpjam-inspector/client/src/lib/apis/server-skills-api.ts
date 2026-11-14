@@ -105,6 +105,9 @@ export interface VerifiedServerSkill {
   contentSha256: string;
   frontmatter: unknown;
   resources: Array<{ uri: string; digest: string; size?: number }>;
+  /** SEP-2549 attributes of the `skills/get` result, when the server sent them. */
+  ttlMs?: number;
+  cacheScope?: string;
 }
 
 const EMPTY_SUPPORT: ServerSkillsSupport = {

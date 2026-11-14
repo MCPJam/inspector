@@ -26,6 +26,7 @@ import {
   parseJsonRpcCode,
   parseProtocolVersion,
   projectHostedLogEnvelope,
+  projectAuthChallenge,
   projectScopeChallenge,
 } from "./hosted-upstream-projection.js";
 
@@ -539,6 +540,8 @@ export function projectHostedConnectFailureDetails(
   }
   const insufficientScope = projectScopeChallenge(details.insufficientScope);
   if (insufficientScope) projected.insufficientScope = insufficientScope;
+  const authChallenge = projectAuthChallenge(details.authChallenge);
+  if (authChallenge) projected.authChallenge = authChallenge;
   return Object.keys(projected).length > 0 ? projected : undefined;
 }
 

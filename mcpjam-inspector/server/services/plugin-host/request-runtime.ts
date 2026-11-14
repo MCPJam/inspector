@@ -1,3 +1,6 @@
+import { pluginRuntimeProfile } from "@/shared/plugin-runtime-profile";
+import { createInlineMrtrCollector } from "./inline-mrtr.js";
+import { appResourcesEnabled } from "@/shared/app-resource-capability";
 import type { ElicitResult } from "@modelcontextprotocol/client";
 import { pluginLocalFormFilesOptInSchema } from "../../../shared/plugin-form-services.js";
 import { pluginFormFileGrants } from "./form-file-grants.js";
@@ -5,6 +8,8 @@ import { isLocalPluginFormFileTarget } from "./form-files.js";
 import { PluginInvocationSuspension } from "./invocation.js";
 import {
   createOwnedPluginMrtr,
+  ownedMrtrFormCapabilities,
+  ownedPluginFormSchema,
   endPluginMrtrFormsDisabled,
 } from "./owned-mrtr.js";
 import {
@@ -21,6 +26,7 @@ import type {
 } from "./invocation.js";
 import {
   pluginModelContextEnabled,
+  pluginModelContextPolicy,
   pluginMessageEnabled,
 } from "./context-profile.js";
 import { pluginComputerUploadsAvailable } from "./computer-file-target.js";
@@ -36,11 +42,15 @@ import {
   disabledPluginFeatures,
 } from "@mcpjam/sdk/internal/plugin-host";
 import {
+  resolvePluginExtensionBehavior,
   resolvePluginExtensions,
   type PluginExtensionCapabilities,
   type ResolvedPluginExtensions,
 } from "@mcpjam/sdk/host-config/internal";
-import type { MrtrInputCollector } from "@mcpjam/sdk";
+import {
+  OPENAI_ELICITATION_EXTENSION,
+  type MrtrInputCollector,
+} from "@mcpjam/sdk";
 import {
   OPENAI_LEGACY_FORM_EXTENSION,
   OPENAI_LEGACY_FORM_METHOD,
@@ -157,7 +167,8 @@ export function resolvePluginCatalogTool<
     serverCapabilities?: unknown;
   },
 >(catalog: T, name: string) {
-  const { tools, serverCapabilities: _capabilities, ...current } = catalog;
+  // Server capabilities stay: some checks (mention search) depend on them.
+  const { tools, ...current } = catalog;
   const tool = tools.find((candidate) => candidate.name === name) as
     | T["tools"][number]
     | undefined;
@@ -185,10 +196,13 @@ export async function assertPluginInstanceBindingCurrent(input: {
   signal: AbortSignal;
 }) {
   const { admission, bearer, instance, signal } = input;
+  const currentBearer = admission.getAuthorization
+    ? await admission.getAuthorization()
+    : bearer;
   const current = await readPluginExecutionContext({
     projectId: admission.projectId,
     expectedActorId: admission.actorId,
-    bearer,
+    bearer: currentBearer,
     serverIds: [instance.owner.serverId],
     hostId: instance.hostId,
     signal,
@@ -225,11 +239,13 @@ export function createPluginRequestRuntime(
     RetainedActivation,
   options: {
     ownedForms?: boolean;
+    inlineMrtr?: boolean;
     /** The extension governing a retained owner that has no activation
      * (a mention lease). An App's own kind decides it otherwise. */
     extension?: keyof PluginExtensionCapabilities;
   } = {},
 ) {
+  const currentBearer = () => admission.getAuthorization?.() ?? Promise.resolve(bearer);
   const governing =
     options.extension ?? (expected ? pluginInstanceExtension(expected) : undefined);
   type Lease = PooledPluginConnection<
@@ -252,8 +268,8 @@ export function createPluginRequestRuntime(
   // An unpinned client prepares both form services and answers with the one
   // its connection actually negotiated; a pin decides it before connect.
   let negotiatedWire: "legacy" | "mrtr" | undefined;
-  const ownedForms = () => (negotiatedWire === "mrtr" ? undefined : forms);
-  const ownedMrtr = () => (negotiatedWire === "legacy" ? undefined : mrtr);
+  const ownedForms = () => (negotiatedWire === "mrtr" && !options.inlineMrtr ? undefined : forms);
+  const ownedMrtr = () => (negotiatedWire === "legacy" || options.inlineMrtr ? undefined : mrtr);
   const formsEnabled = () => latest?.capabilities.forms !== false;
   // Logs entries this request owes the client (returned with its response).
   const notes: PluginDiagnostic[] = [];
@@ -261,9 +277,11 @@ export function createPluginRequestRuntime(
     const legacy = ownedForms();
     const modern = ownedMrtr();
     entry.hooks.legacy = legacy ? legacy.binding.handler : undefined;
-    entry.hooks.collector = modern
-      ? (modern.collector as NonNullable<typeof entry.hooks.collector>)
-      : undefined;
+    entry.hooks.collector = options.inlineMrtr && forms
+      ? createInlineMrtrCollector(binding.serverId, forms.answer)
+      : modern
+        ? (modern.collector as NonNullable<typeof entry.hooks.collector>)
+        : undefined;
   };
   const dropLease = async (reusable: boolean) => {
     const previous = lease;
@@ -305,11 +323,11 @@ export function createPluginRequestRuntime(
       serverBindings,
       serverNamesById,
     } = await read(() =>
-      timedPluginStep("backend-admission-read", () =>
+      timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
           projectId: admission.projectId,
           expectedActorId: admission.actorId,
-          bearer,
+          bearer: await currentBearer(),
           serverIds: [binding.serverId],
           hostId: binding.hostId,
           signal,
@@ -327,6 +345,7 @@ export function createPluginRequestRuntime(
       throw denied();
     assertPluginWorkspaceRuntime({
       harness: config.harness,
+      agentLoop: config.agentLoop,
       hostPolicy: { hostStyle: config.hostStyle },
     });
     const hostRevision = pluginHostBindingDigest(config);
@@ -350,7 +369,7 @@ export function createPluginRequestRuntime(
     mrtrWire = version === "2026-07-28";
     const capabilities = createPluginCapabilityRegistry({
       profile: {
-        runtime: config.harness === "codex" ? "codex" : "chatgpt-emulated",
+        runtime: pluginRuntimeProfile(config) === "codex" ? "codex" : "chatgpt-emulated",
         transport: version === "2026-07-28" ? "mrtr" : "legacy",
         // The client's own per-extension toggles are the only source of
         // extension support, enforced here too, not only in the browser.
@@ -376,7 +395,7 @@ export function createPluginRequestRuntime(
       const fresh = await readPluginExecutionContext({
         projectId: admission.projectId,
         expectedActorId: admission.actorId,
-        bearer,
+        bearer: await currentBearer(),
         serverIds: [binding.serverId],
         hostId: binding.hostId,
         signal,
@@ -445,9 +464,10 @@ export function createPluginRequestRuntime(
     if (!formServices && expected && formsMode !== "none") {
       formServices = true;
       forms =
-        legacyForms
+        (legacyForms || (modernForms && options.inlineMrtr))
           ? createOwnedPluginLegacyForms({
               bearer,
+              getAuthorization: currentBearer,
               projectId: admission.projectId,
               workspaceId: expected.owner.workspaceId,
               hostId: binding.hostId,
@@ -561,29 +581,32 @@ export function createPluginRequestRuntime(
             })
           : undefined;
       mrtr =
-        modernForms
+        modernForms && !options.inlineMrtr
           ? createOwnedPluginMrtr({
               c,
               bearer,
+              getAuthorization: currentBearer,
               projectId: admission.projectId,
               serverId: binding.serverId,
+              serverName: () => admittedServerName,
               manager: () => lease?.manager,
               assertCurrent,
               sourceBinding: { hostId: binding.hostId, hostRevision },
               localFiles,
               uploadTarget,
               fileResources: extensions.capabilities.fileResources,
+              fileResourcesEnabled: () => latest?.capabilities.fileResources === true,
               formsEnabled,
             })
           : undefined;
     }
-    const clientCapabilities = {
-      ...ownedLegacyFormCapabilities(
-        capabilities.clientCapabilities(),
-        legacyForms ? { binding: true } : undefined,
-      ),
-      ...(modernForms ? { elicitation: { form: {} } } : {}),
-    };
+    const legacyCapabilities = ownedLegacyFormCapabilities(
+      capabilities.clientCapabilities(),
+      legacyForms ? { binding: true } : undefined,
+    );
+    const clientCapabilities = modernForms
+      ? ownedMrtrFormCapabilities(legacyCapabilities)
+      : legacyCapabilities;
     const key = pluginBindingDigest([
       "plugin-connection-v1",
       admission.actorId,
@@ -760,6 +783,15 @@ export function createPluginRequestRuntime(
                 if (!collect) return Promise.reject(denied());
                 return collect(args);
               },
+              // Kept on a 2026 connection even when the legacy handler's
+              // claim on the same key is withheld there. The selector only
+              // matters if a collector answers in-process; the owned one
+              // suspends and validates on resume.
+              {
+                extensionClaims: [OPENAI_ELICITATION_EXTENSION],
+                selectFormSchema: (params) =>
+                  ownedPluginFormSchema(params, binding.serverId),
+              },
             );
           await timedPluginStep("mcp-connect", () =>
             created.manager.connectToServer(binding.serverId, target!, {
@@ -849,14 +881,18 @@ export function createPluginRequestRuntime(
       },
       requiresApproval: config.requireToolApproval === true,
       appToolsEnabled: pluginAppToolsEnabled(config),
+      resourcesEnabled: appResourcesEnabled(config),
       contextEnabled:
         pluginModelContextEnabled(config) &&
         extensions.capabilities.modelContext,
+      modelContextPolicy: pluginModelContextPolicy(config),
       messageEnabled:
         pluginMessageEnabled(config) && extensions.capabilities.messages,
       extensions,
+      /** How the client's entry points are listed and opened. */
+      behavior: resolvePluginExtensionBehavior(config),
       runtime:
-        config.harness === "codex" ? ("codex" as const) : ("chatgpt" as const),
+        pluginRuntimeProfile(config),
       transport:
         negotiatedVersion === "2026-07-28"
           ? ("mrtr" as const)
@@ -874,11 +910,11 @@ export function createPluginRequestRuntime(
     signal.throwIfAborted();
     if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
     const { hostConfig, serverBindings } = await read(() =>
-      timedPluginStep("backend-admission-read", () =>
+      timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
           projectId: admission.projectId,
           expectedActorId: admission.actorId,
-          bearer,
+          bearer: await currentBearer(),
           serverIds: [binding.serverId],
           hostId: binding.hostId,
           signal,
@@ -951,7 +987,16 @@ export function createPluginRequestRuntime(
           // After a cold authorization or initialize (long external work),
           // read again before anything stands on this resolution.
           if (cold) await verify(current, signal, read);
-          return resolvePluginCatalogTool({ ...current, tools: [tool] }, name);
+          return resolvePluginCatalogTool(
+            {
+              ...current,
+              tools: [tool],
+              serverCapabilities: current.manager.getServerCapabilities(
+                binding.serverId,
+              ),
+            },
+            name,
+          );
         }
         if (typeof catalog.nextCursor !== "string") break;
         if (seen.has(catalog.nextCursor))
@@ -1068,12 +1113,12 @@ export function createPluginRequestRuntime(
         throw new PluginInvocationError("CONTINUATION_PROTOCOL_DENIED");
       return mrtr.execute(authorization, invocationId, params, signal, run);
     },
-    handleLegacyForm: (request: { params?: Record<string, unknown> }) => {
+    handleOwnedForm: (request: { params?: Record<string, unknown> }) => {
       const forms = ownedForms();
       if (!forms) throw new PluginInvocationError("INSTANCE_DENIED");
-      return forms.binding.handler(request);
+      return options.inlineMrtr ? forms.answer(request) : forms.binding.handler(request);
     },
-    runOwnedLegacy: async <T>(
+    runOwnedForm: async <T>(
       authorization: ResolvedInvocationContext,
       invocationId: string,
       signal: AbortSignal,
@@ -1117,7 +1162,7 @@ export function createPluginRequestRuntime(
         pluginFormFileGrants.closeOperation(authorization.owner, invocationId);
       return result;
     },
-    resumeMrtr: (
+    resumeMrtr: async (
       authorization: ResolvedInvocationContext,
       invocationId: string,
       params: PluginToolCallParams,
@@ -1130,7 +1175,7 @@ export function createPluginRequestRuntime(
         // no form service, and the pending form ends as cancelled.
         if (expected && mrtrWire && !formsEnabled())
           return endPluginMrtrFormsDisabled({
-            bearer,
+            bearer: await currentBearer(),
             owner: authorization.owner,
             invocationId,
             continuationId: submission.continuationId,

@@ -1,5 +1,26 @@
 import type { MCPClientManager, ConnectionsByServerId } from "@mcpjam/sdk";
 const connections = new WeakMap<MCPClientManager, ConnectionsByServerId>();
+const taskOwners = new WeakMap<MCPClientManager, Map<string, string>>();
+
+export function setManagerTaskOwnerScope(
+  manager: MCPClientManager,
+  keys: readonly string[],
+  scope?: string,
+): void {
+  const owners = taskOwners.get(manager) ?? new Map<string, string>();
+  for (const key of keys) {
+    if (scope === undefined) owners.delete(key);
+    else owners.set(key, scope);
+  }
+  taskOwners.set(manager, owners);
+}
+
+export function getManagerTaskOwnerScope(
+  manager: MCPClientManager,
+  key: string,
+): string | undefined {
+  return taskOwners.get(manager)?.get(key);
+}
 export function setManagerConnections(
   manager: MCPClientManager,
   value: ConnectionsByServerId,
@@ -25,6 +46,36 @@ export function connectionsAtTurn(manager: MCPClientManager) {
     : undefined;
 }
 
+/**
+ * The accounts each server was authorized with: an account group's ids, or
+ * the single credential a server without a group connected on. A server on
+ * no stored credential (XAA, a bearer header, none) is listed with no ids, so
+ * the backend can still record it as shared or XAA.
+ */
+export function managerAccountsAtRun(
+  manager: MCPClientManager,
+): Array<{ serverId: string; connectionIds: string[] }> {
+  const groups = getManagerConnections(manager) ?? {};
+  const credentials = authorizedCredentials.get(manager) ?? {};
+  return listBaseServers(manager).map((serverId) => ({
+    serverId,
+    connectionIds:
+      groups[serverId]?.map((c) => c.connectionId) ??
+      (credentials[serverId] ? [credentials[serverId]] : []),
+  }));
+}
+const authorizedCredentials = new WeakMap<
+  MCPClientManager,
+  Readonly<Record<string, string>>
+>();
+/** The stored credential each server authorized with, by server id. */
+export function setManagerAuthorizedCredentials(
+  manager: MCPClientManager,
+  value: Readonly<Record<string, string>>,
+) {
+  authorizedCredentials.set(manager, value);
+}
+
 /** Account aliases are internal; catalog/eval consumers see the base once. */
 export function listBaseServers(
   manager: Partial<Pick<MCPClientManager, "listServers">>,
@@ -42,6 +93,11 @@ export async function removeServerConnections(
   serverKey: string,
 ) {
   const groups = connections.get(manager);
+  localScopes.get(manager)?.delete(serverKey);
+  setManagerTaskOwnerScope(manager, [
+    serverKey,
+    ...(groups?.[serverKey] ?? []).map((entry) => entry.key),
+  ]);
   if (!groups?.[serverKey]) return;
   for (const c of groups[serverKey])
     if (c.key !== serverKey) await manager.removeServer(c.key);
@@ -53,6 +109,27 @@ const localScopes = new WeakMap<
   MCPClientManager,
   Map<string, { serverId: string; projectId: string }>
 >();
+export function localConnectionKeysForServer(
+  manager: MCPClientManager,
+  serverId: string,
+): string[] {
+  const candidates = [...(localScopes.get(manager) ?? [])].filter(
+    ([, scope]) => scope.serverId === serverId,
+  );
+  if (!candidates.length) return [];
+  const live = new Set(
+    manager
+      .listServers()
+      .filter((key) => manager.getConnectionStatus(key) === "connected"),
+  );
+  const groups = connections.get(manager);
+  return candidates
+    .map(([key]) => key)
+    .filter(
+      (key) =>
+        live.has(key) || groups?.[key]?.some((entry) => live.has(entry.key)),
+    );
+}
 export function registerLocalConnectionScope(
   manager: MCPClientManager,
   key: string,
@@ -73,6 +150,10 @@ export async function revokeLocalConnection(
     const groups = connections.get(manager) ?? {};
     const group = groups[base];
     const revoked = group?.find((c) => c.connectionId === connectionId);
+    setManagerTaskOwnerScope(manager, [
+      ...(!group || revoked?.isDefault ? [base] : []),
+      ...(revoked ? [revoked.key] : []),
+    ]);
     if (!group || revoked?.isDefault) await manager.removeServer(base);
     if (revoked && revoked.key !== base)
       await manager.removeServer(revoked.key);
@@ -82,4 +163,29 @@ export async function revokeLocalConnection(
         [base]: group.filter((c) => c.connectionId !== connectionId),
       });
   }
+}
+
+const organizations = new WeakMap<MCPClientManager, string>();
+/** Authoritative hosted batch metadata; absent on local/unscoped managers. */
+export function setManagerOrganization(
+  manager: MCPClientManager,
+  organizationId: string | null | undefined,
+) {
+  if (organizationId) organizations.set(manager, organizationId);
+}
+export function getManagerOrganization(
+  manager: MCPClientManager,
+): string | undefined {
+  return organizations.get(manager);
+}
+
+export type ManagerResourceSnapshot = { serverUpdatedAt: number; credentialAuthorizedAt: number | null; credentialId?: string; headersReconstructible?: boolean };
+const resourceSnapshots = new WeakMap<MCPClientManager, Map<string, ManagerResourceSnapshot>>();
+const resourceHostConfigs = new WeakMap<MCPClientManager, {hostConfigId: string; hostId: string}>();
+export function setManagerResourceSnapshots(manager: MCPClientManager, snapshots: Map<string, ManagerResourceSnapshot>) { resourceSnapshots.set(manager, snapshots); }
+export function setManagerResourceHostConfig(manager: MCPClientManager, hostConfigId: string, hostId: string) { resourceHostConfigs.set(manager, {hostConfigId, hostId}); }
+export function getManagerResourceSnapshot(manager: MCPClientManager, key: string) {
+  const snapshot = resourceSnapshots.get(manager)?.get(key);
+  const host = resourceHostConfigs.get(manager);
+  return snapshot && host ? {...snapshot, ...host} : undefined;
 }

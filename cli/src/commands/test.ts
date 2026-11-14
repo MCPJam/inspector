@@ -1,3 +1,4 @@
+import { describeCloudCredential } from "../lib/credential-describe.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -8,6 +9,7 @@ import {
   renderStructuredRunJson,
   runSuiteFile,
   type RunSuiteFileOptions,
+  type SuiteFileAuthRequired,
   type SuiteFileRunProgressEvent,
   type SuiteFileRunResult,
   type SuiteFileRunnerRuntime,
@@ -27,6 +29,9 @@ import {
 } from "../lib/local-test-exit-code.js";
 import {
   CliError,
+  authChallengeHint,
+  signInUrlArgument,
+  displayableScope,
   cliError,
   setProcessExitCode,
   usageError,
@@ -151,11 +156,20 @@ function readSuiteFile(
 }
 
 function progressWriter(
-  quiet: boolean
+  quiet: boolean,
+  credentialSource: string
 ): (event: SuiteFileRunProgressEvent) => void {
   return (event) => {
     if (quiet) return;
     switch (event.type) {
+      case "identity":
+        process.stderr.write(
+          `MCPJam identity: ${credentialSource}; organization ${event.organizationId}; project ${event.projectId}.\n`
+        );
+        process.stderr.write(
+          "Run start recorded. Planned iterations are not completed usage. Results remain local.\n"
+        );
+        return;
       case "setup":
         if (event.stage === "connect" && event.server) {
           process.stderr.write(`Connecting to ${event.server}…\n`);
@@ -251,6 +265,50 @@ function routeAiSdkWarnings(quiet: boolean): () => void {
   return () => {
     holder.AI_SDK_LOG_WARNINGS = previous;
   };
+}
+
+/**
+ * One line per target server that asked for sign-in during the run: what it
+ * refused and how to get it a credential. `mcpjam test` never signs in
+ * itself; it names the command, and where the result is bound.
+ */
+export function localSignInHints(
+  result: Pick<SuiteFileRunResult, "cases">,
+  servers: RunSuiteFileOptions["servers"]
+): string[] {
+  const byServer = new Map<string, SuiteFileAuthRequired>();
+  for (const entry of result.cases) {
+    for (const iteration of entry.iterations) {
+      const authRequired = iteration.authRequired;
+      if (!authRequired) continue;
+      const server = authRequired.server ?? "unknown";
+      if (!byServer.has(server)) byServer.set(server, authRequired);
+    }
+  }
+  return [...byServer].map(([name, authRequired]) => {
+    const binding = servers[name];
+    const url =
+      binding && "url" in binding.config && binding.config.url
+        ? String(binding.config.url)
+        : undefined;
+    const requiredScope = displayableScope(
+      authRequired.challenge.requiredScope
+    );
+    const lead = `Server "${name}" asked for sign-in when "${authRequired.toolName}" was called; a local run never signs in.`;
+    // `--credentials-file` binds only the server `--url` names; every other
+    // binding takes its credentials from its MCP config entry.
+    if (binding?.source === "--url") {
+      return `${lead} ${authChallengeHint(
+        requiredScope !== undefined ? { requiredScope } : {},
+        url
+      )}`;
+    }
+    const scopes =
+      requiredScope !== undefined ? ` --scopes "${requiredScope}"` : "";
+    return `${lead} Sign in with \`mcpjam oauth login --url ${signInUrlArgument(
+      url,
+    )}${scopes} --credentials-out <file>\`, then set "credentialsFile" to that file in the "${name}" entry of your MCP config.`;
+  });
 }
 
 function refusalToCliError(error: SuiteFileRunError): CliError {
@@ -387,8 +445,8 @@ export function registerTestCommand(
       const restoreWarnings = routeAiSdkWarnings(globalOptions.quiet);
 
       let result: SuiteFileRunResult;
+      let servers: RunSuiteFileOptions["servers"] = {};
       try {
-        let servers: RunSuiteFileOptions["servers"] = {};
         // A binding that cannot be SET UP (missing, unreadable config, unset
         // variable) is held back until the SDK has validated the file and every
         // selected case: an unsupported case or a bad flag is the more useful
@@ -419,6 +477,7 @@ export function registerTestCommand(
           }
         }
         const runOptions: RunSuiteFileOptions = {
+          surface: "cli", clientVersion: program.version(),
           servers,
           ...(caseIds ? { caseIds } : {}),
           inference: {
@@ -449,7 +508,10 @@ export function registerTestCommand(
           setupTimeoutMs: globalOptions.timeout,
           signal: controller.signal,
           // Progress is always stderr, so stdout stays one document.
-          onProgress: progressWriter(globalOptions.quiet),
+          onProgress: progressWriter(
+            globalOptions.quiet,
+            describeCloudCredential(options, { env }).credential.source
+          ),
         };
         const runner = dependencies.runtime
           ? createSuiteFileRunner(dependencies.runtime)
@@ -518,6 +580,13 @@ export function registerTestCommand(
         writeError(error, globalOptions.format);
         setProcessExitCode(LOCAL_TEST_EXIT.notEstablished);
         return;
+      }
+      // After the report, so stdout stays one document; reported, never a
+      // changed exit code (see `SuiteFileRunIssue`).
+      if (!globalOptions.quiet) {
+        for (const hint of localSignInHints(result, servers)) {
+          process.stderr.write(`${hint}\n`);
+        }
       }
       const exitCode = localTestExitCodeForResult(result, {
         artifactWriteFailed,

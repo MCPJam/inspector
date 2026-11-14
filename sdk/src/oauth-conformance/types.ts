@@ -1,4 +1,5 @@
 import type { ConformanceSkipReason } from "../conformance-outcome.js";
+import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
 import type {
   InfoLogEntry,
   HttpHistoryEntry,
@@ -170,7 +171,33 @@ export interface OAuthConformanceClientConfig {
   clientIdMetadataUrl?: string;
 }
 
+/**
+ * The OAuth suite's advice: SHOULD findings beside the verdict,
+ * read off what the flow already discovered.
+ */
+export const MCP_OAUTH_READINESS_IDS = [
+  // RFC 9207 `iss` lets a client spot an authorization-server mix-up. The MCP
+  // auth spec states it as a SHOULD, so advice, never a step failure.
+  "readiness-oauth-iss-advertised",
+] as const;
+
+export type MCPOAuthReadinessId = (typeof MCP_OAUTH_READINESS_IDS)[number];
+
+export interface MCPOAuthReadinessWarning extends Omit<
+  MCPReadinessWarning,
+  "id"
+> {
+  id: MCPOAuthReadinessId;
+}
+
 export interface OAuthConformanceConfig {
+  /** Cancels the whole run, including pending requests. */
+  signal?: AbortSignal;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by suites for their inner runs. See `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
   serverUrl: string;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
@@ -190,6 +217,8 @@ export interface OAuthConformanceConfig {
   stepTimeout?: number;
   verification?: OAuthVerificationConfig;
   oauthConformanceChecks?: boolean;
+  /** Report only this advice. Absent ⇒ all of it; empty ⇒ none. */
+  readinessIds?: MCPOAuthReadinessId[];
   /** Optional callback for progress messages during the OAuth flow. */
   onProgress?: (message: string) => void;
 }
@@ -272,6 +301,8 @@ export interface ConformanceResult {
   durationMs: number;
   credentials?: OAuthConformanceCredentials;
   verification?: VerificationResult;
+  /** SHOULD advice, beside the verdict. Absent when there is none. */
+  readiness?: MCPOAuthReadinessWarning[];
 }
 
 export interface OAuthConformanceCredentials {
@@ -284,6 +315,8 @@ export interface OAuthConformanceCredentials {
 }
 
 export interface NormalizedOAuthConformanceConfig {
+  /** Cancels the whole run, including pending requests. */
+  signal?: AbortSignal;
   serverUrl: string;
   serverName: string;
   protocolVersion: OAuthProtocolVersion;
@@ -298,6 +331,8 @@ export interface NormalizedOAuthConformanceConfig {
   stepTimeout: number;
   verification: OAuthVerificationConfig;
   oauthConformanceChecks: boolean;
+  /** See {@link OAuthConformanceConfig.readinessIds}. */
+  readinessIds?: MCPOAuthReadinessId[];
   onProgress: (message: string) => void;
 }
 
@@ -380,6 +415,8 @@ export type OAuthConformanceSuiteFlow = Partial<
 export interface OAuthConformanceSuiteConfig {
   /** Human-friendly name for the suite run. */
   name?: string;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
   /** The MCP server URL. Shared across all flows. */
   serverUrl: string;
   /** Shared defaults applied to each flow unless overridden. */

@@ -4,13 +4,15 @@ name: Release trigger
 #
 # Merging the version PR (prepare-release.yml) commits versions npm does not
 # have yet. Release ships a commit only once Tests, Build and Test and Deploy
-# Staging have all passed on it, and that is usually NOT the version commit
-# itself: each push to `main` cancels the previous commit's test and staging
-# runs, which happens to about two commits in three. Every later commit carries
-# the same versions, though, so this watches each of those three workflows
-# finish on `main` and dispatches Release at the first commit that is still the
-# tip, green on all three, and carrying unpublished versions. A version commit
-# that gets cancelled only moves the release to the next green commit.
+# Staging have all passed on it. The first two pass in the merge queue before
+# the commit lands; Deploy Staging runs after, on the push to `main`, and each
+# push cancels the previous commit's staging run, so the version commit itself
+# is often NOT the one released. Every later commit carries the same versions,
+# though, so this runs each time Deploy Staging finishes on `main` (always the
+# last of the three) and dispatches Release at the first commit that is still
+# the tip, green on all three, and carrying unpublished versions. A version
+# commit whose staging run gets cancelled only moves the release to the next
+# green commit.
 #
 # A version PR that ticked skip_verify is released without waiting for any of
 # that: the merge's own push runs this too, and releases the version commit
@@ -22,7 +24,7 @@ name: Release trigger
 
 on:
   workflow_run:
-    workflows: [Tests, Build and Test, Deploy Staging]
+    workflows: [Deploy Staging]
     types: [completed]
     branches: [main]
   # For skip_verify. A version PR always changes some workspace's
@@ -100,6 +102,9 @@ jobs:
             // production deploy is the worse mistake.
             let options = { deploy_backend_prod: false, deploy_webapp: false, skip_verify: false };
             let optionsNote = `No merged version PR names ${label}; releasing without deploys.`;
+            // The release's Slack post names who started it. Dispatched with
+            // GITHUB_TOKEN it would read as a bot, so pass whoever merged the PR.
+            let requestedBy = "";
             if (label) {
               const { data: prs } = await github.rest.pulls.list({
                 owner, repo, state: "closed", base: "main",
@@ -116,6 +121,13 @@ jobs:
                 if (cmp.status === "ahead" || cmp.status === "identical") {
                   options = parseReleaseOptions(versionPr.body);
                   optionsNote = `Options from #${versionPr.number}: ${JSON.stringify(options)}`;
+                  try {
+                    const { data: full } = await github.rest.pulls.get({ owner, repo, pull_number: versionPr.number });
+                    requestedBy = full.merged_by?.login ?? "";
+                  } catch (err) {
+                    // Only the Slack post's "started by" depends on this; the release must not.
+                    core.warning(`Could not read who merged #${versionPr.number}: ${err.message}`);
+                  }
                 } else {
                   optionsNote = `Version PR #${versionPr.number} is not in ${headSha}; releasing without deploys.`;
                 }
@@ -129,11 +141,19 @@ jobs:
             const greenChecks = [];
             if (label && !options.skip_verify) {
               for (const workflow_id of REQUIRED_CHECKS) {
-                const { data } = await github.rest.actions.listWorkflowRuns({
-                  owner, repo, workflow_id, per_page: 50,
-                });
-                if (data.workflow_runs.some((r) => r.head_sha === headSha && r.conclusion === "success")) {
-                  greenChecks.push(workflow_id);
+                // Paged with an early exit, as in release.yml's CI gate. The
+                // queue ran Tests and Build and Test before this commit landed,
+                // so PR runs started since can push that run off page one.
+                let pages = 0;
+                for await (const { data: runs } of github.paginate.iterator(
+                  github.rest.actions.listWorkflowRuns,
+                  { owner, repo, workflow_id, per_page: 100 },
+                )) {
+                  if (runs.some((r) => r.head_sha === headSha && r.conclusion === "success")) {
+                    greenChecks.push(workflow_id);
+                    break;
+                  }
+                  if (++pages >= 5) break;
                 }
               }
             }
@@ -168,6 +188,7 @@ jobs:
                 skip_verify: String(options.skip_verify),
                 versions: decision.label,
                 trigger_sha: headSha,
+                requested_by: requestedBy,
               },
             });
             await core.summary

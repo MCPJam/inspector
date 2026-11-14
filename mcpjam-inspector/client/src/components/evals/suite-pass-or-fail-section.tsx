@@ -38,7 +38,7 @@ export const PASS_OR_FAIL_HINT =
   "Evaluators grade the evidence available for each iteration.";
 
 export const JUDGE_HINT =
-  "A judge scores iteration evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
+  "A judge scores iteration evidence from 0–1. Set goal completion to Required to let it fail a run.";
 
 export function SuitePassOrFailSection({
   matchOptions,
@@ -48,12 +48,13 @@ export function SuitePassOrFailSection({
   judgeConfig,
   onJudgeConfigChange,
   availableModels,
+  requireOrgKeys,
+  onManageOrgProviders,
+  onAddProvider,
   scenarioMigrationNotice,
-  judgeAccessory,
   rubricEditor,
   stageFacts,
   capabilities,
-  unavailableReason,
   groundednessEvidence,
   judgeRubric,
 }: {
@@ -66,10 +67,20 @@ export function SuitePassOrFailSection({
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
+  /** The organization requires its own provider keys for AI features. */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
   /** The "migrate scenario assertions per case" warning, when the suite has any. */
   scenarioMigrationNotice?: React.ReactNode;
-  /** S6 mounts the agreement line, the gate switch and its acknowledgement. */
-  judgeAccessory?: React.ReactNode;
   /** S6 mounts the judge rubric editor under the user-value group. */
   rubricEditor?: React.ReactNode;
   /**
@@ -80,7 +91,6 @@ export function SuitePassOrFailSection({
    */
   stageFacts?: Partial<Record<UserValueStage, React.ReactNode>>;
   capabilities?: SuiteCapabilities | null;
-  unavailableReason?: string;
   groundednessEvidence?: GroundednessRunEvidence;
   /** The suite's rubric; the rubric-checks card lists its criteria. */
   judgeRubric?: EvalJudgeRubric;
@@ -93,12 +103,13 @@ export function SuitePassOrFailSection({
       judgeConfig={judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
       availableModels={availableModels}
+      requireOrgKeys={requireOrgKeys}
+      onManageOrgProviders={onManageOrgProviders}
+      onAddProvider={onAddProvider}
       scenarioMigrationNotice={scenarioMigrationNotice}
-      judgeAccessory={judgeAccessory}
       rubricEditor={rubricEditor}
       stageFacts={stageFacts}
       capabilities={capabilities}
-      unavailableReason={unavailableReason}
       passOrFailHint={PASS_OR_FAIL_HINT}
       judgeHint={JUDGE_HINT}
       groundednessEvidence={groundednessEvidence}

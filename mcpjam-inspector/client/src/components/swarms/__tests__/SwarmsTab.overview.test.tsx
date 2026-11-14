@@ -255,6 +255,14 @@ let overviewThrows = false;
 let waveSignalsData: SwarmWaveSignals | undefined;
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({
+    query: async (_reference: unknown, { runIds }: { runIds: string[] }) =>
+      runIds.map((runId) => ({
+        journeyRefId: overviewData?.runs.find((run) => run.runId === runId)
+          ?.journeyRefId,
+        problems: [],
+      })),
+  }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     queryCalls.push({ name, args });
@@ -1113,9 +1121,10 @@ describe("Swarm header chrome", () => {
     await screen.findByTestId("swarms-empty-hero");
     const header = screen.getByTestId("swarms-tab-header-chrome");
     const title = within(header).getByRole("heading", { name: "Swarm" });
-    const row = title.closest("div.flex.items-center.justify-between");
-    expect(row?.contains(within(header).getByRole("button", { name: "Overview" }))).toBe(
-      true,
+    const row = within(header).getByTestId("swarms-tab-header-chrome-title-row");
+    expect(row).toContainElement(title);
+    expect(row).toContainElement(
+      within(header).getByRole("button", { name: "Overview" }),
     );
     expect(screen.getByText(HEADLINE)).toBeTruthy();
   });

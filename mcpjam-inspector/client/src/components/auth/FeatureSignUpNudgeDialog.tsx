@@ -27,7 +27,7 @@
  */
 
 import { useEffect, useRef } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +43,7 @@ import {
   GATED_FEATURE_COPY,
   type GatedFeatureId,
 } from "@/components/guest-preview/feature-highlights";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 export function FeatureSignUpNudgeDialog({
   feature,
@@ -53,7 +54,7 @@ export function FeatureSignUpNudgeDialog({
   isOpen: boolean;
   onClose: () => void;
 }) {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp } = useInspectorAuth();
   const copy = GATED_FEATURE_COPY[feature];
   const location = copy.analyticsLocation;
 
@@ -116,6 +117,7 @@ export function FeatureSignUpNudgeDialog({
             I already have an account
           </Button>
         </div>
+        <LegalConsentNotice />
       </DialogContent>
     </Dialog>
   );

@@ -20,6 +20,8 @@
  *   - it expires, so a path stored days ago in a long-lived tab cannot
  *     hijack an unrelated sign-in later.
  */
+import { readPromoCampaign, redeemPath } from "./promo-intent";
+import { projectTransitionRecovery } from "./auth/project-transition-recovery";
 import { normalizeReturnTargetPath, routePaths } from "./app-navigation";
 import { isAppRelativeTarget, readProjectPathSegment } from "./project-route";
 
@@ -66,9 +68,10 @@ export function writeAppSignInReturnPath(
   path: string | null | undefined,
   now: number = Date.now(),
 ): boolean {
-  if (typeof sessionStorage === "undefined") return false;
   const trimmed = path?.trim() ?? "";
   if (!isStorableReturnPath(trimmed)) return false;
+  projectTransitionRecovery.arm(trimmed);
+  if (typeof sessionStorage === "undefined") return false;
   try {
     const payload: StoredReturnPath = { path: trimmed, storedAt: now };
     sessionStorage.setItem(
@@ -113,6 +116,14 @@ export function readAppSignInReturnPath(
       return null;
     }
     if (!isStorableReturnPath(parsed.path)) return null;
+    // The card entry is standalone and has no app navigation tab.
+    if (parsed.path.split(/[?#]/)[0] === "/redeem") {
+      const url = new URL(parsed.path, "https://app.mcpjam.com");
+      return redeemPath(
+        readPromoCampaign(url.search),
+        url.searchParams.get("manual") === "1",
+      );
+    }
     // Re-normalized on the way out, not just on the way in: this value has
     // been sitting in storage where anything on the origin could rewrite it.
     const normalized = normalizeReturnTargetPath(parsed.path, routePaths.root);

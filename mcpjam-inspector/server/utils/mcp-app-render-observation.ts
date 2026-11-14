@@ -11,9 +11,16 @@
  */
 
 import { resolveToolUiResourceUri } from "@mcpjam/sdk/widget-runtime";
-import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
+import {
+  describeError,
+  isMcpAppTool,
+  originOf,
+  type MCPClientManager,
+} from "@mcpjam/sdk";
 import { injectOpenAICompat, normalizeWidgetCspMeta } from "./widget-helpers";
 import type { WidgetCspMeta } from "./widget-helpers";
+import { HOSTED_MODE } from "../config.js";
+import { getSystemLogger } from "./request-logger.js";
 import {
   extractHtmlFromResourceContent,
   isRecord,
@@ -23,6 +30,8 @@ import type {
   McpAppBrowserHarness,
   WidgetRenderObservation,
 } from "./mcp-app-browser-harness";
+
+const renderLog = getSystemLogger("mcp-app-render");
 
 export interface RenderMcpAppToolResultParams {
   toolCallId: string;
@@ -34,7 +43,7 @@ export interface RenderMcpAppToolResultParams {
   output?: unknown;
   /** The tool-call input (delivered to the widget as toolInput), if known. */
   toolInput?: Record<string, unknown>;
-  mcpClientManager: MCPClientManager;
+  mcpClientManager: Pick<MCPClientManager, "readResource">;
   /** Inject the OpenAI Apps SDK `window.openai` shim (host-config resolved). */
   injectOpenAiCompat?: boolean;
   harness: McpAppBrowserHarness;
@@ -98,12 +107,24 @@ export async function renderMcpAppToolResult(
       cspMeta = normalizeWidgetCspMeta(contentMeta);
       html = extractHtmlFromResourceContent(content);
     }
-  } catch {
+  } catch (error) {
+    const elapsedMs = Date.now() - ts;
+    const origin = originOf(describeError(error, { surface: "mcpServer" }));
+    // The row keeps the error class, never its text, which can carry details
+    // from the user's own server. Sentry follows `error-origin-capture.ts`:
+    // only an error of ours, and only on our hosted server, since a local
+    // install (npx, desktop) runs its user's own servers. A slow or down user
+    // server reads as `ambiguous` and stays in Axiom.
+    renderLog.event(
+      "mcp_app.resource_read.failed",
+      { durationMs: elapsedMs, origin },
+      { error, sentry: HOSTED_MODE && origin === "mcpjam" },
+    );
     return {
       ...base,
       status: "resource_read_failed",
       resourceUri,
-      elapsedMs: Date.now() - ts,
+      elapsedMs,
     };
   }
 

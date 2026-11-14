@@ -11,6 +11,7 @@ import { DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
 import { mcpAppToolResultSchema as CallToolResultSchema } from "@mcpjam/sdk/widget-runtime";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { pluginToolCallValidation } from "./tool-call-validation.js";
+import { PluginInvocationError } from "./invocation.js";
 import {
   pluginDiagnostic,
   type PluginDiagnostic,
@@ -28,8 +29,23 @@ export type PluginSettingsCatalog = Pick<
 >;
 type Catalog = PluginSettingsCatalog;
 
+/** A rejected settings reply explains the failure without proving the tool had no effect. */
+export function settingsResultValidation(validate: (result: unknown) => void) {
+  return (result: unknown) => {
+    try {
+      validate(result);
+    } catch (error) {
+      if (error instanceof PluginSettingsError)
+        throw new PluginInvocationError(error.code, true);
+      throw error;
+    }
+  };
+}
+
 export interface PluginSettingsActionBinding {
   name: string;
+  /** The referenced tool's display name; layout titles are deprecated and ignored. */
+  title: string;
   kind: "tool" | "app" | "unavailable";
   revision: string;
 }
@@ -56,7 +72,8 @@ export function settingsActionBindings(
   );
   return [...names].map((name) => {
     const tool = catalog.tools.find((tool) => tool.name === name);
-    if (!tool) return { name, kind: "unavailable", revision: "" };
+    if (!tool) return { name, title: name, kind: "unavailable", revision: "" };
+    const title = pluginEntrypointTitle(tool);
     const revision = settingsActionRevision(catalog, tool);
     try {
       settingsActionToolValidation(tool);
@@ -68,9 +85,9 @@ export function settingsActionBindings(
         (typeof uri !== "string" || !uri.startsWith("ui://"))
       )
         throw new PluginSettingsError("PLUGIN_SETTINGS_ACTION_UI_INVALID");
-      return { name, kind: uri ? "app" : "tool", revision };
+      return { name, title, kind: uri ? "app" : "tool", revision };
     } catch {
-      return { name, kind: "unavailable", revision };
+      return { name, title, kind: "unavailable", revision };
     }
   });
 }

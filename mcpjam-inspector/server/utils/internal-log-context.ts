@@ -1,4 +1,5 @@
 import type { RequestLogContext } from "./log-events.js";
+import { logConvexId } from "./log-convex-id.js";
 
 /**
  * Server-only logging context returned by Convex authorize endpoints
@@ -39,7 +40,8 @@ export type InternalLogContext = {
 /**
  * Lift an `InternalLogContext` into the partial shape `setRequestLogContext`
  * accepts. Every field defaults to `null` when missing so the request log
- * line has a stable shape.
+ * line has a stable shape. Its IDs are the rows Convex authorized, so they
+ * may be logged as `LogConvexId`s.
  */
 export function mapInternalToRequestContext(
   ctx: InternalLogContext,
@@ -53,14 +55,14 @@ export function mapInternalToRequestContext(
     userExternalId: ctx.userExternalId ?? null,
     guestExternalId: ctx.guestExternalId ?? null,
     emailDomain: ctx.emailDomain ?? null,
-    orgId: ctx.orgId ?? null,
+    orgId: logConvexId(ctx.orgId),
     orgPlan: ctx.orgPlan ?? null,
     orgSeatQuantity: ctx.orgSeatQuantity ?? null,
     orgCreatedBy: ctx.orgCreatedBy ?? null,
-    projectId: ctx.projectId ?? null,
+    projectId: logConvexId(ctx.projectId),
     projectRole: ctx.projectRole ?? null,
     accessLevel: ctx.accessLevel ?? null,
-    serverId: ctx.serverId ?? null,
+    serverId: logConvexId(ctx.serverId),
     serverTransport: ctx.serverTransport ?? null,
     scenarioId: ctx.scenarioId ?? null,
     surface: ctx.surface ?? null,

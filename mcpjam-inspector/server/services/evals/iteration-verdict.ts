@@ -26,6 +26,7 @@ import {
 import {
   buildIterationTranscript,
   evaluatePredicates,
+  extractToolErrors,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
@@ -124,7 +125,12 @@ export function buildEvalIterationVerdict(
     input.toolsCalledByPrompt,
     input.isNegativeTest,
     input.matchOptions,
-    { skillToolsActive: input.skillToolsActive === true },
+    {
+      skillToolsActive: input.skillToolsActive === true,
+      // The failures the `failOnToolError` gate reads: a failed call followed
+      // by an identical one is then graded as a retry, not as an extra.
+      toolErrors: extractToolErrors(input.trace),
+    },
   );
 
   // Extracted once, outside the `effectivePredicates` guard's branch, so the
@@ -173,12 +179,19 @@ export function buildEvalIterationVerdict(
   let passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: input.trace,
-    // A failed per-turn cycle (`iterationError`) must not sneak through as a
-    // pass on negative / zero-expected-tool cases.
     iterationError: input.iterationError,
     failOnToolError: input.failOnToolError,
     predicateResults,
   });
+
+  // A failed per-turn cycle (`iterationError`) must not sneak through as a
+  // pass on negative / zero-expected-tool cases. Checked here on its own
+  // because the shared gate skips it whenever `failOnToolError` is false, and
+  // turning that off forgives a tool that answered with an error, not a turn
+  // that never finished.
+  if (passed && input.iterationError?.trim()) {
+    passed = false;
+  }
 
   // A pinned (model-free) tool call's error never enters the trace, so the
   // `failOnToolError` trace gate is blind to it — apply it explicitly.

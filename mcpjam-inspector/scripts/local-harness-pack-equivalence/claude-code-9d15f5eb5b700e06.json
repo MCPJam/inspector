@@ -1,0 +1,15 @@
+{
+  "schema": "mcpjam.local-harness-pack-equivalence/1",
+  "harnessId": "claude-code",
+  "fingerprint": "sha256:9d15f5eb5b700e065ac8dc7a017fd80f4a857869ed65f5cefb213f5445b06ede",
+  "packVersion": "1.0.4",
+  "digests": {
+    "darwin-arm64": "sha256:5611ae8b02e0f325e5a9624bacf36a583172641fd55d6473f1cb30a3956d4a40",
+    "darwin-x64": "sha256:e551ee37091ac7edb2d7bf6f40dc3aea15fa5e39a5119e9f8e00dd14b0de7526",
+    "linux-arm64": "sha256:6ba6505bb2a053e35dbb50b05cf46b2a61bdee51be02935ded19091bbe220610",
+    "linux-x64": "sha256:34acb460678b6cb366513f1fb539f91ae5113f63058d6c5af65fa2f42a7a8091",
+    "win32-x64": "sha256:a5cbfeefa8d33dd276d5203863bb2da93bca1c84728ce890861d7c13449ef3a3"
+  },
+  "commit": "28d36fb6045a8a040466c100c7fc6877485f3a23",
+  "run": "https://github.com/MCPJam/inspector/actions/runs/39376194745"
+}

@@ -1,9 +1,18 @@
 import { act, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { useState } from "react";
+import { createCompareBroadcast, type CompareBroadcastDelivery } from "@/components/ui-playground/compare-broadcast";
 import type { UIMessageChunk } from "ai";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 import { MultiModelPlaygroundCard } from "@/components/ui-playground/multi-model-playground-card";
+
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    wanted: false,
+    failed: false,
+    pluginServerIds: [],
+  }),
+}));
 
 const mockState = vi.hoisted(() => ({
   empty: [] as never[],
@@ -115,6 +124,7 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
   getAuthHeaders: vi.fn(() => ({})),
+  getSessionToken: vi.fn(() => null),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -259,10 +269,12 @@ function Harness() {
     Record<string, MultiModelCardSummary>
   >({});
   const [, setFlags] = useState<Record<string, boolean>>({});
-  const [send, setSend] = useState(false);
+  const [broadcast, setBroadcast] = useState<CompareBroadcastDelivery | null>(null);
   return (
     <>
-      <button onClick={() => setSend(true)}>Send</button>
+      <button onClick={() => setBroadcast(createCompareBroadcast({
+        id: 1, text: "Explain Excel upload", files: [], prependMessages: [],
+      }, ["Claude", "ChatGPT", "Cursor"]))}>Send</button>
       <div data-testid="statuses">
         {Object.values(summaries)
           .map((s) => s.status)
@@ -277,16 +289,8 @@ function Harness() {
           model={mcpJamModel}
           comparisonSummaries={Object.values(summaries)}
           selectedServers={[]}
-          broadcastRequest={
-            send
-              ? {
-                  id: 1,
-                  text: "Explain Excel upload",
-                  files: [],
-                  prependMessages: [],
-                }
-              : null
-          }
+          broadcastRequest={broadcast?.request ?? null}
+          claimBroadcastDelivery={(request) => broadcast?.claim(request, name) ?? false}
           deterministicExecutionRequest={null}
           stopRequestId={0}
           executionConfig={{

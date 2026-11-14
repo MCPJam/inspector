@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { pluginModelContextParamsSchema } from "../../../shared/plugin-model-context.js";
+import {
+  pluginModelContextParamsSchema,
+  type PluginContextLimits,
+} from "../../../shared/plugin-model-context.js";
 import {
   pluginInstances,
   type PluginInstanceIdentity,
@@ -21,10 +24,10 @@ const change = handle.extend({
   /** The person was using the App when it sent this update. */
   attach: z.literal("user").optional(),
 });
-const removal = handle.extend({
+/** `basis` is the snapshot `cursor` the person saw; retries resend it. */
+const removeAll = handle.extend({
   operationId: z.string().uuid(),
-  updateId: z.string().uuid(),
-  index: z.number().int().nonnegative(),
+  basis: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
 export function pluginContextRoutes(ports: {
   route: (c: Context, action: () => Promise<Response>) => Promise<Response>;
@@ -44,6 +47,7 @@ export function pluginContextRoutes(ports: {
     action: (
       actor: PluginInstanceIdentity,
       authorize: () => Promise<void>,
+      limits: PluginContextLimits | undefined,
     ) => Promise<Response>,
   ) {
     const { actor, bearer, admission } = await ports.admitted(c, body);
@@ -62,12 +66,16 @@ export function pluginContextRoutes(ports: {
       instance,
       { ownedForms: false },
     );
+    // The client's policy as this request first resolved it: saving the
+    // client never closes the App, and the next update uses the new budgets.
+    let limits: PluginContextLimits | undefined;
     const authorize = async () => {
       const resolved = await resolveOpenPluginActivation(
         runtime,
         instance.activation,
         c.req.raw.signal,
       );
+      limits ??= resolved.modelContextPolicy;
       // The client's current toggle, not the one the App opened with.
       if (resolved.extensions?.capabilities.modelContext === false)
         throw new PluginInvocationError("PLUGIN_EXTENSION_DISABLED");
@@ -81,7 +89,7 @@ export function pluginContextRoutes(ports: {
     };
     try {
       await authorize();
-      return await action(actor, authorize);
+      return await action(actor, authorize, limits);
     } finally {
       await runtime.release();
     }
@@ -89,11 +97,11 @@ export function pluginContextRoutes(ports: {
   router.post("/", (c) =>
     ports.route(c, async () => {
       const body = change.parse(await c.req.json());
-      return use(c, body, async (actor, authorize) => {
+      return use(c, body, async (actor, authorize, limits) => {
         const changed = await pluginInstances.changeContextPersistent(
           body.instanceToken,
           actor,
-          { kind: "update", request: body },
+          { kind: "update", request: body, limits },
           c.req.raw.signal,
           authorize,
         );
@@ -112,18 +120,24 @@ export function pluginContextRoutes(ports: {
       });
     }),
   );
-  router.post("/remove", (c) =>
+  router.post("/remove-all", (c) =>
     ports.route(c, async () => {
-      const body = removal.parse(await c.req.json());
+      const body = removeAll.parse(await c.req.json());
       return use(c, body, async (actor, authorize) => {
         const changed = await pluginInstances.changeContextPersistent(
           body.instanceToken,
           actor,
-          { kind: "remove", request: body },
+          { kind: "remove-all", request: body },
           c.req.raw.signal,
           authorize,
         );
-        return c.json(changed.snapshot);
+        if (!("outcome" in changed.result))
+          throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
+        // The persisted snapshot, not the candidate's: it is what a read returns.
+        return c.json({
+          outcome: changed.result.outcome,
+          snapshot: changed.snapshot,
+        });
       });
     }),
   );

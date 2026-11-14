@@ -3,6 +3,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostListItem } from "@/hooks/useClients";
 import { HostCompareSelector } from "../HostCompareSelector";
+import { PUBLIC_CAN_I_USE_INLINE_PRESET_IDS } from "../caniuse-capability-catalog";
+
+const INLINE_LIMIT = PUBLIC_CAN_I_USE_INLINE_PRESET_IDS.length;
 
 function makeHost(hostId: string, name: string): HostListItem {
   return {
@@ -94,11 +97,41 @@ describe("HostCompareSelector", () => {
     expect(screen.getByText("Cursor #2")).toBeInTheDocument();
   });
 
+  it.each([3, 11])("puts selected clients first with %i available clients", (count) => {
+    const hosts = Array.from({ length: count }, (_, index) =>
+      makeHost(`h_${index}`, `Host ${index}`),
+    );
+    const props = {
+      hosts,
+      subjectsByHost: {},
+      onToggleHost: vi.fn(),
+      divergingOnly: false,
+      onDivergingOnlyChange: vi.fn(),
+      showDescriptions: false,
+      onShowDescriptionsChange: vi.fn(),
+    };
+    const { container, rerender } = render(
+      <HostCompareSelector {...props} selectedHostIds={[hosts[count - 1].hostId]} />,
+    );
+    const chipIds = () =>
+      Array.from(
+        container.querySelectorAll('[data-testid^="host-compare-chip-"]'),
+        (node) => node.getAttribute("data-testid"),
+      );
+
+    expect(chipIds()[0]).toBe(`host-compare-chip-h_${count - 1}`);
+    expect(chipIds()[1]).toBe("host-compare-chip-h_0");
+
+    rerender(<HostCompareSelector {...props} selectedHostIds={["h_1"]} />);
+    expect(chipIds()[0]).toBe("host-compare-chip-h_1");
+    expect(chipIds()[1]).toBe("host-compare-chip-h_0");
+  });
+
   it("shows a More menu once there are more hosts than fit inline", () => {
     // One past INITIAL_INLINE_CHIP_LIMIT, which is derived from the ranked
     // caniuse list. Deliberately not a bare number: this asserts the overflow
     // rule, not a particular limit, so the count moves with the constant.
-    const hosts = Array.from({ length: 10 }, (_, index) =>
+    const hosts = Array.from({ length: INLINE_LIMIT + 1 }, (_, index) =>
       makeHost(`h_${index}`, `Host ${index}`),
     );
 
@@ -118,10 +151,12 @@ describe("HostCompareSelector", () => {
     expect(
       screen.getByTestId("host-compare-overflow-trigger"),
     ).toBeInTheDocument();
-    // The last host inline is h_8; the tenth spills into the More menu.
-    expect(screen.getByTestId("host-compare-chip-h_8")).toBeInTheDocument();
+    // The last inline host fills the limit; the next one spills into More.
     expect(
-      screen.queryByTestId("host-compare-chip-h_9"),
+      screen.getByTestId(`host-compare-chip-h_${INLINE_LIMIT - 1}`),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`host-compare-chip-h_${INLINE_LIMIT}`),
     ).not.toBeInTheDocument();
   });
 
@@ -130,8 +165,11 @@ describe("HostCompareSelector", () => {
     // One past INITIAL_INLINE_CHIP_LIMIT, which is derived from the ranked
     // caniuse list rather than fixed, so the last host is the one that
     // overflows into the More menu.
-    const hosts = Array.from({ length: 10 }, (_, index) =>
-      makeHost(`h_${index}`, index === 9 ? "Custom tenth" : `Host ${index}`),
+    const hosts = Array.from({ length: INLINE_LIMIT + 1 }, (_, index) =>
+      makeHost(
+        `h_${index}`,
+        index === INLINE_LIMIT ? "Custom overflow" : `Host ${index}`,
+      ),
     );
 
     render(
@@ -149,12 +187,14 @@ describe("HostCompareSelector", () => {
 
     await user.click(screen.getByTestId("host-compare-overflow-trigger"));
     expect(
-      screen.getByTestId("host-compare-overflow-h_9").querySelector("img"),
+      screen
+        .getByTestId(`host-compare-overflow-h_${INLINE_LIMIT}`)
+        .querySelector("img"),
     ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
   it("shows selected hosts inline even past the initial compact limit", () => {
-    const hosts = Array.from({ length: 11 }, (_, index) =>
+    const hosts = Array.from({ length: INLINE_LIMIT + 2 }, (_, index) =>
       makeHost(`h_${index}`, `Host ${index}`),
     );
 
@@ -171,7 +211,9 @@ describe("HostCompareSelector", () => {
       />,
     );
 
-    expect(screen.getByTestId("host-compare-chip-h_10")).toBeInTheDocument();
+    expect(
+      screen.getByTestId(`host-compare-chip-h_${INLINE_LIMIT + 1}`),
+    ).toBeInTheDocument();
     expect(
       screen.queryByTestId("host-compare-overflow-trigger"),
     ).not.toBeInTheDocument();

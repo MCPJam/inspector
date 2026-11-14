@@ -150,6 +150,21 @@ describe("multi-connection tools", () => {
         .enum
     ).toEqual([b.connectionId]);
   });
+  it("routes and attributes a host-grouped only login like any lone account", () => {
+    const { perKey } = fixture();
+    const only = { ...a, implicit: true };
+    const lone = mergeConnectionToolsets(
+      { [a.key]: perKey[a.key] } as any,
+      { server: [only] },
+      { snapshot }
+    ).search as any;
+    // Same tool, no selector: an implicit login changes nothing the model sees.
+    expect(lone.execute).toBe(perKey[a.key].search.execute);
+    expect(lone.inputSchema).toBe(perKey[a.key].search.inputSchema);
+    expect(lone._connectionForCall("any")).toBe(only);
+    expect(lone._connectionForInput({})).toBe(only);
+  });
+
   it("keeps deduplicated account slugs inside the budget", () => {
     const shared = "Acme Corporation Production Workspace";
     const many = Array.from({ length: 11 }, (_unused, index) => ({

@@ -120,6 +120,15 @@ describe("Thread", () => {
     expect(screen.getByTestId("thinking-indicator").parentElement).not.toHaveClass("pt-8", "pb-16");
   });
 
+  it("offers approval responses only after the stream has settled", () => {
+    const onToolApprovalResponse = vi.fn();
+    const messages = [createMessage({ role: "assistant" })];
+    const view = renderWithHost(<Thread {...defaultProps} messages={messages} isLoading onToolApprovalResponse={onToolApprovalResponse} />);
+    expect(mockMessageView).toHaveBeenLastCalledWith(expect.objectContaining({ onToolApprovalResponse: undefined }));
+    view.rerender(<Thread {...defaultProps} messages={messages} isLoading={false} onToolApprovalResponse={onToolApprovalResponse} />);
+    expect(mockMessageView).toHaveBeenLastCalledWith(expect.objectContaining({ onToolApprovalResponse }));
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     useWidgetSurfaceStore.setState({
@@ -253,7 +262,7 @@ describe("Thread", () => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           interactive: true,
-          reasoningDisplayMode: "inline",
+          reasoningDisplayMode: "collapsed",
         }),
       );
     });
@@ -309,7 +318,7 @@ describe("Thread", () => {
       render(<Thread {...defaultProps} messages={messages} isLoading={true} />);
 
       // openai → chatgpt host → standalone thinking row visible (no
-      // assistant content yet); claudeFooterMode stays "none" because the
+      // assistant content yet); claudeFooterActive stays false because the
       // host isn't Claude.
       expect(mockThinkingIndicator).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -387,7 +396,7 @@ describe("Thread", () => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({ id: "msg-1" }),
-          claudeFooterMode: "none",
+          claudeFooterActive: false,
         }),
       );
     });
@@ -414,7 +423,7 @@ describe("Thread", () => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({ id: "msg-2" }),
-          claudeFooterMode: "animated",
+          claudeFooterActive: true,
         }),
       );
     });
@@ -438,12 +447,12 @@ describe("Thread", () => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({ id: "msg-2" }),
-          claudeFooterMode: "none",
+          claudeFooterActive: false,
         }),
       );
     });
 
-    it("keeps only the latest assistant Claude footer and makes it static after loading", () => {
+    it("clears the Claude footer on every message after loading", () => {
       const messages = [
         createMessage({
           id: "msg-1",
@@ -466,13 +475,13 @@ describe("Thread", () => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({ id: "msg-1" }),
-          claudeFooterMode: "none",
+          claudeFooterActive: false,
         }),
       );
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           message: expect.objectContaining({ id: "msg-3" }),
-          claudeFooterMode: "static",
+          claudeFooterActive: false,
         }),
       );
     });
@@ -529,6 +538,7 @@ describe("Thread", () => {
           {...defaultProps}
           messages={messages}
           enableFullscreenChatOverlay={true}
+          harnessStartupPhase="authorization"
         />,
         "claude",
       );
@@ -539,6 +549,9 @@ describe("Thread", () => {
       });
 
       expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
+      expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
+        expect.objectContaining({ startupPhase: "authorization" }),
+      );
       // The overlay no longer takes a loadingIndicatorVariant prop — it
       // resolves the brand indicator from ScenarioHostStyleProvider context.
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(

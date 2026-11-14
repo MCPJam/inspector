@@ -1,3 +1,4 @@
+import { attachRunningSandbox } from "../../utils/computers/attach-sandbox.js";
 /**
  * W1 internal debug route — the hosted-browser pipeline, end to end.
  *
@@ -10,11 +11,11 @@
  * body is the USER whose desktop is reserved.
  *
  * All orchestration + cleanup live in `runBrowserProbe`; this file only builds
- * the live seams (Convex reserve/sandbox-info, `Sandbox.connect`, the E2B →
+ * the live seams (Convex reserve/sandbox-info, sandbox attachment, the E2B →
  * BrowserdSandbox adapter, the real client) and the bundle bytes.
  */
 import { Hono } from "hono";
-import { Sandbox } from "e2b";
+import type { Sandbox } from "e2b";
 import { internalServiceAuthMiddleware } from "../../middleware/internal-service-auth.js";
 import {
   ensureComputerReady,
@@ -46,7 +47,7 @@ function connectProbeSandbox(sandbox: Sandbox): ProbeSandbox {
     writeBundle: (path, content) => writeBundleInto(sandbox, path, content),
     browserd: adaptSandbox(sandbox),
     // Never kill the durable computer here — only the daemon is stopped, by the
-    // probe's own cleanup. `Sandbox.connect` holds no resource to release.
+    // probe's own cleanup. The SDK handle holds no resource to release.
     disconnect: async () => {},
   };
 }
@@ -93,7 +94,7 @@ internalComputerBrowserDebug.post("/probe", async (c) => {
           }
           return info.value.providerComputerId;
         },
-        connect: async (sandboxId) => connectProbeSandbox(await Sandbox.connect(sandboxId)),
+        connect: async (sandboxId) => connectProbeSandbox(await attachRunningSandbox(sandboxId)),
         boot: bootBrowserd,
         createClient: (baseUrl, boot) => new BrowserdClient({ baseUrl, bearer: boot }),
       },

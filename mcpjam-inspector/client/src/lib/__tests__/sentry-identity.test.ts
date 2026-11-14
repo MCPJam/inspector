@@ -8,10 +8,19 @@ import {
 import {
   resetTelemetryIdentity,
   setTelemetryActor,
+  setTelemetryCaptureContext,
+  setTelemetryContentPolicy,
   setTelemetryIdentity,
 } from "../telemetry-context";
 
+import { setSessionPrivacy } from "../session-privacy";
+
+beforeEach(() => {
+  setSessionPrivacy("full");
+  setTelemetryCaptureContext({ projectIds: ["project_test"], organizationIds: [] });
+});
 afterEach(() => {
+  setSessionPrivacy("pending");
   delete window.electronAPI;
   setTelemetryActor(null);
 });
@@ -53,6 +62,7 @@ describe("setSentryActor", () => {
 
   it("mirrors the email into username so the issue list shows a person", () => {
     setTelemetryActor("workos-1");
+    setTelemetryContentPolicy("workos-1", "full");
     setTelemetryIdentity("workos-1", "full");
     setSentryActor({
       kind: "signedIn",
@@ -142,6 +152,7 @@ describe("the identity grant", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setTelemetryActor("workos-1");
+    setTelemetryContentPolicy("workos-1", "full");
   });
 
   afterEach(() => {
@@ -185,6 +196,7 @@ describe("the identity grant", () => {
 
   it("never names a guest", () => {
     setTelemetryActor("guest-1");
+    setTelemetryContentPolicy("guest-1", "full");
     setTelemetryIdentity("guest-1", "full");
     setSentryActor({ kind: "guest", id: "guest-1" });
     expect(mocks.setUser).toHaveBeenLastCalledWith({ id: "guest-1" });

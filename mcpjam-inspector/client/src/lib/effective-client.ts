@@ -10,6 +10,7 @@
  * of the project default and the inspector reads through the host instead.
  */
 
+import { resolvePluginExtensions, applyPluginExtensionsToClientCapabilities } from "@mcpjam/sdk/host-config/internal";
 import type { ClientCapabilityOptions } from "@mcpjam/sdk/browser";
 import {
   getDefaultClientCapabilities,
@@ -99,7 +100,9 @@ export function resolveServerInit(args: {
  * unchanged servers.
  */
 export function resolveEffectiveClientCapabilities(args: {
-  host?: Pick<HostConfigDtoV2, "clientCapabilities"> | null;
+  host?: (Pick<HostConfigDtoV2, "clientCapabilities"> & Partial<Pick<HostConfigDtoV2, "hostStyle" | "harness" | "mcpProfile">>) | null;
+  /** This caller installs the local modern rich-form collector and editor. */
+  localFormSupport?: boolean;
   serverConfig?: {
     clientCapabilities?: unknown;
     capabilities?: unknown;
@@ -122,12 +125,22 @@ export function resolveEffectiveClientCapabilities(args: {
     ? (args.serverConfig!.capabilities as Record<string, unknown>)
     : undefined;
 
-  return normalizeClientCapabilities(
+  const resolved = normalizeClientCapabilities(
     mergeClientCapabilities(
       hostCaps as ClientCapabilityOptions,
       serverCaps as ClientCapabilityOptions | undefined,
     ) as ClientCapabilityOptions,
   );
+  if (!args.localFormSupport || !args.host) return resolved;
+  const forms = resolvePluginExtensions(args.host);
+  const gated = applyPluginExtensionsToClientCapabilities(resolved, forms);
+  return normalizeClientCapabilities(forms.capabilities.forms
+    ? mergeClientCapabilities(gated, {
+        elicitation: { form: {} },
+        extensions: { "openai/elicitation": { form: {} } },
+      })
+    : gated);
+
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

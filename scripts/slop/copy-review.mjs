@@ -119,7 +119,8 @@ export async function callClaude({ model, system, user, format, effort }, fetchI
   if (message.stop_reason !== "end_turn" || text === undefined) {
     throw new Error(`${model.id} returned no result (stop_reason ${message.stop_reason}).`);
   }
-  return { items: JSON.parse(text).items ?? [], usage: message.usage };
+  const result = JSON.parse(text);
+  return { items: result.items ?? [], result, usage: message.usage };
 }
 
 /** Classify in batches of BATCH and merge the findings and usage. */

@@ -8,6 +8,11 @@ import {
   baseSuite,
 } from "./settings-sheet-harness";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 /**
  * The settings sheet as a DRAFT (S1).
  *
@@ -81,6 +86,13 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
 vi.mock("../suite-github-checks-section", () => ({
   SuiteGithubChecksSection: () => <div data-testid="github-checks-section" />,
 }));
+vi.mock("../suite-accounts-row", () => ({
+  SuiteAccountsRow: () => (
+    <button type="button" data-testid="suite-accounts-row">
+      Save this choice
+    </button>
+  ),
+}));
 vi.mock("@/lib/error-reporting", () => ({ reportBoundaryError: vi.fn() }));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useEphemeralCloudAvailable: () => true,
@@ -91,7 +103,7 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
-vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => true }));
+vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: (flag: string) => flag !== "eval-suite-settings-tabs" }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
   useEnsureAdhocEnvironments: () => vi.fn(),
@@ -412,6 +424,22 @@ describe("a suite managed by CI", () => {
         "fieldset[data-testid='suite-settings-locked'] input",
       ).length,
     ).toBeGreaterThan(0);
+  });
+
+  it("leaves the Accounts row out of the lock: it is each person's choice", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // A CI-owned suite keeps its Run controls, and a run started from it uses
+    // the starter's accounts, so the row that chooses them stays usable while
+    // the rows after it stay locked.
+    expect(
+      screen.getByTestId("suite-accounts-row").closest("fieldset[disabled]"),
+    ).toBeNull();
+    expect(
+      document
+        .querySelector('[data-subsection-id="turnTimeoutMs"]')
+        ?.closest("fieldset[disabled]"),
+    ).toBeTruthy();
   });
 
   it("does not offer the name at all — it lives outside the fieldset", () => {

@@ -50,6 +50,7 @@ import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import {
@@ -253,6 +254,7 @@ export function HostConfigCompareView({
   const publicSiteRelays = useServerSupportsFeature("public-site-relays");
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
   // Claude Code and Codex are always useful as read-only reference data here,
   // like on caniuse.dev. Their creation flags still gate the New Client picker
@@ -262,12 +264,13 @@ export function HostConfigCompareView({
     const excluded = excludedFlagGatedHostIds({
       claudeCode: claudeCodeEnabled,
       codex: codexEnabled,
+      copilotCli: copilotCliEnabled === true,
       cursorCli: cursorCliEnabled,
     });
     excluded.delete("claude-code");
     excluded.delete("codex");
     return excluded;
-  }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, presetOnly]);
+  }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled, presetOnly]);
   // Public caniuse still displays flag-gated hosts as reference data, but must
   // not offer their verify links because those links auto-create a host, and
   // the app refuses to create one until the rollout flag is on. The flags
@@ -575,14 +578,11 @@ export function HostConfigCompareView({
     );
   }, []);
 
-  const handleViewModeChange = useCallback(
-    (mode: CompareViewMode) => {
-      if (mode === "list" && showDescriptions) return;
-      viewModeUserSetRef.current = true;
-      setViewMode(mode);
-    },
-    [showDescriptions]
-  );
+  const handleViewModeChange = useCallback((mode: CompareViewMode) => {
+    viewModeUserSetRef.current = true;
+    if (mode === "list") setShowDescriptions(false);
+    setViewMode(mode);
+  }, []);
 
   const handleShowDescriptionsChange = useCallback((enabled: boolean) => {
     setShowDescriptions(enabled);
@@ -696,16 +696,11 @@ export function HostConfigCompareView({
               query={fieldSearchQuery}
               onQueryChange={setFieldSearchQuery}
               fields={compareFields}
-              viewMode={viewMode}
-              onViewModeChange={handleViewModeChange}
-              disableListView={showDescriptions}
               mobileOptimized={presetOnly}
               onReset={handleResetCompareView}
-              supportFilter={supportFilter}
-              onSupportFilterChange={setSupportFilter}
               actions={
                 presetOnly ? (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center justify-center gap-1.5">
                     {publicSiteRelays !== false && (
                       <>
                         <ReportInconsistencyDialog />
@@ -730,7 +725,15 @@ export function HostConfigCompareView({
               onToggleHost={handleToggleHost}
               viewMode={viewMode}
               onViewModeChange={handleViewModeChange}
-              disableListView={showDescriptions}
+              filters={
+                presetOnly ? (
+                  <SupportFilterFunnel
+                    supportFilter={supportFilter}
+                    onSupportFilterChange={setSupportFilter}
+                    disabled={!hasFieldSearchQuery}
+                  />
+                ) : undefined
+              }
               divergingOnly={divergingOnly}
               onDivergingOnlyChange={setDivergingOnly}
               showDescriptions={showDescriptions}
@@ -763,7 +766,12 @@ export function HostConfigCompareView({
                   // force-filling it. Wrapping list view too would give the
                   // grid a definite height it overflows, and the container's
                   // bottom padding stops clearing the last card.
-                  <div className="min-h-0 flex-1">
+                  <div
+                    className={cn(
+                      "min-h-0 flex-1",
+                      presetOnly && "min-h-[240px] sm:min-h-0"
+                    )}
+                  >
                     <HostConfigComparisonMatrix
                       subjects={orderedSubjects}
                       fields={compareFields}
@@ -1119,11 +1127,6 @@ const SUPPORT_FILTER_OPTIONS: ReadonlyArray<{
   { value: "supported", label: "Full" },
 ];
 
-/**
- * Support-level filter for the caniuse search line, rendered right after the
- * "?" glyph. Always present; the funnel only takes the accent colour once a
- * non-default filter is applied.
- */
 function SupportFilterFunnel({
   supportFilter,
   onSupportFilterChange,
@@ -1179,27 +1182,17 @@ function CompareSearchBar({
   query,
   onQueryChange,
   fields,
-  viewMode,
-  onViewModeChange,
-  disableListView = false,
   mobileOptimized = false,
   onReset,
   actions,
-  supportFilter,
-  onSupportFilterChange,
 }: {
   query: string;
   onQueryChange: (q: string) => void;
   fields: ReadonlyArray<HostConfigFieldDef>;
-  viewMode: CompareViewMode;
-  onViewModeChange: (mode: CompareViewMode) => void;
-  disableListView?: boolean;
   mobileOptimized?: boolean;
   onReset?: () => void;
   /** Utility actions rendered at the trailing edge of the search row. */
   actions?: ReactNode;
-  supportFilter?: SupportFilterMode;
-  onSupportFilterChange?: (mode: SupportFilterMode) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const searchAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -1283,7 +1276,7 @@ function CompareSearchBar({
             ref={searchAnchorRef}
             className={cn(
               mobileOptimized
-                ? "w-full min-w-[96px] max-w-[420px] flex-1"
+                ? "order-last w-full basis-full sm:order-none sm:min-w-[96px] sm:max-w-[420px] sm:flex-1 sm:basis-auto"
                 : "order-last w-full sm:order-none sm:w-auto sm:min-w-[240px] sm:flex-1"
             )}
           >
@@ -1376,13 +1369,6 @@ function CompareSearchBar({
           >
             ?
           </span>
-          {supportFilter !== undefined && onSupportFilterChange ? (
-            <SupportFilterFunnel
-              supportFilter={supportFilter}
-              onSupportFilterChange={onSupportFilterChange}
-              disabled={query.trim().length === 0}
-            />
-          ) : null}
         </span>
       )}
     </>
@@ -1397,7 +1383,7 @@ function CompareSearchBar({
     >
       {mobileOptimized ? (
         <div className="flex basis-full flex-col items-center gap-2 pb-2 pt-1 @min-[900px]:grid @min-[900px]:grid-cols-[auto_minmax(0,1fr)_auto] @min-[900px]:items-center @min-[900px]:gap-4">
-          <div className="flex w-full min-w-0 flex-nowrap items-center justify-center gap-2 @min-[900px]:col-start-2">
+          <div className="flex w-full min-w-0 flex-wrap items-center justify-center gap-2 sm:flex-nowrap @min-[900px]:col-start-2">
             {searchRow}
           </div>
           {actions ? (
@@ -1416,48 +1402,6 @@ function CompareSearchBar({
         </div>
       ) : (
         searchRow
-      )}
-      {!mobileOptimized && (
-        <div
-          role="group"
-          aria-label="View mode"
-          className="ml-auto flex shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5"
-        >
-          {(
-            [
-              { value: "table", label: "Tables" },
-              { value: "list", label: "List" },
-            ] as const
-          ).map((v) => {
-            const active = viewMode === v.value;
-            const disabled = v.value === "list" && disableListView;
-            return (
-              <button
-                key={v.value}
-                type="button"
-                aria-pressed={active}
-                disabled={disabled}
-                title={
-                  disabled
-                    ? "Turn descriptions off before switching to list view"
-                    : undefined
-                }
-                data-testid={`compare-view-${v.value}`}
-                onClick={() => onViewModeChange(v.value)}
-                className={cn(
-                  "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
-                  "disabled:cursor-not-allowed disabled:opacity-40",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                  active
-                    ? "bg-primary/10 text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {v.label}
-              </button>
-            );
-          })}
-        </div>
       )}
     </div>
   );

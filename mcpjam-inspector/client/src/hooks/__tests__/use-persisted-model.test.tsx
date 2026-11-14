@@ -7,9 +7,55 @@ import {
   replaceLeadModelId,
   saveSelectedModelId,
   saveSelectedModelIds,
+  saveSelectedModelSelections,
 } from "@/lib/selected-model-storage";
 
 describe("usePersistedModel", () => {
+  it("refreshes a same-id lead connection without resetting the compare array", () => {
+    localStorage.clear();
+    saveSelectedModelId("openai/gpt-4o");
+    saveSelectedModelIds(["openai/gpt-4o", "openai/gpt-5"]);
+    const { result } = renderHook(() => usePersistedModel());
+    const choice = {
+      modelId: "openai/gpt-4o", source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "connection-b" },
+      fallback: { provider: "none", model: "none" } as const,
+    };
+    act(() => saveSelectedModelSelections([choice]));
+    expect(result.current.selectedModelSelection).toEqual(choice);
+    expect(result.current.selectedModelIds).toEqual(["openai/gpt-4o", "openai/gpt-5"]);
+  });
+  it("does not pair a changed lead id with an unrelated saved selection", () => {
+    const choice = {
+      modelId: "openai/gpt-4o", nativeModelId: "gpt-4o", source: "org" as const,
+      connectionRef: { kind: "orgProvider" as const, id: "connection-a" },
+      fallback: { provider: "none", model: "none" } as const,
+    };
+    saveSelectedModelId(choice.modelId);
+    saveSelectedModelSelections([choice]);
+    const { result } = renderHook(() => usePersistedModel());
+    act(() => result.current.setSelectedModelId("anthropic/claude-sonnet-4.5"));
+    expect(result.current.selectedModelId).toBe("anthropic/claude-sonnet-4.5");
+    expect(result.current.selectedModelSelection).toBeNull();
+    act(() => replaceLeadModelId("gpt-4o"));
+    expect(result.current.selectedModelSelection).toEqual(choice);
+    act(() => result.current.setSelectedModelId(null));
+    expect(result.current.selectedModelSelection).toBeNull();
+  });
+
+  it("retains the full selection reference on identical storage writes", () => {
+    const choice = {
+      modelId: "openai/gpt-4o", source: "hosted" as const,
+      fallback: { provider: "none", model: "none" } as const,
+    };
+    saveSelectedModelId(choice.modelId);
+    saveSelectedModelSelections([choice]);
+    const { result } = renderHook(() => usePersistedModel());
+    const original = result.current.selectedModelSelection;
+    act(() => saveSelectedModelSelections([choice]));
+    expect(result.current.selectedModelSelection).toBe(original);
+  });
+
   beforeEach(() => {
     localStorage.clear();
   });

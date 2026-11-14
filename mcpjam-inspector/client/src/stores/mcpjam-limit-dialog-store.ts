@@ -23,6 +23,9 @@ export interface MCPJamLimitNotifyInput {
   surface?: MCPJamLimitSurface;
   period?: MCPJamLimitPeriod;
   shortfall?: MCPJamCreditShortfall;
+  /** The user asked to see the dialog (a button), so a dismissal never hides
+   * it; see {@link MCPJamLimitDialogState.outOfCreditsDismissed}. */
+  userInitiated?: boolean;
 }
 
 interface MCPJamLimitDialogState {
@@ -57,6 +60,22 @@ interface MCPJamLimitDialogState {
   hasPendingLimit: boolean;
   outOfCreditsHit: boolean;
   outOfCreditsOrganizationId: string | null;
+  /**
+   * The user dismissed an out-of-credits dialog, so a later exhaustion notice
+   * for that organization (or any, when it named none) only updates the latch:
+   * the run, send and launch buttons already say so. A shortfall is about one
+   * request and still opens, and so does a notice the user asked for. Cleared
+   * when a purchase begins or credits come back.
+   */
+  outOfCreditsDismissed: boolean;
+  outOfCreditsDismissedOrganizationId: string | null;
+  /**
+   * Whether each organization's balance last read empty, keyed by its id (""
+   * for a guest). Kept here, not in a component, so credits that come back
+   * while no view watches (a teammate's top-up, the daily reset on another
+   * page) are still seen as a change by the next view that reads the balance.
+   */
+  balanceOutByOrganization: Readonly<Record<string, boolean>>;
   authStatus: MCPJamLimitAuthStatus;
   intent: MCPJamLimitIntent | null;
   organizationId: string | null;
@@ -88,7 +107,13 @@ interface MCPJamLimitDialogState {
    * organization.
    */
   forgetNotifiedWaves: (organizationId?: string) => void;
+  /** A view read the organization's balance. Going from empty to funded ends
+   * its {@link MCPJamLimitDialogState.outOfCreditsDismissed}. */
+  observeBalance: (organizationId: string | null, out: boolean) => void;
   close: () => void;
+  /** The user closed the dialog: {@link MCPJamLimitDialogState.close}, and an
+   * exhaustion it showed stays dismissed. */
+  dismiss: () => void;
 }
 
 /**
@@ -204,6 +229,57 @@ const latchFor = (
   return { outOfCreditsHit: false, outOfCreditsOrganizationId: null };
 };
 
+// The user already dismissed this exhaustion; see `outOfCreditsDismissed`. A
+// notice or a dismissal that names no organization cannot be told apart, so it
+// matches any.
+const isDismissed = (
+  state: Pick<
+    MCPJamLimitDialogState,
+    "outOfCreditsDismissed" | "outOfCreditsDismissedOrganizationId"
+  >,
+  input: MCPJamLimitNotifyInput,
+): boolean =>
+  state.outOfCreditsDismissed &&
+  !input.userInitiated &&
+  !input.shortfall &&
+  (!input.organizationId ||
+    !state.outOfCreditsDismissedOrganizationId ||
+    input.organizationId === state.outOfCreditsDismissedOrganizationId);
+
+// Ends a dismissal for the organization, as `clearOutOfCreditsHit` ends a
+// latch: `undefined` names any, and another organization's is left alone.
+const withoutDismissal = (
+  state: Pick<
+    MCPJamLimitDialogState,
+    "outOfCreditsDismissed" | "outOfCreditsDismissedOrganizationId"
+  >,
+  organizationId: string | undefined,
+) => {
+  if (!state.outOfCreditsDismissed) return {};
+  if (
+    organizationId !== undefined &&
+    state.outOfCreditsDismissedOrganizationId &&
+    state.outOfCreditsDismissedOrganizationId !== organizationId
+  ) {
+    return {};
+  }
+  return {
+    outOfCreditsDismissed: false,
+    outOfCreditsDismissedOrganizationId: null,
+  };
+};
+
+const CLOSED = {
+  isOpen: false,
+  hasPendingLimit: false,
+  intent: null,
+  organizationId: null,
+  surface: null,
+  period: null,
+  shortfall: null,
+  pendingInput: null,
+} satisfies Partial<MCPJamLimitDialogState>;
+
 // A dialog already on screen follows newer evidence too, in place and never
 // reopened: a wave's first run may report a shortfall (the dialog says credits
 // remain and suggests a cheaper request) and a later one real exhaustion. A
@@ -279,6 +355,9 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     hasPendingLimit: false,
     outOfCreditsHit: false,
     outOfCreditsOrganizationId: null,
+    outOfCreditsDismissed: false,
+    outOfCreditsDismissedOrganizationId: null,
+    balanceOutByOrganization: {},
     authStatus: "loading",
     intent: null,
     organizationId: null,
@@ -382,6 +461,14 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
               [...state.staleWaveKeys].filter((key) => !keys.includes(key)),
             )
           : state.staleWaveKeys;
+        if (isDismissed(state, input)) {
+          return {
+            notifiedKeys,
+            staleWaveKeys,
+            waveOrganizations,
+            ...latchFor(state, input),
+          };
+        }
         if (state.authStatus === "loading") {
           return {
             notifiedKeys,
@@ -470,6 +557,8 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           ...(waves.every((key) => state.staleWaveKeys.has(key))
             ? {}
             : { staleWaveKeys: new Set([...state.staleWaveKeys, ...waves]) }),
+          // A user who is buying and runs out again is told again.
+          ...withoutDismissal(state, organizationId),
           // What counts as announced before this scope's purchase starts over
           // with it; the other scopes keep the boundary of their own purchase.
           runKeysAtPurchase: {
@@ -482,16 +571,32 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           },
         };
       }),
-    close: () =>
-      set({
-        isOpen: false,
-        hasPendingLimit: false,
-        intent: null,
-        organizationId: null,
-        surface: null,
-        period: null,
-        shortfall: null,
-        pendingInput: null,
+    observeBalance: (organizationId, out) =>
+      set((state) => {
+        const key = organizationId ?? "";
+        const wasOut = state.balanceOutByOrganization[key];
+        if (wasOut === out) return state;
+        return {
+          balanceOutByOrganization: {
+            ...state.balanceOutByOrganization,
+            [key]: out,
+          },
+          // Credits came back, so running out again is news.
+          ...(wasOut && !out
+            ? withoutDismissal(state, organizationId ?? undefined)
+            : {}),
+        };
       }),
+    close: () => set(CLOSED),
+    dismiss: () =>
+      set((state) => ({
+        ...CLOSED,
+        ...(state.isOpen && !state.shortfall
+          ? {
+              outOfCreditsDismissed: true,
+              outOfCreditsDismissedOrganizationId: state.organizationId,
+            }
+          : {}),
+      })),
   }),
 );

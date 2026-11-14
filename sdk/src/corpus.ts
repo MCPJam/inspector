@@ -518,6 +518,7 @@ export function evalTestFromPlatformCase(
     // one here would give the same case two identities.
     id: evalCase.id,
     name: options.name ?? evalCase.title,
+    billableSteps: Math.max(1, prompts.length),
     test: async (executor: HostExecutor) => {
       // Per invocation, never per case: an iteration must not inherit the
       // previous iteration's conversation.

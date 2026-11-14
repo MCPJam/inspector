@@ -59,7 +59,13 @@ describe("OAuth connection routes", () => {
     vi.clearAllMocks();
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
     mocks.authorize.mockResolvedValue({
-      results: { server: { ok: true, oauthAccessToken: "b-token" } },
+      results: {
+        server: {
+          ok: true,
+          oauthAccessToken: "b-token",
+          serverConfig: { transportType: "http", url: "https://mcp.test" },
+        },
+      },
     });
     mocks.capture.mockResolvedValue({ profile: { id: "B" } });
     vi.stubGlobal(
@@ -83,6 +89,21 @@ describe("OAuth connection routes", () => {
       profile: { id: "B" },
     });
     expect(request!.headers).toMatchObject({ Authorization: "Bearer caller" });
+  });
+  it("never starts a stdio server to capture a profile", async () => {
+    mocks.authorize.mockResolvedValue({
+      results: {
+        server: {
+          ok: true,
+          oauthAccessToken: "b-token",
+          serverConfig: { transportType: "stdio", command: "node", args: [] },
+        },
+      },
+    });
+    const response = await post("/profile");
+    expect(await response.json()).toMatchObject({ outcome: "unavailable" });
+    expect(mocks.capture).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
   it("makes a failed profile call best effort without writing any identity", async () => {
     mocks.capture.mockRejectedValue(new Error("server unavailable"));

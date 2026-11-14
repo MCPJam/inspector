@@ -17,7 +17,7 @@ describe("EvalsHeader", () => {
         onAddCase={add}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     expect(setup).toHaveBeenCalledOnce();
     await user.click(
       screen.getByRole("button", { name: "More evaluate actions" }),
@@ -66,7 +66,7 @@ describe("EvalsHeader", () => {
         parentCrumb={{ label: "Amazon", onClick: vi.fn() }}
         detailCrumb={[
           { label: "Test Case Evaluators", onClick: toCaseEvaluators },
-          { label: "Test Suite Evaluators" },
+          { label: "Suite settings" },
         ]}
         onCurrentCrumbClick={toCase}
       >
@@ -83,7 +83,7 @@ describe("EvalsHeader", () => {
     expect(toCaseEvaluators).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("link", {
-        name: "Test Suite Evaluators",
+        name: "Suite settings",
         current: "page",
       }),
     ).toBeInTheDocument();
@@ -166,6 +166,32 @@ describe("EvalsHeader", () => {
 
     fireEvent.click(runs);
     expect(onLandingViewChange).toHaveBeenCalledWith("runs");
+  });
+
+  it("on a phone, keeps Run on the title's line and puts the tabs below", () => {
+    render(
+      <EvalsHeader
+        onCreateSuite={vi.fn()}
+        onSetupRun={vi.fn()}
+        landingView="runs"
+        onLandingViewChange={vi.fn()}
+      />,
+    );
+
+    const actions = screen.getByTestId("evals-header-actions");
+    const tabs = screen.getByTestId("evals-header-tabs");
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: /^run$/i }),
+    );
+    expect(tabs).toContainElement(
+      screen.getByRole("navigation", { name: "Evaluate view" }),
+    );
+    // Phone: title, action, then the tabs on a full-width line of their own.
+    expect(actions).toHaveClass("order-2", "ml-auto");
+    expect(tabs).toHaveClass("order-3", "w-full");
+    // From sm up: title, tabs, action, as before.
+    expect(tabs).toHaveClass("sm:order-2", "sm:w-auto");
+    expect(actions).toHaveClass("sm:order-3");
   });
 
   it("renders a minimal Evaluate / title trail on detail routes", () => {

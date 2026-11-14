@@ -1,8 +1,8 @@
-import { modelApps } from "./model-apps.js";
+import { modelApps, readOwnedApp } from "./model-apps.js";
 import { pluginResourceUri } from "./bindings.js";
 import type { Context } from "hono";
 import { z } from "zod";
-import { pluginModelContextMessage } from "../../../shared/plugin-model-context.js";
+import type { PluginModelContext } from "../../../shared/plugin-model-context.js";
 import type { PluginWorkspaceAdmission } from "./admission.js";
 import { pluginInstances, type PluginInstanceIdentity } from "./instances.js";
 import { createPluginRequestRuntime } from "./request-runtime.js";
@@ -23,10 +23,12 @@ export async function readOwnedTurnContext(input: {
   const tokens = [
     ...new Set(pluginContextReferencesSchema.parse(input.references)),
   ];
-  const contexts = [];
+  const contexts: PluginModelContext[] = [];
+  const signal = input.c.req.raw.signal;
   for (const token of tokens) {
-    if (modelApps.has(token)) {
-      const record = modelApps.get(token, input.actor);
+    const owned = await readOwnedApp(token, input.actor, signal);
+    if (owned.kind === "model") {
+      const record = owned.app;
       const runtime = createPluginRequestRuntime(
         input.c,
         input.admission,
@@ -36,26 +38,27 @@ export async function readOwnedTurnContext(input: {
         { ownedForms: false },
       );
       try {
-        const fresh = await runtime.resolve(
-          record.toolName,
-          input.c.req.raw.signal,
-        );
+        const fresh = await runtime.resolve(record.toolName, signal);
         if (
           !fresh.contextEnabled ||
           fresh.revision !== record.revision ||
           pluginResourceUri(fresh.tool._meta) !== record.resourceUri
         )
           throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
-        await input.admission.revalidate({ signal: input.c.req.raw.signal });
-        modelApps.get(token, input.actor);
-        const snapshot = record.context.snapshot(
-          record.owner.owner.instanceId,
-          record.owner.owner.generation,
+        // The stored control beside admission: the context this turn reads
+        // is the latest any replica wrote, from an App still open.
+        await modelApps.fence(token, input.actor, signal)(() =>
+          input.admission.revalidate({ signal }),
+        );
+        const current = modelApps.get(token, input.actor);
+        const snapshot = current.context.snapshot(
+          current.owner.owner.instanceId,
+          current.owner.owner.generation,
         );
         if (snapshot.state)
           contexts.push({
-            instanceId: record.owner.owner.instanceId,
-            generation: record.owner.owner.generation,
+            instanceId: current.owner.owner.instanceId,
+            generation: current.owner.owner.generation,
             ...snapshot.state,
           });
       } finally {
@@ -63,11 +66,7 @@ export async function readOwnedTurnContext(input: {
       }
       continue;
     }
-    const instance = await pluginInstances.getPersistent(
-      token,
-      input.actor,
-      input.c.req.raw.signal,
-    );
+    const instance = owned.instance;
     if (!instance.contextEnabled)
       throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
     const runtime = createPluginRequestRuntime(
@@ -82,14 +81,14 @@ export async function readOwnedTurnContext(input: {
       const current = await resolveOpenPluginActivation(
         runtime,
         instance.activation,
-        input.c.req.raw.signal,
+        signal,
       );
       if (
         !current.contextEnabled ||
         current.revision !== instance.activation.revision
       )
         throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
-      await input.admission.revalidate({ signal: input.c.req.raw.signal });
+      await input.admission.revalidate({ signal });
       pluginInstances.get(token, input.actor);
       const snapshot = pluginInstances.contextSnapshot(token, input.actor);
       if (snapshot.state)
@@ -102,11 +101,20 @@ export async function readOwnedTurnContext(input: {
       await runtime.release();
     }
   }
-  input.c.req.raw.signal.throwIfAborted();
+  signal.throwIfAborted();
+  // A model App's control is shared by every replica, so a read taken before
+  // this turn's later awaits proves nothing now: read every one again, after
+  // all of them. Each App is then seen live after the turn's last other wait.
+  await Promise.all(
+    tokens
+      .filter((token) => modelApps.holds(token))
+      .map((token) => modelApps.restore(token, input.actor, signal)),
+  );
   // Every source remains live after the final authorization await.
   for (const token of tokens) {
-    if (modelApps.has(token)) modelApps.get(token, input.actor);
+    if (modelApps.holds(token)) modelApps.get(token, input.actor);
     else pluginInstances.get(token, input.actor);
   }
-  return pluginModelContextMessage(contexts);
+  // The turn budget is the chat's to apply, over every owner's contexts.
+  return contexts;
 }

@@ -24,9 +24,9 @@ describe("SwarmsTabHeader", () => {
     const title = screen.getByRole("heading", { name: "Swarm" });
     const overview = screen.getByRole("button", { name: "Overview" });
     const create = screen.getByRole("button", { name: /create new swarm/i });
-    const row = title.closest("div.flex.items-center.justify-between");
+    const row = screen.getByTestId("swarms-tab-header-chrome-title-row");
 
-    expect(row).toBeTruthy();
+    expect(row).toContainElement(title);
     expect(row?.contains(overview)).toBe(true);
     expect(row?.contains(create)).toBe(true);
 

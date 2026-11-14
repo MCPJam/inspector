@@ -36,14 +36,12 @@
     },
     {
       "output": {
-        "output": {
-          "content": [
-            {
-              "text": "PROBE_ECHO conformance",
-              "type": "text"
-            }
-          ]
-        }
+        "content": [
+          {
+            "text": "PROBE_ECHO conformance",
+            "type": "text"
+          }
+        ]
       },
       "providerExecuted": true,
       "toolCallId": "<id-2>",
@@ -79,6 +77,7 @@
                   "input": {
                     "message": "conformance"
                   },
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "probe"
@@ -97,14 +96,12 @@
                   "output": {
                     "type": "json",
                     "value": {
-                      "output": {
-                        "content": [
-                          {
-                            "text": "PROBE_ECHO conformance",
-                            "type": "text"
-                          }
-                        ]
-                      }
+                      "content": [
+                        {
+                          "text": "PROBE_ECHO conformance",
+                          "type": "text"
+                        }
+                      ]
                     }
                   },
                   "providerOptions": {
@@ -135,7 +132,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "echo"
+              "toolName": "echo",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
@@ -165,7 +163,7 @@
       "type": "text-start"
     },
     {
-      "delta": "TOOL RESULT RECEIVED: Wall time: <time> seconds\nOutput:\n{\"output\":{\"content\":[{\"type\":\"text\",\"text\":\"PROBE_ECHO conformance\"}]}}",
+      "delta": "TOOL RESULT RECEIVED: [{\"type\":\"input_text\",\"text\":\"Wall time: <time> seconds\\nOutput:\"},{\"type\":\"input_text\",\"text\":\"PROBE_ECHO conformance\"}]",
       "id": "<id-6>",
       "type": "text-delta"
     },
@@ -203,6 +201,7 @@
                   "input": {
                     "message": "conformance"
                   },
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "probe"
@@ -221,14 +220,12 @@
                   "output": {
                     "type": "json",
                     "value": {
-                      "output": {
-                        "content": [
-                          {
-                            "text": "PROBE_ECHO conformance",
-                            "type": "text"
-                          }
-                        ]
-                      }
+                      "content": [
+                        {
+                          "text": "PROBE_ECHO conformance",
+                          "type": "text"
+                        }
+                      ]
                     }
                   },
                   "providerOptions": {
@@ -246,7 +243,7 @@
             {
               "content": [
                 {
-                  "text": "TOOL RESULT RECEIVED: Wall time: <time> seconds\nOutput:\n{\"output\":{\"content\":[{\"type\":\"text\",\"text\":\"PROBE_ECHO conformance\"}]}}",
+                  "text": "TOOL RESULT RECEIVED: [{\"type\":\"input_text\",\"text\":\"Wall time: <time> seconds\\nOutput:\"},{\"type\":\"input_text\",\"text\":\"PROBE_ECHO conformance\"}]",
                   "type": "text"
                 }
               ],
@@ -268,7 +265,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "echo"
+              "toolName": "echo",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
@@ -357,6 +355,7 @@
             "input": {
               "message": "conformance"
             },
+            "providerExecuted": true,
             "providerOptions": {
               "mcpjam": {
                 "serverId": "probe"
@@ -375,14 +374,12 @@
             "output": {
               "type": "json",
               "value": {
-                "output": {
-                  "content": [
-                    {
-                      "text": "PROBE_ECHO conformance",
-                      "type": "text"
-                    }
-                  ]
-                }
+                "content": [
+                  {
+                    "text": "PROBE_ECHO conformance",
+                    "type": "text"
+                  }
+                ]
               }
             },
             "providerOptions": {
@@ -400,7 +397,7 @@
       {
         "content": [
           {
-            "text": "TOOL RESULT RECEIVED: Wall time: <time> seconds\nOutput:\n{\"output\":{\"content\":[{\"type\":\"text\",\"text\":\"PROBE_ECHO conformance\"}]}}",
+            "text": "TOOL RESULT RECEIVED: [{\"type\":\"input_text\",\"text\":\"Wall time: <time> seconds\\nOutput:\"},{\"type\":\"input_text\",\"text\":\"PROBE_ECHO conformance\"}]",
             "type": "text"
           }
         ],
@@ -423,14 +420,12 @@
       {
         "isError": false,
         "output": {
-          "output": {
-            "content": [
-              {
-                "text": "PROBE_ECHO conformance",
-                "type": "text"
-              }
-            ]
-          }
+          "content": [
+            {
+              "text": "PROBE_ECHO conformance",
+              "type": "text"
+            }
+          ]
         },
         "promptIndex": 0,
         "serverId": "probe",

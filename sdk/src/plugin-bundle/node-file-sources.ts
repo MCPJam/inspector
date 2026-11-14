@@ -34,6 +34,11 @@ import JSZip from "jszip";
 import type { PluginFileEntry, PluginFileSource } from "./types.js";
 import type { OpenAIArchiveObservations } from "../openai-readiness/package/reader.js";
 
+/** File-type bits of a POSIX mode word, and the regular and directory types. */
+const S_IFMT = 0o170000;
+const S_IFREG = 0o100000;
+const S_IFDIR = 0o040000;
+
 /**
  * Scratch directories a materializer writes beside the bundle it is extracting.
  *
@@ -78,6 +83,7 @@ async function listDirectory(
       path,
       size: stats.size,
       kind: stats.nlink > 1 ? "hardlink" : "file",
+      mode: stats.mode & 0o777,
     });
   }
 }
@@ -150,9 +156,24 @@ export async function createZipPluginFileSource(
     async list() {
       const out: PluginFileEntry[] = [];
       zip.forEach((path, entry) => {
-        // JSZip has no symlink concept; the parser's path/limit rules still
-        // apply, and the extracted copy is re-listed from disk (where links
-        // WOULD be visible) before it is accepted.
+        // JSZip extracts a link as a file holding its target, so the mode word
+        // (present only when the archive was made on a POSIX system) is what
+        // identifies one. Any populated type other than a regular file or a
+        // directory is surfaced as a link, which the parser rejects, as the
+        // browser and backend ZIP readers do; some writers leave the type 0.
+        // The type is read before `entry.dir`, which JSZip also sets for any
+        // name ending in `/`, so a link named that way is still a link. The
+        // extracted copy is also re-listed from disk before it is accepted.
+        const mode = entry.unixPermissions;
+        const type = typeof mode === "number" ? mode & S_IFMT : 0;
+        if (type !== 0 && type !== S_IFREG && type !== S_IFDIR) {
+          out.push({
+            path: path.replace(/\/+$/, ""),
+            size: 0,
+            kind: "symlink",
+          });
+          return;
+        }
         out.push({
           path: entry.dir ? path.replace(/\/+$/, "") : path,
           // A directory has no content, so 0 is a fact. For a FILE, an absent
@@ -162,6 +183,7 @@ export async function createZipPluginFileSource(
           // it". `readBytes` is what actually bounds the read.
           size: entry.dir ? 0 : (declaredUncompressedSize(entry) ?? 0),
           kind: entry.dir ? "directory" : "file",
+          ...(typeof mode === "number" ? { mode: mode & 0o777 } : {}),
         });
       });
       return out;
@@ -303,9 +325,12 @@ const EOCD_SIZE = 22;
 const CENTRAL_FILE_HEADER_SIZE = 46;
 const ZIP64_ENTRY_COUNT_SENTINEL = 0xffff;
 const ZIP64_OFFSET_SENTINEL = 0xffffffff;
+/** General purpose bit 0 of a central directory record: the entry is encrypted. */
+const ENCRYPTED_FLAG = 0x0001;
 
 /**
- * Entry names exactly as the central directory records them.
+ * Entry names exactly as the central directory records them, and the names of
+ * the entries it flags encrypted.
  *
  * WHY NOT `Object.keys(zip.files)`, which is what this used to be. JSZip
  * normalizes while it loads: it resolves `.` and `..`, collapses doubled
@@ -318,14 +343,17 @@ const ZIP64_OFFSET_SENTINEL = 0xffffffff;
  * rather than an unexamined one.
  *
  * Reading the directory directly also survives an encrypted archive, whose
- * central directory is plaintext even when every entry body is not.
+ * central directory is plaintext even when every entry body is not, so its
+ * flags are read here too: JSZip refuses such an archive outright.
  *
- * Returns `undefined` — not `[]` — for anything this cannot read faithfully
- * (no EOCD, a ZIP64 sentinel, a truncated or non-conforming directory), so the
- * gap stays visible instead of becoming an empty list that reads as "checked,
- * nothing found".
+ * Returns `undefined` — not empty lists — for anything this cannot read
+ * faithfully (no EOCD, a ZIP64 sentinel, a truncated or non-conforming
+ * directory), so the gap stays visible instead of becoming an empty list that
+ * reads as "checked, nothing found".
  */
-function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
+function readCentralDirectory(
+  bytes: Uint8Array
+): { names: string[]; encrypted: string[] } | undefined {
   if (bytes.byteLength < EOCD_SIZE) return undefined;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const decoder = new TextDecoder("utf-8");
@@ -349,6 +377,7 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
     }
 
     const names: string[] = [];
+    const encrypted: string[] = [];
     let cursor = directoryOffset;
     for (let entry = 0; entry < totalEntries; entry += 1) {
       if (cursor + CENTRAL_FILE_HEADER_SIZE > bytes.byteLength)
@@ -356,6 +385,7 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
       if (view.getUint32(cursor, true) !== CENTRAL_FILE_HEADER_SIGNATURE) {
         return undefined;
       }
+      const flags = view.getUint16(cursor + 8, true);
       const nameLength = view.getUint16(cursor + 28, true);
       const extraLength = view.getUint16(cursor + 30, true);
       const entryCommentLength = view.getUint16(cursor + 32, true);
@@ -365,56 +395,49 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
       // CP437 name that is pure ASCII decodes identically, and every rule
       // checked against these names — separators, empty and dot segments,
       // duplicates — is decided by ASCII characters.
-      names.push(
-        decoder.decode(bytes.subarray(nameStart, nameStart + nameLength)),
+      const name = decoder.decode(
+        bytes.subarray(nameStart, nameStart + nameLength)
       );
+      names.push(name);
+      if (flags & ENCRYPTED_FLAG) encrypted.push(name);
       cursor = nameStart + nameLength + extraLength + entryCommentLength;
+      // A record whose extra field or comment runs past the upload was cut
+      // short, so the directory was not read in full.
+      if (cursor > bytes.byteLength) return undefined;
     }
-    return names;
+    return { names, encrypted };
   }
   return undefined;
 }
 
+/**
+ * Never throws: an archive JSZip refuses (an encrypted one, usually) is a case
+ * the readiness report must explain, not a crashed run. Unlike
+ * `createZipPluginFileSource`, whose contract is a readable source, this one
+ * reports observations, and "unreadable" is one.
+ */
 export async function collectZipArchiveObservations(
-  bytes: Uint8Array,
+  bytes: Uint8Array
 ): Promise<OpenAIArchiveObservations> {
-  // Read straight off the archive, BEFORE and independently of JSZip: these
-  // are the names the portal will see, and the loader's job is to produce a
-  // readable tree rather than to preserve them.
-  const rawEntryNames = readRawCentralDirectoryNames(bytes);
-
-  try {
-    await JSZip.loadAsync(bytes);
-  } catch {
-    // AN UNREADABLE ARCHIVE IS THE ENCRYPTED ONE'S USUAL SHAPE. JSZip rejects
-    // a password-protected zip outright rather than listing its entries, and
-    // an encrypted upload is precisely a case the readiness report must
-    // survive: letting the rejection escape turns a gradeable submission into
-    // a crashed run, and the one fact this adapter can still state — the
-    // uploaded size — is thrown away with it. Every other field stays absent,
-    // so the reader reports what it could not read rather than passing it.
-    //
-    // NOT the same choice as `createZipPluginFileSource` above, which must
-    // still throw: its whole contract is to hand back a readable file source,
-    // and there is nothing to read here. This function's contract is to report
-    // observations, and "unreadable" is one.
-    // The central directory is readable even here, so the names survive an
-    // archive the loader refused.
-    return { compressedBytes: bytes.byteLength, rawEntryNames };
-  }
+  // Read straight off the archive, independently of JSZip: these are the
+  // names the portal will see, and the loader's job is to produce a readable
+  // tree rather than to preserve them.
+  const directory = readCentralDirectory(bytes);
   return {
     // The uploaded bytes, which is exactly what the portal's compressed-size
     // limit is measured against.
     compressedBytes: bytes.byteLength,
-    // RAW names, straight off the entry table. The readiness reader checks the
-    // portal's path rules against these BEFORE anything normalizes them,
-    // because normalization repairs a backslash separator and a doubled or `.`
-    // segment — three of the things the portal rejects.
-    rawEntryNames,
-    // `encryptedEntryPaths` is deliberately ABSENT rather than `[]`. JSZip
-    // cannot read an encrypted archive at all, so this adapter has no way to
-    // enumerate encrypted entries; reporting an empty list would assert
-    // "checked, none found" for a check that never ran.
+    // RAW names. The readiness reader checks the portal's path rules against
+    // these BEFORE anything normalizes them, because normalization repairs a
+    // backslash separator and a doubled or `.` segment — three of the things
+    // the portal rejects.
+    ...(directory
+      ? {
+          rawEntryNames: directory.names,
+          // An empty list is a measurement: every record's flag was read.
+          encryptedEntryPaths: directory.encrypted,
+        }
+      : {}),
   };
 }
 

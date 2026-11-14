@@ -98,6 +98,15 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "environmentIds",
   },
   {
+    key: "accounts",
+    label: "Accounts",
+    // Which of a person's OWN accounts their runs of this suite use, saved
+    // per suite, per person and per server. It is not a suite field, so the
+    // suite PATCH has nothing to carry.
+    excluded:
+      "Each person's own choice of which of their accounts the suite runs with, set in the app; it is not a suite field.",
+  },
+  {
     key: "passOrFail",
     label: "Evaluators",
     // A PRESENTATION grouping, not a setting. It has no stored field of its
@@ -119,11 +128,12 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "judge",
-    label: "Judge",
+    label: "Judge model",
     api: "settings.judge",
   },
   {
     key: "judgeRubric",
+    settingsPage: "hidden",
     label: "Grading instructions",
     api: "settings.judge.rubric",
   },
@@ -322,6 +332,9 @@ export const SETTINGS_PAGE_HIDDEN_KEYS = {
   schedule: "Triggers group, gated on the scheduled-evals feature flag",
   githubChecks: "Organization settings → GitHub Checks, per repository",
   deleteSuite: "Suite overview header",
+  // The judge section shows only the judge model for now. Grading
+  // instructions keep their stored value and still apply to runs.
+  judgeRubric: "API and CLI only for now; the page shows only the judge model",
 } as const satisfies Record<string, string>;
 
 export const EVAL_SUITE_SETTING_KEYS: readonly EvalSuiteSettingKey[] =

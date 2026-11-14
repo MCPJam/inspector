@@ -67,6 +67,8 @@ export interface SuiteDashboardProps {
   runningTestCaseId?: string | null;
   blockTestCaseRuns?: boolean;
   runTestCaseDisabledReason?: string | null;
+  /** See `TestCasesOverview`'s prop of the same name. */
+  runTestCaseOutOfCreditsReason?: (testCase: EvalCase) => string | null;
   connectedServerNames?: Set<string>;
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   testCasesClickHint?: string;
@@ -133,6 +135,7 @@ export function SuiteDashboard({
   runningTestCaseId,
   blockTestCaseRuns,
   runTestCaseDisabledReason,
+  runTestCaseOutOfCreditsReason,
   connectedServerNames,
   onDeleteTestCasesBatch,
   testCasesClickHint,
@@ -202,6 +205,7 @@ export function SuiteDashboard({
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={blockTestCaseRuns}
       runTestCaseDisabledReason={runTestCaseDisabledReason}
+      runTestCaseOutOfCreditsReason={runTestCaseOutOfCreditsReason}
       connectedServerNames={connectedServerNames}
       onGenerateTestCases={onGenerateTestCases}
       canGenerateTestCases={canGenerateTestCases}

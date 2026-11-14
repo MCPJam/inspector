@@ -1,5 +1,7 @@
-// Must stay the first import; see the module comment.
-import "./lib/install-failed-request-tracker";
+// Must stay first; OAuth modules and SDKs retain window.fetch at load time.
+import "./lib/install-telemetry-transport";
+import { promoSignInReturn } from "@/lib/promo-intent";
+import { HostedAuthEntry } from "./components/auth/hosted-auth-entry";
 import { authRefusalDiagnostics } from "./lib/auth/auth-refusal-diagnostics";
 import { ACCESS_REQUIRED_EVENT, ACCESS_GRANTED_EVENT } from "./lib/access-link";
 import { AccessRequired } from "./components/AccessRequired";
@@ -18,10 +20,12 @@ import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extension
 import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
+import { WorkosAuthUnavailableDialog } from "./components/auth/WorkosAuthUnavailableDialog";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
 import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
+import { installRecorderNavigationGuard } from "./lib/recorder-navigation-guard.js";
 import { installTranslatedPageDomGuard } from "./lib/translated-page-dom-guard";
 import { installStaleChunkRecovery } from "./lib/stale-chunk-recovery";
 import { reportCaught } from "./lib/error-reporting";
@@ -50,7 +54,11 @@ import {
   isDebugOAuthCallbackPath,
   normalizeInitialLegacyHashBookmark,
 } from "./lib/app-navigation";
-import { queueProjectSignInReturnPath } from "./lib/app-signin-return-path";
+import {
+  queueProjectSignInReturnPath,
+  readAppSignInReturnPath,
+  consumeAppSignInReturnPath,
+} from "./lib/app-signin-return-path";
 import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
@@ -74,15 +82,21 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
+import { useAppLoadStallReport } from "./lib/app-load-stall";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
+import { LegalAcceptanceGate } from "./components/legal/LegalAcceptanceGate";
 import {
   clearLegacyWorkosRefreshTokenStorage,
   resolveWorkosClientOptions,
   WORKOS_DEV_MODE,
 } from "./lib/workos-authkit-config";
 
-// Initialize Sentry before React mounts
 initSentry();
+
+// After Sentry, so this wraps `history.pushState` OUTSIDE Sentry's own
+// instrumentation: both recorders stop before a navigation onto a credential
+// URL reaches either of them. See the module comment.
+installRecorderNavigationGuard();
 
 // Stop browser page translation from crashing React; see the module comment.
 installTranslatedPageDomGuard();
@@ -107,6 +121,7 @@ if (sandboxOriginFault) {
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+  useAppLoadStallReport(isUserReady);
   useEffect(() => {
     authRefusalDiagnostics.update({ ready: isUserReady });
     return () => authRefusalDiagnostics.update({ ready: false });
@@ -120,6 +135,7 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
       <GuestTabRecoveryBoundary ready={isUserReady}>
         <AuthRecoveryBoundary ready={isUserReady}>
           {children}
+          <LegalAcceptanceGate />
         </AuthRecoveryBoundary>
       </GuestTabRecoveryBoundary>
     </DbUserReadyProvider>
@@ -231,6 +247,7 @@ if (isInIframe) {
         {...handoffWorkosOptions}
       >
         <ServerConnectionHandoff />
+        <WorkosAuthUnavailableDialog />
       </AuthKitProvider>
     </StrictMode>,
   );
@@ -417,6 +434,12 @@ if (isInIframe) {
        */
       onRedirectCallback={({ state }) => {
         const carried = state as Record<string, unknown> | null;
+        const promoReturn = promoSignInReturn(carried);
+        const savedPath = readAppSignInReturnPath();
+        const savedPromoReturn =
+          savedPath?.split("?")[0] === "/redeem"
+            ? consumeAppSignInReturnPath()
+            : null;
         const returnTo =
           takeHandoffSignInReturn(
             carried?.[HANDOFF_SIGN_IN_STATE_KEY],
@@ -430,7 +453,9 @@ if (isInIframe) {
           takePermalinkSignInReturn(
             carried?.[PERMALINK_SIGN_IN_STATE_KEY],
             window.location.origin,
-          );
+          ) ??
+          promoReturn ??
+          savedPromoReturn;
         if (returnTo) {
           // A scoped return cannot navigate until App has the database user
           // and authoritative memberships. Keep it in same-origin storage and
@@ -445,16 +470,19 @@ if (isInIframe) {
       }}
       {...workosClientOptions}
     >
-      <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
-        <GuestTabTransitionListener />
-        <SignOutBoundary>
-          <AuthRecoveryBoundary>
-            <AuthBootstrap>
-              <AppRouterProvider />
-            </AuthBootstrap>
-          </AuthRecoveryBoundary>
-        </SignOutBoundary>
-      </ConvexProviderWithAuth>
+      <HostedAuthEntry>
+        <ConvexProviderWithAuth client={convex} useAuth={useUnifiedConvexAuth}>
+          <GuestTabTransitionListener />
+          <SignOutBoundary>
+            <AuthRecoveryBoundary>
+              <AuthBootstrap>
+                <AppRouterProvider />
+              </AuthBootstrap>
+            </AuthRecoveryBoundary>
+          </SignOutBoundary>
+        </ConvexProviderWithAuth>
+      </HostedAuthEntry>
+      <WorkosAuthUnavailableDialog />
     </AuthKitProvider>
   );
 

@@ -3,9 +3,7 @@ import { isModelSelection, selectionKey } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "@/shared/types";
 import type { OrgVisibleConfig } from "../model-helpers";
 import { buildAvailableModelsFromOrgConfig } from "../model-helpers";
-import { HOSTED_MODEL_IDS } from "@/shared/hosted-model-ids.generated";
 import {
-  BARE_MODEL_ID_CANONICAL,
   canonicalSelectionModelId,
   caseModelEntry,
   findModelForStoredChoice,
@@ -103,11 +101,24 @@ describe("canonicalSelectionModelId", () => {
       "mistralai/mistral-small-2603",
     ],
     [{ id: "claude-opus-5", provider: "anthropic" }, "anthropic/claude-opus-5"],
-    // No known canonical id: no selection, the legacy id stays.
-    [{ id: "grok-3", provider: "xai" }, null],
-    [{ id: "mistral-large-latest", provider: "mistral" }, null],
-    [{ id: "claude-unknown-test-model", provider: "anthropic" }, null],
-    [{ id: "deepseek-chat", provider: "deepseek" }, null],
+    // The catalog's own vendor spelling wins over the provider's prefix.
+    [{ id: "grok-4.5", provider: "xai" }, "spacexai/grok-4.5"],
+    // Not catalog ids: the provider's canonical vendor prefix.
+    [{ id: "gpt-5.1", provider: "openai" }, "openai/gpt-5.1"],
+    [{ id: "grok-3", provider: "xai" }, "x-ai/grok-3"],
+    [
+      { id: "mistral-large-latest", provider: "mistral" },
+      "mistralai/mistral-large-latest",
+    ],
+    [{ id: "deepseek-chat", provider: "deepseek" }, "deepseek/deepseek-chat"],
+    [
+      { id: "anthropic.claude-sonnet-4-5-20250929-v1:0", provider: "bedrock" },
+      "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0",
+    ],
+    [{ id: "kimi-k2-turbo-preview", provider: "moonshotai" }, "moonshotai/kimi-k2-turbo-preview"],
+    // No canonical id: no selection, the legacy id stays.
+    [{ id: "grok-3", provider: "Not A Provider" }, null],
+    [{ id: "   ", provider: "openai" }, null],
     [{ id: "llama3.2:latest", provider: "ollama" }, "ollama/llama3.2:latest"],
     [{ id: "openai/gpt-4o", provider: "openrouter" }, "openai/gpt-4o"],
     [{ id: "xai/grok-4", provider: "openrouter" }, "x-ai/grok-4"],
@@ -133,40 +144,31 @@ describe("canonicalSelectionModelId", () => {
     },
   );
 
-  it("maps every table entry to a catalog id", () => {
-    for (const byId of Object.values(BARE_MODEL_ID_CANONICAL)) {
-      for (const canonical of Object.values(byId)) {
-        expect(HOSTED_MODEL_IDS).toContain(canonical);
-      }
+  it("saves the provider's own id beside a derived canonical id", () => {
+    for (const [row, modelId] of [
+      [{ id: "grok-3", provider: "xai" }, "x-ai/grok-3"],
+      [{ id: "claude-sonnet-4-5", provider: "anthropic" }, "anthropic/claude-sonnet-4.5"],
+    ] as const) {
+      expect(
+        modelSelectionFromDefinition(
+          { ...row, name: row.id, hosted: false },
+          undefined,
+          "chat",
+        ),
+      ).toMatchObject({ modelId, source: "local", nativeModelId: row.id });
     }
   });
 
-  it("writes no selection for a bare id with no known canonical id", () => {
+  it("writes no selection for a row with no canonical id", () => {
     const unknown: ModelDefinition = {
       id: "grok-3",
       name: "Grok 3",
-      provider: "xai",
+      provider: "Not A Provider",
       hosted: false,
     };
     expect(modelSelectionFromDefinition(unknown, undefined, "chat")).toBeNull();
     expect(storedModelChoice(unknown, undefined, "evalTarget")).toEqual({
       modelId: "grok-3",
-    });
-    expect(
-      modelSelectionFromDefinition(
-        {
-          id: "claude-sonnet-4-5",
-          name: "Claude Sonnet 4.5",
-          provider: "anthropic",
-          hosted: false,
-        },
-        undefined,
-        "chat",
-      ),
-    ).toMatchObject({
-      modelId: "anthropic/claude-sonnet-4.5",
-      source: "local",
-      nativeModelId: "claude-sonnet-4-5",
     });
   });
 
@@ -511,9 +513,16 @@ describe("org OpenAI-compatible providers with listed models", () => {
     });
   });
 
-  it("an id the catalog does not list stays legacy", () => {
+  it("an id the catalog does not list saves under the vendor prefix", () => {
     const rows = buildAvailableModelsFromOrgConfig(config, []);
-    expect(modelSelectionFromDefinition(rows[1], undefined, "chat")).toBeNull();
+    expect(
+      modelSelectionFromDefinition(rows[1], undefined, "chat"),
+    ).toMatchObject({
+      modelId: "moonshotai/kimi-k2-0905-preview",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_moonshot" },
+      nativeModelId: "kimi-k2-0905-preview",
+    });
   });
 });
 
@@ -539,6 +548,88 @@ describe("stored choices", () => {
     ).toBe(true);
   });
 
+  it("a stored legacy selection resolves to an own-key row, never the hosted twin", () => {
+    const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
+    const byok = models.find(
+      (m) =>
+        String(m.id) === "anthropic/claude-haiku-4.5" && m.hosted === false,
+    )!;
+    const modelId = "anthropic/claude-haiku-4.5";
+    const legacy = { source: "legacy" as const, modelId };
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        models,
+        orgConfig,
+      ),
+    ).toBe(byok);
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: { ...legacy, provider: String(byok.provider) } },
+        models,
+        orgConfig,
+      ),
+    ).toBe(byok);
+    // Only the hosted row listed: "own key only" never lands on MCPJam credits.
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [hostedHaiku],
+        orgConfig,
+      ),
+    ).toBeUndefined();
+    // Two own-key rows with that id: the legacy fields cannot tell which
+    // connection ran it, so neither is picked.
+    const twin = { ...byok, name: `${byok.name} (second)` };
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [byok, twin],
+        orgConfig,
+      ),
+    ).toBeUndefined();
+    // The provider hint separates two rows with the same id, and names no
+    // row when it matches none.
+    const otherProvider = { ...twin, provider: "custom:other" };
+    expect(
+      findModelForStoredChoice(
+        {
+          modelId,
+          selection: { ...legacy, provider: String(byok.provider) },
+        },
+        [byok, otherProvider],
+        orgConfig,
+      ),
+    ).toBe(byok);
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: { ...legacy, provider: "nobody" } },
+        [byok],
+        orgConfig,
+      ),
+    ).toBeUndefined();
+    // A locked twin does not make the runnable row ambiguous.
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        [byok, { ...twin, disabled: true }],
+        orgConfig,
+      ),
+    ).toBe(byok);
+    // A strict lookup (the organization requires its own keys) needs a
+    // saved connection, which a legacy selection does not name.
+    expect(
+      findModelForStoredChoice(
+        { modelId, selection: legacy },
+        models,
+        orgConfig,
+        {
+          exactSelection: true,
+        },
+      ),
+    ).toBeUndefined();
+  });
+
   it("bare BYOK ids round-trip through the canonical stored id", () => {
     const models = buildAvailableModelsFromOrgConfig(orgConfig, [hostedHaiku]);
     const bare = models.find(
@@ -551,6 +642,48 @@ describe("stored choices", () => {
       selection: { nativeModelId: String(bare.id), source: "org" },
     });
     expect(findModelForStoredChoice(stored, models, orgConfig)).toBe(bare);
+  });
+
+  it("resolve only their own source and connection with exactSelection", () => {
+    // While the organization requires its own keys the list holds only org
+    // rows, and its OpenRouter connection lists the hosted catalog's id.
+    const orgRows = buildAvailableModelsFromOrgConfig(orgConfig, [
+      hostedHaiku,
+    ]).filter((m) => m.orgProvider);
+    const byok = orgRows.find(
+      (m) => String(m.id) === "anthropic/claude-haiku-4.5",
+    )!;
+    const hosted = storedModelChoice(hostedHaiku, undefined, "evalTarget");
+    expect(hosted.selection?.source).toBe("hosted");
+    // The id fallback alone would call the saved hosted model the org row.
+    expect(findModelForStoredChoice(hosted, orgRows, orgConfig)).toBe(byok);
+    expect(
+      findModelForStoredChoice(hosted, orgRows, orgConfig, {
+        exactSelection: true,
+      }),
+    ).toBeUndefined();
+    const org = storedModelChoice(byok, orgConfig, "evalTarget");
+    expect(
+      findModelForStoredChoice(org, orgRows, orgConfig, {
+        exactSelection: true,
+      }),
+    ).toBe(byok);
+    // A strict choice without a selection cannot borrow an org row by id.
+    expect(
+      findModelForStoredChoice(
+        { modelId: "anthropic/claude-haiku-4.5" },
+        orgRows,
+        orgConfig,
+        { exactSelection: true },
+      ),
+    ).toBeUndefined();
+    expect(
+      findModelForStoredChoice(
+        { modelId: "anthropic/claude-haiku-4.5" },
+        orgRows,
+        orgConfig,
+      ),
+    ).toBe(byok);
   });
 });
 

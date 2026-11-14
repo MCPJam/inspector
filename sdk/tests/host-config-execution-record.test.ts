@@ -272,3 +272,17 @@ describe("exports", () => {
     expect(browser.summarizeExecutionRecord).toBe(summarizeExecutionRecord);
   });
 });
+
+describe("record-only selection markers", () => {
+  it("round trips both origins without opening saved selection validation", () => {
+    for (const origin of ["backfill", "platform"]) {
+      const base = gatewayRecord();
+      const record = readExecutionRecord({ ...base, requested: { ...base.requested, origin } });
+      expect(record?.requested).toMatchObject({ origin });
+    }
+    const base = gatewayRecord();
+    expect(readExecutionRecord({ ...base, requested: { ...base.requested, origin: "visitor" } })).toBeUndefined();
+    expect(readExecutionRecord({ ...base, requested: { source: "legacy", modelId: "custom/model", ownKeyOnly: true, origin: "backfill" } })?.requested).toMatchObject({ ownKeyOnly: true, origin: "backfill" });
+    expect(readExecutionRecord({ ...base, requested: { ...base.requested, ownKeyOnly: true } })).toBeUndefined();
+  });
+});

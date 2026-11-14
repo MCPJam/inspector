@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ generate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ generate: vi.fn(), model: vi.fn(() => ({})) }));
 vi.mock("ai", () => ({ generateObject: mocks.generate }));
 vi.mock("../src/model-factory.js", () => ({
-  createModelFromString: () => ({}),
+  createModelFromString: mocks.model,
 }));
 import { goalCompletionScorer } from "../src/scorers/goal-completion-scorer.js";
 import type { ScorerContextV1 } from "../src/contract/types.js";
+import { McpjamModelLeaseScope } from "../src/mcpjam-model-lease.js";
 
 const context: ScorerContextV1 = {
   version: 1,
@@ -30,6 +31,7 @@ const options = {
   },
 };
 beforeEach(() => {
+  mocks.model.mockClear();
   mocks.generate.mockReset();
   mocks.generate.mockResolvedValue({
     object: { score: 1, reason: "Done", rubricHits: [] },
@@ -37,6 +39,52 @@ beforeEach(() => {
 });
 
 describe("local built-in goal completion", () => {
+  it("forwards renewable credentials and the caller's project and lease owner without changing identity", async () => {
+    let token = "first";
+    const auth = { getAuth: async () => token };
+    const scope = new McpjamModelLeaseScope({ auth });
+    const base = { ...options, model: "mcpjam/openai/gpt-5.4", apiKey: "" };
+    const original = goalCompletionScorer(base);
+    const scorer = goalCompletionScorer({
+      ...base,
+      mcpjamAuth: auth,
+      mcpjamProject: "project-123",
+      mcpjamLeaseScope: scope,
+      baseUrls: { mcpjam: "https://staging.mcpjam.com" },
+    });
+    expect(scorer.definition).toEqual(original.definition);
+    const forwarded = mocks.model.mock.lastCall;
+    expect(forwarded).toEqual([
+      base.model,
+      expect.objectContaining({
+        apiKey: "",
+        mcpjamAuth: auth,
+        mcpjamProject: "project-123",
+        mcpjamLeaseScope: scope,
+        baseUrls: { mcpjam: "https://staging.mcpjam.com" },
+      }),
+    ]);
+    token = "rotated";
+    expect(await auth.getAuth()).toBe("rotated");
+    const release = vi.spyOn(scope, "release");
+    await scorer.score(context);
+    expect(release).not.toHaveBeenCalled();
+    await scope.release();
+  });
+
+  it("keeps provider credentials and custom endpoints unchanged", async () => {
+    const baseUrls = { openai: "https://provider.example/v1" };
+    await goalCompletionScorer({ ...options, baseUrls }).score(context);
+    expect(mocks.model).toHaveBeenCalledWith(options.model, {
+      apiKey: options.apiKey,
+      baseUrls,
+      customProviders: undefined,
+      mcpjamAuth: undefined,
+      mcpjamProject: undefined,
+      mcpjamLeaseScope: undefined,
+    });
+  });
+
   it("uses the complete evidence and caps instructions-only scores", async () => {
     const scorer = goalCompletionScorer({
       ...options,

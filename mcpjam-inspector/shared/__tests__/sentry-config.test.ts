@@ -13,6 +13,10 @@ import {
   groupOAuthDebuggerStepFailures,
   isSentryBuildSurface,
   resolveClientBuildSurface,
+  type ScrubbableBreadcrumb,
+  scrubClientSentryBreadcrumb,
+  scrubSentryCredentials,
+  sentryTransactionTemplate,
   SENTRY_BUILD_SURFACES,
   SENTRY_DSN,
 } from "../sentry-config";
@@ -845,4 +849,186 @@ describe("groupOAuthDebuggerStepFailures", () => {
       expect(groupOAuthDebuggerStepFailures(event).fingerprint).toBeUndefined();
     },
   );
+});
+
+describe("scrubSentryBreadcrumb", () => {
+  const APP_ORIGIN = "https://app.mcpjam.test";
+
+  it("keeps a console breadcrumb's level, category and label but not its arguments", () => {
+    const payload = { messages: [{ content: "private words" }] };
+    const crumb = {
+      category: "console",
+      level: "error",
+      message:
+        '[chat] stream failed: {"messages":[{"content":"private words"}]}',
+      data: {
+        arguments: ["[chat] stream failed:", payload],
+        logger: "console",
+      },
+    };
+
+    expect(scrubClientSentryBreadcrumb(crumb, APP_ORIGIN)).toEqual({
+      category: "console",
+      level: "error",
+      message: "[chat] stream failed: (+1 args)",
+      data: { logger: "console", argumentCount: 2 },
+    });
+    // The caller's object is never touched; only the breadcrumb's copy goes.
+    expect(payload.messages[0]?.content).toBe("private words");
+  });
+
+  it("describes a console call whose first argument is not a string", () => {
+    expect(
+      scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>(
+        {
+          category: "console",
+          data: { arguments: [new Error("for jane@acme.com")] },
+        },
+        APP_ORIGIN,
+      )!.message,
+    ).toBe("Error: for [redacted-email]");
+    expect(
+      scrubClientSentryBreadcrumb<ScrubbableBreadcrumb>(
+        {
+          category: "console",
+          data: { arguments: [{ toolArgs: { city: "Lisbon" } }] },
+        },
+        APP_ORIGIN,
+      )!.message,
+    ).toBe("{toolArgs: {city: string(6)}}");
+  });
+
+  it("keeps the browser's own API paths but drops queries and fragments", () => {
+    expect(
+      scrubClientSentryBreadcrumb(
+        {
+          category: "fetch",
+          data: {
+            url: "/api/web/servers/srv_1/tools?cursor=abc#x",
+            method: "GET",
+          },
+        },
+        APP_ORIGIN,
+      )!.data,
+    ).toEqual({ url: "/api/web/servers/srv_1/tools", method: "GET" });
+
+    expect(
+      scrubClientSentryBreadcrumb(
+        {
+          category: "xhr",
+          data: { url: `${APP_ORIGIN}/api/web/servers/srv_1?cursor=abc` },
+        },
+        APP_ORIGIN,
+      )!.data,
+    ).toEqual({ url: `${APP_ORIGIN}/api/web/servers/srv_1` });
+
+    expect(
+      scrubClientSentryBreadcrumb(
+        {
+          category: "navigation",
+          data: { from: "/oauth/callback?code=c0de&state=s", to: "/servers" },
+        },
+        APP_ORIGIN,
+      )!.data,
+    ).toEqual({ from: "/oauth/callback", to: "/servers" });
+  });
+
+  it("keeps only the origin of a browser request to another origin", () => {
+    const crumb = (url: string) => ({ category: "fetch", data: { url } });
+
+    for (const url of [
+      "https://mcp.acme.com/tenants/42/mcp?api_key=k",
+      // Protocol-relative: no scheme of its own, still another host.
+      "//mcp.acme.com/tenants/42/mcp",
+      // Same host, different port is a different origin.
+      "https://app.mcpjam.test:8443/tenants/42",
+    ]) {
+      const expected = new URL(url, APP_ORIGIN).origin;
+      expect(scrubClientSentryBreadcrumb(crumb(url), APP_ORIGIN)!.data).toEqual(
+        { url: expected },
+      );
+    }
+
+    // No app origin known: every absolute URL is someone else's.
+    expect(
+      scrubClientSentryBreadcrumb(
+        crumb(`${APP_ORIGIN}/api/web/servers/srv_1`),
+        undefined,
+      )!.data,
+    ).toEqual({ url: APP_ORIGIN });
+    // An opaque origin never matches, even its own.
+    expect(
+      scrubClientSentryBreadcrumb(
+        crumb("file:///Users/jane/notes.txt"),
+        "null",
+      )!.data,
+    ).toEqual({ url: "null" });
+  });
+
+  it("is wired into the browser config with the app's origin", () => {
+    const config = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+      documentOrigin: APP_ORIGIN,
+    });
+    const scrub = (url: string) =>
+      config.beforeBreadcrumb({ category: "fetch", data: { url } })!.data;
+    expect(scrub(`${APP_ORIGIN}/api/web/servers/srv_1?x=1`)).toEqual({
+      url: `${APP_ORIGIN}/api/web/servers/srv_1`,
+    });
+    expect(scrub("https://mcp.acme.com/tenants/42/mcp")).toEqual({
+      url: "https://mcp.acme.com",
+    });
+  });
+});
+
+describe("credentials (shared/credential-urls.ts) on every Sentry hook", () => {
+  const SECRET = "SENTINELs3ntry";
+
+  it("transactions and spans", () => {
+    const config = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+    });
+    const transaction = config.beforeSendTransaction({
+      type: "transaction",
+      transaction: "/results/:runToken",
+      spans: [
+        { description: `GET /api/web/score/runs/${SECRET}`, op: "http" },
+        { description: "GET /api/web/projects", op: "http" },
+      ],
+    });
+    expect(JSON.stringify(transaction)).not.toContain(SECRET);
+    expect(transaction?.spans).toHaveLength(2);
+    expect(transaction?.spans?.[1]?.description).toBe("GET /api/web/projects");
+  });
+
+  it("the browser beforeSend, last", () => {
+    const beforeSend = buildClientSentryConfig({
+      environment: "prod",
+      deployment: "hosted",
+    }).beforeSend;
+    const out = beforeSend({
+      exception: { values: [{ type: "Error", value: "boom" }] },
+      request: { url: `https://app.mcpjam.com/evals/shared/${SECRET}` },
+    } as never);
+    expect(JSON.stringify(out)).not.toContain(SECRET);
+  });
+
+  it("drops an event it cannot show clean", () => {
+    let deep: unknown = "x";
+    for (let i = 0; i < 100; i++) deep = { d: deep };
+    expect(
+      scrubSentryCredentials({ extra: { deep }, tags: { deep } }),
+    ).toBeNull();
+  });
+
+  it("names a transaction by template", () => {
+    expect(
+      sentryTransactionTemplate(`POST /api/web/bench/results/${SECRET}`),
+    ).toBe("POST /api/web/bench/results/:secret");
+    expect(sentryTransactionTemplate("GET /api/web/projects")).toBe(
+      "GET /api/web/projects",
+    );
+  });
 });

@@ -1,5 +1,6 @@
 import type { ActivePluginRow } from "@/lib/plugins/active-plugins-types";
 import type { PluginNoticePlugin } from "@/lib/plugins/plugin-notice-display";
+import type { PluginServerUnavailable } from "@/shared/plugin-server-unavailable";
 
 /**
  * How a Playground chat runs the project's installed plugins while the
@@ -16,34 +17,93 @@ import type { PluginNoticePlugin } from "@/lib/plugins/plugin-notice-display";
  * Only a project with at least one runnable plugin takes this path. Every other
  * chat keeps today's client turn, request body included.
  *
- * Only REMOTE components are ever composed. The plugins are read for the
- * hosted venue in every build, so a plugin with a component that would run on
- * this computer (or in a computer) is skipped as `placement`: nothing the
- * member did not pick starts a process on their machine. An environment they
- * choose explicitly is still how such a plugin runs.
+ * Where those plugins run is the composition's VENUE (see
+ * {@link hiddenEnvironmentVenue}). Hosted composes remote components, plus
+ * verified stdio components when the selected client has a Computer and this
+ * deployment supports that runtime. Local also composes processes on this
+ * machine, and only follows the member's own choice to run this chat's client
+ * here. An environment they choose explicitly is the other way such a plugin
+ * runs.
  */
 
 /**
+ * `hosted`: remote components only. `local`: remote components, plus ones
+ * that start a process on this machine. `computer`: verified stdio components
+ * on the selected client's Computer, supported by this deployment.
+ */
+export type HiddenEnvironmentVenue = "hosted" | "local" | "computer";
+
+/**
+ * The venue a Playground chat's plugins are composed for.
+ *
+ * `local` only when ALL of these hold:
+ * - this is not the hosted app, which can never reach the member's machine;
+ * - the member chose to run this chat's client here and authorized it
+ *   (`clientRunsHere`);
+ * - a plugin needs it (`needsLocal`).
+ * A hosted client with a saved Computer and an explicit deployment capability
+ * instead composes verified stdio components for the `computer` venue.
+ *
+ * A local build alone is not that choice, and neither is a client profile
+ * named after a desktop app. Without a plugin that needs it, the chat keeps
+ * the route it had.
+ */
+export function hiddenEnvironmentVenue(args: {
+  hostedMode: boolean;
+  clientRunsHere: boolean;
+  needsLocal: boolean;
+  computerAvailable?: boolean;
+}): HiddenEnvironmentVenue {
+  if (args.hostedMode && args.computerAvailable && args.needsLocal)
+    return "computer";
+  return !args.hostedMode && args.clientRunsHere && args.needsLocal
+    ? "local"
+    : "hosted";
+}
+
+/**
  * A plugin whose active version contributes to a turn right now. Every one of
- * its servers must be remote: the hosted-venue read already skips the rest,
+ * its servers must be able to run in `venue`. The read already skips the rest,
  * and this holds the line if a read ever did not.
  */
-export function isRunnablePlugin(plugin: ActivePluginRow): boolean {
+export function isRunnablePlugin(
+  plugin: ActivePluginRow,
+  venue: HiddenEnvironmentVenue = "hosted",
+): boolean {
   return (
     plugin.status === "active" &&
     !!plugin.pluginVersionId &&
-    plugin.servers.every((server) => server.placement === "remote")
+    plugin.servers.every(
+      (server) =>
+        server.placement === "remote" ||
+        ((venue === "local" || venue === "computer") && server.placement === "local"),
+    )
+  );
+}
+
+/**
+ * A plugin that runs only once the venue is `local`: runnable there, with a
+ * server that starts a process on this machine. One whose local server still
+ * waits on setup counts too. Its remote servers and skills run there, and it
+ * runs without that server and says so. Composed hosted, the whole plugin
+ * would drop, depending on which other plugins are installed.
+ */
+export function needsLocalVenue(plugin: ActivePluginRow): boolean {
+  return (
+    isRunnablePlugin(plugin, "local") &&
+    plugin.servers.some((server) => server.placement === "local")
   );
 }
 
 /** The runnable plugins' active versions, in plugin order, deduped. */
 export function runnablePluginVersionIds(
   plugins: readonly ActivePluginRow[],
+  venue: HiddenEnvironmentVenue = "hosted",
 ): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const plugin of plugins) {
-    if (!isRunnablePlugin(plugin)) continue;
+    if (!isRunnablePlugin(plugin, venue)) continue;
     const id = plugin.pluginVersionId as string;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -52,16 +112,20 @@ export function runnablePluginVersionIds(
   return ids;
 }
 
-/** The runnable plugins' server ids, in plugin order, deduped. */
+/**
+ * The runnable plugins' server ids, in plugin order, deduped. A server this
+ * member can't use yet is left out: naming it would connect it and fail.
+ */
 export function runnablePluginServerIds(
   plugins: readonly ActivePluginRow[],
+  venue: HiddenEnvironmentVenue = "hosted",
 ): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const plugin of plugins) {
-    if (!isRunnablePlugin(plugin)) continue;
+    if (!isRunnablePlugin(plugin, venue)) continue;
     for (const server of plugin.servers) {
-      if (seen.has(server.serverId)) continue;
+      if (server.unavailable || seen.has(server.serverId)) continue;
       seen.add(server.serverId);
       ids.push(server.serverId);
     }
@@ -75,17 +139,18 @@ export function runnablePluginServerIds(
  * re-ensured only when this changes — never per message.
  *
  * Order is kept, not sorted: the backend's fingerprint treats array order as
- * meaningful, and plugin order is stable in the active-plugins read.
+ * meaningful, and plugin order is stable in the active-plugins read. A local
+ * venue is part of the key, so a change of venue always recomposes.
  */
 export function hiddenEnvironmentCompositionKey(input: {
   hostId: string;
   pluginVersionIds: readonly string[];
-  secretIds?: readonly string[];
+  venue?: HiddenEnvironmentVenue;
 }): string {
   return JSON.stringify([
     input.hostId,
     input.pluginVersionIds,
-    input.secretIds ?? [],
+    ...(input.venue && input.venue !== "hosted" ? [input.venue] : []),
   ]);
 }
 
@@ -113,28 +178,121 @@ export function hiddenEnvironmentServerOverride(
 }
 
 /**
- * The installed plugins a turn skips for a reason the member can act on.
- * A plugin someone disabled on purpose is not news, so `disabled` never
- * appears.
+ * The installed plugins a turn skips, whole or in part, for a reason the
+ * member can act on. A plugin someone disabled on purpose is not news, so
+ * `disabled` never appears.
  */
 export function skippedPluginsForNotice(
   plugins: readonly ActivePluginRow[],
 ): PluginNoticePlugin[] {
-  return plugins.flatMap((plugin) =>
-    plugin.status === "skipped" && plugin.reason && plugin.reason !== "disabled"
+  return plugins.flatMap((plugin): PluginNoticePlugin[] => {
+    const identity = {
+      pluginId: plugin.pluginId,
+      name: plugin.name,
+      displayName: plugin.displayName,
+    };
+    if (plugin.status === "active") {
+      // The one signing in fixes, when there is one: a turn's report picks
+      // the same, and only that one gets a Sign in.
+      const server =
+        plugin.servers.find(
+          (candidate) => candidate.unavailable === "needs_auth",
+        ) ?? plugin.servers.find((candidate) => candidate.unavailable);
+      const reason = server?.unavailable;
+      return server && reason
+        ? [
+            {
+              ...identity,
+              reason,
+              partial: true,
+              ...signInFor(plugin, reason, server.componentKey),
+            },
+          ]
+        : [];
+    }
+    return plugin.status === "skipped" &&
+      plugin.reason &&
+      plugin.reason !== "disabled"
       ? [
           {
-            pluginId: plugin.pluginId,
-            name: plugin.name,
-            displayName: plugin.displayName,
+            ...identity,
             reason: plugin.reason,
             ...(plugin.reason === "placement"
               ? { placement: skippedPlacement(plugin) }
               : {}),
+            ...signInFor(plugin, plugin.reason, plugin.componentKey),
           },
         ]
-      : [],
-  );
+      : [];
+  });
+}
+
+/** The server a notice offers Sign in for, when signing in is its fix. */
+function signInFor(
+  plugin: ActivePluginRow,
+  reason: string,
+  componentKey: string | undefined,
+  scopeChallenge?: PluginServerUnavailable["scopeChallenge"],
+): Pick<PluginNoticePlugin, "signIn"> {
+  return reason === "needs_auth" && plugin.pluginVersionId && componentKey
+    ? {
+        signIn: {
+          pluginVersionId: plugin.pluginVersionId,
+          componentKey,
+          ...(scopeChallenge ? { scopeChallenge } : {}),
+        },
+      }
+    : {};
+}
+
+/**
+ * The plugins a turn ran without one of their servers, for the plugin notice.
+ * A server is matched to the plugin that lists it; a plugin with a server that
+ * needs a sign-in says that, since it is the one the member can act on.
+ */
+export function unavailableServersForNotice(
+  plugins: readonly ActivePluginRow[],
+  servers: readonly PluginServerUnavailable[],
+  projectId?: string,
+): PluginNoticePlugin[] {
+  return plugins.flatMap((plugin): PluginNoticePlugin[] => {
+    const own = servers.filter((unavailable) =>
+      plugin.servers.some((server) => server.serverId === unavailable.serverId),
+    );
+    const chosen =
+      own.find((unavailable) => unavailable.reason === "needs_auth") ??
+      own.find((unavailable) => unavailable.reason === "needs_approval") ?? own[0];
+    if (!chosen) return [];
+    const componentKey = plugin.servers.find(
+      (server) => server.serverId === chosen.serverId,
+    )?.componentKey;
+    return [
+      {
+        pluginId: plugin.pluginId,
+        name: plugin.name,
+        displayName: plugin.displayName,
+        reason: chosen.reason,
+        partial: true,
+        ...(chosen.reason === "needs_approval" && projectId
+          ? {
+              reviewCommand: {
+                projectId,
+                serverId: chosen.serverId,
+                serverName: plugin.servers.find(
+                  (server) => server.serverId === chosen.serverId,
+                )?.name ?? plugin.name,
+              },
+            }
+          : {}),
+        ...signInFor(
+          plugin,
+          chosen.reason,
+          componentKey,
+          chosen.scopeChallenge,
+        ),
+      },
+    ];
+  });
 }
 
 /** Where the component a `placement` skip names would have run. */
@@ -208,6 +366,7 @@ export function retargetHiddenEnvironmentBody(
     executionTarget: _target,
     environmentOverrides: _overrides,
     includeProjectSkills,
+    autoContributedPluginServerIds: _automatic,
     ...rest
   } = parsed;
   if (next.environmentId === null) {
@@ -224,6 +383,9 @@ export function retargetHiddenEnvironmentBody(
         next.pluginServerIds,
       ),
     },
+    autoContributedPluginServerIds: next.pluginServerIds.filter(
+      (id) => !selected.includes(id),
+    ),
     ...(includeProjectSkills !== undefined ? { includeProjectSkills } : {}),
   });
 }

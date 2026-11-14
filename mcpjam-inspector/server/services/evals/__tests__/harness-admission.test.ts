@@ -127,7 +127,7 @@ describe("checkEvalHarnessAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("only runs MCPJam-provided models");
+    expect(verdict.reason).toContain("needs a supported model and an eligible Anthropic connection");
     expect(verdict.reason).toContain("byok case");
     expect(verdict.reason).not.toContain("hosted case");
   });
@@ -255,7 +255,7 @@ describe("checkEvalHarnessAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("broker");
+    expect(verdict.reason).toContain("can’t access the credentials");
   });
 
   it("admits Codex for a suite with MCP servers (host-executed delivery)", () => {
@@ -321,7 +321,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("MCPJam-provided models");
+    expect(verdict.reason).toContain("needs a supported model and an eligible Anthropic connection");
   });
 
   // The rule is asserted DIRECTLY rather than through a refusal, because no
@@ -364,7 +364,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("unattended run");
+    expect(verdict.reason).toContain("cannot wait for tool approval in evals or swarms");
   });
 
   it("refuses the same approval host at the full, per-case check", () => {
@@ -375,7 +375,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("unattended run");
+    expect(verdict.reason).toContain("cannot wait for tool approval in evals or swarms");
     expect(verdict.reason).not.toContain("Ineligible cases");
   });
 
@@ -392,7 +392,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
 describe("attribution helpers", () => {
   it("reads only a REGISTERED harness id off a host config", () => {
     expect(harnessOfHostConfig({ harness: "claude-code" })).toBe("claude-code");
-    expect(harnessOfHostConfig({ harness: "not-a-harness" })).toBeUndefined();
+    expect(() => harnessOfHostConfig({ harness: "not-a-harness" })).toThrow("unsupported");
     expect(harnessOfHostConfig(null)).toBeUndefined();
   });
 
@@ -662,7 +662,7 @@ describe("checkEvalExecutionAdmission", () => {
     // still live for the much larger emulated population.
     expect(
       checkEvalExecutionAdmission({
-        hostConfig: { harness: "not-a-harness", builtInToolIds: ["bash"] },
+        hostConfig: { builtInToolIds: ["bash"] },
         pinnedComputerImageId: null,
       }).ok
     ).toBe(false);
@@ -719,12 +719,13 @@ describe("external-account hosts: the host's model is what an eval case runs", (
     provider: "anthropic" as const,
   };
 
-  it("promotes the host's sentinel over the case's own model", () => {
-    const resolved = resolveEvalCaseModelDefinition({
-      hostConfig: cursorHost,
-      caseModel,
-    });
+  it("promotes the host's sentinel over the case's own model, and says so", () => {
+    const { modelDefinition: resolved, externalAccount } =
+      resolveEvalCaseModelDefinition({ hostConfig: cursorHost, caseModel });
 
+    // The flag, not object identity, is what billing reads: the case runs on
+    // the customer's own Cursor account.
+    expect(externalAccount).toBe(true);
     expect(resolved.id).toBe("cursor/auto");
     // Carries the curated label and the registered provider, not a re-derived
     // guess — the same definition the swarm runner builds for a pinned target.
@@ -750,7 +751,7 @@ describe("external-account hosts: the host's model is what an eval case runs", (
       })
     ).toEqual({ ok: true, harness: "cursor" });
 
-    const resolved = resolveEvalCaseModelDefinition({
+    const { modelDefinition: resolved } = resolveEvalCaseModelDefinition({
       hostConfig: cursorHost,
       caseModel,
     });
@@ -770,20 +771,19 @@ describe("external-account hosts: the host's model is what an eval case runs", (
       resolveEvalCaseModelDefinition({
         hostConfig: { harness: "claude-code", modelId: "openai/gpt-5-mini" },
         caseModel,
-      }).id
-    ).toBe(caseModel.id);
+      }),
+    ).toEqual({ modelDefinition: caseModel, externalAccount: false });
   });
 
   it("leaves a non-harness host's case model alone", () => {
-    expect(
-      resolveEvalCaseModelDefinition({
-        hostConfig: { hostStyle: "mcpjam", modelId: "openai/gpt-5-mini" },
-        caseModel,
-      }).id
-    ).toBe(caseModel.id);
-    expect(
-      resolveEvalCaseModelDefinition({ hostConfig: null, caseModel }).id
-    ).toBe(caseModel.id);
+    for (const hostConfig of [
+      { hostStyle: "mcpjam", modelId: "openai/gpt-5-mini" },
+      null,
+    ]) {
+      expect(resolveEvalCaseModelDefinition({ hostConfig, caseModel })).toEqual(
+        { modelDefinition: caseModel, externalAccount: false },
+      );
+    }
   });
 
   it("does NOT promote a mis-configured external-account host's ordinary id", () => {
@@ -794,9 +794,8 @@ describe("external-account hosts: the host's model is what an eval case runs", (
       modelId: "anthropic/claude-sonnet-4.5",
     };
     expect(
-      resolveEvalCaseModelDefinition({ hostConfig: misconfigured, caseModel })
-        .id
-    ).toBe(caseModel.id);
+      resolveEvalCaseModelDefinition({ hostConfig: misconfigured, caseModel }),
+    ).toEqual({ modelDefinition: caseModel, externalAccount: false });
 
     const verdict = checkEvalHarnessAdmission({
       hostConfig: misconfigured,
@@ -822,7 +821,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("Codex harness can't run this host's model");
+    expect(verdict.reason).toMatch(/not.*verified/);
     expect(verdict.reason).toContain("Ineligible cases: luna");
     expect(verdict.reason).not.toContain("fine");
   });
@@ -842,7 +841,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
     expect(verdict.reason).toMatch(
-      /^not verified for claude-code \d+\.\d+\.\d+\. Ineligible cases: fable$/
+      /has not been verified for the Claude Code client.*Ineligible cases: fable$/
     );
   });
 
@@ -853,7 +852,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toMatch(/^not verified for claude-code /);
+    expect(verdict.reason).toMatch(/has not been verified for the Claude Code client/);
   });
 
   it("refuses a non-Anthropic model on Claude Code instead of letting the CLI default", () => {
@@ -865,7 +864,7 @@ describe("checkEvalHarnessAdmission — version-keyed model support", () => {
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
     expect(verdict.reason).toContain(
-      "Claude Code harness can't run this host's model"
+      "model isn’t supported by Claude Code"
     );
   });
 });
@@ -896,4 +895,16 @@ describe("local harness admission", () => {
       }).ok).toBe(true);
     }
   });
+});
+
+
+it.each([
+  { id: "claude-code", model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+  { id: "codex", model: "openai/gpt-5", provider: "openai" },
+])("admits widget assertions with the $id agent loop and MCPJam client", ({ id, model, provider }) => {
+  expect(checkEvalHarnessAdmission({
+    hostConfig: { agentLoop: id, computer: { kind: "personal" } },
+    serverIds: ["s1"], cases: [{ title: "renders", model, provider }],
+    widgetAssertingCaseTitles: ["renders"],
+  })).toEqual({ ok: true, harness: id });
 });

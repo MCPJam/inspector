@@ -3,6 +3,7 @@
  * posthog-js stand-in: what the recorder is told, in what order, as the
  * session's organizations change.
  */
+import { useLayoutEffect } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionPrivacyInputs } from "@/lib/session-privacy";
@@ -46,6 +47,7 @@ async function setup(surface: "hosted" | "desktop" | "npx") {
     vi.stubGlobal("isElectron", true);
   }
   vi.resetModules();
+  const telemetry = await import("@/lib/telemetry-context");
   const privacy = await import("@/lib/session-privacy");
   const { useSessionPrivacy } = await import("../useSessionPrivacy");
   const posthog = recordingPosthog();
@@ -68,15 +70,27 @@ async function setup(surface: "hosted" | "desktop" | "npx") {
       ...overrides,
     });
   const hook = renderHook(
-    ({ level }: { level: ReturnType<typeof levelFor> }) =>
-      useSessionPrivacy(level),
+    ({ level }: { level: ReturnType<typeof levelFor> }) => {
+      useLayoutEffect(() => {
+        telemetry.setTelemetryActor("user_A");
+        telemetry.setTelemetryCaptureContext({
+          projectIds: [],
+          organizationIds: ["org_plain"],
+        });
+        telemetry.setTelemetryContentPolicy(
+          "user_A",
+          level === "full" ? "full" : "strict",
+        );
+      }, [level]);
+      useSessionPrivacy(level);
+    },
     {
       initialProps: {
         level: levelFor("org_plain", { recording: undefined }),
       },
     },
   );
-  return { privacy, posthog, levelFor, hook };
+  return { privacy, posthog, levelFor, hook, telemetry };
 }
 
 describe("useSessionPrivacy with the real recorders", () => {
@@ -100,22 +114,166 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.log).toEqual(["masked"]);
 
     hook.rerender({ level: levelFor("org_plain") });
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
     expect(posthog.log).toEqual(["masked", "full", "start"]);
   });
 
   it("switching into an organization with enterprise privacy never records it unmasked", async () => {
     const { posthog, levelFor, hook } = await setup("hosted");
     hook.rerender({ level: levelFor("org_plain") });
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
     posthog.log.length = 0;
 
     hook.rerender({ level: levelFor("org_private") });
 
     // Synchronous, in the commit that switched: stop under the full profile,
-    // reconfigure, and only then record again.
-    expect(posthog.log).toEqual(["stop", "masked", "start"]);
+    // reconfigure, and keep recording stopped.
+    expect(posthog.log).toEqual(["stop", "masked"]);
   });
 
-  it("switching back records masked until the settle period has passed", async () => {
+  it("a capture-context change alone immediately stops an active recording", async () => {
+    const { telemetry, posthog, levelFor, hook } = await setup("hosted");
+    hook.rerender({ level: levelFor("org_plain") });
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
+    posthog.log.length = 0;
+
+    act(() => {
+      telemetry.setTelemetryCaptureContext({
+        projectIds: [],
+        organizationIds: ["org_unknown"],
+      });
+    });
+
+    expect(posthog.log).toEqual(["stop", "masked"]);
+    expect(telemetry.currentTelemetryCaptureContext().policy.content).toBe(
+      "strict",
+    );
+  });
+
+  it("keeps an active full recorder and its buffer across a validated full context change", async () => {
+    const { telemetry, privacy, posthog, levelFor, hook } =
+      await setup("hosted");
+    hook.rerender({ level: levelFor("org_plain") });
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
+    const frame = { timestamp: Date.now() };
+    vi.advanceTimersByTime(20);
+    posthog.stopSessionRecording.mockClear();
+    posthog.startSessionRecording.mockClear();
+    const observed: string[] = [];
+    const unsubscribe = telemetry.subscribeTelemetryPolicy(() => {
+      observed.push(telemetry.currentTelemetryCaptureContext().policy.content);
+    });
+
+    act(() =>
+      telemetry.setTelemetryCaptureContextAndContent(
+        { projectIds: [], organizationIds: ["org_public_next"] },
+        "user_A",
+        "full",
+      ),
+    );
+
+    expect(observed).toEqual(["full"]);
+    expect(posthog.stopSessionRecording).not.toHaveBeenCalled();
+    expect(posthog.startSessionRecording).not.toHaveBeenCalled();
+    expect(privacy.replayFramesToSend([frame])).toEqual([frame]);
+    expect(telemetry.currentTelemetryCaptureContext().organizationIds).toEqual([
+      "org_public_next",
+    ]);
+    unsubscribe();
+  });
+
+  it.each([
+    {
+      scenario: "denied",
+      content: "strict",
+      actor: "user_A",
+      sharedLink: false,
+    },
+    {
+      scenario: "loading",
+      content: undefined,
+      actor: "user_A",
+      sharedLink: false,
+    },
+    {
+      scenario: "stale actor",
+      content: "full",
+      actor: "user_B",
+      sharedLink: false,
+    },
+    {
+      scenario: "shared context",
+      content: "full",
+      actor: "user_A",
+      sharedLink: true,
+    },
+  ] as const)(
+    "immediately discards the buffer for a $scenario update",
+    async ({ content, actor, sharedLink }) => {
+      const { telemetry, privacy, posthog, levelFor, hook } =
+        await setup("hosted");
+      hook.rerender({ level: levelFor("org_plain") });
+      await act(async () => {
+        vi.advanceTimersByTime(3_000);
+      });
+      const dropped: unknown[] = [];
+      posthog.stopSessionRecording.mockImplementation(() => {
+        dropped.push(privacy.replayFramesToSend([{ timestamp: Date.now() }]));
+        return posthog.log.push("stop");
+      });
+      posthog.log.length = 0;
+
+      act(() =>
+        telemetry.setTelemetryCaptureContextAndContent(
+          { projectIds: [], organizationIds: ["org_next"], sharedLink },
+          actor,
+          content,
+        ),
+      );
+
+      expect(telemetry.currentTelemetryCaptureContext().policy.content).toBe(
+        "strict",
+      );
+      expect(posthog.log).toEqual(["stop", "masked"]);
+      expect(dropped).toEqual([null]);
+    },
+  );
+
+  it("keeps the actor-reset guard before applying a new actor's grant", async () => {
+    const { telemetry, posthog, levelFor, hook } = await setup("hosted");
+    hook.rerender({ level: levelFor("org_plain") });
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
+    posthog.stopSessionRecording.mockClear();
+
+    act(() => telemetry.setTelemetryActor("user_B"));
+    expect(posthog.stopSessionRecording).toHaveBeenCalledOnce();
+    expect(telemetry.currentTelemetryCaptureContext().policy.content).toBe(
+      "strict",
+    );
+    act(() =>
+      telemetry.setTelemetryCaptureContextAndContent(
+        { projectIds: [], organizationIds: ["org_next"] },
+        "user_A",
+        "full",
+      ),
+    );
+    expect(telemetry.currentTelemetryCaptureContext().policy.content).toBe(
+      "strict",
+    );
+    expect(telemetry.currentTelemetryActor()).toBe("user_B");
+  });
+
+  it("switching back waits for the settle period before recording", async () => {
     const { posthog, levelFor, hook } = await setup("hosted");
     hook.rerender({ level: levelFor("org_private") });
     posthog.log.length = 0;
@@ -126,7 +284,7 @@ describe("useSessionPrivacy with the real recorders", () => {
     await act(async () => {
       vi.advanceTimersByTime(3_000);
     });
-    expect(posthog.log).toEqual(["stop", "full", "start"]);
+    expect(posthog.log).toEqual(["full", "start"]);
   });
 
   it("a backend that never answers is never recorded", async () => {
@@ -143,11 +301,11 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.log).not.toContain("full");
   });
 
-  it("desktop: masked for everyone once the backend answers", async () => {
+  it("desktop: never records even after the backend answers", async () => {
     const { posthog, levelFor, hook } = await setup("desktop");
     expect(posthog.log).toEqual(["masked"]);
     hook.rerender({ level: levelFor("org_plain") });
-    expect(posthog.log).toEqual(["masked", "start"]);
+    expect(posthog.log).toEqual(["masked"]);
   });
 
   it("replay off: never starts, and a running recording stops in the same commit", async () => {
@@ -180,10 +338,10 @@ describe("useSessionPrivacy with the real recorders", () => {
     expect(posthog.startSessionRecording).not.toHaveBeenCalled();
   });
 
-  it("npx: off, the recorder is never touched", async () => {
+  it("npx: recording remains off", async () => {
     const { posthog, levelFor, hook } = await setup("npx");
     hook.rerender({ level: levelFor("org_private") });
-    expect(posthog.log).toEqual([]);
+    expect(posthog.log).toEqual(["masked"]);
   });
 });
 
@@ -205,6 +363,7 @@ describe("useSessionPrivacy composed with the policy subscription", () => {
     vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.resetModules();
+    const telemetry = await import("@/lib/telemetry-context");
     const privacy = await import("@/lib/session-privacy");
     const { useSessionPrivacy } = await import("../useSessionPrivacy");
     const { useTelemetryPrivacyContext } =
@@ -220,6 +379,14 @@ describe("useSessionPrivacy composed with the policy subscription", () => {
           projectIds: [],
           organizationIds: ["org_plain"],
         });
+        useLayoutEffect(() => {
+          telemetry.setTelemetryActor("user_A");
+          telemetry.setTelemetryCaptureContextAndContent(
+            { projectIds: [], organizationIds: ["org_plain"] },
+            policy.actor,
+            policy.answered ? policy.policy?.content : undefined,
+          );
+        }, [policy.actor, policy.policy?.content]);
         useSessionPrivacy(
           privacy.resolveSessionPrivacy({
             surface: privacy.recordingSurface(),
@@ -235,8 +402,11 @@ describe("useSessionPrivacy composed with the policy subscription", () => {
   }
 
   it("joining an organization with replay off stops recording until the new answer", async () => {
-    server.answer = { recording: "full", identity: "full" };
+    server.answer = { recording: "full", identity: "full", content: "full" };
     const { privacy, posthog, hook } = await setupComposed();
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
     expect(posthog.log.at(-1)).toBe("start");
     posthog.log.length = 0;
 
@@ -254,7 +424,11 @@ describe("useSessionPrivacy composed with the policy subscription", () => {
     expect(posthog.log).toEqual(["stop", "masked"]);
 
     // When it does come, it is off: still nothing records.
-    server.answer = { recording: "off", identity: "id_only" };
+    server.answer = {
+      recording: "off",
+      identity: "id_only",
+      content: "strict",
+    };
     await act(async () => {
       hook.rerender({ membershipKey: "org_off:member:0,org_plain:owner:0" });
     });

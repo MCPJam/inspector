@@ -74,6 +74,23 @@ describe("v1 catalog read proxies", () => {
       "https://convex-http.example.com/v1/project-servers?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     ],
     [
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/revisions?limit=5&cursor=3",
+      "https://convex-http.example.com/v1/project-server-revisions?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&serverId=s1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&limit=5&cursor=3",
+    ],
+    [
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/revisions/6",
+      "https://convex-http.example.com/v1/project-server-revision?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&serverId=s1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&revisionNumber=6",
+    ],
+    [
+      // `from` is renamed to the backend's `fromRevisionNumber`.
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/revisions/6/diff?from=4",
+      "https://convex-http.example.com/v1/project-server-revision-diff?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&serverId=s1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&revisionNumber=6&fromRevisionNumber=4",
+    ],
+    [
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/revisions/6/diff",
+      "https://convex-http.example.com/v1/project-server-revision-diff?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&serverId=s1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&revisionNumber=6",
+    ],
+    [
       "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
       "https://convex-http.example.com/v1/eval-suites?projectId=p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     ],

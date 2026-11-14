@@ -91,6 +91,10 @@ function toPayload(e: StreamFailureEvent, report: RouteFailureReport) {
     origin: report.origin,
     ...(report.normalized.slug ? { slug: report.normalized.slug } : {}),
     ...(e.errorCode ? { errorCode: e.errorCode } : {}),
+    ...(e.errorCode === "agent_billing_rejected" &&
+    e.context?.reason === "payment_not_confirmed"
+      ? { reason: "payment_not_confirmed" }
+      : {}),
     errorMessage: rawMessage.slice(0, 500),
     ...(e.rpcMethod ? { rpcMethod: e.rpcMethod } : {}),
   };

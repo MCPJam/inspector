@@ -179,9 +179,7 @@ async function resolveSessionContext(c: any): Promise<SessionContext> {
     session = await verifyAuthKitToken(bearer);
   } catch (error) {
     if (error instanceof AuthKitConfigError) {
-      logger.error("AuthKit verification is misconfigured", {
-        error: error.message,
-      });
+      logger.error("AuthKit verification is misconfigured", error);
       throw new WebRouteError(
         500,
         ErrorCode.INTERNAL_ERROR,
@@ -269,7 +267,7 @@ function mapWorkOSError(status: number, body: any, fallback: string): never {
   // while `message` is just "Validation failed" — keep the field errors or the
   // failure is undiagnosable from our logs.
   const fieldErrors = Array.isArray(body?.errors) ? body.errors : undefined;
-  logger.error("WorkOS API call failed", {
+  logger.error("WorkOS API call failed", undefined, {
     workos_status: status,
     message: safeMessage,
     ...(fieldErrors ? { workos_errors: fieldErrors } : {}),
@@ -445,7 +443,7 @@ async function userOwnsApiKey(userId: string, keyId: string): Promise<boolean> {
       return false;
     }
   }
-  logger.error("API key ownership check exhausted page cap", {
+  logger.error("API key ownership check exhausted page cap", undefined, {
     workos_user_id: userId,
     workos_key_id: keyId,
   });
@@ -565,13 +563,11 @@ apiKeys.post("/", async (c) =>
         expiresAt,
       });
     } catch (bindingError) {
-      logger.error("API key org binding failed; revoking WorkOS key", {
-        workos_key_id: workosKeyId,
-        error:
-          bindingError instanceof Error
-            ? bindingError.message
-            : String(bindingError),
-      });
+      logger.error(
+        "API key org binding failed; revoking WorkOS key",
+        bindingError,
+        { workos_key_id: workosKeyId },
+      );
       try {
         await callWorkOS(
           "DELETE",
@@ -581,13 +577,11 @@ apiKeys.post("/", async (c) =>
         // Best-effort cleanup. If this also fails the WorkOS key lingers with
         // no binding — not a security hole (the bearer middleware rejects
         // orphaned keys) but litter worth flagging.
-        logger.error("Failed to revoke WorkOS key after binding failure", {
-          workos_key_id: workosKeyId,
-          error:
-            revokeError instanceof Error
-              ? revokeError.message
-              : String(revokeError),
-        });
+        logger.error(
+          "Failed to revoke WorkOS key after binding failure",
+          revokeError,
+          { workos_key_id: workosKeyId },
+        );
       }
 
       const message =

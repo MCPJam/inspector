@@ -1,3 +1,4 @@
+import { startLocalHarnessMcpPlane, type LocalHarnessMcpPlaneArgs } from "./mcp-plane.js";
 import { readLocalHarnessAuthorization } from "./authorization.js";
 /**
  * Everything a turn needs to run on the user's own machine, behind ONE call.
@@ -66,7 +67,8 @@ import {
   releaseParkedLocalSession,
   type ParkInvalidationReason,
 } from "./approval-park.js";
-import { CODEX_LOCAL_ADAPTER_IDENTITY } from "../codex-appserver/local-identity.js";
+import { localRuntime } from "./runtimes/index.js";
+import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
 import {
   createSupervisedLocalHarnessProvider,
   removeSessionStateDir,
@@ -91,7 +93,6 @@ import { toAdapterPath } from "./adapter-path.js";
 import { validateLocalHarnessSecretEnv } from "./session-env.js";
 import { mkdir, stat } from "node:fs/promises";
 import { reserveLoopbackPort } from "./bridge-endpoint.js";
-import { createRequire } from "node:module";
 
 /**
  * The turn's declared local target — opaque ids only.
@@ -118,6 +119,7 @@ export interface LocalHarnessExecutionTarget {
 
 export interface PreparedLocalHarnessTurn {
   plan: LocalHarnessLaunchPlan;
+  bindMcpPlane: (args: LocalHarnessMcpPlaneArgs) => Promise<Awaited<ReturnType<typeof startLocalHarnessMcpPlane>>>;
   /** The AI SDK sandbox provider the turn assembles its harness over. */
   sandbox: ReturnType<typeof createSupervisedLocalHarnessProvider>;
   /** What the child gets: a gateway URL and a per-session capability. */
@@ -130,8 +132,9 @@ export interface PreparedLocalHarnessTurn {
    * directly is what put bridge state inside the user's checkout.
    */
   sandboxWorkDir: string;
-  /** Adapter-facing path under the session's synthetic HOME. */
-  skillsBaseDir: string;
+  /** Adapter-facing path of the session's synthetic HOME, where its runtime
+   *  keeps skills (the folder is the runtime's skills descriptor's). */
+  homeDir: string;
   /**
    * Where this session's composer attachments land: the session's own state
    * directory, never the workspace (the user's real checkout, reached through
@@ -217,6 +220,7 @@ export interface PrepareLocalHarnessTurnArgs {
    * compared against what is ACTUALLY installed.
    */
   installedAdapterVersion?: string;
+  getCleanupAuthorization?: () => Promise<string>;
   /** The user's bearer, for the lease start. Never persisted here. */
   bearer: string;
   /** Attended Off requires durable consent; unattended modes keep their mapping. */
@@ -247,50 +251,11 @@ export interface PrepareLocalHarnessTurnArgs {
   signal?: AbortSignal;
 }
 
-/** What a user calls each local harness, for refusals they read. */
-const LOCAL_HARNESS_DISPLAY_NAME: Readonly<Record<SupportedLocalHarnessId, string>> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-};
-
 function asLocalHarnessId(harnessId: string): SupportedLocalHarnessId | null {
   return (SUPPORTED_LOCAL_HARNESS_IDS as readonly string[]).includes(harnessId)
     ? (harnessId as SupportedLocalHarnessId)
     : null;
 }
-
-/**
- * The child's model credential: the gateway, and a capability that means
- * nothing anywhere else. The lease is not in here and never will be.
- *
- * Codex's `OPENAI_BASE_URL` is the gateway's BARE origin — no `/v1`. Codex
- * appends `/responses` to the base URL, and the gateway forwards exactly
- * `POST /responses` under the broker's own OpenAI base path.
- */
-function localChildAuth(
-  harnessId: SupportedLocalHarnessId,
-  gateway: Pick<LocalModelGateway, "baseUrl" | "sessionCapability">,
-): HarnessAuth {
-  switch (harnessId) {
-    case "claude-code":
-      return {
-        ANTHROPIC_AUTH_TOKEN: gateway.sessionCapability,
-        ANTHROPIC_API_KEY: gateway.sessionCapability,
-        ANTHROPIC_BASE_URL: gateway.baseUrl,
-      } as HarnessAuth;
-    case "codex":
-      return {
-        CODEX_API_KEY: gateway.sessionCapability,
-        OPENAI_BASE_URL: gateway.baseUrl,
-      } as HarnessAuth;
-  }
-}
-
-/** Where each harness reads skills, under the session's synthetic HOME. */
-const LOCAL_SKILLS_SUBDIR: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> = {
-  "claude-code": [".claude", "skills"],
-  codex: [".agents", "skills"],
-};
 
 export async function prepareLocalHarnessTurn(
   args: PrepareLocalHarnessTurnArgs,
@@ -304,7 +269,7 @@ export async function prepareLocalHarnessTurn(
     };
   }
   validateLocalHarnessSecretEnv(args.scopedEnv ?? {}, harnessId);
-  const displayName = LOCAL_HARNESS_DISPLAY_NAME[harnessId];
+  const displayName = harnessDisplayName(harnessId);
 
   // A decision for an approval a live runtime is parked on: hand that runtime
   // to this turn, or refuse. Never replay the approval into a fresh process.
@@ -489,7 +454,7 @@ async function prepareWithReservedRuntime(outer: {
     runtimeDigest: runtimeStatus.digest,
     installedAdapterVersion:
       args.installedAdapterVersion ??
-      (await readInstalledAdapterVersion(harnessId)),
+      localRuntime(harnessId).installedAdapterVersion(),
   });
   if (!availability.available) {
     return {
@@ -638,7 +603,9 @@ async function prepareWithReservedRuntime(outer: {
 
     // Built before the teardown that has to drop it, so the drop can prove the
     // entry under this id is still the one this turn registered.
+    let mcpPlane: Awaited<ReturnType<typeof startLocalHarnessMcpPlane>> | undefined;
     let leaseBearer = args.bearer;
+    let leaseAuthorization = args.getCleanupAuthorization ?? (async () => leaseBearer);
     const sessionRecord: LocalHarnessSessionRecord = {
       userId: args.target.actingUserId,
       projectId: args.projectId,
@@ -646,9 +613,15 @@ async function prepareWithReservedRuntime(outer: {
       runtimeId: plan.runtime.runtimeId,
       workspaceGrantId: plan.target.workspaceGrantId,
       brokerRunId: broker.runId,
-      gateway: started,
+      gateway: {
+        ...started,
+        revoke: () => { started.revoke(); mcpPlane?.hold(); },
+        close: async () => {
+          try { await started.close(); } finally { await mcpPlane?.close(); }
+        },
+      },
       stop: async () => await supervisor.stopSession(args.sessionId),
-      revokeLease: () => revokeLease(currentRunId, leaseBearer),
+      revokeLease: () => revokeLease(currentRunId, leaseAuthorization),
       releaseRuntime: outer.releaseRuntimeUse,
       // A Stop, stop-all, workspace or project stop ends a parked session
       // through this registry; the parked record must stop answering at once.
@@ -659,10 +632,10 @@ async function prepareWithReservedRuntime(outer: {
     let treeStopped = false;
     const teardownOnce = onceAsync(async () => {
       try {
-        started.revoke();
-        await started.close();
+        sessionRecord.gateway?.revoke();
+        await sessionRecord.gateway?.close();
       } finally {
-        await revokeLease(currentRunId, leaseBearer);
+        await revokeLease(currentRunId, leaseAuthorization);
         // Stop the supervised tree, THEN give up the reservation. This is the
         // teardown a normal turn takes — `run-harness-turn.ts` calls it when
         // the model stream ends — and `endLocalHarnessSession` never reaches
@@ -726,18 +699,24 @@ async function prepareWithReservedRuntime(outer: {
         started.rebind(next.lease);
         currentRunId = next.runId;
         leaseBearer = next.bearer;
+        leaseAuthorization = next.getCleanupAuthorization ?? (async () => leaseBearer);
         sessionRecord.brokerRunId = next.runId;
       },
-      revokeCurrentLease: () => revokeLease(currentRunId, leaseBearer),
+      revokeCurrentLease: () => revokeLease(currentRunId, leaseAuthorization),
     };
     const prepared: PreparedLocalHarnessTurn = {
       plan,
+      bindMcpPlane: async (next) => {
+        if (mcpPlane) mcpPlane.rebind(next);
+        else mcpPlane = await startLocalHarnessMcpPlane(next);
+        return mcpPlane;
+      },
       sandbox,
-      auth: localChildAuth(harnessId, started),
+      // The gateway and a capability that means nothing anywhere else, named
+      // the way this runtime's CLI reads them. The lease never reaches it.
+      auth: localRuntime(harnessId).childAuth(started),
       sandboxWorkDir: "project",
-      skillsBaseDir: toAdapterPath(
-        join(sessionStateDir, "home", ...LOCAL_SKILLS_SUBDIR[harnessId]),
-      ),
+      homeDir: toAdapterPath(join(sessionStateDir, "home")),
       attachmentsDir: {
         writeDir: toAdapterPath(join(sessionStateDir, "attachments")),
         agentDir: join(sessionStateDir, "attachments"),
@@ -776,7 +755,8 @@ async function prepareWithReservedRuntime(outer: {
             // lease is not kept live across a human wait: a fresh one is
             // minted, after re-checking authorization, when a decision lands.
             started.hold();
-            void revokeLease(currentRunId, leaseBearer);
+            mcpPlane?.hold();
+            void revokeLease(currentRunId, leaseAuthorization);
           },
         }),
       unpark: () => releaseParkedLocalSession(args.sessionId),
@@ -805,7 +785,7 @@ interface LiveLocalRuntime {
   runtimeId: string;
   workspaceGrantId: string;
   /** Bind a fresh lease to the SAME gateway (same port, same capability). */
-  rebindLease: (next: { runId: string; lease: string; bearer: string }) => void;
+  rebindLease: (next: { runId: string; lease: string; bearer: string; getCleanupAuthorization?: () => Promise<string> }) => void;
   revokeCurrentLease: () => Promise<void>;
 }
 
@@ -824,18 +804,18 @@ async function adoptParkedLocalTurn(
   args: PrepareLocalHarnessTurnArgs,
   harnessId: SupportedLocalHarnessId,
 ): Promise<LocalHarnessTurnPreparation> {
-  const continuation = args.approvalContinuation!;
   const claim = claimParkedLocalSession<LiveLocalRuntime>({
     sessionId: args.sessionId,
-    generation: continuation.generation,
+    generation: args.approvalContinuation!.generation,
     userId: args.target.actingUserId,
     projectId: args.projectId,
-    approvalIds: continuation.approvalIds,
+    approvalIds: args.approvalContinuation!.approvalIds,
   });
   if (!claim.ok) {
     return { ok: false, status: `approval-${claim.reason}`, message: claim.message };
   }
   const live = claim.parked.resources;
+  live.prepared.sandbox.forbidNewProcesses();
   const fail = async (
     reason: ParkInvalidationReason,
     status: string,
@@ -877,7 +857,7 @@ async function adoptParkedLocalTurn(
     runtimeDigest: runtimeStatus.digest,
     installedAdapterVersion:
       args.installedAdapterVersion ??
-      (await readInstalledAdapterVersion(harnessId)),
+      localRuntime(harnessId).installedAdapterVersion(),
   });
   if (!availability.available) {
     return fail("authorization-revoked", availability.status, availability.message);
@@ -969,7 +949,7 @@ async function adoptParkedLocalTurn(
     );
   }
   try {
-    live.rebindLease({ runId: broker.runId, lease: broker.lease, bearer: args.bearer });
+    live.rebindLease({ runId: broker.runId, lease: broker.lease, bearer: args.bearer, getCleanupAuthorization: args.getCleanupAuthorization });
   } catch (error) {
     await revokeLease(broker.runId, args.bearer);
     return fail(
@@ -982,7 +962,7 @@ async function adoptParkedLocalTurn(
   }
   logger.info("[local-harness] parked session re-adopted for an approval", {
     sessionId: args.sessionId,
-    approvals: continuation.approvalIds.length,
+    approvals: args.approvalContinuation!.approvalIds.length,
   });
   return {
     ok: true,
@@ -1028,8 +1008,9 @@ async function abandonLocalSetup(args: {
   await revokeLease(args.runId, args.bearer);
 }
 
-async function revokeLease(runId: string, bearer: string): Promise<void> {
+async function revokeLease(runId: string, authorization: string | (() => Promise<string>)): Promise<void> {
   try {
+    const bearer = typeof authorization === "string" ? authorization : await authorization();
     await revokeHarnessModelBroker({ runId, bearer });
   } catch (error) {
     // Best-effort, exactly as the cloud path's revoke is: the lease's own TTL
@@ -1039,40 +1020,6 @@ async function revokeLease(runId: string, bearer: string): Promise<void> {
       message: error instanceof Error ? error.message : String(error),
     });
   }
-}
-
-/**
- * The version of the adapter package actually installed next to this server.
- *
- * The manifest pins an exact version, and the compatibility gate refuses a
- * mismatch — so the value has to come from the installed package rather than
- * from the manifest, or the check would be comparing the pin to itself.
- */
-declare const __MCPJAM_CLAUDE_ADAPTER_VERSION__: string | undefined;
-let cachedAdapterVersion: string | null = null;
-
-async function readInstalledAdapterVersion(
-  harnessId: SupportedLocalHarnessId,
-): Promise<string> {
-  // Codex's local adapter is MCPJam's own bridge bundle plus the pinned CLI,
-  // compiled into this server (npx and Electron alike): there is no npm
-  // package to read a version from. See `codex-appserver/local-identity.ts`.
-  if (harnessId === "codex") return CODEX_LOCAL_ADAPTER_IDENTITY;
-  if (cachedAdapterVersion !== null) return cachedAdapterVersion;
-  if (typeof __MCPJAM_CLAUDE_ADAPTER_VERSION__ === "string") return __MCPJAM_CLAUDE_ADAPTER_VERSION__;
-  try {
-    const required = createRequire(import.meta.url);
-    const pkg = required("@ai-sdk/harness-claude-code/package.json") as {
-      version?: unknown;
-    };
-    cachedAdapterVersion = typeof pkg.version === "string" ? pkg.version : "";
-  } catch {
-    // An adapter we cannot identify fails the compatibility gate's exact-pin
-    // check, which is the correct outcome: a runtime whose adapter version is
-    // unknown is not one the manifest can vouch for.
-    cachedAdapterVersion = "";
-  }
-  return cachedAdapterVersion;
 }
 
 /** Run an async function at most once, whatever the caller does. */

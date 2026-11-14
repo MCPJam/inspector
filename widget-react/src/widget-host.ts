@@ -9,7 +9,11 @@
 // systems stay in the inspector by design, so the package can't import them).
 import type {
   BrowserStoragePolicy,
+  DisplayBehavior,
   ToolResultPolicy,
+  PrepareSandboxViewRequest,
+  PreparedSandboxView,
+  ReleaseSandboxViewRequest,
 } from "@mcpjam/sdk/widget-runtime";
 // Drift-safety is enforced by the inspector's `use-widget-host.ts` adapter:
 // it builds the host from the real stores/resolvers and returns it typed as this
@@ -239,6 +243,17 @@ export interface WidgetSurfaceInfo {
    * refuses the App either. Absent: modes are negotiated as usual.
    */
   fixedDisplayMode?: DisplayMode;
+  /**
+   * How the client picks display modes while its Display modes extension is
+   * on. `hints` names the resource metadata the hints come from. `start:
+   * "hint-first"` is OpenAI's rules: omitted resource modes mean every host
+   * mode, a preference picks the starting mode without narrowing, a resource
+   * that declares both inline and fullscreen starts fullscreen, and a fixed
+   * mode the initialized App says it cannot show refuses the App.
+   * `"inline-then-move"` is Claude's: the App starts inline and moves once to
+   * the side panel. Absent: modes are negotiated as before.
+   */
+  displayBehavior?: DisplayBehavior;
 }
 
 // --- Instrumentation ---------------------------------------------------------
@@ -308,7 +323,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-error"
     | "bridge-connect-skipped"
     | "app-initialized"
-    | "view-mounted";
+    | "view-mounted"
+    | "view-channel-closed";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -338,9 +354,11 @@ export interface WidgetSandboxApplied {
    * How the proxy mounted the view. `"url"` means it was written into a blank
    * same-origin frame and runs at the proxy's URL; the srcdoc values mean it
    * has no URL of its own (`"srcdoc"` was asked for, `"srcdoc-fallback"` was
-   * forced because the frame's document was unreachable).
+   * forced because the frame's document was unreachable). `"opaque"` is the
+   * intended srcdoc mount of a client whose app iframe is not same-origin
+   * (e.g. Claude's no-`stable-origin` mode): no URL and an opaque origin, by design.
    */
-  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback" | "opaque";
   /** Id of the currently displayed inner iframe mount. */
   mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
@@ -590,6 +608,12 @@ export interface WidgetHostProfileSandbox {
    * field missing here silently disappears before reaching the renderer.
    */
   browserStorage?: BrowserStoragePolicy;
+  /**
+   * Probe-measured: whether the app iframe shares the sandbox page's origin.
+   * `false` makes the proxy mount the view in an opaque origin (srcdoc, no
+   * `allow-same-origin`), `ui.domain` or not. Absent or `true` = same-origin.
+   */
+  sameOriginAppIframe?: boolean;
 }
 
 /**
@@ -692,7 +716,12 @@ export interface FetchWidgetContentRequest {
 }
 
 export interface FetchWidgetContentResponse {
+  sourceReceipt?: string;
   resourceDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
+  /** `_meta.ui` display hints, read under `displayBehavior.hints: "ui"`. */
+  uiDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
+  /** A `_meta.ui.preferredDisplayMode` that isn't a mode, as JSON; ignored. */
+  ignoredPreferredDisplayMode?: string;
   html: string;
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;
@@ -738,6 +767,8 @@ export type ListResourcesResult = {
  * HOSTED_MODE / web-managed guard before calling the raw api.
  */
 export interface WidgetHostServices {
+  prepareSandboxView?: (request: PrepareSandboxViewRequest, signal?: AbortSignal) => Promise<PreparedSandboxView>;
+  releaseSandboxView?: (request: ReleaseSandboxViewRequest) => Promise<void>;
   /** Host-admitted plugin navigation, never arbitrary external navigation. */
   openAppLink?: (url: string) => Promise<void>;
   sendMessage?: (params: unknown) => Promise<Record<string, unknown>>;

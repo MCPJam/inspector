@@ -44,6 +44,7 @@ vi.mock("../../../services/xaa-confidential-cimd.js", () => ({
 
 vi.mock("../../../utils/logger.js", () => ({
   logger: { error: loggerErrorMock },
+  captureOriginErrorToSentry: vi.fn(),
 }));
 
 // Stub the manager (as auth-manager.test.ts does): the real one starts
@@ -785,5 +786,54 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
     expect((failure as { cause?: unknown }).cause).toMatchObject({
       message: "Missing or invalid bearer token",
     });
+  });
+
+  // A swarm run pins only server ids, so it passes no `serverNames`. The
+  // refusal must still name the server, from the name the backend stored.
+  it("names a refused sign-in by the stored server name when the caller passes none", async () => {
+    batchOf({
+      "srv-configured": {
+        ...okBase,
+        serverConfig: {
+          name: "Asana",
+          transportType: "http",
+          url: "https://configured.example.com/mcp",
+          secretsBoundOrigin: "https://configured.example.com",
+          authMethod: "auto",
+          authServerMode: "mcpjam",
+          clientId: "client-1",
+        },
+      },
+    });
+    mintXaaAccessTokenMock.mockRejectedValue(
+      new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "XAA token exchange (jwt-bearer grant) was rejected by the authorization server at https://as.example.com/token (HTTP 429)",
+        { status: 429 }
+      )
+    );
+
+    const failure = await createAuthorizedManager(
+      callerContextFromHono(makeContext()),
+      "bearer",
+      "ws-1",
+      ["srv-configured"],
+      30_000,
+      undefined,
+      undefined,
+      {
+        xaaIssuer: "https://app.mcpjam.com/api/web",
+        xaaPolicy: { idp: "mcpjam" },
+      }
+    ).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect((failure as Error).message).toBe(
+      'The authorization server for "Asana" rejected MCPJam\'s access request (HTTP 429). Check the server\'s auth settings.'
+    );
+    expect((failure as Error).message).not.toContain("srv-configured");
   });
 });

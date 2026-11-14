@@ -7,6 +7,7 @@ import type {
 } from "@mcpjam/sdk/browser";
 
 interface UseApiContextOptions {
+  taskOwnerId?: string | null;
   projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
@@ -27,7 +28,6 @@ interface UseApiContextOptions {
   xaaPolicy?: XaaEnterprisePolicy;
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
-  oauthTokensByServerId?: Record<string, string>;
   // Resolved scenario identity (post-redeem) — drives scenario-aware request
   // shaping inside the API context.
   scenarioId?: string;
@@ -38,6 +38,7 @@ interface UseApiContextOptions {
 }
 
 export function useApiContext({
+  taskOwnerId,
   projectId,
   serverIdsByName,
   clientCapabilities,
@@ -53,7 +54,6 @@ export function useApiContext({
   xaaPolicy,
   clientConfigSyncPending,
   getAccessToken,
-  oauthTokensByServerId,
   scenarioId,
   accessVersion,
   isAuthenticated,
@@ -76,6 +76,7 @@ export function useApiContext({
     }
 
     const next: ApiContext = {
+      taskOwnerId,
       projectId,
       serverIdsByName,
       clientCapabilities,
@@ -91,7 +92,6 @@ export function useApiContext({
       xaaPolicy,
       clientConfigSyncPending,
       getAccessToken,
-      oauthTokensByServerId,
       scenarioId,
       accessVersion,
       isAuthenticated,
@@ -104,6 +104,7 @@ export function useApiContext({
     setApiContext(next);
   }, [
     enabled,
+    taskOwnerId,
     projectId,
     serverIdsByName,
     clientCapabilities,
@@ -119,7 +120,6 @@ export function useApiContext({
     xaaPolicy,
     clientConfigSyncPending,
     getAccessToken,
-    oauthTokensByServerId,
     scenarioId,
     accessVersion,
     isAuthenticated,

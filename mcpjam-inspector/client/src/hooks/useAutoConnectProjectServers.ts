@@ -43,7 +43,19 @@ const lastSeenScopeByProject = new Map<string, string>();
  * observed scope is startup hydration, not a client switch, so it is recorded
  * above without being added here.
  */
-const pendingRecycleScopeByProject = new Map<string, string>();
+const pendingRecycleScopeByProject = new Map<
+  string,
+  { scopeKey: string; quiet: boolean }
+>();
+
+/**
+ * A lead client that a setup flow picked, not the user (the Playground's
+ * first-run comparison lineup puts Claude first). Switching to it still
+ * reconnects, since every server must handshake as the new client, but
+ * without the progress toast: nobody switched anything, so only a failure
+ * is worth telling them about.
+ */
+const quietScopeByProject = new Map<string, string>();
 
 /**
  * The client-switch reconnect batch still running per project, and the toast
@@ -51,7 +63,10 @@ const pendingRecycleScopeByProject = new Map<string, string>();
  * only the newest batch reports — so rapid switching shows one toast that ends
  * on the latest outcome, never one per switch.
  */
-const recycleBatchByProject = new Map<string, { toastId: string | number }>();
+const recycleBatchByProject = new Map<
+  string,
+  { toastId: string | number | undefined }
+>();
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -114,20 +129,33 @@ export function resetAutoConnectAttempts(projectId?: string): void {
   // Sonner loading toasts never close on their own.
   if (projectId === undefined) {
     for (const batch of recycleBatchByProject.values()) {
-      toast.dismiss(batch.toastId);
+      if (batch.toastId !== undefined) toast.dismiss(batch.toastId);
     }
     attemptedByProject.clear();
     lastSeenScopeByProject.clear();
     pendingRecycleScopeByProject.clear();
+    quietScopeByProject.clear();
     recycleBatchByProject.clear();
   } else {
     const batch = recycleBatchByProject.get(projectId);
-    if (batch) toast.dismiss(batch.toastId);
+    if (batch?.toastId !== undefined) toast.dismiss(batch.toastId);
     attemptedByProject.delete(projectId);
     lastSeenScopeByProject.delete(projectId);
     pendingRecycleScopeByProject.delete(projectId);
+    quietScopeByProject.delete(projectId);
     recycleBatchByProject.delete(projectId);
   }
+}
+
+/**
+ * Call right before a setup flow, not the user, makes `hostScopeKey` the
+ * project's lead client, so the reconnect that switch triggers stays quiet.
+ */
+export function markQuietClientSwitch(
+  projectId: string,
+  hostScopeKey: string,
+): void {
+  quietScopeByProject.set(projectId, hostScopeKey);
 }
 
 interface UseAutoConnectProjectServersResult {
@@ -269,11 +297,13 @@ export function useAutoConnectProjectServers({
 
     attemptedByProject.delete(projectId);
     lastSeenScopeByProject.set(projectId, scopeKey);
+    const quiet = quietScopeByProject.get(projectId) === scopeKey;
+    quietScopeByProject.delete(projectId);
     if (previousScopeKey === undefined || suspendAutoConnect) {
       pendingRecycleScopeByProject.delete(projectId);
       return;
     }
-    pendingRecycleScopeByProject.set(projectId, scopeKey);
+    pendingRecycleScopeByProject.set(projectId, { scopeKey, quiet });
   }, [projectId, scopeKey, hostScopeKey, suspendAutoConnect]);
 
   // Reconnect-on-client-switch: fires at most once per (project, scopeKey).
@@ -292,7 +322,8 @@ export function useAutoConnectProjectServers({
       pendingRecycleScopeByProject.delete(projectId);
       return;
     }
-    if (pendingRecycleScopeByProject.get(projectId) !== scopeKey) return;
+    const pending = pendingRecycleScopeByProject.get(projectId);
+    if (pending?.scopeKey !== scopeKey) return;
     pendingRecycleScopeByProject.delete(projectId);
     if (isAttempted(projectId, scopeKey, "recycle")) return;
     markAttempted(projectId, scopeKey, "recycle");
@@ -306,12 +337,18 @@ export function useAutoConnectProjectServers({
     // "Reconnected" (or a failure message) once the batch settles. Reusing the
     // same toast id keeps the loading → result transition on a single toast
     // instead of stacking a second one.
+    // A quiet switch shows nothing unless it fails. One that lands while a
+    // visible batch is still running takes that toast over as usual, so the
+    // spinner the user is watching still ends on an outcome.
     const running = recycleBatchByProject.get(projectId);
     const loadingMessage = reconnectingToastMessage(connectedNow.length);
     const batch = {
-      toastId: running
-        ? toast.loading(loadingMessage, { id: running.toastId })
-        : toast.loading(loadingMessage),
+      toastId:
+        running?.toastId !== undefined
+          ? toast.loading(loadingMessage, { id: running.toastId })
+          : pending.quiet
+            ? undefined
+            : toast.loading(loadingMessage),
     };
     const toastId = batch.toastId;
     recycleBatchByProject.set(projectId, batch);
@@ -337,6 +374,7 @@ export function useAutoConnectProjectServers({
       });
 
       if (failures.length === 0) {
+        if (toastId === undefined) return;
         toast.success(reconnectSuccessToastMessage(connectedNow.length), {
           id: toastId,
         });
@@ -389,7 +427,7 @@ export function useAutoConnectProjectServers({
 
     serverCheckQueue.markAutomatic(projectId, fresh);
     let cancelled = false;
-    ensureServersReady(fresh).then(
+    ensureServersReady(fresh, { automatic: true }).then(
       (result) => {
         if (cancelled) return;
         lastResultRef.current = result;

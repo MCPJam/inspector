@@ -67,6 +67,17 @@ describe("Claude Code effort mapping", () => {
     });
   });
 
+  it("starts without non-essential traffic only when the turn asks for a quiet start", () => {
+    adapter().createHarness({ modelId: "anthropic/claude-sonnet-4-6", auth: {}, mcpJson, quietStartup: true });
+    expect(vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!.env).toMatchObject({
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    });
+    adapter().createHarness({ modelId: "anthropic/claude-sonnet-4-6", auth: {}, mcpJson });
+    expect(vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!.env).not.toHaveProperty(
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    );
+  });
+
   describe("the models Claude Code picks for itself", () => {
     // Plan mode switches to the `sonnet` alias, background work and the
     // Explore subagent use `haiku`; the lease admits only the turn's model.
@@ -81,10 +92,18 @@ describe("Claude Code effort mapping", () => {
         ),
       );
 
-    it("a Haiku turn pins sonnet and opus to itself, and leaves its own alias alone", () => {
+    it("a Haiku turn pins its requested version and the other families", () => {
       expect(pins(envFor("anthropic/claude-haiku-4.5"))).toEqual({
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-haiku-4.5",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-haiku-4.5",
+      });
+    });
+
+    it("pins Haiku 5.5 for the alias and small-fast model", () => {
+      expect(envFor("anthropic/claude-haiku-5.5")).toMatchObject({
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5",
+        ANTHROPIC_SMALL_FAST_MODEL: "claude-haiku-5-5",
       });
     });
 

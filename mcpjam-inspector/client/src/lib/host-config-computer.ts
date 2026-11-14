@@ -169,9 +169,9 @@ export function shouldShowComputerToggle(opts: {
  * in instead of offering that save.
  */
 export function hostConfigNeedsAccount(
-  input: Pick<HostConfigInputV2, "harness" | "computer"> | undefined,
+  input: Pick<HostConfigInputV2, "harness" | "agentLoop" | "computer"> | undefined,
 ): boolean {
-  return Boolean(input?.harness || input?.computer);
+  return Boolean(input?.agentLoop || input?.harness || input?.computer);
 }
 
 /**
@@ -191,6 +191,7 @@ export function detachComputerPatch(
   return {
     computer: undefined,
     harness: undefined,
+    agentLoop: undefined,
     builtInToolIds: value.builtInToolIds.filter((id) => !backed.has(id)),
   };
 }
@@ -218,7 +219,7 @@ export function sanitizeHostConfigForEvalSuite(
   // harness left set with no computer violates the backend `harness ⇒ computer`
   // invariant and would route an eval run toward the real harness path. Mirrors
   // detachComputerPatch — dropping the computer takes its dependent runtime.
-  const harnessChanged = value.harness !== undefined;
+  const harnessChanged = value.harness !== undefined || value.agentLoop !== undefined;
   if (value.computer === undefined && !idsChanged && !harnessChanged) {
     return value;
   }
@@ -226,6 +227,7 @@ export function sanitizeHostConfigForEvalSuite(
     ...value,
     computer: undefined,
     harness: undefined,
+    agentLoop: undefined,
     builtInToolIds: cleanedIds,
   };
 }

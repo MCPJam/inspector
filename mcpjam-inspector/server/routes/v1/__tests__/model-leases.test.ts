@@ -116,6 +116,22 @@ describe("v1 model leases", () => {
     });
   });
 
+  it("forwards the full requested selection and reasoning effort", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(backendResponse(200, MINTED));
+    global.fetch = fetchMock as never;
+    const modelSelection = {
+      source: "hosted", modelId: "anthropic/claude-sonnet-4.5",
+      settings: { reasoningEffort: "high" },
+      fallback: { provider: "none", model: "none" },
+    };
+    await request(makeApp(), "/api/v1/projects/default/model-leases", {
+      model: modelSelection.modelId, modelSelection, reasoningEffort: "high",
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      modelSelection, reasoningEffort: "high",
+    });
+  });
+
   it("omits projectId for `default` and forwards an explicit id", async () => {
     const fetchMock = vi.fn().mockResolvedValue(backendResponse(200, MINTED));
     global.fetch = fetchMock as never;

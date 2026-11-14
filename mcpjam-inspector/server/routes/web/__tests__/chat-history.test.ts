@@ -105,6 +105,20 @@ describe("chat-history routes", () => {
     app.route("/chat-history", chatHistoryModule.default);
   });
 
+  it("forwards only the explicit state view and never caches its response", async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ ok: true, session: { _id: "s1", version: 1 } })));
+    const res = await app.request("/chat-history/detail?chatSessionId=c1&projectId=p1&view=state", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://convex.test/direct-chat/detail?chatSessionId=c1&projectId=p1&view=state");
+    await app.request("/chat-history/detail?chatSessionId=c1&view=unknown", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(fetchMock.mock.calls[1][0]).toBe("https://convex.test/direct-chat/detail?chatSessionId=c1");
+  });
+
   describe("GET /chat-history/list", () => {
     it("proxies list request to Convex backend", async () => {
       fetchMock.mockResolvedValueOnce(

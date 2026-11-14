@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import type { ConvexHttpClient } from "convex/browser";
 import type { SuiteRunRecorder } from "./recorder.js";
 import { logger } from "../../utils/logger.js";
@@ -38,7 +39,7 @@ import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js"
  * when the host selects no harness, which is the overwhelming majority of runs
  * — exactly the ones its rule is about.
  */
-import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
+import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
@@ -53,7 +54,7 @@ import {
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -124,7 +125,7 @@ export function harnessOfHostConfig(
   hostConfig: Record<string, unknown> | null | undefined
 ): Harness | undefined {
   if (!hostConfig) return undefined;
-  return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
+  return resolveAgentLoop(hostConfig).harnessId;
 }
 
 /**
@@ -191,8 +192,8 @@ function harnessCannotObserveWidgetsReason(
   return (
     `the ${name} harness reaches MCP servers through a signed proxy rather ` +
     "than through the inspector, so widgetRendered assertions have nothing to " +
-    "observe on a harness run. Remove them, or run these cases on a " +
-    `non-harness host. Cases asserting widgetRendered: ${named}` +
+    "observe with that MCP client. Use a client with MCPJam tool delivery, " +
+    `or remove those assertions. Cases asserting widgetRendered: ${named}` +
     (caseTitles.length > 10 ? `, +${caseTitles.length - 10} more` : "")
   );
 }
@@ -238,25 +239,33 @@ function harnessCannotObserveWidgetsReason(
  * Only a SENTINEL host promotes. A host whose harness is external-account but
  * whose model is an ordinary id is a broken configuration, and the admission
  * gate refuses it on the host's own id — promoting that id would launder it.
+ *
+ * `externalAccount` says the host's model was promoted: the case runs on the
+ * customer's own vendor account. Billing and the case's selection read it,
+ * never whether the definition is the case's own object.
  */
 export function resolveEvalCaseModelDefinition(args: {
   hostConfig: Record<string, unknown> | null | undefined;
   localExecution?: boolean;
   /** The model the CASE names, already built into a definition. */
   caseModel: ModelDefinition;
-}): ModelDefinition {
+}): { modelDefinition: ModelDefinition; externalAccount: boolean } {
+  const caseModel = { modelDefinition: args.caseModel, externalAccount: false };
   const harness = harnessOfHostConfig(args.hostConfig);
-  if (!harness) return args.caseModel;
+  if (!harness) return caseModel;
   if (getHarnessAdapter(harness).modelAccess !== "external-account") {
-    return args.caseModel;
+    return caseModel;
   }
   const hostConfig = args.hostConfig as Record<string, unknown>;
   const hostModelId =
     typeof hostConfig.modelId === "string" ? hostConfig.modelId.trim() : "";
-  if (!isRuntimeChosenModelSentinel(hostModelId)) return args.caseModel;
+  if (!isRuntimeAccountModel(hostModelId)) return caseModel;
   // The same builder the swarm runner uses, so the sentinel arrives with its
   // curated label and its registered provider rather than a re-derived guess.
-  return buildSyntheticModelDefinition(hostModelId);
+  return {
+    modelDefinition: isRuntimeAccountModel(String(args.caseModel.id)) ? args.caseModel : buildSyntheticModelDefinition(hostModelId),
+    externalAccount: true,
+  };
 }
 
 export function hasSelectedMcpServersForAdmission(args: {
@@ -306,7 +315,7 @@ export function checkEvalHarnessStaticAdmission(args: {
   const pinnedRow: { id: string; hosted?: boolean } = { id: hostModelId ?? "" };
   const pinnedModel = withSelectionRouting(pinnedRow, pinnedSelection);
   const availability = checkHarnessRuntimeAvailable({
-    harnessId: harness,
+    harnessId: harness, surface: "evals", agentLoop: hostConfig.agentLoop !== undefined,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
     requireToolApproval: hostConfig.requireToolApproval === true,
     hasSelectedMcpServers,
@@ -429,7 +438,7 @@ export function checkEvalHarnessAdmission(args: {
       };
       const routedCaseModel = withSelectionRouting(caseRow, selection);
       const availability = checkHarnessRuntimeAvailable({
-        harnessId: harness,
+        harnessId: harness, surface: "evals", agentLoop: hostConfig.agentLoop !== undefined,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
         requireToolApproval,
         hasSelectedMcpServers,
@@ -469,7 +478,7 @@ export function checkEvalHarnessAdmission(args: {
     return {
       ok: false,
       harness,
-      reason: `${ineligible[0]!.reason}. Ineligible cases: ${names
+      reason: `${ineligible[0]!.reason.replace(/\.$/, "")}. Ineligible cases: ${names
         .slice(0, 10)
         .join(", ")}${names.length > 10 ? `, +${names.length - 10} more` : ""}`,
     };
@@ -523,6 +532,7 @@ export function checkEvalHarnessAdmission(args: {
   }
 
   return admitHarness(harness, {
+    mcpClient: resolveAgentLoop(args.hostConfig ?? {}).mcpClient,
     // Passed THROUGH, never coerced: a caller may legitimately not know the
     // project, and refusing over a fact we do not hold is the same mistake as
     // admitting over one we do. The route passes an explicit `null` for an
@@ -690,6 +700,7 @@ function isModelKind(kind: HarnessUnavailableKind): boolean {
 function admitHarness(
   harness: Harness,
   args: {
+    mcpClient: "mcpjam" | "harness";
     widgetAssertingCaseTitles?: readonly string[];
     /** `undefined` ⇒ the caller did not resolve one (the static half), so the
      *  rule is deferred to the full check rather than decided without evidence.
@@ -705,7 +716,7 @@ function admitHarness(
     };
   }
   const widgetCases = args.widgetAssertingCaseTitles ?? [];
-  if (widgetCases.length > 0) {
+  if (widgetCases.length > 0 && args.mcpClient === "harness") {
     return {
       ok: false,
       harness,

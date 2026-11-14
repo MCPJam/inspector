@@ -29,6 +29,7 @@ import type {
   RuntimePluginVersion,
 } from "../../services/environments/effective-capabilities.js";
 import { allEffectiveSkills } from "../../services/environments/effective-capabilities.js";
+import { logger } from "../logger.js";
 import type { RuntimeSkillFile } from "./runtime-skills.js";
 
 /**
@@ -95,45 +96,22 @@ export function pluginVersionsFingerprint(
   return (h >>> 0).toString(16);
 }
 
-/**
- * The skills fingerprint with the plugin dimension folded in.
- *
- * For a turn whose skill set mixes the project's pool with plugin skills (the
- * Playground's hidden environment): a change in which plugin versions ran —
- * even one whose skills read identically — must change the hash that decides
- * whether the box's skills are re-written. Empty versions leave the hash
- * byte-identical, so a turn with no plugins keeps resuming exactly as before.
- */
-export function skillsHashWithPlugins(
-  skillsHash: string,
-  versions: RuntimePluginVersion[]
-): string {
-  const plugins = pluginVersionsFingerprint(versions);
-  return plugins ? `${skillsHash}+plugins:${plugins}` : skillsHash;
-}
-
-/**
- * Which selected servers can actually be delivered into the sandbox's
- * `.mcp.json`, failing CLOSED on a plugin-contributed one that cannot.
- *
- * A selected server with no live config in the manager is skipped (that is the
- * long-standing behavior for host-selected servers, which the user can see and
- * reconnect). A PLUGIN-contributed server is different: hosts are plugin-blind,
- * the environment pinned that version precisely to get those tools, and the
- * silently reduced tool set would surface only as the agent "not doing the
- * thing". Name the plugin and refuse the turn instead — the same all-or-nothing
- * rule the hosted proxy-token mint already applies.
- */
+/** Refused servers are omitted; an unexplained missing plugin config still fails. */
 export function selectDeliverableServerIds(args: {
   selectedServerIds: string[];
   /** True when the manager holds a live config for this id. */
   hasLiveConfig: (serverId: string) => boolean;
+  unavailableServerIds?: readonly string[];
   /** Plugin origin per server id (`pluginOriginByServerId`); may be empty. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
   onSkipped?: (serverId: string) => void;
 }): string[] {
   const deliverable: string[] = [];
   for (const serverId of args.selectedServerIds) {
+    if (args.unavailableServerIds?.includes(serverId)) {
+      args.onSkipped?.(serverId);
+      continue;
+    }
     if (args.hasLiveConfig(serverId)) {
       deliverable.push(serverId);
       continue;
@@ -184,7 +162,7 @@ export interface DeliveredPluginSkillOrigin {
  */
 export function deliveredPluginSkillOrigins(args: {
   set: EffectiveCapabilitySet;
-  /** The runtime's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). */
+  /** The runtime's skills folder on the box, absolute. */
   skillsBaseDir: string;
   /** skillId → on-box dir name, for the skills the adapter was given. */
   deliveredNameBySkillId: Map<string, string>;
@@ -222,4 +200,49 @@ export function pluginSkillDeliverySummary(
     fileCount: skill.files.length,
     pluginVersionId: skill.plugin?.pluginVersionId ?? null,
   }));
+}
+
+/**
+ * Log the plugin skills a turn put on its box, with the immutable plugin
+ * revision behind each folder the runtime reads. Provenance, not a pin: never
+ * read back to restore anything.
+ */
+export function logPluginSkillDelivery(args: {
+  set: EffectiveCapabilitySet;
+  /** The skills on the box this turn (`writeBoxSkills`'s `delivered`). */
+  delivered: ReadonlyArray<{ skillId: string; name: string }>;
+  skillsBaseDir: string;
+  harness: string;
+  /** The box the material went to: a computer or ephemeral sandbox row. */
+  boxKind: string;
+  boxId: string | undefined;
+}): void {
+  const deliveredNameBySkillId = new Map(
+    args.delivered.map((skill) => [skill.skillId, skill.name]),
+  );
+  const set = {
+    ...args.set,
+    pluginSkills: args.set.pluginSkills.filter((skill) =>
+      deliveredNameBySkillId.has(skill.skillId),
+    ),
+  };
+  const skills = pluginSkillDeliverySummary(set);
+  if (skills.length > 0) {
+    logger.info("[harness] delivered plugin skills", {
+      boxKind: args.boxKind,
+      boxId: args.boxId,
+      skills,
+    });
+  }
+  const origins = deliveredPluginSkillOrigins({
+    set,
+    skillsBaseDir: args.skillsBaseDir,
+    deliveredNameBySkillId,
+  });
+  if (origins.length > 0) {
+    logger.info("[harness] plugin skill origins", {
+      harness: args.harness,
+      origins,
+    });
+  }
 }

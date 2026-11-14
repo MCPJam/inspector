@@ -8,6 +8,14 @@
  * on a schedule, across a directory feed, against a production tenant — they
  * are indistinguishable from an attack.
  *
+ * THE STEP-UP PROBE is the gentlest of the three and the narrowest: it calls
+ * the ONE declared tool, once, with the caller's own access token — one that
+ * lacks the scope the tool needs — and records whether the server answered
+ * with a 403 `insufficient_scope` challenge. It refuses any tool not annotated
+ * `readOnlyHint: true`, and it never spends, refreshes or forwards the token
+ * anywhere but the MCP endpoint. The gatherer runs it only for an armed mode
+ * with a declared tool and a credential to call it with.
+ *
  * SO THE GATE IS SDK-ENFORCED, NOT CALL-SITE-ENFORCED. {@link
  * resolveClaudeIntrusiveMode} is the only way to obtain the token these probes
  * require, and it refuses unless every condition below is met. A call site
@@ -30,7 +38,12 @@
  *      registration that cannot be cleaned up is reported rather than hidden.
  */
 
-import { parseBearerAuthenticateParameters } from "../oauth/state-machines/shared/challenges.js";
+export {
+  probeStepUpChallenge,
+  type ClaudeStepUpProbeOptions,
+} from "./step-up-probe.js";
+
+
 import { claudePolicySource } from "./manifest.js";
 import type { ClaudeReadinessFinding } from "./types.js";
 import {
@@ -40,6 +53,12 @@ import {
   type ClaudeCheckDefinition,
   type ClaudeCheckStamp,
 } from "./checks/helpers.js";
+import {
+  STEP_UP,
+  gradeStepUp,
+  type ClaudeStepUpObservation,
+} from "./step-up-grade.js";
+
 
 /**
  * Where the grant these probes spend came from.
@@ -113,7 +132,7 @@ const AUTHORIZATION = Object.freeze({}) as IntrusiveAuthorization;
  * true of the type and false of the runtime, which is the worse of the two
  * places for it to be true.
  */
-function assertArmed(mode: ClaudeIntrusiveMode): asserts mode is Extract<
+export function assertArmed(mode: ClaudeIntrusiveMode): asserts mode is Extract<
   ClaudeIntrusiveMode,
   { enabled: true }
 > {
@@ -231,17 +250,6 @@ const REFRESH_ROTATION: ClaudeCheckDefinition = {
   requiresCapabilities: ["intrusive-probes"],
 };
 
-const STEP_UP: ClaudeCheckDefinition = {
-  id: "claude.intrusive.step-up-challenge",
-  title: "A protected tool challenges for the scopes it needs",
-  lane: "runtime-compatibility",
-  class: "required",
-  source: claudePolicySource("authentication", "§Step-up authorization"),
-  provenance: "wire",
-  intrusiveness: "side-effecting",
-  requiresCapabilities: ["intrusive-probes"],
-};
-
 const INTRUSIVE_DEFINITIONS = [DCR_REGISTER, REFRESH_ROTATION, STEP_UP];
 
 // ── Observations ────────────────────────────────────────────────────────
@@ -284,45 +292,11 @@ export interface ClaudeIntrusiveObservations {
     replayBody?: Record<string, unknown>;
     error?: string;
   };
-  stepUp?: {
-    attempted: boolean;
-    toolName: string;
-    status: number;
-    wwwAuthenticate?: string;
-    error?: string;
-  };
+  stepUp?: ClaudeStepUpObservation;
 }
 
-/**
- * The scopes a step-up challenge asked for, beside the ones the run expected.
- *
- * Reported, never graded. A challenge that names no `scope` is conforming, and
- * a server is free to ask for scopes the operator did not list — so the useful
- * output is the comparison itself, which tells whoever reads the report
- * whether their declared expectation matched reality.
- */
-function summarizeStepUpScopes(
-  wwwAuthenticate: string | undefined,
-  expectedScopes: string[] | undefined,
-): Record<string, unknown> {
-  const expected = expectedScopes ?? [];
-  const challengedScopes = wwwAuthenticate
-    ? (parseBearerAuthenticateParameters(wwwAuthenticate).scope ?? "")
-        .split(/\s+/)
-        .filter(Boolean)
-    : [];
-  return {
-    expectedScopes: expected,
-    challengedScopes,
-    // `undefined` rather than a boolean when the challenge named nothing:
-    // there is no overlap to report, and `false` would read as a mismatch the
-    // server never committed.
-    scopesOverlapExpectation:
-      challengedScopes.length === 0
-        ? undefined
-        : challengedScopes.some((scope) => expected.includes(scope)),
-  };
-}
+/** Why the probes below did not run, when the run never got as far as them. */
+const PROBE_NOT_RUN = "this probe did not run in this run";
 
 /**
  * Whether the refresh request itself was answered successfully.
@@ -369,8 +343,10 @@ export function gradeClaudeIntrusiveObservations(
       notEvaluated(
         DCR_REGISTER,
         stamp,
-        registration?.error ??
-          "no registration was attempted; the authorization server advertised no registration endpoint",
+        // The probe's own reason when it ran and declined; otherwise only
+        // that it did not run. Guessing "no registration endpoint" here would
+        // blame the server for a probe nobody started.
+        registration?.error ?? `the dynamic-registration ${PROBE_NOT_RUN}`,
       ),
     );
   } else if (registration.status < 200 || registration.status >= 300) {
@@ -474,55 +450,7 @@ export function gradeClaudeIntrusiveObservations(
     );
   }
 
-  // ── Step-up ──────────────────────────────────────────────────────────
-  const stepUp = observations.stepUp;
-  if (!mode.protectedToolName) {
-    findings.push(
-      notEvaluated(
-        STEP_UP,
-        stamp,
-        "no `protectedToolName` was declared; calling an arbitrary tool to see what happens is not something this runner does",
-        { missingInput: "intrusive.protectedToolName" },
-      ),
-    );
-  } else if (!stepUp?.attempted) {
-    findings.push(
-      notEvaluated(STEP_UP, stamp, stepUp?.error ?? "the step-up probe did not run"),
-    );
-  } else {
-    const challenged =
-      stepUp.status === 403 &&
-      /insufficient_scope/.test(stepUp.wwwAuthenticate ?? "");
-    // WHAT THE CONFIG PROMISED, MEASURED. `expectedScopes` is required
-    // alongside `protectedToolName` so the run states what it is asserting,
-    // but nothing compared it, so the requirement bought a config error and no
-    // evidence. Recorded rather than graded: the `scope` parameter is OPTIONAL
-    // on an `insufficient_scope` challenge — Claude selects scopes from
-    // discovery when it is absent — so a server that omits it, or names its
-    // own, is not thereby wrong.
-    const scopeEvidence = summarizeStepUpScopes(
-      stepUp.wwwAuthenticate,
-      mode.expectedScopes,
-    );
-    findings.push(
-      challenged
-        ? satisfied(STEP_UP, stamp, {
-            toolName: stepUp.toolName,
-            wwwAuthenticate: stepUp.wwwAuthenticate,
-            ...scopeEvidence,
-          })
-        : violated(
-            STEP_UP,
-            stamp,
-            `Calling \`${stepUp.toolName}\` without its scopes answered ${stepUp.status}. Claude needs a 403 with \`error="insufficient_scope"\` to know it should re-authorize rather than give up.`,
-            {
-              status: stepUp.status,
-              wwwAuthenticate: stepUp.wwwAuthenticate,
-              ...scopeEvidence,
-            },
-          ),
-    );
-  }
+  findings.push(gradeStepUp(mode, observations.stepUp, stamp));
 
   return findings;
 }

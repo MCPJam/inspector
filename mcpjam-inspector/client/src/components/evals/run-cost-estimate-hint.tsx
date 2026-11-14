@@ -1,3 +1,4 @@
+import { useUnlimitedCredits } from "@/hooks/useCreditBalance";
 import { Info } from "lucide-react";
 import {
   Tooltip,
@@ -42,12 +43,14 @@ export function RunCostEstimateHint({
   side?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";
 }) {
+  const unlimited = useUnlimitedCredits();
   const summary = formatRunCostEstimate(state);
   const detailLines =
     state.status === "ready" && state.estimate
       ? state.estimate.lines.filter((line) => line.units > 0)
       : [];
 
+  if (unlimited) return null;
   return (
     <Tooltip open={state.open} onOpenChange={state.setOpen}>
       <TooltipTrigger asChild>

@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCreditBalance, useOutOfCredits } from "@/hooks/useCreditBalance";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -60,6 +60,9 @@ describe("useCreditBalance", () => {
       hasPendingLimit: false,
       outOfCreditsHit: false,
       outOfCreditsOrganizationId: null,
+      outOfCreditsDismissed: false,
+      outOfCreditsDismissedOrganizationId: null,
+      balanceOutByOrganization: {},
       isOpen: false,
       intent: null,
       organizationId: null,
@@ -91,6 +94,7 @@ describe("useCreditBalance", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {});
     expect(result.current.balance).toEqual({
+      unlimitedCreditsUntil: null,
       platformPaidFallback: false,
       platformFreeBudgetExhausted: false,
       platformFreeBudgetResetAt: null,
@@ -269,5 +273,100 @@ describe("useCreditBalance", () => {
     await waitFor(() => {
       expect(useMCPJamLimitDialogStore.getState().outOfCreditsHit).toBe(false);
     });
+  });
+
+  it("ends a dismissed dialog only when the balance goes from empty to funded", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-1");
+    const balance = (freeDailyCreditsRemaining: number) => ({
+      paidCreditsRemaining: 0,
+      hasPurchaseHistory: false,
+      freeDailyPercentUsed: 100,
+      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyCreditsRemaining,
+      freeDailyCreditsTotal: 20,
+      walletLocked: false,
+    });
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsDismissed: true,
+      outOfCreditsDismissedOrganizationId: "org-1",
+    });
+
+    // Funded from the start (credits held by in-flight work): still dismissed.
+    mocks.queryResult = balance(5);
+    const { rerender } = renderHook(() => useOutOfCredits());
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
+      true
+    );
+
+    mocks.queryResult = balance(0);
+    rerender();
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
+      true
+    );
+
+    mocks.queryResult = balance(20);
+    rerender();
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
+      false
+    );
+  });
+
+  it("ends a dismissal on a fresh view when credits came back while none watched", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-1");
+    // Last read empty by a view that has since unmounted.
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsDismissed: true,
+      outOfCreditsDismissedOrganizationId: "org-1",
+      balanceOutByOrganization: { "org-1": true },
+    });
+
+    renderHook(() => useOutOfCredits());
+
+    expect(useMCPJamLimitDialogStore.getState().outOfCreditsDismissed).toBe(
+      false
+    );
+  });
+
+  it("keeps an organization's dismissal when another, funded one is read", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.workosAuth.user = { id: "user_123" };
+    localStorage.setItem("active-organization-id:user_123", "org-2");
+    useMCPJamLimitDialogStore.setState({
+      outOfCreditsDismissed: true,
+      outOfCreditsDismissedOrganizationId: "org-1",
+      balanceOutByOrganization: { "org-1": true },
+    });
+
+    renderHook(() => useOutOfCredits());
+
+    expect(useMCPJamLimitDialogStore.getState()).toMatchObject({
+      outOfCreditsDismissed: true,
+      balanceOutByOrganization: { "org-1": true, "org-2": false },
+    });
+  });
+});
+
+
+describe("contract credit expiry", () => {
+  it("clears a local limit and expires in an open tab", () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.convexAuth.isLoading = false;
+    mocks.workosAuth.user = { id: "contract-owner" };
+    mocks.workosAuth.isLoading = false;
+    mocks.queryResult = { unlimitedCreditsUntil: now + 1000, paidCreditsRemaining: 0,
+      freeDailyCreditsRemaining: 0, billingModel: "monthly_per_seat" };
+    mocks.useQuery.mockImplementation(() => mocks.queryResult);
+    const { result, unmount } = renderHook(() => useOutOfCredits("contract-org"));
+    expect(result.current).toBe(false);
+    act(() => { vi.advanceTimersByTime(1001); });
+    expect(result.current).toBe(true);
+    unmount();
+    vi.useRealTimers();
   });
 });

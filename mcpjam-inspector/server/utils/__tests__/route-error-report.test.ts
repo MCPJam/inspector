@@ -102,10 +102,7 @@ describe("reportRouteFailure", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
-  it("keeps the Axiom row for a declined failure, with the verdict on it", () => {
-    // Not paging is not the same as not recording. The `origin`/`slug`/
-    // `captured` fields are what make "should this bucket page?" answerable
-    // from data rather than from argument.
+  it("keeps a closed diagnostic row for a declined failure", () => {
     reportRouteFailure("Error fetching resources", deadServerError(), {
       source: "mcp.resources.list",
       hop: "user_server_hop",
@@ -117,16 +114,17 @@ describe("reportRouteFailure", () => {
       [
         expect.objectContaining({
           level: "error",
-          message: "Error fetching resources",
-          source: "mcp.resources.list",
-          hop: "user_server_hop",
+          event: "log.unknown",
           origin: "user_config",
-          slug: "transport/econnrefused",
-          captured: false,
-          serverId: "srv_1",
+          route: "unknown_route",
+          errorClass: "Error",
         }),
       ],
     );
+    const serialized = JSON.stringify(mockIngest.mock.calls);
+    expect(serialized).not.toContain("Error fetching resources");
+    expect(serialized).not.toContain("srv_1");
+    expect(serialized).not.toContain("127.0.0.1");
   });
 
   it("does not page for a declined PRIMITIVE throw", () => {
@@ -151,17 +149,16 @@ describe("reportRouteFailure", () => {
     expect(captureException).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a primitive throw's text in the Axiom row", () => {
-    // Wrapping must not cost the diagnostic. `String(value)` is preserved as
-    // the wrapper's message, so the row reads identically to the raw throw.
+  it("keeps primitive throw diagnostics without forwarding their text", () => {
     reportRouteFailure("Error listing tasks", "server exploded", {
       source: "mcp.tasks.list",
       hop: "user_server_hop",
     });
 
     expect(mockIngest).toHaveBeenCalledWith(expect.anything(), [
-      expect.objectContaining({ error: "server exploded" }),
+      expect.objectContaining({ event: "log.unknown", errorClass: "Error" }),
     ]);
+    expect(JSON.stringify(mockIngest.mock.calls)).not.toContain("server exploded");
   });
 
   it("survives a null rejection", () => {
@@ -463,28 +460,29 @@ describe("reportRouteFailure — a surface's capture policy", () => {
     ).toBe("warning");
   });
 
-  it("leaves the origin, the hop and the Axiom row exactly as they were", () => {
+  it("keeps the same safe diagnostic row across capture policies", () => {
     const withPolicy = reportRouteFailure("agent failed", deadServerError(), {
       source: "agent.test",
       hop: "user_server_hop",
       capture: ALWAYS,
     });
-    const rowWithPolicy = axiomRows().find((r) => r.source === "agent.test");
+    const rowWithPolicy = axiomRows()[0];
     mockIngest.mockClear();
     const without = reportRouteFailure("agent failed", deadServerError(), {
       source: "agent.test",
       hop: "user_server_hop",
     });
-    const rowWithout = axiomRows().find((r) => r.source === "agent.test");
+    const rowWithout = axiomRows()[0];
 
     expect(withPolicy.origin).toBe(without.origin);
     expect(withPolicy.normalized.slug).toBe(without.normalized.slug);
     expect(rowWithPolicy?.origin).toBe(rowWithout?.origin);
-    expect(rowWithPolicy?.hop).toBe("user_server_hop");
-    expect(rowWithout?.hop).toBe("user_server_hop");
-    // Only the capture outcome differs.
-    expect(rowWithPolicy?.captured).toBe(true);
-    expect(rowWithout?.captured).toBe(false);
+    expect(rowWithPolicy?.event).toBe("log.unknown");
+    expect(rowWithPolicy?.fingerprint).toBe(rowWithout?.fingerprint);
+    expect(rowWithPolicy).not.toHaveProperty("hop");
+    expect(rowWithPolicy).not.toHaveProperty("captured");
+    expect(withPolicy.captured).toBe(true);
+    expect(without.captured).toBe(false);
   });
 
   it("reports the outcome explicitly, false for a decline", () => {

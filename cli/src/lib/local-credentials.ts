@@ -3,9 +3,15 @@ import {
   type McpjamInferenceConnection,
   type SuiteFileInferenceOptions,
 } from "@mcpjam/sdk";
+import { trimTrailingSlashes } from "@mcpjam/sdk/internal/deployment";
 import { isPlatformApiError, resolveProject } from "@mcpjam/sdk/platform";
 import { resolveCloudProjectArgs } from "./cloud-scope.js";
-import { CliError, usageError } from "./output.js";
+import {
+  CliError,
+  deploymentCliError,
+  deploymentRefusalOf,
+  usageError,
+} from "./output.js";
 import { resolvePlatformCredential } from "./platform-auth.js";
 import {
   buildPlatformClient,
@@ -13,14 +19,8 @@ import {
 } from "./platform-client.js";
 
 /**
- * Credentials for `mcpjam test`: explicit provider keys for BYOK inference,
- * and a LAZY resolver for MCPJam-hosted inference.
- *
- * The SDK runner never reads the environment; this module reads the standard
- * provider variables explicitly, once, and hands the SDK plain values. The
- * platform resolver runs only when a selected case actually needs the MCPJam
- * rail, so a BYOK-only run never touches the login store, never lists
- * projects and never sends a platform request.
+ * Provider keys pay for inference. Every eval also resolves MCPJam identity,
+ * including BYOK runs whose results remain local.
  */
 
 /** Standard provider key variables, per SDK provider id. First set wins. */
@@ -50,18 +50,6 @@ export function readProviderKeys(
     }
   }
   return keys;
-}
-
-/**
- * `value` without its trailing slashes. `replace(/\/+$/, "")` is the shorter
- * spelling, but CodeQL rates it `js/polynomial-redos` (high): on input shaped
- * like `"a" + "/".repeat(n) + "b"` the engine retries `\/+$` from every
- * position. Same behaviour, linear.
- */
-function trimTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === "/") end -= 1;
-  return value.slice(0, end);
 }
 
 function baseUrlFromEnv(
@@ -102,16 +90,6 @@ export function readProviderBaseUrls(
     ...(anthropic ? { anthropic } : {}),
     ...(ollama ? { ollama } : {}),
   };
-}
-
-/**
- * The MCPJam app base for an API base URL — `/api/v1` stripped EXACTLY once,
- * because the lease client appends it again. A deployment under a path prefix
- * keeps its prefix.
- */
-export function appBaseFromApiBase(apiBaseUrl: string): string {
-  const trimmed = trimTrailingSlashes(apiBaseUrl);
-  return trimmed.replace(/\/api\/v1$/, "");
 }
 
 export type McpjamResolverOptions = {
@@ -167,6 +145,11 @@ export function createMcpjamConnectionResolver(
         message
       );
     };
+    const selectedKey = options.apiKey ?? deps.env.MCPJAM_API_KEY;
+    if (selectedKey !== undefined && !selectedKey.trim().startsWith("sk_")) {
+      throw new SuiteFileRunError({ code: "CREDENTIALS_REJECTED", phase: "setup", category: "credentials",
+        message: "This MCPJam API key is invalid or retired. Create an sk_ key or run `mcpjam cloud login`." });
+    }
     const credentialDeps = {
       env: deps.env,
       warn,
@@ -211,6 +194,8 @@ export function createMcpjamConnectionResolver(
       );
     } catch (error) {
       if (error instanceof CliError) throw refusalFromCliError(error);
+      const refusal = deploymentRefusalOf(error);
+      if (refusal) throw refusalFromCliError(deploymentCliError(refusal));
       if (isPlatformApiError(error)) {
         const auth =
           error.status === 401 ||
@@ -242,7 +227,7 @@ export function createMcpjamConnectionResolver(
       });
     }
     return {
-      baseUrl: appBaseFromApiBase(built.baseUrl),
+      baseUrl: built.appBaseUrl,
       projectId: resolution.project.id,
       getAuth: () => credential.getAuth(),
       ...(headers ? { headers } : {}),

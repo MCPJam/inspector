@@ -66,7 +66,7 @@ vi.mock("../../../utils/harness/registry.js", () => ({
     supportsMcpToolApproval: false,
     // The delivery mode under test: no `.mcp.json`, so MCPJam builds the
     // model-facing MCP tools itself instead of consuming `tools`.
-    mcpDelivery: "host-executed",
+    mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     // The dispatch reads the evidence-table verdict; this mock's model is one
     // the (mocked) runtime runs.
@@ -88,7 +88,6 @@ vi.mock("../../../utils/harness/e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../../../utils/harness/runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));

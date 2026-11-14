@@ -39,6 +39,7 @@ import {
   isPlainRecord,
   parseHttpStatus,
   parseHttpUrl,
+  projectAuthChallenge,
   projectScopeChallenge,
 } from "./hosted-upstream-projection.js";
 
@@ -88,8 +89,7 @@ export function projectHostedAuthoredFailureMessage(
         : undefined;
     return (
       `The authorization server for ${serverName} rejected MCPJam's access request` +
-      `${status !== undefined ? ` (HTTP ${status})` : ""} — check the server's XAA client` +
-      ` credentials and issuer in its auth settings.`
+      `${status !== undefined ? ` (HTTP ${status})` : ""}. Check the server's auth settings.`
     );
   }
   return error.message;
@@ -111,6 +111,11 @@ export function projectHostedAuthoredFailureDetails(
     const challenge = projectScopeChallenge(projected.insufficientScope);
     if (challenge) projected.insufficientScope = challenge;
     else delete projected.insufficientScope;
+  }
+  if ("authChallenge" in projected) {
+    const challenge = projectAuthChallenge(projected.authChallenge);
+    if (challenge) projected.authChallenge = challenge;
+    else delete projected.authChallenge;
   }
   return projected;
 }

@@ -21,6 +21,7 @@ import { tunnelManager } from "../services/tunnel-manager.js";
 import "../types/hono.js";
 import type { Context, Next } from "hono";
 import { validateToken } from "../services/session-token.js";
+import { scrubCredentialsInText } from "../../shared/credential-urls.js";
 
 /**
  * Routes that don't require authentication.
@@ -117,28 +118,50 @@ const UNPROTECTED_PREFIXES = [
   // `/api/internal/chat-stage/derivation-requested`.
   "/api/internal/chat-stage/",
   "/api/internal/agent-turns/",
+  // MCP Events. The callers are the inbox Worker (`/enqueue`, authenticated
+  // by its own `x-events-inbox-token`, constant-time, fail-closed) and the
+  // backend (`/dispatch`, `internalServiceAuthMiddleware()`); neither has a
+  // browser session. Authorization is NOT waived — the router's own gates
+  // answer instead. Trailing slash for the same `startsWith` reason as above.
+  "/api/internal/events/",
+  // The LOCAL development webhook receiver (`routes/mcp/events.ts`): an MCP
+  // server POSTs events here and cannot present a session token. Every
+  // delivery is Standard-Webhooks signature-verified against the slot's
+  // secret before anything is journalled, and the route exists only in local
+  // mode (`/api/mcp/*` is not mounted hosted). Only the hooks sub-path is
+  // exempt — every other `/api/mcp/events/*` route keeps session auth.
+  "/api/mcp/events/hooks/",
+  // Backend→Inspector hourly hosted-browser check. Same caller and same guard:
+  // the router mounts `internalServiceAuthMiddleware()`, so this carve-out
+  // only lets the backend's token reach it. Trailing slash for the
+  // `startsWith` reason above; the router's only path is
+  // `/api/internal/hosted-browser/synthetic`.
+  "/api/internal/hosted-browser/",
 ];
 
 /**
- * Scrub sensitive tokens from URLs for safe logging.
- * Replaces _token (session token), k (tunnel bearer secret), t (the retired
- * harness `?t=` proxy-token fallback), and token (the computer terminal/
- * upload token — routes/web/computer-terminal.ts takes it from the WS
- * subprotocol only, never `?token=`, but this is scrubbed defensively in
- * case a stale client, a proxy, or a future regression puts one in the URL)
- * query parameter values with [REDACTED].
+ * Scrub credentials from a request line before it is logged (the hono/logger
+ * print function in server/index.ts and server/app.ts hands each
+ * `<-- GET /path?query` / `--> GET /path?query 200 3ms` line through here).
+ *
+ * Delegates to the credential registry (`shared/credential-urls.ts`) rather
+ * than keeping its own list. The list this used to keep — `_token` (session
+ * token), `k` (tunnel bearer secret), `t` (the retired harness proxy token)
+ * and `token` (the computer terminal token, scrubbed defensively) — is a
+ * subset of the registry's secret query keys, and it missed the rest: an
+ * OAuth callback's `?code=`/`?state=`, presigned-URL signatures, and every
+ * credential that sits in the PATH (`/results/<token>`,
+ * `/api/web/score/runs/<token>`, …), none of which has a query key at all.
+ * Secret values become the registry's placeholder, `[redacted]`.
  */
 export function scrubTokenFromUrl(url: string): string {
-  return url
-    .replace(/([?&])_token=[^&]*/g, "$1_token=[REDACTED]")
-    .replace(/([?&])k=[^&]*/g, "$1k=[REDACTED]")
-    .replace(/([?&])t=[^&]*/g, "$1t=[REDACTED]")
-    .replace(/([?&])token=[^&]*/g, "$1token=[REDACTED]");
+  return scrubCredentialsInText(url);
 }
 
 // Routes that typically use query param auth (SSE endpoints)
 const SSE_ROUTES = [
   "/api/mcp/servers/rpc/stream",
+  "/api/mcp/events/stream",
   "/api/mcp/elicitation/stream",
   "/api/mcp/adapter-http/",
   "/api/mcp/manager-http/",

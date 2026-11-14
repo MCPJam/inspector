@@ -6,9 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * local; the hosted routes word everything else as the server's (MJ-001).
  */
 
-const { renderMock, disposeMock } = vi.hoisted(() => ({
+const { renderMock, disposeMock, harnessOptions } = vi.hoisted(() => ({
   renderMock: vi.fn(),
   disposeMock: vi.fn(),
+  harnessOptions: [] as McpAppBrowserHarnessOptions[],
 }));
 
 vi.mock("../mcp-app-render-observation", () => ({
@@ -19,10 +20,14 @@ vi.mock("../mcp-app-render-observation", () => ({
 vi.mock("../mcp-app-browser-harness", () => ({
   ChromiumNotInstalledError: class ChromiumNotInstalledError extends Error {},
   McpAppBrowserHarness: class {
+    constructor(options: McpAppBrowserHarnessOptions) {
+      harnessOptions.push(options);
+    }
     dispose = disposeMock;
   },
 }));
 
+import type { McpAppBrowserHarnessOptions } from "../mcp-app-browser-harness";
 import { renderWidgetForRequest } from "../widget-render-core.js";
 import { isLocalRouteFailure } from "../hosted-route-failure.js";
 
@@ -37,10 +42,14 @@ class StreamableHTTPError extends Error {
   }
 }
 
-function manager(executeTool = vi.fn().mockResolvedValue({ content: [] })) {
+function manager(
+  executeTool = vi.fn().mockResolvedValue({ content: [] }),
+  readResource = vi.fn(),
+) {
   return {
     listTools: vi.fn().mockResolvedValue({ tools: [{ name: "show" }] }),
     executeTool,
+    readResource,
   } as never;
 }
 
@@ -66,7 +75,20 @@ function render(mcpClientManager = manager()) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  harnessOptions.length = 0;
   disposeMock.mockResolvedValue(undefined);
+});
+
+describe("renderWidgetForRequest harness", () => {
+  // The harness advertises serverResources by default (PLB-406).
+  it("reads resources through the manager that rendered the widget", async () => {
+    renderMock.mockResolvedValue({ toolCallId: "t1", status: "rendered" });
+    const readResource = vi.fn().mockResolvedValue({ contents: [] });
+    await render(manager(undefined, readResource));
+    const params = { uri: "box://fixture/document" };
+    await harnessOptions[0].readResource("s1", params);
+    expect(readResource).toHaveBeenCalledWith("s1", params);
+  });
 });
 
 describe("renderWidgetForRequest failures", () => {

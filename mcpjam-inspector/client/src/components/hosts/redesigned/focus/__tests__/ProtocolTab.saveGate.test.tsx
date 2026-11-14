@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   emptyHostConfigInputV2,
@@ -23,19 +23,24 @@ vi.mock("@/components/ui/json-editor", () => ({
   JsonEditor: ({
     rawContent,
     onRawChange,
+    error,
   }: {
     rawContent: string;
     onRawChange: (next: string) => void;
+    error?: string | null;
   }) => (
+    <>
+    {error && <p role="alert">{error}</p>}
     <textarea
       aria-label="json"
       value={rawContent}
       onChange={(e) => onRawChange(e.target.value)}
     />
+    </>
   ),
 }));
 
-import { ProtocolTab } from "../ProtocolTab";
+import { ProtocolTab, protocolToJson, applyJsonToDraft } from "../ProtocolTab";
 
 // Mirror HostBuilderViewRedesigned's exact save gate:
 //   canSave = isDirty && !isSaving && !hasBlockingErrors(attention)
@@ -161,5 +166,45 @@ describe("ProtocolTab arms the Save gate on edit", () => {
     await user.click(screen.getByText(/Latest \(2026-07-28\)/i));
 
     expect(screen.getByTestId("dirty").textContent).toBe("dirty");
+  });
+});
+
+describe("MCP profile extension object validation", () => {
+  const extensions = {
+    "mcpjam/plugin-local-form-files": { version: 1, serverIds: ["saved-server"] },
+    "existing/extension": { keep: true },
+  };
+  function initialConfig() {
+    const initial = realisticHost();
+    initial.mcpProfile = {
+      ...initial.mcpProfile,
+      profileVersion: 1,
+      initialize: { clientInfo: { name: "fixture", version: "1" }, supportedProtocolVersions: ["2025-11-25", "2026-07-28"] },
+      extensions,
+    };
+    return initial;
+  }
+  it.each([null, [], false, "invalid"])("preserves the saved extensions when the JSON field is %j", (invalid) => {
+    const initial = initialConfig();
+    const parsed = { ...protocolToJson(initial), extensions: invalid };
+    expect(applyJsonToDraft(parsed, initial)).toBeNull();
+    render(<Harness initial={initial} />);
+    fireEvent.change(screen.getByLabelText("json"), { target: { value: JSON.stringify(parsed) } });
+    expect(screen.getByRole("alert").textContent).toContain("extensions must be a JSON object");
+    expect(screen.getByTestId("dirty").textContent).toBe("clean");
+    expect(initial.mcpProfile?.extensions).toEqual(extensions);
+    fireEvent.change(screen.getByLabelText("json"), { target: { value: JSON.stringify(protocolToJson(initial)) } });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+  it("round-trips file extension settings without changing the other profile fields", () => {
+    const initial = initialConfig();
+    const nextExtensions = { ...extensions, "mcpjam/plugin-file-targets": { version: 1, targets: [] } };
+    const next = applyJsonToDraft({ ...protocolToJson(initial), extensions: nextExtensions }, initial);
+    expect(next?.mcpProfile).toEqual({ ...initial.mcpProfile, extensions: nextExtensions });
+    expect(protocolToJson(next!).extensions).toEqual(nextExtensions);
+    render(<Harness initial={initial} />);
+    fireEvent.change(screen.getByLabelText("json"), { target: { value: JSON.stringify(protocolToJson(next!)) } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("cansave").textContent).toBe("cansave");
   });
 });

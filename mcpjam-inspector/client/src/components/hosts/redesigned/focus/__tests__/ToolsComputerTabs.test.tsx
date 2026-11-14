@@ -1,7 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const flags = vi.hoisted(() => ({ hostedBrowser: true }));
+const toolNotes = vi.hoisted(() => ({
+  current: {} as Record<string, string>,
+  projectId: undefined as string | null | undefined,
+}));
 import { fireEvent, render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+
+// The organization AI key policy's notes; the hook reads Convex.
+vi.mock("@/hooks/use-built-in-tool-notes", () => ({
+  useBuiltInToolNotes: (projectId: string | null | undefined) => {
+    toolNotes.projectId = projectId;
+    return toolNotes.current;
+  },
+}));
 
 // Catalog with one GA tool (Web Search) plus a computer-backed tool (Bash),
 // so we can exercise both the plain row and the requiresComputer gating.
@@ -165,6 +177,31 @@ describe("ToolsTab", () => {
     expect(screen.getByRole("switch", { name: "Bash" })).toBeInTheDocument();
     expect(screen.queryByText(/Search the web via Exa/i)).toBeNull();
     expect(screen.queryByText("Attached")).toBeNull();
+  });
+
+  it("shows the project's web search note without blocking the switch", () => {
+    toolNotes.current = {
+      web_search:
+        "Off while your organization requires its own AI keys. Web search can't run on them yet.",
+    };
+    try {
+      render(
+        <ToolsTab
+          projectId="project-1"
+          draft={emptyHostConfigInputV2()}
+          onDraftChange={vi.fn()}
+        />,
+      );
+      expect(toolNotes.projectId).toBe("project-1");
+      expect(
+        screen.getByTestId("built-in-tool-note-web_search"),
+      ).toHaveTextContent("Web search can't run on them yet.");
+      expect(
+        screen.getByRole("switch", { name: "Web Search" }),
+      ).not.toBeDisabled();
+    } finally {
+      toolNotes.current = {};
+    }
   });
 
   it("points the Bash block reason at the Computer tab when no computer is attached", () => {

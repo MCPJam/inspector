@@ -11,10 +11,21 @@
  * failure, etc. — so logging them as warnings to Sentry conflates user-side
  * connectivity with backend issues. Callers should route these to a debug
  * log instead while still surfacing backend HTTP/logical errors as warnings.
+ *
+ * Also matches a socket dropped after the headers arrived: reading the body
+ * then rejects `TypeError: terminated` with the socket error as its cause.
+ * Only with that cause — a bare `terminated` says nothing about the network.
  */
 export function isFetchConnectionFailure(error: unknown): boolean {
-  return error instanceof TypeError && /fetch failed/i.test(error.message);
+  if (!(error instanceof TypeError)) return false;
+  if (/fetch failed/i.test(error.message)) return true;
+  return (
+    error.message === "terminated" &&
+    SOCKET_ERROR_CODES.has(getFetchErrorCause(error) ?? "")
+  );
 }
+
+const SOCKET_ERROR_CODES = new Set(["UND_ERR_SOCKET", "ECONNRESET"]);
 
 /**
  * Pull the underlying network error code (e.g. `ECONNREFUSED`, `ENOTFOUND`)

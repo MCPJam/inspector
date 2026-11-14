@@ -13,9 +13,7 @@ import {
 } from "./chat-input/prompts/mentions-popover";
 import { PluginServerIcon } from "./chat-input/plugin-server-icon";
 import {
-  ContextAttachmentChip,
-  ContextGroupChip,
-  groupContextAttachments,
+  ContextAttachmentList,
   type ContextAttachment,
 } from "./chat-input/attachments/context-attachment-chip";
 import {
@@ -62,6 +60,7 @@ import {
   getFileInputAccept,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
+  DisabledReasonTooltip,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -318,7 +317,10 @@ interface ChatInputProps {
   stop: () => void;
   disabled?: boolean;
   submitDisabled?: boolean;
+  /** Why Send is off, shown in its tooltip (an out-of-credits model). */
+  submitDisabledReason?: string;
   isLoading?: boolean;
+  canStop?: boolean;
   placeholder?: string;
   className?: string;
   currentModel: ModelDefinition;
@@ -387,11 +389,10 @@ interface ChatInputProps {
   fileAttachments?: FileAttachment[];
   /** Callback when file attachments change */
   onChangeFileAttachments?: (files: FileAttachment[]) => void;
-  /** Tool approval toggle */
   requireToolApproval?: boolean;
   onRequireToolApprovalChange?: (enabled: boolean) => void;
-  /** Shared chat-only mode */
   minimalMode?: boolean;
+  hideExecutionControls?: boolean;
   /** Allow the context popover while the surrounding surface is minimal. */
   showContextPopover?: boolean;
   /** Main chat: show the Claude/ChatGPT host-style selector in the "+" menu. */
@@ -451,6 +452,12 @@ interface ChatInputProps {
    */
   onManageOrgProviders?: () => void;
   /**
+   * The organization requires its own provider keys for AI features; the
+   * model picker then offers only organization models and, when none can be
+   * picked, says how to get one.
+   */
+  requireOrgKeys?: boolean;
+  /**
    * Environment mode (Project Environments): the environment's resolved
    * servers, id-first from the preview. When present (even empty) this
    * REPLACES the ad-hoc rows above in the "+" menu — environment servers are
@@ -494,7 +501,9 @@ export function ChatInput({
   stop,
   disabled = false,
   submitDisabled = false,
+  submitDisabledReason,
   isLoading = false,
+  canStop = false,
   placeholder = "Type your message...",
   className,
   currentModel,
@@ -535,6 +544,7 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
+  hideExecutionControls = false,
   showContextPopover,
   showHostStyleSelector = false,
   hostStyle,
@@ -552,6 +562,7 @@ export function ChatInput({
   scenarioAttachableServers,
   onAttachScenarioServer,
   onManageOrgProviders,
+  requireOrgKeys,
   environmentServers,
   onEnvironmentServerToggle,
   environmentServersOverridden = false,
@@ -1531,6 +1542,7 @@ export function ChatInput({
         disabled ||
         submitDisabled ||
         isLoading ||
+        canStop ||
         // While recording/transcribing the textarea shows a placeholder but
         // `value` still holds the draft — don't let Enter submit it behind the
         // voice UI (and leave the mic open).
@@ -1572,20 +1584,7 @@ export function ChatInput({
               </Button>
             </span>
           )}
-          {groupContextAttachments(contextAttachments).map((entry) =>
-            entry.kind === "group" ? (
-              <ContextGroupChip
-                key={`group:${entry.group.id}`}
-                group={entry.group}
-                items={entry.items}
-              />
-            ) : (
-              <ContextAttachmentChip
-                key={entry.attachment.id}
-                {...entry.attachment}
-              />
-            ),
-          )}
+          <ContextAttachmentList attachments={contextAttachments} />
           {mcpPromptResults.map((mcpPromptResult, index) => (
             <MCPPromptResultCard
               key={`prompt-${index}`}
@@ -1698,7 +1697,10 @@ export function ChatInput({
         ref={formRef}
         hidden={formCardActive}
         className={cn("w-full", className)}
-        onSubmit={onSubmit}
+        onSubmit={(event) => {
+          if (canStop) { event.preventDefault(); return; }
+          onSubmit(event);
+        }}
       >
         <div
           ref={containerRef}
@@ -2179,7 +2181,7 @@ export function ChatInput({
                         </button>
                       )}
 
-                      <button
+                      {!hideExecutionControls && <button
                         type="button"
                         className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
                         onClick={() => {
@@ -2189,9 +2191,9 @@ export function ChatInput({
                       >
                         <Settings2 className="h-4 w-4 text-muted-foreground" />
                         System Prompt & Temperature
-                      </button>
+                      </button>}
 
-                      {onRequireToolApprovalChange && (
+                      {!hideExecutionControls && onRequireToolApprovalChange && (
                         <div className="rounded-md px-2 py-2 hover:bg-muted/60">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 text-sm">
@@ -2240,7 +2242,7 @@ export function ChatInput({
               {!minimalMode && executionTarget ? (
                 <ExecutionTargetChip {...executionTarget} />
               ) : null}
-              {!minimalMode && (
+              {!minimalMode && !hideExecutionControls && (
                 <ModelSelector
                   platformPaidFallback={creditBalance?.platformPaidFallback}
                   currentModel={currentModel}
@@ -2256,6 +2258,8 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  onAddProvider={null}
+                  requireOrgKeys={requireOrgKeys}
                   {...modelEfforts}
                   // Servers attached means the turn can call tools.
                   workload={
@@ -2263,7 +2267,7 @@ export function ChatInput({
                   }
                 />
               )}
-              {!minimalMode && !multiModelEnabled && onReasoningEffortChange ? (
+              {!minimalMode && !hideExecutionControls && !multiModelEnabled && onReasoningEffortChange ? (
                 <EffortControl
                   variant="inline"
                   options={reasoningEffortLevels ?? []}
@@ -2424,7 +2428,7 @@ export function ChatInput({
                 </Tooltip>
               ) : (
                 voiceInputState !== "recording" &&
-                (isLoading ? (
+                (isLoading || canStop ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -2441,32 +2445,32 @@ export function ChatInput({
                     <TooltipContent>Stop generating</TooltipContent>
                   </Tooltip>
                 ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="submit"
-                        size="icon"
-                        aria-label="Send message"
-                        className={cn(
-                          "size-[34px] rounded-full transition-colors shadow-none",
-                          (value.trim() || hasResults) &&
-                            !disabled &&
-                            !submitDisabled
-                            ? activeSubmitButtonClasses
-                            : inactiveSubmitButtonClasses,
-                          pulseSubmit && "animate-onboarding-pulse",
-                        )}
-                        disabled={
-                          (!value.trim() && !hasResults) ||
-                          disabled ||
-                          submitDisabled
-                        }
-                      >
-                        <ArrowUp size={16} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Send message</TooltipContent>
-                  </Tooltip>
+                  <DisabledReasonTooltip
+                    reason={submitDisabledReason}
+                    fallback="Send message"
+                  >
+                    <Button
+                      type="submit"
+                      size="icon"
+                      aria-label="Send message"
+                      className={cn(
+                        "size-[34px] rounded-full transition-colors shadow-none",
+                        (value.trim() || hasResults) &&
+                          !disabled &&
+                          !submitDisabled
+                          ? activeSubmitButtonClasses
+                          : inactiveSubmitButtonClasses,
+                        pulseSubmit && "animate-onboarding-pulse",
+                      )}
+                      disabled={
+                        (!value.trim() && !hasResults) ||
+                        disabled ||
+                        submitDisabled
+                      }
+                    >
+                      <ArrowUp size={16} />
+                    </Button>
+                  </DisabledReasonTooltip>
                 ))
               )}
             </div>
@@ -2485,7 +2489,7 @@ export function ChatInput({
         />
       )}
 
-      {!minimalMode && (
+      {!minimalMode && !hideExecutionControls && (
         <SystemPromptSelector
           systemPrompt={systemPrompt || DEFAULT_SYSTEM_PROMPT}
           onSystemPromptChange={onSystemPromptChange}

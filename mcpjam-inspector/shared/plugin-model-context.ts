@@ -5,15 +5,72 @@ import {
   pluginResourceLink,
   pluginResourceLinkModelText,
 } from "./plugin-resource-link.js";
+import type { PluginContextExcess } from "./plugin-diagnostics.js";
+import {
+  MODEL_CONTEXT_POLICY_CEILINGS,
+  MODEL_CONTEXT_POLICY_DEFAULTS,
+  type ResolvedModelContextPolicy,
+} from "@mcpjam/sdk/host-config/internal";
 
-export const PLUGIN_CONTEXT_MAX_BYTES = 256 * 1024;
-export const PLUGIN_CONTEXT_TURN_MAX_BYTES = 1024 * 1024;
 const byteSize = (value: unknown) =>
   new TextEncoder().encode(JSON.stringify(value)).length;
-export class PluginModelContextError extends Error {}
+/**
+ * The per-update budgets a parse checks. A new update is admitted against
+ * the client's policy; context already admitted (a restore, a fork, a
+ * snapshot, a turn) is re-read against `MODEL_CONTEXT_POLICY_CEILINGS`, so a
+ * lowered policy or a large stored context never breaks an App.
+ */
+export type PluginContextLimits = Pick<
+  ResolvedModelContextPolicy,
+  "updateMaxBytes" | "maxBlocks"
+> & {
+  /** Params-level `_meta`, which `updateMaxBytes` doesn't count. */
+  metaMaxBytes?: number;
+};
+/** The `_meta` a new update may carry, whatever the client's policy. */
+export const PLUGIN_CONTEXT_META_MAX_BYTES = 16 * 1024;
+/**
+ * UTF-8 bytes of an update's model-visible half, `{ content,
+ * structuredContent }`: what a budget counts. Params-level `_meta` is not
+ * part of it.
+ */
+export function pluginModelContextBytes(params: {
+  content?: unknown;
+  structuredContent?: unknown;
+}): number {
+  // A structured-only update is stored with `content: []`, and counts the
+  // same before and after.
+  const empty = Array.isArray(params.content) && !params.content.length;
+  return byteSize({
+    content: empty ? undefined : params.content,
+    structuredContent: params.structuredContent,
+  });
+}
+/** ChatGPT's own JSON-RPC -32000 message for a context update it did not
+ * store. Apps get the same text here as there, so it stays verbatim. */
+export const PLUGIN_CONTEXT_NOT_PERSISTED_MESSAGE =
+  "The host could not persist the model context update";
+/** `message` is the refusal code; `excess` is set when a budget was crossed. */
+export class PluginModelContextError extends Error {
+  constructor(
+    code: string,
+    readonly excess?: PluginContextExcess,
+  ) {
+    super(code);
+  }
+}
 
+/**
+ * The shape of any update MCPJam may hold. The context routes accept it as
+ * is: admission (`parsePluginModelContext` with the client's limits) decides
+ * the budgets, so an update over one gets its typed refusal, never a schema
+ * error the App can't recover from.
+ */
 export const pluginModelContextParamsSchema = z.strictObject({
-  content: z.array(ContentBlockSchema).max(64).optional(),
+  content: z
+    .array(ContentBlockSchema)
+    .max(MODEL_CONTEXT_POLICY_CEILINGS.maxBlocks)
+    .optional(),
   structuredContent: z.record(z.string(), z.unknown()).optional(),
   _meta: z.record(z.string(), z.unknown()).optional(),
 });
@@ -28,23 +85,58 @@ export type PluginModelContext = {
   structuredContent?: Record<string, unknown>;
 };
 
+const contextCount = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
 export const pluginContextSnapshotSchema = z
   .strictObject({
     revision: z.number().int().nonnegative(),
-    sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    sequence: contextCount,
     state: z
       .strictObject({
         updateId: z.string().min(1).max(128),
-        content: z.array(ContentBlockSchema).max(64),
+        content: z
+          .array(ContentBlockSchema)
+          .max(MODEL_CONTEXT_POLICY_CEILINGS.maxBlocks),
         structuredContent: z.record(z.string(), z.unknown()).optional(),
       })
       .nullable(),
+    // Removal state, omitted while it is the default (not held, nothing
+    // removed or attached yet). `held`: the person removed this App's context
+    // and its own updates are refused until they use the App again.
+    // `cursor` counts removals and user attaches; `removedAt` and
+    // `attachedAt` are its value at the last of each, so a remove-all retry
+    // can tell what happened after the state it was based on.
+    held: z.literal(true).optional(),
+    cursor: contextCount.optional(),
+    removedAt: contextCount.optional(),
+    attachedAt: contextCount.optional(),
   })
+  .refine((value) => value.sequence <= value.revision, "Invalid context cursor")
   .refine(
-    (value) => value.sequence <= value.revision,
-    "Invalid context cursor",
+    (value) =>
+      (value.removedAt ?? 0) <= (value.cursor ?? 0) &&
+      (value.attachedAt ?? 0) <= (value.cursor ?? 0),
+    "Invalid context removal cursor",
   );
 export type PluginContextSnapshot = z.infer<typeof pluginContextSnapshotSchema>;
+
+/** What a remove-all did. Only `applied` changed anything:
+ * - `applied`: this operation cleared the context and set the hold.
+ * - `in-effect`: a removal made after the request's basis still holds.
+ * - `superseded`: that removal was applied, then the person attached again;
+ *   their newer context is kept.
+ * - `stale`: the removal never landed and the person attached after its
+ *   basis; nothing was erased, so they must review and remove again. */
+export const pluginContextRemoveAllResultSchema = z.strictObject({
+  outcome: z.enum(["applied", "in-effect", "superseded", "stale"]),
+  snapshot: pluginContextSnapshotSchema,
+});
+export type PluginContextRemoveAllResult = z.infer<
+  typeof pluginContextRemoveAllResultSchema
+>;
 
 type InlinePluginContent =
   | { type: "text"; text: string }
@@ -52,14 +144,21 @@ type InlinePluginContent =
   | { type: "resource_link"; reference: ReturnType<typeof pluginResourceLink> };
 
 /** The official text/blob union strips the other representation; check it first. */
-export function assertPluginResourceRepresentations(value: unknown): void {
+export function assertPluginResourceRepresentations(
+  value: unknown,
+  maxBlocks: number,
+): void {
   const content =
     value && typeof value === "object" && "content" in value
       ? value.content
       : undefined;
   if (!Array.isArray(content)) return;
-  if (content.length > 64)
-    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE");
+  if (content.length > maxBlocks)
+    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE", {
+      budget: "maxBlocks",
+      actual: content.length,
+      allowed: maxBlocks,
+    });
   for (const block of content) {
     if (block?.type !== "resource") continue;
     const resource = block.resource;
@@ -160,39 +259,66 @@ export function pluginContextAttachments(snapshot: PluginContextSnapshot) {
 /** Supplied text/image bytes and inert link data; unsupported binary/audio refuses. */
 export function parsePluginModelContext(
   value: unknown,
+  limits: PluginContextLimits,
 ): PluginModelContextParams {
-  assertPluginResourceRepresentations(value);
+  assertPluginResourceRepresentations(value, limits.maxBlocks);
   const params = pluginModelContextParamsSchema.parse(value);
-  if (byteSize(params) > PLUGIN_CONTEXT_MAX_BYTES)
-    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE");
+  const size = pluginModelContextBytes(params);
+  if (size > limits.updateMaxBytes)
+    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE", {
+      budget: "updateMaxBytes",
+      actual: size,
+      allowed: limits.updateMaxBytes,
+    });
+  const meta = params._meta ? byteSize(params._meta) : 0;
+  const metaMax = limits.metaMaxBytes ?? PLUGIN_CONTEXT_META_MAX_BYTES;
+  if (meta > metaMax)
+    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE", {
+      budget: "metaMaxBytes",
+      actual: meta,
+      allowed: metaMax,
+    });
   for (const block of params.content ?? []) {
     pluginInlineContentBlock(block);
   }
   return structuredClone(params);
 }
 
-/** Per-turn, untrusted app state. Presentation/request metadata never reaches the model. */
+/**
+ * Per-turn, untrusted app state. Presentation/request metadata never reaches
+ * the model. `turnMaxBytes` is the chat client's budget over every App in the
+ * turn; eval turns keep MCPJam's default.
+ */
 export function pluginModelContextMessage(
   contexts: readonly PluginModelContext[],
+  turnMaxBytes = MODEL_CONTEXT_POLICY_DEFAULTS.turnMaxBytes,
 ): ModelMessage | undefined {
   if (!contexts.length) return;
-  if (
-    byteSize(
-      contexts.map(({ content, structuredContent }) => ({
-        content,
-        structuredContent,
-      })),
-    ) > PLUGIN_CONTEXT_TURN_MAX_BYTES
-  )
-    throw new PluginModelContextError("PLUGIN_CONTEXT_TURN_TOO_LARGE");
+  // What each App's update was admitted at, so one App at `updateMaxBytes`
+  // fits any turn budget at least that large.
+  const turnSize = contexts.reduce(
+    (sum, context) => sum + pluginModelContextBytes(context),
+    0,
+  );
+  if (turnSize > turnMaxBytes)
+    throw new PluginModelContextError("PLUGIN_CONTEXT_TURN_TOO_LARGE", {
+      budget: "turnMaxBytes",
+      actual: turnSize,
+      allowed: turnMaxBytes,
+    });
   const parts: UserContent = [];
   for (const context of contexts) {
-    const params = parsePluginModelContext({
-      content: context.content,
-      ...(context.structuredContent
-        ? { structuredContent: context.structuredContent }
-        : {}),
-    });
+    // Each context was admitted when it was stored; the turn budget above
+    // is what this turn decides.
+    const params = parsePluginModelContext(
+      {
+        content: context.content,
+        ...(context.structuredContent
+          ? { structuredContent: context.structuredContent }
+          : {}),
+      },
+      MODEL_CONTEXT_POLICY_CEILINGS,
+    );
     if (!(params.content?.length || params.structuredContent)) continue;
     parts.push({
       type: "text",

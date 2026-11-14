@@ -6,7 +6,7 @@
  * `runConformance`. Recovery for a dead owner is heartbeat + sweep.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { createConvexClientMock, runConformanceMock } = vi.hoisted(() => ({
   createConvexClientMock: vi.fn(),
@@ -234,6 +234,17 @@ describe("executePersistedConformanceRun replay", () => {
       outcome: "failed",
       score: { score: 37 },
       durationMs: 9,
+      advisories: [
+        {
+          id: "apps-readiness-deprecated-resource-uri",
+          title: "Deprecated resource URI",
+          group: "apps-1",
+          kind: "readiness",
+          status: "SHOULD",
+          message: "Use the new field.",
+          details: { big: "x" },
+        },
+      ],
       groups: [
         {
           id: "apps",
@@ -277,6 +288,7 @@ describe("executePersistedConformanceRun replay", () => {
         passed: boolean;
         outcome?: string;
         score?: { score: number };
+        advisories?: Array<Record<string, unknown>>;
         groups: Array<{ cases: Array<{ id: string; error?: string }> }>;
       };
     };
@@ -285,6 +297,17 @@ describe("executePersistedConformanceRun replay", () => {
     expect(fallback.report.passed).toBe(false);
     expect(fallback.report.outcome).toBe("failed");
     expect(fallback.report.score?.score).toBe(37);
+    // The advice survives too, without its details.
+    expect(fallback.report.advisories).toEqual([
+      {
+        id: "apps-readiness-deprecated-resource-uri",
+        title: "Deprecated resource URI",
+        group: "apps-1",
+        kind: "readiness",
+        status: "SHOULD",
+        message: "Use the new field.",
+      },
+    ]);
     expect(fallback.report.groups[0]!.cases[0]!.id).toBe(
       "apps-report-not-persisted"
     );
@@ -519,5 +542,61 @@ describe("executePersistedConformanceRun replay", () => {
       outcome: "passed",
       score: 100,
     });
+  });
+});
+
+describe("executePersistedConformanceRun usage telemetry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    runConformanceMock.mockResolvedValue({
+      outcome: "passed",
+      score: { score: 100 },
+    });
+    // Start every case with server analytics on; each case sets the rest.
+    vi.stubEnv("DO_NOT_TRACK", "");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  const run = (source: "api" | "github_app" | "benchmark" | "ui") => {
+    convexClient({ runId: "run_1", reused: false, status: "queued" });
+    return executePersistedConformanceRun({
+      convexToken: "tok",
+      projectId: "p1",
+      server: SERVER as never,
+      suites: ["protocol"],
+      source,
+      target: { kind: "server", serverId: "s1" },
+    });
+  };
+
+  it.each(["api", "github_app", "benchmark"] as const)(
+    "labels a prod %s run for the SDK to count",
+    async (source) => {
+      vi.stubEnv("ENVIRONMENT", "prod");
+      await run(source);
+      const config = runConformanceMock.mock.calls[0]![0];
+      expect(config).toMatchObject({ __telemetryRunSource: source });
+      expect(config).not.toHaveProperty("__suppressTelemetry");
+    }
+  );
+
+  it.each([
+    ["a staging api run", "staging", {}, "api"],
+    ["a prod run with DO_NOT_TRACK", "prod", { DO_NOT_TRACK: "1" }, "api"],
+    [
+      "a prod run with local analytics off",
+      "prod",
+      { VITE_DISABLE_POSTHOG_LOCAL: "true" },
+      "api",
+    ],
+    ["a prod ui run, which the browser counts", "prod", {}, "ui"],
+  ] as const)("keeps the SDK quiet for %s", async (_name, environment, env, source) => {
+    vi.stubEnv("ENVIRONMENT", environment);
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    await run(source);
+    const config = runConformanceMock.mock.calls[0]![0];
+    expect(config).toMatchObject({ __suppressTelemetry: true });
+    expect(config).not.toHaveProperty("__telemetryRunSource");
   });
 });

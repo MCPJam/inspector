@@ -54,13 +54,14 @@ describe("plugin root substitution", () => {
     ).toBe(`${ROOT}:${ROOT}`);
   });
 
-  it("leaves ordinary stdio configs untouched", () => {
+  it("keeps a config without placeholders, adding only the root and its cwd", () => {
     const spec = { command: "node", args: ["server.js"], env: { A: "1" } };
     expect(needsPluginRoot(spec)).toBe(false);
     expect(resolvePluginStdioLaunch(spec, ROOT)).toEqual({
       command: "node",
       args: ["server.js"],
       env: { ...pluginRootEnv(ROOT), A: "1" },
+      workingDirectory: ROOT,
     });
   });
 
@@ -106,12 +107,30 @@ describe("plugin root substitution", () => {
     });
   });
 
-  it("injects PLUGIN_ROOT for the child process", () => {
+  it("injects PLUGIN_ROOT for the child process and runs it in the root", () => {
     const resolved = resolvePluginStdioLaunch(
       { command: "node", args: [], env: {} },
       ROOT
     );
     expect(resolved.env).toEqual({ PLUGIN_ROOT: ROOT });
+    expect(resolved.workingDirectory).toBe(ROOT);
+  });
+
+  it("applies the client's PLUGIN_ROOT and PLUGIN_DATA over a row's own", () => {
+    const resolved = resolvePluginStdioLaunch(
+      {
+        command: "node",
+        args: [],
+        env: { PLUGIN_ROOT: "/elsewhere", PLUGIN_DATA: "/tmp/x", KEEP: "1" },
+      },
+      ROOT,
+      { dataDir: DATA }
+    );
+    expect(resolved.env).toEqual({
+      PLUGIN_ROOT: ROOT,
+      PLUGIN_DATA: DATA,
+      KEEP: "1",
+    });
   });
 
   it("injects and substitutes PLUGIN_DATA when a data dir is supplied", () => {

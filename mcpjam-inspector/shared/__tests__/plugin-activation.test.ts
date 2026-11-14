@@ -3,7 +3,7 @@ import {
   pluginEntrypointPlan,
   pluginEntrypointKinds,
   pluginEntrypointTitle,
-  pluginSettingsEntrypoints,
+  pluginEntrypointDiagnostics,
   pluginFileEntrypoints,
   pluginQuickAction,
 } from "../plugin-activation.js";
@@ -95,28 +95,6 @@ describe("minimal shared entrypoint plan", () => {
       ).params,
     ).toEqual({ name: "create", arguments: {} });
   });
-  it("opens declared settings with empty arguments, separate origin and global scope", () => {
-    const settings = {
-      ...tool,
-      _meta: {
-        "openai/ui": {
-          entrypoints: [{ type: "settings", searchTerms: ["theme"] }],
-        },
-      },
-    };
-    expect(pluginEntrypointPlan(settings, { kind: "settings" })).toEqual({
-      selector: { kind: "settings" },
-      params: { name: tool.name, arguments: {} },
-      scope: { kind: "global" },
-    });
-    expect(() => pluginEntrypointPlan(tool, { kind: "settings" })).toThrow();
-    expect(() =>
-      pluginEntrypointPlan(settings, {
-        kind: "settings",
-        threadId: "forged",
-      } as never),
-    ).toThrow();
-  });
   it("deduplicates entrypoint affordances without inventing undeclared kinds", () => {
     expect(
       pluginEntrypointKinds({
@@ -131,7 +109,7 @@ describe("minimal shared entrypoint plan", () => {
           },
         },
       }),
-    ).toEqual(["global", "settings"]);
+    ).toEqual(["global"]);
   });
   it("resolves catalog titles in order and falls back past blank labels", () => {
     expect(
@@ -150,40 +128,42 @@ describe("minimal shared entrypoint plan", () => {
     ).toBe("Old display");
     expect(pluginEntrypointTitle({ name: "call" })).toBe("call");
   });
-  it("searches only settings declarations by title, name and search terms", () => {
-    const tools = [
-      {
-        name: "configure",
-        title: "Preferences",
-        _meta: {
-          "openai/ui": {
-            entrypoints: [
-              { type: "settings", searchTerms: ["  Color  ", "Theme"] },
-              { type: "settings", searchTerms: ["Theme"] },
-            ],
-          },
+  it("ignores an unrecognized declaration without dropping the tool's other entrypoints", () => {
+    const mixed = {
+      name: "library",
+      _meta: {
+        "openai/ui": {
+          entrypoints: [
+            { type: "settings", searchTerms: ["Theme"] },
+            { type: "global" },
+            { type: "thread", extra: true },
+            { type: "thread" },
+          ],
         },
       },
-      tool,
-      {
-        name: "invalid",
-        _meta: {
-          "openai/ui": {
-            entrypoints: [{ type: "settings", searchTerms: [""] }],
-          },
+    };
+    expect(pluginEntrypointKinds(mixed)).toEqual(["global", "thread"]);
+    expect(pluginEntrypointDiagnostics([tool, mixed], "server-1")).toEqual([
+      expect.objectContaining({
+        level: "warning",
+        code: "PLUGIN_ENTRYPOINT_UNRECOGNIZED",
+        serverId: "server-1",
+        details: { tools: ["library"] },
+      }),
+    ]);
+    expect(pluginEntrypointDiagnostics([tool], "server-1")).toEqual([]);
+    expect(pluginEntrypointKinds({ _meta: { "openai/ui": {} } })).toEqual([]);
+  });
+  it("refuses a settings selector because no tool declares a settings entrypoint", () => {
+    expect(() =>
+      pluginEntrypointPlan(
+        {
+          name: "configure",
+          _meta: { "openai/ui": { entrypoints: [{ type: "settings" }] } },
         },
-      },
-    ];
-    const entries = [
-      {
-        toolName: "configure",
-        title: "Preferences",
-        searchTerms: ["Color", "Theme"],
-      },
-    ];
-    for (const query of ["", "  THEME ", "color", "configure", "preferences"])
-      expect(pluginSettingsEntrypoints(tools, query)).toEqual(entries);
-    expect(pluginSettingsEntrypoints(tools, "fixture")).toEqual([]);
+        { kind: "settings" },
+      ),
+    ).toThrow("PLUGIN_ENTRYPOINT_UNAVAILABLE");
   });
   it("collects file declarations without accepting a file path or execution grant", () => {
     const tools = [
@@ -237,5 +217,84 @@ describe("minimal shared entrypoint plan", () => {
       { kind: "global", arguments: { forged: true } },
     ])
       expect(() => pluginEntrypointPlan(tool, selection as never)).toThrow();
+  });
+});
+
+describe("the plan under a client's entry-point rules", () => {
+  const CLAUDE = {
+    entrypointVisibility: "require-model",
+    entrypointNames: "no-double-separators",
+    entrypointQuickActions: "hide",
+  } as const;
+  const action = {
+    title: "Create",
+    icons: [{ src: "https://example.com/icon.svg" }],
+    target: { type: "tool", name: "create" },
+  };
+  const source = (name: string, visibility?: string[]) => ({
+    name,
+    _meta: {
+      ui: {
+        resourceUri: "ui://fixture",
+        ...(visibility ? { visibility } : {}),
+      },
+      "openai/ui": { entrypoints: [{ type: "global", quickAction: action }] },
+    },
+  });
+  const quickAction = () =>
+    ({ kind: "quick-action", requestId: crypto.randomUUID() }) as const;
+
+  it("refuses a quick action while quick actions are hidden", () => {
+    expect(() =>
+      pluginEntrypointPlan(source("library"), quickAction(), CLAUDE),
+    ).toThrow("PLUGIN_QUICK_ACTION_UNAVAILABLE");
+    expect(
+      pluginEntrypointPlan(source("library"), quickAction(), {
+        ...CLAUDE,
+        entrypointQuickActions: "show",
+      }).params.name,
+    ).toBe("create");
+  });
+
+  it("refuses a quick action on a tool hidden from the model", () => {
+    expect(() =>
+      pluginEntrypointPlan(source("library", ["app"]), quickAction(), {
+        ...CLAUDE,
+        entrypointQuickActions: "show",
+      }),
+    ).toThrow("PLUGIN_QUICK_ACTION_UNAVAILABLE");
+  });
+
+  it("refuses to open a name with double separators", () => {
+    expect(() =>
+      pluginEntrypointPlan(source("foo__bar"), { kind: "global" }, CLAUDE),
+    ).toThrow("PLUGIN_ENTRYPOINT_UNOPENABLE");
+    expect(
+      pluginEntrypointPlan(source("foo_bar"), { kind: "global" }, CLAUDE)
+        .params,
+    ).toEqual({ name: "foo_bar", arguments: {} });
+  });
+
+  it("keeps ChatGPT's plan, and an open App's re-resolution, as before", () => {
+    for (const behavior of [
+      undefined,
+      {
+        entrypointVisibility: "ignore",
+        entrypointNames: "any",
+        entrypointQuickActions: "show",
+      } as const,
+    ]) {
+      expect(
+        pluginEntrypointPlan(
+          source("foo__bar", ["app"]),
+          quickAction(),
+          behavior,
+        ).params.name,
+      ).toBe("create");
+      expect(
+        pluginEntrypointPlan(source("foo__bar"), { kind: "global" }, behavior)
+          .params.name,
+      ).toBe("foo__bar");
+    }
   });
 });

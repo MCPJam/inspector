@@ -40,7 +40,10 @@ import {
   getConvexHttpUrl,
   isComputersDataPlaneConfigured,
 } from "./control-plane-client.js";
-import { initComputersRuntimeConfigBootstrap } from "./runtime-config.js";
+import {
+  initComputersRuntimeConfigBootstrap,
+  startHostedBrowserVerdictRefresh,
+} from "./runtime-config.js";
 
 /**
  * The one computers startup entrypoint. Order matters: the credential
@@ -58,6 +61,9 @@ import { initComputersRuntimeConfigBootstrap } from "./runtime-config.js";
  */
 export async function initComputersStartup(): Promise<void> {
   await initComputersRuntimeConfigBootstrap();
+  // After the boot answer, so the first refresh replaces a verdict rather
+  // than racing the bootstrap to set one.
+  startHostedBrowserVerdictRefresh();
   await initComputersRemoteDataPlaneDiscovery();
 }
 

@@ -7,12 +7,16 @@ import {
   shouldStartPersistedRun,
 } from "../PersistConformanceRun";
 
-const { startRun, heartbeat, finalizeRun, upsertReport } = vi.hoisted(() => ({
-  startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
-  heartbeat: vi.fn().mockResolvedValue(undefined),
-  finalizeRun: vi.fn().mockResolvedValue(undefined),
-  upsertReport: vi.fn().mockResolvedValue(undefined),
-}));
+const { startRun, heartbeat, finalizeRun, upsertReport, toastError } =
+  vi.hoisted(() => ({
+    startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
+    heartbeat: vi.fn().mockResolvedValue(undefined),
+    finalizeRun: vi.fn().mockResolvedValue(undefined),
+    upsertReport: vi.fn().mockResolvedValue(undefined),
+    toastError: vi.fn(),
+  }));
+
+vi.mock("@/lib/toast", () => ({ toast: { error: toastError } }));
 
 vi.mock("convex/react", () => ({
   useMutation: (name: string) => {
@@ -44,7 +48,6 @@ function snapshot(overrides: Partial<RunSnapshot> = {}): RunSnapshot {
     runVersion: 0,
     runAll: vi.fn(),
     authorizeOAuth: vi.fn(),
-    oauthNotScored: false,
     isRunning: false,
     ...overrides,
   };
@@ -166,8 +169,168 @@ describe("PersistConformanceRun", () => {
       expect.objectContaining({
         projectId: "proj_1",
         source: "ui",
+        runTimeoutSeconds: 300,
         actorLabel: "Inspector UI",
       }),
+    );
+  });
+
+  it("says the run won't be saved when the backend refuses it", async () => {
+    startRun.mockRejectedValueOnce(
+      Object.assign(new Error("Server Error"), {
+        data: { code: "FORBIDDEN", message: "Conformance is not enabled for this account." },
+      }),
+    );
+    const { rerender } = renderPersist(
+      snapshot({ runVersion: 1, isRunning: false }),
+    );
+    rerender(
+      <PersistConformanceRun
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: true,
+          protocol: { status: "running" },
+        })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "This run won't be saved to History",
+        { description: "Conformance is not enabled for this account." },
+      ),
+    );
+  });
+
+  it("sends a suite's completed report only after its running update settles", async () => {
+    // The two uploads are separate actions with no ordering between them; a
+    // "running" that landed second would move the saved suite back to running.
+    let releaseRunning!: () => void;
+    upsertReport.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRunning = resolve;
+        }),
+    );
+    const persist = { projectId: "proj_1", serverId: "srv_1" };
+    const { rerender } = renderPersist(
+      snapshot({ runVersion: 1, isRunning: false }),
+    );
+    rerender(
+      <PersistConformanceRun
+        persist={persist}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: true,
+          oauth: { status: "running" },
+        })}
+      />,
+    );
+    await waitFor(() =>
+      expect(upsertReport).toHaveBeenCalledWith(
+        expect.objectContaining({ suiteKind: "oauth", status: "running" }),
+      ),
+    );
+
+    rerender(
+      <PersistConformanceRun
+        persist={persist}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: false,
+          oauth: {
+            status: "unavailable",
+            unavailableReason: "This server does not require authorization.",
+            result: {
+              outcome: "not-applicable",
+              passed: false,
+              summary: "This server does not require authorization.",
+              steps: [],
+              durationMs: 0,
+            } as never,
+          },
+        })}
+      />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(upsertReport).not.toHaveBeenCalledWith(
+      expect.objectContaining({ suiteKind: "oauth", status: "completed" }),
+    );
+
+    releaseRunning();
+    await waitFor(() =>
+      expect(upsertReport).toHaveBeenCalledWith(
+        expect.objectContaining({ suiteKind: "oauth", status: "completed" }),
+      ),
+    );
+  });
+
+  it("closes out an OAuth suite that settles as not applicable", async () => {
+    const persist = { projectId: "proj_1", serverId: "srv_1" };
+    const { rerender } = renderPersist(
+      snapshot({ runVersion: 1, isRunning: false }),
+    );
+    rerender(
+      <PersistConformanceRun
+        persist={persist}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: true,
+          oauth: { status: "running" },
+        })}
+      />,
+    );
+    await waitFor(() =>
+      expect(upsertReport).toHaveBeenCalledWith(
+        expect.objectContaining({ suiteKind: "oauth", status: "running" }),
+      ),
+    );
+
+    // A server that needs no auth: the suite ends "unavailable" with a result.
+    rerender(
+      <PersistConformanceRun
+        persist={persist}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: false,
+          oauth: {
+            status: "unavailable",
+            unavailableReason: "This server does not require authorization.",
+            result: {
+              outcome: "not-applicable",
+              passed: false,
+              summary: "This server does not require authorization.",
+              steps: [],
+              durationMs: 0,
+            } as never,
+          },
+        })}
+      />,
+    );
+
+    // The real result is persisted as a non-scoring report, not the
+    // synthetic "did not produce a report" fallback, which scores as one
+    // check that could not run.
+    await waitFor(() =>
+      expect(upsertReport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          suiteKind: "oauth",
+          status: "completed",
+          report: expect.objectContaining({
+            score: expect.objectContaining({
+              score: null,
+              applicable: 0,
+              outcome: "passed",
+            }),
+          }),
+        }),
+      ),
     );
   });
 });
