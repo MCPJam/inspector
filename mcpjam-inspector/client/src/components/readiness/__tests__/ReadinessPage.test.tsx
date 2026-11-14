@@ -228,7 +228,7 @@ describe("ReadinessRoute", () => {
         name: "Run checks with test plan revision 3?",
       });
       expect(dialog).toHaveTextContent(
-        "Revision 3 was saved by a project member about 1 hour ago. It calls 3 tools on Sample server with your connection.",
+        "Revision 3 was saved by a project member about 1 hour ago. It calls 3 tools on Sample server with your account.",
       );
       expect(dialog).toHaveTextContent("create_note can change data.");
       expect(dialog).toHaveTextContent("delete_note can destroy data.");
