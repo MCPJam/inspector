@@ -8,11 +8,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
+import { useAppSessionReopenKey } from "@/components/chat-v2/thread/app-session-scope";
 import type { PluginMessageIntent } from "@/shared/plugin-message";
 import { X } from "lucide-react";
 import {
@@ -61,6 +63,8 @@ export interface ExtensionRegistration {
   /** `null` turns every extension off (master switch, flag, access, client). */
   identity: ExtensionOwnerIdentity | null;
   chatId: string;
+  /** The current history row when its App owner survives a conflict. */
+  sessionId?: string;
   servers: WorkspaceServer[];
   /** Exact plugin contribution already resolved for this chat. Display only. */
   includedPluginTools?: { environmentId: string; serverIds: string[]; includeAppOnly?: boolean };
@@ -184,6 +188,7 @@ function registrationKey(registration: ExtensionRegistration): string {
   return JSON.stringify([
     ownerIdentityKey(registration.identity),
     registration.chatId,
+    registration.sessionId ?? registration.chatId,
     registration.servers.map((server) => [
       server.serverId,
       server.name,
@@ -310,6 +315,7 @@ export function ExtensionWorkspaceProvider({
     [capsKey],
   );
   const chatId = identity ? (registration?.chatId ?? null) : null;
+  const sessionId = registration?.sessionId ?? chatId;
   const profile = registration?.profile ?? "chatgpt";
   const displayBehavior = identity ? registration?.displayBehavior : undefined;
   const hostRevision = identity ? registration?.hostRevision : undefined;
@@ -330,7 +336,10 @@ export function ExtensionWorkspaceProvider({
     setRetained((old) => {
       const base = old.identity === identityKey ? old.ids : [];
       if (!chatId) return { identity: identityKey, ids: base };
-      const ids = [...base.filter((id) => id !== chatId), chatId];
+      // A conflict borrows its source owner only while the continuation is
+      // shown. Reopening either row later must acquire its own Apps.
+      const ids = base.filter((id) => id !== chatId);
+      if (sessionId === chatId) ids.push(chatId);
       // Release deleted chats and hidden chats with nothing open, then cap
       // the rest.
       const chats = store.getState().chats;
@@ -348,7 +357,7 @@ export function ExtensionWorkspaceProvider({
         ? old
         : { identity: identityKey, ids: capped };
     });
-  }, [identityKey, chatId, store, released]);
+  }, [identityKey, chatId, sessionId, store, released]);
   useLayoutEffect(() => {
     store.setState({
       currentChatId: chatId,
@@ -423,7 +432,8 @@ export function ExtensionWorkspaceProvider({
         ) : null}
         {identity
           ? chatIds.map((id) => (
-              <ChatOwner
+              <ChatOwnerLifetime
+                sessionId={id === chatId ? sessionId : id}
                 key={`${identityKey}:${id}`}
                 identity={identity}
                 chatId={id}
@@ -613,6 +623,14 @@ const GlobalOwner = memo(function GlobalOwner({
     </>
   );
 });
+
+function ChatOwnerLifetime({
+  sessionId,
+  ...props
+}: ComponentProps<typeof ChatOwner> & { sessionId: string | null }) {
+  const key = useAppSessionReopenKey(sessionId, props.chatId);
+  return <ChatOwner key={key} {...props} />;
+}
 
 const ChatOwner = memo(function ChatOwner({
   identity,

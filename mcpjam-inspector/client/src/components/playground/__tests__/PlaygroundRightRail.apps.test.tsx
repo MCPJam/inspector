@@ -28,8 +28,8 @@ vi.mock("@/components/logger-view", () => ({
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/stores/active-chat-session-store", () => ({
   useActiveChatSessionStore: (
-    select: (state: { sessionId: string }) => unknown,
-  ) => select({ sessionId: "chat-1" }),
+    select: (state: { sessionId: string; appSessionScopeId: string }) => unknown,
+  ) => select({ sessionId: "chat-1", appSessionScopeId: "chat-1" }),
 }));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useMintBrowserToken: () => async () => ({ token: "t", expiresAt: 0 }),

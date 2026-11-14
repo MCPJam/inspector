@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { useForwardedWidgetCalls } from "../use-forwarded-widget-calls";
+import { AppSessionScopeContext } from "../app-session-scope";
 import { authFetch } from "@/lib/session-token";
 vi.mock("@/lib/session-token", () => ({ authFetch: vi.fn() }));
 vi.mock("@/lib/toast", () => ({ toast: { error: vi.fn() } }));
@@ -40,7 +41,7 @@ const wire = (value: object) =>
 beforeEach(() => vi.resetAllMocks());
 afterEach(cleanup);
 describe("forwarded App calls", () => {
-  it("explicitly cancels a pending approval when the widget unmounts behind a proxy", async () => {
+  it.each(["unmount", "switch"])("retains a pending approval on a conflict and cancels it on %s", async (leave) => {
     vi.mocked(authFetch).mockImplementation(async (url, init) => {
       if (String(url).endsWith("/approval")) return new Response("{}");
       return new Response(
@@ -54,8 +55,15 @@ describe("forwarded App calls", () => {
         }),
       );
     });
-    const { result, unmount } = renderHook(() =>
-      useForwardedWidgetCalls("chat", true, "parent"),
+    let scope = "source";
+    const { result, rerender, unmount } = renderHook(
+      ({ row }) => useForwardedWidgetCalls(row, true, "parent"),
+      {
+        initialProps: { row: "source" },
+        wrapper: ({ children }) => (
+          <AppSessionScopeContext.Provider value={scope}>{children}</AppSessionScopeContext.Provider>
+        ),
+      },
     );
     let outcome!: Promise<unknown>;
     act(() => {
@@ -64,7 +72,15 @@ describe("forwarded App calls", () => {
         .catch((error: Error) => error.message);
     });
     await waitFor(() => expect(result.current.approvals).toHaveLength(1));
-    unmount();
+    rerender({ row: "fork" });
+    expect(result.current.approvals).toHaveLength(1);
+    expect(authFetch).toHaveBeenCalledTimes(1);
+    if (leave === "unmount") {
+      unmount();
+    } else {
+      scope = "other";
+      rerender({ row: "other" });
+    }
     await expect(outcome).resolves.toBe("cancelled");
     expect(authFetch).toHaveBeenCalledTimes(2);
     expect(authFetch).toHaveBeenLastCalledWith(
