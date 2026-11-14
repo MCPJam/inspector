@@ -8,7 +8,8 @@
  * the preparation's own deadline and a margin. An expiry that stops moving
  * means the preparer died, and its claim holds until its TTL: the Send never
  * runs beside it. Either way the Send stops before any sandbox command, with
- * an error the person can retry; a retry once the claim has lapsed proceeds.
+ * an error the person can retry. A claim that lapses retires the box, as an
+ * `uncertain` release does, and a turn on it is refused `BOX_RETIRED_CODE`.
  */
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 import {
@@ -19,6 +20,8 @@ import {
 
 // Mirrored by the backend's `BOX_PREPARING_CODE`, pinned by its check:mirrors.
 export const BOX_PREPARING_CODE = "box_preparing";
+// Mirrored by the backend's `BOX_RETIRED_CODE`, pinned by its check:mirrors.
+export const BOX_RETIRED_CODE = "box_retired";
 /** The longest a Send waits on a preparation: its deadline and a margin. */
 export const BOX_PREPARING_WAIT_MS = PREPARATION_DEADLINE_MS + 30_000;
 /** A live preparer renews within this; an expiry still for longer stopped. */

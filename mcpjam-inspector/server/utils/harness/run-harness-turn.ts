@@ -126,10 +126,12 @@ import type { HarnessV1PermissionMode, HarnessV1NetworkSandboxSession } from "@a
 import { destroySuspendedBridge, forceDestroySessionBridge } from "./destroy-suspended-bridge.js";
 import {
   revokeHarnessModelBroker,
-  releaseHarnessBoxReservation,
-  renewHarnessBoxReservation,
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
+import {
+  releaseHarnessBoxReservation,
+  renewHarnessBoxReservation,
+} from "./harness-box-reservation.js";
 import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";

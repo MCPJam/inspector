@@ -18,9 +18,12 @@
  * starts only if it will end before the claim can lapse, every command under
  * coreutils `timeout -s KILL` in the box (`preparation-fence.ts`); a box
  * without that `timeout` is skipped. A Send that arrives meanwhile is answered
- * `box_preparing` and waits (`box-preparing-wait.ts`). The claim is handed
- * back once every call in the box has returned; after one that never did, it
- * is left to lapse at its TTL, since that call may still reach the box.
+ * `box_preparing` and waits (`box-preparing-wait.ts`). The claim is always
+ * released, with how the preparation ended: `clean` once every call in the
+ * box returned, or none started, leaving the box for the Send; `uncertain`
+ * after one that threw or never returned, since it may still reach the box.
+ * The backend retires an uncertain box, as it does one whose claim lapsed, so
+ * no Send ever runs on it (`box_retired`).
  */
 import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
@@ -32,8 +35,9 @@ import {
   releaseHarnessBoxReservation,
   renewHarnessBoxReservation,
   reserveHarnessBox,
-  type HarnessBrokerBox,
-} from "./harness-model-broker.js";
+  type BoxReleaseOutcome,
+} from "./harness-box-reservation.js";
+import type { HarnessBrokerBox } from "./harness-model-broker.js";
 import { PreparationFence, StaleClaimError } from "./preparation-fence.js";
 import {
   CLAIM_CALL_TIMEOUT_MS,
@@ -159,21 +163,25 @@ export async function prepareConversationBox(args: {
     modelId: args.modelId,
     runId: crypto.randomUUID(),
   };
-  const release = async () => {
+  const release = async (outcome: BoxReleaseOutcome) => {
     const released = await args.cleanupAuthorization().then(
       (bearer) =>
         releaseHarnessBoxReservation({
           ...claim,
+          outcome,
           bearer,
           signal: AbortSignal.timeout(CLAIM_CALL_TIMEOUT_MS),
         }),
       () => ({ ok: false }),
     );
-    // The claim's TTL frees the box if this release is lost.
+    // If this release is lost, the claim lapses, and a lapsed preparation
+    // claim retires the box: the backend marked it when the claim was made.
+    // So a box this cannot hand back is never reused.
     if (!released.ok) {
-      logger.warn("[harness-prepare] box claim release deferred to expiry", {
-        harness: args.harnessId,
-      });
+      logger.warn(
+        "[harness-prepare] box claim release failed; a lapsed claim retires it",
+        { harness: args.harnessId, outcome },
+      );
     }
   };
 
@@ -195,8 +203,9 @@ export async function prepareConversationBox(args: {
   });
   if (!claimed.ok) {
     // A call the backend did not answer, or whose answer could not be read
-    // (502), may still have made the claim.
-    if (claimed.status >= 500) await release();
+    // (502), may still have made the claim. Nothing ran in the box: `clean`.
+    // A release that arrives first is recorded, and the late claim refused.
+    if (claimed.status >= 500) await release("clean");
     return skipped("box_busy");
   }
   fence.confirm(claimSentAt, claimed.ttlMs);
@@ -281,13 +290,17 @@ export async function prepareConversationBox(args: {
   } finally {
     clearTimeout(deadline);
     clearInterval(renewal);
-    // Handed back only once nothing the claim covers can still be running.
-    if (fence.settled) await release();
-    else {
-      logger.info("[harness-prepare] box claim left to lapse", {
+    // `clean` only when the fence proves every call in the box returned, or
+    // none started. A call that threw or never returned may still reach the
+    // box after a Send takes it, so the box is released `uncertain` instead,
+    // and the backend retires it rather than hand it to the Send.
+    const { outcome } = fence;
+    if (outcome === "uncertain") {
+      logger.info("[harness-prepare] box released uncertain; it is retired", {
         harness: args.harnessId,
       });
     }
+    await release(outcome);
   }
 }
 

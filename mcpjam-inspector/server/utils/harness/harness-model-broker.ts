@@ -26,17 +26,18 @@ import {
  * pinned) it evaluates as an unknown version. Pairs with
  * MCPJam/mcpjam-backend#1614, which accepts the optional field.
  */
-function harnessRuntimeVersionField(
+export function harnessRuntimeVersionField(
   harnessId: HarnessId,
 ): { harnessRuntimeVersion?: string } {
   const version = harnessPinnedVersion(harnessId);
   return version ? { harnessRuntimeVersion: version } : {};
 }
 /**
- * Every registered harness id — reserve/renew/release are taken by EVERY
- * harness, brokered or not: an external-account harness still runs its CLI in
- * the customer's box, so it claims that box for the span of a turn's
- * preparation exactly like a brokered one does.
+ * Every registered harness id — reserve/renew/release
+ * (`harness-box-reservation.ts`) are taken by EVERY harness, brokered or not:
+ * an external-account harness still runs its CLI in the customer's box, so it
+ * claims that box for the span of a turn's preparation exactly like a
+ * brokered one does.
  *
  * `startHarnessModelBroker` is typed the same but must never be REACHED for an
  * external-account harness. Three things stop it, and none of them is this
@@ -585,214 +586,8 @@ export async function revokeHarnessModelBroker(args: {
   }
 }
 
-export type HarnessBoxReservationResult =
-  | {
-      ok: true;
-      expiresAt?: number;
-      /** What is left of the claim, relative: count it from the request's send. */
-      ttlMs?: number;
-      /** An org selection's hashed credential revision; the start refuses a newer key. */
-      credentialRevision?: string;
-    }
-  | { ok: false; status: number; error: string; code?: string; reservationExpiresAt?: number };
-
 /** `{ [key]: n }` when the answer carries the number `n` there; else nothing. */
-function numberField<K extends string>(payload: unknown, key: K): Partial<Record<K, number>> {
+export function numberField<K extends string>(payload: unknown, key: K): Partial<Record<K, number>> {
   const value: unknown = typeof payload === "object" && payload ? Reflect.get(payload, key) : undefined;
   return typeof value === "number" ? ({ [key]: value } as Record<K, number>) : {};
-}
-
-/**
- * Claim a box for a turn's PREPARATION (waking it, installing the runtime),
- * which runs before the lease and its per-box fence exist; the lease consumes
- * the claim (by `runId`). A missing endpoint fails hard: going on without a
- * claim would reopen the race it closes, so roll out the backend first.
- */
-export async function reserveHarnessBox(args: {
-  box: HarnessBrokerBox;
-  harnessId: HarnessId;
-  modelId: string;
-  runId: string;
-  /** See `startHarnessModelBroker`: an org selection is checked here first. */
-  modelSelection?: ModelSelection | null;
-  purpose?: "prepare";
-  bearer: string;
-  signal?: AbortSignal;
-}): Promise<HarnessBoxReservationResult> {
-  let url: string;
-  try {
-    url = new URL(
-      "/web/harness/model-broker/reserve",
-      getConvexHttpUrl()
-    ).toString();
-  } catch (err) {
-    logger.error("[harness-model-broker] missing reserve endpoint config", err);
-    return {
-      ok: false,
-      status: 500,
-      error: "Harness model-broker endpoint is not configured",
-    };
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...inspectorAiRequestHeaders("harness"),
-        authorization: bearerHeader(args.bearer),
-      },
-      body: JSON.stringify({
-        ...boxRequestFields(args.box),
-        ...(args.purpose ? { purpose: args.purpose } : {}),
-        // The harness + model the lease will name, authorized as a lease is:
-        // for an ephemeral box, against what the run actually pinned.
-        harnessId: args.harnessId,
-        ...harnessRuntimeVersionField(args.harnessId),
-        modelId: args.modelId,
-        runId: args.runId,
-        // An org selection is resolved HERE: a bad connection fails pre-install.
-        ...leaseSelectionField(args.modelSelection),
-      }),
-      signal: args.signal,
-    });
-  } catch (err) {
-    logger.error("[harness-model-broker] reserve network error", err);
-    return {
-      ok: false,
-      status: 502,
-      error: "Failed to reach harness model-broker endpoint",
-    };
-  }
-
-  const payload: any = await response.json().catch(() => null);
-  if (!response.ok || payload?.ok !== true) {
-    return {
-      ok: false,
-      // A 2xx whose body can't be read may still have made the claim.
-      status: response.ok ? 502 : response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `Couldn't reserve the computer (${response.status})`,
-      ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
-      ...numberField(payload, "reservationExpiresAt"),
-    };
-  }
-  return {
-    ok: true,
-    ...numberField(payload, "expiresAt"),
-    ...numberField(payload, "ttlMs"),
-    ...(args.modelSelection?.source === "org" &&
-    typeof payload.credentialRevision === "string"
-      ? { credentialRevision: payload.credentialRevision }
-      : {}),
-  };
-}
-
-/** Renew the preparation claim before its crash-recovery TTL elapses. */
-export async function renewHarnessBoxReservation(args: {
-  box: HarnessBrokerBox;
-  harnessId: HarnessId;
-  modelId: string;
-  runId: string;
-  bearer: string;
-  signal?: AbortSignal;
-}): Promise<{ ok: boolean; expiresAt?: number; ttlMs?: number }> {
-  let url: string;
-  try {
-    url = new URL(
-      "/web/harness/model-broker/reserve/renew",
-      getConvexHttpUrl()
-    ).toString();
-  } catch {
-    return { ok: false };
-  }
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...inspectorAiRequestHeaders("harness"),
-        authorization: bearerHeader(args.bearer),
-      },
-      body: JSON.stringify({
-        ...boxRequestFields(args.box),
-        harnessId: args.harnessId,
-        modelId: args.modelId,
-        runId: args.runId,
-      }),
-      signal: args.signal,
-    });
-    const payload: any = await response.json().catch(() => null);
-    if (!response.ok || payload?.ok !== true) {
-      logger.error(
-        `[harness-model-broker] reservation renewal returned ${response.status}`
-      );
-      return { ok: false };
-    }
-    return {
-      ok: true,
-      ...numberField(payload, "expiresAt"),
-      ...numberField(payload, "ttlMs"),
-    };
-  } catch (err) {
-    logger.error(
-      "[harness-model-broker] reservation renewal network error",
-      err
-    );
-    return { ok: false };
-  }
-}
-
-/**
- * Hand a claimed box back after a failed or aborted preparation. Best-effort:
- * the reservation's TTL is the real guarantee, and a turn that dies without
- * releasing must not wedge the box for longer than that.
- */
-export async function releaseHarnessBoxReservation(args: {
-  box: HarnessBrokerBox;
-  harnessId: HarnessId;
-  modelId: string;
-  runId: string;
-  bearer: string;
-  signal?: AbortSignal;
-}): Promise<{ ok: boolean }> {
-  let url: string;
-  try {
-    url = new URL(
-      "/web/harness/model-broker/reserve/release",
-      getConvexHttpUrl()
-    ).toString();
-  } catch {
-    return { ok: false };
-  }
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...inspectorAiRequestHeaders("harness"),
-        authorization: bearerHeader(args.bearer),
-      },
-      body: JSON.stringify({
-        ...boxRequestFields(args.box),
-        harnessId: args.harnessId,
-        modelId: args.modelId,
-        runId: args.runId,
-      }),
-      signal: args.signal,
-    });
-    if (!response.ok) {
-      logger.warn(
-        `[harness-model-broker] reservation release returned ${response.status}`
-      );
-      return { ok: false };
-    }
-    return { ok: true };
-  } catch (err) {
-    logger.error("[harness-model-broker] reservation release network error", err);
-    return { ok: false };
-  }
 }

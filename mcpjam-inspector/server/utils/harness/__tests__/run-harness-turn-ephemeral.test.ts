@@ -95,9 +95,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -107,6 +104,11 @@ vi.mock("../harness-model-broker.js", () => ({
     proxyBaseUrl: "https://broker.example",
     delivery: "e2b-network-transform",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -126,7 +128,7 @@ import {
   reserveHarnessBox,
   renewHarnessBoxReservation,
   releaseHarnessBoxReservation,
-} from "../harness-model-broker.js";
+} from "../harness-box-reservation.js";
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
 import { ScenarioHarnessRepublishRequiredError } from "../../scenario-runtime-config.js";
@@ -344,6 +346,23 @@ describe("runHarnessTurn — broker lease owns preparation", () => {
     expect(harnessState.started).not.toHaveBeenCalled();
     expect(reserveHarnessBox).not.toHaveBeenCalled();
     expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
+  });
+  it("a box a preparation left uncertain ends the turn typed before anything runs in it", async () => {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
+      ok: false, status: 409, error: "The box was retired.", code: "box_retired",
+    });
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never, "none");
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onEngineError.mock.calls[0]![0]).toMatchObject({
+      phase: "setup",
+      message: "This conversation's computer was replaced. Send your message again.",
+      infra: { source: "sandbox_setup", code: "box_retired", httpStatus: 409 },
+    });
+    expect(harnessState.started).not.toHaveBeenCalled();
+    // The run's lease is revoked by run, as for any refused start.
+    const runId = vi.mocked(startHarnessModelBroker).mock.calls[0]![0].runId;
+    expect(revokeHarnessModelBroker).toHaveBeenCalledWith(expect.objectContaining({ runId }));
   });
 });
 

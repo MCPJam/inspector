@@ -3,9 +3,12 @@ import {
   startHarnessModelBroker,
   startLoopbackModelBroker,
   revokeHarnessModelBroker,
-  reserveHarnessBox,
-  renewHarnessBoxReservation,
 } from "../harness-model-broker";
+import {
+  releaseHarnessBoxReservation,
+  renewHarnessBoxReservation,
+  reserveHarnessBox,
+} from "../harness-box-reservation";
 import {
   ORG_BINDING_UNCONFIRMED,
   orgLeaseUpstreamFrom,
@@ -431,6 +434,44 @@ describe("harness box reservation", () => {
       modelId: "anthropic/claude-haiku-4.5",
       runId: "run_1",
     });
+  });
+
+  it("releases with a preparation's outcome; a turn's release sends none", async () => {
+    const urls: string[] = [];
+    const bodies: unknown[] = [];
+    mockFetch((url, init) => {
+      urls.push(url);
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ ok: true });
+    });
+    const claim = {
+      box,
+      harnessId: "claude-code" as const,
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_1",
+      bearer: "t",
+    };
+    await expect(
+      releaseHarnessBoxReservation({ ...claim, outcome: "uncertain" }),
+    ).resolves.toEqual({ ok: true });
+    await releaseHarnessBoxReservation({ ...claim, outcome: "clean" });
+    await releaseHarnessBoxReservation(claim);
+    expect(new Set(urls)).toEqual(
+      new Set([
+        "https://convex.example.com/web/harness/model-broker/reserve/release",
+      ]),
+    );
+    const sent = {
+      sandboxRowId: "sbxrow_1",
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_1",
+    };
+    expect(bodies).toEqual([
+      { ...sent, outcome: "uncertain" },
+      { ...sent, outcome: "clean" },
+      sent,
+    ]);
   });
 });
 

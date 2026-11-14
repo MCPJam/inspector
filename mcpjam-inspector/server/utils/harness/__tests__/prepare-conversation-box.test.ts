@@ -19,10 +19,12 @@ vi.mock("../../computers/control-plane-client.js", async (importOriginal) => ({
 }));
 vi.mock("../harness-model-broker.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
+  startHarnessModelBroker: mocks.startLease,
+}));
+vi.mock("../harness-box-reservation.js", () => ({
   reserveHarnessBox: mocks.reserve,
   renewHarnessBoxReservation: mocks.renew,
   releaseHarnessBoxReservation: mocks.release,
-  startHarnessModelBroker: mocks.startLease,
 }));
 vi.mock("../harness-session-state.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -131,6 +133,12 @@ function fakeBox(
   };
 }
 
+/** The outcome of the one release the preparation sent. */
+function releasedAs(): unknown {
+  expect(mocks.release).toHaveBeenCalledTimes(1);
+  return mocks.release.mock.calls[0]![0].outcome;
+}
+
 function prepare() {
   return prepareConversationBox({
     harnessId: "claude-code",
@@ -205,12 +213,14 @@ describe("preparing a new chat's box", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+    // Every call in the box returned: the box is the Send's.
     expect(mocks.release).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: mocks.reserve.mock.calls[0]![0].runId,
         bearer: "Bearer cleanup",
       }),
     );
+    expect(releasedAs()).toBe("clean");
     // Attached without the guard, which runs fenced; then the bootstrap,
     // every command under coreutils `timeout -s KILL`.
     expect(mocks.createProvider).toHaveBeenCalledWith(
@@ -251,17 +261,17 @@ describe("preparing a new chat's box", () => {
     ).toBe(true);
   });
 
-  it("skips a box whose timeout is not coreutils', and hands the claim back", async () => {
+  it("skips a box whose timeout is not coreutils', and hands it back clean", async () => {
     const box = fakeBox({ gnuTimeout: false });
     await expect(prepare()).resolves.toEqual({
       outcome: "skipped",
       reason: "no_timeout",
     });
     expect(box.runs.map((run) => run.command)).toEqual([PROBE]);
-    expect(mocks.release).toHaveBeenCalledTimes(1);
+    expect(releasedAs()).toBe("clean");
   });
 
-  it("renews the claim while it runs, stops when it is lost, and leaves it to lapse", async () => {
+  it("renews the claim while it runs, stops when it is lost, and retires its box", async () => {
     vi.useFakeTimers();
     const box = fakeBox({ hang: true });
     mocks.renew
@@ -283,13 +293,13 @@ describe("preparing a new chat's box", () => {
     const lostAt = mocks.log.lastIndexOf("renew");
     expect(mocks.log.slice(lostAt + 1)).not.toContain("command");
     expect(box.spawn).not.toHaveBeenCalled();
-    // The interrupted install may still be running in the box, however late
-    // its request reached it: the claim is never handed back early.
+    // The interrupted install may still reach the box, however late its
+    // request arrives: the box is released uncertain, once, and retired.
     await vi.advanceTimersByTimeAsync(COMMAND_BOUND_MS + 30_000);
-    expect(mocks.release).not.toHaveBeenCalled();
+    expect(releasedAs()).toBe("uncertain");
   });
 
-  it("past its deadline leaves the claim to lapse: the interrupted command may still be running", async () => {
+  it("past its deadline retires its box: the interrupted command may still be running", async () => {
     vi.useFakeTimers();
     // The guard takes a minute, so the install starts a minute in.
     const box = fakeBox({ hang: true, guardMs: 60_000 });
@@ -299,10 +309,10 @@ describe("preparing a new chat's box", () => {
     await vi.advanceTimersByTimeAsync(PREPARATION_DEADLINE_MS - 60_000);
     await expect(prepared).resolves.toEqual({ outcome: "failed" });
     await vi.advanceTimersByTimeAsync(COMMAND_BOUND_MS + 30_000);
-    expect(mocks.release).not.toHaveBeenCalled();
+    expect(releasedAs()).toBe("uncertain");
   });
 
-  it("a failed command ended, so the box is handed back at once", async () => {
+  it("a failed command ended, so the box is handed back clean", async () => {
     const box = fakeBox();
     const run = box.session.run.getMockImplementation()!;
     box.session.run.mockImplementation(async (call: Run) => {
@@ -310,10 +320,10 @@ describe("preparing a new chat's box", () => {
       return isInstall(call.command) ? { ...result, exitCode: 1 } : result;
     });
     await expect(prepare()).resolves.toEqual({ outcome: "failed" });
-    expect(mocks.release).toHaveBeenCalledTimes(1);
+    expect(releasedAs()).toBe("clean");
   });
 
-  it("a command whose call dropped leaves the claim to lapse", async () => {
+  it("a command whose call dropped retires its box", async () => {
     vi.useFakeTimers();
     const box = fakeBox();
     const run = box.session.run.getMockImplementation()!;
@@ -323,7 +333,15 @@ describe("preparing a new chat's box", () => {
     });
     await expect(prepare()).resolves.toEqual({ outcome: "failed" });
     await vi.advanceTimersByTimeAsync(COMMAND_BOUND_MS + 30_000);
-    expect(mocks.release).not.toHaveBeenCalled();
+    expect(releasedAs()).toBe("uncertain");
+  });
+
+  it("a write whose call dropped retires its box", async () => {
+    const box = fakeBox();
+    box.session.writeTextFile.mockRejectedValue(new Error("connection reset"));
+    await expect(prepare()).resolves.toEqual({ outcome: "failed" });
+    expect(box.session.writeTextFile).toHaveBeenCalledTimes(1);
+    expect(releasedAs()).toBe("uncertain");
   });
 
   it("after a stall, starts nothing its claim might not outlive, by the clock and not a timer", async () => {
@@ -348,8 +366,8 @@ describe("preparing a new chat's box", () => {
     // Not the install's marker, nor anything after it.
     expect(box.runs).toHaveLength(started);
     expect(box.session.writeTextFile).toHaveBeenCalledTimes(written);
-    // Nothing it started is still running, so the box is handed back.
-    expect(mocks.release).toHaveBeenCalledTimes(1);
+    // Refused before it started, so nothing can still reach the box.
+    expect(releasedAs()).toBe("clean");
   });
 
   it("starts nothing once unanswered renewals leave too little of the claim", async () => {
@@ -365,20 +383,20 @@ describe("preparing a new chat's box", () => {
     box.finishInstall();
     await expect(prepared).resolves.toEqual({ outcome: "failed" });
     expect(box.runs).toHaveLength(started);
-    expect(mocks.release).toHaveBeenCalledTimes(1);
+    expect(releasedAs()).toBe("clean");
   });
 
-  it("an attach refused starts nothing, and hands the claim back at once", async () => {
+  it("an attach refused starts nothing, and hands the box back clean", async () => {
     mocks.createProvider.mockImplementation(() => ({
       createSession: vi.fn(async () => {
         throw new Error("sandbox not found");
       }),
     }));
     await expect(prepare()).resolves.toEqual({ outcome: "failed" });
-    expect(mocks.release).toHaveBeenCalledTimes(1);
+    expect(releasedAs()).toBe("clean");
   });
 
-  it("hands back a claim the backend may have made but never answered", async () => {
+  it("hands back clean a claim the backend may have made but never answered", async () => {
     fakeBox();
     mocks.reserve.mockResolvedValue({
       ok: false,
@@ -389,7 +407,8 @@ describe("preparing a new chat's box", () => {
       outcome: "skipped",
       reason: "box_busy",
     });
-    expect(mocks.release).toHaveBeenCalledTimes(1);
+    // Nothing ran in the box.
+    expect(releasedAs()).toBe("clean");
     expect(mocks.createProvider).not.toHaveBeenCalled();
   });
 

@@ -163,14 +163,16 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -186,11 +188,13 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import {
-  releaseHarnessBoxReservation,
-  reserveHarnessBox,
   revokeHarnessModelBroker,
   startHarnessModelBroker,
 } from "../harness-model-broker.js";
+import {
+  releaseHarnessBoxReservation,
+  reserveHarnessBox,
+} from "../harness-box-reservation.js";
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { getHarnessCredentialReadiness } from "../../computers/control-plane-client.js";
 import { EXTERNAL_ACCOUNT_PLAN_WALL_TEXTS } from "../external-account-plan-wall";
@@ -388,6 +392,29 @@ describe("runHarnessTurn — external-account (org key)", () => {
   it("hands the box back at teardown (the claim is held, not leaked)", async () => {
     await runHarnessTurn(baseOptions() as never, "none");
     expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops typed before anything runs on a box a preparation left uncertain", async () => {
+    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: "The box was retired.",
+      code: "box_retired",
+    });
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onEngineError.mock.calls[0]![0]).toMatchObject({
+      phase: "setup",
+      message:
+        "This conversation's computer was replaced. Send your message again.",
+      infra: { source: "sandbox_setup", code: "box_retired", httpStatus: 409 },
+    });
+    // No box opened, no command or login in it, and no claim to hand back.
+    expect(providerState.lastArgs).toBeUndefined();
+    expect(harnessState.session.run).not.toHaveBeenCalled();
+    expect(loginState.install).not.toHaveBeenCalled();
+    expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
   });
 
   it("runs with broker delivery killed — it has no broker to disable", async () => {

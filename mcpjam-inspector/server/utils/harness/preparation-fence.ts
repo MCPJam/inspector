@@ -13,10 +13,12 @@
  *
  * It also knows what may still be running. A call that returned has ended:
  * the box answered it. A call that threw, or has not settled, may still reach
- * the box late, past any bound counted here, so only the claim's own expiry
- * is safe then: the claim is left to lapse.
+ * the box late, past any bound counted here and past the claim's own expiry.
+ * The preparation then releases its claim `uncertain`, and the backend
+ * retires the box, so no Send runs on it.
  */
 import type { Experimental_SandboxSession } from "@ai-sdk/provider-utils";
+import type { BoxReleaseOutcome } from "./harness-box-reservation.js";
 import { shellQuote } from "./shell-quote.js";
 
 export class StaleClaimError extends Error {
@@ -49,11 +51,12 @@ export class PreparationFence {
   }
 
   /**
-   * Whether the claim can be handed back now: every call it covered returned.
-   * Otherwise it is left to lapse at its TTL.
+   * How the preparation releases its claim: `clean` once every call it
+   * covered returned, or none started; `uncertain` while one may still reach
+   * the box.
    */
-  get settled(): boolean {
-    return this.inFlight === 0 && !this.interrupted;
+  get outcome(): BoxReleaseOutcome {
+    return this.inFlight === 0 && !this.interrupted ? "clean" : "uncertain";
   }
 
   /** A command too short to need the bound, such as a version check. */

@@ -6,7 +6,13 @@ const broker = vi.hoisted(() => ({
   releaseHarnessBoxReservation: vi.fn(),
 }));
 
-vi.mock("../harness-model-broker.js", () => broker);
+vi.mock("../harness-model-broker.js", () => ({
+  startHarnessModelBroker: broker.startHarnessModelBroker,
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: broker.reserveHarnessBox,
+  releaseHarnessBoxReservation: broker.releaseHarnessBoxReservation,
+}));
 
 import {
   BOX_PREPARING_CODE,

@@ -117,41 +117,53 @@ describe("the fence around a preparation's work in the box", () => {
     expect(inner.spawn).not.toHaveBeenCalled();
   });
 
-  it("hands the claim back at once when every call returned", async () => {
+  it("releases clean when every call returned", async () => {
     const guard = fence();
     const session = guard.session(innerSession());
     await session.run({ command: "true" });
     await session.writeTextFile({ path: "/x", content: "" });
-    expect(guard.settled).toBe(true);
+    expect(guard.outcome).toBe("clean");
   });
 
-  it("leaves the claim to lapse after a command whose call threw, past its bound too", async () => {
+  it("releases clean when nothing started, refused calls included", async () => {
+    const guard = fence();
+    const inner = innerSession();
+    expect(guard.outcome).toBe("clean");
+    vi.advanceTimersByTime(TTL_MS);
+    await expect(
+      guard.session(inner).run({ command: "true" }),
+    ).rejects.toBeInstanceOf(StaleClaimError);
+    expect(inner.run).not.toHaveBeenCalled();
+    expect(guard.outcome).toBe("clean");
+  });
+
+  it("releases uncertain after a command whose call threw, past its bound too", async () => {
     const guard = fence();
     const inner = innerSession();
     inner.run.mockRejectedValueOnce(new Error("connection reset"));
     await expect(guard.session(inner).run({ command: "x" })).rejects.toThrow();
     // The request may have reached the box late: no bound counted here holds.
     vi.advanceTimersByTime(BOUND_MS + MARGIN_MS + 1);
-    expect(guard.settled).toBe(false);
+    expect(guard.outcome).toBe("uncertain");
   });
 
-  it("leaves the claim to lapse after a write that threw", async () => {
+  it("releases uncertain after a write that threw", async () => {
     const guard = fence();
     const inner = innerSession();
     inner.writeTextFile.mockRejectedValueOnce(new Error("connection reset"));
     await expect(
       guard.session(inner).writeTextFile({ path: "/x", content: "" }),
     ).rejects.toThrow();
-    expect(guard.settled).toBe(false);
+    expect(guard.outcome).toBe("uncertain");
   });
 
-  it("never hands the claim back while a call has not settled", async () => {
+  it("releases uncertain while a call has not settled", async () => {
     const guard = fence();
     const inner = innerSession();
     inner.run.mockImplementationOnce(() => new Promise(() => {}));
     void guard.session(inner).run({ command: "sleep 1" });
     vi.advanceTimersByTime(BOUND_MS + MARGIN_MS + 1);
-    expect(guard.settled).toBe(false);
+    expect(guard.outcome).toBe("uncertain");
   });
 
   it("cuts a write's request off at the bound, keeping the caller's cancellation", async () => {

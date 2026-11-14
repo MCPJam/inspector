@@ -44,7 +44,10 @@ import {
   type InfraFailureEvidence,
   type ModelEndpointOwnership,
 } from "../infra-failure-evidence.js";
-import { waitOutBoxPreparation } from "./box-preparing-wait.js";
+import {
+  BOX_RETIRED_CODE,
+  waitOutBoxPreparation,
+} from "./box-preparing-wait.js";
 import {
   orgHarnessSelection,
   type OrgHarnessSelection,
@@ -52,8 +55,8 @@ import {
 import {
   releaseHarnessBoxReservation,
   reserveHarnessBox,
-  startHarnessModelBroker,
-} from "./harness-model-broker.js";
+} from "./harness-box-reservation.js";
+import { startHarnessModelBroker } from "./harness-model-broker.js";
 import {
   failedTurnEvidence,
   type HarnessOrgLeaseUpstream,
@@ -72,6 +75,19 @@ import {
 } from "./org-credential-continuity.js";
 import type { MCPJamHandlerOptions } from "../mcpjam-stream-handler.js";
 import type { HarnessRuntimeAdapter } from "./registry.js";
+
+/**
+ * A box whose preparation ended uncertain is retired: a call it made may still
+ * reach the box, so the backend refuses every turn on it (`box_retired`). The
+ * Send stops here, before any sandbox command, and the person sends again.
+ */
+function refuseRetiredBox(result: { ok: boolean; code?: string }): void {
+  if (result.ok || result.code !== BOX_RETIRED_CODE) return;
+  throw new HarnessInfraSetupError(
+    "This conversation's computer was replaced. Send your message again.",
+    { source: "sandbox_setup", code: BOX_RETIRED_CODE, httpStatus: 409 },
+  );
+}
 
 export class OrgLeaseTurn {
   /** MCPJam's model proxy, or on the org's key the endpoint the lease reaches. */
@@ -182,7 +198,8 @@ export class OrgLeaseTurn {
    * concurrency control. An org selection is resolved by the backend HERE,
    * before anything is installed, and one it refused is a CONFIGURATION
    * failure that keeps the backend's own code (`provider_mismatch`, …).
-   * A preparation holding the box is waited out (`box-preparing-wait.ts`).
+   * A preparation holding the box is waited out (`box-preparing-wait.ts`),
+   * and a box one left uncertain is refused (`refuseRetiredBox`).
    * A try the backend may have answered after it was given up leaves a claim
    * nobody holds, so it is handed back, by run, as a failed preparation's is.
    */
@@ -208,6 +225,7 @@ export class OrgLeaseTurn {
     });
     if (!reservation.ok) {
       if (reservation.status >= 500) handBack();
+      refuseRetiredBox(reservation);
       throw new HarnessInfraSetupError(reservation.error, {
         source: "sandbox_setup",
         code:
@@ -224,7 +242,9 @@ export class OrgLeaseTurn {
    * Start the box's lease. An org start carries the revision `/reserve`
    * prepared, so a key replaced since is refused. A preparation holding the
    * box is waited out first (`box-preparing-wait.ts`); a lease a given-up try
-   * still installed is revoked by run with the turn's own (`brokerRunId`).
+   * still installed is revoked by run with the turn's own (`brokerRunId`). A
+   * retired box ends the turn typed (`refuseRetiredBox`); teardown still
+   * revokes by run.
    */
   async start(
     args: Omit<
@@ -244,6 +264,7 @@ export class OrgLeaseTurn {
         }),
       args.signal,
     );
+    refuseRetiredBox(broker);
     if (broker.ok) {
       this.leaseRunId = args.runId;
       if (this.selection) this.upstream = broker.orgUpstream;
