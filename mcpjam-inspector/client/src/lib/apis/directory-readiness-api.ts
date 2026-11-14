@@ -66,20 +66,6 @@ export type ReadinessRunReceipt = PlatformReadinessRunReceipt;
 export type ReadinessRunStatus = PlatformReadinessRun["status"];
 export type HostedSubmissionMode = PlatformReadinessSubmissionMode;
 
-/**
- * The submission shapes a HOSTED run can grade.
- *
- * Two of OpenAI's four carry a package and there is no upload for it, so those
- * only ever run on the CLI. Offering them here and failing at the API would
- * teach a submitter that readiness is broken rather than that they are on the
- * wrong surface. Typed against the platform union so a fifth mode cannot
- * appear here without this list being reconsidered.
- */
-export const HOSTED_SUBMISSION_MODES = [
-  "mcp-only",
-  "mcp-imported-skills",
-] as const satisfies readonly HostedSubmissionMode[];
-
 /** Terminal states: nothing about this run will change again. */
 export function isTerminalRunStatus(status: ReadinessRunStatus): boolean {
   return (
@@ -254,9 +240,8 @@ export async function resumeHostedReadinessRun(
 /**
  * The full graded report, fetched lazily.
  *
- * Megabytes are possible and the run row already carries everything the
- * collapsed section renders, so this is called when a reader opens the
- * findings rather than alongside every poll.
+ * Megabytes are possible and the run row already carries the summary, so
+ * this is fetched once the run finishes rather than alongside every poll.
  */
 export async function getHostedReadinessReport(
   runId: string,
