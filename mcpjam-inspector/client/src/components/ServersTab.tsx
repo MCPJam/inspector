@@ -87,7 +87,7 @@ import {
   type OrgRegistryDialogSeed,
 } from "./registry/OrgRegistryServerDialog";
 import { track } from "@/lib/analytics";
-import { reportPossiblyOurFailure } from "@/lib/error-reporting";
+import { reportCaught, reportPossiblyOurFailure } from "@/lib/error-reporting";
 import {
   HoverCard,
   HoverCardContent,
