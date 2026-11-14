@@ -162,7 +162,9 @@ describe("the reviewer's password", () => {
   });
 
   it("is not reported unset when nobody looked at the project's secrets", () => {
-    expect(issues(answers(), undefined)).toEqual([]);
+    expect(
+      validateDirectoryAnswers(FLOW, answers(), { savedSecrets: undefined })
+    ).toEqual([]);
   });
 
   it("refuses a pasted password at the write, without repeating it", () => {

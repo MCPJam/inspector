@@ -234,6 +234,19 @@ describe("collectZipArchiveObservations", () => {
     ]);
   });
 
+  it("does not call a cut-short directory a full read of the encryption flags", async () => {
+    // The last record declares an extra field longer than the bytes left, so
+    // the directory was never read to its end and "none encrypted" is not a
+    // measurement.
+    const zip = rawZipOf([["plugin.json", "{}"]]);
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    const directoryOffset = view.getUint32(zip.byteLength - 22 + 16, true);
+    view.setUint16(directoryOffset + 30, 0xffff, true);
+    const observed = await collectZipArchiveObservations(zip);
+    expect(observed.encryptedEntryPaths).toBeUndefined();
+    expect(observed.rawEntryNames).toBeUndefined();
+  });
+
   it("survives an archive it cannot read, keeping the one fact it still has", async () => {
     // The usual shape of this is a password-protected zip: JSZip rejects it
     // outright rather than listing entries. Letting that reject escape would

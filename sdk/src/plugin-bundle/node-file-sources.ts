@@ -401,6 +401,9 @@ function readCentralDirectory(
       names.push(name);
       if (flags & ENCRYPTED_FLAG) encrypted.push(name);
       cursor = nameStart + nameLength + extraLength + entryCommentLength;
+      // A record whose extra field or comment runs past the upload was cut
+      // short, so the directory was not read in full.
+      if (cursor > bytes.byteLength) return undefined;
     }
     return { names, encrypted };
   }
