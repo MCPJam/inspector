@@ -266,13 +266,14 @@ export function preflightTargets({
       cell.modelId ? cell.modelSelection : host?.modelSelection,
       model,
     );
+    const harness = effectiveHarnessId(client);
     return [
       {
         model,
         provider: provider.provider,
         ...(selection ? { selection } : {}),
         ...(host?.selectionKnown === false ? { selectionKnown: false } : {}),
-        ...(client?.harness ? { harness: client.harness } : {}),
+        ...(harness ? { harness } : {}),
       },
     ];
   });
