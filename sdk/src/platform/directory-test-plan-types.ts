@@ -14,6 +14,10 @@ import type {
   DirectoryTestPlan,
   DirectoryTestPlanIssue,
 } from "../directory-readiness/test-plan/types.js";
+import type {
+  DirectoryObservationReason,
+  DirectoryObservationStatus,
+} from "../directory-readiness/observations.js";
 import type { PlatformReadinessRun } from "./types.js";
 
 /** The server's stored tool list a plan was drafted from or checked against. */
@@ -83,6 +87,52 @@ export interface PlatformDirectoryToolTestSweep {
   issues?: DirectoryTestPlanIssue[];
 }
 
+/** Arguments MCPJam's broker proposed for a case that had none. */
+export interface PlatformDirectoryTestArgumentDraft {
+  caseId: string;
+  /** Fixture references left as a plan holds them. */
+  arguments: Record<string, unknown>;
+  /** A negative case's expected refusal; absent means any refusal. */
+  expectedError?: "invalid-arguments" | "tool-error";
+  rationale: string;
+}
+
+/** A case the broker answered without arguments, and why. */
+export interface PlatformDirectoryTestArgumentUndecided {
+  caseId: string;
+  reason:
+    | "needs_secret"
+    | "needs_fixture"
+    | "unclear"
+    | "schema_mismatch"
+    | "credential"
+    | "schema_invalid"
+    | "provider_error"
+    | "provider_timeout"
+    | "ai_unavailable";
+  detail?: string;
+}
+
+/**
+ * A run's drafting pass, from its report. Proposals only: the run sent none
+ * of them, and none reaches the plan until someone accepts it into a new
+ * revision.
+ */
+export interface PlatformDirectoryTestArgumentDrafting {
+  status: Exclude<DirectoryObservationStatus, "not-requested" | "pending">;
+  reason?: DirectoryObservationReason;
+  /** What went wrong, and what to do, when the pass drafted nothing. */
+  detail?: string;
+  drafts: PlatformDirectoryTestArgumentDraft[];
+  undecided: PlatformDirectoryTestArgumentUndecided[];
+  /** Drafts the broker checked and dropped; each is also in `undecided`. */
+  dropped: { schema: number; credential: number };
+  /** Cases without arguments the run did not send for drafting. */
+  unsent: number;
+  modelId?: string;
+  promptVersion?: string;
+}
+
 /** What one run's test plan calls showed. */
 export interface PlatformDirectoryToolTests {
   /** `null` until a run of the submission names a test plan. */
@@ -97,6 +147,11 @@ export interface PlatformDirectoryToolTests {
   source: "report" | "ledger" | null;
   /** From the report only. */
   sweep?: PlatformDirectoryToolTestSweep;
+  /**
+   * From the report only, and only for a run that opted into model
+   * observations: arguments drafted for the plan's cases that had none.
+   */
+  drafting?: PlatformDirectoryTestArgumentDrafting;
   /** One result per tool in the plan; each case keeps the call that decided it and who made it. */
   tools: DirectoryToolTestResult[];
   counts: {

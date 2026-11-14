@@ -8,7 +8,14 @@
  * revision of edits still waiting: that would overwrite, unseen, a change
  * someone else made to the same field.
  */
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import {
   directoryFlowField,
   validateDirectoryAnswers,
@@ -422,13 +429,16 @@ export function useDirectorySubmission({
   }, [store, projectId, submissionId]);
 
   // The run reuses the readiness run poller; a new `start` resets it. So the
-  // plugin version a ChatGPT run grades is read when the run starts.
+  // plugin version a ChatGPT run grades, and the test plan revision the person
+  // started the run with, are read when the run starts.
+  const consented = useRef<number | undefined>(undefined);
   const start = useCallback(
     (key: string) =>
       startDirectorySubmissionRun(
         { projectId, submissionId: submissionId ?? "" },
         key,
         store.draft().view?.pluginVersionId,
+        consented.current,
       ),
     [projectId, submissionId, store],
   );
@@ -477,13 +487,22 @@ export function useDirectorySubmission({
       flow ? validateDirectoryAnswers(flow, answers, { on: "review" }) : [],
     [flow, answers],
   );
-  const startRun = useCallback(async () => {
-    // A run grades the answers stored when it starts, so it starts only
-    // once every edit is saved, and only for the submission still open.
-    const scope = store.scope();
-    if (!(await store.saveNow())) return;
-    if (store.scope() === scope) await run();
-  }, [store, run]);
+  /**
+   * `testPlanRevision` is the saved plan revision the person started the run
+   * with, which authorizes its calls; without one the run calls no tool.
+   */
+  const startRun = useCallback(
+    async (testPlanRevision?: number) => {
+      // A run grades the answers stored when it starts, so it starts only
+      // once every edit is saved, and only for the submission still open.
+      const scope = store.scope();
+      if (!(await store.saveNow())) return;
+      if (store.scope() !== scope) return;
+      consented.current = testPlanRevision;
+      await run();
+    },
+    [store, run],
+  );
   const confirm = useCallback(
     (key: string) => {
       const value = values[key];

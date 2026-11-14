@@ -67,6 +67,10 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/directory-submissions/sub_1/snapshots",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/findings",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/findings/claude.endpoint.https",
+    // The test plan: without these its read, draft, save and results 401.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan/draft",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/tool-tests",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });
@@ -109,6 +113,11 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/directory-submissions/sub_1/findings/check_1/details",
     // A sub-path the API does not serve.
     "/api/v1/projects/proj_1/directory-submissions/sub_1/answers",
+    // The test plan paths take no extra segment, and no sibling.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan/draft/raw",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan/2",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/tool-tests/run_1",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plans",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });

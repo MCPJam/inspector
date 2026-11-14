@@ -45,6 +45,16 @@ const COUNTS = [
   },
 ] as const;
 
+/** The button says which saved test plan revision pressing it authorizes. */
+function runLabel(hasRun: boolean, planRevision?: number): string {
+  if (planRevision === undefined) {
+    return hasRun ? "Run checks again" : "Run checks";
+  }
+  return hasRun
+    ? `Run checks again with test plan revision ${planRevision}`
+    : `Run checks with test plan revision ${planRevision}`;
+}
+
 export function RehearsalBar({
   directory,
   counts,
@@ -53,6 +63,7 @@ export function RehearsalBar({
   canRun,
   running,
   hasRun,
+  planRevision,
   onRun,
 }: {
   directory: string;
@@ -63,6 +74,8 @@ export function RehearsalBar({
   canRun: boolean;
   running: boolean;
   hasRun: boolean;
+  /** The saved test plan revision a run starts with, and so authorizes. */
+  planRevision?: number;
   onRun: () => void;
 }) {
   return (
@@ -108,7 +121,7 @@ export function RehearsalBar({
           ) : (
             <Play aria-hidden="true" />
           )}
-          {hasRun ? "Run checks again" : "Run checks"}
+          {runLabel(hasRun, planRevision)}
         </Button>
       </div>
     </div>

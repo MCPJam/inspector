@@ -29,6 +29,7 @@ import {
 import {
   directoryTestPlanSchema,
   type PlatformDirectorySubmission as Submission,
+  type PlatformDirectoryTestArgumentDrafting,
   type PlatformDirectoryTestPlanRevision,
 } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
@@ -245,12 +246,17 @@ async function reportedToolTests(run: RunRow): Promise<DirectoryToolTestReport |
 }
 
 /** The report's summary, judged against the tool list its calls were made with. */
-function fromReport({ status, reason, stopped, issues, ambiguous, tools, cleanup }: DirectoryToolTestReport) {
+function fromReport({ status, reason, stopped, issues, ambiguous, tools, cleanup, drafting }: DirectoryToolTestReport) {
   const doubted = new Set(ambiguous);
   const calls = [...tools.flatMap((tool) => tool.cases.flatMap((result) => (result.call ? [result.call] : []))), ...cleanup];
+  // Proposals for a person to accept into a new revision: the run sent none.
+  // Typed as the SDK's shape, so the worker's and the API's cannot drift.
+  const drafted: PlatformDirectoryTestArgumentDrafting | undefined =
+    drafting && [drafting.drafts, drafting.undecided].every(Array.isArray) ? drafting : undefined;
   return {
     source: "report" as const,
     sweep: { status, ...(reason ? { reason } : {}), ...(stopped ? { stopped } : {}), ...(issues ? { issues } : {}) },
+    ...(drafted ? { drafting: drafted } : {}),
     tools,
     counts: countsOf(tools),
     inDoubt: calls.filter((call) => doubted.has(call.callKey)),
