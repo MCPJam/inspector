@@ -95,7 +95,6 @@ describe("PosthogUtils", () => {
     // `register` feeds EVENTS; `/flags` evaluates PERSON properties. Without
     // this call a `deployment = self_hosted` flag rule matches nobody.
     expect(posthog.setPersonPropertiesForFlags).toHaveBeenCalledWith({
-      local_browser_security_version: "1",
       deployment: "self_hosted",
       platform: expect.any(String),
     });

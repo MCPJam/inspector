@@ -182,10 +182,10 @@ export function captureServerEventForActor(
  * caller's force-exit timer is the backstop).
  */
 /** Rollout evaluation does not emit exposure events or trust client flags. */
-export async function evaluateBrowserRollout(
-  key: "local-browser-enabled" | "hosted-browser-enabled",
+export async function evaluateHostedBrowserRollout(
   distinctId: string,
 ): Promise<boolean> {
+  const key = "hosted-browser-enabled";
   if (!rolloutActorId(distinctId)) return false;
   const answer = rolloutAnswerWithoutPostHog(key);
   if (answer !== undefined) return answer;
@@ -193,9 +193,6 @@ export async function evaluateBrowserRollout(
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
         sendFeatureFlagEvents: false,
-        ...(key === "local-browser-enabled"
-          ? { personProperties: { local_browser_security_version: "1" } }
-          : {}),
       })) === true
     );
   } catch {

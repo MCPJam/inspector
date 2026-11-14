@@ -135,12 +135,6 @@ export function useBrowserWorkspaceEnabled(): boolean {
   return useBrowserWorkspaceEnabledState() === true;
 }
 
-/** Browser candidacy never depends on the shell cohort. */
-export const LOCAL_BROWSER_FEATURE_FLAG = "local-browser-enabled";
-export function useLocalBrowserEnabled(): boolean {
-  return useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG) === true;
-}
-
 export const HOSTED_BROWSER_FEATURE_FLAG = "hosted-browser-enabled";
 
 /**
@@ -156,17 +150,14 @@ export function useHostedBrowserEnabled(): boolean {
 }
 
 /**
- * Browser has two location rollouts, neither nested under Computers. In hosted
- * mode the browser on offer is the one the model drives, so it follows the
- * backend's answer for the `browser_*` tools.
+ * The local Browser is always on; only the cloud one is a rollout, and it is
+ * not nested under Computers. In hosted mode the browser on offer is the one
+ * the model drives, so it follows the backend's answer for the `browser_*`
+ * tools.
  */
 export function useBrowserEnabledState(): boolean | undefined {
-  const local = useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG);
-  const hostedFlag = useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG);
   const hostedTools = useHostedBrowserAvailable("tools");
-  if (HOSTED_MODE) return hostedTools;
-  if (local === true || hostedFlag === true) return true;
-  return local === undefined || hostedFlag === undefined ? undefined : false;
+  return HOSTED_MODE ? hostedTools : true;
 }
 
 export function useBrowserEnabled(): boolean {

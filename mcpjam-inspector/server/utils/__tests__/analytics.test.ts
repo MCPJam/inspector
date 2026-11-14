@@ -33,7 +33,7 @@ import { join } from "node:path";
 import { PostHog } from "posthog-node";
 import {
   captureServerEvent,
-  evaluateBrowserRollout,
+  evaluateHostedBrowserRollout,
   evaluateClientFeatureFlags,
   evaluateLocalHarnessRollout,
   shutdownAnalytics,
@@ -124,18 +124,12 @@ describe("captureServerEvent", () => {
       process.env[setting] = "true";
       flagMock.mockResolvedValueOnce(true);
       expect(
-        await evaluateBrowserRollout(
-          "local-browser-enabled",
-          "user_01H00000000000000000000000",
-        ),
+        await evaluateHostedBrowserRollout("user_01H00000000000000000000000"),
       ).toBe(true);
       expect(flagMock).toHaveBeenLastCalledWith(
-        "local-browser-enabled",
+        "hosted-browser-enabled",
         "user_01H00000000000000000000000",
-        {
-          sendFeatureFlagEvents: false,
-          personProperties: { local_browser_security_version: "1" },
-        },
+        { sendFeatureFlagEvents: false },
       );
       captureServerEvent(
         fakeContext({
@@ -163,10 +157,7 @@ describe("captureServerEvent", () => {
     process.env.DO_NOT_TRACK = "true";
     flagMock.mockResolvedValue(true);
     expect(
-      await evaluateBrowserRollout(
-        "local-browser-enabled",
-        "user_01H00000000000000000000000",
-      ),
+      await evaluateHostedBrowserRollout("user_01H00000000000000000000000"),
     ).toBe(false);
     expect(
       await evaluateLocalHarnessRollout("user_01H00000000000000000000000"),
@@ -186,7 +177,7 @@ describe("captureServerEvent", () => {
     writeFileSync(
       path,
       JSON.stringify({
-        "local-browser-enabled": true,
+        "hosted-browser-enabled": true,
         "local-harness-enabled": false,
         "evaluate-enabled": true,
         "guest-credit-wall-copy": "treatment",
@@ -196,10 +187,7 @@ describe("captureServerEvent", () => {
     process.env.MCPJAM_FEATURE_FLAGS_FILE = path;
     try {
       expect(
-        await evaluateBrowserRollout(
-          "local-browser-enabled",
-          "user_01H00000000000000000000000",
-        ),
+        await evaluateHostedBrowserRollout("user_01H00000000000000000000000"),
       ).toBe(true);
       expect(
         await evaluateLocalHarnessRollout("user_01H00000000000000000000000"),
@@ -207,7 +195,7 @@ describe("captureServerEvent", () => {
       expect(
         await evaluateClientFeatureFlags("user_01H00000000000000000000000", {}),
       ).toEqual({
-        "local-browser-enabled": true,
+        "hosted-browser-enabled": true,
         "local-harness-enabled": false,
         "evaluate-enabled": true,
         "guest-credit-wall-copy": "treatment",

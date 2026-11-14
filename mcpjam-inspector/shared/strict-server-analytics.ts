@@ -166,8 +166,5 @@ export function rolloutPersonProperties(input: Record<string, string>, trustedEm
     ...(input.deployment === "hosted" || input.deployment === "self_hosted"
       ? { deployment: input.deployment }
       : {}),
-    ...(input.local_browser_security_version === "1"
-      ? { local_browser_security_version: "1" }
-      : {}),
   };
 }

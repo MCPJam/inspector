@@ -28,7 +28,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "hosted-browser-enabled",
   "integrations-tab",
   "learn-more-enabled",
-  "local-browser-enabled",
   "local-codex-enabled",
   "local-computer-enabled",
   "local-copilot-cli-enabled",

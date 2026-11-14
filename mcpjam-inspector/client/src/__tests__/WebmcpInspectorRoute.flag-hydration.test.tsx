@@ -10,7 +10,7 @@ import { routePaths } from "../lib/app-navigation";
 let flagState: boolean | undefined = undefined;
 
 vi.mock("../hooks/useWebmcpInspectorEnabled", () => ({
-  WEBMCP_INSPECTOR_FEATURE_FLAG: "local-browser-enabled",
+  WEBMCP_INSPECTOR_FEATURE_FLAG: "hosted-browser-enabled",
   useWebmcpInspectorEnabledState: () => flagState,
   useWebmcpInspectorEnabled: () => flagState === true,
 }));

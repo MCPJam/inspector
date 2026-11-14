@@ -44,7 +44,7 @@ export async function prepareMobileApp(
       convexOrigin: "wss://visual.invalid",
       responses: {
         ...memberFixture.responses,
-        "/api/web/flags": { flags: { "local-browser-enabled": true } },
+        "/api/web/flags": { flags: {} },
         "/api/mcp/servers": {
           success: true,
           servers: [
