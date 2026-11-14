@@ -21,11 +21,11 @@ const UNDECIDED: Record<
   needs_fixture:
     "It needs a fixture the plan does not name. Enter its arguments in the plan below.",
   unclear:
-    "The tool's schema does not say enough to draft its arguments. Enter them in the plan below.",
+    "The tool does not describe its arguments well enough to draft them. Enter them in the plan below.",
   schema_mismatch:
-    "Its draft did not match the tool's schema, so MCPJam dropped it. Enter its arguments in the plan below.",
+    "MCPJam dropped its draft because it did not fit what the tool accepts. Enter its arguments in the plan below.",
   credential:
-    "Its draft matched a credential pattern, so MCPJam dropped it. Enter its arguments in the plan below.",
+    "MCPJam dropped its draft to keep a secret out of the plan. Enter its arguments in the plan below.",
   schema_invalid:
     "The model's answer could not be read. Enter its arguments in the plan below.",
   provider_error:
@@ -96,9 +96,9 @@ export function ArgumentDrafts({
   const { schema, credential } = drafting.dropped;
   const dropped = [
     schema > 0 &&
-      `${many(schema, "draft", "drafts")} that did not match the tool's schema`,
+      `${many(schema, "draft", "drafts")} that did not fit what the tool accepts`,
     credential > 0 &&
-      `${many(credential, "draft", "drafts")} that matched a credential pattern`,
+      `${many(credential, "draft", "drafts")} that held secret-like values`,
   ].filter(Boolean);
   const revision = session.results?.testPlanRevision;
   return (

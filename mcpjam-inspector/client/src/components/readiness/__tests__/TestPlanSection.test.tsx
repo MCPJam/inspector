@@ -226,7 +226,9 @@ describe("TestPlanSection", () => {
       screen.getByText("The note to delete comes from another case."),
     ).toBeVisible();
     expect(
-      screen.getByText(/^MCPJam dropped 1 draft that did not match/),
+      screen.getByText(
+        /^MCPJam dropped 1 draft that did not fit what the tool accepts/,
+      ),
     ).toBeVisible();
     expect(
       screen.getByText(/^2 cases without arguments were not sent for drafting/),
