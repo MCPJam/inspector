@@ -4632,6 +4632,15 @@ export function PlaygroundMain({
     ) {
       return true;
     }
+    // On the multi-select Playground, `serverName` is the app-wide selection,
+    // which may not be one of the servers this chat runs against. Only a
+    // server the user added here may hold up the send.
+    if (
+      playgroundServerSelectorProps?.isMultiSelectEnabled &&
+      !playgroundServerSelectorProps.selectedMultipleServers.includes(serverName)
+    ) {
+      return true;
+    }
 
     const connectionStatus = servers[serverName]?.connectionStatus;
     if (connectionStatus === "connected") {
@@ -4664,7 +4673,13 @@ export function PlaygroundMain({
     } finally {
       setIsPreparingServerForSend(false);
     }
-  }, [ensureServersReady, serverName, servers]);
+  }, [
+    ensureServersReady,
+    isEnvironmentMode,
+    playgroundServerSelectorProps,
+    serverName,
+    servers,
+  ]);
 
   const localAutoApprove = useLocalAutoApproveConsent({
     enabled: localHarnessRequested && requireToolApproval === false,
