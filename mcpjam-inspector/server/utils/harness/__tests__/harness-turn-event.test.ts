@@ -399,6 +399,35 @@ describe("harness_turn_completed: closed vocabularies", () => {
     },
   );
 
+  it.each<[string, { warm?: WarmAttachOutcome; kept?: KeptRuntimeOutcome }, string]>([
+    ["a kept local runtime", { kept: "authorization_revoked" }, "authorization_revoked"],
+    ["a warm bridge", { warm: "probe_refused" }, "probe_refused"],
+  ])(
+    "still says why it refused %s when the turn then failed before its session",
+    (_label, reuse, fallback) => {
+      const { sink, turn } = setup({ local: reuse.kept !== undefined });
+      turn.mark("start");
+      turn.claimed(1);
+      if (reuse.warm) turn.warmAttach(reuse.warm);
+      if (reuse.kept) turn.keptRuntime(reuse.kept);
+      turn.close({ aborted: false, completed: false, bootstrap: undefined });
+      const event = sent(sink);
+      expect(event).toMatchObject({ outcome: "failed", fallback_reason: fallback });
+      expect(event).not.toHaveProperty("start");
+    },
+  );
+
+  it("sends no fallback for a runtime it adopted when the turn failed before its session", () => {
+    const { sink, turn } = setup({ local: true });
+    turn.mark("start");
+    turn.claimed(1);
+    turn.keptRuntime("adopted");
+    turn.close({ aborted: false, completed: false, bootstrap: undefined });
+    const event = sent(sink);
+    expect(event).not.toHaveProperty("fallback_reason");
+    expect(event).not.toHaveProperty("start");
+  });
+
   it("lets the lane's reset say why a local turn started fresh, over its kept runtime's refusal", () => {
     const { sink, turn } = startSession({
       local: true,
