@@ -18,7 +18,7 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 | `MCPJAM_PROJECT_ID` | No | org's Default project | Project the results are filed under |
 | `MCPJAM_BASE_URL` | No | `https://app.mcpjam.com` | MCPJam API base URL override |
 
-Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
+Set `MCPJAM_BASE_URL` only when results should go to an MCPJam host other than the default.
 
 `MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result's trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`HostRunner`](/sdk/reference/host-runner) was constructed with [`mcpClientManager`](/sdk/reference/host-runner#parameters).
 
@@ -347,7 +347,7 @@ Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJam
 |----------|------|----------|-------------|
 | `suiteName` | `string` | Yes | Suite name for the run |
 | `results` | `EvalResultInput[]` | Yes | The results to upload |
-| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an executor (`HostRunner` / `HostRuntime`) created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result). Field name predates the Stage 4 rename; any `HostExecutor` is accepted. |
+| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an executor (`HostRunner` / `HostRuntime`) created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result). Any `HostExecutor` is accepted. |
 | `executor` | `{ getHostSnapshot?: () => HostJson \| undefined }` | No | Host-snapshot fallback for the run-level host config. Consulted when no per-iteration `hostSnapshot` is available; any object exposing `getHostSnapshot()` (e.g. `HostRunner`, `HostRuntime`) qualifies. See [Run-level host snapshot](#run-level-host-snapshot) |
 | `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
 
@@ -357,7 +357,7 @@ Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJam
 |----------|------|----------|-------------|
 | `enabled` | `boolean` | No | Enable/disable reporting (default: `true`) |
 | `apiKey` | `string` | No | MCPJam API key (`sk_…`; falls back to `MCPJAM_API_KEY` env var) |
-| `baseUrl` | `string` | No | MCPJam API base URL override (useful for internal development or tests) |
+| `baseUrl` | `string` | No | MCPJam API base URL override |
 | `project` | `string` | No | Project id results are filed under (falls back to `MCPJAM_PROJECT_ID`, then the org's Default project) |
 | `suiteName` | `string` | No | Suite name for the run |
 | `suiteDescription` | `string` | No | Description of the suite |
@@ -378,29 +378,29 @@ The replay sources `agent` and `mcpClientManager` are fields of [`ReportEvalResu
 
 ### Run-level host snapshot
 
-When a usable host snapshot is available, the reporter includes a normalized + content-hashed host config alongside the run body (the v1 ingest surface always accepts the pair — the old per-`baseUrl` capability probe is gone):
+When a usable host snapshot is available, the reporter includes a normalized + content-hashed host config alongside the run body:
 
 ```jsonc
 POST /api/v1/projects/{projectId}/eval-ingest/runs/start
 {
   "suiteName": "...",
   "results": [...],
-  "hostConfig":     {/* canonical HostConfigInputV2 with serverIds stripped */},
+  "hostConfig":     {/* canonical host config with serverIds stripped */},
   "hostConfigHash": "sha256(canonical)"
 }
 ```
 
 **Source order (highest priority first):**
 
-1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime` (Stage 4). Reflects the bound `Host` state at the iteration's end. Not yet carried by `EvalResultInput`, so today the reporter falls through to 2 and 3.
+1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime`. Reflects the bound `Host` state at the iteration's end. `EvalResultInput` does not carry this field, so uploads built from `EvalResultInput` use 2 or 3.
 2. `executor.getHostSnapshot?.()` — fallback for executors that don't expose per-iteration snapshots.
-3. `MCPJamReportingConfig.host` — explicit override, compatibility path.
+3. `MCPJamReportingConfig.host` — explicit override.
 
-**Pass-1 homogeneity gate.** The reporter only sends a run-level `{ hostConfig, hostConfigHash }` when all available iteration snapshots canonicalize to the same hash. Heterogeneous runs (e.g. mutating the bound `Host` between iterations) omit the run-level field — per-iteration wire support is a later stage.
+**Mixed host snapshots.** The reporter only sends a run-level `{ hostConfig, hostConfigHash }` when all available iteration snapshots canonicalize to the same hash. Runs whose snapshots differ (e.g. mutating the bound `Host` between iterations) omit the pair.
 
 **Fail-safe omission.** Any error while resolving or canonicalizing the snapshot — malformed `hostSnapshot`, an executor that throws, non-canonicalizable host JSON — logs a warning and omits the wire pair rather than failing the eval upload. The body shape stays the same without it.
 
-**Server-id normalization.** Runtime-manager identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) are stripped by `normalizeSdkEvalHostConfigForWire` on both ends so SDK runtime ids like `"everything"` never reach the backend's `validateServerScope` as `Id<'servers'>`. The persisted `hostConfigsV2` row's hash will differ from the wire `hostConfigHash` because suite-resolved Convex server ids are layered on top at storage time — the wire hash is a transport-integrity check, not the storage id.
+**Server ids.** Runtime server identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) are stripped before upload, so SDK ids like `"everything"` are never read as MCPJam server ids. The host config MCPJam stores for the run adds the suite's own servers, so its hash can differ from the uploaded `hostConfigHash`. Treat `hostConfigHash` as an integrity check on the upload, not as an identifier for the stored config.
 
 ### MCPServerReplayConfig
 
@@ -447,12 +447,12 @@ Automatically detected when `ci` is omitted for supported CI services. An explic
 | `trace` | `EvalTraceInput` | No | Conversation trace |
 | `externalIterationId` | `string` | No | Custom iteration ID |
 | `externalCaseId` | `string` | No | Custom case ID |
-| `caseId` | `string` | No | The case's declared identity ([`EvalTestConfig.id`](/sdk/reference/eval-test)). An `EvalSuite` puts this on every result automatically. The backend resolves by it first and adopts it onto a case that resolved by content hash, which is what lets a renamed test keep its history. Must equal `externalCaseId` when both are present. |
-| `intent` | `string \| null` | No | Analytics grouping label for this case. `null` explicitly records an unlabelled modern producer; omit the field to preserve legacy wire behavior. Never affects scoring or the verdict. |
+| `caseId` | `string` | No | The case's declared identity ([`EvalTestConfig.id`](/sdk/reference/eval-test)). An `EvalSuite` puts this on every result automatically. MCPJam matches results to a case by this id first, so a renamed test keeps its history. Must equal `externalCaseId` when both are present. |
+| `intent` | `string \| null` | No | Analytics grouping label for this case. `null` records the case as explicitly unlabelled; omit the field if you do not set intents. Never affects scoring or the verdict. |
 | `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata; values must be scalars. When the runner evaluates a case's predicates, it persists `{ predicate, passed, reason, scope? }[]` under `metadata.predicates` automatically. |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
 | `advancedConfig` | `Record<string, unknown>` | No | Advanced case configuration recorded with the iteration (e.g. `steps`, `system`, `temperature`) |
-| `matchOptions` | `EvalMatchOptions` | No | Per-result match options. When present, the inspector snapshots these onto the iteration so historical pass/fail computation honors them. See [`EvalMatchOptions`](/sdk/reference/validators#evalmatchoptions) |
+| `matchOptions` | `EvalMatchOptions` | No | Per-result match options. When present, MCPJam stores these with the iteration so later pass/fail computation honors them. See [`EvalMatchOptions`](/sdk/reference/validators#evalmatchoptions) |
 | `widgetSnapshots` | `EvalWidgetSnapshotInput[]` | No | MCP App HTML replay payloads (typically from [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result)). Omitted when not using MCP Apps or when `HostRunner` had no `mcpClientManager` |
 
 ### Predicate gate
@@ -460,10 +460,6 @@ Automatically detected when `ci` is omitted for supported CI services. An explic
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
 Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **required** predicate passes. A check's `role` is `"required"` (legacy spelling: `"gating"`) or `"advisory"`; absent means required. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case, including when its `status` is `"error"`. A **required** check that could not be scored is the opposite: it holds the gate shut, because a check that never ran is not a check that passed (see [A predicate never passes by default](#a-predicate-never-passes-by-default)); its `onError` / `onSkipped` policy is what decides, and for a required role both default to `"fail"`. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
-
-<Note>
-  Before SDK 3.0 the predicate engine was hosted-only: `EvalResultInput` had no predicate field, and a code-first run could not evaluate them. Code-first predicates now gate the iteration locally **and** report the same verdicts, so a suite reads identically whether it ran from your test file or from the platform.
-</Note>
 
 The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors` — read render observations that only a hosted run captures, and they fail closed. `EvalTest` therefore **rejects them at construction** rather than failing every iteration with a confusing reason; move those cases to a hosted suite.
 
@@ -561,7 +557,7 @@ Reasons never print a value without its key, so a value under a sensitive key su
 
 #### Standard checks
 
-Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory. UVC reports these evaluator results without turning advisory failures into failed stages. Scored **required** discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
+Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory. The user-value chain reports these evaluator results without turning advisory failures into failed stages. Scored **required** discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
 
 Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
 
@@ -583,7 +579,7 @@ A predicate that cannot be evaluated fails the case instead of silently passing.
 Some kinds above are marked **Observation**. They are heuristics — a pattern
 that can be right about what it saw and still wrong about what it means — so
 they carry one rule everywhere: `role: "advisory"` is required, a required one is
-refused by the schema and by the backend, the authoring UI offers Advisory
+refused when the check is written, the authoring UI offers Advisory
 only, and they never enter `allGatingScorersPassed`.
 
 #### Missing evidence is an error, not a failure
@@ -633,7 +629,7 @@ const allPassed = allPredicatesPassed(results);
 
 #### Predicate results in metadata
 
-When the Inspector runner evaluates predicates, it persists one row per predicate to `testIteration.metadata.predicates`:
+When the runner evaluates predicates, it records one entry per predicate under the iteration's `metadata.predicates`:
 
 ```typescript
 type PredicateResult = {
@@ -653,8 +649,8 @@ Thrown by `reportEvalResults()` and (when `strict: true`) by `reportEvalResultsS
 | Property | Type | Description |
 |----------|------|-------------|
 | `isBillingLimitReached` | `boolean` | The org's billing limit was reached. No results were filed. |
-| `isReportingBackendIncompatible` | `boolean` | The destination rejected a field this SDK sends — the reporting backend is older than the SDK's minimum contract. No results were filed, and retrying will not help. Upgrade the destination or point `baseUrl` at one that accepts declared case ids. |
-| `statusCode` | `number \| undefined` | HTTP status code from the backend, if available. |
+| `isReportingBackendIncompatible` | `boolean` | The destination rejected a field this SDK sends because the MCPJam deployment at `baseUrl` is older than this SDK supports. No results were filed, and retrying will not help. Upgrade the destination or point `baseUrl` at one that accepts declared case ids. |
+| `statusCode` | `number \| undefined` | HTTP status code from MCPJam, if available. |
 | `attemptCount` | `number \| undefined` | Number of upload attempts made before giving up. |
 | `endpoint` | `string \| undefined` | The endpoint path that was called. |
 
@@ -685,7 +681,7 @@ try {
 |----------|------|-------------|
 | `suiteId` | `string` | Created/matched suite ID |
 | `runId` | `string` | Created run ID |
-| `projectId` | `string?` | Project the run landed in, echoed by the ingest response. Absent against a backend that predates the field, and when reporting fails. |
+| `projectId` | `string?` | Project the run landed in, echoed by the ingest response. Absent when reporting fails or the destination does not return it. |
 | `status` | `"completed" \| "failed"` | Run status |
 | `result` | `"passed" \| "failed"` | Pass/fail based on criteria |
 | `summary.total` | `number` | Total iterations |
@@ -708,8 +704,8 @@ It is on by default and there is nothing to configure. Details worth knowing:
 - **Once per run.** A chunked upload passes through several code paths
   (start, finalize) and still prints a single line. Each `EvalTest` is its
   own run, so a file with several tests prints one line each.
-- **`?project=` may be absent.** The param carries whatever the backend
-  echoed, falling back to a `project` you configured explicitly. The
+- **`?project=` may be absent.** The param carries the project MCPJam
+  returned, falling back to a `project` you configured explicitly. The
   zero-config `"default"` sentinel is not a project ID, so it is omitted
   rather than sent — the app then opens the run in your active project.
 - **Nothing prints when there is no run to link to.** A failed upload, or a

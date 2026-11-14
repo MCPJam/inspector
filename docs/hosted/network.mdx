@@ -26,7 +26,7 @@ Hosted MCPJam connects to MCP servers from these IPv4 addresses:
 | `152.55.180.243` |
 
 This covers connecting, OAuth discovery and client registration, tool calls,
-chat, evals and scheduled runs. Allow all three: any of them may be in use, and
+chat and evals. Allow all three: any of them may be in use, and
 which one changes over time. These connections use IPv4 only.
 
 ## Your OAuth authorization server
@@ -81,9 +81,6 @@ curl -s https://app.mcpjam.com/egress-ips.json | jq -r '.mcp_servers.ipv4[]'
   request comes from your own network. If your allowlist blocks it, the
   connection still goes through MCPJam.
 - **The local inspector and the desktop app.** They connect from your machine.
-- **Computers.** Commands and browsing on a Project Computer, or in a harness
-  client's sandbox, use the sandbox provider's addresses. Calls to your MCP
-  servers made through MCPJam are covered.
 - **Private networks.** The hosted app doesn't connect to private, loopback or
   link-local addresses. Use the [local inspector](/installation) for those.
 

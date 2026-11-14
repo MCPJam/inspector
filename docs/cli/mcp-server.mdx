@@ -113,9 +113,9 @@ Alongside its tools, `mcpjam mcp` serves two of MCPJam's Agent Skills over the [
 | `mcp-inspector` | Interpreting probe, doctor, OAuth, and conformance output conservatively — the tools this server exposes |
 | `mcpjam-eval-import` | Converting an existing test corpus into an MCPJam eval suite |
 
-A client that advertises the extension sees them in `skills/list` and can load them with no install step — you do not need `npx skills add` for these two when you are connected this way. Each skill's files are also readable as ordinary resources under `skill://mcpjam/<name>/…`, which is why `resources/list` now returns rows for a server that previously exposed none.
+A client that advertises the extension sees them in `skills/list` and can load them with no install step — you do not need `npx skills add` for these two when you are connected this way. Each skill's files are also readable as ordinary resources under `skill://mcpjam/<name>/…`, so `resources/list` returns rows for them.
 
-Every file carries a SHA-256 digest and a byte size, and a conforming host verifies both before loading. The listing and each `skills/get` result carry `ttlMs: 0`, which the protocol defines as immediately stale: because the documented launch command is `npx -y @mcpjam/cli@latest mcp`, the bytes behind an identical command change whenever a release lands, so this server issues no cache-freshness licence it could not honour.
+Every file carries a SHA-256 digest and a byte size, and a conforming host verifies both before loading. The listing and each `skills/get` result carry `ttlMs: 0`, which the protocol defines as immediately stale, because the files behind `npx -y @mcpjam/cli@latest mcp` change with every release.
 
 `mcpjam-eval-import` is served by the [hosted MCP server](/cli/mcp-server#relationship-to-the-hosted-mcp-server) too, under the same URI. If you are connected to both at once, address it by server (`<server>/mcpjam-eval-import`) rather than by bare URI.
 

@@ -4,10 +4,6 @@ description: "Run MCP health checks, conformance suites, and evals in GitHub Act
 icon: "circle-check"
 ---
 
-<Note>
-The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
-</Note>
-
 Run `mcpjam` in CI to catch MCP server regressions on every push. The examples below cover GitHub Actions and GitLab CI, but the same commands work in any CI environment.
 
 ## GitHub Actions
@@ -370,13 +366,6 @@ The MCPJam evals action runs an existing hosted suite, waits for its result, and
 uploads reports to GitHub. It sets up Node automatically. It tests the suite's
 saved server; it does not build or deploy your PR's source code.
 
-<Note>
-`evals-v1` is published by MCPJam's release workflow, which smoke-tests the
-action live and then moves the tag. Until the first release moves it, pin a full
-commit SHA instead — `uses: MCPJam/inspector/actions/evals@<40-character sha>` —
-or use the direct CLI integration below, which does not depend on the tag.
-</Note>
-
 Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
 
 ```yaml
@@ -485,20 +474,17 @@ runners is supported in this first version.
 <Note>
 **Runs launched from Actions badge as GitHub, and show GitHub provenance columns.** The CLI
 declares what it is on every launch, so a run started from a workflow shows
-**GitHub** in the Runs table rather than the generic **API** that every hosted
-launch used to show. Filtering the Runs table by the **GitHub** source reveals
+**GitHub** in the Runs table instead of **API**. Filtering the Runs table by the **GitHub** source reveals
 separate **Commit**, **PR**, and **Branch** columns populated from the standard
 `GITHUB_*` environment — nothing to configure. Outside CI the same command
 declares **CLI**.
 
 That commit is also what `eval compare --baseline-sha` resolves against, so a
-run launched by the CLI in CI can now be compared to a previous commit's run the
+run launched by the CLI in CI can be compared to a previous commit's run the
 same way an SDK-reported one can.
 
-This is a *declared* label, deliberately: the platform still stamps the run's
-own `source` server-side and records the verified credential separately, so a
-badge can never claim more than "the client said so". No secret that could prove
-it can live in a public npm package.
+The badge is declared by the CLI and is not verified. The platform records the
+run's `source` and the verified credential separately.
 </Note>
 
 In human format, `eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
@@ -551,7 +537,7 @@ npx -y @mcpjam/cli@latest cloud eval gate --run "$RUN_ID" \
 ```
 
 Both report **non-gateable** (exit `3`) rather than passing when the cost is
-unknown or only partly measured — a run on your own API keys, a harness run,
+unknown or only partly measured — a run on your own API keys,
 or a run only some of whose iterations MCPJam priced. Exit `3` is safe to retry
 and safe to treat as "no opinion"; what it never does is let an unpriced run
 through as if it were cheap.
@@ -577,9 +563,8 @@ a network failure still exits `3` with a waiver in place — those established
 nothing, and a waiver granted for a regression is not consent to ship on an
 infrastructure failure.
 
-Waivers expire, and expiry is enforced on both sides: the platform republishes
-the GitHub Check Run when the waiver lapses, and the CLI re-derives the expiry
-itself rather than trusting the platform's answer. `mcpjam cloud eval gate
+Waivers expire, and the CLI re-derives the expiry itself rather than trusting
+the platform's answer. `mcpjam cloud eval gate
 unwaive --run "$RUN_ID"` ends one early.
 
 <Warning>
@@ -647,7 +632,7 @@ The line is **not** a diagnosis. A first failed stage is a location and a failur
 
 `eval status --stages` expands each failing iteration to all six chain rows with their states and reasons. It is off by default: six rows per iteration is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
 
-Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval github list/connect` (GitHub checks integration), and more.
+Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), and more.
 
 ### Upload SDK eval results
 
@@ -712,4 +697,4 @@ Runs uploaded together — `runWithClient` given several clients — read as one
 
 ## Eval authentication
 
-For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.
+See [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

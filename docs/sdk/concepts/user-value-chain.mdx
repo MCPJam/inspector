@@ -45,12 +45,9 @@ Missing or partial catalog capture at Discovery reports an evaluator error, not 
 
 A check's link says where its evidence is recorded. It does not assert that a failure originated there.
 
-`noToolErrors` is the clearest case. It files at **Response**, because a tool error is the server's answer. Until analyzer version 11 it filed at User value, and the same defect was counted twice: the analyzer already failed Response on an observed tool error, while the predicate row failed User value. Which link a reader saw as the first break depended on which row they looked at first.
+`noToolErrors` is the clearest case. It files at **Response**, because a tool error is the server's answer.
 
-Two consequences worth keeping in mind:
-
-- A failure at one link is frequently caused upstream of it. Selection failing because two tools have near-identical descriptions is a Discovery problem wearing a Selection label.
-- Moving a check to a different link changes where historical failures are attributed, so it is a versioned analyzer change rather than an edit anyone can make locally. The three `widget*` kinds are current candidates to move to Response.
+A failure at one link is frequently caused upstream of it. Selection failing because two tools have near-identical descriptions is a Discovery problem wearing a Selection label.
 
 ## Graders that are not predicates
 

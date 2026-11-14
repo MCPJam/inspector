@@ -4,10 +4,6 @@ description: "Run an MCPJam eval suite file on your machine with mcpjam test wit
 icon: "flask"
 ---
 
-<Note>
-The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
-</Note>
-
 `mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and authenticate the run with MCPJam. With MCPJam-hosted inference it uses your existing CLI login and billing.
 
 Results are **never uploaded**. The command writes results to your terminal and, if you ask, to a report file. It records the run start with MCPJam. Like every command, it sends the CLI's single anonymous [telemetry](/cli/telemetry) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
@@ -144,8 +140,7 @@ MCPJam-hosted inference uses the Cloud credential precedence (`--api-key` > `MCP
 ## Reasoning effort
 
 A local suite file does **not** take a reasoning effort yet: `defaults` has no
-`reasoningEffort` key (a dialect-2 default needs a matching backend field on the
-suite's default config, which has not shipped), so the value is rejected as an
+`reasoningEffort` key, so the value is rejected as an
 unknown key rather than accepted and ignored. Ways to run a local suite at an
 effort today:
 
@@ -159,10 +154,6 @@ effort today:
 ## Tool policy
 
 A suite's `defaults.toolPolicy` is enforced before the MCP call: a denied tool never reaches the server, the model receives the refusal, and the report records the block by case, iteration and call id. A blocked call is not graded as a call and is not an executed tool span. A `deny` name that matches no tool the servers expose is invalid input (exit `2`); an unmatched `allow` is a warning. With no `toolPolicy`, nothing is restrained.
-
-<Note>
-For the upcoming Inspector eval runner with MCP App view tools enabled, use `view:<name>` in a suite's `toolPolicy.allow` or `deny`, for example `view:make_move`. These names wait until the app renders; plain tool names keep the validation described above. Assertions and side-effect manifests still use `make_move`. This syntax does not enable view tools in the local SDK suite-file runner.
-</Note>
 
 ## Imported cases
 

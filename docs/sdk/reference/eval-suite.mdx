@@ -106,14 +106,12 @@ Later edits, renames, and deletion do not change previously saved results.
 Set `mcpjam.enabled: false` to run without uploading results.
 
 `runWithClient` uses MCPJam inference for Anthropic Claude and OpenAI GPT-5 models, billed to
-that project. It requires a backend that returns saved client versions. The
-optional `baseUrl` is the MCPJam app origin for a custom deployment.
+that project. The optional `baseUrl` is the MCPJam app origin for a custom deployment.
 
 Your code owns server connections, credentials, and MCP connection settings;
 the client's saved server IDs and connection overrides are not applied to those
-connections. The first release does not launch cloud computers, browsers, saved
-skills, built-in tools, or interactive approvals. Clients requiring these
-features fail before tests execute. Existing `run(executor)` calls keep their
+connections. A client that needs built-in tools, interactive approvals, or
+other hosted resources fails before tests execute. Existing `run(executor)` calls keep their
 current behavior.
 
 The client's **Progressive tools** setting applies as it does in hosted runs. See
@@ -147,10 +145,8 @@ result.failures; // clients whose setup or run threw
   `"<client> / <test>"`.
 - `mcpjam.externalRunId` becomes a prefix: each client's run is
   `<id>:<client>`, so a retry lands on the same runs.
-- An MCPJam backend that predates run groups stores the runs without grouping
-  them.
 
-A single string keeps today's single-client result: no `clients`, `failures` or `runGroupId`, and setup errors throw as before.
+A single string returns a single-client result: no `clients`, `failures` or `runGroupId`, and setup errors throw.
 
 ### add()
 

@@ -4,4 +4,5 @@ evals-vocabulary-consolidation.md
 public-api-vocabulary-consolidation.md
 # The ledger of every API reference URL ever published; a test reads it, readers never should.
 reference/published-api-pages.json
-pp-80-observability-inventory.md
+# Notes for whoever edits this directory, not for readers.
+README.md

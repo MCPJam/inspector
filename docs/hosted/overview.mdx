@@ -110,7 +110,7 @@ Tunneling exposes a local MCP server over HTTPS for remote access. Since the hos
 
 ### No Tracing tab
 
-The **Tracing** tab is not available in the hosted app. It is a live log of the JSON-RPC traffic between the Inspector and a server you are connected to, and it streams from the local Inspector process's RPC bus — which a hosted deployment does not run. Use the [local inspector](/installation) for the full log. In the hosted app, the JSON-RPC frames for a chat turn are captured and shown with that turn in the Playground instead.
+The **Tracing** tab is not available in the hosted app. It is a live log of the JSON-RPC traffic between the Inspector and a server you are connected to. Use the [local inspector](/installation) for the full log. In the hosted app, the JSON-RPC frames for a chat turn are captured and shown with that turn in the Playground instead.
 
 Getting eval traces OUT of the hosted app is a different thing, and it does work: open a completed run and use **Export traces** for an OTLP JSON file (see [Evals](/inspector/evals#exporting-traces)), or fetch the same projection from `GET /api/v1/trace-exports/otlp` in the [public API](/reference/public-api). Both use OpenInference semantic conventions and land in Arize Phoenix, Datadog, or any other OTLP-compatible backend.
 
@@ -139,38 +139,20 @@ To add credits, click **Top up** — either from the empty state when you have n
   **Desktop app:** When you confirm a top-up in the desktop app, checkout opens in your default system browser and the dialog closes automatically. Your credit balance updates in the app once the purchase completes — no redirect back into the app is required.
 </Note>
 
-### Spend budget
+### Auto-reload
 
-An owner or admin can cap what the whole organization spends on MCPJam-billed
-work — chat, evals, judges and computer time — for each billing period, from
-**Organization → Budget**.
+Auto-reload buys credits automatically when your balance runs low. Open it
+from **Auto-reload → Manage** on the credit balance card and set:
 
-- Set the cap in dollars, and choose the percentages to be warned at. The
-  default warns at 80%; reaching the cap always notifies, whether or not you
-  list it.
-- Warnings go to the organization's owners and admins in the notifications
-  bell, and to the owner by email.
-- **When the budget is reached**, new chat turns, eval runs and computer starts
-  are refused for the whole organization. The refusal says the budget is
-  reached and that an owner or admin can raise it — buying credits does not
-  clear it. Work already in flight finishes, and running computers keep going
-  until they hibernate.
-- A scheduled eval that hits the budget pauses its schedule rather than
-  retrying into the same cap every window; it resumes once you raise the cap or
-  the period rolls over.
-- Runs that use **your own API keys** are never counted against the budget and
-  never blocked by it. Neither is the free daily allowance, which is not
-  credits.
-- The window is your organization's own billing period: the subscription cycle
-  for team and enterprise plans, and the calendar month otherwise. Raising or
-  lowering the cap mid-period does not reset what has already been spent.
+- **Credits to add**: how many credits each refill buys, from 500 to 1,000,000.
+- **Minimum balance**: a refill runs when your balance falls below this.
+- **Maximum monthly spend** (optional): the most auto-reload may spend in a
+  month, in US dollars. Leave it blank for no limit.
 
-Any member can see the budget and how much of it is left; only owners and
-admins can change it. Every change is recorded in the organization's audit log
-with who made it and what it was before.
-
-The same budget is readable and writable from the API at
-`/v1/organizations/{organizationId}/spend-budget`.
+The monthly limit resets each UTC calendar month. Manual top-ups don't count
+toward it, and refunds don't reduce it. Saving changed settings turns
+auto-reload off until you authorize the card again; saving alone never charges
+you.
 
 ### Managing billing details
 

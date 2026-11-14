@@ -1,5 +1,5 @@
 /**
- * MCP Events identities (contract C2, `docs/plans/mcp-events-contracts.md`).
+ * MCP Events identities (contract C2, `internal-docs/plans/mcp-events-contracts.md`).
  *
  * Every identity here has ONE purpose, and none of them is a credential:
  *

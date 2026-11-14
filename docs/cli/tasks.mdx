@@ -4,7 +4,7 @@ description: "Create, inspect, answer and watch MCP Tasks from the CLI — legac
 icon: "list-todo"
 ---
 
-The `tasks` commands give the CLI the manual-testing loop the Inspector's Tasks tab has: create a task from a tool call, read it, answer its input, cancel it, and watch it run to a terminal status — on whichever tasks wire the server resolves to.
+The `tasks` commands give the CLI a manual-testing loop for MCP Tasks: create a task from a tool call, read it, answer its input, cancel it, and watch it run to a terminal status — on whichever tasks wire the server resolves to.
 
 For judging a server's *conformance* to the tasks spec, see [MCP Tasks Conformance](/cli/tasks-conformance). These commands do the opposite job: they assume the server works and let you drive it.
 
@@ -93,7 +93,7 @@ mcpjam tasks update \
 
 `--input-responses` accepts inline JSON, `@path`, or `-` for stdin, like `--tool-args`. The ack is empty by design — the task's status does not move until a later `tasks get`.
 
-Only `elicitation/create` requests are answerable. A task asking for `roots/list` or `sampling/createMessage` is reported as an unanswered rejection; the Inspector UI cannot answer those either.
+Only `elicitation/create` requests are answerable. A task asking for `roots/list` or `sampling/createMessage` is reported as an unanswered rejection.
 
 ## Watching a task
 

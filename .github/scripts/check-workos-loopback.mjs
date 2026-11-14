@@ -127,7 +127,7 @@ async function main(args) {
   }
   if (results.some((result) => !result.ok)) {
     process.stderr.write(
-      "Callback gate failed. Follow docs/workos-loopback-callbacks.md; preserve existing URIs and defaults.\n",
+      "Callback gate failed. Follow internal-docs/workos-loopback-callbacks.md; preserve existing URIs and defaults.\n",
     );
     process.exitCode = 1;
   }

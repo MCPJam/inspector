@@ -862,12 +862,8 @@ providers count; OpenRouter and local-runtime connections do not.
 - **Model pickers** list only the organization's eligible models. A suite's
   judge must be chosen from an organization provider; there is no default
   judge, and a suite without one can't run.
-- **Harness runtimes** run on the organization's own key for their vendor:
-  Claude Code on an Anthropic provider, Codex on an OpenAI provider. Not
-  supported while the setting is on: SDK model leases (`sdk-direct`), a
-  provider with a custom base URL, and a local-runtime connection.
 - **Default AI model.** Work nobody picks a model for (insights and findings,
-  generation, typed decisions, readiness observations, and the simulated user
+  generation, typed decisions, and the simulated user
   in Swarm and User Testing) runs on the organization's default AI model. An
   admin chooses it under **Organization → AI providers → Default AI model**,
   and can test it there. MCPJam may suggest one but never sets it. Until it is
@@ -915,7 +911,6 @@ not run on an eligible organization connection:
 - A model saved without an organization provider connection (a legacy bare model ID).
 - A model on an organization connection that is missing or not eligible to run it.
 - The suite requires a judge, but none was chosen or its model is not on an eligible organization connection.
-- A harness uses the wrong provider: Claude Code needs an organization Anthropic provider, and Codex needs an organization OpenAI provider.
 
 The **Setup Run** sheet lists these problems and blocks Start until every
 required dependency can run. Organization admins can use **Manage AI
@@ -960,15 +955,11 @@ configuration failures:
 
 The feature, runtime, or selected provider cannot run on organization
 credentials yet. Only direct cloud connections are eligible: OpenRouter (a
-shared gateway) and local-runtime connections are not. Cursor has no
-organization-key execution path and is unavailable while this policy is on.
-Claude Code supports an organization Anthropic provider, and Codex supports
-an organization OpenAI provider; custom base URLs are not supported for these
-harnesses.
+shared gateway) and local-runtime connections are not.
 
 **Next steps**
 - Choose a model from a directly connected cloud provider (OpenAI, Anthropic, Google, Azure, Bedrock, and others).
-- For a harness run, choose Claude Code with an organization Anthropic connection or Codex with an organization OpenAI connection. A feature without an organization-key path remains unavailable under this policy.
+- A feature without an organization-key path remains unavailable under this policy.
 - Organization admins can turn off **Use your keys for all AI features** to run this feature on MCPJam-provided models again.
 
 ### Organization scope unresolved
@@ -1055,11 +1046,9 @@ This environment has no servers.
 **Likely causes**
 - The client this environment points at has no servers connected.
 - The attached server group is empty.
-- Every server contributed by a pinned plugin has been removed.
 
 **Next steps**
 - Connect a server to the client, or attach a server group.
-- Check the environment's pinned plugins if it relied on one for servers.
 
 ### Archived
 

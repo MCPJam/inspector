@@ -5,15 +5,11 @@ icon: "square-slash"
 tag: "NEW"
 ---
 
-<Note>
-The Skills tab is always accessible. **Cloud (hosted) skills** — the project store, upload button, and skill tree — are available on accounts where the feature has been enabled. **Skills over MCP** (server-provided skills from connected servers) require no account feature and are always shown. Local skills, read from your filesystem, also need no account feature.
-</Note>
-
-[Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam lets you discover skills from your filesystem (local) or your project (hosted), upload new ones, and use them in the Playground — either automatically based on the user's prompt or deterministically with the `/` command.
+[Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam discovers skills from your filesystem and from connected MCP servers, lets you upload new ones, and lets you use them in the Playground, either automatically based on the user's prompt or deterministically with the `/` command.
 
 ## Getting Started
 
-1. **Open the Connect view** in MCPJam Inspector and select the **Skills** tab (Servers | Client | Computer | **Skills**)
+1. **Open the Connect view** in MCPJam Inspector and select the **Skills** tab
 2. **Load skills** — MCPJam automatically discovers skills from [supported directories](#skill-directories). You can also upload skills directly through the Skills tab, or run `npx skills` to install them
 3. **Use skills in the Playground** — the LLM discovers them automatically, or you can inject them with the `/` command
 
@@ -47,36 +43,11 @@ MCPJam scans the following directories for skills. Each subdirectory is expected
   If you have no skills installed, run `npx skills` to get started quickly.
 </Tip>
 
-## Finding skill IDs
-
-Several CLI flags take a skill ID: `eval run --compose-skill`, `eval cases run --compose-skill`, and `environments ensure-adhoc --skill`. Use `mcpjam cloud skills list` to discover the IDs of the project-shared skills in your project:
-
-```bash
-mcpjam cloud skills list --project my-project
-```
-
-Each row includes a `pinnability` field that says whether the skill can be pinned into an environment or eval run, and why not if it can't. To see a skill's full SKILL.md body:
-
-```bash
-mcpjam cloud skills get --skill <id> --project my-project
-```
-
-Only `sharing: "project"` skills can be pinned. Personal drafts (`sharing: "user"`) are visible in the list but are not accepted by `--compose-skill` or `skillSelection`.
-
 ## Uploading Skills
 
 You can upload skill folders directly from the Skills tab in the Connect view. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
 
-- **Local:** Uploaded skills are stored in `~/.mcpjam/skills/`.
-- **Hosted (cloud):** Cloud skills carry supporting files. A folder may contain `SKILL.md` plus scripts, references, and assets; the model reaches them with `listSkillFiles` and `readSkillFile` after loading the skill.
-
-Hosted skill folders are bounded by three limits, enforced when the files are attached:
-
-| Limit | Value |
-|---|---|
-| Per file | 2 MB |
-| Files per skill | 50 |
-| Total per skill | 20 MB |
+Uploaded skills are stored in `~/.mcpjam/skills/`.
 
 <Note>
   Uploading a skill with a name that already exists will be rejected. Delete the existing skill first if you need to replace it.
@@ -95,81 +66,6 @@ To update every installed skill at once:
 ```bash
 npx skills update
 ```
-
-## Where a turn's skills come from
-
-A chat turn builds **one catalog** from every origin available to it, rather
-than picking a single source:
-
-| Origin | Reference | Available on |
-|---|---|---|
-| Your project (Cloud Skills) | `code-review` | anywhere you're signed in with a project |
-| A local file | `local/code-review` | the desktop and npm app |
-| A connected MCP server | `<server>/code-review` | anywhere that server is connected |
-| A plugin | `<plugin>/code-review` | wherever the plugin is installed |
-
-This is why the Skills tab's Local/Cloud switch only changes what you are
-**browsing**. It no longer decides what the model can use: a desktop turn signed
-into a project offers your local files *and* your project skills, so a skill you
-author in the tab is usable in the very next message.
-
-Signed out, or with no project selected, a desktop turn simply has no project
-family — it offers local files, exactly as before.
-
-### Two skills with the same name
-
-Local and project skills are namespaced apart on purpose, so nothing is hidden
-and nothing is silently preferred. If you have a local `code-review` and a
-project `code-review`, both appear and both load:
-
-```
-loadSkill("local/code-review")  → your file
-loadSkill("code-review")        → the project's
-```
-
-**An exact reference always wins.** `code-review` *is* the project skill's
-reference, so asking for it is not ambiguous — it is a direct hit, and the local
-skill stays reachable under its own name. That is what keeps a project skill
-addressable no matter what you happen to have on disk.
-
-Ambiguity is the case where nothing is an exact hit: two *namespaced* skills
-share a name and no skill answers to the bare name itself — a plugin
-`docs-tools/code-review` alongside a local `local/code-review`, with no project
-`code-review`. There the tool refuses and names the alternatives rather than
-guessing:
-
-```
-"code-review" is ambiguous — it matches "docs-tools/code-review" and
-"local/code-review". Use the full reference.
-```
-
-## Skills an agent writes for itself
-
-Harness runs (Claude Code, Codex) execute in a sandbox with a real filesystem, so
-the agent can write a skill mid-run the same way it would on your machine. After
-a clean turn, MCPJam **adopts** any skill it finds in the sandbox's skills
-directory into your project — otherwise the work would vanish with the sandbox.
-
-Adopted skills are **personal**: visible to you, not to the rest of the project,
-until you promote one. They are marked with a `computer-adopted` provenance, so
-you can tell them from skills you authored.
-
-Adoption is deliberately narrow. It does not run when:
-
-- **you use the hosted app** — only a self-hosted Inspector adopts, so a skill
-  an agent writes in a hosted sandbox never becomes a project skill;
-- **the run used pinned skills** — a pinned set is a frozen snapshot, and writing
-  back into the pool would change what the *next* eval arm resolves against,
-  silently altering the thing under comparison;
-- the turn failed, was aborted, or is paused waiting for approval;
-- the run carries an execution scope (guest and swarm runs never adopt);
-- the live skills fetch failed, so MCPJam cannot tell an agent-authored skill
-  from one it simply failed to see as already managed.
-
-<Note>
-  On a self-hosted Inspector, set `HARNESS_SKILL_ADOPTION_DISABLED=1` to turn
-  adoption off entirely.
-</Note>
 
 ## Using Skills
 
@@ -191,17 +87,11 @@ If your skills do not fit, MCPJam shortens descriptions first, and only omits wh
 
 An omitted skill is invisible to the model and cannot be loaded, so keep skill descriptions to a single line if you have many skills installed.
 
-#### Catalog Fetch Failures (Hosted)
-
-In the hosted app, the catalog is fetched from your project when the prompt is built, with a **3 second timeout**. If that fetch fails or times out, the turn proceeds with no skills rather than failing — the LLM sees no catalog and no skill tools. MCPJam records the failure separately from a genuinely empty project, so a run that silently lost its skills is distinguishable after the fact.
-
 ### Deterministic Injection
 
 Type `/` in the input to open the skills popover. Select a skill to inject it directly into the conversation — this pre-loads the `SKILL.md` content before the LLM processes your message, so the skill is guaranteed to be used.
 
 When you select a skill via `/`, it appears as a card above the input. You can expand the card to browse the skill's file tree and optionally select additional files to include. Only files you explicitly select are pre-loaded — by default, only the `SKILL.md` is injected.
-
-The `/` picker works in both local and hosted modes. In the hosted app, it lists your project's cloud skills.
 
 <iframe
   className="w-full aspect-video rounded-xl"
@@ -221,12 +111,6 @@ When at least one skill is available, the LLM is given `loadSkill`, and — on s
 | `listSkillFiles(name)` | List all files in the skill directory | Only when the turn's skills can carry supporting files |
 | `readSkillFile(name, path)` | Read the content of a specific supporting file | Only when the turn's skills can carry supporting files |
 
-The file tools are not advertised everywhere, because promising them for skills that have no files invites the model to go looking:
-
-- **Local and hosted Playground chat** — all three tools.
-- **Eval runs with pinned skills** — `loadSkill` only. Pinned eval skills are `SKILL.md`-only, so there are no files to browse.
-- **Environment-resolved turns** — all three, but only when the resolved set actually contains a file-bearing skill.
-
 Together with the inlined catalog, these tools let the LLM progressively load skill content as needed during a conversation, rather than injecting every skill's content upfront.
 
 <Note>
@@ -235,7 +119,7 @@ Together with the inlined catalog, these tools let the LLM progressively load sk
 
 ## Skills over MCP (Server-Provided Skills)
 
-When a connected MCP server advertises the SEP-2640 skills extension, MCPJam discovers its skills automatically and inlines them in the system prompt catalog alongside local and hosted skills — each entry attributed to its originating server (`MCP server "…"`). The model can choose a relevant skill from the catalog and load it with `loadSkill`, exactly as it would for any other skill origin.
+When a connected MCP server advertises the SEP-2640 skills extension, MCPJam discovers its skills automatically and inlines them in the system prompt catalog alongside local skills — each entry attributed to its originating server (`MCP server "…"`). The model can choose a relevant skill from the catalog and load it with `loadSkill`, exactly as it would for any other skill origin.
 
 Every server skill is verified before it is loaded: MCPJam fetches each file listed in the skill's manifest and checks its digest (and byte length, when the server provides one) before any content reaches the model.
 
@@ -245,7 +129,7 @@ Each server skill row shows the origin server's label as a badge directly on the
 
 The [stable spec](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/stable/skills.mdx) is written against protocol revision 2026-07-28. MCPJam also sends `skills/*` on a 2025-era connection when both sides declared the extension, which is outside the spec's baseline; the request `_meta` envelope the spec requires exists only on 2026-07-28 connections.
 
-The tab's single refresh button reloads both the project skill store and all server skill catalogs at once. It remains visible even when the project store is hidden, since server skills are the only list in that case.
+The tab's refresh button reloads your local skills and every server skill catalog at once.
 
 ### Inspecting a server's skills from the CLI
 
@@ -267,12 +151,6 @@ path the Playground uses, so what you get back is either verified content or a
 **refusal** naming the check that failed (see the table below). A refusal is a
 result, not an error: it prints to stdout and exits 0, because "this skill
 cannot be verified, and here is why" is the answer you asked for.
-
-<Note>
-`mcpjam skills` reads a **connected server's** skills. `mcpjam cloud skills`
-lists the Cloud Skills in your own MCPJam project. Same word, opposite
-direction.
-</Note>
 
 The skills extension is mutually declared, so these commands advertise it on
 connect. If you pin a host persona that does not — `--host cursor`, say — the
@@ -336,5 +214,3 @@ Verification uses the spec's per-skill budget of 16 MiB, which the spec requires
 Once a server-provided skill's `SKILL.md` is in the conversation, MCPJam treats the model as acting on that skill until the conversation no longer contains it. During that time, running a shell command (`bash`) and reading a resource from a saved server (`read_server_resource`) always ask for approval, whatever the Tool Approval setting says, because the spec requires the approval gate on code execution and on cross-server reads driven by skill content. The approval on `read_server_resource` shows the tool's input, which names the server being read; the spec asks it to name the skill's origin server too, and that is not yet shown. On an org provider running in the local runtime, which cannot resume a turn after an approval, such a turn is refused with `tool_approval_unsupported` instead.
 
 The origin banner on a loaded skill records the digest set of the manifest it was loaded under. If the server changes the skill's files afterwards, `listSkillFiles` and `readSkillFile` refuse with `manifest_changed` until the skill is loaded again, so a file the server added later is never read as part of the skill the user saw.
-
-A captured server skill, used by environment turns, is tagged with the same banner naming the capture, and its stored content is re-checked against the digest stored with the capture before it enters the conversation.

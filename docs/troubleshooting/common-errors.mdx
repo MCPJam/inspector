@@ -253,7 +253,7 @@ The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code C
 
 ### Update button does nothing after a download completes
 
-If you click **Update** and nothing happens — or the app refuses to quit after a download finishes — this was a known bug fixed in 3.8.1. The app was continuing to check for updates even after a build was already staged, which caused the system to forget the staged build. After that, both the Update button and quitting were silently refused.
+If you click **Update** and nothing happens — or the app refuses to quit after a download finishes — you are on a version earlier than 3.8.1.
 
 The fix is included in 3.8.1 and later. If you are on an affected version:
 
@@ -265,7 +265,7 @@ The fix is included in 3.8.1 and later. If you are on an affected version:
 
 ### "Reference" line on an error toast
 
-When an unexpected failure occurs in the app — for example, while inviting a member, changing a role, or connecting to a registry — the error toast shows a **Reference `<id>`** line beneath the message. You can hover the toast and click **Copy error message** to copy both the message and the reference together.
+When an unexpected failure occurs in the app — for example, while inviting a member or changing a role — the error toast shows a **Reference `<id>`** line beneath the message. You can hover the toast and click **Copy error message** to copy both the message and the reference together.
 
 That reference is a request ID you can include when reporting the issue. It lets the MCPJam team look up the exact failure in the logs, so you don't need to reproduce it or capture a stack trace — a screenshot of the toast (or the copied text) is enough.
 

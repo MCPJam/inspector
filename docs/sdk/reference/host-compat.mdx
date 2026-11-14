@@ -4,7 +4,7 @@ description: "API reference for @mcpjam/sdk/host-compat — derive server requir
 icon: "book"
 ---
 
-`@mcpjam/sdk/host-compat` is the shared host-compatibility engine. It answers "does this MCP server work on host X?" by joining a server's derived requirements against per-host capability profiles to produce `works` / `degraded` / `blocked` verdicts. The same engine powers the Inspector's [Compatibility destination](/inspector/compatibility), the CLI, and the public API.
+`@mcpjam/sdk/host-compat` is the shared host-compatibility engine. It answers "does this MCP server work on host X?" by joining a server's derived requirements against per-host capability profiles to produce `works` / `degraded` / `blocked` verdicts. The same engine powers `mcpjam compat` in the CLI and the public API.
 
 ## Import
 
@@ -271,7 +271,7 @@ enum HostCompatBridge {
 
 ### HostCompatProfile
 
-Describes a host's capabilities for evaluation purposes. Supply your own profiles or use the Inspector's built-in catalog.
+Describes a host's capabilities for evaluation purposes. Supply your own profiles or build them from the bundled catalog with `buildHostProfilesFromCatalog(bundledHostCompatCatalog())`.
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -302,6 +302,5 @@ Describes a host's capabilities for evaluation purposes. Supply your own profile
 
 ## Related
 
-- [Compatibility destination](/inspector/compatibility) — the Inspector UI powered by this engine
 - [Apps Conformance SDK](/sdk/reference/apps-conformance) — dynamic conformance testing
 - [Protocol Conformance SDK](/sdk/reference/protocol-conformance) — MCP protocol checks

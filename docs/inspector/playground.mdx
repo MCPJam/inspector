@@ -16,12 +16,6 @@ The Playground is the main workspace for developing against your MCP servers. It
   />
 </Frame>
 
-<Note>
-  The Playground replaces the standalone **Chat** and **App Builder** tabs.
-  Everything those tabs did is here, plus multi-host compare and a dockable
-  Sessions rail.
-</Note>
-
 ## Key Features
 
 - **Chat with frontier models** — Talk to your server using Claude, GPT, Gemini, DeepSeek, and more at no cost, no API key required. Organizations can configure additional model providers in their organization settings.
@@ -60,10 +54,9 @@ The Playground is a three-column IDE shell. Each side rail is collapsible — dr
 - Chat composer, conversation thread with inline tool calls and widgets, and the host context toolbar.
 - Top of the pane has a segmented control to switch between **Chat**, **Trace**, and **Raw** views.
 
-**Right rail — Logs / Shell**
+**Right rail — Logs**
 
 - **Logs** (always available) — Real-time feed of MCP protocol messages. Search, filter by source server, filter by log level, copy, download, or clear the buffer.
-- **Shell** (shown when the previewed host has a Project Computer and is not a harness client) — A live terminal on the personal computer. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
 
 ## Chat, Trace, and Raw Views
 
@@ -283,15 +276,11 @@ Widgets can request mode changes from their own code; users can exit PiP or Full
 
 All widgets — whether they declare `openai/outputTemplate` (ChatGPT Apps), `_meta.ui.resourceUri` (MCP Apps), or both — render through a single unified renderer. The `window.openai` compatibility shim is always injected, so both `window.openai.*` calls and `ui/*` JSON-RPC messages work regardless of which metadata the tool declares.
 
-Widget rendering is gated on the active Client's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor, Codex) render widgets as normal. Hosts that strip the extension show the plain tool result row instead. Per-server capability overrides are honored.
+Widget rendering is gated on the active Client's `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension show the plain tool result row instead. Per-server capability overrides are honored.
 
 ## Per-Widget Debugging
 
 Every tool result in the chat thread has a row of icons in its header. Click an icon to open the matching debug panel below the widget.
-
-### Sign-in links
-
-When a computer-backed tool (such as Bash) runs a command that triggers a device-flow authentication prompt — for example, `gh auth login` — any sign-in URLs surfaced by the tool appear as clickable links directly in the chat thread under a **Sign-in link** heading. This saves you from hunting through scrollback for the URL. Only `https:` URLs are rendered as links; plain `http:` and non-web schemes are never shown.
 
 ### Data
 
@@ -323,7 +312,7 @@ Click **Edit** on a tool-result card to make the **Input** and **Result** JSON e
 
 ## Right Rail
 
-The right rail has two tabs. The **Logs** tab is always present; the **Shell** tab appears when the previewed host has a Project Computer attached and is not a harness client (Claude Code, Codex, or Cursor). Harness clients run on disposable per-conversation boxes, not a personal computer, so the Shell tab is not shown for them.
+The **Logs** tab is always present in the right rail.
 
 ### Logs tab
 
@@ -347,12 +336,6 @@ Controls in the logger header:
 - **Collapse** the rail
 
 When a search is active and the source filter is hiding matching entries, a banner appears below the toolbar showing how many matches are hidden. Click **Clear filter** in the banner to reset the source filter to **All** and reveal those entries. The empty state reads **No matches in this view** (rather than **No logs yet**) whenever logs exist but are all filtered out.
-
-### Shell tab
-
-When the previewed host has a Project Computer and is not a harness client (Claude Code, Codex, or Cursor), a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
-
-Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
 
 ## Input Bar
 
@@ -380,7 +363,6 @@ The switch **raises** the bar and never lowers it, so it is not the whole story 
 
 Some actions pause whether it is on or off:
 
-- local shell commands (`bash`);
 - destructive UI actions;
 - [workspace tools](#workspace-tools) that change something in your project.
 
@@ -389,13 +371,6 @@ Local Browser (`browser_*`) and WebMCP page tools follow the chat’s Tool Appro
 Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, read-only UI actions, and tools an MCP App provided. Everything in between follows the switch, including web search — its query is your text leaving for a third party, and the call spends credits.
 
 Two things sit just outside those lists. An **unattended run** (an eval, a swarm) has nobody to ask, so its browser tools follow the `toolPolicy` it declared up front instead of pausing. And **loading a skill that an MCP server provided** is always tagged as third-party content and always bound to the manifest digest you were shown — but whether it pauses follows the switch.
-
-When a **local harness** (Claude Code or Codex) is active, turning Tool Approval off requires a separate **Run without asking?** confirmation before the first send. The dialog names the harness and explains that it will run commands and change files on your computer without asking first. Consent is scoped to your signed-in account, this machine, the current project, and the harness — it is not shared across projects or machines.
-
-- **Cancel** restores Tool Approval to On and keeps your draft intact.
-- Once confirmed, MCPJam answers native approval requests on your behalf. The runtime stays in ask mode — toggling the switch does not decide any approval that was already waiting; your explicit answer still controls it.
-- Host-executed tools marked as always requiring approval continue to pause regardless of the toggle.
-- Forgetting the local authorization clears the Off consent; the confirmation dialog reappears the next time you turn it off.
 
 **Message history**
 Press **Up** in the composer to recall your last sent message. Press **Up** again to step further back through your previous messages, and **Down** to walk forward. Past the newest entry, **Down** returns the draft you had started before the walk began.
@@ -514,8 +489,8 @@ Local Browser and WebMCP inspection require **Allow Browser** on the current dev
 
 Page text, screenshots and tool results used in chat may be sent to your selected model provider. Signed-in websites and local-network services can contain sensitive information. Exports may include page contents, tool inputs/results and screenshots; review them before sharing.
 
-Electron inspection keeps website sign-ins in a separate profile for each account and project, including a separate standalone profile. The upgrade requires signing in to websites again: the old shared inspection profile is never imported. **Clear inspection site data** closes sessions for the selected profile and deletes its website storage/cache. **Delete old shared profile** removes the unused legacy profile. Neither action deletes previously saved transcripts, screenshots, exported files or cloud profile copies. Node inspection is temporary and does not retain sign-ins after closing.
+Electron inspection keeps website sign-ins in a separate profile for each account and project, including a separate standalone profile. The upgrade requires signing in to websites again: the old shared inspection profile is never imported. **Clear inspection site data** closes sessions for the selected profile and deletes its website storage/cache. **Delete old shared profile** removes the unused legacy profile. Neither action deletes previously saved transcripts, screenshots or exported files. Node inspection is temporary and does not retain sign-ins after closing.
 
 Electron website downloads require your decision in a native save dialog. They are limited to 1 GiB and never opened automatically. Node website downloads are disabled. Camera, microphone, geolocation, device access and clipboard reads remain denied; explicit human paste and file selection remain available.
 
-Local profiles are files on this machine protected by your OS account and filesystem permissions. Some browser secrets may use OS credential protection; this is not a promise that all profile data, screenshots or transcripts are encrypted. Uploading a Playground browser profile to a cloud computer is a separate action that copies its data outside this machine.
+Local profiles are files on this machine protected by your OS account and filesystem permissions. Some browser secrets may use OS credential protection; this is not a promise that all profile data, screenshots or transcripts are encrypted.
