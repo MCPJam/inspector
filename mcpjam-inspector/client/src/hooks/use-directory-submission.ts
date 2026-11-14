@@ -248,6 +248,7 @@ function createSubmissionDraft(
     scope,
     draft: () => draft,
     load,
+    adopt,
     flush,
     /** Another submission is open: stop rendering, keep saving. */
     detach() {
@@ -332,6 +333,8 @@ export function createDraftStore(render: () => void) {
     saveNow: () => current.flush(),
     reapply: () => current.reapply(),
     keepSaved: () => current.keepSaved(),
+    /** Shows a submission another write returned, such as the gate's. */
+    adopt: (view: SubmissionView) => current.adopt(view),
   };
 }
 
@@ -450,6 +453,8 @@ export function useDirectorySubmission({
     saveNow: store.saveNow,
     reapply: store.reapply,
     keepSaved: store.keepSaved,
+    /** Shows a submission another write returned, such as the gate's. */
+    adopt: store.adopt,
   };
 }
 
