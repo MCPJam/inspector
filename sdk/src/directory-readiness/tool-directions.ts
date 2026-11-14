@@ -123,7 +123,8 @@ export function findToolDirectionCandidates(
   return candidates;
 }
 
-function textFields(tool: ToolTextEvidence): Array<[string, string]> {
+/** A tool's description and its parameters' descriptions, by field path. */
+export function textFields(tool: ToolTextEvidence): Array<[string, string]> {
   const fields: Array<[string, string]> = [];
   if (typeof tool.description === "string") {
     fields.push(["description", tool.description]);
@@ -161,7 +162,7 @@ function schemaFields(
 }
 
 /** The text's sentences, trimmed and without a leading list marker. */
-function sentences(text: string): string[] {
+export function sentences(text: string): string[] {
   const out: string[] = [];
   let start = 0;
   for (const end of text.matchAll(SENTENCE_END)) {

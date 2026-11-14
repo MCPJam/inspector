@@ -114,6 +114,7 @@ export {
   runClaudeToolChecks,
 } from "./checks/tools.js";
 export { runClaudeCrossToolScan } from "./checks/cross-tool.js";
+export { runClaudeDecisionChecks } from "./checks/decisions.js";
 export { runClaudeDeclarationChecks } from "./checks/declarations.js";
 export type { ClaudeDeclarationEvidence } from "./checks/declarations.js";
 export { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
