@@ -22,6 +22,7 @@ import {
   directoryFlowDefaults,
   directoryFlowField,
   getDirectoryFlow,
+  validateDirectoryAnswerInput,
   withDirectoryFlowDefaults,
   type DirectoryFlowField,
 } from "../../src/directory-readiness/index.js";
@@ -132,6 +133,9 @@ describe("field rules", () => {
       { key: "dataHandling.apiOwnership", value: "own" },
       { key: "dataHandling.healthData", value: "no" },
     ]);
+    for (const { key, value } of defaults) {
+      expect(validateDirectoryAnswerInput(FLOW, key, value)).toBeUndefined();
+    }
   });
 
   it("never default an account prefill or a field without options", () => {
