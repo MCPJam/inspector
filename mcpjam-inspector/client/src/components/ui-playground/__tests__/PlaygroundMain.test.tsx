@@ -403,6 +403,12 @@ vi.mock("@/hooks/use-chat-session", () => ({
   },
 }));
 
+const mockUseHarnessBoxPreparation = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/use-harness-box-preparation", () => ({
+  useHarnessBoxPreparation: (...args: unknown[]) =>
+    mockUseHarnessBoxPreparation(...args),
+}));
+
 // Mock use-stick-to-bottom
 vi.mock("use-stick-to-bottom", () => {
   const StickToBottomComponent = ({
@@ -952,6 +958,7 @@ describe("PlaygroundMain", () => {
       // Fresh instance per test: a prior test's `mockResolvedValue` on the
       // shared object would otherwise leak into the next one.
       rewindToMessage: vi.fn(),
+      harnessBoxPreparation: null,
     });
     mockThread.mockClear();
     mockChatInputProps.mockClear();
@@ -2799,6 +2806,35 @@ describe("PlaygroundMain", () => {
       expect(
         mockThread.mock.calls.at(-1)?.[0].onEditUserMessage
       ).toBeUndefined();
+    });
+
+    it("does not prepare the hidden root chat's computer while comparing", () => {
+      const request = {
+        chatSessionId: "chat-session-1",
+        body: { projectId: "project_1", chatSessionId: "chat-session-1" },
+      };
+      mockUseChatSession.harnessBoxPreparation = request;
+      mockUseChatSession.availableModels = [
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+        {
+          id: "anthropic/claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+      );
+      expect(mockUseHarnessBoxPreparation.mock.calls.at(-1)?.[0]).toEqual(
+        request,
+      );
+
+      mockUseChatSession.multiModelEnabled = true;
+      rerender(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+      );
+      expect(mockUseHarnessBoxPreparation.mock.calls.at(-1)?.[0]).toBeNull();
     });
 
     it("suppresses the edit affordance when compare mode is live, independent of hideMessageEdit", async () => {
