@@ -80,6 +80,10 @@ import {
   getDirectorySubmissionTestPlanOperation,
   getDirectorySubmissionToolTestsOperation,
   saveDirectorySubmissionTestPlanOperation,
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -1626,6 +1630,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getDirectorySubmissionToolTestsOperation, tier: "direct" },
+  // A submission's test cases live in an eval suite. Linking it and importing
+  // a package's cases write MCPJam rows and call no tool; a run of the suite
+  // goes through run_eval_suite's own approval.
+  { operation: getDirectorySubmissionEvalsOperation, tier: "direct" },
+  { operation: setDirectorySubmissionEvalsOperation, tier: "direct" },
+  { operation: importDirectorySubmissionTestCasesOperation, tier: "direct" },
+  { operation: exportDirectorySubmissionTestCasesOperation, tier: "direct" },
   // Reviewer sign-in: each start or resume begins a run that signs in to the
   // submission's server, so a person approves it. Reading and stopping do not.
   {

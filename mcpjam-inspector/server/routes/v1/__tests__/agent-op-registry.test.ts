@@ -182,6 +182,10 @@ describe("agent op registry", () => {
         "update_directory_submission",
         // A test plan revision: it calls nothing until a start names it.
         "save_directory_submission_test_plan",
+        // A submission's eval suite and the cases a package declares: they
+        // call no tool until someone runs the suite.
+        "set_directory_submission_evals",
+        "import_directory_submission_test_cases",
         // Stops a reviewer sign-in, as cancel_readiness_run stops a run.
         "cancel_reviewer_attempt",
         "ensure_adhoc_environment",

@@ -151,6 +151,12 @@ import {
   getDirectorySubmissionToolTestsOperation,
   saveDirectorySubmissionTestPlanOperation,
 } from "./directory-test-plan-operations.js";
+import {
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
+} from "./directory-submission-eval-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2476,6 +2482,7 @@ export type {
 export * from "./directory-submission-operations.js";
 export * from "./directory-reviewer-attempt-operations.js";
 export * from "./directory-test-plan-operations.js";
+export * from "./directory-submission-eval-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19387,6 +19394,11 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   draftDirectorySubmissionTestPlanOperation,
   saveDirectorySubmissionTestPlanOperation,
   getDirectorySubmissionToolTestsOperation,
+  // A submission's test cases, as the eval suite that holds them.
+  getDirectorySubmissionEvalsOperation,
+  setDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  exportDirectorySubmissionTestCasesOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,

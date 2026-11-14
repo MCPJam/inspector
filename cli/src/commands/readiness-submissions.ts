@@ -45,6 +45,7 @@ import {
 } from "../lib/platform-command.js";
 import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
 import { collectRepeated } from "./readiness-lazy-auth.js";
+import { registerSubmissionEvalCommands } from "./readiness-submission-evals.js";
 import { registerTestPlanCommands } from "./readiness-test-plans.js";
 
 type Options = PlatformOptions & {
@@ -437,4 +438,5 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
   });
 
   registerTestPlanCommands(submission);
+  registerSubmissionEvalCommands(submission);
 }
