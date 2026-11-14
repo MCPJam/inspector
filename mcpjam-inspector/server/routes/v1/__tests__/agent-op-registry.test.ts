@@ -173,6 +173,10 @@ describe("agent op registry", () => {
         // connection request reads the same way, and frees the slot it holds.
         "cancel_project_server_connection",
         "cancel_readiness_run",
+        // Answers to a directory form: they spend nothing, and each records
+        // the agent as its author.
+        "create_directory_submission",
+        "update_directory_submission",
         "ensure_adhoc_environment",
         "name_environment",
         createEvalSuiteOperation.name,
@@ -2019,6 +2023,13 @@ describe("tier derives from operation.risk", () => {
         "direct. Gated for the reason start_claude_readiness_run is: a start " +
         "dials a third party's server and persists a project row.",
     },
+    start_directory_submission_run: {
+      tier: "gated",
+      reason:
+        "The same as start_claude_readiness_run: the optional model pass is " +
+        "platform-paid, so risk is none and would derive direct, but the run " +
+        "dials the submission's server and persists a project row.",
+    },
     generate_eval_cases: {
       tier: "gated",
       reason:
@@ -2292,6 +2303,8 @@ const EXPECTED_PROMPT_NOTES = [
   '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
   "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
   "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
+  "- `update_directory_submission` records you as the author of each answer you write. `confirm` states that a declaration (data handling, acknowledgments) is true: confirm one only when the user told you it is. A 409 names the `conflictingKeys` someone else changed since your `expectedRevision`; read the submission again before you reapply your change.",
+  "- `start_directory_submission_run` returns a RECEIPT. Poll `get_readiness_run` until it finishes, then read `get_directory_submission_results`, which places each finding under the portal step and field it belongs to.",
   "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
   "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",

@@ -62,6 +62,14 @@ import {
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -1562,6 +1570,36 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getReadinessRunOperation, tier: "direct" },
   { operation: listReadinessRunsOperation, tier: "direct" },
   { operation: getReadinessReportOperation, tier: "direct" },
+  // Directory submissions. Answers spend nothing and name the agent as their
+  // author; a run dials the submission's server, so a person approves it.
+  { operation: listDirectoryFlowsOperation, tier: "direct" },
+  { operation: getDirectoryFlowOperation, tier: "direct" },
+  { operation: createDirectorySubmissionOperation, tier: "direct" },
+  { operation: listDirectorySubmissionsOperation, tier: "direct" },
+  { operation: getDirectorySubmissionOperation, tier: "direct" },
+  {
+    operation: updateDirectorySubmissionOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `update_directory_submission` records you as the author of each answer you write. `confirm` states that a declaration (data handling, acknowledgments) is true: confirm one only when the user told you it is. A 409 names the `conflictingKeys` someone else changed since your `expectedRevision`; read the submission again before you reapply your change.",
+    ],
+  },
+  {
+    operation: startDirectorySubmissionRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Run the checks for directory submission ${named(input, "submission") ?? "(unnamed)"}`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // Platform-paid, like the readiness starts: no money to warn about.
+      confirmSeverity: "none",
+    },
+    promptNotes: [
+      "- `start_directory_submission_run` returns a RECEIPT. Poll `get_readiness_run` until it finishes, then read `get_directory_submission_results`, which places each finding under the portal step and field it belongs to.",
+    ],
+  },
+  { operation: getDirectorySubmissionResultsOperation, tier: "direct" },
   {
     operation: startConformanceRunOperation,
     tier: "gated",
@@ -2637,6 +2675,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // deliberate, it does not make a removal recoverable.
   delete_persona:
     "Removes a persona from the roster; the agent proposes authoring, never destruction.",
+  delete_directory_submission:
+    "Deletes a submission and every answer in it, and nothing here can restore them; the agent proposes authoring, never destruction.",
   // PROJECT SECRET WRITES. The first two are excluded for a reason that is not
   // about risk appetite at all: their INPUT carries the plaintext credential,
   // so it would transit model context and be written into this turn's

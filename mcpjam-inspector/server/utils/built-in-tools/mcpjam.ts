@@ -112,6 +112,14 @@ import {
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -198,6 +206,15 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  // Directory submissions, like the readiness runs above; the delete is excluded.
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -358,6 +375,8 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   // looking at them.
   delete_persona:
     "Takes a persona off the roster; the Swarms tab shows what still references it before you do.",
+  delete_directory_submission:
+    "Deletes a submission and every answer in it, and nothing restores them. A chat tool would delete by id with none of those answers in view; the API and CLI delete the one you name.",
   // PROJECT SECRET WRITES. The first two are excluded for a reason unrelated to
   // reversibility: the plaintext credential is an ARGUMENT, so it would transit
   // model context and be written into this chat's transcript before anything

@@ -89,6 +89,7 @@ import {
   lazyAuthProbeFromOptions,
   parseFeatureClaims,
 } from "./readiness-lazy-auth.js";
+import { registerDirectorySubmissionCommands } from "./readiness-submissions.js";
 export {
   lazyAuthProbeFromOptions,
   parseFeatureClaims,
@@ -505,6 +506,7 @@ export function registerReadinessCommands(program: Command): void {
     });
 
   registerHostedReadinessCommands(readiness);
+  registerDirectorySubmissionCommands(readiness);
 }
 
 /**

@@ -60,6 +60,22 @@ beta; they are listed [after the table](#held-tools).
 | `get_server_skill` | Fetch one skill from a saved MCP server by uri, verified against its manifest digest, advertised frontmatter, and uri identity before any content is returned. | — |
 | `read_server_skill_file` | Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
+| `start_claude_readiness_run` | Grade a saved MCP server against Anthropic's connector-directory rules, and get a run id to poll. In beta: refused for organizations outside it. | — |
+| `start_openai_readiness_run` | Grade a saved MCP server against OpenAI's app-directory rules for a declared submission mode, and get a run id to poll. In beta. | — |
+| `start_muse_readiness_run` | Grade a saved MCP server against Meta's Muse connector guidelines, and get a run id to poll. In beta. | — |
+| `get_readiness_run` | Read one readiness run: whether it finished, its grade, the optional model pass, and per-lane coverage. | — |
+| `list_readiness_runs` | List a project's readiness runs, newest first, optionally for one publisher or one server. | — |
+| `cancel_readiness_run` | Stop a readiness run that is still going. The run's final state arrives on a later read. | — |
+| `get_readiness_report` | Read a finished readiness run's findings, capped and ordered most consequential first, without raw evidence. | — |
+| `list_directory_flows` | List the directory submission forms MCPJam can rehearse, such as Anthropic's connector directory, with their steps. | — |
+| `get_directory_flow` | Read one directory's submission form field by field (labels, limits, defaults, the portal's error lines), or one step of it. | — |
+| `create_directory_submission` | Start a rehearsal of a directory's form for a saved server, prefilled from your account. Nothing is sent to the directory. In beta. | — |
+| `list_directory_submissions` | List a project's directory submissions, newest first, optionally for one server or one flow. | — |
+| `get_directory_submission` | Read one submission: each answer with who set it and whether it was confirmed, the portal's checks, and the latest results by step. | — |
+| `update_directory_submission` | Save answers to a submission. A stale revision is refused only for the fields someone else changed since. In beta. | — |
+| `delete_directory_submission` | Delete a directory submission and its answers. | — |
+| `start_directory_submission_run` | Grade a submission's server and saved answers, and get a run to poll. In beta. | — |
+| `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale. | — |
 | `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
 | `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
 | `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |
@@ -190,9 +206,6 @@ is resolved per caller, these are held off this surface for **everyone**
 (`HELD_WHILE_IN_BETA` in `src/tools/platformTools.ts`, which also writes their
 `EXCLUDED_FROM_CATALOG` reasons). REST, the SDK and the CLI are unaffected.
 
-- Readiness: `start_claude_readiness_run`, `start_openai_readiness_run`,
-  `start_muse_readiness_run`, `get_readiness_run`, `list_readiness_runs`,
-  `cancel_readiness_run`, `get_readiness_report`
 - Unified sessions: `search_sessions`
 - Registry directory: `search_registry_directory`,
   `get_registry_directory_server`, `list_registry_directory_sources`,

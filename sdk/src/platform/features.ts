@@ -48,6 +48,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "trace-destinations",
   "description-experiments",
   "conformance",
+  "directory-readiness",
   "unified-sessions",
   "unified-share-evals",
   "github-checks",
@@ -78,6 +79,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "trace-destinations": "Trace destinations",
   "description-experiments": "Description experiments",
   conformance: "Conformance",
+  "directory-readiness": "Directory readiness",
   "unified-sessions": "The unified sessions feed",
   "unified-share-evals": "Eval run sharing",
   "github-checks": "GitHub checks",
@@ -116,6 +118,11 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_conformance_runs: "conformance",
   get_conformance_report: "conformance",
   get_conformance_check: "conformance",
+  // Directory submissions. Only the writes and a run started from a
+  // submission are gated; the readiness starts above keep `conformance`.
+  create_directory_submission: "directory-readiness",
+  update_directory_submission: "directory-readiness",
+  start_directory_submission_run: "directory-readiness",
   // The unified sessions feed. `list_chat_sessions` reads chat sessions,
   // which are released.
   search_sessions: "unified-sessions",
@@ -233,6 +240,14 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_readiness_runs: null,
   get_readiness_run: null,
   cancel_readiness_run: null,
+  // The flows are product data, and the backend leaves submission reads and
+  // the delete open, so an organization can still find and remove its own.
+  list_directory_flows: null,
+  get_directory_flow: null,
+  list_directory_submissions: null,
+  get_directory_submission: null,
+  get_directory_submission_results: null,
+  delete_directory_submission: null,
   list_personas: null,
   get_persona: null,
   delete_persona: null,

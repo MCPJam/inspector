@@ -167,6 +167,16 @@ describe("workspace tool catalog", () => {
       "list_readiness_runs",
       "cancel_readiness_run",
       "get_readiness_report",
+      // Directory submissions: everything but the delete, which is in
+      // EXCLUDED_FROM_WORKSPACE.
+      "list_directory_flows",
+      "get_directory_flow",
+      "create_directory_submission",
+      "list_directory_submissions",
+      "get_directory_submission",
+      "update_directory_submission",
+      "start_directory_submission_run",
+      "get_directory_submission_results",
       "start_conformance_run",
       "get_conformance_run",
       "list_conformance_runs",
