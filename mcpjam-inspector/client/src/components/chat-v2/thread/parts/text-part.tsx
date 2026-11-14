@@ -11,11 +11,10 @@ export function TextPart({
 }) {
   const textColorClass =
     role === "user" ? "text-inherit" : "text-foreground";
-  const alignmentClass = role === "user" ? "text-right" : "";
   return (
     <MemoizedMarkdown
       content={text}
-      className={`max-w-full break-words overflow-auto ${textColorClass} ${alignmentClass}`}
+      className={`max-w-full break-words overflow-auto ${textColorClass}`}
     />
   );
 }
