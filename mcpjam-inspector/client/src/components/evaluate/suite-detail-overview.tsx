@@ -1023,6 +1023,9 @@ export function SuiteDetailOverview({
               : (onDescribeCases ?? onEditCases)
           }
           onOpenSettings={openSettings}
+          runBlockedReason={runBlockedReason}
+          runBusy={isRerunning}
+          onRun={() => setReviewRun(true)}
         />
       ) : showEmptyCasesHero ? (
         <SuiteEmptyCasesHero

@@ -3,10 +3,12 @@
  * launches the Runs card shows, the latest one, and a bar per launch. Plus
  * the two states a suite has before that: no cases, and cases but no runs.
  */
+import type { ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { SuiteHealthBars } from "../suite-health";
+import { SuiteRunButton } from "./suite-page-header";
 import type { SuiteHistoryLaunch } from "../suite-run-history-snapshot";
 
 /** Bars drawn; older launches still count toward nothing on screen. */
@@ -99,44 +101,78 @@ export function SuiteRunsHealth({
   );
 }
 
-/** In place of the Runs card for a suite with cases that has never run. */
-export function SuiteNoRunsHealth() {
+/**
+ * The page's empty states, centered in the space under the header. They fill
+ * it when no Runs card sits above them, like today's empty-cases hero.
+ */
+function SuiteEmptyPanel({
+  fill,
+  testId,
+  children,
+}: {
+  fill: boolean;
+  testId: string;
+  children: ReactNode;
+}) {
   return (
     <section
-      className="rounded-xl border border-border bg-card p-5"
-      aria-label="Suite health"
-      data-testid="nav-suite-health"
+      className={cn(
+        "flex min-h-[20rem] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/70 px-6 py-12 text-center",
+        fill && "min-h-0 flex-1",
+      )}
+      data-testid={testId}
     >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className={AVERAGE_CLASS}>—</span>
-        <span className="text-[13px] text-muted-foreground">No runs yet</span>
-      </div>
-      <p className="mt-3 text-sm text-muted-foreground">
+      {children}
+    </section>
+  );
+}
+
+/** A suite with cases that has never run, in place of the Runs card. */
+export function SuiteNoRunsEmpty({
+  runBlockedReason,
+  runBusy,
+  onRun,
+}: {
+  runBlockedReason: string | null;
+  runBusy: boolean;
+  onRun: () => void;
+}) {
+  return (
+    <SuiteEmptyPanel fill testId="nav-suite-no-runs">
+      <h3 className="text-base font-semibold text-foreground">No runs yet</h3>
+      <p className="max-w-md text-sm text-muted-foreground">
         Run the suite once to start a trend.
       </p>
-    </section>
+      <div className="mt-2">
+        <SuiteRunButton
+          large
+          blockedReason={runBlockedReason}
+          busy={runBusy}
+          onRun={onRun}
+        />
+      </div>
+    </SuiteEmptyPanel>
   );
 }
 
 /** A suite with no cases. Each action is absent when the reader cannot take it. */
 export function SuiteNoCasesEmpty({
+  fill,
   onBuildCase,
   onOpenSettings,
 }: {
+  /** No Runs card above it. */
+  fill: boolean;
   onBuildCase?: () => void;
   onOpenSettings?: () => void;
 }) {
   return (
-    <section
-      className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border/70 px-6 py-12 text-center"
-      data-testid="nav-suite-empty"
-    >
+    <SuiteEmptyPanel fill={fill} testId="nav-suite-empty">
       <h3 className="text-base font-semibold text-foreground">
         No test cases yet
       </h3>
       <p className="max-w-md text-sm text-muted-foreground">
-        A test case is one prompt and the assertions its answer must pass. Build
-        the first one, then run the suite.
+        Add your first test case, then run the suite.
       </p>
       {onBuildCase ? (
         <Button size="lg" className="mt-2 gap-2" onClick={onBuildCase}>
@@ -153,7 +189,7 @@ export function SuiteNoCasesEmpty({
           or open Suite settings
         </button>
       ) : null}
-    </section>
+    </SuiteEmptyPanel>
   );
 }
 
@@ -163,20 +199,33 @@ export function SuiteNavEmptyState({
   hasRuns,
   onBuildCase,
   onOpenSettings,
+  runBlockedReason,
+  runBusy,
+  onRun,
 }: {
   hasCases: boolean;
   hasRuns: boolean;
   /** Absent for read-only and CI-locked suites. */
   onBuildCase?: () => void;
   onOpenSettings?: () => void;
+  runBlockedReason: string | null;
+  runBusy: boolean;
+  onRun: () => void;
 }) {
   if (!hasCases) {
     return (
       <SuiteNoCasesEmpty
+        fill={!hasRuns}
         onBuildCase={onBuildCase}
         onOpenSettings={onOpenSettings}
       />
     );
   }
-  return hasRuns ? null : <SuiteNoRunsHealth />;
+  return hasRuns ? null : (
+    <SuiteNoRunsEmpty
+      runBlockedReason={runBlockedReason}
+      runBusy={runBusy}
+      onRun={onRun}
+    />
+  );
 }
