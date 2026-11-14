@@ -12,6 +12,17 @@ import { warmBridgeCommand } from "./warm-bridge-files.js";
 export const WARM_ATTACH_TIMEOUT_MS = 1500;
 export const WARM_RETENTION_TIMEOUT_MS = 1500;
 
+/**
+ * How a warm attach ended: it re-attached, or it fell back to saved files
+ * because the box's probe refused the bridge, the attach threw, or the
+ * deadline passed. The step, never the error: an E2B error names its sandbox.
+ */
+export type WarmAttachOutcome =
+  | "attached"
+  | "probe_refused"
+  | "attach_failed"
+  | "attach_timeout";
+
 const coordinates = z.object({
   data: z.object({
     bridge: z.object({
@@ -39,11 +50,13 @@ function withoutSpawn<T extends object>(target: T): T {
 /**
  * A warm attempt cannot dispatch a prompt or spawn a replacement process.
  * `windowMs` is the box's idle window: how long a parked bridge stays reusable.
+ * `onAttach` hears how an attempt ended; a cancelled one reports nothing.
  */
 export function withWarmBridgeRuntime<T extends HarnessV1>(
   factory: (startupTimeoutMs?: number, sandboxHomeDir?: string) => T,
   configuration: string,
   windowMs: number,
+  onAttach?: (outcome: WarmAttachOutcome) => void,
 ): T {
   const ordinary = factory();
 
@@ -74,6 +87,10 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
             ? AbortSignal.any([options.abortSignal, abort.signal])
             : abort.signal;
           let timer: ReturnType<typeof setTimeout> | undefined;
+          // The step a fallback came from. The deadline is kept apart: an
+          // attempt it abandoned can still settle and move this on.
+          let failedAt: "probe_refused" | "attach_failed" = "attach_failed";
+          let timedOut = false;
           const attempt = async () => {
             const result = await options.sandboxSession.run({
               command: warmBridgeCommand({
@@ -86,6 +103,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
               }),
               abortSignal: signal,
             });
+            failedAt = "probe_refused";
             const probe = z.object({ ready: z.literal(true), home: z.string().optional() })
               .safeParse(JSON.parse(result.stdout));
             if (result.exitCode !== 0 || !probe.success)
@@ -96,6 +114,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
             const sandboxHomeDir = home?.startsWith("/") && !home.includes("\0")
               ? home : undefined;
             signal.throwIfAborted();
+            failedAt = "attach_failed";
             return factory(WARM_ATTACH_TIMEOUT_MS, sandboxHomeDir).doStart({
               ...options,
               abortSignal: signal,
@@ -103,11 +122,13 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
             });
           };
           const pending = Promise.resolve(attempt());
+          let outcome: WarmAttachOutcome;
           try {
             session = await Promise.race([
               pending,
               new Promise<never>((_, reject) => {
                 timer = setTimeout(() => {
+                  timedOut = true;
                   abort.abort();
                   reject(new Error("Warm bridge deadline exceeded."));
                 }, WARM_ATTACH_TIMEOUT_MS);
@@ -116,6 +137,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
             logger.info("[harness] warm bridge attached", {
               harness: target.harnessId,
             });
+            outcome = "attached";
           } catch {
             // No prompt was dispatched. A late attach only detaches its socket;
             // it must neither retain a socket nor stop the replacement process.
@@ -134,9 +156,11 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
               "[harness] warm bridge unavailable; resuming from disk",
               { harness: target.harnessId },
             );
+            outcome = timedOut ? "attach_timeout" : failedAt;
           } finally {
             if (timer) clearTimeout(timer);
           }
+          onAttach?.(outcome);
         }
         session ??= await target.doStart({
           ...options,

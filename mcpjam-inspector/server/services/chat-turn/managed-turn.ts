@@ -38,6 +38,7 @@ import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
 import { TurnTiming } from "../../utils/turn-timing.js";
+import { harnessTurnEventSink } from "../../utils/harness/harness-turn-event.js";
 import {
   conversationExecutionArgs,
   startBoundConversationExecutionCheck,
@@ -49,7 +50,10 @@ export async function handleManagedChatTurn(
   normalizedBody?: Record<string, unknown>,
 ): Promise<Response> {
   const localIngress = ingress === "local" && !HOSTED_MODE;
-  const timing = new TurnTiming();
+  // A harness turn on a local runtime reports the `local` surface itself.
+  const timing = new TurnTiming({
+    harnessTurnEvent: harnessTurnEventSink(c, "web"),
+  });
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
   // returns a streaming Response. Wrapping it in handleRoute → c.json() would
   // serialize the Response object as '{}' instead of forwarding the stream.
@@ -219,6 +223,7 @@ export async function handleManagedChatTurn(
       bearerToken,
       localIngress,
       resources,
+      timing,
       setup: setup.value,
       connections,
     });

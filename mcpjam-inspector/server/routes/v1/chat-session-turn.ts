@@ -126,6 +126,8 @@ import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { withSelectionRouting } from "../../utils/selection-rail.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
+import { TurnTiming } from "../../utils/turn-timing.js";
+import { harnessTurnEventSink } from "../../utils/harness/harness-turn-event.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
   releaseUncommittedHarnessLane,
@@ -789,6 +791,11 @@ export function registerChatSessionTurnRoute(router: Hono): void {
 }
 
 async function handleTurn(c: Context): Promise<Response> {
+  // The recorder the browser routes start with: a harness turn's first text
+  // and closing event, timed from the start of the request.
+  const timing = new TurnTiming({
+    harnessTurnEvent: harnessTurnEventSink(c, "api"),
+  });
   // Graceful degradation on OSS/self-hosted installs: the hosted engine, the
   // delegated-token mint and the lease all require the backend wiring.
   if (!process.env.CONVEX_HTTP_URL || !process.env.CONVEX_URL) {
@@ -1520,6 +1527,8 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(pins.environmentId ? { projectEnvironmentId: pins.environmentId } : {}),
       ...(engine.kind === "harness" ? { harness: engine.harness } : {}),
       signal: abortController.signal,
+      // Creating or waking it counts toward the turn's box wake.
+      timing,
     };
     const earlyBox =
       engine.kind === "harness"
@@ -1832,6 +1841,7 @@ async function handleTurn(c: Context): Promise<Response> {
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
+      turnTiming: timing,
       messages: inputMessages,
       modelDefinition,
       systemPrompt: appendBrowserRefusalContext(
