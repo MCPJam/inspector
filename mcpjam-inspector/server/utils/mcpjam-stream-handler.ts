@@ -935,7 +935,10 @@ function applyToolRefresh(
 
 export interface MCPJamHandlerOptions {
   turnAuthorization?: TurnAuthorization;
-  /** The route's stage timing; a harness turn adds its stages and first text. */
+  /**
+   * The route's stage timing. A harness turn adds its stages and first text,
+   * and sends its closing event to the timing's `harnessTurnEvent` sink.
+   */
   turnTiming?: import("./turn-timing.js").TurnTiming;
   harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */

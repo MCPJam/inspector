@@ -14,6 +14,7 @@ import {
   startPlaygroundBoxEarly,
 } from "../owned-playground-box.js";
 import { takeEarly } from "../../../utils/early-start.js";
+import { TurnTiming } from "../../../utils/turn-timing.js";
 import { TurnResources } from "../resources.js";
 
 const args = { bearer: "tok", projectId: "p1", chatSessionId: "c1" };
@@ -52,6 +53,20 @@ describe("acquireOwnedPlaygroundHarnessBox", () => {
     expect(m.release).toHaveBeenCalledTimes(1);
   });
 
+  it("counts creating or waking the box toward the turn's box wake, and keeps the recorder from the control plane", async () => {
+    let now = 0;
+    const timing = new TurnTiming({ now: () => now });
+    m.acquire.mockImplementation(async () => {
+      now += 1_800;
+      return acquired();
+    });
+    const resources = new TurnResources(() => {});
+    await acquireOwnedPlaygroundHarnessBox(resources, { ...args, timing });
+    expect(timing.boxAcquisitionMs()).toBe(1_800);
+    expect(m.acquire).toHaveBeenCalledWith(args);
+    await resources.dispose();
+  });
+
   it("gives a refused box nothing to release", async () => {
     const refusal = {
       ok: false,
@@ -82,6 +97,22 @@ describe("startPlaygroundBoxEarly", () => {
     await expect(takeEarly(early!)).resolves.toMatchObject({ ok: true });
     await resources.dispose();
     expect(m.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("times an early booking on the turn's recorder too", async () => {
+    let now = 0;
+    const timing = new TurnTiming({ now: () => now });
+    m.acquire.mockImplementation(async () => {
+      now += 2_400;
+      return acquired();
+    });
+    const resources = new TurnResources(() => {});
+    const early = startPlaygroundBoxEarly(
+      resources, "conversation", { ...boxArgs, timing }, false,
+    );
+    await takeEarly(early!);
+    expect(timing.boxAcquisitionMs()).toBe(2_400);
+    await resources.dispose();
   });
 
   it("leaves every box a check before the booking could refuse to its usual place", () => {

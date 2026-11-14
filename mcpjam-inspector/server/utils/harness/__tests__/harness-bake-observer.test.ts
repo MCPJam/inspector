@@ -14,6 +14,7 @@ vi.mock("../../logger.js", () => ({
 import {
   harnessBootstrapLogFields,
   harnessBootstrapObservation,
+  harnessBootstrapOutcome,
   logHarnessBootstrapOnFailure,
   observeHarnessBootstrap,
 } from "../harness-bake-observer.js";
@@ -271,6 +272,22 @@ describe("observeHarnessBootstrap", () => {
     await frameworkBootstrap(observed);
     const o = await harnessBootstrapObservation(observed, 10);
     expect(o?.bakeOnBox).toBe("unknown");
+  });
+
+  it("answers the outcome alone at once, while the manifest probe is still out", async () => {
+    const fake = fakeProvider({ files: {} });
+    fake.session.readTextFile.mockImplementation(
+      async ({ path }: { path: string }) =>
+        path === HARNESS_BAKE_MANIFEST_PATH
+          ? new Promise<string | null>(() => {})
+          : null,
+    );
+    const observed = observeHarnessBootstrap(fake.provider);
+    expect(harnessBootstrapOutcome(observed)).toBe("none");
+    await frameworkBootstrap(observed);
+    expect(harnessBootstrapOutcome(observed)).toBe("installed");
+    expect(harnessBootstrapOutcome(fake.provider)).toBeUndefined();
+    expect(harnessBootstrapOutcome(null)).toBeUndefined();
   });
 });
 
