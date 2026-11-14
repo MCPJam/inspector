@@ -20,6 +20,7 @@ import {
   findingOffersPrompt,
   findingPromptLabel,
   type FindingPromptContext,
+  SURFACES,
 } from "./finding-prompts";
 import { type FindingEvidenceLocator } from "./finding-evidence";
 import {
@@ -65,19 +66,11 @@ export function CopyFindingPrompt({
       }}
     >
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      {copied ? "Copied" : "Copy fix prompt"}
+      {copied ? "Copied" : findingPromptLabel(finding)}
     </Button>
   );
 }
 
-const SURFACES: Record<string, string> = {
-  description: "Tool description",
-  input_schema: "Input schema",
-  output_schema: "Output schema",
-  handler: "Tool handler",
-  server_instructions: "Server instructions",
-  capability: "Server capability",
-};
 const OWNERS: Record<string, string> = {
   mcp_server: "MCP server",
   agent_configuration: "Agent / prompt",

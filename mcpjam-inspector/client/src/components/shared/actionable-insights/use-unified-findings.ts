@@ -16,8 +16,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import {
+  findingsViewOf,
   selectCurrentFindings,
   unifiedFindingsOf,
+  type FindingsViewSupport,
   type ActionableFinding,
   type InsightsEnvelope,
   type InsightsFindingProvenance,
@@ -44,6 +46,8 @@ export type UnifiedFindingsState = {
   /** `undefined` while loading; `null` when the backend serves no envelope. */
   envelope: InsightsEnvelope | null | undefined;
   experiment: ReturnType<typeof unifiedFindingsOf>;
+  /** The backend's observation view when this client can read it. */
+  findingsView: FindingsViewSupport;
   /** `ai` once a current enrichment exists; the deterministic view otherwise. */
   mode: UnifiedFindingsMode;
   findings: ActionableFinding[];
@@ -240,10 +244,13 @@ export function useUnifiedFindings(args: {
   // The branch `onAnalyze` takes: a snapshot that is not stale can only be
   // enriched, anything else has to be built first. Availability follows the
   // same split so an enabled button never lands on a silent return.
+  // A stale snapshot is rebuilt and then enriched, so the actor must be
+  // allowed both; a guest may rebuild for free but is never offered analysis.
   const analyzeCapable =
     experiment?.snapshot && experiment.snapshot.enrichment?.status !== "stale"
       ? experiment.canEnrich === true
-      : experiment?.canBuild === true;
+      : experiment?.canBuild === true &&
+        (!experiment.snapshot || experiment.canEnrich === true);
 
   // A new enrichment landed for the run this section asked about: the
   // request is settled whether or not `pending` was ever observed.
@@ -316,13 +323,19 @@ export function useUnifiedFindings(args: {
     if (
       !experiment?.snapshot ||
       experiment.snapshot.builtAt === analysisBuildStamp.current ||
-      !experiment.canEnrich ||
       experiment.job?.status === "pending"
     )
       return;
+    // The build landed. Stop waiting either way; enrich only when allowed, so
+    // an actor who may not analyze is never left waiting on a request.
     setAwaitingBuild(false);
     analysisInFlight.current = false;
-    if (!args.generation.unavailable && args.generation.canRequest) onEnrich();
+    if (
+      experiment.canEnrich &&
+      !args.generation.unavailable &&
+      args.generation.canRequest
+    )
+      onEnrich();
   }, [
     awaitingBuild,
     experiment,
@@ -387,6 +400,7 @@ export function useUnifiedFindings(args: {
   return {
     envelope: args.envelope,
     experiment,
+    findingsView: findingsViewOf(experiment),
     mode,
     findings,
     provenance,
