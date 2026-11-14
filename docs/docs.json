@@ -63,6 +63,11 @@
         "tab": "Inspector",
         "groups": [
           {
+            "group": "Overview",
+            "icon": "compass",
+            "pages": ["inspector/overview"]
+          },
+          {
             "group": "Connect",
             "icon": "plug",
             "pages": [

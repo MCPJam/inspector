@@ -1,0 +1,79 @@
+---
+title: "Inspector overview"
+sidebarTitle: "Overview"
+description: "Connect an MCP server, call its tools, debug the connection, and test it with models and people."
+icon: "compass"
+---
+
+MCPJam Inspector is an app for testing MCP servers. Connect a server, then call its tools by hand, chat with it through a model, check how its widgets render in Claude or ChatGPT, and step through its OAuth flow. Inspector runs in the browser at [app.mcpjam.com](https://app.mcpjam.com), on your machine with `npx @mcpjam/inspector@latest`, as a desktop app for macOS and Windows, or in Docker.
+
+<Card title="Get started" icon="rocket" href="/getting-started">
+  Open Inspector and connect your first server.
+</Card>
+
+## Connect a server
+
+Add a server from the **Connect** tab. Paste an HTTPS URL such as `https://your-server.example/mcp`, or a STDIO command such as `node build/index.js`. The web app can only reach HTTPS servers. For a server on `localhost` or over STDIO, run Inspector from the terminal or the desktop app.
+
+- [Multi-server connections](/inspector/connecting-servers): HTTP and STDIO setup, several servers at once, and tunneling.
+- [Projects](/inspector/projects): group servers and share them with your team.
+- [MCP protocol versions](/inspector/protocol-versions): pin a protocol version, including the 2026-07-28 stateless RC.
+- [Plugins](/inspector/plugins): import an Agent Plugins bundle with its servers and skills.
+
+## Call tools and chat with your server
+
+The **Tools**, **Resources**, **Prompts**, and **Tasks** tabs call one primitive at a time with arguments you choose and show the raw result. The **Playground** sends a prompt like `What can this server do?` to a model and shows which tools it calls.
+
+- [MCP Inspector](/inspector/tools-prompts-resources): call tools, read resources, and fetch prompts by hand.
+- [Playground](/inspector/playground): chat with your servers, compare models, and render widgets.
+- [Skills](/inspector/skills): give the model the context it needs to use your tools.
+
+## Check how your server works in Claude, ChatGPT, and other hosts
+
+Hosts render widgets and support capabilities differently. A **Client** reproduces one host's setup, so you can test against it before you ship.
+
+- [Clients](/inspector/clients): reusable host setups for Claude, ChatGPT, Cursor, and others.
+- [Host compatibility](/inspector/host-compat): see which hosts support your server as soon as you connect it.
+- [View origins](/inspector/view-origins): find the origin your MCP App's view runs at, so you can allowlist it.
+
+## Debug a connection or auth flow
+
+Start here when a server won't connect, returns errors, or rejects a token.
+
+- [Tracing & debugging](/inspector/debugging): every JSON-RPC message between Inspector and your server.
+- [OAuth Debugger](/inspector/guided-oauth): step through the OAuth handshake and see which step fails.
+- [XAA Debugger](/inspector/xaa-debugger): test Cross-App Access with MCPJam as the identity provider.
+- [Common errors](/troubleshooting/common-errors): fixes for the errors people hit most.
+
+To check your server against the spec, run the conformance commands in the CLI: [OAuth conformance](/cli/oauth-conformance), [MCP Apps conformance](/cli/apps-conformance), and [Tasks conformance](/cli/tasks-conformance).
+
+## Run evals
+
+Write test cases such as "book a table for two at 7pm" and assert which tools the model calls and with which arguments. Run them across models and track pass rates over time.
+
+- [Evaluate](/inspector/evals): write cases, run them, and add an LLM judge.
+- [Local evals with the CLI](/cli/local-evals): run the same suites from your terminal or CI.
+
+## Test with simulated users and real people
+
+These two tabs are in the hosted app at [app.mcpjam.com](https://app.mcpjam.com). Their runs use your organization's credits.
+
+- **Swarms** sends a set of simulated users, each with its own goals, to work through your server on the clients and models you choose. When the run ends, it reports which goals passed and where sessions failed.
+- **User Testing** publishes your server and client as a **study** behind a share link. People you invite chat with it, and you read their sessions and the findings.
+
+Both tabs are new and don't have a guide yet. To run them from the terminal, see `mcpjam cloud swarms` and `mcpjam cloud studies` in the [CLI reference](/cli/reference).
+
+## Build an MCP App
+
+- [My First MCP App](/guides/first-mcp-app): build a reservation app with a widget.
+- [My First ChatGPT App](/guides/first-chatgpt-app-react): build a coffee shop app with React.
+
+## Use Inspector from your own tools
+
+- [Launch from Code](/inspector/launch-from-code): start Inspector from a script or a Vite plugin.
+- [MCP Docs Server](/inspector/docs-server): connect your AI assistant to these docs.
+- [Telemetry & privacy](/inspector/telemetry-privacy): what Inspector sends and how to opt out.
+
+## Find your way around the app
+
+[Home](/inspector/home) covers the dashboard you see after you sign in: org stats, recommended servers and clients, What's new, and the Ask MCPJam panel.
