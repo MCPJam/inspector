@@ -130,6 +130,11 @@ export type {
   OpenAIPortalCodeViolation,
   ValidateOpenAIPortalDocumentOptions,
 } from "./portal-codes/validate.js";
+export {
+  OPENAI_CHECK_PORTAL_CODES,
+  OPENAI_ISSUE_PORTAL_CODES,
+  openaiIssuePortalCode,
+} from "./portal-codes/issue-codes.js";
 
 export {
   readImageDimensions,
