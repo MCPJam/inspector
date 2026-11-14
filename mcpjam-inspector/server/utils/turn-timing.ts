@@ -18,7 +18,7 @@ export const TURN_TIMING_STAGES = [
   "streamPreparation",
 ] as const;
 
-/** Each stage's `<stage>Ms` field is declared on `harness.timing` (`log-events.ts`). */
+/** Each stage's `<stage>Ms` field is declared on `harness.timing` (`log-events/harness-timing.ts`). */
 export type TurnTimingStage = (typeof TURN_TIMING_STAGES)[number];
 
 export class TurnTiming {
@@ -59,7 +59,8 @@ export class TurnTiming {
    * Run `acquire`, the route's acquisition of the box a harness turn runs on
    * (creating or waking it), and keep how long it took. The box is held
    * before the turn starts, so the turn adds this to the wake it measures
-   * itself (`box_wake_ms`). It is not a stage: the stage it ran in keeps it.
+   * itself (`box_wake_ms`). It is not a stage: the stage it ran in keeps it,
+   * and `fields()` reports it apart, as `boxAcquisitionMs`.
    */
   async timeBoxAcquisition<T>(acquire: () => Promise<T>): Promise<T> {
     const startedAt = this.now();
@@ -84,7 +85,10 @@ export class TurnTiming {
       .join(", ");
   }
 
-  /** Whole milliseconds per stage, and `firstTextMs` once text has gone out. */
+  /**
+   * Whole milliseconds per stage, `firstTextMs` once text has gone out, and
+   * `boxAcquisitionMs` once the route acquired the turn's box.
+   */
   fields(): Record<string, number> {
     const fields: Record<string, number> = {};
     for (const [stage, ms] of this.stages) {
@@ -93,6 +97,8 @@ export class TurnTiming {
     if (this.firstTextAfter !== undefined) {
       fields.firstTextMs = Math.round(this.firstTextAfter);
     }
+    const boxAcquisitionMs = this.boxAcquisitionMs();
+    if (boxAcquisitionMs !== undefined) fields.boxAcquisitionMs = boxAcquisitionMs;
     return fields;
   }
 
