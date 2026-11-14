@@ -7,7 +7,6 @@ vi.mock("../computers/convex-skills-client", () => ({
   convexListSkills: vi.fn(),
   convexGetSkill: vi.fn(),
   convexGetSkillByName: vi.fn(),
-  convexListSkillsForMaterialize: vi.fn(),
   convexCreateSkill: vi.fn(),
   convexUpdateSkill: vi.fn(),
   convexDeleteSkill: vi.fn(),
