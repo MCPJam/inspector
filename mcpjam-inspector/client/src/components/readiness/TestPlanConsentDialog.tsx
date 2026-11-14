@@ -59,7 +59,7 @@ export function TestPlanConsentDialog({
             {`Run checks with test plan revision ${revision}?`}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {`Revision ${revision} was saved by ${who} ${when}. It calls ${tools} on ${serverName} with your connection.`}
+            {`Revision ${revision} was saved by ${who} ${when}. It calls ${tools} on ${serverName} with your account.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-1 text-sm">
