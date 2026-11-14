@@ -2,7 +2,8 @@
  * MCPJam's test plan, on the step where the portal asks whether every tool
  * was tested (Claude's Test & launch). The portal has no such block, so it is
  * drawn apart from the copy and marked "MCPJam": the saved revision and its
- * issues, and this tab's changes until they are saved.
+ * issues, this tab's changes until they are saved, the arguments a run
+ * drafted, and what the newest run with a plan showed.
  *
  * Every tool is in a plan unless someone excludes it, and destructive calls
  * run last, on the plan's fixtures (D28). A run makes the calls of the saved
@@ -22,9 +23,11 @@ import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import type { DirectoryTestPlanSession } from "@/hooks/use-directory-test-plan";
 import { useTaskOwnerId } from "@/hooks/use-task-owner-id";
+import { ArgumentDrafts } from "./ArgumentDrafts";
 import { McpjamMark } from "./McpjamChecks";
 import { editBudget } from "./test-plan-edits";
 import { IssueList, TestPlanTools } from "./TestPlanTools";
+import { ToolTestResults } from "./ToolTestResults";
 
 /** The step where each flow asks about testing every tool. */
 const PLAN_STEPS: Readonly<Record<string, string>> = {
@@ -277,6 +280,7 @@ export function TestPlanSection({
       </div>
     );
   }
+  // What needs the person comes first; the plan's long tool list comes last.
   return (
     <section
       aria-label="MCPJam test plan"
@@ -287,6 +291,8 @@ export function TestPlanSection({
         Test plan
       </h2>
       {body}
+      <ArgumentDrafts session={session} />
+      <ToolTestResults results={session.results} error={session.resultsError} />
       {plan ? <PlanDetails session={session} plan={plan} /> : null}
     </section>
   );

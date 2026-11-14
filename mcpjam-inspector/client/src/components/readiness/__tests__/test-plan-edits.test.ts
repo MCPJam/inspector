@@ -1,16 +1,17 @@
 /**
  * The plan edits behind the test plan section: an excluded tool has no
- * cases, and an included one gets its cases back in run order with
- * destructive calls last.
+ * cases, an included one gets its cases back in run order with destructive
+ * calls last, and an accepted draft lands in its case only.
  */
 import { describe, expect, it } from "vitest";
 import {
+  acceptDraft,
   editBudget,
   editCase,
   editExclusion,
   setToolAction,
 } from "../test-plan-edits";
-import { PLAN } from "./test-plan-fixtures";
+import { DRAFTING, PLAN } from "./test-plan-fixtures";
 
 const ids = (plan: typeof PLAN) => plan.cases.map((entry) => entry.id);
 
@@ -53,6 +54,17 @@ describe("test plan edits", () => {
     const next = setToolAction(PLAN, "search_docs", "negative-only");
     expect(ids(next)).toEqual(ids(PLAN));
     expect(next.tools[0].action).toBe("negative-only");
+  });
+
+  it("accepts a draft's arguments and expected refusal into its case only", () => {
+    const next = acceptDraft(PLAN, DRAFTING.drafts[1]);
+    expect(next.cases[2]).toMatchObject({
+      arguments: { query: 42 },
+      expectedError: "invalid-arguments",
+    });
+    expect(
+      next.cases.filter((entry, index) => entry !== PLAN.cases[index]),
+    ).toHaveLength(1);
   });
 
   it("edits a case, an exclusion and the budget without touching the rest", () => {

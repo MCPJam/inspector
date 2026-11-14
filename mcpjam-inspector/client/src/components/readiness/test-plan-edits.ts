@@ -11,6 +11,7 @@ import {
   type DirectoryTestPlan,
   type DirectoryToolPlan,
 } from "@mcpjam/sdk/browser";
+import type { PlatformDirectoryTestArgumentDraft } from "@mcpjam/sdk/platform";
 
 type Plan = DirectoryTestPlan;
 
@@ -23,6 +24,18 @@ export function editCase(
     entry.id === caseId ? { ...entry, ...patch } : entry,
   );
   return { ...plan, cases };
+}
+
+/** A draft's arguments, and a negative case's expected refusal, in its case. */
+export function acceptDraft(
+  plan: Plan,
+  draft: PlatformDirectoryTestArgumentDraft,
+): Plan {
+  const { caseId, arguments: args, expectedError } = draft;
+  return editCase(plan, caseId, {
+    arguments: args,
+    ...(expectedError ? { expectedError } : {}),
+  });
 }
 
 export const editBudget = (
