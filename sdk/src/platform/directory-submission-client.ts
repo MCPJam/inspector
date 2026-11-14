@@ -34,6 +34,13 @@ import type {
   PlatformDirectoryTestPlanView,
   PlatformDirectoryToolTests,
 } from "./directory-test-plan-types.js";
+import type {
+  PlatformDirectorySubmissionEvalExport,
+  PlatformDirectorySubmissionEvalImport,
+  PlatformDirectorySubmissionEvalLink,
+  PlatformDirectorySubmissionEvalLinkBody,
+  PlatformDirectorySubmissionEvals,
+} from "./directory-submission-eval-types.js";
 import { isPlatformApiError } from "./errors.js";
 import { ServerAccountClient } from "./server-account-client.js";
 import type { PlatformPage, PlatformReadinessRunReceipt } from "./types.js";
@@ -273,9 +280,55 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
     const query = { runId: params.runId };
     return this.request("GET", target, { query }, options);
   }
+
+  /** The eval suite holding the submission's test cases, its linked run, and each case's result in that run. */
+  getDirectorySubmissionEvals(
+    params: Scope,
+    options?: RequestOptions
+  ): Promise<PlatformDirectorySubmissionEvals> {
+    const target = path(params.projectId, params.submissionId, "evals");
+    return this.request("GET", target, {}, options);
+  }
+
+  /**
+   * Link a suite in the submission's project, or a run of the linked suite;
+   * `null` unlinks. A `409` names the current revision and the conflicting
+   * keys (see {@link directorySubmissionConflict}).
+   */
+  setDirectorySubmissionEvals(
+    params: Scope & PlatformDirectorySubmissionEvalLinkBody,
+    options?: RequestOptions
+  ): Promise<PlatformDirectorySubmissionEvalLink> {
+    const { projectId, submissionId, expectedRevision, suiteId, runId, idempotencyKey } = params;
+    // `null` is kept, since it unlinks; `undefined` drops out of the JSON.
+    const body = { expectedRevision, suiteId, runId, idempotencyKey };
+    return this.request("PATCH", path(projectId, submissionId, "evals"), { body }, options);
+  }
+
+  /**
+   * Import the review test cases of the plugin version the submission names
+   * into its linked suite. Importing a version again writes nothing.
+   */
+  importDirectorySubmissionTestCases(
+    params: Scope & { pluginVersionId?: string },
+    options?: RequestOptions
+  ): Promise<PlatformDirectorySubmissionEvalImport> {
+    const { projectId, submissionId, pluginVersionId } = params;
+    const target = path(projectId, submissionId, "evals/import");
+    return this.request("POST", target, { body: { pluginVersionId } }, options);
+  }
+
+  /** The linked suite's cases in the portal's shape, as a file: save `content` as it is. */
+  exportDirectorySubmissionTestCases(
+    params: Scope,
+    options?: RequestOptions
+  ): Promise<PlatformDirectorySubmissionEvalExport> {
+    const target = path(params.projectId, params.submissionId, "evals/export");
+    return this.request("GET", target, {}, options);
+  }
 }
 
-/** The conflict an update or a test plan save was refused with, or `undefined` for any other error. */
+/** The conflict an update, a test plan save or an eval link was refused with, or `undefined` for any other error. */
 export function directorySubmissionConflict(
   error: unknown
 ): PlatformDirectorySubmissionConflict | undefined {

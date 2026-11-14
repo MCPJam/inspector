@@ -234,6 +234,8 @@ describe("disabledOperations", () => {
       [
         "create_directory_submission",
         "save_directory_submission_test_plan",
+        "set_directory_submission_evals",
+        "import_directory_submission_test_cases",
         "start_directory_submission_run",
         "update_directory_submission",
         // A reviewer sign-in starts a run too.
@@ -251,6 +253,8 @@ describe("disabledOperations", () => {
       "get_directory_submission_test_plan",
       "draft_directory_submission_test_plan",
       "get_directory_submission_tool_tests",
+      "get_directory_submission_evals",
+      "export_directory_submission_test_cases",
       "delete_directory_submission",
       "list_reviewer_attempts",
       "get_reviewer_attempt",
