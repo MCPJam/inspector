@@ -112,13 +112,15 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
 
 vi.mock("../harness-model-broker.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../harness-model-broker.js")>()),
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => ({ ok: true })),
   startHarnessModelBroker: vi.fn(async () => {
     throw new Error("an external-account turn must never start a model lease");
   }),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";

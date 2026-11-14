@@ -8,6 +8,7 @@ import {
   withWarmBridgeRuntime,
   WARM_ATTACH_TIMEOUT_MS,
   WARM_RETENTION_TIMEOUT_MS,
+  type WarmAttachOutcome,
 } from "../warm-bridge-runtime.js";
 
 /** The box's idle window, as the backend sends it. */
@@ -236,6 +237,90 @@ describe("warm runtime lifecycle", () => {
     const detached = session.doDetach();
     await vi.advanceTimersByTimeAsync(WARM_RETENTION_TIMEOUT_MS);
     expect(await detached).toEqual(state);
+  });
+});
+
+describe("warm attach outcome, for the turn's event", () => {
+  const start = (
+    f: ReturnType<typeof fixture>,
+    onAttach: (outcome: WarmAttachOutcome) => void,
+    options: HarnessV1StartOptions = f.options,
+  ) =>
+    withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS, onAttach).doStart(options);
+
+  it("reports a re-attach", async () => {
+    const f = fixture();
+    const onAttach = vi.fn();
+    await start(f, onAttach);
+    expect(onAttach.mock.calls).toEqual([["attached"]]);
+  });
+
+  it.each([
+    ["refuses the bridge", { exitCode: 1, stdout: "", stderr: "" }],
+    ["answers what is not its reply", { exitCode: 0, stdout: "ready", stderr: "" }],
+  ])("reports a probe that %s, and resumes from disk", async (_label, reply) => {
+    const f = fixture();
+    f.run.mockResolvedValueOnce(reply);
+    const onAttach = vi.fn();
+    await start(f, onAttach);
+    expect(onAttach.mock.calls).toEqual([["probe_refused"]]);
+    expect(f.start.mock.calls[0][0].resumeFrom?.data).toEqual({ threadId: "thread" });
+  });
+
+  it("reports which step failed, never the error, when the attach throws", async () => {
+    const f = fixture();
+    f.start.mockRejectedValueOnce(
+      new Error("sandbox sbx_9f2c41d7 at https://49983-sbx.e2b.app/ refused Bearer sk-ant-abc"),
+    );
+    const onAttach = vi.fn();
+    await start(f, onAttach);
+    expect(onAttach.mock.calls).toEqual([["attach_failed"]]);
+  });
+
+  it("reports a probe that could not run as a failed attach", async () => {
+    const f = fixture();
+    f.run.mockRejectedValueOnce(new Error("sandbox not found"));
+    const onAttach = vi.fn();
+    await start(f, onAttach);
+    expect(onAttach.mock.calls).toEqual([["attach_failed"]]);
+  });
+
+  it("reports the deadline, even when the abandoned probe answers after it", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    // The probe answers only once the deadline aborts it, and refuses.
+    f.run.mockImplementationOnce(
+      ({ abortSignal }: { command: string; abortSignal?: AbortSignal }) =>
+        new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) =>
+          abortSignal?.addEventListener("abort", () =>
+            resolve({ exitCode: 1, stdout: "", stderr: "" }),
+          ),
+        ),
+    );
+    const onAttach = vi.fn();
+    const pending = start(f, onAttach);
+    await vi.advanceTimersByTimeAsync(WARM_ATTACH_TIMEOUT_MS);
+    await pending;
+    expect(onAttach.mock.calls).toEqual([["attach_timeout"]]);
+  });
+
+  it("reports nothing for an approval continuation or a cancelled attempt", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const onAttach = vi.fn();
+    await start(f, onAttach, {
+      ...f.options,
+      resumeFrom: undefined,
+      continueFrom: { ...state, type: "continue-turn" as const },
+    });
+    const abort = new AbortController();
+    f.run.mockImplementationOnce(() => new Promise(() => undefined));
+    const cancelled = start(f, onAttach, { ...f.options, abortSignal: abort.signal });
+    const rejected = expect(cancelled).rejects.toThrow();
+    abort.abort();
+    await vi.advanceTimersByTimeAsync(WARM_ATTACH_TIMEOUT_MS);
+    await rejected;
+    expect(onAttach).not.toHaveBeenCalled();
   });
 });
 

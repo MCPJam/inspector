@@ -347,6 +347,18 @@ export async function harnessBootstrapObservation(
 }
 
 /**
+ * Just the outcome of {@link harnessBootstrapObservation}, read without
+ * waiting for the manifest probe, so a turn's closing event never waits on
+ * its box.
+ */
+export function harnessBootstrapOutcome(
+  provider: unknown,
+): HarnessBootstrapOutcome | undefined {
+  if (!provider || typeof provider !== "object") return undefined;
+  return observations.get(provider as HarnessV1SandboxProvider)?.().outcome;
+}
+
+/**
  * The bootstrap fields of a turn's log line: inline `key=value` text (the
  * console drops the context argument) and the same values as a structured
  * context for Axiom, plus the pinned runtime version. The bake-miss monitor

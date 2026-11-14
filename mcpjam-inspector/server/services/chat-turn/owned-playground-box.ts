@@ -4,9 +4,16 @@ import {
   playgroundHarnessBoxUnavailableReason,
 } from "../../utils/harness/playground-box.js";
 import { type EarlyStart, startEarly } from "../../utils/early-start.js";
+import type { TurnTiming } from "../../utils/turn-timing.js";
 import type { TurnResources } from "./resources.js";
 
-type BoxArgs = Parameters<typeof acquirePlaygroundHarnessBox>[0];
+type BoxArgs = Parameters<typeof acquirePlaygroundHarnessBox>[0] & {
+  /**
+   * The turn's recorder: creating or waking the box counts as its wake, and a
+   * box prepared before Send makes the session's start `prepared`.
+   */
+  timing?: Pick<TurnTiming, "timeBoxAcquisition" | "markBoxPrepared">;
+};
 type Acquired = Awaited<ReturnType<typeof acquirePlaygroundHarnessBox>>;
 
 /**
@@ -17,10 +24,12 @@ type Acquired = Awaited<ReturnType<typeof acquirePlaygroundHarnessBox>>;
  */
 export async function acquireOwnedPlaygroundHarnessBox(
   resources: Pick<TurnResources, "own">,
-  args: Parameters<typeof acquirePlaygroundHarnessBox>[0],
+  { timing, ...args }: BoxArgs,
 ): ReturnType<typeof acquirePlaygroundHarnessBox> {
-  const acquired = await acquirePlaygroundHarnessBox(args);
+  const acquire = () => acquirePlaygroundHarnessBox(args);
+  const acquired = await (timing ? timing.timeBoxAcquisition(acquire) : acquire());
   if (!acquired.ok) return acquired;
+  if (acquired.prepared) timing?.markBoxPrepared();
   try {
     resources.own(() => acquired.box.release());
   } catch (error) {
