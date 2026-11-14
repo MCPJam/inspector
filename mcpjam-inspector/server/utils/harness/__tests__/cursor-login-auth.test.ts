@@ -82,4 +82,19 @@ describe("Cursor file-login authentication", () => {
       }),
     ).toThrow("invalid");
   });
+
+  it("wraps a frozen session, as the local supervised provider's is", async () => {
+    const f = setup();
+    const frozen = Object.freeze({ ...f.sandbox, restricted: () => Object.freeze({ spawn: f.spawn, readTextFile: async () => "restricted" }) });
+    await f.wrapped.doStart({ sandboxSession: frozen as never, sessionId: "one", sessionWorkDir: "/workspace" });
+    const fullSession = f.start.mock.calls[0]![0].sandboxSession;
+    expect("restricted" in fullSession).toBe(true);
+    const session = "restricted" in fullSession ? fullSession.restricted() : fullSession;
+    await session.spawn({ command: "bridge", env: { AI_SDK_ACP_BRIDGE_CONFIGURATION: "{}" } });
+    expect(f.spawn).toHaveBeenCalledWith({
+      command: "bridge",
+      env: { AI_SDK_ACP_BRIDGE_CONFIGURATION: JSON.stringify({ authentication: { methodId: "cursor_login" } }) },
+    });
+    expect(await session.readTextFile({ path: "/unused" })).toBe("restricted");
+  });
 });

@@ -1,4 +1,3 @@
-import { withCursorHostToolApproval } from "./cursor-host-tool-approval";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 /**
@@ -21,9 +20,7 @@ import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
 import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
-import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
-import { withAcpPermissionCallInput } from "./acp-permission-input.js";
-import { withCursorLoginAuthentication } from "./cursor-login-auth.js";
+import { createCursorHarness } from "./cursor-harness.js";
 import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
 export {
   CURSOR_CLI_CHECKSUMS,
@@ -1222,21 +1219,10 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     // host-configured workdir here used to be an injection surface.
     '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
   createHarness({ auth, mcpJson }) {
-    // Dual-`ai` boundary cast, same as the other two adapters.
-    return withAcpPermissionCallInput(withCursorHostToolApproval(withCursorLoginAuthentication(pinCursorHarnessBootstrap(
-      createCursor({
-        // An explicit empty key prevents ambient credential lookup. The backend
-        // installs the temporary login before the runtime process starts.
-        auth,
-        // The framework replaces even empty keys with placeholders by default.
-        // Keep the CLI on its installed login instead of trying a fake API key.
-        credentialForwarding: () => "",
-        // REQUIRED by this arm's signature: `session-config` delivery has no
-        // other channel, so a construction that forgot the servers would be a
-        // silently tool-less turn. The type makes that unwritable.
-        mcpServers: toAcpMcpServers(mcpJson),
-      }) as unknown as HarnessAgentAdapter,
-    ))));
+    // REQUIRED by this arm's signature: `session-config` delivery has no
+    // other channel, so a construction that forgot the servers would be a
+    // silently tool-less turn. The type makes that unwritable.
+    return createCursorHarness({ auth, mcpServers: toAcpMcpServers(mcpJson) });
   },
 };
 

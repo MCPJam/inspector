@@ -76,7 +76,8 @@ let restoredCatalogPending = false;`);
   return source;
 }
 
-function replaceInRegion(source: string, region: string, before: string, after: string): string {
+/** Replace one anchor inside one source region of the pinned bridge, or refuse a bridge that changed. */
+export function replaceInRegion(source: string, region: string, before: string, after: string): string {
   const start = source.indexOf(`//#region ${region}`);
   const end = source.indexOf("//#endregion", start);
   if (start < 0 || end < start) throw new Error("Cursor host approval bridge region changed. Requalify the adapter.");

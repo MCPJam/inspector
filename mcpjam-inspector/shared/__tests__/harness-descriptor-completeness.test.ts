@@ -67,7 +67,6 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
       expect(descriptor.credential?.env.trim()).toBeTruthy();
       expect(descriptor.orgKeys).toBe(false);
       expect(descriptor.protocol).toBeNull();
-      expect(harnessSurfaceRefusal(id, "local")).toBeDefined();
       expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
       // Its boxes get the organization's key only in evals, swarms and the
       // Playground; the org-key checks enforce that with the same copy.

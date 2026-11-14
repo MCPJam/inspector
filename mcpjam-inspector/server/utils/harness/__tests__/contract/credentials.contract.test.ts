@@ -7,6 +7,7 @@ import {
 import { harnessOrgUpstreamProfile } from "@/shared/harness-gateway-model";
 import { buildBrokerDummyAuth } from "../../registry";
 import { LOCAL_HARNESS_MANIFEST } from "../../local/compatibility";
+import { localRuntimeOf } from "../../local/runtimes/index";
 import { CASES, FOREIGN_MODEL, OWN_MODEL, assertFullMatrix } from "./support";
 
 it("covers every registered harness", assertFullMatrix);
@@ -76,7 +77,9 @@ describe.each(CASES)(
       expect(Object.hasOwn(LOCAL_HARNESS_MANIFEST, id)).toBe(runsLocally);
       if (descriptor.modelAccess === "external-account") {
         expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
-        expect(runsLocally).toBe(false);
+        // On the member's computer only on a login the backend hands out for
+        // the session: there is no model lease to run it on.
+        if (runsLocally) expect(localRuntimeOf(id)?.credential.kind).toBe("runtime-login");
       }
     });
   },

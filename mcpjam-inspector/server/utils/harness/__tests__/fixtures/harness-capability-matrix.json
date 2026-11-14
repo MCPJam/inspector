@@ -306,7 +306,6 @@
         "api": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
         "events": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
         "guests": "Cursor CLI runs on the organization's own Cursor account, so guests can't use it.",
-        "local": "Cursor CLI can't run on your computer yet. Run it in the cloud instead.",
         "user-testing": "Cursor CLI runs only in the Playground, evals and swarms. Choose a different client for this study."
       }
     },

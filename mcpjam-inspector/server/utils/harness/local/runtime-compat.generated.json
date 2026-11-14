@@ -135,6 +135,12 @@
           }
         }
       }
+    },
+    "cursor": {
+      "conformance": {
+        "version": ""
+      },
+      "targets": {}
     }
   }
 }

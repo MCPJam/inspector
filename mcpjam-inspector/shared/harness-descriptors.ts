@@ -148,7 +148,6 @@ export const HARNESS_DESCRIPTORS = {
       api: "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
       events: "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
       "user-testing": "Cursor CLI runs only in the Playground, evals and swarms. Choose a different client for this study.",
-      local: "Cursor CLI can't run on your computer yet. Run it in the cloud instead.",
       guests: "Cursor CLI runs on the organization's own Cursor account, so guests can't use it.",
     },
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
