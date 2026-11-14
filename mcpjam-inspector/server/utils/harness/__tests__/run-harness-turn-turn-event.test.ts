@@ -20,7 +20,9 @@ const harnessState = vi.hoisted(() => ({
     stateVersion: 1,
     fingerprintChanged: false,
     state: null as unknown,
-  },
+  } as Record<string, unknown>,
+  /** Fields over the stock adapter, for a turn that qualifies as warm. */
+  adapter: {} as Record<string, unknown>,
   approvalContinuations: [] as unknown[],
   createSession: vi.fn(async (_opts?: unknown) => ({
     sessionId: "harness-session-0",
@@ -69,7 +71,15 @@ vi.mock("../registry.js", () => ({
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
+    ...harnessState.adapter,
   })),
+}));
+
+// The warm wrapper is replaced: the test hears what the turn hands it, and
+// answers the attach the way the wrapper does, while the session starts.
+vi.mock("../warm-bridge-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../warm-bridge-runtime.js")>()),
+  withWarmBridgeRuntime: vi.fn(() => ({ harnessId: "claude-code" })),
 }));
 
 vi.mock("../resolve-sandbox.js", () => ({
@@ -129,6 +139,11 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 });
 
 import { runHarnessTurn } from "../run-harness-turn";
+import { admitWarmChatManager } from "../warm-approval-binding.js";
+import {
+  withWarmBridgeRuntime,
+  type WarmAttachOutcome,
+} from "../warm-bridge-runtime.js";
 import { logger } from "../../logger.js";
 import { TurnTiming } from "../../turn-timing.js";
 import type { HarnessTurnEventSink } from "../harness-turn-event.js";
@@ -213,6 +228,7 @@ describe("runHarnessTurn: harness_turn_completed", () => {
       state: resumable(),
     };
     harnessState.approvalContinuations = [];
+    harnessState.adapter = {};
   });
 
   afterEach(() => vi.unstubAllEnvs());
@@ -405,6 +421,67 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     expect(onlyEvent(sink)).toMatchObject({
       outcome: "aborted",
       kind: "follow_up",
+    });
+  });
+
+  describe("on a box that keeps a warm agent", () => {
+    /** The conversation's box, with the idle window a warm agent needs. */
+    const BOX = {
+      sandboxRowId: "computer-1",
+      sandboxId: "sandbox-1",
+      idleMs: 300_000,
+    };
+
+    /** A Playground turn the warm gate admits, whose attach answers `outcome`. */
+    async function warmTurn(outcome: WarmAttachOutcome) {
+      harnessState.adapter = {
+        pinnedRuntimeVersion: "runtime-1",
+        forwardingRuntime: { runtimeVersion: "runtime-1" },
+      };
+      harnessState.claim = {
+        stateVersion: 2,
+        fingerprintChanged: false,
+        supportsApprovalFence: true,
+        state: resumable(),
+      };
+      const { sink, options } = turn("web", {
+        harnessSandboxBinding: BOX,
+        harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
+      });
+      admitWarmChatManager(options.mcpClientManager as never, "org-1", false);
+      const startSession = harnessState.createSession.getMockImplementation()!;
+      harnessState.createSession.mockImplementationOnce(async (opts) => {
+        const [, , , onAttach] = vi.mocked(withWarmBridgeRuntime).mock.lastCall!;
+        onAttach?.(outcome);
+        return startSession(opts);
+      });
+      await runToClose(options);
+      return onlyEvent(sink);
+    }
+
+    it("hands the wrapper the box's idle window and the turn's attach report", async () => {
+      vi.mocked(withWarmBridgeRuntime).mockClear();
+      await warmTurn("attached");
+      expect(withWarmBridgeRuntime).toHaveBeenCalledOnce();
+      const [, , windowMs, onAttach] = vi.mocked(withWarmBridgeRuntime).mock.calls[0]!;
+      expect(windowMs).toBe(BOX.idleMs);
+      expect(onAttach).toEqual(expect.any(Function));
+    });
+
+    it("reports a re-attached bridge as a warm start", async () => {
+      expect(await warmTurn("attached")).toMatchObject({
+        surface: "web",
+        kind: "follow_up",
+        start: "warm",
+        fallback_reason: "none",
+      });
+    });
+
+    it("reports a bridge the probe refused as a resume from saved files that says why", async () => {
+      expect(await warmTurn("probe_refused")).toMatchObject({
+        start: "disk_resume",
+        fallback_reason: "probe_refused",
+      });
     });
   });
 
