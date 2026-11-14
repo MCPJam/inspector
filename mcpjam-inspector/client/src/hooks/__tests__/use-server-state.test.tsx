@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { appReducer } from "@/state/app-reducer";
 import { presentConnectionError } from "@/lib/connection-error-presentation";
+import { submitServerDraft } from "@/lib/server-connection-submission";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
 import {
   buildElectronMcpCallbackUrl,
@@ -2980,6 +2981,179 @@ describe("useServerState OAuth callback failures", () => {
     );
     expect(toastError).not.toHaveBeenCalled();
   });
+
+  it.each(["add", "edit"] as const)(
+    "reports a connection failure after accepting an %s draft",
+    async (operation) => {
+      let finishConnection!: (value: { success: false; error: string }) => void;
+      testConnectionMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishConnection = resolve;
+          }),
+      );
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch);
+      const draft = {
+        name: "demo-server",
+        type: "http" as const,
+        url: "https://example.com/mcp",
+        useOAuth: false,
+      };
+
+      await act(async () => {
+        const accepted =
+          operation === "add"
+            ? await submitServerDraft(result.current.handleConnect, draft)
+            : (await result.current.handleUpdate("demo-server", draft)).ok;
+        expect(accepted).toBe(true);
+      });
+      await waitFor(() => expect(testConnectionMock).toHaveBeenCalledOnce());
+      expect(toastError).not.toHaveBeenCalled();
+
+      await act(async () => {
+        finishConnection({
+          success: false,
+          error: "Connection stopped after saving",
+        });
+      });
+      await waitFor(() => expect(toastError).toHaveBeenCalledOnce());
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_FAILURE",
+          name: "demo-server",
+          error: "Connection stopped after saving",
+        }),
+      );
+    },
+  );
+
+  it("keeps a rejected draft's validation error inline before acceptance", async () => {
+    const { result } = renderUseServerState(vi.fn());
+    await act(async () => {
+      expect(
+        await submitServerDraft(result.current.handleConnect, {
+          name: "demo-server",
+          type: "http",
+          url: "",
+        }),
+      ).toBe(false);
+    });
+    expect(testConnectionMock).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("reports OAuth startup failure after accepting a draft", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({
+      success: false,
+      error: "OAuth startup stopped",
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+    let connection!: Promise<void>;
+    await act(async () => {
+      expect(
+        await submitServerDraft(
+          (data, options) => {
+            connection = result.current.handleConnect(data, options);
+            return connection;
+          },
+          {
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            useOAuth: true,
+          },
+        ),
+      ).toBe(true);
+      await connection;
+    });
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
+    expect(toastError).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_FAILURE",
+        name: "demo-server",
+        error: "OAuth startup stopped",
+      }),
+    );
+  });
+
+  it.each([true, false])(
+    "preserves the failure surface across OAuth with an accepted draft: %s",
+    async (acceptedDraft) => {
+      const appState = createAppState();
+      appState.projects = {
+        "project-1": {
+          ...appState.projects.default,
+          id: "project-1",
+          sharedProjectId: "project-1",
+        },
+      };
+      appState.activeProjectId = "project-1";
+      mockConvexQuery.mockResolvedValueOnce([
+        { _id: "srv_demo", projectId: "project-1", name: "demo-server" },
+      ]);
+      mockUpdateServer.mockResolvedValue("srv_demo");
+      testConnectionMock.mockResolvedValueOnce({
+        success: false,
+        error: "Authorization required",
+        oauthRequired: true,
+      });
+      const auth = {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+      };
+      const { result, unmount } = renderUseServerState(vi.fn(), appState, auth);
+      await act(async () => {
+        await result.current.handleConnect(
+          {
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            useOAuth: true,
+          },
+          {
+            suppressErrorToast: true,
+            ...(acceptedDraft ? { onAccepted: vi.fn() } : {}),
+          },
+        );
+      });
+      expect(initiateOAuthMock).toHaveBeenCalledOnce();
+      expect(
+        JSON.parse(localStorage.getItem("mcp-hosted-oauth-pending") ?? "null"),
+      ).toMatchObject({
+        serverName: "demo-server",
+        suppressErrorToast: !acceptedDraft,
+      });
+      unmount();
+
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      window.history.replaceState(
+        {},
+        "",
+        "/oauth/callback?error=access_denied",
+      );
+      const dispatch = vi.fn();
+      renderUseServerState(dispatch, appState, auth);
+      await waitFor(() =>
+        expect(dispatch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "CONNECT_FAILURE",
+            name: "demo-server",
+          }),
+        ),
+      );
+      if (acceptedDraft) expect(toastError).toHaveBeenCalledOnce();
+      else expect(toastError).not.toHaveBeenCalled();
+    },
+  );
 
   it("suppresses a success toast when an inline surface owns the result", async () => {
     const dispatch = vi.fn();

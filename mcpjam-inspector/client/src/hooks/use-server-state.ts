@@ -3889,11 +3889,12 @@ export function useServerState({
       },
     ) => {
       let formData: ServerFormData = { ...inputFormData };
+      let suppressErrorToast = options?.suppressErrorToast;
       const showConnectionError = (
         failure: unknown,
         data?: Parameters<typeof toastServerConnectionFailure>[2],
       ) => {
-        if (!options?.suppressErrorToast) toastServerConnectionFailure(formData.name, failure, data);
+        if (!suppressErrorToast) toastServerConnectionFailure(formData.name, failure, data);
       };
       const showConnectionSuccess = (message: string) => {
         if (!options?.suppressSuccessToast) toast.success(message);
@@ -4083,7 +4084,10 @@ export function useServerState({
         ? undefined
         : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
       saveOAuthConfigToLocalStorage(formData);
-      options?.onAccepted?.();
+      if (options?.onAccepted) {
+        suppressErrorToast = false;
+        options.onAccepted();
+      }
 
       // Keyed by server id where one exists; name is the last-resort key for
       // servers that haven't synced an id yet. Declared outside the try so the
@@ -4370,7 +4374,7 @@ export function useServerState({
             serverId: hostedServerId,
             serverName: formData.name,
             serverUrl: formData.url,
-            suppressErrorToast: options?.suppressErrorToast,
+            suppressErrorToast,
             suppressSuccessToast: options?.suppressSuccessToast,
           });
           const oauthResult = await initiateOAuth(oauthOptions, {
