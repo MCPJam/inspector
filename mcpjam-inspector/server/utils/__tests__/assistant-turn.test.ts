@@ -11,6 +11,7 @@ import {
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
 import { runAssistantTurn } from "../assistant-turn";
+import { TurnTiming } from "../turn-timing";
 import type { ModelDefinition } from "@/shared/types";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 
@@ -515,6 +516,19 @@ describe("runAssistantTurn", () => {
       });
       // The emulated engine never ran on the org key.
       expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("hands the route's first-text recorder to the harness turn", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockClear();
+      runHarnessTurnMock.mockResolvedValue({
+        messageHistory: [],
+        aborted: false,
+      });
+      const turnTiming = new TurnTiming();
+      await turn({ modelSelection: ORG_ANTHROPIC, turnTiming });
+      expect(runHarnessTurnMock).toHaveBeenCalledTimes(1);
+      expect(runHarnessTurnMock.mock.lastCall?.[0].turnTiming).toBe(turnTiming);
     });
 
     it("refuses an org connection on another vendor, naming the provider rule", async () => {
