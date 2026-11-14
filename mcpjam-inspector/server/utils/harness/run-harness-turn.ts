@@ -134,6 +134,7 @@ import {
 } from "./harness-box-reservation.js";
 import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
+import { warmBridgeWindowMs, warmRetentionFor } from "./warm-retention.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
 import {
   harnessBrokerDeliveryEnabled,
@@ -920,11 +921,11 @@ export async function runHarnessTurn(
     Boolean(harnessExecutionTarget),
   );
   const copilotCli = harnessAdapter.id === "copilot-cli";
-  // A warm agent exits after its box's idle window, so it runs only on a box
-  // whose window the backend sent.
-  const warmWindowMs = harnessSandboxBinding?.idleMs;
+  // A warm agent exits after its box's idle window (or ceiling, when kept
+  // through the box's pause), so it runs only on a box whose window the backend sent.
+  const warmRetention = warmRetentionFor(harnessSandboxBinding);
   const warmAgentPilot = isWarmChatManager(mcpClientManager) && (copilotCli || !!qualifiedForwardingRuntime(harnessAdapter)) &&
-    sourceType === "direct" && !harnessExecutionTarget && warmWindowMs !== undefined && !!chatSessionId &&
+    sourceType === "direct" && !harnessExecutionTarget && warmRetention !== undefined && !!chatSessionId &&
     harnessMcpProxy?.plane === "web-authorized" &&
     (copilotCli || harness === "claude-code" || harness === "codex");
   // The effort this turn asked for: the typed field, else the saved selection it
@@ -2856,10 +2857,10 @@ export async function runHarnessTurn(
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
-      let harnessRuntime = warmAgentPilot && warmWindowMs !== undefined
-        ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home), warmWindowMs),
-            JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]), warmWindowMs,
-            turnEvent.warmAttach)
+      let harnessRuntime = warmAgentPilot && warmRetention !== undefined
+        ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home), warmBridgeWindowMs(warmRetention)),
+            JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]), warmRetention.idleMs,
+            { retainUntil: warmRetention.retainUntil, onAttach: turnEvent.warmAttach })
         : buildRuntime();
       if (elicitationServerIds.size > 0 && onHarnessElicitation) {
         harnessRuntime = withHarnessElicitation(harnessRuntime, {

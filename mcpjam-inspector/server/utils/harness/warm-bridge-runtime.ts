@@ -47,17 +47,27 @@ function withoutSpawn<T extends object>(target: T): T {
   });
 }
 
+export interface WarmBridgeRuntimeOptions {
+  /**
+   * The box's ceiling when the bridge is kept through its pause
+   * (`warm-retention.ts`); the probe and the marker then run to it.
+   */
+  retainUntil?: number;
+  /** Hears how an attempt ended; a cancelled one reports nothing. */
+  onAttach?: (outcome: WarmAttachOutcome) => void;
+}
+
 /**
  * A warm attempt cannot dispatch a prompt or spawn a replacement process.
  * `windowMs` is the box's idle window: how long a parked bridge stays reusable.
- * `onAttach` hears how an attempt ended; a cancelled one reports nothing.
  */
 export function withWarmBridgeRuntime<T extends HarnessV1>(
   factory: (startupTimeoutMs?: number, sandboxHomeDir?: string) => T,
   configuration: string,
   windowMs: number,
-  onAttach?: (outcome: WarmAttachOutcome) => void,
+  { retainUntil, onAttach }: WarmBridgeRuntimeOptions = {},
 ): T {
+  const retention = retainUntil === undefined ? {} : { retainUntil };
   const ordinary = factory();
 
   return new Proxy(ordinary, {
@@ -99,6 +109,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
                 ...saved.data.data.bridge,
                 park: false,
                 windowMs,
+                ...retention,
                 includeHome: true,
               }),
               abortSignal: signal,
@@ -162,6 +173,10 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
           }
           onAttach?.(outcome);
         }
+        // Neither re-attached above nor continuing an approval: the adapter
+        // starts the process this turn parks (disk resume drops the old one's
+        // coordinates).
+        const spawned = session === undefined && !options.continueFrom;
         session ??= await target.doStart({
           ...options,
           ...(options.resumeFrom && !options.continueFrom
@@ -186,6 +201,8 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
                         ...bridge.data.data.bridge,
                         park: true,
                         windowMs,
+                        ...retention,
+                        spawned,
                       }),
                       abortSignal: abort.signal,
                     });

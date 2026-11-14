@@ -56,6 +56,14 @@ export function nativeForwardingEnabled(): boolean {
 }
 
 /**
+ * Keep a warm hosted agent running through its box's pause, up to the box's
+ * ceiling. Off by default; read per call so operators can turn it off.
+ */
+export function harnessKeepAgentThroughPause(): boolean {
+  return process.env.MCPJAM_HARNESS_KEEP_THROUGH_PAUSE === "true";
+}
+
+/**
  * Hosted Claude Code starts without its non-essential traffic (telemetry,
  * error reports, auto-update, feature flags, availability checks). A hosted
  * box needs none of it, since its CLI version is pinned at install, and

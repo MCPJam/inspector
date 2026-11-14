@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  harnessKeepAgentThroughPause,
   harnessPrepareBoxEnabled,
   harnessPrepareBoxSwitchedOn,
   harnessQuietClaudeStartup,
@@ -35,6 +36,21 @@ it("treats an empty restriction as unrestricted", () => {
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", undefined);
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", " , ");
   expect(hostedWarmAgentEnabled("organization-a")).toBe(true);
+});
+
+it.each([undefined, "", "1", "TRUE", "false"])(
+  "keeps no agent through its box's pause unless switched on (%s)",
+  (value) => {
+    vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", value);
+    expect(harnessKeepAgentThroughPause()).toBe(false);
+  },
+);
+
+it("keeps an agent through its box's pause when switched on, read per call", () => {
+  vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", "true");
+  expect(harnessKeepAgentThroughPause()).toBe(true);
+  vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", "false");
+  expect(harnessKeepAgentThroughPause()).toBe(false);
 });
 
 it.each([undefined, "", "0", "false", "yes"])("keeps box preparation off unless switched on (%s)", (value) => {

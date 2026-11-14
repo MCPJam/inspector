@@ -497,7 +497,10 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     };
 
     /** A Playground turn the warm gate admits, whose attach answers `outcome`. */
-    async function warmTurn(outcome: WarmAttachOutcome) {
+    async function warmTurn(
+      outcome: WarmAttachOutcome,
+      box: Record<string, unknown> = BOX,
+    ) {
       harnessState.adapter = {
         pinnedRuntimeVersion: "runtime-1",
         forwardingRuntime: { runtimeVersion: "runtime-1" },
@@ -509,14 +512,14 @@ describe("runHarnessTurn: harness_turn_completed", () => {
         state: resumable(),
       };
       const { sink, options } = turn("web", {
-        harnessSandboxBinding: BOX,
+        harnessSandboxBinding: box,
         harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
       });
       admitWarmChatManager(options.mcpClientManager as never, "org-1", false);
       const startSession = harnessState.createSession.getMockImplementation()!;
       harnessState.createSession.mockImplementationOnce(async (opts) => {
-        const [, , , onAttach] = vi.mocked(withWarmBridgeRuntime).mock.lastCall!;
-        onAttach?.(outcome);
+        const [, , , retention] = vi.mocked(withWarmBridgeRuntime).mock.lastCall!;
+        retention?.onAttach?.(outcome);
         return startSession(opts);
       });
       await runToClose(options);
@@ -527,9 +530,22 @@ describe("runHarnessTurn: harness_turn_completed", () => {
       vi.mocked(withWarmBridgeRuntime).mockClear();
       await warmTurn("attached");
       expect(withWarmBridgeRuntime).toHaveBeenCalledOnce();
-      const [, , windowMs, onAttach] = vi.mocked(withWarmBridgeRuntime).mock.calls[0]!;
+      const [, , windowMs, retention] = vi.mocked(withWarmBridgeRuntime).mock.calls[0]!;
       expect(windowMs).toBe(BOX.idleMs);
-      expect(onAttach).toEqual(expect.any(Function));
+      expect(retention).toEqual({ retainUntil: undefined, onAttach: expect.any(Function) });
+    });
+
+    it("hands the wrapper the ceiling of a box kept through its pause, with the attach report", async () => {
+      vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", "true");
+      const retainUntil = Date.now() + 4 * 60 * 60_000;
+      vi.mocked(withWarmBridgeRuntime).mockClear();
+      expect(await warmTurn("attached", { ...BOX, retainUntil })).toMatchObject({
+        start: "warm",
+        fallback_reason: "none",
+      });
+      const [, , windowMs, retention] = vi.mocked(withWarmBridgeRuntime).mock.calls[0]!;
+      expect(windowMs).toBe(BOX.idleMs);
+      expect(retention).toEqual({ retainUntil, onAttach: expect.any(Function) });
     });
 
     it("reports a re-attached bridge as a warm start", async () => {

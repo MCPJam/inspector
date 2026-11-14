@@ -169,6 +169,9 @@ export async function acquirePlaygroundHarnessBox(args: {
           sandboxId: result.value.sandboxId,
           ...(result.value.workdir ? { workdir: result.value.workdir } : {}),
           ...(result.value.idleMs ? { idleMs: result.value.idleMs } : {}),
+          ...(result.value.retainUntil
+            ? { retainUntil: result.value.retainUntil }
+            : {}),
         },
       };
     },
