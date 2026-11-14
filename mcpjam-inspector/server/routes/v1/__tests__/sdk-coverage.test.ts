@@ -185,6 +185,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/readiness-runs/{runId}/cancel":
     "cancelReadinessRun",
 
+  // Directory submissions and the flows they rehearse
+  "get /directory-flows": "listDirectoryFlows",
+  "get /directory-flows/{flowId}": "getDirectoryFlow",
+  "get /projects/{projectId}/directory-submissions": "listDirectorySubmissions",
+  "get /projects/{projectId}/directory-submissions/{submissionId}":
+    "getDirectorySubmission",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/results":
+    "getDirectorySubmissionResults",
+
   // Persisted conformance runs
   "post /projects/{projectId}/servers/{serverId}/conformance-runs":
     "startConformanceRun",

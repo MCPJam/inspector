@@ -234,6 +234,21 @@ const KNOWN_UNDOCUMENTED = new Set([
   // capability probe above. Document them when durable turns ship on.
   "get /projects/{projectId}/agent/jobs/{jobId}",
   "post /projects/{projectId}/agent/jobs/{jobId}/cancel",
+  // Directory submissions and the flows they rehearse. Creating, editing and
+  // running a submission is decided per organization (the directory-readiness
+  // beta), and `docs/README.md` is explicit that such a feature is not
+  // documented until the flag comes off ("a feature that is enforced per
+  // organization must not be documented until the flag comes off", and its
+  // routes are "kept out of reference/openapi.json and listed in the
+  // Inspector's KNOWN_UNDOCUMENTED baseline"). The flow reads go with them:
+  // they describe the gated forms. The SDK client carries the surface in the
+  // meantime, for organizations in the beta. Document them all when the flag
+  // comes off.
+  "get /directory-flows",
+  "get /directory-flows/{flowId}",
+  "get /projects/{projectId}/directory-submissions",
+  "get /projects/{projectId}/directory-submissions/{submissionId}",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/results",
 ]);
 
 /**
