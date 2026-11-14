@@ -82,6 +82,9 @@ export interface LocalRuntime<
     /** Flags whose paths are runtime state, kept in the session's own state
      *  directory and never in the granted workspace. */
     sessionStateFlags: readonly string[];
+    /** Flags whose value is a fixed word rather than a path, passed through
+     *  only when it is exactly this one. */
+    literalFlags?: Readonly<Record<string, string>>;
   };
   /** The Inspector layer's files for this runtime besides `launcher.mjs` and
    *  `layer.json`, as `scripts/bundle-local-harness-layer.mjs` names them. */
@@ -100,6 +103,22 @@ export interface LocalRuntime<
   credential: LocalRuntimeCredential;
   /** Runs shell commands through Git for Windows on Windows. */
   gitBashOnWindows: boolean;
+  /**
+   * For a runtime started through the AI SDK's ACP bridge. In the cloud the
+   * adapter installs the vendor CLI into an implementation directory and the
+   * bridge starts it from there. Locally the translator gives the bridge a
+   * directory in the session's own state instead, whose `implementation.json`
+   * starts the CLI from the verified pack.
+   */
+  acp?: {
+    /** The bridge flag that names the implementation directory. */
+    implementationDirFlag: string;
+    /** The CLI's executable and arguments. `inPack` makes a path in the pack absolute. */
+    agent(
+      inPack: (...segments: string[]) => string,
+      platform: NodeJS.Platform,
+    ): { executable: string; args: readonly string[] };
+  };
 }
 
 /** A login the backend exchanged from the organization's own key for one

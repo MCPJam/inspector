@@ -732,6 +732,7 @@ export function createSupervisedLocalHarnessProvider(
       // call we make.
       confine,
       confineToSessionState,
+      platform,
     };
 
     /**
@@ -831,6 +832,19 @@ export function createSupervisedLocalHarnessProvider(
       ...filterBridgeSuppliedEnv(supplied, opts.harnessId),
     });
 
+    // Files a launch needs in session state (an ACP bridge's implementation
+    // descriptor), through the same symlink-aware check as everything else and
+    // by replacement: the agent can write in session state, so a link it
+    // planted at the name must not redirect the write or the read.
+    const writeLaunchFiles = async (
+      files: ReadonlyArray<{ path: string; content: string }> | undefined,
+    ): Promise<void> => {
+      for (const file of files ?? []) {
+        await mkdir(dirname(file.path), { recursive: true, mode: 0o700 });
+        await writeBytesAtomically(await confineToSessionState(file.path), Buffer.from(file.content, "utf8"));
+      }
+    };
+
     const runTranslated = async (
       translated: TranslatedCommand,
       abort?: AbortSignal,
@@ -880,6 +894,7 @@ export function createSupervisedLocalHarnessProvider(
         }
         case "exec": {
           await assertCanStart();
+          await writeLaunchFiles(translated.files);
           const handle = await opts.supervisor.spawnSupervised({
             sessionId,
             executable: translated.executable,
@@ -1051,6 +1066,7 @@ export function createSupervisedLocalHarnessProvider(
         let spawning = false;
         try {
           await assertCanStart();
+          await writeLaunchFiles(translated.files);
           // Before the bridge exists, not after: once it is running, an
           // accepted connection on the leased port is indistinguishable from
           // "our bridge came up" and "our bridge failed to bind and something
