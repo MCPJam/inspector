@@ -45,7 +45,7 @@ const REASON: Record<DirectoryTestExclusionReason, string> = {
   "needs-a-person": "Needs a person",
   other: "Another reason",
 };
-const EXPECTED = {
+export const EXPECTED = {
   any: "Any refusal",
   "invalid-arguments": "Invalid arguments",
   "tool-error": "An error from the tool",
