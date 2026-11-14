@@ -1,7 +1,8 @@
 /**
  * /readiness: rehearse a directory submission for a saved server. MCPJam's
  * rehearsal bar sits above a copy of the Claude portal: its first screen
- * (what to submit, then the server's saved rehearsals), then the form.
+ * (what to submit, then the server's saved rehearsals), then the form, or
+ * ChatGPT's plugin page for a ChatGPT plugin submission.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
@@ -28,12 +29,18 @@ import type { ServerWithName } from "@/state/app-types";
 import { NO_PEOPLE, type People } from "./AnswerOrigin";
 import { FieldLabels } from "./EvidenceStatus";
 import { McpjamMark } from "./McpjamChecks";
+import { OpenAiPortal } from "./OpenAiPortal";
 import { PortalFrame } from "./PortalFrame";
 import { DIRECTORY_NAMES, RehearsalBar } from "./RehearsalBar";
 import "./portal-theme.css";
 
 /** The one flow with a rehearsal so far: Claude's MCP connector. */
 const FLOW_ID = "claude-connector";
+const FLOW_NAMES: Record<string, string> = {
+  "claude-connector": "MCP connector",
+  "chatgpt-plugin": "ChatGPT plugin",
+};
+const SCOPES = { claude: "portal-claude", openai: "portal-openai" };
 const NO_SERVER = { name: "" };
 
 export interface SavedServer {
@@ -193,7 +200,7 @@ function PortalStart({
                   className="flex items-center gap-4 py-3 text-sm"
                 >
                   <span className="min-w-0 flex-1">
-                    {entry.title ?? "MCP connector"}
+                    {entry.title ?? FLOW_NAMES[entry.flowId]}
                     <span className="block text-muted-foreground">
                       Edited{" "}
                       {formatDistanceToNow(entry.updatedAt, {
@@ -279,6 +286,11 @@ export function ReadinessPage({
     if (openId && !(await session.saveNow())) return;
     onSelect(name);
   };
+  // The flow outlives a closed submission: it names the directory only
+  // while one is open.
+  const directory = view && flow ? flow.directory : "claude";
+  // A ChatGPT run grades a stored version of the plugin, so it needs one.
+  const needsVersion = flow?.directory === "openai" && !view?.pluginVersionId;
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -315,6 +327,16 @@ export function ReadinessPage({
         onOpen={(id) => setOpen({ serverId: chosen.id, id })}
       />
     );
+  } else if (flow && view && flow.directory === "openai") {
+    body = (
+      <OpenAiPortal
+        flow={flow}
+        view={view}
+        session={session}
+        projectId={projectId}
+        onClose={() => setOpen(null)}
+      />
+    );
   } else if (flow && view) {
     const labelOf = (key: string) =>
       directoryFlowField(flow, key)?.label ?? key;
@@ -347,7 +369,7 @@ export function ReadinessPage({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <RehearsalBar
-        directory={DIRECTORY_NAMES[flow?.directory ?? "claude"]}
+        directory={DIRECTORY_NAMES[directory]}
         counts={counts}
         server={
           <ConformanceServerPicker
@@ -357,13 +379,24 @@ export function ReadinessPage({
             onSelect={(name) => void select(name)}
           />
         }
-        status={view && flow ? runStatus(run, flow.version) : "Not checked yet"}
-        canRun={Boolean(view) && run.status !== "unavailable"}
+        status={
+          !view || !flow
+            ? "Not checked yet"
+            : needsVersion
+              ? "Choose a plugin version to run checks."
+              : runStatus(run, flow.version)
+        }
+        canRun={Boolean(view) && run.status !== "unavailable" && !needsVersion}
         running={run.status === "running"}
         hasRun={Boolean(view?.lastRunId)}
         onRun={() => void startRun()}
       />
-      <div className="portal-claude flex min-h-0 flex-1 flex-col bg-background text-foreground">
+      <div
+        className={cn(
+          SCOPES[directory],
+          "flex min-h-0 flex-1 flex-col bg-background text-foreground",
+        )}
+      >
         {body}
       </div>
     </div>

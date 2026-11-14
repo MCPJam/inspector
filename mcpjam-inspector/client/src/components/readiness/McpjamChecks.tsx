@@ -95,7 +95,7 @@ export function McpjamBlock(props: {
   );
 }
 
-function CheckResult({ entry }: { entry: PlacedFinding }) {
+export function CheckResult({ entry }: { entry: PlacedFinding }) {
   const { finding, evidenceStatus } = entry;
   const severity = severityOf(entry);
   // A result without a verdict says why in its evidence note instead.
