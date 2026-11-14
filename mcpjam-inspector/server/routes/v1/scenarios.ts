@@ -24,9 +24,6 @@
  *
  * AUTHORIZATION. Publishing and unpublishing require project ADMIN (Convex
  * enforces it: a scenario is shared execution config that outsiders can reach).
- * Publishing is additionally behind the `sandboxes-enabled` beta flag, enforced
- * server-side. Unpublishing deliberately is NOT — an org that has just lost the
- * flag must still be able to take a live scenario down.
  *
  * GUESTS. These paths match no rule in `GUEST_ALLOWED_V1_RULES`, so guests are
  * denied by default, which is correct and intended: the existing scenario GET
@@ -278,10 +275,6 @@ const publishHandler = async (c: Context) => {
 // how a caller names a study they already hold the id of, and refusing the
 // spelling they have would make the rename cost them a lookup. The canonical
 // name wins when both are sent; the spec documents one per surface.
-//
-// NOT behind the beta flag — taking a live study down must keep working for
-// an org that has lost the flag. See lib/sandboxesGate.ts on why exposure-
-// reducing writes are ungated.
 const unpublishHandler = async (c: Context) => {
   const projectId = c.req.param("projectId");
   const environmentId = c.req.param("environmentId");

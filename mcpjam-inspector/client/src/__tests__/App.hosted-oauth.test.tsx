@@ -3634,11 +3634,6 @@ describe("App hosted OAuth callback handling", () => {
       serverUrl: "https://mcp.asana.com/sse",
       returnPath: "#scenarios",
     });
-    // User Testing is flag-gated at the route, not just in the sidebar — the
-    // callback can only land back on it for a user who has the flag.
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "sandboxes-enabled",
-    );
     mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,
       serverName: "asana",
