@@ -2,8 +2,16 @@
  * Public `/api/v1` directory submissions: a saved rehearsal of one
  * directory's submission form for one saved server, and the readiness runs
  * that grade it.
+ *
+ * A person in the browser and an agent over this API edit the same answers.
+ * Every write names the revision it read, and the backend refuses it only
+ * when a field it touches changed since; the refusal carries the submission
+ * as it is now, so the writer can reapply its change without another read.
+ * Bodies are `strictObject`, like the readiness routes: an unknown key is a
+ * 400, never a silent forward.
  */
 import { Hono, type Context } from "hono";
+import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import {
@@ -13,12 +21,29 @@ import {
   type DirectoryFlow,
 } from "@mcpjam/sdk";
 import type { PlatformDirectorySubmission as Submission } from "@mcpjam/sdk/platform";
-import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { authorizeServer } from "../web/auth.js";
+import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { toReadinessRunDto } from "../shared/readiness-runs.js";
+import { captureServerEvent } from "../../utils/analytics.js";
+import { logger } from "../../utils/logger.js";
+import {
+  startHostedReadinessRun,
+  toReadinessRunDto,
+} from "../shared/readiness-runs.js";
+import { readinessAnalyticsActor } from "./readiness.js";
+import { readJsonObjectBody } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
 import { requireConvexIdShape, requireProjectIdArg } from "./convex-id-param.js";
+import { translateConvexWriteError } from "./convex-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import { redactForLog } from "./redact-log-message.js";
+import {
+  accountPrefill,
+  actorLabel,
+  planAnswerChange,
+  submissionIdempotencyKey,
+  writeChannel,
+} from "./directory-submission-writes.js";
 import {
   latestResults,
   placeResults,
@@ -39,11 +64,43 @@ const NOT_FOUND = "Directory submission not found";
 const RUN_NOT_FOUND = "Readiness run not found for this submission";
 
 const query = (name: string) => makeFunctionReference<"query">(name);
+const mutation = (name: string) => makeFunctionReference<"mutation">(name);
 const fn = {
+  create: mutation("directorySubmissions:createDirectorySubmission"),
   get: query("directorySubmissions:getDirectorySubmission"),
   list: query("directorySubmissions:listDirectorySubmissions"),
+  update: mutation("directorySubmissions:updateDirectorySubmission"),
+  remove: mutation("directorySubmissions:deleteDirectorySubmission"),
   getRun: query("claudeReadinessRuns:getReadinessRun"),
 };
+
+const idempotencyKey = z.string().trim().min(1).max(200).optional();
+
+const createSchema = z.strictObject({
+  flowId: z.string().trim().min(1).max(100),
+  serverId: z.string().trim().min(1).max(100),
+  title: z.string().max(200).optional(),
+  idempotencyKey,
+});
+
+const answerValue = z.union([z.string(), z.number(), z.boolean(), z.null()])
+  .or(z.array(z.string()))
+  .or(z.array(z.record(z.string(), z.string())));
+
+const updateSchema = z.strictObject({
+  expectedRevision: z.number().int().min(1),
+  /** `null` removes the answer. */
+  answers: z.record(z.string().min(1).max(100), answerValue).optional(),
+  confirm: z.array(z.string().min(1).max(100)).max(200).optional(),
+  title: z.string().max(200).optional(),
+  idempotencyKey,
+});
+
+const startSchema = z.strictObject({
+  idempotencyKey,
+  /** The one field that can spend. Off unless sent, as on the readiness starts. */
+  includeLlmObservations: z.boolean().optional(),
+});
 
 function idParam(value: string | undefined, param: string, notFound: string) {
   return requireConvexIdShape(value, param, {
@@ -111,6 +168,39 @@ directorySubmissions.get("/directory-flows/:flowId", (c) => {
   return v1Resource(c, flow);
 });
 
+directorySubmissions.post("/projects/:projectId/directory-submissions", async (c) => {
+  const projectId = requireProjectIdArg(c.req.param("projectId"), SCOPE);
+  const body = parseWithSchema(createSchema, await readJsonObjectBody(c));
+  const flow = getDirectoryFlow(body.flowId);
+  if (!flow) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `flowId: Use one of: ${DIRECTORY_FLOW_IDS.join(", ")}.`,
+    );
+  }
+  const serverId = idParam(body.serverId, "serverId", "Server not found");
+  const key = submissionIdempotencyKey(c, body.idempotencyKey);
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  let created: { submissionId: string; reused: boolean };
+  try {
+    created = await convex.mutation(fn.create, {
+      projectId,
+      serverId,
+      flowId: flow.id,
+      flowVersion: flow.version,
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(key ? { idempotencyKey: key } : {}),
+      prefill: await accountPrefill(convex, projectId, flow),
+    });
+  } catch (error) {
+    throw translateConvexWriteError(error, { resource: RESOURCE });
+  }
+  const row = await readSubmission(convex, projectId, created.submissionId);
+  const view = await viewOf(convex, row);
+  return v1Resource(c, created.reused ? { ...view, replayed: true } : view, 201);
+});
+
 directorySubmissions.get("/projects/:projectId/directory-submissions", async (c) => {
   const projectId = requireProjectIdArg(c.req.param("projectId"), SCOPE);
   const { serverId, flowId, limit: rawLimit } = c.req.query();
@@ -144,6 +234,101 @@ directorySubmissions.get(ONE, async (c) => {
   const convex = createConvexClient(await getConvexBearerForRequest(c));
   const row = await readSubmission(convex, projectId, submissionId);
   return v1Resource(c, await viewOf(convex, row));
+});
+
+directorySubmissions.patch(ONE, async (c) => {
+  const { projectId, submissionId } = scopeOf(c);
+  const body = parseWithSchema(updateSchema, await readJsonObjectBody(c));
+  const key = submissionIdempotencyKey(c, body.idempotencyKey);
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  const row = await readSubmission(convex, projectId, submissionId);
+  const change = planAnswerChange(flowOf(row), row.answers, body);
+  const label = actorLabel(c);
+  let updated: Submission & { replayed?: true };
+  try {
+    updated = await convex.mutation(fn.update, {
+      submissionId,
+      expectedRevision: body.expectedRevision,
+      ...change,
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(label ? { actorLabel: label } : {}),
+      setVia: writeChannel(c),
+      ...(key ? { idempotencyKey: key } : {}),
+    });
+  } catch (error) {
+    const refusal = translateConvexWriteError(error, { resource: RESOURCE });
+    if (refusal.status === 409) {
+      // Best effort: `currentRevision` alone already tells the writer to read again.
+      try {
+        const current = await readSubmission(convex, projectId, submissionId);
+        refusal.details = { ...refusal.details, current: await viewOf(convex, current) };
+      } catch (readError) {
+        logger.warn(`[${SCOPE}] could not read a conflicting submission back`, {
+          detail: redactForLog(readError),
+        });
+      }
+    }
+    throw refusal;
+  }
+  const view = await viewOf(convex, updated);
+  return v1Resource(c, updated.replayed ? { ...view, replayed: true } : view);
+});
+
+directorySubmissions.delete(ONE, async (c) => {
+  const { projectId, submissionId } = scopeOf(c);
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  // Read first, so another project's submission answers 404 here too.
+  await readSubmission(convex, projectId, submissionId);
+  try {
+    await convex.mutation(fn.remove, { submissionId });
+  } catch (error) {
+    throw translateConvexWriteError(error, { resource: RESOURCE });
+  }
+  return v1Resource(c, { id: submissionId, deleted: true });
+});
+
+/**
+ * Grade the submission's saved server with its answers frozen at this
+ * revision. The server is authorized exactly as the readiness start does, and
+ * the directory comes from the submission's flow, never the body.
+ */
+directorySubmissions.post(`${ONE}/runs`, async (c) => {
+  const { projectId, submissionId } = scopeOf(c);
+  const body = parseWithSchema(startSchema, await readJsonObjectBody(c));
+  const key = submissionIdempotencyKey(c, body.idempotencyKey);
+  const convexAuthToken = await getConvexBearerForRequest(c);
+  const convex = createConvexClient(convexAuthToken);
+  const row = await readSubmission(convex, projectId, submissionId);
+  const flow = flowOf(row);
+  if (!row.serverId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "This submission has no saved server to grade. Create a submission for a saved server, then start its run.",
+    );
+  }
+  const receipt = await startHostedReadinessRun({
+    convex,
+    projectId,
+    serverId: row.serverId,
+    publisher: flow.directory,
+    idempotencyKey: key,
+    includeLlmObservations: body.includeLlmObservations === true,
+    submissionId,
+    authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
+    analyticsActor: readinessAnalyticsActor(c, projectId),
+    translateError: (error) =>
+      translateConvexWriteError(error, { resource: "Readiness run" }),
+  });
+  captureServerEvent(c, "directory_readiness_run_started_server", {
+    readiness_kind: flow.directory,
+    submission_mode: null,
+    flow_id: flow.id,
+    include_llm_observations: body.includeLlmObservations === true,
+    deduped: receipt.deduped,
+    run_status: receipt.status,
+  });
+  return v1Resource(c, receipt, 202);
 });
 
 directorySubmissions.get(`${ONE}/results`, async (c) => {
