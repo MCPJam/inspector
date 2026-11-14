@@ -67,6 +67,7 @@ export type PreflightHost = {
   modelSelection?: PreflightSelection | null;
   selectionKnown?: boolean;
   harness?: string | null;
+  agentLoop?: string | null;
 };
 
 /** Unknown client selections are left to the backend's launch checks. */

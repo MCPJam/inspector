@@ -11,6 +11,7 @@ import {
 import { NATIVE_HARNESS_TRIAL_TURNS } from "@/shared/native-harness-trial";
 import { NativeHarnessLimitDialogView } from "./NativeHarnessLimitDialogView";
 import { ScenarioOwnerLimitDialogView } from "./ScenarioOwnerLimitDialogView";
+import { useNativeHarnessSwitch } from "./use-native-harness-switch";
 
 const WALL = {
   location: "plan_limit_dialog",
@@ -59,6 +60,14 @@ function NativeHarnessUpgradeDialog({
   const { recipients, isLoading: isLoadingRecipients } =
     useUpgradeRequestRecipients(organizationId);
   const trial = useNativeHarnessTrial(organizationId);
+  // The switch is for the project in front of the person, and only when it
+  // belongs to the organization that ran out.
+  const harnessSwitch = useNativeHarnessSwitch(
+    activeProject?.sharedProjectId &&
+      activeProject.organizationId === organizationId
+      ? activeProject.sharedProjectId
+      : null,
+  );
   // Nothing renders until billing says who this is: the hook reads as a
   // member until then, which would flash a request at someone who can upgrade.
   // A member's request also waits for the owners, as the credits dialog's
@@ -110,6 +119,14 @@ function NativeHarnessUpgradeDialog({
     if (result.shouldDismiss)
       useNativeHarnessLimitDialogStore.getState().closeNotice(noticeSerial);
   };
+  const switchClients = async () => {
+    // As with checkout, a notice that replaced this one stays open.
+    const { noticeSerial } = useNativeHarnessLimitDialogStore.getState();
+    if (!(await harnessSwitch.switchClients())) return;
+    const store = useNativeHarnessLimitDialogStore.getState();
+    store.closeNotice(noticeSerial);
+    store.afterSwitch?.();
+  };
 
   return (
     <NativeHarnessLimitDialogView
@@ -120,7 +137,10 @@ function NativeHarnessUpgradeDialog({
       organizationName={upgrade.organizationName}
       teamName={upgrade.teamName}
       isUpgrading={upgrade.isStarting || upgrade.isLoadingPrices}
+      switchCount={harnessSwitch.switchCount}
+      isSwitching={harnessSwitch.isSwitching}
       onUpgrade={() => void startUpgrade()}
+      onSwitch={() => void switchClients()}
       onDismiss={dismiss}
     />
   );

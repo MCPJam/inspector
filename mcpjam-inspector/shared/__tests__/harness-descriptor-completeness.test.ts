@@ -17,6 +17,7 @@ const DESCRIPTOR_KEYS = [
   "orgKeys",
   "protocol",
   "reasoningEfforts",
+  "runtimeName",
   "runtimeVersion",
   "unavailableOn",
 ];
@@ -27,6 +28,20 @@ const LOOP_CONTROLS = [
   "requireToolApproval",
   "temperature",
 ];
+
+it("names each runtime as the harness choice shows it", () => {
+  expect(
+    Object.fromEntries(
+      HARNESS_IDS.map((id) => [id, HARNESS_DESCRIPTORS[id].runtimeName]),
+    ),
+  ).toEqual({
+    "claude-code": "Claude Agent SDK",
+    codex: "Codex App Server",
+    cursor: "Cursor CLI",
+    "copilot-cli": "GitHub Copilot CLI",
+    opencode: "OpenCode",
+  });
+});
 
 it("describes every SDK harness and nothing else", () => {
   expect(Object.keys(HARNESS_DESCRIPTORS).sort()).toEqual(
@@ -44,6 +59,7 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
 
   it("uses only the known values", () => {
     expect(descriptor.displayName.trim()).not.toBe("");
+    expect(descriptor.runtimeName.trim()).not.toBe("");
     expect(descriptor.runtimeVersion.trim()).not.toBe("");
     expect(["harness", "mcpjam"]).toContain(descriptor.mcpClient);
     expect(["broker", "external-account"]).toContain(descriptor.modelAccess);

@@ -311,7 +311,9 @@ const NATIVE_HARNESS_TRIAL_CODE_PATTERN = new RegExp(
  * attempt's code beside a sentence that no longer carries it. The code is no
  * English phrase, so finding it anywhere is the refusal.
  */
-const hasNativeHarnessTrialCode = (args: MCPJamLimitErrorInput): boolean =>
+export const isNativeHarnessTrialRefusal = (
+  args: MCPJamLimitErrorInput,
+): boolean =>
   args.code === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE ||
   [args.message, ...collectStringValues(args.details)].some(
     (value) =>
@@ -332,7 +334,7 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     return true;
   }
   // Nor is the native harness trial: buying credits does not lift it.
-  if (hasNativeHarnessTrialCode(args)) {
+  if (isNativeHarnessTrialRefusal(args)) {
     const organizationId = findMCPJamLimitOrganizationId(args);
     useNativeHarnessLimitDialogStore.getState().open(
       {
