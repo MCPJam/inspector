@@ -113,10 +113,11 @@ export const cursorLocalRuntime: LocalRuntime<"cursor"> = {
     // Inspector, never reads a Cursor login of the member's own from their
     // home directory or keychain.
     adapterAuth: {} as HarnessAuth,
-    // In memory only: nothing is written to disk or the keychain. A login
-    // Cursor refuses (revoked with the key, say) would otherwise send the CLI
-    // to the member's browser to sign in to an account of their own;
-    // `NO_OPEN_BROWSER` makes it refuse instead, on every platform's build.
+    // In memory only: nothing is written to disk or the keychain. A login the
+    // CLI can't use (unreadable, or under five minutes from expiring) would
+    // otherwise send it to the member's browser to sign in to an account of
+    // their own; `NO_OPEN_BROWSER` makes it refuse instead, on every
+    // platform's build.
     childEnv: (login) => ({
       CURSOR_AUTH_TOKEN: login.accessToken,
       AGENT_CLI_CREDENTIAL_STORE: "memory",
