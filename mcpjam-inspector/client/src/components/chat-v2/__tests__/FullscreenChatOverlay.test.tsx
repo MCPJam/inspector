@@ -66,10 +66,7 @@ vi.mock("../shared/loading-indicator-content", async (importOriginal) => {
 });
 
 vi.mock("@/lib/client-styles/indicators/claude-mark", () => ({
-  ClaudeLoadingIndicator: ({ mode = "animated" }: { mode?: string }) => (
-    <div data-testid={`claude-indicator-${mode}`} />
-  ),
-  ClaudeMarkIndicator: () => <div data-testid="claude-indicator-animated" />,
+  ClaudeMarkIndicator: () => <div data-testid="claude-indicator" />,
 }));
 
 describe("FullscreenChatOverlay", () => {
@@ -191,7 +188,7 @@ describe("FullscreenChatOverlay", () => {
       screen.getByTestId("loading-indicator-claude-mark")
     ).toBeInTheDocument();
     expect(
-      screen.queryByTestId("fullscreen-claude-footer-animated")
+      screen.queryByTestId("fullscreen-claude-footer")
     ).not.toBeInTheDocument();
   });
 
@@ -362,7 +359,7 @@ describe("FullscreenChatOverlay", () => {
       screen.queryByTestId("fullscreen-thinking-row")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByTestId("fullscreen-claude-footer-animated")
+      screen.getByTestId("fullscreen-claude-footer")
     ).toBeInTheDocument();
   });
 
@@ -525,12 +522,12 @@ describe("FullscreenChatOverlay", () => {
       screen.queryByTestId("fullscreen-thinking-row")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByTestId("fullscreen-claude-footer-animated")
+      screen.getByTestId("fullscreen-claude-footer")
     ).toBeInTheDocument();
-    expect(screen.getByTestId("claude-indicator-animated")).toBeInTheDocument();
+    expect(screen.getByTestId("claude-indicator")).toBeInTheDocument();
   });
 
-  it("keeps only one static Claude footer on the latest assistant bubble after loading", () => {
+  it("clears the Claude footer once loading finishes", () => {
     renderWithProviders(
       <ScenarioHostStyleProvider value="claude">
         <FullscreenChatOverlay
@@ -557,10 +554,9 @@ describe("FullscreenChatOverlay", () => {
       screen.queryByTestId("fullscreen-thinking-row")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByTestId("fullscreen-claude-footer-static")
-    ).toBeInTheDocument();
-    expect(screen.getAllByTestId(/fullscreen-claude-footer-/)).toHaveLength(1);
-    expect(screen.getByTestId("claude-indicator-static")).toBeInTheDocument();
+      screen.queryByTestId("fullscreen-claude-footer")
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("claude-indicator")).not.toBeInTheDocument();
   });
 
   it("uses Claude host shell colors in the fullscreen overlay", () => {
