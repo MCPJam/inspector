@@ -26,7 +26,7 @@ describe("createChatTurnQueue", () => {
     const gate = createIdleGate();
     const first = deferred();
     void run(async () => ({ result: 1, turn: first.promise }), gate);
-    gate.set(false);
+    gate.set({ idle: false, awaitingUser: false });
     const second = vi.fn(async () => ({ result: 2 }));
     const secondResult = run(second, gate);
 
@@ -37,7 +37,7 @@ describe("createChatTurnQueue", () => {
     await flush();
     expect(second).not.toHaveBeenCalled();
 
-    gate.set(true);
+    gate.set({ idle: true, awaitingUser: false });
     await expect(secondResult).resolves.toBe(2);
     expect(second).toHaveBeenCalledTimes(1);
   });
@@ -66,5 +66,32 @@ describe("createChatTurnQueue", () => {
     await expect(failed).rejects.toThrow("preflight failed");
     await expect(refused).resolves.toBe(false);
     await expect(next).resolves.toBe("sent");
+  });
+
+  it("starts a send at once when nothing is queued, even with an approval pending", () => {
+    const run = createChatTurnQueue();
+    const gate = createIdleGate();
+    gate.set({ idle: true, awaitingUser: true });
+    const task = vi.fn(async () => ({ result: true }));
+    void run(task, gate);
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a queued send while the ended turn waits on the user", async () => {
+    const run = createChatTurnQueue();
+    const gate = createIdleGate();
+    const first = deferred();
+    void run(async () => ({ result: 1, turn: first.promise }), gate);
+    gate.set({ idle: false, awaitingUser: false });
+    const second = vi.fn(async () => ({ result: 2 }));
+    const secondResult = run(second, gate);
+
+    first.resolve();
+    gate.set({ idle: true, awaitingUser: true });
+    await flush();
+    expect(second).not.toHaveBeenCalled();
+
+    gate.set({ idle: true, awaitingUser: false });
+    await expect(secondResult).resolves.toBe(2);
   });
 });

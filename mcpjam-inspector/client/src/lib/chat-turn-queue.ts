@@ -1,13 +1,21 @@
-/** Whether the chat status React last rendered is idle, and a wait for it. */
+/**
+ * What the chat session last rendered: whether its status is idle, and whether
+ * the turn is paused on the user (a tool approval or an App input round).
+ */
 export interface IdleGate {
+  /** The rendered status is idle (`ready` or `error`). */
   isIdle(): boolean;
-  wait(): Promise<void>;
+  /** Resolves once the rendered status is idle. */
+  waitForIdle(): Promise<void>;
+  /** Resolves once the status is idle and nothing waits on the user. */
+  waitForTurnEnd(): Promise<void>;
 }
 
 /**
- * One chat turn at a time for a session. `run` starts its task once every
- * earlier turn has settled and the gate is idle; with nothing running it starts
- * at once, in the caller's tick. The task returns its result and, when it
+ * One chat turn at a time for a session. `run` starts its task at once when
+ * nothing is queued and the status is idle; otherwise it waits for every
+ * earlier turn to settle and for the turn to end, including an approval or App
+ * round the user still has to answer. The task returns its result and, when it
  * started a request, that request's promise: the AI SDK settles it once the
  * reply and its automatic follow-up requests have ended.
  */
@@ -34,7 +42,7 @@ export function createChatTurnQueue() {
       try {
         if (!startNow) {
           await previous;
-          await gate.wait();
+          await gate.waitForTurnEnd();
         }
         const started = await task();
         turn = started.turn;
@@ -48,26 +56,32 @@ export function createChatTurnQueue() {
 }
 
 /**
- * Follows the chat status React rendered. The SDK settles a request's promise
- * before that render, so a turn that started on the promise alone could skip
- * the previous turn's post-stream work.
+ * Follows what React rendered. The SDK settles a request's promise before that
+ * render, so a turn started on the promise alone could skip the previous
+ * turn's post-stream work.
  */
-export function createIdleGate(): IdleGate & { set(idle: boolean): void } {
+export function createIdleGate(): IdleGate & {
+  set(state: { idle: boolean; awaitingUser: boolean }): void;
+} {
   let idle = true;
-  let waiters: Array<() => void> = [];
+  let awaitingUser = false;
+  let waiters: Array<{ needsTurnEnd: boolean; resolve: () => void }> = [];
+  const open = (needsTurnEnd: boolean) =>
+    idle && (!needsTurnEnd || !awaitingUser);
+  const wait = (needsTurnEnd: boolean) =>
+    open(needsTurnEnd)
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => waiters.push({ needsTurnEnd, resolve }));
   return {
     isIdle: () => idle,
-    set(next: boolean) {
-      idle = next;
-      if (!idle) return;
-      const ready = waiters;
-      waiters = [];
-      for (const resolve of ready) resolve();
-    },
-    wait(): Promise<void> {
-      return idle
-        ? Promise.resolve()
-        : new Promise((resolve) => waiters.push(resolve));
+    waitForIdle: () => wait(false),
+    waitForTurnEnd: () => wait(true),
+    set(state) {
+      idle = state.idle;
+      awaitingUser = state.awaitingUser;
+      const ready = waiters.filter((w) => open(w.needsTurnEnd));
+      waiters = waiters.filter((w) => !open(w.needsTurnEnd));
+      for (const w of ready) w.resolve();
     },
   };
 }

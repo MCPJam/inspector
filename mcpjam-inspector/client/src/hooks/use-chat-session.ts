@@ -5500,9 +5500,24 @@ export function useChatSession(
   // waits for it to end and for React to render the session idle.
   const [runTurn] = useState(createChatTurnQueue);
   const [idleGate] = useState(createIdleGate);
+  // A turn can end paused on the user: a tool approval in the last reply, or
+  // an App input round. A send queued behind that turn waits for the answer.
+  const awaitingUserApproval = useMemo(() => {
+    const last = messages.at(-1);
+    return (
+      last?.role === "assistant" &&
+      last.parts.some(
+        (part) => "state" in part && part.state === "approval-requested",
+      )
+    );
+  }, [messages]);
+  const awaitingAppRound = useHostedMrtrStore((s) => s.rounds.length > 0);
   useEffect(() => {
-    idleGate.set(status === "ready" || status === "error");
-  }, [idleGate, status]);
+    idleGate.set({
+      idle: status === "ready" || status === "error",
+      awaitingUser: awaitingUserApproval || awaitingAppRound,
+    });
+  }, [idleGate, status, awaitingUserApproval, awaitingAppRound]);
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -5685,7 +5700,7 @@ export function useChatSession(
         }
         // A turn started outside this queue (an approval or sign-in
         // continuation) may have begun during the preflight above.
-        await idleGate.wait();
+        await idleGate.waitForIdle();
         try {
           if (!sendIsCurrent() || (isCurrent && !isCurrent())) {
             pendingWidgetModelContextRef.current = undefined;
