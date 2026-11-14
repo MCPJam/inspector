@@ -26,6 +26,7 @@
  * Pure data. No transport.
  */
 
+import { UNGATHERED_EVIDENCE_DETAIL_KEY } from "../../directory-readiness/helpers.js";
 import { openaiPolicySource } from "../manifest.js";
 import { OPENAI_APP_HTML_MIME } from "../profile.js";
 import { openaiPortalIssue } from "../portal-errors.js";
@@ -136,6 +137,16 @@ const SCREENSHOTS_WITH_UI: OpenAICheckDefinition = {
   provenance: "declared",
   intrusiveness: "passive",
 };
+
+/**
+ * Details for the three checks whose evidence nothing gathers: MCPJam renders
+ * no template, so it never sees what one loads or shows. The verdict keeps
+ * them out of its default gate rather than waiting on them forever.
+ */
+const ungathered = (evidence: string, extra?: Record<string, unknown>) => ({
+  ...extra,
+  [UNGATHERED_EVIDENCE_DETAIL_KEY]: evidence,
+});
 
 const ALL: OpenAICheckDefinition[] = [
   MIME_PROFILE,
@@ -300,8 +311,8 @@ export function runOpenAIAppsUiChecks(
       ? notEvaluated(
           CSP_EXACT,
           stamp,
-          "no template was rendered, so the domains it actually loads were never observed and the allowlist could not be compared against them",
-          { requiresRender: true },
+          "no run renders a template yet, so the domains it loads were never observed and the allowlist could not be compared against them",
+          ungathered("observedDomains", { requiresRender: true })
         )
       : cspProblems.length === 0
         ? satisfied(CSP_EXACT, stamp, { resources: resources.length })
@@ -351,7 +362,8 @@ export function runOpenAIAppsUiChecks(
       ? notEvaluated(
           OUTPUT_SCHEMA_CONSISTENT,
           stamp,
-          "no run compared a tool's outputSchema against the data its template renders",
+          "no run renders a template yet, so no tool's outputSchema was compared with the data its template shows",
+          ungathered("outputSchemaCoversRenderedData")
         )
       : schemaBad.length === 0
         ? satisfied(OUTPUT_SCHEMA_CONSISTENT, stamp, {
@@ -380,7 +392,8 @@ export function runOpenAIAppsUiChecks(
       ? notEvaluated(
           USEFUL_WITHOUT_UI,
           stamp,
-          "whether a tool's text response stands on its own is a judgement about content this run did not make",
+          "no run judges yet whether a tool's text response stands on its own without its template",
+          ungathered("usefulWithoutUi")
         )
       : notUseful.length === 0
         ? satisfied(USEFUL_WITHOUT_UI, stamp, { compared: usefulKnown.length })

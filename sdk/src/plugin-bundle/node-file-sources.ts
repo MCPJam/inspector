@@ -325,9 +325,12 @@ const EOCD_SIZE = 22;
 const CENTRAL_FILE_HEADER_SIZE = 46;
 const ZIP64_ENTRY_COUNT_SENTINEL = 0xffff;
 const ZIP64_OFFSET_SENTINEL = 0xffffffff;
+/** General purpose bit 0 of a central directory record: the entry is encrypted. */
+const ENCRYPTED_FLAG = 0x0001;
 
 /**
- * Entry names exactly as the central directory records them.
+ * Entry names exactly as the central directory records them, and the names of
+ * the entries it flags encrypted.
  *
  * WHY NOT `Object.keys(zip.files)`, which is what this used to be. JSZip
  * normalizes while it loads: it resolves `.` and `..`, collapses doubled
@@ -340,14 +343,17 @@ const ZIP64_OFFSET_SENTINEL = 0xffffffff;
  * rather than an unexamined one.
  *
  * Reading the directory directly also survives an encrypted archive, whose
- * central directory is plaintext even when every entry body is not.
+ * central directory is plaintext even when every entry body is not, so its
+ * flags are read here too: JSZip refuses such an archive outright.
  *
- * Returns `undefined` — not `[]` — for anything this cannot read faithfully
- * (no EOCD, a ZIP64 sentinel, a truncated or non-conforming directory), so the
- * gap stays visible instead of becoming an empty list that reads as "checked,
- * nothing found".
+ * Returns `undefined` — not empty lists — for anything this cannot read
+ * faithfully (no EOCD, a ZIP64 sentinel, a truncated or non-conforming
+ * directory), so the gap stays visible instead of becoming an empty list that
+ * reads as "checked, nothing found".
  */
-function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
+function readCentralDirectory(
+  bytes: Uint8Array
+): { names: string[]; encrypted: string[] } | undefined {
   if (bytes.byteLength < EOCD_SIZE) return undefined;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const decoder = new TextDecoder("utf-8");
@@ -371,6 +377,7 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
     }
 
     const names: string[] = [];
+    const encrypted: string[] = [];
     let cursor = directoryOffset;
     for (let entry = 0; entry < totalEntries; entry += 1) {
       if (cursor + CENTRAL_FILE_HEADER_SIZE > bytes.byteLength)
@@ -378,6 +385,7 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
       if (view.getUint32(cursor, true) !== CENTRAL_FILE_HEADER_SIGNATURE) {
         return undefined;
       }
+      const flags = view.getUint16(cursor + 8, true);
       const nameLength = view.getUint16(cursor + 28, true);
       const extraLength = view.getUint16(cursor + 30, true);
       const entryCommentLength = view.getUint16(cursor + 32, true);
@@ -387,56 +395,49 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
       // CP437 name that is pure ASCII decodes identically, and every rule
       // checked against these names — separators, empty and dot segments,
       // duplicates — is decided by ASCII characters.
-      names.push(
-        decoder.decode(bytes.subarray(nameStart, nameStart + nameLength)),
+      const name = decoder.decode(
+        bytes.subarray(nameStart, nameStart + nameLength)
       );
+      names.push(name);
+      if (flags & ENCRYPTED_FLAG) encrypted.push(name);
       cursor = nameStart + nameLength + extraLength + entryCommentLength;
+      // A record whose extra field or comment runs past the upload was cut
+      // short, so the directory was not read in full.
+      if (cursor > bytes.byteLength) return undefined;
     }
-    return names;
+    return { names, encrypted };
   }
   return undefined;
 }
 
+/**
+ * Never throws: an archive JSZip refuses (an encrypted one, usually) is a case
+ * the readiness report must explain, not a crashed run. Unlike
+ * `createZipPluginFileSource`, whose contract is a readable source, this one
+ * reports observations, and "unreadable" is one.
+ */
 export async function collectZipArchiveObservations(
-  bytes: Uint8Array,
+  bytes: Uint8Array
 ): Promise<OpenAIArchiveObservations> {
-  // Read straight off the archive, BEFORE and independently of JSZip: these
-  // are the names the portal will see, and the loader's job is to produce a
-  // readable tree rather than to preserve them.
-  const rawEntryNames = readRawCentralDirectoryNames(bytes);
-
-  try {
-    await JSZip.loadAsync(bytes);
-  } catch {
-    // AN UNREADABLE ARCHIVE IS THE ENCRYPTED ONE'S USUAL SHAPE. JSZip rejects
-    // a password-protected zip outright rather than listing its entries, and
-    // an encrypted upload is precisely a case the readiness report must
-    // survive: letting the rejection escape turns a gradeable submission into
-    // a crashed run, and the one fact this adapter can still state — the
-    // uploaded size — is thrown away with it. Every other field stays absent,
-    // so the reader reports what it could not read rather than passing it.
-    //
-    // NOT the same choice as `createZipPluginFileSource` above, which must
-    // still throw: its whole contract is to hand back a readable file source,
-    // and there is nothing to read here. This function's contract is to report
-    // observations, and "unreadable" is one.
-    // The central directory is readable even here, so the names survive an
-    // archive the loader refused.
-    return { compressedBytes: bytes.byteLength, rawEntryNames };
-  }
+  // Read straight off the archive, independently of JSZip: these are the
+  // names the portal will see, and the loader's job is to produce a readable
+  // tree rather than to preserve them.
+  const directory = readCentralDirectory(bytes);
   return {
     // The uploaded bytes, which is exactly what the portal's compressed-size
     // limit is measured against.
     compressedBytes: bytes.byteLength,
-    // RAW names, straight off the entry table. The readiness reader checks the
-    // portal's path rules against these BEFORE anything normalizes them,
-    // because normalization repairs a backslash separator and a doubled or `.`
-    // segment — three of the things the portal rejects.
-    rawEntryNames,
-    // `encryptedEntryPaths` is deliberately ABSENT rather than `[]`. JSZip
-    // cannot read an encrypted archive at all, so this adapter has no way to
-    // enumerate encrypted entries; reporting an empty list would assert
-    // "checked, none found" for a check that never ran.
+    // RAW names. The readiness reader checks the portal's path rules against
+    // these BEFORE anything normalizes them, because normalization repairs a
+    // backslash separator and a doubled or `.` segment — three of the things
+    // the portal rejects.
+    ...(directory
+      ? {
+          rawEntryNames: directory.names,
+          // An empty list is a measurement: every record's flag was read.
+          encryptedEntryPaths: directory.encrypted,
+        }
+      : {}),
   };
 }
 

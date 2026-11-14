@@ -43,6 +43,8 @@ export interface PlaceDirectoryResultsInput {
   gradedAnswers?: readonly DirectoryAnswer[];
   /** Which page's field issues to report: the step form's or the review page's. */
   on?: "form" | "review";
+  /** Names of the project's secrets that hold a value (see `validateDirectoryAnswers`). */
+  savedSecrets?: readonly string[];
 }
 
 const BLOCKED = "blocked: ";
@@ -55,12 +57,33 @@ export function directoryBlockedReason(failure: string): string {
   return `${BLOCKED}${failure}`;
 }
 
+/**
+ * The placement of a finding id: its own, else the family (`prefix.*`) whose
+ * prefix it starts with, for an id the engine builds at run time.
+ */
+export function directoryPlacementOf(
+  flow: DirectoryFlow,
+  checkId: string
+): DirectoryCheckPlacement | undefined {
+  return (
+    flow.placements.find((placement) => placement.checkId === checkId) ??
+    flow.placements.find(
+      (placement) =>
+        placement.checkId.endsWith(".*") &&
+        checkId.startsWith(placement.checkId.slice(0, -1))
+    )
+  );
+}
+
 export function placeDirectoryResults(
   input: PlaceDirectoryResultsInput
 ): PlacedStep[] {
   const { flow, findings = [] } = input;
   const placements = new Map(
-    flow.placements.map((placement) => [placement.checkId, placement])
+    findings.flatMap((finding) => {
+      const placement = directoryPlacementOf(flow, finding.id);
+      return placement ? [[finding.id, placement] as const] : [];
+    })
   );
   const lacking = lackingDependencies(findings, placements);
   const changed = input.gradedAnswers
@@ -92,6 +115,7 @@ export function placeDirectoryResults(
 
   const issues = validateDirectoryAnswers(flow, input.answers, {
     on: input.on,
+    savedSecrets: input.savedSecrets,
   });
   return flow.steps.map((step) => {
     const keys = new Set(step.fields.map((field) => field.key));
