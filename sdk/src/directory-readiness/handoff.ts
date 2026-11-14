@@ -106,7 +106,10 @@ export type DirectoryHandoffOperation =
   | "start_directory_submission_run"
   | "get_readiness_run"
   | "resume_readiness_run"
-  | "diff_server_revisions";
+  | "diff_server_revisions"
+  | "get_directory_submission_finding"
+  | "list_directory_submission_findings"
+  | "export_directory_submission";
 
 export interface DirectoryNextAction {
   operation: DirectoryHandoffOperation;
@@ -284,7 +287,16 @@ function portalActionsOf(
 
 function nextActionsOf(
   input: DirectoryHandoffInput,
-  state: { toAnswer: string[]; unconfirmed: string[]; placed: PlacedFinding[]; blockers: number; snapshots: Snapshots }
+  state: {
+    toAnswer: string[];
+    unconfirmed: string[];
+    placed: PlacedFinding[];
+    /** Every check failing the gate, in form order. */
+    blockers: string[];
+    /** Ready under the gate, with steps left that only a person can take in the portal. */
+    handOver: boolean;
+    snapshots: Snapshots;
+  }
 ): DirectoryNextAction[] {
   const { submission, latestRun } = input;
   const project = submission.projectId;
@@ -309,15 +321,25 @@ function nextActionsOf(
       "These declarations hold the portal's default or no answer. Ask the person you work for, then confirm each one that is true, or set its value.";
     actions.push({ operation: "update_directory_submission", why, input: write, fields: state.unconfirmed });
   }
+  const [first] = state.blockers;
+  if (first) {
+    const why = "Read what the first blocker found, with its evidence, before you fix it.";
+    actions.push({ operation: "get_directory_submission_finding", why, input: { ...scope, check: first } });
+  }
+  if (state.blockers.length > MAX_BLOCKERS) {
+    const why = `${plural(state.blockers.length, "check")} fail the run, and this summary lists the first ${MAX_BLOCKERS}. Page through the violated findings for the rest.`;
+    actions.push({ operation: "list_directory_submission_findings", why, input: { ...scope, status: "violated" } });
+  }
   const stale = state.placed.filter((entry) => entry.evidenceStatus === "stale").length;
+  const blockers = state.blockers.length;
   const rerun = inFlight
     ? undefined
     : input.resultsRunId === null
       ? "No run has graded this submission yet."
       : stale > 0
         ? `${plural(stale, "finding")} read an answer that changed since the run. Run again to recheck them.`
-        : state.blockers > 0
-          ? `Run again after fixing the ${plural(state.blockers, "blocker")} to recheck them.`
+        : blockers > 0
+          ? `Run again after fixing the ${plural(blockers, "blocker")} to recheck them.`
           : undefined;
   if (rerun) actions.push({ operation: "start_directory_submission_run", why: rerun, input: scope });
   for (const { from, to } of state.snapshots.differs) {
@@ -328,6 +350,11 @@ function nextActionsOf(
       why: `The ${from} and ${to} catalogs differ. Read which tools changed between them.`,
       input: { project, server: before.serverId, revisionNumber: after.revisionNumber, fromRevisionNumber: before.revisionNumber },
     });
+  }
+  // Nothing is left in MCPJam: what remains is a person's, in the portal.
+  if (state.handOver && !inFlight && missing === 0 && state.unconfirmed.length === 0) {
+    const why = "Every gated check passes. Export the pack for the person who finishes in the portal; it lists the steps only they can take there.";
+    actions.push({ operation: "export_directory_submission", why, input: { ...scope, format: "markdown" } });
   }
   return actions;
 }
@@ -386,6 +413,7 @@ export function buildDirectoryHandoff(input: DirectoryHandoffInput) {
   const state = { status: status ?? undefined, credentials, snapshots };
   const busy = new Set([...issues, ...unconfirmed, ...blockers].map((entry) => entry.step));
   const refs = pick(submission.directoryRefs ?? {}, ["managementUrl", "directoryId", "version", "confirmationReference"]);
+  const portal = portalActionsOf(flow, { ...state, status: status?.state });
   return {
     submission: {
       ...pick(submission, ["id", "projectId", "title", "serverId", "revision", "updatedAt", "flowVersion"]),
@@ -423,10 +451,11 @@ export function buildDirectoryHandoff(input: DirectoryHandoffInput) {
       toAnswer: [...new Set(issues.map((issue) => issue.key))],
       unconfirmed: unconfirmed.map((declaration) => declaration.key),
       placed,
-      blockers: blockers.length,
+      blockers: blockers.map((entry) => entry.finding.id),
+      handOver: verdict.verdict === "ready" && portal.length > 0,
       snapshots,
     }),
-    remainingPortalActions: portalActionsOf(flow, { ...state, status: status?.state }),
+    remainingPortalActions: portal,
     unknowns: unknownsOf(state, verdict, placed),
     links: { submissionUrl: flow.submissionUrl, managementUrl: refs.managementUrl ?? null, statusLink: status?.link ?? null },
   };

@@ -284,9 +284,10 @@ test("announce: false is only used at the allowlisted Cloud call sites", () => {
     "commands/cloud-link.ts",
     "commands/projects.ts",
     "commands/environments.ts",
-    // `readiness submission run` keeps hosted readiness silent, as
-    // bindOperation does for the rest of the group.
+    // The `readiness submission` commands that print more than one result
+    // keep hosted readiness silent, as bindOperation does for the rest.
     "commands/readiness-submissions.ts",
+    "commands/readiness-submission-handoff.ts",
     // `evals export` prints the file's bytes, so it runs its own operation.
     "commands/readiness-submission-evals.ts",
   ];

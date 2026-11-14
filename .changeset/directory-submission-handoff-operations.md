@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+Eight platform operations pick a directory submission up from its id. `getDirectorySubmissionHandoffOperation` reads the handoff summary and is the first call when resuming from a link; `listDirectorySubmissionFindingsOperation` pages through every finding by status, step or lane; `getDirectorySubmissionFindingOperation` reads one check with its evidence; `exportDirectorySubmissionOperation` returns the pack's exact bytes as JSON or Markdown; and `listDirectorySubmissionEventsOperation` lists what was recorded. `recordDirectorySubmissionStatusOperation`, `recordDirectorySubmissionSnapshotOperation` and `importDirectoryFindingOperation` record a status, the server revision a copy of the catalog holds, and what the directory said, as `reported` unless the caller says it `observed` it; the `directory-readiness` feature gates these three, and the reads stay open. They follow the submission operations in `ALL_OPERATIONS`. The handoff's next actions can now point at a blocker's evidence, at the failing checks past the first ten, and at the export once only a person's steps in the portal are left.

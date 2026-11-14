@@ -46,6 +46,7 @@ import {
 import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
 import { collectRepeated } from "./readiness-lazy-auth.js";
 import { registerSubmissionEvalCommands } from "./readiness-submission-evals.js";
+import { registerSubmissionHandoffCommands } from "./readiness-submission-handoff.js";
 import { registerTestPlanCommands } from "./readiness-test-plans.js";
 
 type Options = PlatformOptions & {
@@ -437,6 +438,7 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
     reportGate(saved.submission.checkGate, command);
   });
 
+  registerSubmissionHandoffCommands(submission);
   registerTestPlanCommands(submission);
   registerSubmissionEvalCommands(submission);
 }

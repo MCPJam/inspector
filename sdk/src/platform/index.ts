@@ -164,6 +164,7 @@ export type {
 } from "./directory-reviewer-attempt-types.js";
 // The directory submission operations and their input and result types.
 export * from "./directory-submission-operations.js";
+export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-reviewer-attempt-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";

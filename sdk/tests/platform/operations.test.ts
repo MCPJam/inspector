@@ -2432,6 +2432,21 @@ describe("operation catalog consistency", () => {
     delete_directory_submission: { submission: "sub" },
     start_directory_submission_run: { submission: "sub" },
     get_directory_submission_results: { submission: "sub" },
+    get_directory_submission_handoff: { submission: "sub" },
+    list_directory_submission_findings: { submission: "sub" },
+    get_directory_submission_finding: {
+      submission: "sub",
+      check: "claude.endpoint.https",
+    },
+    export_directory_submission: { submission: "sub" },
+    list_directory_submission_events: { submission: "sub" },
+    record_directory_submission_status: { submission: "sub", state: "submitted" },
+    record_directory_submission_snapshot: { submission: "sub", label: "directory" },
+    import_directory_finding: {
+      submission: "sub",
+      text: "Remove MCP from the name.",
+      via: "email",
+    },
     create_reviewer_attempt: {
       submission: "sub",
       passwordSecretName: "MCPJAM_REVIEWER_SUB_PASSWORD",
@@ -2816,6 +2831,10 @@ describe("operation catalog consistency", () => {
       "update_directory_submission",
       "delete_directory_submission",
       "start_directory_submission_run",
+      // Records of what happened in the directory: append-only events.
+      "record_directory_submission_status",
+      "record_directory_submission_snapshot",
+      "import_directory_finding",
       // A reviewer sign-in starts a run that signs in to the submission's
       // server; a cancel stops one.
       "create_reviewer_attempt",

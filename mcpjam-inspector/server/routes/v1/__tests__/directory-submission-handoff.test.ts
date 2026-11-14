@@ -342,6 +342,22 @@ describe("v1 directory submission handoff", () => {
       expect((await json(refused)).message).toContain("needs one of these states");
     });
 
+    it("keys a record on the agent's idempotency header, ahead of the body's key", async () => {
+      mutations[RECORD] = (args) => ({ id: "e4", ...args });
+      const body = { kind: "status", reportedOrObserved: "reported", state: "submitted" };
+      const headers = { "x-mcpjam-idempotency-key": "turn:record_directory_submission_status:abc" };
+      await request("POST", `${ONE}/events`, { body, headers });
+      await request("POST", `${ONE}/events`, { body: { ...body, idempotencyKey: "k2" }, headers });
+      await request("POST", `${ONE}/events`, { body: { ...body, idempotencyKey: "k2" } });
+      await request("POST", `${ONE}/events`, { body });
+      expect(convexMutationMock.mock.calls.map(([, args]) => args.idempotencyKey)).toEqual([
+        headers["x-mcpjam-idempotency-key"],
+        headers["x-mcpjam-idempotency-key"],
+        "k2",
+        undefined,
+      ]);
+    });
+
     it.each([
       ["a Bearer credential", { detail: "Reviewer header: Authorization: Bearer Abc123xyz789" }],
       ["a JWT in a directory's text", { kind: "directory-finding", finding: { text: `token ${TOKEN}`, via: "email" } }],

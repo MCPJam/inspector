@@ -418,6 +418,20 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_directory_submission_results: {
     command: "readiness submission results",
   },
+  // Resuming a submission from its id, and recording what happened in the
+  // directory itself.
+  get_directory_submission_handoff: { command: "readiness submission handoff" },
+  list_directory_submission_findings: {
+    command: "readiness submission findings",
+  },
+  get_directory_submission_finding: { command: "readiness submission finding" },
+  export_directory_submission: { command: "readiness submission export" },
+  list_directory_submission_events: { command: "readiness submission events" },
+  record_directory_submission_status: { command: "readiness submission status" },
+  record_directory_submission_snapshot: {
+    command: "readiness submission snapshot",
+  },
+  import_directory_finding: { command: "readiness submission import-finding" },
   // A submission's test plan; `readiness submission run --test-plan-revision`
   // starts a run that makes its calls.
   get_directory_submission_test_plan: { command: "readiness submission plan show" },

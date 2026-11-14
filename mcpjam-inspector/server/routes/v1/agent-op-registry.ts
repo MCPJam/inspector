@@ -71,6 +71,14 @@ import {
   updateDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
   createReviewerAttemptOperation,
   listReviewerAttemptsOperation,
   getReviewerAttemptOperation,
@@ -1619,6 +1627,28 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getDirectorySubmissionResultsOperation, tier: "direct" },
+  // Picking a submission up from its id, and recording what happened in the
+  // directory. The records spend nothing and name the agent's principal.
+  {
+    operation: getDirectorySubmissionHandoffOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Given a directory submission's id or link, call `get_directory_submission_handoff` first: it says where the submission stands and lists `nextActions`, each an operation with the input to send. Do not ask the user again for anything it already holds.",
+    ],
+  },
+  { operation: listDirectorySubmissionFindingsOperation, tier: "direct" },
+  { operation: getDirectorySubmissionFindingOperation, tier: "direct" },
+  { operation: exportDirectorySubmissionOperation, tier: "direct" },
+  { operation: listDirectorySubmissionEventsOperation, tier: "direct" },
+  {
+    operation: recordDirectorySubmissionStatusOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Record a directory status, snapshot or finding only as the user told you (`reported`) or as you saw it in the portal (`observed`), never inferred from MCPJam's own results. A record is never edited: to correct one, record a newer one.",
+    ],
+  },
+  { operation: recordDirectorySubmissionSnapshotOperation, tier: "direct" },
+  { operation: importDirectoryFindingOperation, tier: "direct" },
   // A plan is saved like answers; its calls run only in a start a person approves.
   { operation: getDirectorySubmissionTestPlanOperation, tier: "direct" },
   { operation: draftDirectorySubmissionTestPlanOperation, tier: "direct" },

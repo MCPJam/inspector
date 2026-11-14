@@ -139,6 +139,16 @@ import {
   updateDirectorySubmissionOperation,
 } from "./directory-submission-operations.js";
 import {
+  exportDirectorySubmissionOperation,
+  getDirectorySubmissionFindingOperation,
+  getDirectorySubmissionHandoffOperation,
+  importDirectoryFindingOperation,
+  listDirectorySubmissionEventsOperation,
+  listDirectorySubmissionFindingsOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  recordDirectorySubmissionStatusOperation,
+} from "./directory-submission-handoff-operations.js";
+import {
   cancelReviewerAttemptOperation,
   createReviewerAttemptOperation,
   getReviewerAttemptOperation,
@@ -2480,6 +2490,7 @@ export type {
 
 // Directory submission operations, from modules that export nothing else.
 export * from "./directory-submission-operations.js";
+export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-reviewer-attempt-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";
@@ -19383,6 +19394,15 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  // Resuming one from its id: the summary, findings, pack and the records.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
   // A submission's reviewer sign-in attempts.
   createReviewerAttemptOperation,
   listReviewerAttemptsOperation,

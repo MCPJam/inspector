@@ -32,6 +32,14 @@ import {
   deleteDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
   createReviewerAttemptOperation,
   listReviewerAttemptsOperation,
   getReviewerAttemptOperation,
@@ -382,6 +390,17 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   deleteDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  // Resuming a submission from its id, so an agent with only these tools
+  // can pick one up, read every finding, export the pack and record what
+  // happened in the directory.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
   createReviewerAttemptOperation,
   listReviewerAttemptsOperation,
   getReviewerAttemptOperation,
@@ -901,6 +920,11 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "duplicate_client",
   // A new rehearsal; a replayed key returns the one it made.
   "create_directory_submission",
+  // Append-only events about a submission: a newer record supersedes an
+  // older one in the summary, and the older one stays as it was.
+  "record_directory_submission_status",
+  "record_directory_submission_snapshot",
+  "import_directory_finding",
   // New eval cases from a package; a case an earlier import made is left alone.
   "import_directory_submission_test_cases",
   "send_feedback",
