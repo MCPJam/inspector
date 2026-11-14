@@ -349,6 +349,26 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     });
   });
 
+  it("reports a first message on a box prepared before Send as a prepared start", async () => {
+    harnessState.claim = {
+      stateVersion: 0,
+      fingerprintChanged: false,
+      state: null,
+    };
+    const { sink, options } = turn();
+    const timing = new TurnTiming({
+      harnessTurnEvent: sink as HarnessTurnEventSink,
+    });
+    // The route's acquisition took a box prepared before Send.
+    timing.markBoxPrepared();
+    await runToClose({ ...options, turnTiming: timing });
+    expect(onlyEvent(sink)).toMatchObject({
+      kind: "first",
+      start: "prepared",
+      fallback_reason: "none",
+    });
+  });
+
   it.each([
     [
       "a changed runtime",

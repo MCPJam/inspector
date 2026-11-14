@@ -93,6 +93,25 @@ describe("provisionPlaygroundTerminalSandbox", () => {
     });
   });
 
+  it("says the box was prepared before Send only when the backend answers true", async () => {
+    const box = { sandboxRowId: "row", sandboxId: "sbx" };
+    const provision = () =>
+      provisionPlaygroundTerminalSandbox({
+        bearer: "token",
+        projectId: "p1",
+        chatSessionId: "c1",
+      });
+    respond = () => json(200, { ...box, prepared: true });
+    expect(await provision()).toEqual({
+      ok: true,
+      value: { ...box, prepared: true },
+    });
+    for (const other of [false, "true", 1, null, {}]) {
+      respond = () => json(200, { ...box, prepared: other });
+      expect(await provision()).toEqual({ ok: true, value: box });
+    }
+  });
+
   it("hands a cap refusal back with its status and code, never retrying it", async () => {
     respond = () =>
       json(429, {

@@ -7,8 +7,9 @@
  * session started, the answer of its attempt to reuse a running agent (a
  * warm attach, or a kept local runtime) and the bootstrap observation. The
  * route's `TurnTiming` supplies `first_text_ms`, the time the route spent
- * acquiring the turn's box before the turn started, and the sink: a turn
- * with none (an eval, a swarm) sends nothing.
+ * acquiring the turn's box before the turn started, whether that box was
+ * prepared before Send, and the sink: a turn with none (an eval, a swarm)
+ * sends nothing.
  *
  * Content-free by construction: closed vocabularies, the harness id and whole
  * milliseconds, plus the verified organization id the route's sink adds. A
@@ -155,6 +156,7 @@ export class HarnessTurnRecord {
     if (session.approval) start = "approval_continuation";
     else if (session.resumed)
       start = this.reuse === "reused" ? "warm" : "disk_resume";
+    else if (!this.local && this.timing?.boxWasPrepared()) start = "prepared";
     let fallback: HarnessTurnFallbackReason = "none";
     if (session.resetReason) fallback = RESET_FALLBACK[session.resetReason];
     else if (this.reuse && this.reuse !== "reused") fallback = this.reuse;
