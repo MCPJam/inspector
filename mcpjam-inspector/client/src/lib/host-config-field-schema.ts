@@ -1097,7 +1097,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "clientInfo",
     label: "Client version",
     path: "mcpProfile.initialize.clientInfo.version",
-    description: "`initialize.clientInfo` name and version sent to the server.",
+    description: "Client name and version sent to the server.",
     kind: { kind: "string" },
     // The name the client actually sends, then its version (`Sydney 1.0.0`):
     // a bare `1.0.0` says nothing about which client build it is.
