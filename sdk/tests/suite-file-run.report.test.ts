@@ -125,6 +125,30 @@ describe("the local report", () => {
     );
   });
 
+  it("shows the evidence the run recorded for a passing case in HTML and JUnit", async () => {
+    const result = await run(reads);
+    expect(result.verdict).toBe("passed");
+    const html = renderStructuredRunHtml(result.report);
+    const xml = renderStructuredRunJUnitXml(result.report);
+    expect(html).toContain('<details class="case-evidence">');
+    expect(html).toContain("<code>read_note</code>");
+    expect(html).toContain("&quot;id&quot;: &quot;7&quot;");
+    expect(xml).toContain("<system-out>case c_read: passed · 2 iterations");
+    expect(xml).toContain("tool call read_note {&quot;id&quot;:&quot;7&quot;}");
+    for (const iteration of result.cases[0]!.iterations) {
+      const { input, output, total } = iteration.tokens;
+      const tokens = `tokens ${input} input / ${output} output / ${total} total`;
+      expect(html).toContain(`Iteration ${iteration.iterationNumber}</h4>`);
+      expect(html).toContain(tokens);
+      expect(xml).toContain(tokens);
+      expect(iteration.scores.length).toBeGreaterThan(0);
+      for (const score of iteration.scores) {
+        expect(html).toContain(`<td>${score.scorerId}</td>`);
+        expect(xml).toContain(`scorer ${score.scorerId}`);
+      }
+    }
+  });
+
   it("uses one decision for every terminal — pass, fail, inconclusive and interrupted", async () => {
     const outcomes = {
       passed: await run(reads),

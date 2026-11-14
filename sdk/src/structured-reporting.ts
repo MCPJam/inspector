@@ -22,6 +22,11 @@ import {
   localRunJUnitProperties,
   renderLocalRunHtmlSection,
 } from "./suite-file-run/report.js";
+import {
+  LOCAL_RUN_EVIDENCE_STYLE,
+  localRunCaseEvidenceText,
+  renderLocalRunEvidenceHtml,
+} from "./suite-file-run/report-iteration-evidence.js";
 
 export type StructuredCaseClassification =
   | "breaking"
@@ -449,10 +454,21 @@ export function renderStructuredRunJUnitXml(
   const skipped = skippedCount > 0 ? ` skipped="${skippedCount}"` : "";
   const time = (redactedReport.durationMs / 1000).toFixed(3);
   const suiteName = escapeXml(redactedReport.kind);
+  const local = isLocalEvalRunReport(redactedReport)
+    ? redactedReport
+    : undefined;
+  // A local case's iteration evidence rides in its own `<system-out>`, which
+  // CI viewers show per test, passing tests included.
+  const caseOutput = local ? localRunCaseEvidenceText(local) : undefined;
 
   const casesXml = effectiveCases
     .map((caseResult) =>
-      renderJUnitTestCase(redactedReport.kind, caseResult, neutralReport)
+      renderJUnitTestCase(
+        redactedReport.kind,
+        caseResult,
+        neutralReport,
+        caseOutput?.get(caseResult.id)
+      )
     )
     .join("\n");
 
@@ -468,7 +484,6 @@ export function renderStructuredRunJUnitXml(
   // decision, provenance and partial-state warnings, in the same words the
   // CLI prints — plus `<properties>` naming it local and emulated, so a
   // consumer reading attributes alone cannot mistake it for a hosted run.
-  const local = isLocalEvalRunReport(redactedReport) ? redactedReport : undefined;
   const systemOut = local
     ? `\n    <system-out>${escapeXml(formatLocalEvalRunSummary(local))}</system-out>`
     : redactedReport.decisionSummary === undefined
@@ -501,7 +516,8 @@ function formatWaiverMessage(waiver: StructuredCaseWaiver): string {
  * `<style>`, no scripts/fonts/external assets) because CI artifacts are
  * opened from disk — often over `file://` with no network. The paid HTML
  * tiers (traces, parity, history) are out of scope; this is summary+failures
- * only, per PRD §18.2.
+ * only, per PRD §18.2. A local run adds each case's recorded iteration
+ * evidence (tool calls, tokens, scores), collapsed, at the end.
  *
  * Redaction MUST come first, exactly like `renderStructuredRunJUnitXml`:
  * `--out` and `--reporter` are two terminals for the same artifact, and
@@ -523,6 +539,7 @@ export function renderStructuredRunHtml(report: StructuredRunReport): string {
   // would otherwise be the one thing this page never mentioned — a report that
   // silently rendered an overridden failure as a clean run.
   const waivedCases = redacted.cases.filter((entry) => entry.waiver);
+  const local = isLocalEvalRunReport(redacted) ? redacted : undefined;
 
   const sections = [
     renderHtmlHeader(redacted, status),
@@ -533,9 +550,7 @@ export function renderStructuredRunHtml(report: StructuredRunReport): string {
     // A local run says so first: local, emulated, which verdict authority,
     // and whether the evidence is complete. Narrowed on the validated local
     // contract, never on an unchecked metadata cast.
-    isLocalEvalRunReport(redacted)
-      ? renderLocalRunHtmlSection(redacted, escapeHtml)
-      : "",
+    local ? renderLocalRunHtmlSection(local, escapeHtml) : "",
     renderHtmlSummary(
       redacted.summary,
       observedFailures.length === 0 && diagnosticCases.length > 0
@@ -545,6 +560,9 @@ export function renderStructuredRunHtml(report: StructuredRunReport): string {
       : "",
     renderHtmlCaseSection("Failures", observedFailures, false),
     renderHtmlCaseSection("Not measured", diagnosticCases, true),
+    // Last, and collapsed per case: the view above stays the summary, and
+    // the evidence behind every verdict (passes included) is one click away.
+    local ? renderLocalRunEvidenceHtml(local, escapeHtml) : "",
   ]
     .filter((section) => section.length > 0)
     .join("\n");
@@ -555,7 +573,7 @@ export function renderStructuredRunHtml(report: StructuredRunReport): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(redacted.kind)} report</title>
-<style>${STRUCTURED_RUN_HTML_STYLE}</style>
+<style>${STRUCTURED_RUN_HTML_STYLE}${local ? LOCAL_RUN_EVIDENCE_STYLE : ""}</style>
 </head>
 <body>
 <main>
@@ -1094,11 +1112,16 @@ function createSyntheticCase(
 function renderJUnitTestCase(
   kind: string,
   caseResult: StructuredCaseResult,
-  neutralReport: boolean
+  neutralReport: boolean,
+  systemOut?: string
 ): string {
   const testcaseName = escapeXml(caseResult.title);
   const testcaseClassname = escapeXml(resolveJUnitClassname(kind, caseResult));
   const testcaseTime = ((caseResult.durationMs ?? 0) / 1000).toFixed(3);
+  const out =
+    systemOut === undefined
+      ? ""
+      : `\n      <system-out>${escapeXml(systemOut)}</system-out>`;
 
   // A WAIVED case is neither a pass nor a failure, and JUnit already has the
   // word for that. `<skipped>` is read by every CI parser and renders as its
@@ -1113,11 +1136,13 @@ function renderJUnitTestCase(
   if (caseResult.waiver) {
     const waiverMessage = escapeXml(formatWaiverMessage(caseResult.waiver));
     const waiverBody = escapeXml(JSON.stringify(caseResult.waiver));
-    return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}">\n      <skipped message="${waiverMessage}">${waiverBody}</skipped>\n    </testcase>`;
+    return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}">\n      <skipped message="${waiverMessage}">${waiverBody}</skipped>${out}\n    </testcase>`;
   }
 
   if (caseResult.passed) {
-    return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}"/>`;
+    return out
+      ? `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}">${out}\n    </testcase>`
+      : `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}"/>`;
   }
 
   // Informational failures are diagnostic state, not product regressions.
@@ -1130,7 +1155,7 @@ function renderJUnitTestCase(
       ? escapeXml(JSON.stringify(caseResult.details))
       : "";
     return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}">
-      <skipped message="${skippedMessage}">${skippedBody}</skipped>
+      <skipped message="${skippedMessage}">${skippedBody}</skipped>${out}
     </testcase>`;
   }
 
@@ -1139,7 +1164,7 @@ function renderJUnitTestCase(
     ? escapeXml(JSON.stringify(caseResult.details))
     : "";
 
-  return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}">\n      <failure message="${failureMessage}">${failureBody}</failure>\n    </testcase>`;
+  return `    <testcase name="${testcaseName}" classname="${testcaseClassname}" time="${testcaseTime}">\n      <failure message="${failureMessage}">${failureBody}</failure>${out}\n    </testcase>`;
 }
 
 function resolveJUnitClassname(
