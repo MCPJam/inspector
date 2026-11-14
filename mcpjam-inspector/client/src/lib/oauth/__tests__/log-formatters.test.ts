@@ -297,4 +297,105 @@ describe("OAuth copy log formatters", () => {
     expect(responseText).toContain("Response Headers:");
     expect(responseText).not.toContain("Request Body:");
   });
+
+  it("copies several guide steps in flow order with their original numbers", () => {
+    const state = { currentStep: "token_request" } as OAuthFlowState;
+    const groups = [
+      {
+        step: "request_without_token" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 1,
+      },
+      {
+        step: "received_401_unauthorized" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 2,
+      },
+      {
+        step: "token_request" as OAuthFlowStep,
+        entries: [],
+        firstTimestamp: 3,
+      },
+    ];
+
+    const copied = generateGuideText(state, groups, {
+      steps: ["token_request", "request_without_token"],
+    });
+
+    const first = copied.indexOf("1. Initial MCP Request");
+    const third = copied.indexOf("3. Request Tokens with Authorization Code");
+    expect(first).toBeGreaterThan(-1);
+    expect(third).toBeGreaterThan(first);
+    expect(copied).not.toContain("2. ");
+    expect(generateGuideText(state, groups, { steps: [] })).toContain(
+      "No activity yet.",
+    );
+  });
+
+  it("copies raw entries for several steps, using the display step of split halves", () => {
+    const httpEntry = {
+      step: "request_without_token" as OAuthFlowStep,
+      timestamp: 10,
+      request: {
+        method: "POST",
+        url: "https://mcp.example.com/mcp",
+        headers: {},
+      },
+      response: {
+        status: 401,
+        statusText: "Unauthorized",
+        headers: {},
+        body: { error: "unauthorized" },
+      },
+    } as any;
+    const infoLog = (step: OAuthFlowStep, label: string, timestamp: number) =>
+      ({
+        type: "info",
+        timestamp,
+        log: { id: label, step, label, timestamp, level: "info" },
+        key: label,
+      }) as const;
+    const entries = [
+      infoLog("request_without_token", "Sending initial request", 5),
+      {
+        type: "http" as const,
+        timestamp: 10,
+        entry: httpEntry,
+        step: "request_without_token" as OAuthFlowStep,
+        view: "request" as const,
+        key: "request",
+      },
+      {
+        type: "http" as const,
+        timestamp: 35,
+        entry: httpEntry,
+        step: "received_401_unauthorized" as OAuthFlowStep,
+        view: "response" as const,
+        key: "response",
+      },
+      infoLog("request_resource_metadata", "Requesting metadata", 40),
+      infoLog("received_resource_metadata", "Metadata received", 50),
+    ];
+
+    const copied = generateRawText({} as OAuthFlowState, entries as any, {
+      steps: ["received_resource_metadata", "received_401_unauthorized"],
+    });
+
+    expect(copied).toContain("[401 Unauthorized] received_401_unauthorized");
+    expect(copied).toContain("Metadata received");
+    expect(copied).not.toContain("[request sent]");
+    expect(copied).not.toContain("Sending initial request");
+    expect(copied).not.toContain("Requesting metadata");
+
+    // An entry without a display step falls back to the entry's own step.
+    const { step: _step, view: _view, ...wholeEntry } = entries[1];
+    expect(
+      generateRawText({} as OAuthFlowState, [wholeEntry] as any, {
+        steps: ["request_without_token"],
+      }),
+    ).toContain("[401 Unauthorized] request_without_token");
+    expect(
+      generateRawText({} as OAuthFlowState, entries as any, { steps: [] }),
+    ).toContain("No activity yet.");
+  });
 });
