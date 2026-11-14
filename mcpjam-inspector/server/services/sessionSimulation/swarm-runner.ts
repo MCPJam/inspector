@@ -1174,8 +1174,8 @@ async function runJourneyFanOut(
           try {
             releaseLocalSlot = await acquireLocalHarnessSlot(attemptSignal);
           } catch (err) {
-            // A stop scoped to credit-funded conversations ends this wait, and
-            // the target's sponsored ones still run.
+            // A stop scoped to credit-funded conversations ends this wait: go
+            // on to the target's sponsored conversations, not fail the target.
             if (attemptSignal.aborted && creditStop.signal.aborted && !stopScheduling()) continue;
             throw err;
           }
