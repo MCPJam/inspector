@@ -19,13 +19,15 @@ export const HARNESS_TURN_KINDS = ["first", "follow_up"] as const;
 /**
  * How the session started: re-attached to the bridge an earlier turn left
  * running, or adopted the local runtime an earlier turn kept (`warm`);
- * resumed from saved files (`disk_resume`), started fresh (`new`), or
+ * resumed from saved files (`disk_resume`), started fresh (`new`), started
+ * fresh on a box prepared before Send that no turn had used (`prepared`), or
  * continued a turn paused on an approval (`approval_continuation`).
  */
 export const HARNESS_TURN_STARTS = [
   "warm",
   "disk_resume",
   "new",
+  "prepared",
   "approval_continuation",
 ] as const;
 

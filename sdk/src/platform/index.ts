@@ -104,6 +104,22 @@ export type {
   PlatformServerAccountTokens,
   PlatformServerAccountUpload,
 } from "./server-account-types.js";
+export type {
+  PlatformDirectoryFlowSummary,
+  PlatformDirectorySubmission,
+  PlatformDirectorySubmissionConflict,
+  PlatformDirectorySubmissionCounts,
+  PlatformDirectorySubmissionCreateBody,
+  PlatformDirectorySubmissionDeleted,
+  PlatformDirectorySubmissionResults,
+  PlatformDirectorySubmissionRunBody,
+  PlatformDirectorySubmissionSummary,
+  PlatformDirectorySubmissionUpdateBody,
+  PlatformDirectorySubmissionView,
+} from "./directory-submission-types.js";
+export { directorySubmissionConflict } from "./directory-submission-client.js";
+// The nine directory submission operations and their input and result types.
+export * from "./directory-submission-operations.js";
 
 export {
   computeRunTargets,
@@ -547,6 +563,7 @@ export {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,

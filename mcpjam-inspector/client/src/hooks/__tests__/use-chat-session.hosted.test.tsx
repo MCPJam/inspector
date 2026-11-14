@@ -2286,6 +2286,29 @@ describe("useChatSession — environment execution target", () => {
     unmount();
   });
 
+  it("says a restored session kept the conversation but not the files", () => {
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "toast-id");
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: environmentContext,
+      }),
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-harness-reset",
+        data: { reason: "sandbox-restored" },
+      });
+    });
+
+    expect(info).toHaveBeenCalledWith(
+      "This conversation's computer was replaced. The agent still has the conversation, but files from earlier turns are gone.",
+    );
+    info.mockRestore();
+    unmount();
+  });
+
   it("aborts a send whose target changed while the name→id preflight was in flight", async () => {
     // The preflight is async and the transport body is built from the LATEST
     // props when the request finally goes out. A message composed against a

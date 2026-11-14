@@ -30,6 +30,7 @@ export class TurnTiming {
   private readonly stages: Array<[TurnTimingStage, number]> = [];
   private firstTextAfter: number | undefined;
   private boxAcquiredIn: number | undefined;
+  private boxPrepared = false;
 
   constructor(
     options: {
@@ -76,6 +77,19 @@ export class TurnTiming {
     return this.boxAcquiredIn === undefined
       ? undefined
       : Math.round(this.boxAcquiredIn);
+  }
+
+  /**
+   * The route's acquisition took a box prepared before Send. The backend says
+   * so only on the call that takes the box, so it holds for the whole turn.
+   */
+  markBoxPrepared(): void {
+    this.boxPrepared = true;
+  }
+
+  /** Whether the turn's box was prepared before Send (`start: "prepared"`). */
+  boxWasPrepared(): boolean {
+    return this.boxPrepared;
   }
 
   /** The `Server-Timing` header value for the stages closed so far. */

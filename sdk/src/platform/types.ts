@@ -6020,6 +6020,12 @@ export interface PlatformReadinessRun {
   authMode: "headless" | "interactive" | "provided-token" | null;
   capabilities: string[];
   attemptCount: number;
+  /**
+   * The run stopped on the server and waits for the person who started it:
+   * `resumeReadinessRun` runs it again with their credentials. Only they can.
+   * Absent from deployments older than the field: read it as `false`.
+   */
+  resumable?: boolean;
   terminalReason: string | null;
   errorMessage: string | null;
   policySnapshotDate: string | null;
@@ -6029,6 +6035,10 @@ export interface PlatformReadinessRun {
   llmObservations: PlatformReadinessObservationState;
   hasReport: boolean;
   reportUrl: string | null;
+  /** The directory submission the run graded; `null` for a run started from a server. */
+  submissionId: string | null;
+  /** The submission's revision when the run was requested: the answers it graded. */
+  submissionRevision: number | null;
   createdAt: number;
   updatedAt: number;
 }

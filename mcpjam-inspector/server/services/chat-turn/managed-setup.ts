@@ -91,6 +91,8 @@ export async function resolveManagedTurnSetup(args: {
   bearerToken: string;
   localIngress: boolean;
   rpcCollector: ReturnType<typeof createHostedRpcLogCollector>;
+  /** A box preparation (`/web/chat/prepare`): the first message is not sent yet. */
+  preparation?: boolean;
 }) {
   const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
@@ -141,7 +143,10 @@ export async function resolveManagedTurnSetup(args: {
   }
   const executionTarget = normalizedTarget.target;
   const isScenarioRequest = executionTarget.kind === "scenario";
-  if (!Array.isArray(messages) || messages.length === 0) {
+  if (
+    !args.preparation &&
+    (!Array.isArray(messages) || messages.length === 0)
+  ) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,

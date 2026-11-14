@@ -788,6 +788,8 @@ export async function authorizeServer(
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
     accessVersion?: number;
+    /** Ends the request, for a caller that stops waiting for the answer. */
+    signal?: AbortSignal;
   },
 ): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -820,6 +822,7 @@ export async function authorizeServer(
           ? { accessVersion: options.accessVersion }
           : {}),
       }),
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
   } catch (error) {
     throw new WebRouteError(

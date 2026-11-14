@@ -284,6 +284,9 @@ test("announce: false is only used at the allowlisted Cloud call sites", () => {
     "commands/cloud-link.ts",
     "commands/projects.ts",
     "commands/environments.ts",
+    // `readiness submission run` keeps hosted readiness silent, as
+    // bindOperation does for the rest of the group.
+    "commands/readiness-submissions.ts",
   ];
   const hits: string[] = [];
   const walk = (directory: string) => {

@@ -3,7 +3,8 @@
  * turns it into the bootstrap fields of the turn's log line — the
  * `[harness][timing]` line when the turn succeeds, the `[harness][bootstrap]`
  * line when it fails. See `harness-bake.ts` for what the bake is and why a
- * miss is worth recording.
+ * miss is worth recording. A miss on a box booted for the turn is also the
+ * stale-template alert ({@link watchNewBoxForStaleBake}).
  */
 import { posix } from "node:path";
 import type {
@@ -130,6 +131,8 @@ export function observeHarnessBootstrap(
     bakedVersions?: string;
     bakeId?: string;
     bakeOnBox: Promise<HarnessBakeOnBox> | null;
+    /** Set by {@link watchNewBoxForStaleBake}. */
+    newBoxHarnessId?: string;
   } = { missed: false, installed: false, bakeOnBox: null };
 
   const noteMarker = (path: string, cwd: string) => {
@@ -153,6 +156,21 @@ export function observeHarnessBootstrap(
     );
   };
 
+  // The stale-template alert: a box booted for this turn carries a bake, yet
+  // missed the marker in the directory that bake fills.
+  const reportStaleBake = (onBox: HarnessBakeOnBox) => {
+    const { newBoxHarnessId, absoluteBootstrapDir, identity } = state;
+    if (
+      onBox === "present" &&
+      newBoxHarnessId !== undefined &&
+      identity !== undefined &&
+      absoluteBootstrapDir !== undefined &&
+      classifyBakedBootstrapDir(absoluteBootstrapDir) === "baked"
+    ) {
+      warnHarnessBakeStale(newBoxHarnessId, identity);
+    }
+  };
+
   const wrapSession = <S extends SandboxSession>(
     session: S,
     cwd: string,
@@ -166,6 +184,7 @@ export function observeHarnessBootstrap(
           if (result === null) {
             state.missed = true;
             probeBake(probe);
+            void state.bakeOnBox?.then(reportStaleBake);
           } else {
             const baked = parseBakedMarker(result);
             state.found = baked ? "baked" : "reused";
@@ -235,6 +254,9 @@ export function observeHarnessBootstrap(
   });
   // The manifest probe resolves asynchronously; expose it to the log helper.
   bakeOnBoxProbes.set(observed, () => state.bakeOnBox);
+  newBoxWatches.set(observed, (harnessId) => {
+    state.newBoxHarnessId = harnessId;
+  });
   return observed;
 }
 
@@ -242,6 +264,55 @@ const bakeOnBoxProbes = new WeakMap<
   HarnessV1SandboxProvider,
   () => Promise<HarnessBakeOnBox> | null
 >();
+
+const newBoxWatches = new WeakMap<
+  HarnessV1SandboxProvider,
+  (harnessId: string) => void
+>();
+
+/**
+ * Marks an observed provider's box as booted for this turn: a conversation's
+ * first turn, on the box just provisioned for it from the deployment's default
+ * template (or the environment image it chose, which carries no bake). If such
+ * a box carries a bake yet misses the marker, the template lacks this
+ * inspector's recipes and every new conversation installs its runtime until a
+ * template built from this inspector's `harness-bake.lock.json` is rolled out,
+ * so the miss logs `harness_bake_stale`, once per recipe identity per process.
+ * Other boxes (a follow-up turn's, a persistent computer, an eval box frozen on
+ * an earlier default) can predate the template; their misses stay in the
+ * turn's bootstrap fields only.
+ *
+ * A no-op for a provider {@link observeHarnessBootstrap} did not build.
+ */
+export function watchNewBoxForStaleBake(
+  provider: HarnessV1SandboxProvider,
+  harnessId: string,
+): void {
+  newBoxWatches.get(provider)?.(harnessId);
+}
+
+/**
+ * Identities this process has reported. The warning is an alert hook, not a
+ * metric (the timing line counts turns), so it fires once per recipe identity
+ * per process; the set holds at most the recipes this inspector resolves.
+ */
+const staleBakeReported = new Set<string>();
+
+function warnHarnessBakeStale(harnessId: string, identity: string): void {
+  if (staleBakeReported.has(identity)) return;
+  staleBakeReported.add(identity);
+  // A literal message, because the strict log row keeps only catalogued ones.
+  // The row keeps `harnessId` and, as on the timing line, drops the identity
+  // with every other free string.
+  logger.warn("[harness][bake] harness_bake_stale", {
+    harnessId,
+    harnessRecipeIdentity: identity,
+  });
+}
+
+export function resetHarnessBakeStaleWarningsForTests(): void {
+  staleBakeReported.clear();
+}
 
 /**
  * The observation for a provider built by {@link observeHarnessBootstrap}, or

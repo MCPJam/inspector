@@ -71,6 +71,7 @@ import {
   clearAuthChallengeCards,
   presentAuthChallenge,
 } from "@/lib/auth-challenge-lifecycle";
+import { passthroughChallengeErrorText } from "@/lib/auth-challenge-error";
 import {
   AuthChallengeCards,
   authChallengeConnectMessage,
@@ -741,6 +742,8 @@ export function ToolsTab({
         : {}),
     }).then((presentation) => {
       if (presentation.kind === "notice") setAuthNotice(presentation.message);
+      const refusal = passthroughChallengeErrorText(presentation, signal);
+      if (refusal) setError(refusal);
     });
     return true;
   };
