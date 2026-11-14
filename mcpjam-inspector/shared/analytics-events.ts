@@ -47,6 +47,11 @@ export const ANALYTICS_EVENTS = {
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
 
+  // --- Evals navigation ---
+  // eval_nav_page_viewed: page ("suite"), tab (null outside Suite settings),
+  //   ui ("nav" on a new page), project_id. Ids only, never names.
+  eval_nav_page_viewed: { source: "client" },
+
   // --- Conformance runs (one name everywhere; no server twin) ---
   // The CLI and the SDK send this same name from their own clients, with
   // `run_source` saying where the run came from. Hosted server runs go

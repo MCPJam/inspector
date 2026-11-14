@@ -97,6 +97,12 @@ import type { RunMetricsByRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { SUITE_COLUMN_HINTS } from "./nav-suite/suite-page-hints";
+import { SuitePageHeader } from "./nav-suite/suite-page-header";
+import { SuiteNoRunsEmpty } from "./nav-suite/suite-runs-health";
+import { SuitePageTabs, type SuitePageTab } from "./nav-suite/suite-page-tabs";
+import { useSuitePageViewed } from "./nav-suite/use-suite-page-viewed";
+import { newestLaunchPills } from "./nav-suite/newest-launch-pills";
+import { SuitePills } from "./landing/suite-pills";
 import { resolveSuitePassThreshold } from "./run-compare-lanes-model";
 import { useSuiteResultsPageEnabled } from "@/hooks/use-suite-results-page-enabled";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
@@ -168,6 +174,8 @@ export function SuiteDetailOverview({
   projectId = null,
   importJobId = null,
   onClearImportJob,
+  view = "runs",
+  onViewChange,
   onGeneratingChange,
 }: {
   suite: EvalSuite;
@@ -252,6 +260,9 @@ export function SuiteDetailOverview({
    * out was to edit the address bar.
    */
   onClearImportJob?: () => void;
+  /** The new Suite page's tab; `?view=test-cases` opens Test cases. */
+  view?: SuitePageTab;
+  onViewChange?: (view: SuitePageTab) => void;
   /** Retained for callers; verdicts are read in the report, not history rows. */
   decisionSummaryEnabled?: boolean;
   /**
@@ -274,6 +285,11 @@ export function SuiteDetailOverview({
   const showAccounts = useEvalAccountSelectionEnabled() && runs.some((run) => run.accountsAtRun?.length);
   // The new Suite page's Runs card: health above the strip, ⓘ on the metrics.
   const resultsPageEnabled = useSuiteResultsPageEnabled() === true;
+  useSuitePageViewed({
+    enabled: resultsPageEnabled,
+    projectId,
+    suiteId: suite._id,
+  });
   const passThreshold = resolveSuitePassThreshold(suite);
   const runsHealth = resultsPageEnabled
     ? {
@@ -642,6 +658,41 @@ export function SuiteDetailOverview({
       </Button>
     ) : null;
 
+  const resumeImportButton =
+    importedDrafts.length && !reviewingImport ? (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8"
+        data-testid="suite-resume-import-review"
+        // Clearing the marker is what reopens the review: the reader is
+        // asking to be shown these drafts again.
+        onClick={() =>
+          projectId && reopenImportReview({ projectId, suiteId: suite._id })
+        }
+      >
+        {importedDrafts.length === 1
+          ? "Review 1 draft case"
+          : `Review ${importedDrafts.length} draft cases`}
+      </Button>
+    ) : null;
+  // Today's settings page until Suite settings (EFTW-18) takes over.
+  const openSettings = readOnlyConfig || configLocked ? undefined : onEditSuite;
+  // Today's page has no tabs: both sections show, as before.
+  const tab = resultsPageEnabled ? view : null;
+  const emptyTab =
+    (tab === "runs" && !showRunHistory) || (tab === "test-cases" && !hasCases);
+  // Adding the first cases ends on Test cases: Generate and Import finish on
+  // this page, and Back from Describe's editor returns to this address.
+  const fromEmpty = (start?: () => void) =>
+    start && tab === "runs"
+      ? () => {
+          onViewChange?.("test-cases");
+          start();
+        }
+      : start;
+
   const runButton = (
     <Button
       type="button"
@@ -702,7 +753,7 @@ export function SuiteDetailOverview({
         // Keep intrinsic height inside the scroll pane; a long case list
         // otherwise squeezes the overflow-hidden history card to its borders.
         "flex min-h-full shrink-0 flex-col gap-4 pb-6",
-        showEmptyCasesHero && !showRunHistory && "flex-1",
+        ((showEmptyCasesHero && !showRunHistory) || emptyTab) && "flex-1",
       )}
       data-testid="suite-detail-overview"
     >
@@ -735,101 +786,114 @@ export function SuiteDetailOverview({
           disabledReason={runBlockedReason}
         />
       )}
-      <div
-        className="flex min-w-0 flex-wrap items-start justify-between gap-3"
-        data-testid="suite-detail-identity"
-      >
-        <div className="min-w-0">
-          <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
-            {suite.name}
-          </h2>
-          <SuiteRunsAsLine suite={suite} projectId={projectId} className="mt-1.5" />
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {importedDrafts.length && !reviewingImport ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              data-testid="suite-resume-import-review"
-              // Clearing the marker is what reopens the review: the reader is
-              // asking to be shown these drafts again.
-              onClick={() =>
-                projectId &&
-                reopenImportReview({ projectId, suiteId: suite._id })
-              }
-            >
-              {importedDrafts.length === 1
-                ? "Review 1 draft case"
-                : `Review ${importedDrafts.length} draft cases`}
-            </Button>
-          ) : null}
-          {onSetupSdk && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={onSetupSdk}
-            >
-              <Code2 className="size-3.5" aria-hidden /> Setup SDK
-            </Button>
-          )}
-          {configLocked ? (
-            // The reason and the way out, together. A disabled Edit button with
-            // a tooltip would make the remedy discoverable only by hovering the
-            // thing that does not work.
-            <span
-              className="text-xs text-muted-foreground"
-              data-testid="suite-detail-ci-owned"
-            >
-              {CI_OWNED_REASON_COPY}
-            </span>
-          ) : !readOnlyConfig ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={onEditSuite}
-            >
-              Suite settings
-            </Button>
-          ) : null}
-          {configLocked && onDuplicateSuite ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={onDuplicateSuite}
-              data-testid="suite-detail-duplicate-to-edit"
-            >
-              Duplicate to edit
-            </Button>
-          ) : null}
-          {cancelButton}
-          {runDisabled && runBlockedReason ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-flex">{runButton}</span>
-              </TooltipTrigger>
-              <TooltipContent
-                variant="muted"
-                side="bottom"
-                className="max-w-[16rem]"
+      {resultsPageEnabled ? (
+        <SuitePageHeader
+          name={suite.name}
+          pills={<SuitePills {...newestLaunchPills(runs, hostNamesById)} />}
+          review={resumeImportButton}
+          onExportSdk={onSetupSdk}
+          onOpenSettings={openSettings}
+          ciLocked={configLocked}
+          onDuplicate={onDuplicateSuite}
+          cancel={cancelButton}
+          runBlockedReason={runBlockedReason}
+          runBusy={isRerunning}
+          onRun={() => setReviewRun(true)}
+          runsAs={
+            <SuiteRunsAsLine
+              suite={suite}
+              projectId={projectId}
+              className="mt-1.5"
+            />
+          }
+        />
+      ) : (
+        <div
+          className="flex min-w-0 flex-wrap items-start justify-between gap-3"
+          data-testid="suite-detail-identity"
+        >
+          <div className="min-w-0">
+            <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
+              {suite.name}
+            </h2>
+            <SuiteRunsAsLine
+              suite={suite}
+              projectId={projectId}
+              className="mt-1.5"
+            />
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {resumeImportButton}
+            {onSetupSdk && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={onSetupSdk}
               >
-                {runBlockedReason}
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            runButton
-          )}
+                <Code2 className="size-3.5" aria-hidden /> Setup SDK
+              </Button>
+            )}
+            {configLocked ? (
+              // The reason and the way out, together. A disabled Edit button with
+              // a tooltip would make the remedy discoverable only by hovering the
+              // thing that does not work.
+              <span
+                className="text-xs text-muted-foreground"
+                data-testid="suite-detail-ci-owned"
+              >
+                {CI_OWNED_REASON_COPY}
+              </span>
+            ) : !readOnlyConfig ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={onEditSuite}
+              >
+                Suite settings
+              </Button>
+            ) : null}
+            {configLocked && onDuplicateSuite ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={onDuplicateSuite}
+                data-testid="suite-detail-duplicate-to-edit"
+              >
+                Duplicate to edit
+              </Button>
+            ) : null}
+            {cancelButton}
+            {runDisabled && runBlockedReason ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">{runButton}</span>
+                </TooltipTrigger>
+                <TooltipContent
+                  variant="muted"
+                  side="bottom"
+                  className="max-w-[16rem]"
+                >
+                  {runBlockedReason}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              runButton
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {showRunHistory ? (
+      {tab ? (
+        <SuitePageTabs value={tab} onChange={(next) => onViewChange?.(next)} />
+      ) : null}
+
+      {showRunHistory && tab !== "test-cases" ? (
         <section
           className={runHistorySurfaceClass}
           data-testid="suite-detail-run-history"
@@ -972,7 +1036,30 @@ export function SuiteDetailOverview({
         </section>
       ) : null}
 
-      {showEmptyCasesHero ? (
+      {tab && !hasCases && (tab === "test-cases" || !showRunHistory) ? (
+        <SuiteEmptyCasesHero
+          readOnly={readOnlyConfig || configLocked}
+          onDescribe={fromEmpty(onDescribeCases ?? onEditCases)}
+          onGenerate={fromEmpty(() => void handleGenerateCases())}
+          canGenerate={canGenerate}
+          generateDisabledReason={generateTestCasesDisabledReason}
+          isGenerating={
+            isGeneratingTestCases || generation?.status === "running"
+          }
+          onImport={fromEmpty(onImportCases)}
+          fillRemaining
+        />
+      ) : tab === "runs" ? (
+        showRunHistory ? null : (
+          <SuiteNoRunsEmpty
+            caseCount={cases.length}
+            runBlockedReason={runBlockedReason}
+            runBusy={isRerunning}
+            onRun={() => setReviewRun(true)}
+            onViewCases={() => onViewChange?.("test-cases")}
+          />
+        )
+      ) : !tab && showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
           readOnly={readOnlyConfig || configLocked}
           onDescribe={onDescribeCases ?? onEditCases}
