@@ -1,9 +1,13 @@
-import { DIRECTORY_OBSERVATION_STATUSES } from "@mcpjam/sdk";
+import {
+  DIRECTORY_OBSERVATION_STATUSES,
+  type DirectoryAnswer,
+} from "@mcpjam/sdk";
 /**
  * The inspector's half of the readiness lease protocol.
  *
- * Four service-token calls against the backend's `/internal/v1/claude-readiness/*`
- * routes: heartbeat, request observations, finalize, fail. The backend already
+ * Five service-token calls against the backend's `/internal/v1/claude-readiness/*`
+ * routes: heartbeat, request observations, read the frozen submission answers,
+ * finalize, fail. The backend already
  * owns the durable side — claim, lease, recovery, retention — and nothing here
  * duplicates it; this is the client a worker holds while it executes.
  *
@@ -231,6 +235,85 @@ export async function requestManagedObservations(
   } finally {
     release();
   }
+}
+
+/** The answers a run grades, frozen when the run was requested. */
+export interface ReadinessRunSubmission {
+  submissionId: string;
+  submissionRevision: number;
+  flowId: string;
+  flowVersion: string;
+  answers: DirectoryAnswer[];
+}
+
+/** The run names a submission whose frozen answers could not be read. */
+export class ReadinessSubmissionUnreadableError extends Error {
+  readonly code = "readinessSubmissionUnreadable" as const;
+}
+
+const SUBMISSION_TIMEOUT_MS = 10_000;
+
+function isRunSubmission(body: unknown): body is ReadinessRunSubmission {
+  const inputs = body as Partial<ReadinessRunSubmission> | null;
+  return (
+    typeof inputs?.submissionId === "string" &&
+    typeof inputs.submissionRevision === "number" &&
+    typeof inputs.flowId === "string" &&
+    typeof inputs.flowVersion === "string" &&
+    Array.isArray(inputs.answers) &&
+    inputs.answers.every(
+      (answer) =>
+        typeof answer?.key === "string" && typeof answer.origin === "string",
+    )
+  );
+}
+
+/**
+ * Read the copy of the submission's answers made in the same mutation that
+ * created this run, so answers edited while it waited are the next run's.
+ *
+ * Every failure but a lost lease throws `ReadinessSubmissionUnreadableError`:
+ * a run must fail with the reason rather than grade an empty form, which
+ * would report every required field as missing. The message lands on the run
+ * row, so it is written for the person reading the run.
+ */
+export async function getReadinessRunSubmission(
+  lease: ReadinessLease,
+): Promise<ReadinessRunSubmission> {
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
+  const query = new URLSearchParams({ runId: lease.runId, jobId: lease.jobId });
+  let response: Response;
+  let body: unknown;
+  try {
+    // `AbortSignal.timeout` stays armed through the body read as well. Read
+    // on every status, so a refusal's body does not hold its connection.
+    response = await fetch(`${convexUrl}${READINESS_PATH}/submission?${query}`, {
+      headers: { "x-inspector-service-token": serviceToken },
+      signal: AbortSignal.timeout(SUBMISSION_TIMEOUT_MS),
+    });
+    const text = await response.text();
+    body = response.ok ? JSON.parse(text) : undefined;
+  } catch (error) {
+    throw new ReadinessSubmissionUnreadableError(
+      "This run's saved answers could not be read, so it was not graded. Start the run again.",
+      { cause: error },
+    );
+  }
+  if (response.status === 409) throw new ReadinessLeaseLostError();
+  if (response.status === 404) {
+    throw new ReadinessSubmissionUnreadableError(
+      "This run's saved answers were not found, so it was not graded. Start a new run from the submission.",
+    );
+  }
+  if (!response.ok || !isRunSubmission(body)) {
+    throw new ReadinessSubmissionUnreadableError(
+      `This run's saved answers could not be read (HTTP ${response.status}), so it was not graded. Start the run again.`,
+    );
+  }
+  // Picked, so the body's `ok` flag and anything the route gains later stay out of the report.
+  const { submissionId, submissionRevision, flowId, flowVersion, answers } =
+    body;
+  return { submissionId, submissionRevision, flowId, flowVersion, answers };
 }
 
 /** The small, indexed summary the run row carries. The report is opaque. */

@@ -20,8 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ReadinessLeaseLostError,
+  ReadinessSubmissionUnreadableError,
   failReadinessRun,
   finalizeReadinessRun,
+  getReadinessRunSubmission,
   heartbeatReadinessRun,
   requestManagedObservations,
 } from "../backend-client.js";
@@ -295,5 +297,54 @@ describe("failReadinessRun", () => {
     expect(await failReadinessRun(LEASE, "runner_error")).toEqual({
       applied: false,
     });
+  });
+});
+
+describe("getReadinessRunSubmission", () => {
+  const FROZEN = {
+    submissionId: "sub_1",
+    submissionRevision: 3,
+    flowId: "claude-connector",
+    flowVersion: "2026-11-13",
+    answers: [{ key: "listing.name", value: "Acme", origin: "set", revision: 3 }],
+  };
+
+  it("reads the frozen answers behind the lease, and keeps only their fields", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true, ...FROZEN }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await getReadinessRunSubmission(LEASE)).toEqual(FROZEN);
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, any];
+    expect(String(url)).toBe(
+      "https://backend.test/internal/v1/claude-readiness/runs/submission?runId=run_1&jobId=job_1",
+    );
+    expect(init.headers["x-inspector-service-token"]).toBe("service-token");
+  });
+
+  it("throws a lost lease on 409, so the worker stops without writing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ok: false, error: "lease_lost" }, 409)),
+    );
+    await expect(getReadinessRunSubmission(LEASE)).rejects.toBeInstanceOf(
+      ReadinessLeaseLostError,
+    );
+  });
+
+  it.each([
+    ["a 404", () => jsonResponse({ ok: false, error: "no_submission" }, 404), /were not found/],
+    ["a 500", () => jsonResponse({ ok: false, error: "boom" }, 500), /HTTP 500/],
+    ["a body that is not JSON", () => new Response("oops", { status: 200 }), /could not be read/],
+    [
+      "an answer with no key",
+      () => jsonResponse({ ok: true, ...FROZEN, answers: [{ value: "x", origin: "set" }] }),
+      /could not be read/,
+    ],
+    ["an unreachable backend", () => Promise.reject(new Error("ECONNRESET")), /could not be read/],
+  ])("refuses %s with a reason the run can carry", async (_label, responder, reason) => {
+    vi.stubGlobal("fetch", vi.fn(responder as never));
+    const failure = getReadinessRunSubmission(LEASE);
+    await expect(failure).rejects.toBeInstanceOf(ReadinessSubmissionUnreadableError);
+    await expect(failure).rejects.toThrow(reason);
   });
 });

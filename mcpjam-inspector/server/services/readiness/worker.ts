@@ -39,10 +39,13 @@ import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import {
   failReadinessRun,
   finalizeReadinessRun,
+  getReadinessRunSubmission,
   heartbeatReadinessRun,
+  ReadinessSubmissionUnreadableError,
   requestManagedObservations,
   type ReadinessFinalizeSummary,
   type ReadinessLease,
+  type ReadinessRunSubmission,
 } from "./backend-client.js";
 import {
   ReadinessLeaseLostError,
@@ -54,6 +57,7 @@ import {
 import {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
+  getDirectoryFlow,
   isMuseReadinessResult,
   redactConformanceReportForSharing,
   type DirectoryFeatureClaim,
@@ -90,6 +94,8 @@ export interface ExecuteHostedReadinessOptions {
   lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
   /** Features the submitter claims. */
   claimedFeatures?: DirectoryFeatureClaim[];
+  /** The directory submission the run grades: its answers are read at the start. */
+  submissionId?: string;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -169,6 +175,24 @@ export function summarizeReadinessResult(
 }
 
 /**
+ * The frozen answers a submission run grades, checked against the run.
+ *
+ * Read before anything dials: a run that cannot see the answers it names
+ * fails with that reason instead of grading an empty form.
+ */
+async function readSubmissionAnswers(
+  options: ExecuteHostedReadinessOptions,
+): Promise<ReadinessRunSubmission["answers"]> {
+  const submission = await getReadinessRunSubmission(options.lease);
+  if (getDirectoryFlow(submission.flowId)?.directory !== options.publisher) {
+    throw new ReadinessSubmissionUnreadableError(
+      `This run's answers follow the ${submission.flowId} form, which this server cannot grade as a ${options.publisher} run. Start the run again after MCPJam updates.`,
+    );
+  }
+  return submission.answers;
+}
+
+/**
  * Execute one leased run to a terminal state.
  *
  * NEVER THROWS. Every exit lands the run somewhere terminal — completed,
@@ -222,6 +246,9 @@ export async function executeHostedReadinessRun(
   }, HEARTBEAT_INTERVAL_MS);
 
   try {
+    const submissionAnswers = options.submissionId
+      ? await readSubmissionAnswers(options)
+      : undefined;
     const { result } = await runDirectoryReadiness({
       publisher: options.publisher,
       target: options.target,
@@ -235,6 +262,8 @@ export async function executeHostedReadinessRun(
       ...(options.claimedFeatures !== undefined
         ? { claimedFeatures: options.claimedFeatures }
         : {}),
+      // As stored: the grader merges the flow's defaults itself.
+      ...(submissionAnswers ? { submissionAnswers } : {}),
       // The requester's opt-in decides whether a requester exists AT ALL. A
       // runner with no requester structurally cannot spend, which is a
       // stronger guarantee than one that checks a flag before asking.
@@ -308,13 +337,18 @@ export async function executeHostedReadinessRun(
 
     const message =
       error instanceof Error ? error.message : String(error ?? "unknown error");
+    const terminalReason =
+      error instanceof ReadinessSubmissionUnreadableError
+        ? "submission_unreadable"
+        : "runner_error";
     logger.error("[readiness] hosted run failed", error, {
       runId: lease.runId,
+      terminalReason,
     });
-    await failReadinessRun(lease, "runner_error", message.slice(0, 2000)).catch(
+    await failReadinessRun(lease, terminalReason, message.slice(0, 2000)).catch(
       () => undefined,
     );
-    terminal = { outcome: "failed", terminalReason: "runner_error" };
+    terminal = { outcome: "failed", terminalReason };
   } finally {
     clearInterval(heartbeat);
     clearTimeout(deadline);
