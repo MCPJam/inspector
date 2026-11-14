@@ -234,7 +234,7 @@ jobs:
       # Named by the inputs: a release calls this workflow twice in one run,
       # and artifact names are run-wide.
       - name: Hand the adapter build to the platform legs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
           path: ${{ runner.temp }}/adapter-build.tgz
@@ -385,7 +385,7 @@ jobs:
       # Built once, by `unit`. Read from stdin: GNU tar takes the `D:` of a
       # Windows path for a remote host.
       - name: Download the adapter build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
           path: ${{ runner.temp }}/adapter-build
@@ -514,7 +514,7 @@ jobs:
             --scenarios "full,attended-off,delivery,no-launcher,abort,orphan"
 
       - name: Upload conformance evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-evidence-claude-code-${{ matrix.platform_key }}-${{ needs.plan.outputs.claude_pack_version || 'source' }}
           path: ${{ runner.temp }}/conformance/evidence/*.json
@@ -522,7 +522,7 @@ jobs:
 
       - name: Preserve verified published-pack identity
         if: needs.plan.outputs.claude_pack_version != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Versioned: a release (and the publication pipeline) calls this
           # workflow twice in one run, and artifact names are run-wide.
@@ -639,7 +639,7 @@ jobs:
       # Built once, by `unit`. Read from stdin: GNU tar takes the `D:` of a
       # Windows path for a remote host.
       - name: Download the adapter build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
           path: ${{ runner.temp }}/adapter-build
@@ -744,7 +744,7 @@ jobs:
             --scenarios "full,attended-off,delivery,abort"
 
       - name: Upload conformance evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-evidence-claude-code-win32-x64-${{ needs.plan.outputs.claude_pack_version || 'source' }}
           path: ${{ runner.temp }}/conformance/evidence/*.json
@@ -752,7 +752,7 @@ jobs:
 
       - name: Preserve verified published-pack identity
         if: needs.plan.outputs.claude_pack_version != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: published-pack-claude-code-win32-x64-${{ needs.plan.outputs.claude_pack_version }}
           path: ${{ runner.temp }}/conformance/published-conformance-input.json
@@ -785,7 +785,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read pack toolchain pins
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
@@ -797,7 +797,7 @@ jobs:
           arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
           arch -x86_64 /usr/bin/true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
           architecture: ${{ matrix.node_arch }}
@@ -810,7 +810,7 @@ jobs:
         run: |
           arch -x86_64 /usr/bin/xcrun --show-sdk-path
           arch -x86_64 /usr/bin/git --version
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
@@ -917,7 +917,7 @@ jobs:
       # Built once, by `unit`. Read from stdin: GNU tar takes the `D:` of a
       # Windows path for a remote host.
       - name: Download the adapter build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
           path: ${{ runner.temp }}/adapter-build
@@ -1028,7 +1028,7 @@ jobs:
             --scenarios attended,attended-off
 
       - name: Upload conformance evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-evidence-codex-${{ matrix.platform_key }}-${{ needs.plan.outputs.codex_pack_version || 'source' }}
           path: ${{ runner.temp }}/conformance/evidence/*.json
@@ -1058,7 +1058,7 @@ jobs:
       TARGET: ${{ matrix.platform_key }}
       PACK_VERSION: ${{ matrix.pack_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read pack toolchain pins
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
@@ -1070,7 +1070,7 @@ jobs:
           arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
           arch -x86_64 /usr/bin/true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
           architecture: ${{ matrix.node_arch }}
@@ -1082,7 +1082,7 @@ jobs:
         run: |
           arch -x86_64 /usr/bin/xcrun --show-sdk-path
           arch -x86_64 /usr/bin/git --version
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
@@ -1180,7 +1180,7 @@ jobs:
         run: arch -x86_64 "$RUNNER_TEMP/conformance/runtime/$HARNESS/bin/node" --version
 
       - name: Download the adapter build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
           path: ${{ runner.temp }}/adapter-build
@@ -1251,7 +1251,7 @@ jobs:
             --scenarios gateway-turn
 
       - name: Upload conformance evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: conformance-evidence-${{ matrix.harness }}-${{ matrix.platform_key }}-${{ matrix.pack_version || 'source' }}
           path: ${{ runner.temp }}/conformance/evidence/*.json
