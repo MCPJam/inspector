@@ -184,6 +184,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "getReadinessReport",
   "post /projects/{projectId}/readiness-runs/{runId}/cancel":
     "cancelReadinessRun",
+  "post /projects/{projectId}/readiness-runs/{runId}/resume":
+    "resumeReadinessRun",
 
   // Directory submissions and the flows they rehearse
   "get /directory-flows": "listDirectoryFlows",

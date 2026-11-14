@@ -52,6 +52,7 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/readiness-runs/run_1",
     "/api/v1/projects/proj_1/readiness-runs/run_1/cancel",
     "/api/v1/projects/proj_1/readiness-runs/run_1/report",
+    "/api/v1/projects/proj_1/readiness-runs/run_1/resume",
     // The Readiness page: without these, every call there 401s unseen.
     "/api/v1/directory-flows",
     "/api/v1/directory-flows/claude-connector",
@@ -89,6 +90,7 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/readiness-runs-export",
     // One segment too many under a run.
     "/api/v1/projects/proj_1/readiness-runs/run_1/report/raw",
+    "/api/v1/projects/proj_1/readiness-runs/run_1/resume/now",
     // The publisher is a closed set, not a wildcard.
     "/api/v1/projects/proj_1/servers/srv_1/readiness-runs/anthropic",
     // Submission paths stay as narrow as the run paths above.

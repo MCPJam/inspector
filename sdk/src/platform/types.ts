@@ -6020,6 +6020,11 @@ export interface PlatformReadinessRun {
   authMode: "headless" | "interactive" | "provided-token" | null;
   capabilities: string[];
   attemptCount: number;
+  /**
+   * The run stopped on the server and waits for the person who started it:
+   * `resumeReadinessRun` runs it again with their credentials. Only they can.
+   */
+  resumable: boolean;
   terminalReason: string | null;
   errorMessage: string | null;
   policySnapshotDate: string | null;

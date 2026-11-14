@@ -2418,6 +2418,7 @@ describe("operation catalog consistency", () => {
     get_readiness_run: { run: "r" },
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
+    resume_readiness_run: { run: "r" },
     get_readiness_report: { run: "r" },
     list_directory_flows: {},
     get_directory_flow: { flow: "claude-connector" },
@@ -2780,6 +2781,8 @@ describe("operation catalog consistency", () => {
       "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",
+      // Runs a re-queued one again with its requester's credentials.
+      "resume_readiness_run",
       // Directory submissions: the answers are a saved record, and a run
       // started from one dials the submission's server.
       "create_directory_submission",

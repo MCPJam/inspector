@@ -48,6 +48,9 @@ const BODYLESS_WRITES = new Set([
   // heartbeat, and a body could only be a place to pass options a cancellation
   // does not have.
   "post /projects/{projectId}/readiness-runs/{runId}/cancel",
+  // Resuming takes the run's own inputs from the run itself: a body could only
+  // be a place to change them, which a resume must not do.
+  "post /projects/{projectId}/readiness-runs/{runId}/resume",
   // Dismissal is addressed entirely by the path findingId — there is nothing
   // to say about it beyond which finding.
   "post /projects/{projectId}/goal-findings/{findingId}/dismiss",

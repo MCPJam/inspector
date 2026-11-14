@@ -329,6 +329,44 @@ test("run --wait exits 3 for a run that failed, never 1", async () => {
   assert.equal(process.exitCode, 3);
 });
 
+const RUN_PATH = "/api/v1/projects/project-1/readiness-runs/run-1";
+const REQUEUED = { ...runRow("pending", null), resumable: true, attemptCount: 2 };
+
+test("run --wait resumes a re-queued run once, then waits for its verdict", async () => {
+  const requests = stubFetch({
+    [`POST ${BASE}/sub-1/runs`]: [{ status: 202, body: RECEIPT }],
+    [`GET ${RUN_PATH}`]: [{ body: REQUEUED }, { body: runRow("completed", "ready") }],
+    [`POST ${RUN_PATH}/resume`]: [{ status: 202, body: { ...RECEIPT, status: "running" } }],
+  });
+  const waited = await run(["submission", "run", "sub-1", "--wait"]);
+  const resumes = requests.filter((r) => r.key === `POST ${RUN_PATH}/resume`);
+  assert.equal(resumes.length, 1);
+  assert.equal(resumes[0]!.body, undefined);
+  assert.match(waited.stderr, /stopped on the server and was resumed/);
+  assert.equal((waited.printed.run as { status: string }).status, "completed");
+  assert.equal(process.exitCode, 0);
+});
+
+test("run --wait goes on waiting when the resume is refused", async () => {
+  stubFetch({
+    [`POST ${BASE}/sub-1/runs`]: [{ status: 202, body: RECEIPT }],
+    [`GET ${RUN_PATH}`]: [{ body: REQUEUED }, { body: runRow("failed", null) }],
+    [`POST ${RUN_PATH}/resume`]: [
+      {
+        status: 403,
+        body: {
+          code: "FORBIDDEN",
+          message: "No readiness run you can resume was found. Start a new run instead.",
+        },
+      },
+    ],
+  });
+  const waited = await run(["submission", "run", "sub-1", "--wait"]);
+  assert.match(waited.stderr, /could not be resumed: No readiness run you can resume/);
+  // The run graded nothing, so the wait ends incomplete, never not ready.
+  assert.equal(process.exitCode, 3);
+});
+
 test("run --wait exits 3 when the run could not be started", async () => {
   stubFetch({
     [`POST ${BASE}/sub-1/runs`]: [

@@ -173,6 +173,9 @@ describe("agent op registry", () => {
         // connection request reads the same way, and frees the slot it holds.
         "cancel_project_server_connection",
         "cancel_readiness_run",
+        // Its requester finishing a run a person already approved: it
+        // creates nothing, and only the requester gets past the backend.
+        "resume_readiness_run",
         // Answers to a directory form: they spend nothing, and each records
         // the agent as its author.
         "create_directory_submission",
@@ -2309,6 +2312,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
   "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
+  "- When `get_readiness_run` reports `resumable: true`, the run stopped on the server before it finished. Call `resume_readiness_run` once, then keep polling `get_readiness_run`. Only the person who started the run can resume it; if it is refused, say so and do not retry.",
   "- Before launching an eval run, `get_eval_run_disclosure` tells you (and lets you tell a human) what actually happens to the run's content — which models it calls, whether analyzers/judges fire and where their evidence goes, retention and region facts. It never gates the run; `run_eval_suite` already fetches and returns its own disclosure on `disclosure`, so call this separately only when you need it BEFORE deciding to launch.",
   "- When a suite's results change without an obvious cause, read `list_eval_suite_revisions` before blaming the server: it says who last edited the suite's settings, which stored fields moved, and when. A revision's `revisionNumber` is also what makes an edit safe — pass the one you read as `expectedRevisionNumber` on `update_eval_suite` and a suite someone else changed in between is refused instead of overwritten.",
   "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",

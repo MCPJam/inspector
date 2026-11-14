@@ -2240,6 +2240,33 @@ export const cancelReadinessRunOperation: PlatformOperation<
   },
 };
 
+export const resumeReadinessRunOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  { project: SelectedProjectInfo; run: PlatformReadinessRunReceipt }
+> = {
+  name: "resume_readiness_run",
+  title: "Resume a directory readiness run",
+  description:
+    "Run again a readiness run that stopped on the server before it finished. Call it once when `get_readiness_run` reports `resumable: true`, then keep polling `get_readiness_run`. Only the person who started the run can resume it, because the server is graded with their credentials; it is refused for anyone else and for a run that is running, finished, or no longer waiting. Returns a receipt, not a verdict. Readiness is in beta: an organization outside the beta is refused, and the error names the feature.",
+  // The run's own requester finishing the run they started: nothing new is
+  // created and nothing is spent beyond what the start already allowed.
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.resumeReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
 /**
  * The findings, PROJECTED rather than handed over whole.
  *
@@ -19322,6 +19349,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
   // Directory submissions: one directory's form for a saved server, graded by runs.
   listDirectoryFlowsOperation,
