@@ -8,7 +8,6 @@
  * the two match. (MJ-015)
  */
 export const CLIENT_FEATURE_FLAG_KEYS = [
-  "billing-entitlements-ui",
   "browser-workspace-enabled",
   "claude-code-host-enabled",
   "codex-host-enabled",

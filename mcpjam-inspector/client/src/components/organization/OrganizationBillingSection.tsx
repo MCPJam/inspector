@@ -806,7 +806,6 @@ function FreePlanTeamUpsell({
 
 interface OrganizationBillingSectionProps {
   organizationId: string;
-  showPlanBilling: boolean;
   showPlanComparison?: boolean;
   showCredits: boolean;
   billingStatus: OrganizationBillingStatus | undefined;
@@ -834,7 +833,6 @@ interface OrganizationBillingSectionProps {
 
 export function OrganizationBillingSection({
   organizationId,
-  showPlanBilling,
   showPlanComparison = true,
   showCredits,
   billingStatus,
@@ -886,16 +884,14 @@ export function OrganizationBillingSection({
     if (consumeUrlFlag("plans", "open")) setArrivedForPlans(true);
   }, []);
 
-  // Deferred until the section is actually rendering: `showPlanBilling` can
-  // arrive a render late while the org's billing permissions resolve.
   useEffect(() => {
-    if (!arrivedForPlans || !showPlanBilling) return;
+    if (!arrivedForPlans) return;
     setArrivedForPlans(false);
     plansHeadingRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "start",
     });
-  }, [arrivedForPlans, showPlanBilling]);
+  }, [arrivedForPlans]);
 
   useEffect(() => {
     if (checkoutIntent?.interval) {
@@ -913,9 +909,6 @@ export function OrganizationBillingSection({
   }, [billingStatus?.billingInterval, checkoutIntent]);
 
   useEffect(() => {
-    if (!showPlanBilling) {
-      return;
-    }
     if (!checkoutIntent) {
       deepLinkHandledForKeyRef.current = null;
       return;
@@ -1008,7 +1001,6 @@ export function OrganizationBillingSection({
     onCheckoutIntentConsumed,
     organizationId,
     planCatalog,
-    showPlanBilling,
   ]);
 
   const currentPlan = billingStatus?.plan ?? "free";
@@ -1021,7 +1013,6 @@ export function OrganizationBillingSection({
   const deferredTrialBillingCopy = getDeferredTrialBillingCopy(billingStatus);
   const isTrial = billingStatus?.source === "trial";
   const showFreeTeamUpsell =
-    showPlanBilling &&
     !isLoadingBilling &&
     !isTrial &&
     currentPlan === "free" &&
@@ -1242,14 +1233,12 @@ export function OrganizationBillingSection({
           <PaymentsHistorySection
             organizationId={organizationId}
             canViewHistory={showCredits && canManageCredits}
-            canViewInvoices={
-              !!(showPlanBilling && billingStatus?.canManageBilling)
-            }
+            canViewInvoices={!!billingStatus?.canManageBilling}
           />
         </ErrorBoundary>
       ) : null}
 
-      {showPlanBilling && showPlanComparison ? (
+      {showPlanComparison ? (
         <>
           {checkoutIntent ? (
             <div
