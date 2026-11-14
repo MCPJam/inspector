@@ -94,4 +94,19 @@ describe("createChatTurnQueue", () => {
     gate.set({ idle: true, awaitingUser: false });
     await expect(secondResult).resolves.toBe(2);
   });
+
+  it("waits for the previous turn's request even when the status already reads idle", async () => {
+    const run = createChatTurnQueue();
+    const gate = createIdleGate();
+    const first = deferred();
+    void run(async () => ({ result: 1, turn: first.promise }), gate);
+    const second = vi.fn(async () => ({ result: 2 }));
+    const secondResult = run(second, gate);
+
+    await flush();
+    expect(second).not.toHaveBeenCalled();
+
+    first.resolve();
+    await expect(secondResult).resolves.toBe(2);
+  });
 });

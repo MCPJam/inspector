@@ -154,6 +154,7 @@ vi.mock("convex/react", async () =>
 const scenario = vi.hoisted(() => ({
   bodies: [] as Record<string, unknown>[],
   releases: [] as Array<() => void>,
+  firstCallsAppTool: false,
   onConflict: vi.fn(),
   onUnsaved: vi.fn(),
 }));
@@ -196,14 +197,25 @@ vi.mock("ai", async () => ({
               startedAtMs: Date.now(),
             },
           });
-          controller.enqueue({ type: "text-start", id: "text" });
-          controller.enqueue({
-            type: "text-delta",
-            id: "text",
-            delta: `reply ${request}`,
-          });
+          const appTool = request === 1 && scenario.firstCallsAppTool;
+          if (appTool) {
+            // A client-fulfilled App tool: the SDK sends the continuation.
+            controller.enqueue({
+              type: "tool-input-available",
+              toolCallId: "app-call-1",
+              toolName: "app_deadbeef",
+              input: {},
+            });
+          } else {
+            controller.enqueue({ type: "text-start", id: "text" });
+            controller.enqueue({
+              type: "text-delta",
+              id: "text",
+              delta: `reply ${request}`,
+            });
+          }
           await released;
-          controller.enqueue({ type: "text-end", id: "text" });
+          if (!appTool) controller.enqueue({ type: "text-end", id: "text" });
           controller.enqueue({ type: "finish-step" });
           controller.enqueue({ type: "finish" });
           controller.enqueue({
@@ -254,6 +266,7 @@ beforeEach(() => {
   toastError.mockClear();
   scenario.bodies = [];
   scenario.releases = [];
+  scenario.firstCallsAppTool = false;
   scenario.onConflict.mockClear();
   scenario.onUnsaved.mockClear();
 });
@@ -341,5 +354,38 @@ describe("one chat turn at a time (real AI SDK)", () => {
       "App follow-up",
       "reply 2",
     ]);
+  });
+
+  it("waits for the SDK's automatic follow-up request, not only for the first stream", async () => {
+    scenario.firstCallsAppTool = true;
+    const { result } = renderHook(useHarness);
+    act(() => result.current.syncResumedVersion(4));
+    await act(async () => {
+      void result.current.sendMessage({ text: "play e4" });
+    });
+    await waitFor(() => expect(scenario.bodies).toHaveLength(1));
+
+    let queuedSent = false;
+    await act(async () => {
+      void result.current
+        .sendMessage({ text: "App follow-up" })
+        .then((sent) => (queuedSent = sent));
+    });
+
+    await act(async () => scenario.releases[0]());
+    // The App tool's continuation goes first; it is still the first turn.
+    await waitFor(() => expect(scenario.bodies).toHaveLength(2));
+    await act(async () => {});
+    expect(queuedSent).toBe(false);
+    expect(scenario.bodies).toHaveLength(2);
+
+    await act(async () => scenario.releases[1]());
+    await waitFor(() => expect(scenario.bodies).toHaveLength(3));
+    expect(queuedSent).toBe(true);
+    expect(scenario.bodies.map((body) => body.expectedVersion)).toEqual([
+      4, 5, 6,
+    ]);
+    await act(async () => scenario.releases[2]());
+    expect(scenario.onConflict).not.toHaveBeenCalled();
   });
 });
