@@ -19,6 +19,8 @@ interface UseChatHistoryOptions {
   projectId?: string | null;
   enabled?: boolean;
   requestHeaders?: HeadersInit;
+  /** Also fetch multi-model columns missing from the personal page. */
+  includeMultiModelSiblings?: boolean;
 }
 
 interface UseChatHistoryReturn {
@@ -28,6 +30,8 @@ interface UseChatHistoryReturn {
   error: string | null;
   isReactive: boolean;
   refetch: () => void;
+  /** Columns of the page's multi-model sessions that fell outside the page. */
+  multiModelSiblings: ChatHistorySession[];
   actions: {
     rename: (sessionId: string, customTitle: string) => Promise<void>;
     archive: (sessionId: string) => Promise<void>;
@@ -56,12 +60,16 @@ export function useChatHistory({
   projectId,
   enabled = true,
   requestHeaders,
+  includeMultiModelSiblings = false,
 }: UseChatHistoryOptions): UseChatHistoryReturn {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const [personalFallback, setPersonalFallback] = useState<
     ChatHistorySession[]
   >([]);
   const [projectFallback, setProjectFallback] = useState<
+    ChatHistorySession[]
+  >([]);
+  const [siblingsFallback, setSiblingsFallback] = useState<
     ChatHistorySession[]
   >([]);
   const [fallbackLoading, setFallbackLoading] = useState(false);
@@ -75,9 +83,12 @@ export function useChatHistory({
         ? ({
             projectId: projectId ?? undefined,
             status: "active",
+            ...(includeMultiModelSiblings
+              ? { includeMultiModelSiblings: true }
+              : {}),
           } as const)
         : "skip",
-    [isReactive, projectId],
+    [includeMultiModelSiblings, isReactive, projectId],
   );
 
   const reactiveResult = useQuery(
@@ -87,6 +98,7 @@ export function useChatHistory({
     | {
         personal: ChatHistorySession[];
         project: ChatHistorySession[];
+        multiModelSiblings?: ChatHistorySession[];
       }
     | undefined;
 
@@ -126,6 +138,7 @@ export function useChatHistory({
         {
           projectId: projectId ?? undefined,
           status: "active",
+          includeMultiModelSiblings,
         },
         {
           headers: requestHeaders,
@@ -134,6 +147,7 @@ export function useChatHistory({
       if (fetchId !== fetchCountRef.current) return;
       startTransition(() => {
         setPersonalFallback(result.personal);
+        setSiblingsFallback(result.multiModelSiblings ?? []);
         setProjectFallback(result.project);
       });
     } catch (err) {
@@ -144,7 +158,7 @@ export function useChatHistory({
         setFallbackLoading(false);
       }
     }
-  }, [requestHeaders, shouldUseFallback, projectId]);
+  }, [includeMultiModelSiblings, requestHeaders, shouldUseFallback, projectId]);
 
   useEffect(() => {
     if (!shouldUseFallback) {
@@ -266,6 +280,9 @@ export function useChatHistory({
   );
 
   const personal = reactiveResult?.personal ?? personalFallback;
+  const multiModelSiblings = reactiveResult
+    ? (reactiveResult.multiModelSiblings ?? [])
+    : siblingsFallback;
   const project = reactiveResult?.project ?? projectFallback;
 
   const archiveAllActive = useCallback(async () => {
@@ -305,6 +322,7 @@ export function useChatHistory({
   return {
     personal,
     project,
+    multiModelSiblings,
     loading,
     error: isReactive ? null : fallbackError,
     isReactive,

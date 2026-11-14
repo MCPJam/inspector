@@ -65,6 +65,8 @@ export interface ChatHistoryListResponse {
   ok: boolean;
   personal: ChatHistorySession[];
   project: ChatHistorySession[];
+  /** Columns of the page's multi-model sessions that fell outside the page. */
+  multiModelSiblings?: ChatHistorySession[];
 }
 
 export interface ResumeConfig {
@@ -276,6 +278,7 @@ export async function listChatHistory(
     status: "active" | "archived";
     limit?: number;
     before?: number;
+    includeMultiModelSiblings?: boolean;
   },
   requestOptions?: ChatHistoryRequestOptions
 ): Promise<ChatHistoryListResponse> {
@@ -284,6 +287,8 @@ export async function listChatHistory(
   searchParams.set("status", params.status);
   if (params.limit) searchParams.set("limit", String(params.limit));
   if (params.before) searchParams.set("before", String(params.before));
+  if (params.includeMultiModelSiblings)
+    searchParams.set("includeMultiModelSiblings", "true");
 
   return webGet<ChatHistoryListResponse>(
     `/api/web/chat-history/list?${searchParams.toString()}`,
@@ -338,6 +343,31 @@ export async function getMultiModelSessionGroup(
   if (params.projectId) searchParams.set("projectId", params.projectId);
   return webGet(
     `/api/web/chat-history/group?${searchParams.toString()}`,
+    requestOptions,
+  );
+}
+
+export type MultiModelGroupAction =
+  | "rename"
+  | "pin"
+  | "unpin"
+  | "archive"
+  | "unarchive";
+
+/** Rename, pin or archive every column of a multi-model session at once. */
+export async function chatHistoryGroupAction(
+  action: MultiModelGroupAction,
+  groupId: string,
+  title?: string,
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<{ ok: boolean }> {
+  return webPost<Record<string, unknown>, { ok: boolean }>(
+    "/api/web/chat-history/action",
+    {
+      action: `group-${action}`,
+      groupId,
+      ...(title !== undefined ? { title } : {}),
+    },
     requestOptions,
   );
 }
