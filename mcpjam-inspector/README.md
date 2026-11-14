@@ -199,4 +199,4 @@ Some of our partners and favorite frameworks:
 
 # License 📄
 
-Licensed under the **Apache License 2.0**, except for the server's `services/` directory and `routes/mcp/evals.ts`, which are licensed under the [MCPJam Enterprise Edition License](LICENSE-EE). See [LICENSE](LICENSE) for details.
+Licensed under the **Apache License 2.0**, except for a named set of hosted team and CI modules in the server (organization admin, scheduled evals, GitHub checks, production checks and Connector Bench workers), which are licensed under the [MCPJam Enterprise Edition License](LICENSE-EE). Local use of the Inspector, including local evals and conformance checks, is Apache 2.0. See [LICENSE](LICENSE) for the exact file list.

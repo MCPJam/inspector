@@ -148,4 +148,4 @@ We're grateful you're considering it. Read the [contributing guide](CONTRIBUTING
 
 # 📄 License
 
-Licensed under the **Apache License 2.0**, except for the Inspector server's `services/` directory and `routes/mcp/evals.ts`, which are licensed under the [MCPJam Enterprise Edition License](mcpjam-inspector/server/evals/LICENSE). See [LICENSE](LICENSE) for details.
+Licensed under the **Apache License 2.0**, except for a named set of hosted team and CI modules in the Inspector server (organization admin, scheduled evals, GitHub checks, production checks and Connector Bench workers), which are licensed under the [MCPJam Enterprise Edition License](mcpjam-inspector/server/evals/LICENSE). Local use of the Inspector, including local evals and conformance checks, is Apache 2.0. The SDK and some other packages are MIT. See [LICENSE](LICENSE) for the exact file list.
