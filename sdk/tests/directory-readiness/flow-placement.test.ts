@@ -283,6 +283,54 @@ describe("staleness", () => {
     });
   });
 
+  it("marks an unsure flag stale when an answer it read changed", () => {
+    const unsure = finding("claude.experience.tool-overlap", {
+      details: { confidence: "low" },
+    });
+    const now = completeAnswers([
+      answer("connection.serverUrl", "https://other.example.com/mcp"),
+    ]);
+    const [entry] = place([unsure], now, graded).flatMap(
+      (step) => step.findings
+    );
+    expect(entry).toMatchObject({
+      evidenceStatus: "stale",
+      staleBecause: ["connection.serverUrl"],
+    });
+  });
+
+  it("ages a confirmation result when only who stood behind an answer changed", () => {
+    const access = (origin: DirectoryAnswer["origin"]): DirectoryAnswer => ({
+      ...answer("useCases.access", "read-only"),
+      origin,
+    });
+    for (const [then, now] of [
+      ["default", "confirmed"],
+      ["confirmed", "set"],
+      ["set", "confirmed"],
+    ] as const) {
+      const steps = place(
+        findings,
+        completeAnswers([access(now)]),
+        completeAnswers([access(then)])
+      );
+      const label = `${then} to ${now}`;
+      expect(
+        placed(steps, "claude.submission.declarations-confirmed"),
+        label
+      ).toMatchObject({
+        evidenceStatus: "stale",
+        staleBecause: ["useCases.access"],
+      });
+      // The read/write comparison reads only the value.
+      expect(
+        placed(steps, "claude.submission.access-matches-annotations")
+          .evidenceStatus,
+        label
+      ).toBe("established");
+    }
+  });
+
   it("counts a confirmation under new wording as a change", () => {
     const confirm = (wordingRevision: string): DirectoryAnswer => ({
       ...answer("compliance.acknowledgments", ACKNOWLEDGMENT_VALUES),
@@ -300,7 +348,7 @@ describe("staleness", () => {
     });
   });
 
-  it("ignores the order of a row's keys and the merged defaults", () => {
+  it("ignores row key order, and a hand-set default ages only confirmations", () => {
     const reordered = completeAnswers([
       answer("useCases.pairs", [
         { examplePrompt: "Where is order 1042?", useCase: "Track an order" },
@@ -309,7 +357,16 @@ describe("staleness", () => {
     ]);
     const steps = place(findings, reordered, graded);
     const all = steps.flatMap((step) => step.findings);
-    expect(all.filter((entry) => entry.evidenceStatus === "stale")).toEqual([]);
+    // Setting the default by hand stands behind it, which only the checks
+    // that read confirmations care about.
+    expect(
+      all
+        .filter((entry) => entry.evidenceStatus === "stale")
+        .map((entry) => [entry.finding.id, entry.staleBecause])
+    ).toEqual([
+      ["claude.submission.data-handling", ["dataHandling.healthData"]],
+      ["claude.submission.declarations-confirmed", ["dataHandling.healthData"]],
+    ]);
   });
 
   it("is never claimed without the answers the run graded", () => {

@@ -43,6 +43,7 @@ export type {
   DirectoryCheckGate,
   DirectoryRunPath,
   DirectoryVerdict,
+  DirectoryVerdictOptions,
 } from "./verdict.js";
 export type {
   DirectoryAnswer,

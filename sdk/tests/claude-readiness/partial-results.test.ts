@@ -251,6 +251,18 @@ describe("metadata discovery nobody answered", () => {
       notEvaluatedReason:
         "no request for Protected Resource Metadata was answered (fetch failed)",
     });
+    // A pointer to another origin is a defect whatever answered.
+    expect(
+      prmStatus({
+        discoveredVia: "not-found",
+        fetchError: "fetch failed",
+        unanswered: true,
+        rejectedPointer: "https://elsewhere.example.com/prm",
+      })
+    ).toMatchObject({
+      status: "violated",
+      details: { rejectedPointer: "https://elsewhere.example.com/prm" },
+    });
     // Answered with 404s, the same result is still the server's defect.
     expect(
       prmStatus({ discoveredVia: "not-found", fetchError: "answered 404" })

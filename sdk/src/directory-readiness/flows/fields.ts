@@ -62,8 +62,9 @@ const STOOD_BEHIND = new Set<DirectoryAnswerOrigin>(["set", "confirmed"]);
 
 /**
  * Declarations nobody has stood behind yet, in form order: the portal's
- * default, a value an import or a reconnect left there, or no answer. A
- * default is what the portal submits when nobody looks, not a statement.
+ * default, a value an import or a reconnect left there, a confirmation of
+ * wording that has since changed, or no answer. A default is what the portal
+ * submits when nobody looks, not a statement.
  */
 export function unconfirmedDeclarations(
   flow: DirectoryFlow,
@@ -78,7 +79,15 @@ export function unconfirmedDeclarations(
   return flow.steps.flatMap((step) =>
     step.fields.flatMap((field) => {
       const answer = byKey.get(field.key);
-      if (!field.declaration || (answer && STOOD_BEHIND.has(answer.origin))) {
+      // A confirmation of words the field no longer shows stands for nothing.
+      const outdated =
+        answer?.origin === "confirmed" &&
+        answer.wordingRevision !==
+          directoryFieldWordingRevision(flow, field.key);
+      if (
+        !field.declaration ||
+        (answer && STOOD_BEHIND.has(answer.origin) && !outdated)
+      ) {
         return [];
       }
       return [

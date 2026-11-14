@@ -5,9 +5,12 @@
  * every finding whatever the gate, and the result names the gate it applied.
  *
  * A gated check with no current verdict (not evaluated, blocked, stale or
- * never reported) makes the run `incomplete`. A check the run's path can
- * never evaluate, or whose evidence no run gathers yet, is listed apart, with
- * the reason, and leaves the default gate unless `failOn` names it.
+ * never reported) makes the run `incomplete`. A run cannot show that it never
+ * reported a check, so the caller names the directory's blocking checks in
+ * `blocking`, and one of those the run left out is unknown too. A check the
+ * run's path can never evaluate, or whose evidence no run gathers yet, is
+ * listed apart, with the reason, and leaves the default gate unless `failOn`
+ * names it.
  *
  * Pure. Safe from the browser entry.
  */
@@ -70,9 +73,19 @@ function pathLimit(
   return signIn ? NO_SIGN_IN_RECORD : undefined;
 }
 
+export interface DirectoryVerdictOptions {
+  checkGate?: DirectoryCheckGate;
+  path: DirectoryRunPath;
+  /**
+   * Every `required` or `runtime-blocker` check the directory defines. One
+   * the run did not report is unknown unless `warnOnly` names it.
+   */
+  blocking?: readonly string[];
+}
+
 export function directoryVerdict(
   findings: ReadonlyArray<DirectoryReadinessFinding | PlacedFinding>,
-  options: { checkGate?: DirectoryCheckGate; path: DirectoryRunPath }
+  options: DirectoryVerdictOptions
 ): DirectoryVerdict {
   const failOn = new Set(options.checkGate?.failOn ?? []);
   const warnOnly = new Set(
@@ -108,8 +121,12 @@ export function directoryVerdict(
       failing.add(finding.id);
     }
   }
-  // A check the gate names that the run never reported was not checked.
-  for (const id of failOn) {
+  // A gated check the run never reported was not checked.
+  const expected = [
+    ...failOn,
+    ...(options.blocking ?? []).filter((id) => !warnOnly.has(id)),
+  ];
+  for (const id of expected) {
     if (!reported.has(id)) undetermined.add(id);
   }
 

@@ -42,7 +42,10 @@ export interface ValidateOpenAIPortalDocumentOptions {
 type Failure = Pick<OpenAIPortalCodeViolation, "observed" | "expected">;
 
 interface Found {
+  /** For display: keys joined with `.`, so a key holding `.` reads ambiguously. */
   path: string;
+  /** The keys and list indexes to the value, which ancestry is read from. */
+  segments: readonly (string | number)[];
   value: unknown;
 }
 
@@ -62,30 +65,32 @@ const join = (path: string, key: string) => (path ? `${path}.${key}` : key);
  * a list, where a lone value counts as a list of one.
  */
 function locate(document: unknown, field: string): Found[] {
-  let found: Found[] = [{ path: "", value: document }];
+  let found: Found[] = [{ path: "", segments: [], value: document }];
   for (const segment of field.split(".")) {
-    found = found.flatMap(({ path, value }): Found[] => {
+    found = found.flatMap(({ path, segments, value }): Found[] => {
       if (segment === "*") {
         return isRecord(value)
           ? Object.entries(value).map(([key, child]) => ({
               path: join(path, key),
+              segments: [...segments, key],
               value: child,
             }))
           : [];
       }
       const list = segment.endsWith("[]");
       const key = list ? segment.slice(0, -2) : segment;
-      const at = join(path, key);
+      const at = { path: join(path, key), segments: [...segments, key] };
       const child =
         isRecord(value) && Object.hasOwn(value, key) ? value[key] : undefined;
-      if (!list) return [{ path: at, value: child }];
+      if (!list) return [{ ...at, value: child }];
       if (Array.isArray(child)) {
         return child.map((entry, index) => ({
-          path: `${at}[${index}]`,
+          path: `${at.path}[${index}]`,
+          segments: [...at.segments, index],
           value: entry,
         }));
       }
-      return child === undefined ? [] : [{ path: at, value: child }];
+      return child === undefined ? [] : [{ ...at, value: child }];
     });
   }
   return found;
@@ -174,21 +179,17 @@ export function validateOpenAIPortalDocument(
   { stage = "upload" }: ValidateOpenAIPortalDocumentOptions = {}
 ): OpenAIPortalCodeViolation[] {
   const violations: OpenAIPortalCodeViolation[] = [];
-  const stopped: string[] = [];
-  const isStopped = (path: string) =>
-    stopped.some(
-      (stop) =>
-        path === stop ||
-        path.startsWith(`${stop}.`) ||
-        path.startsWith(`${stop}[`)
-    );
+  const stopped: (readonly (string | number)[])[] = [];
+  // By segments: `apps.notes` is not an ancestor of `apps["notes.backup"]`.
+  const isStopped = (segments: readonly (string | number)[]) =>
+    stopped.some((stop) => stop.every((part, at) => segments[at] === part));
 
   for (const definition of OPENAI_PORTAL_CODES) {
     const { field, rules } = definition;
     if (definition.document !== document || !field || !rules) continue;
     if (!checkedAt(definition, stage)) continue;
     for (const found of locate(value, field)) {
-      if (isStopped(found.path)) continue;
+      if (isStopped(found.segments)) continue;
       for (const rule of rules) {
         const failed = failure(rule, found.value, stage);
         if (!failed) continue;
@@ -197,7 +198,7 @@ export function validateOpenAIPortalDocument(
           field: found.path,
           ...failed,
         });
-        if (STOPS.has(rule.kind)) stopped.push(found.path);
+        if (STOPS.has(rule.kind)) stopped.push(found.segments);
         break;
       }
     }

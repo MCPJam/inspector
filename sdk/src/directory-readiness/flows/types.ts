@@ -202,6 +202,11 @@ export interface DirectoryCheckPlacement {
   field?: string;
   /** Answer keys the check reads; a change to one makes its result stale. */
   reads?: string[];
+  /**
+   * The result also depends on whether someone stood behind a declaration it
+   * reads, so a change of origin alone makes it stale.
+   */
+  readsConfirmation?: boolean;
   needs?: DirectoryCheckNeed[];
 }
 
@@ -244,7 +249,8 @@ export interface DirectoryFieldIssue {
  *
  *   - `established` — the run reached a settled result.
  *   - `inconclusive` — a model flagged something and said it was unsure.
- *   - `stale` — established, but an answer it read has changed since.
+ *   - `stale` — established or inconclusive, but an answer it read has
+ *     changed since.
  *   - `not-tested` — the run did not evaluate it, with a stated reason.
  *   - `blocked` — the run lacked something the check depends on.
  */

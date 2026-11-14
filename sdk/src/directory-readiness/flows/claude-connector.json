@@ -814,6 +814,7 @@
         "dataHandling.healthData",
         "dataHandling.sponsored"
       ],
+      "readsConfirmation": true,
       "checks": ["claude.submission.data-handling"]
     },
     {
@@ -828,6 +829,7 @@
       "field": "compliance.acknowledgments",
       "needs": [],
       "reads": ["compliance.acknowledgments"],
+      "readsConfirmation": true,
       "checks": ["claude.submission.attestations"]
     },
     {
@@ -865,7 +867,24 @@
         "testLaunch.selfTested",
         "compliance.acknowledgments"
       ],
+      "readsConfirmation": true,
       "checks": ["claude.submission.declarations-confirmed"]
+    },
+    {
+      "step": "review",
+      "needs": [],
+      "reads": [
+        "connection.serverUrl",
+        "connection.differentUrls",
+        "useCases.access",
+        "company.role",
+        "company.anthropicContact",
+        "testLaunch.instructions",
+        "testLaunch.selfTested",
+        "compliance.additionalNotes"
+      ],
+      "readsConfirmation": true,
+      "checks": ["claude.submission.other-answers"]
     }
   ],
   "laneSteps": {
