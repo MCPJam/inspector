@@ -544,3 +544,36 @@ describe("buildOptionPrompt", () => {
     );
   });
 });
+
+describe("problem view edge cases", () => {
+  it("renders recorded problems even when the snapshot is missing", () => {
+    renderPanel({ snapshot: null });
+    expect(screen.getByTestId("problems-carousel")).toBeVisible();
+  });
+
+  it("shows decision criteria when an option has no hypothesis", () => {
+    const only = option({
+      id: "criteria-only",
+      kind: "experiment",
+      hypothesis: undefined,
+      supportsIf: "The rerun passes the id.",
+      weakensIf: "The rerun still passes a name.",
+    });
+    render(
+      <ProblemDetailsContent
+        problem={problem({ options: [only], recommendedOptionId: only.id })}
+        context={{ rerunLabel: "this eval suite" }}
+      />,
+    );
+    expect(screen.getByText("Supports it if")).toBeVisible();
+    expect(screen.getByText("The rerun still passes a name.")).toBeVisible();
+  });
+
+  it("does not attribute fixed guidance to the trace analysis", () => {
+    const prompt = buildOptionPrompt(
+      problem(),
+      option({ source: "policy", kind: "investigation" }),
+    );
+    expect(prompt).not.toContain("written by the trace analysis");
+  });
+});
