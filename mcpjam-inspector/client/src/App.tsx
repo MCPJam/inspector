@@ -2729,7 +2729,6 @@ export function OAuthFlowRoute() {
 
 export function XAAFlowRoute() {
   const {
-    xaaEnabled,
     appState,
     displayServerConfigs,
     areServersHydrated,
@@ -2741,7 +2740,6 @@ export function XAAFlowRoute() {
     xaaServerModalNonce,
     xaaDebuggerHasHeaderServers,
   } = useAppRouteContext();
-  if (xaaEnabled !== true) return null;
 
   return (
     <ErrorBoundary
@@ -3172,7 +3170,6 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const xaaEnabled = useFeatureFlagEnabled("xaa");
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -3180,7 +3177,7 @@ export default function App() {
   const headerHiddenSurface: HeaderSurface | null =
     activeTab === "oauth-flow"
       ? "oauth"
-      : activeTab === "xaa-flow" && xaaEnabled === true
+      : activeTab === "xaa-flow"
         ? "xaa"
         : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
@@ -5917,13 +5914,7 @@ export default function App() {
       // Only bounce on an explicit `false`. While PostHog hydrates the flag is
       // `undefined`; redirecting then would strand a flagged-in user who
       // cold-loads /compatibility (the redirect fires before the flag
-      // resolves) — the "refresh sends me home" bug. Mirrors the xaa branch.
-      navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
-      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
-      // `undefined`; redirecting then would strand a flagged-in user who
-      // cold-loads /xaa-flow (the redirect fires before the flag resolves) —
-      // which is exactly the "refresh sends me home" bug. Mirrors ComputerRoute.
+      // resolves) — the "refresh sends me home" bug.
       navigateToTarget(defaultHubRoute, { replace: true });
     }
   }, [
@@ -5933,7 +5924,6 @@ export default function App() {
     defaultHubRoute,
     registryEnabled,
     learningEnabled,
-    xaaEnabled,
     isAuthenticated,
     isAuthLoading,
     activeTab,
@@ -6495,7 +6485,7 @@ export default function App() {
     activeTab === "events" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
-    (activeTab === "xaa-flow" && xaaEnabled === true) ||
+    activeTab === "xaa-flow" ||
     activeTab === "chat";
 
   const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
@@ -6524,7 +6514,7 @@ export default function App() {
           // which strands the user on an error page when the client isn't
           // registered). Save without connecting, then select it as the target.
           onConnect:
-            activeTab === "xaa-flow" && xaaEnabled === true
+            activeTab === "xaa-flow"
               ? async (formData) => {
                   await saveServerConfigWithoutConnecting(formData);
                   const name = formData.name?.trim();
@@ -6538,7 +6528,7 @@ export default function App() {
           // the active debugger's modal so it matches the in-canvas "Configure"
           // button; other tabs fall back to the generic modal (prop omitted).
           onAddServerRequested:
-            activeTab === "xaa-flow" && xaaEnabled === true
+            activeTab === "xaa-flow"
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
                 ? () => setOauthServerModalNonce((n) => n + 1)
@@ -6547,9 +6537,8 @@ export default function App() {
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true),
-          includeXaaServers: activeTab === "xaa-flow" && xaaEnabled === true,
+            activeTab === "oauth-flow" || activeTab === "xaa-flow",
+          includeXaaServers: activeTab === "xaa-flow",
           // Only the OAuth / XAA debugger headers get the "hide from this tab"
           // x button; other surfaces omit onHideServer so no x renders.
           hiddenServers: hiddenHeaderServers,
@@ -6561,8 +6550,7 @@ export default function App() {
           // target and it must not change without an explicit click. Other
           // tabs keep full auto-select (stale selections get replaced).
           autoSelectFilteredServer:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true)
+            activeTab === "oauth-flow" || activeTab === "xaa-flow"
               ? "when-empty"
               : true,
           showOnlyServersWithViews: false,
@@ -6701,7 +6689,6 @@ export default function App() {
     toggleServerSelection,
     upgradePlanForActiveTab,
     workOsUser,
-    xaaEnabled,
     oauthDebuggerHasHeaderServers,
     xaaDebuggerHasHeaderServers,
     xaaServerModalNonce,

@@ -6197,30 +6197,11 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
   });
 
-  it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
+  it("renders xaa-flow", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/home");
-    expect(screen.queryByTestId("xaa-flow-tab")).not.toBeInTheDocument();
-  });
-
-  it("renders xaa-flow when the xaa flag is enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/xaa-flow");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false,
-    );
 
     render(<App />);
 
@@ -6237,9 +6218,6 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false,
-    );
     const appStateMock = createAppStateMock();
     const currentProjectServers = {
       "current-project-xaa-oauth": {
