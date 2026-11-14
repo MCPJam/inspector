@@ -193,6 +193,8 @@ describe("field rules", () => {
     expect(field("useCases.pairs")?.pairs?.maxRows).toBe(
       CLAUDE_SUBMISSION_LIMITS.useCasesMax
     );
+    // The portal shows all three rows at once, empty or not.
+    expect(field("useCases.pairs")?.pairs?.grow).toBeUndefined();
     expect(field("compliance.acknowledgments")).toMatchObject({
       minItems: 7,
       control: "checkbox-group",

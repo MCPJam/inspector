@@ -55,6 +55,16 @@ export function Chip({
   );
 }
 
+/** Beside a tab, a button or a step whose content holds open findings. */
+export function FindingsDot({ className }: { className?: string }) {
+  return (
+    <>
+      <span aria-hidden="true" className={cn("size-1.5 rounded-full bg-warning", className)} />
+      <span className="sr-only">, has findings</span>
+    </>
+  );
+}
+
 const textOf = (value: unknown) =>
   typeof value === "string" && value.trim() ? value : undefined;
 

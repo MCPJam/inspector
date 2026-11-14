@@ -60,6 +60,8 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/directory-submissions/sub_1",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/runs",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/results",
+    // A status someone records from the ChatGPT page's submit dialog.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });
@@ -96,7 +98,7 @@ describe("authFetch bearer on directory-readiness routes", () => {
     // Submission paths stay as narrow as the run paths above.
     "/api/v1/directory-flows/claude-connector/steps",
     "/api/v1/projects/proj_1/directory-submissions-export",
-    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events/evt_1",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/runs/run_1",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {

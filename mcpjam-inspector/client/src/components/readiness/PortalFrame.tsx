@@ -111,7 +111,7 @@ function StepBody({
   );
 }
 
-function SaveNote({ session }: { session: DirectorySubmissionSession }) {
+export function SaveNote({ session }: { session: DirectorySubmissionSession }) {
   if (session.saving) return <>Saving draft…</>;
   if (session.error) {
     return (

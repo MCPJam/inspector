@@ -462,9 +462,9 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // attempt, and resuming or cancelling it.
   /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel))?)?$/,
   // The /readiness page: the flows it copies, and a project's directory
-  // submissions with their runs and results.
+  // submissions with their runs, results and recorded events.
   /^\/api\/v1\/directory-flows(\/[^/]+)?$/,
-  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results|events))?)?$/,
   // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
   // change: without this entry the UI's hint would silently 401, since
   // `/api/v1/projects/` is not a prefix this list grants wholesale — see the

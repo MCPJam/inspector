@@ -1,7 +1,8 @@
 /**
  * MCPJam's reviewer path, on the step where the portal asks for a way in
- * (Claude's Test & launch). The portal has no such block, so it is drawn
- * apart from the copy and marked "MCPJam":
+ * (Claude's Test & launch, and the password of ChatGPT's reviewer
+ * credentials). The portal has no such block, so it is drawn apart from the
+ * copy and marked "MCPJam":
  *
  * - the reviewer's credentials, written straight to project secrets and never
  *   shown again, as the portal keeps its own secret;
@@ -371,6 +372,9 @@ export function ReviewerSection({
   const loading =
     rehearsal.attempt === undefined ||
     (credentials.saved === undefined && !savedHere);
+  // A form that asks for the password as a secret's name, as ChatGPT's
+  // does, is answered with the name the save wrote.
+  const secret = step.fields.find((field) => field.control === "secret");
   return (
     <section
       aria-label="Reviewer path"
@@ -399,7 +403,12 @@ export function ReviewerSection({
               ].filter((name): name is string => Boolean(name))}
               here={here}
               stage={path.credentials}
-              onSaved={() => setSavedHere(true)}
+              onSaved={() => {
+                setSavedHere(true);
+                if (secret) {
+                  onAnswer(secret.key, credentials.names.passwordSecretName);
+                }
+              }}
             />
             {path.rows.map((row, index) => (
               <PathRowItem

@@ -2,6 +2,7 @@
  * The generic field renderer: every control a flow can name, drawn from the
  * flow definition and answering with the value shape the API stores.
  */
+import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -30,6 +31,18 @@ function draw(
     <PortalField field={field} value={value} onChange={onChange} {...props} />,
   );
   return { onChange, ...view };
+}
+
+/** The answer kept as the page keeps it, so rows grow as the person types. */
+function Answered({
+  field,
+  initial,
+}: {
+  field: DirectoryFlowField;
+  initial: DirectoryAnswerValue;
+}) {
+  const [value, setValue] = useState(initial);
+  return <PortalField field={field} value={value} onChange={setValue} />;
 }
 
 const options = [
@@ -199,6 +212,13 @@ describe("PortalField", () => {
     expect(onChange).toHaveBeenLastCalledWith([]);
   });
 
+  it("pairs: the portal's use cases keep their three fixed rows, filled or not", () => {
+    draw(claudeField("useCases.pairs"), [
+      { useCase: "Run a suite", examplePrompt: "Run my sample suite." },
+    ]);
+    expect(screen.getAllByRole("textbox")).toHaveLength(6);
+  });
+
   it("server: selects the submission's server URL", async () => {
     const field = claudeField("connection.serverUrl");
     const serverUrl = "https://mcp.example.com/mcp";
@@ -259,5 +279,63 @@ describe("PortalField", () => {
     expect(screen.getByText("Established")).toBeVisible();
     expect(screen.getByText("Verified on your server")).toBeVisible();
     expect(screen.getByText("Serve the endpoint over https.")).toBeVisible();
+  });
+});
+
+describe("PortalField pairs that grow: MCPJam's fixtures", () => {
+  const fixtures = claudeField("testLaunch.fixtures");
+  const max = fixtures.pairs?.maxRows ?? 0;
+  const rows = () => screen.getAllByRole("textbox").length / 2;
+  const filled = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      fixture: `Sample ${index + 1}`,
+      lookup: `get_sample {"id": ${index + 1}}`,
+    }));
+
+  it("an empty field shows one row, with its placeholder", () => {
+    render(<Answered field={fixtures} initial={[]} />);
+    expect(rows()).toBe(1);
+    expect(screen.getByLabelText("Resource 1")).toHaveAttribute(
+      "placeholder",
+      "Sample Project",
+    );
+  });
+
+  it("filling the last row adds the next, and focus stays where the person types", async () => {
+    const user = userEvent.setup();
+    render(<Answered field={fixtures} initial={[]} />);
+    await user.type(screen.getByLabelText("Resource 1"), "Sample Project");
+    expect(rows()).toBe(2);
+    expect(screen.getByLabelText("Resource 1")).toHaveFocus();
+    expect(screen.getByLabelText("Resource 1")).toHaveValue("Sample Project");
+    await user.type(screen.getByLabelText("Lookup 2"), "get_project");
+    expect(rows()).toBe(3);
+    expect(screen.getByLabelText("Lookup 2")).toHaveFocus();
+    expect(screen.getByLabelText("Lookup 2")).toHaveValue("get_project");
+  });
+
+  it("clearing the last filled row drops back to one blank", async () => {
+    const user = userEvent.setup();
+    render(
+      <Answered
+        field={fixtures}
+        initial={[{ fixture: "Sample Project", lookup: "" }]}
+      />,
+    );
+    expect(rows()).toBe(2);
+    await user.clear(screen.getByLabelText("Resource 1"));
+    expect(rows()).toBe(1);
+    expect(screen.getByLabelText("Resource 1")).toHaveFocus();
+  });
+
+  it("stops at maxRows", () => {
+    const { unmount } = render(
+      <Answered field={fixtures} initial={filled(max - 1)} />,
+    );
+    expect(rows()).toBe(max);
+    unmount();
+    render(<Answered field={fixtures} initial={filled(max)} />);
+    expect(rows()).toBe(max);
+    expect(screen.queryByLabelText(`Resource ${max + 1}`)).toBeNull();
   });
 });
