@@ -143,7 +143,7 @@ const SETTLE_WAIT_MS = 1_500;
 const PAGE_STAGES = new Set(["sign-in", "verification", "consent"]);
 const START_AGAIN = "Start a new attempt.";
 const PERSON_SIGN_IN =
-  "Sign in as the reviewer yourself to see what the page asks for, then resume this attempt.";
+  "Change the sign-in so it asks the reviewer only for an email and password. Then resume this attempt.";
 
 type Scrub = (text: string) => string;
 
@@ -353,7 +353,7 @@ async function drivePages(drive: Drive): Promise<Ending> {
         "verification",
         "blocked",
         `The sign-in page asked for a verification step MCPJam cannot complete: "${scrub(seen.quote)}".`,
-        "Sign in as the reviewer and complete the verification, or turn it off for the reviewer account. Then resume this attempt.",
+        "The reviewer account must sign in without a verification step or a bot check, because directory reviewers can't complete one either. Turn it off for that account, or save credentials for an account that has none. Then resume this attempt.",
       );
     }
     if (seen.kind === "consent") {
@@ -362,7 +362,7 @@ async function drivePages(drive: Drive): Promise<Ending> {
           "consent",
           "blocked",
           "MCPJam could not tell which control on the consent page approves access, so it clicked none.",
-          "Approve access as the reviewer yourself, then resume this attempt.",
+          "Give the consent page one button that approves access, such as Allow. Then resume this attempt.",
         );
       }
       const detail = `MCPJam approved access on the consent page ("${scrub(seen.approve.name)}").`;
