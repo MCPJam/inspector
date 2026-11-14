@@ -182,6 +182,7 @@ import {
   prepareEvalRun,
   authorEvalSuite,
   createConvexClients,
+  evalLaunchWritesSuite,
   resolveServerIdsOrThrow,
   type PreparedEvalRun,
   type RunEvalsRequest,
@@ -228,6 +229,13 @@ import {
 } from "../../services/eval-trace-access-audit.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
+import {
+  assertSuiteWritableViaApi,
+  declaredSuiteIdOf,
+  fileSyncArg,
+  fileSyncBodyShape,
+  isCiOwnedSuiteDoc,
+} from "./ci-owned-suite.js";
 import {
   translateConvexWriteError as translateConvexError,
   translateImportIneligibleError,
@@ -2398,27 +2406,6 @@ type SuiteDoc = Record<string, any>;
  */
 const PUBLIC_UNWRITABLE_JUDGE_SLOTS = ["groundedness", "rubricChecks"] as const;
 
-/**
- * Whether the platform will refuse configuration writes to this suite.
- *
- * MIRRORS the backend's `isCiOwnedSuite`, deliberately and with the same two
- * clauses — a committed suite file's `declaredSuiteId`, or `source: 'sdk'` from
- * ingest. This copy is DESCRIPTIVE ONLY: Convex is the guard, and no route here
- * refuses anything on the strength of this predicate. Its whole job is to let
- * the DTO say so before the caller finds out from a 409.
- *
- * NOT `lastSdkRunAt`. CI reporting a result into a UI-authored suite does not
- * make that suite CI-owned, and saying otherwise here would advertise a lock
- * the platform does not apply.
- */
-function isCiOwnedSuiteDoc(suite: SuiteDoc): boolean {
-  const declared = suite.declaredSuiteId;
-  return (
-    (typeof declared === "string" && declared.length > 0) ||
-    suite.source === "sdk"
-  );
-}
-
 function toSuiteDetailDto(
   suite: SuiteDoc,
   execConfig: any,
@@ -3084,62 +3071,6 @@ const publicCaseBodyShape = {
  * that carries one is a 400, never a silently-stripped field.
  */
 const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
-
-/**
- * The suite-file sync marker, on every write route a `mcpjam cloud eval run
- * --file` sync makes.
- *
- * A CI-owned suite (one with a `declaredSuiteId`, or created by SDK ingest) is
- * read-only from the app AND from this API — the platform refuses the write.
- * The file's own sync is the exception, and this is how it says so: by naming
- * the declared id, which only something holding the file can know. The platform
- * allows the write iff the id is the suite's own.
- *
- * NOT A CAPABILITY, and no route-level check. Naming an id you do not own gets
- * you nothing, and the guard is Convex's — a second copy of the ownership rule
- * here would be a copy that can disagree with the one that decides.
- *
- * ============================================================================
- * IT RIDES THE QUERY STRING, NOT THE BODY
- * ============================================================================
- *
- * Every body on these routes is `.strict()`, here and on every Inspector that
- * predates this change. A strict object REFUSES an unknown key, so a body field
- * is a 400 against an older deployment — the same reason the launcher rides a
- * header rather than the run-launch body.
- *
- * That matters far more here than it does for the launcher. A dropped launcher
- * costs a badge; a rejected `--file` sync costs the CLI's whole CI command,
- * against any self-hosted Inspector the user has not upgraded in lockstep with
- * their `@mcpjam/cli`. And the CLI sends this on EVERY file-sync write, so the
- * break would not be occasional. A query parameter is read by the deployments
- * that know it and ignored by the ones that do not, which is exactly the
- * degradation this needs: an Inspector with no lock has nothing to make an
- * exception to.
- *
- * The body shape below is kept so this server accepts either spelling. Nothing
- * has shipped sending the body form, but a route that refuses a marker it
- * understands would be its own compatibility break.
- */
-const fileSyncBodyShape = {
-  declaredSuiteId: z.string().min(1).max(128).optional(),
-} as const;
-
-/**
- * The `fileSync` mutation argument, or nothing.
- *
- * Nothing, rather than `fileSync: undefined`: a platform deployment that
- * predates the CI-owned lock does not know this argument and rejects the whole
- * call for an unknown field, so sending it unconditionally would break every
- * suite edit against an older backend.
- */
-function fileSyncArg(declaredSuiteId: string | undefined | null): {
-  fileSync?: { declaredSuiteId: string };
-} {
-  const trimmed =
-    typeof declaredSuiteId === "string" ? declaredSuiteId.trim() : "";
-  return trimmed.length > 0 ? { fileSync: { declaredSuiteId: trimmed } } : {};
-}
 
 /**
  * The vocabulary-2 case body: the same fields, with the legacy floor spelled
@@ -4554,6 +4485,8 @@ async function resolveLaunchServers(params: {
   requestedServerNames: string[] | undefined;
   ephemeralEnvironment?: boolean;
 }): Promise<{
+  /** The suite the selection read, for callers that check more than scope. */
+  suite: SuiteDoc | undefined;
   environmentId: string | undefined;
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   serverIds: string[];
@@ -4569,16 +4502,19 @@ async function resolveLaunchServers(params: {
   // `selectSuiteEnvironmentId` for the full rule. Inline-only runs (no suiteId)
   // have no attachments to consult, and the schema already forbids
   // `environmentId` without a `suiteId`.
-  const environmentId = suiteId
+  const suite = suiteId
+    ? await readSuiteInProject(
+        convexAuthToken,
+        projectId,
+        suiteId,
+        params.suiteReadPhase,
+      )
+    : undefined;
+  const environmentId = suite
     ? await selectSuiteEnvironmentId({
         convexAuthToken,
         projectId,
-        suite: await readSuiteInProject(
-          convexAuthToken,
-          projectId,
-          suiteId,
-          params.suiteReadPhase,
-        ),
+        suite,
         requestedEnvironmentId: params.requestedEnvironmentId,
         hasServerOverride: params.requestedServerIds.length > 0,
         serverField: "serverIds",
@@ -4625,7 +4561,7 @@ async function resolveLaunchServers(params: {
     serverNames = selection.serverNames;
   }
 
-  return { environmentId, environmentLaunch, serverIds, serverNames };
+  return { suite, environmentId, environmentLaunch, serverIds, serverNames };
 }
 
 /** A target in the caller's own words, for a per-target error message. */
@@ -4713,7 +4649,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // same swap `runEphemeralConnection` does for the synchronous routes.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
-  const { environmentId, environmentLaunch, serverIds, serverNames } =
+  const { suite, environmentId, environmentLaunch, serverIds, serverNames } =
     await resolveLaunchServers({
       convexAuthToken,
       projectId,
@@ -4727,6 +4663,19 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         ? { ephemeralEnvironment: true }
         : {}),
     });
+  // A launch that writes the suite (D11) meets the same refusal as the case
+  // routes, before any server connects. It takes no marker: the run path
+  // writes without one, so the platform would refuse it anyway.
+  if (
+    suite &&
+    evalLaunchWritesSuite({
+      suiteRerun,
+      refreshSnapshot: body.refreshSnapshot,
+      environmentLaunch: Boolean(environmentId),
+    })
+  ) {
+    assertSuiteWritableViaApi(suite);
+  }
 
   // Resolve all inline attachments before authoring, including server picks.
   const hostAttachments = body.hosts?.length
@@ -8686,6 +8635,8 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  const declaredSuiteId = declaredSuiteIdOf(c, body);
+  assertSuiteWritableViaApi(suite!, declaredSuiteId);
 
   // Precheck the one environment rejection a caller is likely to hit, before
   // any of the edits below commit — this handler applies several mutations in
@@ -8940,7 +8891,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           ...revision,
           note: body.revisionNote,
         },
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -8954,7 +8905,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("testSuites:updateTestSuite" as any, {
         ...updateArgs,
         revision,
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -8981,7 +8932,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           body.hosts,
         ),
         revision,
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -9074,7 +9025,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("hostConfigsV2:setSuiteConfig" as any, {
         suiteId,
         input,
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -9094,7 +9045,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         suiteId,
         environmentIds: body.environmentIds,
         revision,
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -9152,7 +9103,15 @@ evals.post(
     // Scope check first: Convex enforces membership, and this makes a valid id
     // from another of the caller's projects read as NOT_FOUND rather than
     // leaking across the scope the path declares.
-    await readSuiteInProject(token, projectId, suiteId, "preflight");
+    const suite = await readSuiteInProject(
+      token,
+      projectId,
+      suiteId,
+      "preflight",
+    );
+    // No marker to stand aside for: `attachEnvironment` takes no `fileSync`,
+    // so a file sync cannot write here either.
+    assertSuiteWritableViaApi(suite);
 
     const { convexClient } = createConvexClients(token);
     let result: { attached?: boolean; environmentIds?: unknown };
@@ -9252,6 +9211,8 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  const declaredSuiteId = declaredSuiteIdOf(c, body);
+  assertSuiteWritableViaApi(suite!, declaredSuiteId);
   // Enabling reuses the suite's saved interval when none is supplied (one-click
   // re-enable after a disable). Only require an interval when there's no saved
   // one to fall back to.
@@ -9300,7 +9261,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       ...(scheduleEnvironmentId
         ? { environmentId: scheduleEnvironmentId }
         : {}),
-      ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+      ...fileSyncArg(declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -9412,6 +9373,8 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  const declaredSuiteId = declaredSuiteIdOf(c, body);
+  assertSuiteWritableViaApi(suite!, declaredSuiteId);
   assertCasePolicyFieldsSupported(
     suite,
     body,
@@ -9441,7 +9404,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     result = await createEvalCasesInBatches(convexClient, {
       suiteId,
       cases: [item],
-      ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+      ...fileSyncArg(declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -9502,6 +9465,8 @@ evals.post(
       );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
+    const declaredSuiteId = declaredSuiteIdOf(c, body);
+    assertSuiteWritableViaApi(suite!, declaredSuiteId);
     // Checked for EVERY case before any of them is authored, like
     // `assertCreatableCase` above: rejecting case 42 after 41 siblings landed
     // leaves the caller reconciling a partial write it cannot retry cleanly.
@@ -9573,7 +9538,7 @@ evals.post(
           ? { duplicatePolicy: body.duplicatePolicy }
           : {}),
         ...(body.overrideReason ? { overrideReason: body.overrideReason } : {}),
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -9632,19 +9597,31 @@ evals.patch(
       caseId,
       "preflight",
     );
-    // The CASE was loaded above; the SUITE was not. Both create paths already
-    // read it for their scope guard, so a PATCH was the one door through which
-    // an inert `repetitions` could still reach storage.
-    //
-    // Read only when the body actually carries a policy field, so an ordinary
-    // title edit does not pay for a second round trip.
-    if (body.repetitions !== undefined || body.passThreshold !== undefined) {
-      assertCasePolicyFieldsSupported(
-        await readSuiteInProject(token, projectId, suiteId, "authorized"),
-        body,
-        "",
-        countFieldNames(vocabularyOf(c)),
+    // The CASE was loaded above; the SUITE was not. It is read for the
+    // CI-owned pre-check and for the policy-field check (both create paths
+    // already read it for their scope guard, so a PATCH was the one door
+    // through which an inert `repetitions` could still reach storage) — and
+    // only when one of them applies, so a file sync's ordinary title edit does
+    // not pay for a second round trip.
+    const declaredSuiteId = declaredSuiteIdOf(c, body);
+    const hasPolicyFields =
+      body.repetitions !== undefined || body.passThreshold !== undefined;
+    if (hasPolicyFields || !fileSyncArg(declaredSuiteId).fileSync) {
+      const suite = await readSuiteInProject(
+        token,
+        projectId,
+        suiteId,
+        "authorized",
       );
+      assertSuiteWritableViaApi(suite, declaredSuiteId);
+      if (hasPolicyFields) {
+        assertCasePolicyFieldsSupported(
+          suite,
+          body,
+          "",
+          countFieldNames(vocabularyOf(c)),
+        );
+      }
     }
     const args = buildCaseMutationArgs(body, {
       forCreate: false,
@@ -9665,9 +9642,7 @@ evals.patch(
           testCaseId: caseId,
           changeSource: "manual",
           ...args,
-          ...fileSyncArg(
-            c.req.query("declaredSuiteId") ?? body.declaredSuiteId,
-          ),
+          ...fileSyncArg(declaredSuiteId),
         },
       );
     } catch (error) {
@@ -9703,14 +9678,21 @@ evals.delete(
       caseId,
       "preflight",
     );
+    // A QUERY PARAM, not a body: this DELETE reads no body at all, and giving
+    // one route a body-carrying delete while its siblings have none is a shape
+    // callers get wrong.
+    const declaredSuiteId = c.req.query("declaredSuiteId");
+    // The suite is read only for the pre-check, which a file sync skips.
+    if (!fileSyncArg(declaredSuiteId).fileSync) {
+      assertSuiteWritableViaApi(
+        await readSuiteInProject(token, projectId, suiteId, "authorized"),
+      );
+    }
     const { convexClient } = createConvexClients(token);
     try {
       await convexClient.mutation("testSuites:deleteTestCase" as any, {
         testCaseId: caseId,
-        // A QUERY PARAM, not a body: this DELETE reads no body at all, and
-        // giving one route a body-carrying delete while its siblings have none
-        // is a shape callers get wrong.
-        ...fileSyncArg(c.req.query("declaredSuiteId")),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -9766,6 +9748,9 @@ evals.post(
       );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
+    // Authoring takes no file-sync marker, so a CI-owned suite is refused
+    // here, before tool discovery connects its servers.
+    assertSuiteWritableViaApi(suite!);
 
     // Which environment (if any) this generation reads tools from — the same
     // attachment-authoritative rule the run route applies, evaluated BEFORE
@@ -9889,6 +9874,8 @@ evals.post(
       );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
+    // Same refusal and reason as `cases/generate`.
+    assertSuiteWritableViaApi(suite!);
 
     const environmentId = await selectSuiteEnvironmentId({
       convexAuthToken: token,
@@ -10007,9 +9994,8 @@ evals.get(
 evals.post(
   "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId/commit",
   async (c) => {
-    const { convexClient: convex } = createConvexClients(
-      await getConvexBearerForRequest(c),
-    );
+    const token = await getConvexBearerForRequest(c);
+    const { convexClient: convex } = createConvexClients(token);
     let job: Record<string, unknown> | null;
     try {
       job = await convex.query("evalAuthoringState:status" as any, {
@@ -10039,6 +10025,17 @@ evals.post(
     const commit = parseWithSchema(
       commitAuthoringJobSchema,
       await readJsonObjectBody(c),
+    );
+    // Defense in depth: the backend refuses CI-owned suites when the job
+    // starts and on the status read above, so none reaches this line today.
+    // This keeps a later change to those checks from saving drafts into one.
+    assertSuiteWritableViaApi(
+      await readSuiteInProject(
+        token,
+        c.req.param("projectId"),
+        suiteId,
+        "authorized",
+      ),
     );
     return completeGeneratedAuthoringJob(c, convex, job, suiteId, commit);
   },
