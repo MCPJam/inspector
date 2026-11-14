@@ -236,6 +236,15 @@ describe("the request", () => {
       "d2",
     ]);
     expect(three.unasked).toEqual({ [DIRECTION]: 18, [ANNOTATION]: 9 });
+
+    // A larger override still stops at the backend's cap.
+    const over = selectDecisionItems("claude", candidates, {
+      maxQuestions: DIRECTORY_DECISION_LIMITS.maxQuestionsPerRun + 6,
+    });
+    expect(over.items).toHaveLength(
+      DIRECTORY_DECISION_LIMITS.maxQuestionsPerRun
+    );
+    expect(over.unasked).toEqual({ [DIRECTION]: 6 });
   });
 });
 
@@ -449,5 +458,18 @@ describe("the scan is off by default", () => {
     expect(graded({ read: true, complete: false }).notEvaluatedReason).toBe(
       "the tool listing was truncated, so the decision scan cannot cover every tool"
     );
+    // An empty error is still a truncated listing, not a complete one.
+    expect(
+      gradeDecisionAnswers([item(DIRECTION, "a")], [answer()], {
+        ...CHECKS,
+        confidenceThreshold: 0.8,
+        listing: { read: true, complete: false, error: "" },
+        missingInput: "toolListing",
+      }).findings[0]
+    ).toMatchObject({
+      status: "not-evaluated",
+      notEvaluatedReason:
+        "the tool listing was truncated, so the decision scan cannot cover every tool",
+    });
   });
 });

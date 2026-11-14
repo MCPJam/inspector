@@ -86,13 +86,18 @@ const GENERATORS: Record<
       rank: 1,
     })),
   "openai.decision.fair-play": (evidence) =>
-    sentenceProposals(evidence, (text) =>
-      STEERS.test(text) ? 2 : COMPARES.test(text) ? 1 : 0
-    ),
+    sentenceProposals(evidence, (text) => {
+      const steers = text.search(STEERS);
+      if (steers >= 0) return [2, steers];
+      const compares = text.search(COMPARES);
+      return compares >= 0 ? [1, compares] : [0, 0];
+    }),
   "openai.decision.secret-seeking": (evidence) =>
-    sentenceProposals(evidence, (text) =>
-      SECRETS.test(text) ? (ASKS.test(text) ? 2 : 1) : 0
-    ),
+    sentenceProposals(evidence, (text) => {
+      const secret = text.search(SECRETS);
+      if (secret < 0) return [0, 0];
+      return [ASKS.test(text) ? 2 : 1, secret];
+    }),
   "both.decision.annotation-matches-behaviour": ({ tools = [] }) =>
     tools.flatMap(annotationProposal),
 };
@@ -107,10 +112,14 @@ export function findDecisionCandidates(
   ).flatMap(({ id }) => keyed(id, GENERATORS[id](evidence)));
 }
 
-/** Each sentence of the model-readable text that `rank` ranks above zero. */
+/**
+ * Each sentence of the model-readable text that `rank` ranks above zero.
+ * `rank` also says where its signal starts, so a long sentence's excerpt keeps
+ * the words that made it a candidate.
+ */
 function sentenceProposals(
   { tools = [], instructions, listing = [] }: DirectoryDecisionEvidence,
-  rank: (sentence: string) => number
+  rank: (sentence: string) => [rank: number, at: number]
 ): Proposal[] {
   const fields: Array<{ tool?: string; field: string; text: string }> = [
     ...tools.flatMap((t) =>
@@ -121,10 +130,10 @@ function sentenceProposals(
   ];
   return fields.flatMap(({ tool, field, text }) =>
     sentences(text.slice(0, MAX_FIELD_CHARS)).flatMap((sentence) => {
-      const value = rank(sentence);
+      const [value, at] = rank(sentence);
       if (value === 0) return [];
       const named = tool ? { tool } : {};
-      return [{ ...named, field, text: excerpt(sentence), rank: value }];
+      return [{ ...named, field, text: excerpt(sentence, at), rank: value }];
     })
   );
 }

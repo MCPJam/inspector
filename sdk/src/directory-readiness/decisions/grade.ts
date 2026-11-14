@@ -120,7 +120,7 @@ export function gradeDecisionAnswers<
   const partial = !listing?.read
     ? listing && "no tool listing was captured for this run"
     : listing.complete === false &&
-      (listing.error ?? "the tool listing was truncated");
+      (listing.error || "the tool listing was truncated");
   if (partial) {
     const reason = `${partial}, so the decision scan cannot cover every tool`;
     const gap = { missingInput: options.missingInput };

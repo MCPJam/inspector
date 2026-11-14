@@ -52,11 +52,13 @@ export function selectDecisionItems(
     seen.add(pair);
     queue.push({ questionId, candidate: valid });
   }
+  // The backend refuses a request over its per-run cap, so no caller exceeds it.
+  const cap = Math.min(maxQuestions, LIMITS.maxQuestionsPerRun);
   const items: DirectoryDecisionItem[] = [];
-  for (let round = 0; items.length < maxQuestions; round += 1) {
+  for (let round = 0; items.length < cap; round += 1) {
     const turn = [...queues.values()].flatMap((queue) => queue[round] ?? []);
     if (turn.length === 0) break;
-    items.push(...turn.slice(0, maxQuestions - items.length));
+    items.push(...turn.slice(0, cap - items.length));
   }
   for (const [id, queue] of queues) {
     const left = queue.length - items.filter((i) => i.questionId === id).length;
