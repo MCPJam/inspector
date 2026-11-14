@@ -107,8 +107,7 @@ export function StatusPanel({
   if (error && !loaded) {
     return (
       <p role="alert" className="text-sm text-destructive">
-        The status history did not load. {sentenceOf(error)} Reload the page to
-        try again.
+        {`The status history did not load. ${sentenceOf(error)} Reload the page to try again.`}
       </p>
     );
   }
