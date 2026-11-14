@@ -49,6 +49,14 @@ export type SuiteSkillsEdit = (
 export const SKILLS_READ_ONLY_REASON =
   "This deployment can’t save skill changes from this page. Edit each environment’s skills on the Environments page.";
 
+/**
+ * Why a skills change is refused when it would leave two of one client's
+ * environments with the same setup: the backend keeps one of two identical
+ * environments, so the suite would lose a combination.
+ */
+export const MERGED_ENVIRONMENTS_REASON =
+  "Changing this skill would make two of the suite’s environments identical, so the suite would keep only one of them. Set them apart on the Environments page, or remove one from the suite first.";
+
 export type SuiteSkillState = {
   /** Skills every environment selects, at the same version. */
   value: ProjectEnvironmentSkillSelection | null;

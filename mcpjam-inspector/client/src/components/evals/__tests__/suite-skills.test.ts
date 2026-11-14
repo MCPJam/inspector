@@ -10,6 +10,7 @@ import { planSuiteClients } from "../suite-clients-settings";
 import { libraryChange } from "../suite-skill-channels";
 import {
   editedSkillSelection,
+  MERGED_ENVIRONMENTS_REASON,
   skillDeliveryLines,
   suiteSkillState,
 } from "../suite-skills";
@@ -90,6 +91,24 @@ describe("suiteSkillState", () => {
     expect(state.across.canAdd("partly")).toBe(false);
     expect(state.across.canAdd("new")).toBe(false);
     // The full client already has this one; the other has room.
+    expect(state.across.canAdd("a0")).toBe(true);
+  });
+
+  it("counts an environment's MCP-server skills against the same cap", () => {
+    // The backend's limit covers Library and server skills together: 15 and 5
+    // fill the environment, so a 16th Library skill would be refused.
+    const state = suiteSkillState([
+      {
+        skillSelection: skills("a", 15),
+        serverSkillSelection: {
+          mode: "explicit",
+          serverSkillIds: ["s0", "s1", "s2", "s3", "s4"],
+        },
+      },
+      { skillSelection: skills("a", 15) },
+    ]);
+    expect(state.across.largestCount).toBe(20);
+    expect(state.across.canAdd("new")).toBe(false);
     expect(state.across.canAdd("a0")).toBe(true);
   });
 });
@@ -255,6 +274,87 @@ describe("planSuiteClients with a Skills edit", () => {
       },
       { environmentId: "codex-env" },
     ]);
+  });
+
+  describe("when the edit would make two of a client's environments alike", () => {
+    const pair = (...selections: ProjectEnvironmentView["skillSelection"][]) =>
+      selections.map((skillSelection, index) => ({
+        environmentId: `env-${index}`,
+        hostId: "chat",
+        modelId: "gpt",
+        serverAttachmentId: "servers",
+        skillSelection,
+        revision: 1,
+      })) as ProjectEnvironmentView[];
+    const pairSuite = {
+      _id: "suite",
+      name: "Suite",
+      environmentIds: ["env-0", "env-1"],
+    } as EvalSuite;
+    const pairSelections = {
+      chat: {
+        includeClientDefaults: false,
+        explicitTargets: [{ modelId: "gpt" }],
+      },
+    };
+    const plan = (
+      rows: ProjectEnvironmentView[],
+      edit: Parameters<typeof editedSkillSelection>[1],
+    ) =>
+      planSuiteClients(pairSuite, rows, pairSelections, {
+        group: "servers",
+        lossless: true,
+        skills: (row) => libraryChange(row, edit),
+      });
+
+    it("refuses to unpin one version when the other already runs Latest", () => {
+      // Unpinning triage in env-0 makes it env-1, and the backend keeps one.
+      const rows = pair(
+        {
+          mode: "explicit",
+          skillIds: ["triage"],
+          versionPins: [pinned("triage", "triage-v1")],
+        },
+        { mode: "explicit", skillIds: ["triage"] },
+      );
+      expect(() => plan(rows, { kind: "add", skillId: "triage" })).toThrow(
+        MERGED_ENVIRONMENTS_REASON,
+      );
+    });
+
+    it("refuses to add a skill to the environment that lacked it", () => {
+      // env-1 gains triage and becomes env-0.
+      const rows = pair({ mode: "explicit", skillIds: ["triage"] }, null);
+      expect(() => plan(rows, { kind: "add", skillId: "triage" })).toThrow(
+        MERGED_ENVIRONMENTS_REASON,
+      );
+    });
+
+    it("lets an edit through that keeps the environments apart", () => {
+      const rows = pair(
+        { mode: "explicit", skillIds: ["triage", "reply"] },
+        { mode: "explicit", skillIds: ["triage"] },
+      );
+      expect(plan(rows, { kind: "remove", skillId: "triage" })).toHaveLength(2);
+    });
+
+    it("does not treat two clients of one suite as alike", () => {
+      const rows = pair({ mode: "explicit", skillIds: ["triage"] }, null).map(
+        (row, index) => ({ ...row, hostId: index ? "codex" : "chat" }),
+      ) as ProjectEnvironmentView[];
+      const both = {
+        chat: pairSelections.chat,
+        codex: pairSelections.chat,
+      };
+      expect(
+        planSuiteClients(pairSuite, rows, both, {
+          group: "servers",
+          lossless: true,
+          skills: (row) =>
+            libraryChange(row, { kind: "add", skillId: "triage" }),
+        }),
+      ).toHaveLength(2);
+    });
   });
 
   it("refuses a skills edit the backend can't derive", () => {
