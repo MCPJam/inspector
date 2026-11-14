@@ -337,6 +337,85 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect((await prepareStepReturn).activeTools).not.toContain("show_squad");
   });
 
+  describe("one tool call per step while only search and load are offered", () => {
+    const stepOptionsFor = async ({
+      provider,
+      loaded = false,
+    }: {
+      provider: string;
+      loaded?: boolean;
+    }) => {
+      let prepareStepReturn: any;
+      streamTextMock.mockImplementationOnce((options: any) => {
+        prepareStepReturn = options.prepareStep({ stepNumber: 1 });
+        return defaultStreamTextReturn();
+      });
+      const handle = runDirectChatTurn({
+        llmModel: { id: "mock" } as any,
+        modelId: "claude-haiku-4-5",
+        provider,
+        messageHistory: [{ role: "user", content: "show me barca" } as any],
+        systemPrompt: "s",
+        tools: {
+          search_mcp_tools: { description: "", execute: async () => ({}) },
+          load_mcp_tools: { description: "", execute: async () => ({}) },
+          show_squad: { description: "", execute: async () => ({}) },
+        } as any,
+        progressivePlan: {
+          enabled: true,
+          reasons: [],
+          policy: {
+            thresholdPct: 0.03,
+            maxToolTokens: 10_000,
+            maxToolCount: 30,
+            searchLimit: 8,
+          },
+          catalog: [
+            {
+              toolId: "sports::show_squad",
+              modelName: "show_squad",
+              serverId: "sports",
+              originalName: "show_squad",
+              description: "",
+              fields: [],
+              inputSchema: {},
+              tokenEstimate: 100,
+            },
+          ],
+          totalTokenEstimate: 100,
+        } as any,
+        discoveryState: {
+          loadedToolIds: new Set<string>(loaded ? ["sports::show_squad"] : []),
+          newlyLoadedToolIds: new Set<string>(),
+          pendingApprovalToolIds: new Set<string>(),
+        } as any,
+      });
+      await consumeDirectChatTurnHeadless(handle);
+      return prepareStepReturn;
+    };
+
+    it("turns off parallel tool calls for the step", async () => {
+      expect(await stepOptionsFor({ provider: "anthropic" })).toMatchObject({
+        providerOptions: { anthropic: { disableParallelToolUse: true } },
+      });
+      expect(await stepOptionsFor({ provider: "openai" })).toMatchObject({
+        providerOptions: { openai: { parallelToolCalls: false } },
+      });
+    });
+
+    it("leaves parallel tool calls on once a tool is loaded", async () => {
+      expect(
+        await stepOptionsFor({ provider: "anthropic", loaded: true }),
+      ).not.toHaveProperty("providerOptions");
+    });
+
+    it("changes nothing for a provider with no such option", async () => {
+      expect(await stepOptionsFor({ provider: "google" })).not.toHaveProperty(
+        "providerOptions",
+      );
+    });
+  });
+
   it("preserves explicit toolChoice instead of forcing initial progressive search", async () => {
     let streamTextOptions: any;
     let prepareStepReturn: any;
