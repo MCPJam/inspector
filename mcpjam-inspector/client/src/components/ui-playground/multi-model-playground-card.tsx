@@ -1022,8 +1022,11 @@ export function MultiModelPlaygroundCard({
     setTraceViewMode("chat");
     setRevealedInChat(false);
     setPreludeTraceExecutions([]);
-    setInjectedToolRenderOverrides({});
   }, [chatSessionId]);
+
+  useEffect(() => {
+    setInjectedToolRenderOverrides({});
+  }, [appSessionScopeId, appReopenKey]);
 
   const drainModelContextQueue = useCallback(() => {
     const queued = modelContextQueue;

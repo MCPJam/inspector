@@ -1075,7 +1075,7 @@ describe("PlaygroundMain", () => {
     }
   });
 
-  it("retains only unsnapshotted injected Apps through the real reactive same-row history refresh", async () => {
+  it.each([false, true])("retains only unsnapshotted injected Apps through the real reactive same-row history refresh (saved raw result: %s)", async (savedRawResult) => {
     mockConvexAuthState.isAuthenticated = true;
     invalidateChatHistoryPrefetch();
     const session = {
@@ -1095,12 +1095,16 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.resumedVersion = incoming.version;
       if (incoming.version === 5) {
         mockUseChatSession.messages = [message(["live", "snapshotted"])];
-        mockUseChatSession.restoredToolRenderOverrides = { snapshotted: { cachedWidgetHtmlUrl: "https://storage.test/saved.html" } };
+        mockUseChatSession.restoredToolRenderOverrides = {
+          snapshotted: { cachedWidgetHtmlUrl: "https://storage.test/saved.html" },
+          ...(savedRawResult ? { live: { toolOutput: { content: [{ type: "text", text: "latest raw result" }] } } } : {}),
+        };
       }
       capturedChatSessionOptions.onReset("hydrate", {
         appSessionScopeId: mockUseChatSession.appSessionScopeId,
         messages: mockUseChatSession.messages,
         toolRenderOverrides: mockUseChatSession.restoredToolRenderOverrides,
+        persistedSnapshotToolCallIds: incoming.version === 5 ? ["snapshotted"] : [],
       });
     });
     try {
@@ -1110,7 +1114,9 @@ describe("PlaygroundMain", () => {
       await act(async () => { await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread(session); });
       for (const toolCallId of ["live", "removed", "snapshotted"]) {
         vi.mocked(createDeterministicToolMessages).mockReturnValueOnce({ messages: [], toolCallId });
-        rerender(<PlaygroundMain {...defaultProps} pendingExecution={{ toolName: "counter", toolCallId, params: {}, result: {}, renderOverride: { cachedWidgetHtmlUrl: "https://storage.test/injected.html" } }} />);
+        rerender(<PlaygroundMain {...defaultProps} pendingExecution={{ toolName: "counter", toolCallId, params: {}, result: {}, renderOverride: {
+          cachedWidgetHtmlUrl: "https://storage.test/injected.html", resourceUri: "ui://counter", serverId: "counter-server",
+        } }} />);
       }
       rerender(<PlaygroundMain {...defaultProps} />);
       expect(mockThread.mock.lastCall?.[0].toolRenderOverrides.live).toBeDefined();
@@ -1123,6 +1129,11 @@ describe("PlaygroundMain", () => {
       ));
       const overrides = mockThread.mock.lastCall?.[0].toolRenderOverrides;
       expect(overrides.live?.cachedWidgetHtmlUrl).toBe("https://storage.test/injected.html");
+      expect(overrides.live?.resourceUri).toBe("ui://counter");
+      expect(overrides.live?.serverId).toBe("counter-server");
+      if (savedRawResult) {
+        expect(overrides.live?.toolOutput).toEqual({ content: [{ type: "text", text: "latest raw result" }] });
+      }
       expect(overrides).not.toHaveProperty("removed");
       expect(overrides.snapshotted?.cachedWidgetHtmlUrl).toBe("https://storage.test/saved.html");
       // An explicit different-row selection with identical tool ids cannot inherit metadata.

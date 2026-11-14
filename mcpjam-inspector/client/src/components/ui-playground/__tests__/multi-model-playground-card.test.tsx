@@ -467,6 +467,48 @@ describe("MultiModelPlaygroundCard", () => {
     expect(lane.view.mock.calls.at(-1)![0].apps).toBeNull();
   });
 
+  it("keeps injected App metadata through a conflict fork and clears it when reopening the source", async () => {
+    const previousMessages = mockUseChatSession.messages;
+    mockUseChatSession.chatSessionId = "source-session";
+    mockUseChatSession.appSessionScopeId = "source-session";
+    Object.assign(mockUseChatSession, {
+      messages: [{ id: "app", role: "assistant", parts: [{ type: "text", text: "Counter" }] }],
+    });
+    const renderOverride = {
+      serverId: "counter-server",
+      resourceUri: "ui://counter",
+      cachedWidgetHtmlUrl: "https://storage.test/counter.html",
+    };
+    try {
+      const { rerender } = render(
+        <Harness deterministicExecutionRequest={{
+          id: 1,
+          toolName: "counter",
+          params: {},
+          result: { content: [{ type: "text", text: "Counter" }] },
+          toolMeta: undefined,
+          toolCallId: "counter-call",
+          renderOverride,
+        }} />,
+      );
+      await waitFor(() => expect(lane.thread.mock.lastCall?.[0].toolRenderOverrides).toMatchObject({
+        "counter-call": renderOverride,
+      }));
+      rerender(<Harness />);
+      act(() => lane.chatOptions.mock.lastCall![0].onReset("conflict-fork"));
+      mockUseChatSession.chatSessionId = "conflict-fork";
+      rerender(<Harness />);
+      expect(lane.thread.mock.lastCall?.[0].toolRenderOverrides).toMatchObject({
+        "counter-call": renderOverride,
+      });
+      mockUseChatSession.chatSessionId = "source-session";
+      rerender(<Harness />);
+      expect(lane.thread.mock.lastCall?.[0].toolRenderOverrides).not.toHaveProperty("counter-call");
+    } finally {
+      mockUseChatSession.messages = previousMessages;
+    }
+  });
+
   it("passes mobile lane visibility to the retained extension workspace", () => {
     const view = render(<Harness active={false} />);
     expect(lane.view.mock.calls.at(-1)![0].active).toBe(false);

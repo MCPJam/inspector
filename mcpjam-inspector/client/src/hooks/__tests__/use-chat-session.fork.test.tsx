@@ -1654,6 +1654,7 @@ describe("useChatSession fork preservation", () => {
     await result.current.loadChatSession({ chatSessionId: "refresh-row", version: 5, messagesBlobUrl: "https://storage.test/real-refresh-v5" });
     expect(result.current.appSessionScopeId).toBe(scope);
     expect(onReset).toHaveBeenLastCalledWith("hydrate", {
+      persistedSnapshotToolCallIds: [],
       appSessionScopeId: scope, messages: expect.arrayContaining([
         expect.objectContaining({ parts: expect.arrayContaining([expect.objectContaining({ toolCallId: "refresh-call" })]) }),
       ]), toolRenderOverrides: {

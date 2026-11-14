@@ -1537,6 +1537,7 @@ export function PlaygroundMain({
           injectedAppScopeRef.current === hydration.appSessionScopeId) {
         setInjectedToolRenderOverrides((previous) => retainInjectedAppOverrides(
           previous, hydration.messages, hydration.toolRenderOverrides,
+          hydration.persistedSnapshotToolCallIds,
         ));
       } else if (reason !== "conflict-fork") {
         injectedAppScopeRef.current = null;

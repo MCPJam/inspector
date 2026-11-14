@@ -698,6 +698,7 @@ export interface UseChatSessionOptions {
 }
 
 export interface ChatSessionHydration {
+  persistedSnapshotToolCallIds: string[];
   appSessionScopeId: string;
   messages: UIMessage[];
   toolRenderOverrides: Record<string, ToolRenderOverride>;
@@ -6438,6 +6439,7 @@ export function useChatSession(
       if (chatSessionIdRef.current === session.chatSessionId &&
           (!options?.shouldApply || options.shouldApply())) {
         const hydration = {
+          persistedSnapshotToolCallIds,
           appSessionScopeId: appSessionScopeIdRef.current,
           messages: uiMessages,
           toolRenderOverrides: overrides,
