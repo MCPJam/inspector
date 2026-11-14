@@ -17,6 +17,7 @@ import {
 } from "../../src/claude-readiness/runner.js";
 import { CLAUDE_READINESS_LANES } from "../../src/claude-readiness/types.js";
 import {
+  CHATGPT_PLUGIN_FLOW,
   CLAUDE_CONNECTOR_FLOW as FLOW,
   DIRECTORY_FLOW_IDS,
   DIRECTORY_FLOWS,
@@ -37,13 +38,14 @@ const BACKEND_KEY = /^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9-]+)*$/;
 
 describe("the flow registry", () => {
   it("lists the flows that exist and nothing else", () => {
-    expect(DIRECTORY_FLOW_IDS).toEqual(["claude-connector"]);
+    expect(DIRECTORY_FLOW_IDS).toEqual(["claude-connector", "chatgpt-plugin"]);
     expect(Object.keys(DIRECTORY_FLOWS)).toEqual([...DIRECTORY_FLOW_IDS]);
     expect(getDirectoryFlow("claude-connector")).toBe(FLOW);
+    expect(getDirectoryFlow("chatgpt-plugin")).toBe(CHATGPT_PLUGIN_FLOW);
   });
 
   it("answers undefined for an id from a request it does not know", () => {
-    for (const id of ["chatgpt-plugin", "", "constructor", "__proto__"]) {
+    for (const id of ["claude-plugin", "", "constructor", "__proto__"]) {
       expect(getDirectoryFlow(id)).toBeUndefined();
     }
   });
