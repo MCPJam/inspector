@@ -678,6 +678,138 @@ describe("guest-session module", () => {
     });
   });
 
+  describe("revokeGuestSessionAndCookie", () => {
+    // After a promotion, ensureUser has already revoked the guest's rows, so
+    // the backend answers `revoked: false` while still expiring the cookie.
+    it("reports success on a 2xx even when no row was left to revoke", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ revoked: false }),
+      } as Response);
+
+      await expect(guestSession.revokeGuestSessionAndCookie()).resolves.toBe(
+        true,
+      );
+    });
+
+    it("reports failure when the revoke request fails", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(global.fetch).mockRejectedValue(
+        new TypeError("Failed to fetch"),
+      );
+
+      await expect(guestSession.revokeGuestSessionAndCookie()).resolves.toBe(
+        false,
+      );
+    });
+  });
+
+  describe("clearGuestActivation", () => {
+    it("clears only the marker of the given guest", () => {
+      guestSession.markGuestActivated("guest-new");
+
+      guestSession.clearGuestActivation("guest-old");
+      expect(guestSession.getActivatedGuestId()).toBe("guest-new");
+
+      guestSession.clearGuestActivation("guest-new");
+      expect(guestSession.getActivatedGuestId()).toBeNull();
+    });
+  });
+
+  describe("getExistingGuestId", () => {
+    it("returns null when the server confirms there is no guest", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+      } as Response);
+
+      await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
+    });
+
+    it("returns null when the server names the cookie's guest as revoked", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: {
+          get: (name: string) =>
+            name === "x-mcpjam-guest-refusal" ? "GUEST_SESSION_REVOKED" : null,
+        },
+        json: async () => ({
+          code: "FORBIDDEN",
+          message: "Guest session revoked.",
+        }),
+      } as unknown as Response);
+
+      await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
+    });
+
+    // An edge or WAF 403 says nothing about the guest behind the cookie.
+    it("throws on a 403 that does not name a revoke", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: { get: () => null },
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await expect(guestSession.getExistingGuestId()).rejects.toThrow(/403/);
+    });
+
+    it("returns null when guest access is turned off", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: {
+          get: (name: string) =>
+            name === "x-mcpjam-guest-refusal" ? "GUEST_ACCESS_DISABLED" : null,
+        },
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
+    });
+
+    it("throws on a server failure so callers can keep the activation marker", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+        headers: { get: () => null },
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await expect(guestSession.getExistingGuestId()).rejects.toThrow(/503/);
+    });
+
+    it("throws on a failed lookup so callers can keep the activation marker", async () => {
+      vi.mocked(global.fetch).mockRejectedValue(new TypeError("Failed to fetch"));
+
+      await expect(guestSession.getExistingGuestId()).rejects.toThrow(
+        "Failed to fetch",
+      );
+    });
+
+    it("returns the guestId of the looked-up session", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "guest-1",
+            token: "token-1",
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+          }),
+      } as Response);
+
+      await expect(guestSession.getExistingGuestId()).resolves.toBe("guest-1");
+    });
+  });
+
   describe("forceRefreshGuestSession", () => {
     it("clears in-memory cache and re-requests with credentials", async () => {
       vi.mocked(global.fetch)

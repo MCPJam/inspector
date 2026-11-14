@@ -275,6 +275,27 @@ describe("POST /guest-session", () => {
     expect(res.status).toBe(204);
   });
 
+  // The browser reads a 204 as "no guest" and drops the guest's promotion
+  // marker, so a 404 that may be a misrouted upstream must not become one.
+  it("answers an upstream 404 on lookup_only as a failure, not a 204", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 404 })) as typeof fetch;
+
+    const res = await app.request("/guest-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "lookup_only" }),
+    });
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { details?: Record<string, unknown> };
+    expect(body.details).toMatchObject({
+      reason: "upstream_status",
+      upstreamStatus: 404,
+    });
+  });
+
   it("returns 403 with passthrough Set-Cookie when upstream revokes", async () => {
     const expiredCookie =
       "__Host-mcpjam_guest_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
@@ -296,8 +317,56 @@ describe("POST /guest-session", () => {
     });
     expect(res.status).toBe(403);
     expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(res.headers.get("x-mcpjam-guest-refusal")).toBe(
+      "GUEST_SESSION_REVOKED",
+    );
     const data = await res.json();
     expect(data.code).toBe("FORBIDDEN");
+  });
+
+  it("answers a suspended guest account as a revoke", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+          JSON.stringify({ code: "account_suspended", message: "Suspended" }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      ),
+    ) as typeof fetch;
+
+    const res = await app.request(`${HOSTED}/guest-session`, {
+      method: "POST",
+      headers: { "x-forwarded-for": "10.0.98.1" },
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers.get("x-mcpjam-guest-refusal")).toBe(
+      "GUEST_SESSION_REVOKED",
+    );
+  });
+
+  // The browser treats a revoke as final and drops the guest's promotion
+  // marker; a 403 that says nothing about the guest must not look like one.
+  it("answers a 403 that is not a revoke as a 503", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as typeof fetch;
+
+    const res = await app.request(`${HOSTED}/guest-session`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "10.0.98.2",
+      },
+      body: JSON.stringify({ mode: "lookup_only" }),
+    });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("x-mcpjam-guest-refusal")).toBeNull();
+    const body = (await res.json()) as { details?: Record<string, unknown> };
+    expect(body.details).toMatchObject({
+      reason: "upstream_status",
+      upstreamStatus: 403,
+    });
   });
 
   it.each([
@@ -345,8 +414,7 @@ describe("POST /guest-session", () => {
     const res = await app.request(`${HOSTED}/guest-session`, {
       method: "POST",
     });
-    expect(res.status).toBe(403);
-    expect((await res.json()).code).toBe("FORBIDDEN");
+    expect(res.status).toBe(503);
     expect(Date.now() - started).toBeLessThan(5000);
   });
 

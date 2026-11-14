@@ -16,9 +16,19 @@ import { guestTabRecovery } from "./auth/guest-tab-recovery";
 import {
   GUEST_ACCESS_DISABLED_CODE,
   GUEST_SESSION_REFUSAL_HEADER,
+  GUEST_SESSION_REVOKED_CODE,
   sanitizeGuestSessionFailureDetails,
   type GuestSessionFailureDetails,
 } from "@/shared/guest-session-failure";
+import {
+  GuestSessionRefusedError,
+  GuestSessionRequestError,
+  GuestSessionRevokedError,
+  isFinalGuestRefusal,
+  type GuestSessionRefusalReason,
+} from "./guest-session-errors";
+
+export { GuestSessionRefusedError, type GuestSessionRefusalReason };
 
 
 declare global {
@@ -67,7 +77,6 @@ const sessionListeners = new Set<() => void>();
 // deterministic for the rest of the window, so retrying only burns the
 // network — and the app offers sign-in instead.
 const GUEST_SESSION_REFUSED_DEFAULT_MS = 10 * 60 * 1000;
-export type GuestSessionRefusalReason = "rate_limited" | "guest_access_disabled";
 export interface GuestSessionRefusal {
   /** Epoch ms after which a new attempt is allowed. */
   readonly until: number;
@@ -171,6 +180,34 @@ export function isGuestActivated(guestId: string | null | undefined): boolean {
 }
 
 /**
+ * Forget the activation marker for `guestId`, so later sign-ins take the
+ * no-marker path. A marker that names another guest (one activated in another
+ * tab meanwhile) is left alone.
+ */
+export function clearGuestActivation(guestId: string): void {
+  try {
+    if (localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY) === guestId) {
+      localStorage.removeItem(GUEST_ACTIVATED_STORAGE_KEY);
+    }
+  } catch {
+    // ignore (private mode / storage disabled)
+  }
+}
+
+/**
+ * The guest this browser last activated, or null. Without a marker no guest
+ * cookie can pass `isGuestActivated`, so sign-in can skip the guest lookup
+ * that would only tell it there is nothing to promote.
+ */
+export function getActivatedGuestId(): string | null {
+  try {
+    return localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read the server-injected `window.__MCP_GUEST_BOOTSTRAP__` blob once at
  * module load (before the first React render), validate it, and seed the
  * in-memory cache so the lazy `useState` initializers in
@@ -238,46 +275,6 @@ function deleteLegacyToken(): void {
     // ignore
   }
   legacyMigrationConsumed = true;
-}
-
-class GuestSessionRequestError extends Error {
-  /**
-   * The HTTP status when the server answered with a non-ok response. Absent
-   * for a network error or an unreadable body — that absence is the signal
-   * that the request never got a real answer from the server.
-   */
-  readonly status?: number;
-  /**
-   * Why the server could not get a session from ITS upstream, from the 503
-   * body. On a self-hosted install that 503 is made on the user's machine, so
-   * this is the only place the cause shows up.
-   */
-  readonly upstreamFailure?: GuestSessionFailureDetails;
-  constructor(
-    message: string,
-    status?: number,
-    upstreamFailure?: GuestSessionFailureDetails,
-    // What `fetch` threw when there is no status. Kept as `cause` so a report
-    // can name the browser's own error class instead of this wrapper's.
-    cause?: unknown,
-  ) {
-    super(message, cause === undefined ? undefined : { cause });
-    this.name = "GuestSessionRequestError";
-    this.status = status;
-    this.upstreamFailure = upstreamFailure;
-  }
-}
-
-/** The server refused to create a guest. Not transient: do not retry. */
-export class GuestSessionRefusedError extends GuestSessionRequestError {
-  readonly retryAfterMs: number;
-  readonly reason: GuestSessionRefusalReason;
-  constructor(retryAfterMs: number, reason: GuestSessionRefusalReason) {
-    super("Couldn't start a guest session. Sign in to continue.");
-    this.name = "GuestSessionRefusedError";
-    this.retryAfterMs = retryAfterMs;
-    this.reason = reason;
-  }
 }
 
 // This fetch has no timeout, so reading a stalled error body without a bound
@@ -402,7 +399,11 @@ async function requestGuestSession(
     const upstreamFailure = sanitizeGuestSessionFailureDetails(
       errorBody?.details,
     );
-    throw new GuestSessionRequestError(
+    const revoked =
+      response.status === 403 &&
+      response.headers?.get?.(GUEST_SESSION_REFUSAL_HEADER) ===
+        GUEST_SESSION_REVOKED_CODE;
+    throw new (revoked ? GuestSessionRevokedError : GuestSessionRequestError)(
       `guest-session request failed: ${response.status} ${response.statusText}${describeUpstreamFailure(upstreamFailure)}`,
       response.status,
       upstreamFailure,
@@ -578,7 +579,8 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
  * Resolve the `guestId` of the guest backed by the current cookie WITHOUT
  * minting a new guest. Prefers the in-memory cache (the common same-tab
  * guest→sign-in case) and otherwise issues a single `lookup_only`. Returns
- * null when there is no existing guest cookie or on transient failure.
+ * null when the server answers that there is no usable guest: a 204, a
+ * revoked guest, or guest access turned off. Throws on a failed lookup.
  *
  * Used by the promotion path to look up the activation marker for the cookie
  * actually present, so an incidental document-bootstrap cookie (never
@@ -589,12 +591,15 @@ export async function getExistingGuestId(): Promise<string | null> {
   if (cached?.guestId) {
     return cached.guestId;
   }
-  try {
-    await getExistingGuestBearerToken();
-  } catch {
-    return null;
-  }
-  return getCachedGuestSession()?.guestId ?? null;
+  const token = await getExistingGuestBearerToken().catch((error: unknown) => {
+    if (isFinalGuestRefusal(error)) return null;
+    throw error;
+  });
+  if (token === null) return null;
+  const guestId = getCachedGuestSession()?.guestId;
+  // A session cleared while the lookup was in flight is not a confirmed miss.
+  if (!guestId) throw new Error("guest session cleared during lookup");
+  return guestId;
 }
 
 /**
@@ -621,15 +626,14 @@ export function clearGuestSession(): void {
  * who later signs out cannot resurrect the previous guest identity by
  * replaying the cookie.
  *
- * Idempotent: returns false if no cookie was present or revocation
- * failed; returns true on success. Always also clears the in-memory
- * cache so subsequent guest-token reads in this tab fall through to
- * a fresh `lookup_or_create` call.
+ * Idempotent. Returns true on any 2xx, which always expires the cookie even
+ * when the body says `revoked: false` (no cookie, or rows a promotion already
+ * revoked), and false when the request failed. Always clears the in-memory
+ * cache so later guest-token reads fall through to `lookup_or_create`.
  */
 export async function revokeGuestSessionAndCookie(): Promise<boolean> {
   const guestId = cachedSession?.guestId;
   const finishTransition = guestId ? guestTabRecovery.begin(guestId) : undefined;
-  let revoked = false;
   let succeeded = false;
   try {
     const response = await fetch("/api/web/guest-session/revoke", {
@@ -637,22 +641,14 @@ export async function revokeGuestSessionAndCookie(): Promise<boolean> {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
     });
-    if (response.ok) {
-      succeeded = true;
-      try {
-        const body = (await response.json()) as { revoked?: unknown };
-        revoked = body?.revoked === true;
-      } catch {
-        revoked = false;
-      }
-    }
+    succeeded = response.ok;
   } catch (error) {
     console.error("Failed to revoke guest session:", error);
   } finally {
     clearGuestSession();
     finishTransition?.(succeeded);
   }
-  return revoked;
+  return succeeded;
 }
 
 /**

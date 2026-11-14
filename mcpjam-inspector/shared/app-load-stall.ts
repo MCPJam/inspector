@@ -14,7 +14,10 @@ export const APP_LOAD_STALL_CODES = [
   "app_load/guest_session_refused",
   // Still waiting for an identity: neither a guest nor a signed-in user yet.
   "app_load/auth_pending",
-  // Authenticated, but the user record is not set up yet.
+  // Authenticated, but with no actor to set up a user record for: neither a
+  // signed-in user id nor a guest actor key.
+  "app_load/actor_pending",
+  // The actor is known, but its user record is not set up yet.
   "app_load/user_setup_pending",
 ] as const;
 
@@ -27,10 +30,12 @@ export function appLoadStallCode(state: {
   guestRefused: boolean;
   sessionRefreshFailed: boolean;
   authenticated: boolean;
+  identityKnown: boolean;
 }): AppLoadStallCode {
   if (state.guestRefused) return "app_load/guest_session_refused";
   if (state.sessionRefreshFailed) return "app_load/guest_session_failed";
-  return state.authenticated
+  if (!state.authenticated) return "app_load/auth_pending";
+  return state.identityKnown
     ? "app_load/user_setup_pending"
-    : "app_load/auth_pending";
+    : "app_load/actor_pending";
 }

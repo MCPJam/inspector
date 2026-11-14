@@ -40,6 +40,13 @@ export const GUEST_ACCESS_DISABLED_CODE = "GUEST_ACCESS_DISABLED";
  */
 export const GUEST_SESSION_REFUSAL_HEADER = "x-mcpjam-guest-refusal";
 
+/**
+ * The refusal header's value on a 403 for a guest the authority revoked or
+ * suspended. Other 403s (a mismatched shared secret, an edge refusal) are
+ * answered as a 503, so the browser can treat only this one as final.
+ */
+export const GUEST_SESSION_REVOKED_CODE = "GUEST_SESSION_REVOKED";
+
 export type GuestSessionFailureDetails = {
   reason: GuestSessionFailureReason;
   /** The upstream's HTTP status, when it answered with a non-ok response. */
