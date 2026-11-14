@@ -105,7 +105,7 @@ export function ArgumentDrafts({
     <div className="space-y-3">
       <h3 className="text-sm font-medium">Drafted arguments</h3>
       <p className="text-sm">
-        {`MCPJam drafted these in the run with revision ${revision}. A run never sends a draft. Accept one into the plan, then save the plan to run it.`}
+        {`MCPJam drafted these in the run with revision ${revision}. Accept a draft into the plan, then save the plan to run it.`}
       </p>
       {drafting.status !== "completed" ? (
         <p className="text-sm">

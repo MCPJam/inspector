@@ -82,9 +82,9 @@ export function ToolTestResults({
   const going = run.status === "pending" || run.status === "running";
   return (
     <div className="space-y-3 text-sm">
-      <h3 className="font-medium">Results</h3>
+      <h3 className="font-medium">Calls MCPJam made to your server</h3>
       <p>
-        {`From the run started ${when(run.createdAt)} with test plan revision ${results.testPlanRevision}. MCPJam called your server directly, so these are not runs inside Claude.`}
+        {`From the run started ${when(run.createdAt)} with test plan revision ${results.testPlanRevision}.`}
       </p>
       {going ? (
         <p className="text-muted-foreground">

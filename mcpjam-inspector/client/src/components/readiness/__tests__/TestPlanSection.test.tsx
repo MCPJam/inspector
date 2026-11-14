@@ -209,7 +209,11 @@ describe("TestPlanSection", () => {
       results: { ...RESULTS, drafting: DRAFTING },
     });
     show(session);
-    expect(screen.getByText(/A run never sends a draft/)).toBeVisible();
+    expect(
+      screen.getByText(
+        /Accept a draft into the plan, then save the plan to run it\./,
+      ),
+    ).toBeVisible();
     expect(
       screen.getByText("Expected refusal: Invalid arguments"),
     ).toBeVisible();
@@ -239,9 +243,10 @@ describe("TestPlanSection", () => {
   it("shows which run and revision the results are from, valid input apart from negative cases", () => {
     show(planSession({ results: RESULTS }));
     expect(
-      screen.getByText(
-        /with test plan revision 3\. MCPJam called your server directly/,
-      ),
+      screen.getByRole("heading", { name: "Calls MCPJam made to your server" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/^From the run started .* with test plan revision 3\.$/),
     ).toBeVisible();
     expect(
       screen.getByText("Valid input: 1 passed, 1 failed, 1 in doubt."),
