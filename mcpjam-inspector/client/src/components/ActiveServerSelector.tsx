@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
-import { ServerFormData } from "@/shared/types.js";
 import { Check, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import {
   UNKNOWN_CONNECTION_STATUS,
@@ -45,7 +44,7 @@ export interface ActiveServerSelectorProps {
    * the shared interface so single-select callers don't need it.
    */
   onSelectMultipleServers?: (serverNames: string[]) => void;
-  onConnect: (formData: ServerFormData) => void;
+  onConnect: import("@/lib/server-connection-submission").ServerConnectionSubmit;
   /**
    * Override the "Add Server" click. When provided, the button calls this
    * instead of opening the generic Add Server modal — used by the XAA / OAuth
@@ -464,11 +463,11 @@ export function ActiveServerSelector({
         <AddServerModal
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
-          onSubmit={(formData) => {
+          onSubmit={(formData, options) => {
             track("connecting_server", {
               location: "active_server_selector",
             });
-            onConnect(formData);
+            return onConnect(formData, options);
           }}
         />
 

@@ -1,21 +1,30 @@
-import { toast } from "@/lib/toast";
-import { splitServerAttribution } from "@/lib/server-error-copy";
+import { createElement } from "react";
+import {
+  toast,
+  CopyableErrorMessage,
+  protocolPinFallbackAction,
+} from "@/lib/toast";
+import { presentConnectionError } from "@/lib/connection-error-presentation";
+import { formatErrorDetailsForCopy } from "@/lib/error-technical-details";
 
 type ToastAction = { label: string; onClick: () => void };
 
-/**
- * The one way a connect/reconnect failure reaches the user.
- *
- * Three call sites used to build their own sentence around the same failure
- * ("Failed to connect to X: …"), which is why one server refusing produced two
- * differently-worded toasts. Copying is not handled here: `@/lib/toast` puts a
- * copy button on every error toast and it reads the description too.
- */
 export function toastServerConnectionFailure(
   serverName: string,
-  message: string,
+  error: unknown,
   options?: { action?: ToastAction },
 ): void {
-  const { title, description } = splitServerAttribution(serverName, message);
-  toast.error(title, { description, action: options?.action });
+  const { title, explanation, diagnostics } = presentConnectionError(error, {
+    serverName,
+  });
+  const copyText = formatErrorDetailsForCopy(
+    { ...diagnostics, title, oneLine: explanation },
+    true,
+  );
+  toast.error(createElement(CopyableErrorMessage, { text: title, copyText }), {
+    description: explanation,
+    action:
+      options?.action ??
+      protocolPinFallbackAction(diagnostics.rawMessage, undefined)?.action,
+  });
 }

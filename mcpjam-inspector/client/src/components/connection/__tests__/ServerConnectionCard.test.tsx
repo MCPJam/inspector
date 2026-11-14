@@ -9,6 +9,12 @@ import {
 } from "@testing-library/react";
 import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { describeAsSlug } from "@mcpjam/sdk/browser";
+import { appReducer } from "@/state/app-reducer";
+import type { AppState } from "@/state/app-types";
+import userEvent from "@testing-library/user-event";
+import { WebApiError } from "@/lib/apis/web/base";
+import { connectionFailureFields } from "@/lib/connection-error-presentation";
 
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
 vi.mock("@/lib/generate-agent-brief", () => ({
@@ -60,9 +66,11 @@ vi.mock("@/lib/apis/mcp-tunnels-api", () => ({
 // would make the card's tunnel-URL effects (which depend on getAccessToken)
 // re-run on every re-render, masking the real polling cadence under test.
 const mockGetAccessToken = vi.fn().mockResolvedValue("test-token");
+const mockSignIn = vi.fn();
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockGetAccessToken,
+    signIn: mockSignIn,
   }),
 }));
 
@@ -124,6 +132,135 @@ describe("ServerConnectionCard", () => {
     vi.clearAllMocks();
     mockUseFeatureFlagEnabled.mockReset();
     mockUseFeatureFlagEnabled.mockReturnValue(false);
+  });
+
+  it("opens and closes error details with Enter and Space without reconnecting", async () => {
+    const message = "Automatic OAuth could not find a usable CIMD or DCR flow.";
+    const server = createServer({ connectionStatus: "failed", lastError: message });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+    const disclosure = screen.getByTestId("error-card-details");
+    disclosure.focus();
+    expect(disclosure).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(message)).toBeVisible();
+    await userEvent.keyboard(" ");
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(defaultProps.onReconnect).not.toHaveBeenCalled();
+  });
+
+  it("shows credential export policy recovery with collapsed, sanitized diagnostics", async () => {
+    const failure = new WebApiError(
+      403,
+      "FORBIDDEN",
+      "client_secret=policy-test-secret",
+      undefined,
+      { exportDenied: true },
+      "req-policy-denial",
+    );
+    const fields = connectionFailureFields(failure);
+    const server = createServer({
+      connectionStatus: "failed",
+      lastError: failure.message,
+      lastNormalizedError: fields.normalized,
+      lastFailureFacts: fields.failureFacts,
+    });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+    expect(
+      screen.getByText(/ask an admin to review the credential export policy/),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("error-card-details")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Copy details" }));
+    await waitFor(() => expect(mockClipboard.writeText).toHaveBeenCalledOnce());
+    const copied = mockClipboard.writeText.mock.calls[0][0];
+    expect(copied).toContain("credential export policy");
+    expect(copied).toContain("req-policy-denial");
+    expect(copied).not.toContain("policy-test-secret");
+    expect(defaultProps.onReconnect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    new WebApiError(401, "SESSION_REVOKED", "revoked test session"),
+    new WebApiError(401, "UNAUTHORIZED", "revoked test session", undefined, {
+      reason: "SESSION_REVOKED",
+    }),
+  ])("recovers expired MCPJam sign-in without starting server OAuth: %j", (failure) => {
+    const fields = connectionFailureFields(failure);
+    const server = createServer({
+      connectionStatus: "failed",
+      lastError: failure.message,
+      lastNormalizedError: fields.normalized,
+      lastFailureFacts: fields.failureFacts,
+    });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+    expect(
+      screen.getByText(
+        "Your MCPJam sign-in expired. Sign in to MCPJam to continue.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByTestId("error-card-details")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(mockSignIn).toHaveBeenCalledOnce();
+    expect(defaultProps.onReconnect).not.toHaveBeenCalled();
+  });
+
+  it("prioritizes trusted MCPJam sign-in over server consent recovery", () => {
+    const server = createServer({ connectionStatus: "failed", lastError: "wire", lastFailureFacts: { code: "SIGN_IN_REQUIRED" }, lastNormalizedError: describeAsSlug("auth/consent_required", new Error("wire")) });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(mockSignIn).toHaveBeenCalledOnce();
+    expect(defaultProps.onReconnect).not.toHaveBeenCalled();
+  });
+
+  it("keeps consent recovery connected to the existing interactive reconnect", async () => {
+    const server = createServer({ connectionStatus: "failed", lastError: "wire", lastNormalizedError: describeAsSlug("auth/consent_required", new Error("wire")) });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => expect(defaultProps.onReconnect).toHaveBeenCalledWith("test-server", { allowInteractiveOAuthFlow: true }));
+  });
+
+  it.each(["auth/consent_required", "sdk/protocol_version_pin_unsupported"] as const)("does not let upstream auth codes replace recovery for %s", (slug) => {
+    const server = createServer({ connectionStatus: "failed", lastError: "wire",
+      lastNormalizedError: { ...describeAsSlug(slug, new Error("wire")), origin: "user_server", rawCode: "SIGN_IN_REQUIRED" },
+    });
+    render(<ServerConnectionCard server={server} {...defaultProps} onOpenDetailModal={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: slug === "auth/consent_required" ? "Reconnect" : "Change protocol version" })).toBeVisible();
+  });
+
+  it.each([{}, { rawMessage: [] }, { rawMessage: 5 }])("keeps consent recovery through reducer reconstruction of malformed diagnostics: %j", (normalized) => {
+    const server = createServer();
+    const state: AppState = {
+      servers: { [server.name]: server }, projects: {}, activeProjectId: "project",
+      selectedServer: server.name, selectedMultipleServers: [], isMultiSelectMode: false,
+    };
+    const failed = appReducer(state, { type: "CONNECT_FAILURE", name: server.name,
+      error: "OAuth consent is required before connecting", normalized,
+    });
+    render(<ServerConnectionCard server={failed.servers[server.name]} {...defaultProps} />);
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeVisible();
+    expect(failed.servers[server.name].lastNormalizedError?.rawMessage).toContain("consent is required");
+  });
+
+  it("opens saved settings while diagnostics stay collapsed", () => {
+    const server = createServer({ connectionStatus: "failed", lastError: "wire" });
+    const onOpenDetailModal = vi.fn();
+    render(<ServerConnectionCard server={server} {...defaultProps} onOpenDetailModal={onOpenDetailModal} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open server settings" }));
+    expect(onOpenDetailModal).toHaveBeenCalledWith(server, "configuration");
+    expect(screen.getByRole("button", { name: "Copy details" })).toBeVisible();
+    expect(screen.getByTestId("error-card-details")).toHaveAttribute("aria-expanded", "false");
   });
 
   describe("rendering", () => {

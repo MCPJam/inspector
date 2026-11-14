@@ -25,7 +25,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { HostSectionTabs } from "@/components/hosts/HostSectionTabs";
-import type { ServerFormData } from "@/shared/types";
+import type { ServerConnectionSubmit } from "@/lib/server-connection-submission";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   emptyHostConfigInputV2,
@@ -535,8 +535,8 @@ export function HostBuilderViewRedesigned({
     [persistClient],
   );
 
-  const handleAddServer = useCallback(
-    async (formData: ServerFormData) => {
+  const handleAddServer = useCallback<ServerConnectionSubmit>(
+    async (formData, options) => {
       try {
         const serverId = (await createServer({
           projectId,
@@ -559,9 +559,10 @@ export function HostBuilderViewRedesigned({
         // project catalog, which is what auto-connect reads, so it
         // connects on its own if the personal Auto-connect switch is on.
         setSelectedNodeId(`server-card:${serverId}`);
+        options?.onAccepted?.();
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {
-        toast.error(getBillingErrorMessage(err, "Failed to add server"));
+        if (!options?.suppressErrorToast) toast.error(getBillingErrorMessage(err, "Failed to add server"));
       }
     },
     [createServer, projectId],

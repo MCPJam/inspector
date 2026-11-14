@@ -20,6 +20,7 @@ import {
   getHostedScenarioId,
 } from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
+import { connectionFailureFields, type ConnectionFailureFacts } from "@/lib/connection-error-presentation";
 import {
   readCredentialRefusal,
   withCredentialRefusal,
@@ -143,6 +144,7 @@ async function safeValidateHostedServer(
   HostedServerValidateResponse & {
     error?: string;
     normalized?: NormalizedError;
+    failureFacts?: ConnectionFailureFacts;
   }
 > {
   try {
@@ -160,8 +162,6 @@ async function safeValidateHostedServer(
     // error is a WebApiError. The string form (kept for back-compat) is
     // populated from the existing normalizer; the rich block flows to
     // the ErrorCard via `lastNormalizedError` on the server reducer.
-    const normalized =
-      error instanceof WebApiError ? error.normalized : undefined;
     // Thread the tagged-401 escalation flag through so the hosted connect
     // path can detect "needs interactive OAuth" structurally, matching the
     // local envelope's top-level `oauthRequired`.
@@ -177,7 +177,7 @@ async function safeValidateHostedServer(
     return {
       success: false,
       error: normalizeHostedValidationError(error),
-      ...(normalized ? { normalized } : {}),
+      ...connectionFailureFields(error),
       ...(oauthRequired ? { oauthRequired: true } : {}),
       ...(credentialRefusal ? { credentialRefusal } : {}),
     };

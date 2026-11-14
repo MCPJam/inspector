@@ -545,10 +545,7 @@ function SortableServerCard({
 interface ServersTabProps {
   projectServers: Record<string, ServerWithName>;
   pendingDashboardOAuth?: PendingDashboardOAuthState | null;
-  onConnect: (
-    formData: ServerFormData,
-    options?: { onConfigSaved?: () => void }
-  ) => void | Promise<void>;
+  onConnect: import("@/lib/server-connection-submission").ServerConnectionSubmit;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -1270,6 +1267,7 @@ export function ServersTab({
         throw error;
       }
       finishRename(result.ok);
+      if (!result.ok) return result;
 
       setDetailModalState((prev) => {
         if (
@@ -1353,7 +1351,7 @@ export function ServersTab({
   };
 
   const handleConnectServer = useCallback(
-    (formData: ServerFormData) => {
+    (formData: ServerFormData, options?: import("@/lib/server-connection-submission").ServerConnectionSubmissionOptions) => {
       if (isAppBootstrapping) {
         toast.error(
           appReadyMessage ?? "App is still loading. Try again in a moment."
@@ -1361,7 +1359,7 @@ export function ServersTab({
         return;
       }
       focusLoggerOnServer(formData.name);
-      onConnect(formData);
+      return onConnect(formData, options);
     },
     [focusLoggerOnServer, onConnect, isAppBootstrapping, appReadyMessage]
   );
@@ -2240,7 +2238,7 @@ export function ServersTab({
             setIsAddingServer(false);
             setPrefilledServerDraft(undefined);
           }}
-          onSubmit={(formData) => {
+          onSubmit={(formData, options) => {
             track("connecting_server", {
               location: "servers_tab",
             });
@@ -2253,7 +2251,7 @@ export function ServersTab({
                 version: formData.mcpProtocolVersionOverride,
               });
             }
-            handleConnectServer(formData);
+            return handleConnectServer(formData, options);
           }}
           projectClientConfig={selectedProject?.clientConfig}
           organizationId={selectedProject?.organizationId ?? null}

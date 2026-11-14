@@ -4,6 +4,9 @@ import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
+import { appReducer } from "@/state/app-reducer";
+import { presentConnectionError } from "@/lib/connection-error-presentation";
+import { submitServerDraft } from "@/lib/server-connection-submission";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import {
@@ -1371,6 +1374,27 @@ describe("useServerState effective server projection", () => {
     );
   });
 
+  it("projects reducer failure facts into the presentation and clears them after recovery starts", () => {
+    const initial = createAppState();
+    const failed = appReducer(initial, {
+      type: "CONNECT_FAILURE", name: "demo-server", error: "Forbidden",
+      failureFacts: { credentialRefusal: { kind: "export_denied" } },
+    });
+    const { result } = renderUseServerState(vi.fn(), failed, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+    });
+    const server = result.current.projectServers["demo-server"];
+    expect(server.lastFailureFacts).toEqual({ credentialRefusal: { kind: "export_denied" } });
+    expect(presentConnectionError(server.lastNormalizedError, {
+      serverName: server.name, facts: server.lastFailureFacts,
+    }).explanation).toContain("credential export policy");
+    const next = appReducer(failed, { type: "RECONNECT_REQUEST", name: server.name, config: server.config });
+    const retried = renderUseServerState(vi.fn(), next, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+    });
+    expect(retried.result.current.projectServers[server.name].lastFailureFacts).toBeUndefined();
+  });
+
   it("does not keep a failure reason once the runtime state is gone", () => {
     // The reason follows the runtime status: a reload leaves the row
     // "disconnected", and pairing that with a stale error would misreport a
@@ -1387,6 +1411,7 @@ describe("useServerState effective server projection", () => {
       retryCount: 0,
       enabled: true,
       lastError: "stale reason from a previous session",
+      lastFailureFacts: { code: "SESSION_REVOKED" },
       lastNormalizedError: {
         slug: "transport/enotfound",
         title: "stale normalized block",
@@ -1417,6 +1442,7 @@ describe("useServerState effective server projection", () => {
       expect.objectContaining({
         connectionStatus: "disconnected",
         lastError: undefined,
+        lastFailureFacts: undefined,
         lastNormalizedError: undefined,
         lastOAuthTrace: undefined,
       })
@@ -1728,8 +1754,8 @@ describe("useServerState OAuth callback failures", () => {
     expect(importHostedOAuthTokensMock).not.toHaveBeenCalled();
     expect(reconnectServerMock).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage("Connection failed: Could not save auth method"),
-      { duration: 8000 },
+      errorToastMessage("Couldn't connect to demo-server."),
+      { duration: 8000, action: undefined, description: expect.any(String) },
     );
   });
 
@@ -1754,10 +1780,8 @@ describe("useServerState OAuth callback failures", () => {
 
       expect(reconnectServerMock).not.toHaveBeenCalled();
       expect(toastError).toHaveBeenCalledWith(
-        errorToastMessage(
-          `${handler === "handleConnectWithTokensFromOAuthFlow" ? "Connection failed" : "Token refresh failed"}: Server does not require OAuth`,
-        ),
-        { duration: 8000 },
+        errorToastMessage("Couldn't connect to demo-server."),
+        { duration: 8000, action: undefined, description: expect.any(String) },
       );
       expect(toastSuccess).not.toHaveBeenCalled();
     },
@@ -1804,7 +1828,7 @@ describe("useServerState OAuth callback failures", () => {
     });
     expect(dispatch.mock.calls.some(([action]) => action.type === "UPSERT_SERVER")).toBe(false);
     expect(reconnectServerMock).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith(errorToastMessage("Connection failed: Import failed"), { duration: 8000 });
+    expect(toastError).toHaveBeenCalledWith(errorToastMessage("Couldn't connect to demo-server."), { duration: 8000, action: undefined, description: expect.any(String) });
   });
 
   it("refuses a target that is not in the resolved project", async () => {
@@ -2170,18 +2194,16 @@ describe("useServerState OAuth callback failures", () => {
     renderUseServerState(dispatch);
 
     await waitFor(() => {
-      expect(dispatch).toHaveBeenCalledWith({
+      expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
         type: "CONNECT_FAILURE",
         name: "demo-server",
         error: "access_denied: User denied access",
-      });
+      }));
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage(
-        "OAuth authorization failed: access_denied: User denied access"
-      ),
-      { duration: 8000 }
+      errorToastMessage("Couldn't connect to demo-server."),
+      { duration: 8000, action: undefined, description: expect.any(String) }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(window.location.pathname).toBe("/servers");
@@ -2219,16 +2241,16 @@ describe("useServerState OAuth callback failures", () => {
     renderUseServerState(dispatch);
 
     await waitFor(() => {
-      expect(dispatch).toHaveBeenCalledWith({
+      expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
         type: "CONNECT_FAILURE",
         name: "demo-server",
         error: "Token exchange failed",
-      });
+      }));
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage("Error completing OAuth flow: Token exchange failed"),
-      { duration: 8000 }
+      errorToastMessage("Couldn't connect to demo-server."),
+      { duration: 8000, action: undefined, description: expect.any(String) }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
@@ -2961,6 +2983,179 @@ describe("useServerState OAuth callback failures", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it.each(["add", "edit"] as const)(
+    "reports a connection failure after accepting an %s draft",
+    async (operation) => {
+      let finishConnection!: (value: { success: false; error: string }) => void;
+      testConnectionMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishConnection = resolve;
+          }),
+      );
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch);
+      const draft = {
+        name: "demo-server",
+        type: "http" as const,
+        url: "https://example.com/mcp",
+        useOAuth: false,
+      };
+
+      await act(async () => {
+        const accepted =
+          operation === "add"
+            ? await submitServerDraft(result.current.handleConnect, draft)
+            : (await result.current.handleUpdate("demo-server", draft)).ok;
+        expect(accepted).toBe(true);
+      });
+      await waitFor(() => expect(testConnectionMock).toHaveBeenCalledOnce());
+      expect(toastError).not.toHaveBeenCalled();
+
+      await act(async () => {
+        finishConnection({
+          success: false,
+          error: "Connection stopped after saving",
+        });
+      });
+      await waitFor(() => expect(toastError).toHaveBeenCalledOnce());
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_FAILURE",
+          name: "demo-server",
+          error: "Connection stopped after saving",
+        }),
+      );
+    },
+  );
+
+  it("keeps a rejected draft's validation error inline before acceptance", async () => {
+    const { result } = renderUseServerState(vi.fn());
+    await act(async () => {
+      expect(
+        await submitServerDraft(result.current.handleConnect, {
+          name: "demo-server",
+          type: "http",
+          url: "",
+        }),
+      ).toBe(false);
+    });
+    expect(testConnectionMock).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("reports OAuth startup failure after accepting a draft", async () => {
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    initiateOAuthMock.mockResolvedValueOnce({
+      success: false,
+      error: "OAuth startup stopped",
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+    let connection!: Promise<void>;
+    await act(async () => {
+      expect(
+        await submitServerDraft(
+          (data, options) => {
+            connection = result.current.handleConnect(data, options);
+            return connection;
+          },
+          {
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            useOAuth: true,
+          },
+        ),
+      ).toBe(true);
+      await connection;
+    });
+    expect(initiateOAuthMock).toHaveBeenCalledOnce();
+    expect(toastError).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CONNECT_FAILURE",
+        name: "demo-server",
+        error: "OAuth startup stopped",
+      }),
+    );
+  });
+
+  it.each([true, false])(
+    "preserves the failure surface across OAuth with an accepted draft: %s",
+    async (acceptedDraft) => {
+      const appState = createAppState();
+      appState.projects = {
+        "project-1": {
+          ...appState.projects.default,
+          id: "project-1",
+          sharedProjectId: "project-1",
+        },
+      };
+      appState.activeProjectId = "project-1";
+      mockConvexQuery.mockResolvedValueOnce([
+        { _id: "srv_demo", projectId: "project-1", name: "demo-server" },
+      ]);
+      mockUpdateServer.mockResolvedValue("srv_demo");
+      testConnectionMock.mockResolvedValueOnce({
+        success: false,
+        error: "Authorization required",
+        oauthRequired: true,
+      });
+      const auth = {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+      };
+      const { result, unmount } = renderUseServerState(vi.fn(), appState, auth);
+      await act(async () => {
+        await result.current.handleConnect(
+          {
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            useOAuth: true,
+          },
+          {
+            suppressErrorToast: true,
+            ...(acceptedDraft ? { onAccepted: vi.fn() } : {}),
+          },
+        );
+      });
+      expect(initiateOAuthMock).toHaveBeenCalledOnce();
+      expect(
+        JSON.parse(localStorage.getItem("mcp-hosted-oauth-pending") ?? "null"),
+      ).toMatchObject({
+        serverName: "demo-server",
+        suppressErrorToast: !acceptedDraft,
+      });
+      unmount();
+
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      window.history.replaceState(
+        {},
+        "",
+        "/oauth/callback?error=access_denied",
+      );
+      const dispatch = vi.fn();
+      renderUseServerState(dispatch, appState, auth);
+      await waitFor(() =>
+        expect(dispatch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "CONNECT_FAILURE",
+            name: "demo-server",
+          }),
+        ),
+      );
+      if (acceptedDraft) expect(toastError).toHaveBeenCalledOnce();
+      else expect(toastError).not.toHaveBeenCalled();
+    },
+  );
+
   it("suppresses a success toast when an inline surface owns the result", async () => {
     const dispatch = vi.fn();
     const { result } = renderUseServerState(dispatch);
@@ -3033,14 +3228,15 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(testConnectionMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: "CONNECT_FAILURE",
       name: "new-server",
       error: PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
-    });
+      failureFacts: {},
+    }));
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
-      { duration: 8000 }
+      errorToastMessage("Couldn't connect to new-server."),
+      expect.objectContaining({ duration: 8000, description: expect.any(String) })
     );
   });
 
@@ -3785,6 +3981,67 @@ describe("useServerState OAuth callback failures", () => {
     );
   });
 
+  it.each(["connect", "reconnect"])(
+    "keeps the actual OAuth exception in both the %s card and toast",
+    async (operation) => {
+      const message =
+        "Automatic OAuth could not find a usable CIMD or DCR flow. Configure pre-registered credentials to continue.";
+      const { ensureAuthorizedForReconnect } = await import(
+        "@/state/oauth-orchestrator"
+      );
+      if (operation === "connect") {
+        testConnectionMock.mockResolvedValueOnce({
+          success: false,
+          error: "Authorization required",
+          oauthRequired: true,
+        });
+        initiateOAuthMock.mockResolvedValueOnce({
+          success: false,
+          error: message,
+        });
+      } else {
+        reconnectServerMock.mockResolvedValueOnce({
+          success: false,
+          error: "Authorization required",
+          oauthRequired: true,
+        });
+        vi.mocked(ensureAuthorizedForReconnect)
+          .mockReset()
+          .mockResolvedValueOnce({ kind: "error", error: message });
+      }
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch);
+      await act(async () => {
+        if (operation === "connect") {
+          await result.current.handleConnect({
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            useOAuth: true,
+          });
+        } else {
+          await result.current.handleReconnect("demo-server");
+        }
+      });
+      const presentation = presentConnectionError(message, {
+        serverName: "demo-server",
+      });
+      expect(presentation.diagnostics.slug).toBe("internal/unknown");
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "CONNECT_FAILURE", error: message }),
+      );
+      expect(toastError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          props: expect.objectContaining({
+            text: presentation.title,
+            copyText: expect.stringContaining(message),
+          }),
+        }),
+        expect.objectContaining({ description: presentation.explanation }),
+      );
+    },
+  );
+
   it("keeps Linear registry OAuth on the generic path when no preregistered client ID is returned", async () => {
     testConnectionMock.mockResolvedValueOnce({
       success: false,
@@ -3843,16 +4100,15 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(initiateOAuthMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: "CONNECT_FAILURE",
       name: "Asana",
       error: "Failed to resolve registry OAuth config: registry lookup failed",
-    });
+      failureFacts: {},
+    }));
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage(
-        "Network error: Failed to resolve registry OAuth config: registry lookup failed"
-      ),
-      { duration: 8000 }
+      errorToastMessage("Couldn't connect to Asana."),
+      expect.objectContaining({ duration: 8000, description: expect.any(String) })
     );
   });
 
@@ -4089,11 +4345,11 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(initiateOAuthMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: "CONNECT_FAILURE",
       name: "demo-server",
       error: "cleanup failed",
-    });
+    }));
   });
 });
 
@@ -4804,7 +5060,13 @@ describe("syncServerToConvex name-collision recovery", () => {
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";
     mockUpdateServer.mockResolvedValueOnce("srv_demo");
-    testConnectionMock.mockResolvedValueOnce({ success: false, error: "MCP unavailable" });
+    let finishConnection!: (value: { success: false; error: string }) => void;
+    testConnectionMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishConnection = resolve;
+        }),
+    );
     const dispatch = vi.fn();
     const { result } = renderUseServerState(dispatch, appState, {
       isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
@@ -4819,7 +5081,16 @@ describe("syncServerToConvex name-collision recovery", () => {
     expect(mockUpdateServer).toHaveBeenCalledWith(expect.objectContaining({ serverId: "srv_demo", name: "Renamed" }));
     expect(outcome).toEqual({ ok: true, serverName: "Renamed" });
     expect(dispatch).toHaveBeenCalledWith({ type: "REMOVE_SERVER", name: "demo-server" });
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "CONNECT_FAILURE", name: "Renamed" }));
+    expect(toastError).not.toHaveBeenCalled();
+    await act(async () => {
+      finishConnection({ success: false, error: "MCP unavailable" });
+    });
+    await waitFor(() =>
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "CONNECT_FAILURE", name: "Renamed" }),
+      ),
+    );
+    expect(toastError).toHaveBeenCalledOnce();
   });
 
   it("reports imported configuration saves independently of connection success", async () => {

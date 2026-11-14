@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { toast } from "@/lib/toast";
+import { submitServerDraft, type ServerConnectionSubmit } from "@/lib/server-connection-submission";
+import { serverFormValidationError, type ServerFormValidationError } from "@/lib/server-form-validation";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -30,7 +31,7 @@ import { useOptionalSharedAppState } from "@/state/app-state-context";
 interface AddServerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (formData: ServerFormData) => void;
+  onSubmit: ServerConnectionSubmit;
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
   projectClientConfig?: Project["clientConfig"];
@@ -152,6 +153,9 @@ export function AddServerModal({
   const appReady = useAppReady();
   const appReadyMessage = useAppReadyMessage();
   const isAppBootstrapping = appReady.status !== "ready";
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [fieldError, setFieldError] = useState<ServerFormValidationError | null>(null);
 
   // Initialize form with initial data if provided
   useEffect(() => {
@@ -299,16 +303,22 @@ export function AddServerModal({
   }, [initialData, isOpen]);
 
   const handleClose = () => {
+    if (isSubmitting) return;
+    setSubmissionError(null);
+    setFieldError(null);
     formState.resetForm();
     setMcpProtocolVersionOverride(undefined);
     onClose();
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmissionError(null);
+    setFieldError(null);
+    if (isSubmitting) return;
 
     if (isAppBootstrapping) {
-      toast.error(appReadyMessage ?? "App is still loading. Try again in a moment.");
+      setSubmissionError(appReadyMessage ?? "The app is still loading. Try again in a moment.");
       return;
     }
 
@@ -319,7 +329,7 @@ export function AddServerModal({
     ) {
       const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
-        toast.error(clientIdError);
+        formState.setClientIdError(clientIdError);
         return;
       }
 
@@ -329,7 +339,7 @@ export function AddServerModal({
           formState.clientSecret,
         );
         if (clientSecretError) {
-          toast.error(clientSecretError);
+          formState.setClientSecretError(clientSecretError);
           return;
         }
       }
@@ -338,7 +348,7 @@ export function AddServerModal({
     // Validate form
     const validationError = formState.validateForm();
     if (validationError) {
-      toast.error(validationError);
+      setFieldError(serverFormValidationError({ name: formState.name, type: formState.type, url: formState.url, command: formState.commandInput }, validationError));
       return;
     }
 
@@ -348,7 +358,13 @@ export function AddServerModal({
         ? { mcpProtocolVersionOverride }
         : {}),
     };
-    onSubmit(finalFormData);
+    setIsSubmitting(true);
+    const accepted = await submitServerDraft(onSubmit, finalFormData);
+    setIsSubmitting(false);
+    if (!accepted) {
+      setSubmissionError("Couldn't add the server. Your draft is still here. Review the settings and try again.");
+      return;
+    }
     formState.resetForm();
     setMcpProtocolVersionOverride(undefined);
     onClose();
@@ -370,22 +386,28 @@ export function AddServerModal({
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} noValidate className="space-y-6">
+          <fieldset disabled={isSubmitting} className="contents">
           {/* Server Name */}
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-foreground">
+            <label htmlFor="add-server-name" className="block text-sm font-medium text-foreground">
               Server Name
             </label>
             <Input
+              id="add-server-name"
               value={formState.name}
+              aria-invalid={fieldError?.field === "name"}
+              aria-describedby={fieldError?.field === "name" ? "add-server-name-error" : undefined}
               onChange={(e) => formState.setName(e.target.value)}
               placeholder="my-mcp-server"
               required
             />
+            {fieldError?.field === "name" ? <p id="add-server-name-error" role="alert" className="text-xs text-destructive">{fieldError.message}</p> : null}
           </div>
 
           {/* Connection Type */}
-          <div className="space-y-2">
+          <div className="space-y-2" role="group" aria-describedby={fieldError?.field === "connection" ? "add-server-connection-error" : undefined}>
+            {fieldError?.field === "connection" ? <p id="add-server-connection-error" role="alert" className="text-xs text-destructive">{fieldError.message}</p> : null}
             <label className="block text-sm font-medium text-foreground">
               Connection Type
             </label>
@@ -615,6 +637,8 @@ export function AddServerModal({
           />
 
           {/* Action Buttons */}
+          {fieldError?.field === "form" ? <p role="alert" className="text-xs text-destructive">{fieldError.message}</p> : null}
+          {submissionError ? <p role="alert" className="text-xs text-destructive">{submissionError}</p> : null}
           <div className="flex justify-end space-x-2 pt-4">
             <Button
               type="button"
@@ -632,7 +656,7 @@ export function AddServerModal({
             <Button
               type="submit"
               disabled={
-                formState.authConfigurationBlocksSubmit || isAppBootstrapping
+                formState.authConfigurationBlocksSubmit || isAppBootstrapping || isSubmitting
               }
               title={isAppBootstrapping ? appReadyMessage ?? undefined : undefined}
               onClick={() => {
@@ -645,6 +669,7 @@ export function AddServerModal({
               {isAppBootstrapping ? appReadyMessage ?? "Loading..." : "Add Server"}
             </Button>
           </div>
+          </fieldset>
         </form>
       </DialogContent>
     </Dialog>

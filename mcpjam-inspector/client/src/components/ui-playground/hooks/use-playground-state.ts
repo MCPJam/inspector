@@ -45,7 +45,6 @@ import type {
 import { track } from "@/lib/analytics";
 import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { useOnboarding } from "@/hooks/use-onboarding";
-import type { ServerFormData } from "@/shared/types.js";
 import type {
   EnsureServersReadyResult,
   ServerWithName,
@@ -119,7 +118,7 @@ export interface UsePlaygroundStateOptions {
   /** Whether this caller retains the legacy auto-connect onboarding path. */
   autoConnectFirstRun?: boolean;
   isServerSyncing?: boolean;
-  onConnect?: (formData: ServerFormData) => void;
+  onConnect?: import("@/lib/server-connection-submission").ServerConnectionSubmit;
   onSaveHostContext?: (
     projectId: string,
     hostContext: ProjectHostContextDraft

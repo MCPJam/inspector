@@ -27,7 +27,7 @@ import { splitSupportReference } from "@/lib/convex-error";
  * Import `toast` from here rather than from "sonner" directly so error toasts
  * stay consistent across the app.
  */
-function CopyableErrorMessage({
+export function CopyableErrorMessage({
   text,
   copyText,
 }: {
@@ -86,7 +86,7 @@ const ERROR_TOAST_DURATION_MS = 8000;
  * So: never override a caller's action, and where none was supplied fall back
  * to the clients list. Less precise than a per-site link, and still a way out.
  */
-function protocolPinFallbackAction(
+export function protocolPinFallbackAction(
   message: unknown,
   data: Parameters<typeof sonnerToast.error>[1],
 ) {

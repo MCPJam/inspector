@@ -18,11 +18,24 @@ vi.mock("@/lib/session-token", () => ({
 
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import { reconnectServer, testConnection } from "../mcp-api";
+import { WebApiError } from "@/lib/apis/web/base";
 
 describe("mcp-api hosted-mode reconnect hardening", () => {
   beforeEach(() => {
     vi.useRealTimers();
     validateHostedServerMock.mockReset();
+  });
+
+  it("preserves trusted session-revocation facts and request ID through hosted validation", async () => {
+    validateHostedServerMock.mockRejectedValueOnce(new WebApiError(
+      401, "UNAUTHORIZED", "Session expired", undefined,
+      { reason: "SESSION_REVOKED" }, "request-session",
+    ));
+    const result = await testConnection({} as MCPServerConfig, "server-1");
+    expect(result).toMatchObject({
+      success: false, failureFacts: { code: "SESSION_REVOKED" },
+      normalized: { requestId: "request-session", rawCode: "UNAUTHORIZED" },
+    });
   });
 
   it("normalizes hosted project timing errors for testConnection", async () => {
@@ -35,6 +48,8 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     expect(result).toEqual({
       success: false,
       error: "Hosted project is still loading. Please try again in a moment.",
+      failureFacts: {},
+      normalized: expect.objectContaining({ slug: "internal/unknown", errorType: "BootstrapNotReadyError" }),
     });
   });
 
@@ -48,6 +63,8 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     expect(result).toEqual({
       success: false,
       error: "Hosted server metadata is still syncing. Please retry.",
+      failureFacts: {},
+      normalized: expect.objectContaining({ slug: "internal/unknown", rawMessage: 'Hosted server not found for "server-2"' }),
     });
   });
 
@@ -59,6 +76,8 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     expect(result).toEqual({
       success: false,
       error: "Boom",
+      failureFacts: {},
+      normalized: expect.objectContaining({ slug: "internal/unknown", rawMessage: "Boom" }),
     });
   });
 

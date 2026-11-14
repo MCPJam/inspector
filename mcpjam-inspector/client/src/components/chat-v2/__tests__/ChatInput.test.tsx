@@ -21,6 +21,7 @@ import {
 } from "@/contexts/scenario-client-style-context";
 import type { ModelDefinition } from "@/shared/types";
 import { authFetch } from "@/lib/session-token";
+import { submitServerDraft, type ServerConnectionSubmit } from "@/lib/server-connection-submission";
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
@@ -35,10 +36,14 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-// Passing `onAddServer` mounts the real AddServerModal, which requires an
-// AuthKitProvider; the popover behavior under test doesn't need its internals.
 vi.mock("@/components/connection/AddServerModal", () => ({
-  AddServerModal: () => null,
+  AddServerModal: ({ isOpen, onSubmit, onClose }: { isOpen: boolean; onSubmit: ServerConnectionSubmit; onClose: () => void }) => isOpen ? (
+    <button onClick={() => {
+      void submitServerDraft(onSubmit, { name: "draft-server", type: "http", url: "https://example.com/mcp" }).then((accepted) => {
+        if (accepted) onClose();
+      });
+    }}>Submit server draft</button>
+  ) : null,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -228,6 +233,28 @@ describe("ChatInput", () => {
       value: vi.fn(),
     });
     vi.mocked(authFetch).mockReset();
+  });
+
+  it("forwards Add Server acceptance options and closes only when the owner accepts", async () => {
+    const onAddServer = vi.fn<ServerConnectionSubmit>((_data, options) => options?.onAccepted?.());
+    render(<ChatInput {...defaultProps} onAddServer={onAddServer} />);
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit server draft" }));
+    expect(onAddServer).toHaveBeenCalledWith(expect.objectContaining({ name: "draft-server" }), {
+      onAccepted: expect.any(Function), suppressErrorToast: true,
+    });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Submit server draft" })).not.toBeInTheDocument());
+  });
+
+  it("keeps the chat Add Server draft open when the owner rejects it", async () => {
+    const onAddServer = vi.fn<ServerConnectionSubmit>(async () => { throw new Error("save rejected"); });
+    render(<ChatInput {...defaultProps} onAddServer={onAddServer} />);
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit server draft" }));
+    await waitFor(() => expect(onAddServer).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: "Submit server draft" })).toBeVisible();
   });
 
   afterEach(() => {
