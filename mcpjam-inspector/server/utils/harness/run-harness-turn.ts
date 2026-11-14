@@ -193,6 +193,7 @@ import {
   harnessBootstrapLogFields,
   harnessBootstrapObservation,
   logHarnessBootstrapOnFailure,
+  watchNewBoxForStaleBake,
 } from "./harness-bake-observer.js";
 import type { PreparedLocalHarnessTurn } from "./local/local-turn.js";
 import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
@@ -2628,6 +2629,12 @@ export async function runHarnessTurn(
                 : {}),
             });
       if (localPrepared === null) bakeObservedSandbox = sandbox;
+      // A conversation's first turn (no commit on its lane yet) runs on the
+      // box just provisioned for it, so a bake miss there says the template
+      // new boxes boot is stale. Later turns' boxes may predate that template.
+      if (harnessSandboxBinding && continuity?.stateVersion === 0) {
+        watchNewBoxForStaleBake(sandbox, harnessAdapter.id);
+      }
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own
