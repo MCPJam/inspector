@@ -214,6 +214,11 @@ const PLAIN_TOOLS = [
   "record_directory_submission_status",
   "record_directory_submission_snapshot",
   "import_directory_finding",
+  // A submission's test plan and what its calls showed, read by agents.
+  "get_directory_submission_test_plan",
+  "draft_directory_submission_test_plan",
+  "save_directory_submission_test_plan",
+  "get_directory_submission_tool_tests",
   "start_conformance_run",
   "get_conformance_run",
   "list_conformance_runs",
@@ -536,6 +541,10 @@ describe("platform tool registration", () => {
       "record_directory_submission_status",
       "record_directory_submission_snapshot",
       "import_directory_finding",
+      "get_directory_submission_test_plan",
+      "draft_directory_submission_test_plan",
+      "save_directory_submission_test_plan",
+      "get_directory_submission_tool_tests",
       "start_conformance_run",
       "get_conformance_run",
       "list_conformance_runs",
@@ -747,6 +756,7 @@ describe("platform tool registration", () => {
       "upsert_study_member",
       "update_project",
       "archive_goal",
+      "save_directory_submission_test_plan",
     ]);
     const names = new Set(registrations.map((registration) => registration.name));
     for (const name of [...ADDITIVE_WRITES, ...IDEMPOTENT_WRITES]) {

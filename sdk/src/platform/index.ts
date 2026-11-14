@@ -151,6 +151,7 @@ export type {
 export * from "./directory-submission-operations.js";
 export * from "./directory-reviewer-attempt-operations.js";
 export * from "./directory-submission-handoff-operations.js";
+export * from "./directory-test-plan-operations.js";
 
 export {
   computeRunTargets,

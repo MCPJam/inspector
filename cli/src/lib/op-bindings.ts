@@ -418,6 +418,12 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_directory_submission_results: {
     command: "readiness submission results",
   },
+  // A submission's test plan; `readiness submission run --test-plan-revision`
+  // starts a run that makes its calls.
+  get_directory_submission_test_plan: { command: "readiness submission plan show" },
+  draft_directory_submission_test_plan: { command: "readiness submission plan draft" },
+  save_directory_submission_test_plan: { command: "readiness submission plan save" },
+  get_directory_submission_tool_tests: { command: "readiness submission plan results" },
   // `readiness reviewer status` lists the attempts, or shows the one it is given.
   create_reviewer_attempt: { command: "readiness reviewer start" },
   list_reviewer_attempts: { command: "readiness reviewer status" },

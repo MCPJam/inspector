@@ -117,6 +117,9 @@ const startInput = submissionInput.extend({
   pluginVersionId: id().optional().describe(
     "Required for a ChatGPT plugin submission, refused for any other: the stored plugin version whose package the run grades with the saved server, such as the submission's `pluginVersionId`. Never read from the submission."
   ),
+  testPlanRevision: z.number().int().min(1).optional().describe(
+    "Make the calls of the submission's saved test plan at this `revision`, from get_directory_submission_test_plan. Naming it authorizes every call in the plan, so it must be the current revision: a stale one is refused with 409 naming the current one, never replaced. Omit it and the run makes no test plan calls."
+  ),
 });
 
 const resultsInput = submissionInput.extend({
@@ -321,16 +324,16 @@ export const deleteDirectorySubmissionOperation: Op<DirectorySubmissionScopedInp
 export const startDirectorySubmissionRunOperation: Op<StartDirectorySubmissionRunInput, StartDirectorySubmissionRunResult> = {
   name: "start_directory_submission_run",
   title: "Run a directory submission's checks",
-  description: `Grade a directory submission: its saved server against the directory's rules, and its answers against the portal's. A ChatGPT plugin submission also grades the package of the stored plugin version you name as \`pluginVersionId\`. Starts a durable run and returns a receipt, not a verdict; poll get_readiness_run with \`run.runId\` until it finishes, then read get_directory_submission_results. The run grades the answers as saved when it starts; later edits do not change it, and the results mark a finding whose answers changed since as \`stale\`. \`includeLlmObservations\` adds an optional model pass, included with MCPJam, so no customer credits are consumed; it is subject to MCPJam's daily analysis budget. ${GATED_BETA}`,
+  description: `Grade a directory submission: its saved server against the directory's rules, and its answers against the portal's. A ChatGPT plugin submission also grades the package of the stored plugin version you name as \`pluginVersionId\`. With \`testPlanRevision\`, the run also makes the calls of that saved test plan; read what they showed with get_directory_submission_tool_tests. Starts a durable run and returns a receipt, not a verdict; poll get_readiness_run with \`run.runId\` until it finishes, then read get_directory_submission_results. The run grades the answers as saved when it starts; later edits do not change it, and the results mark a finding whose answers changed since as \`stale\`. \`includeLlmObservations\` adds an optional model pass, included with MCPJam, so no customer credits are consumed; it is subject to MCPJam's daily analysis budget. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
   permalink: SUBMISSION_PERMALINK,
   inputSchema: startInput,
   async execute(input, context) {
     const { client, signal, scope, info } = await resolveScope(input, context);
-    const { includeLlmObservations, idempotencyKey, pluginVersionId } = input;
+    const { includeLlmObservations, idempotencyKey, pluginVersionId, testPlanRevision } = input;
     const run = await client.startDirectorySubmissionRun(
-      { ...scope, includeLlmObservations, idempotencyKey, pluginVersionId },
+      { ...scope, includeLlmObservations, idempotencyKey, pluginVersionId, testPlanRevision },
       { signal }
     );
     return { project: info, submissionId: input.submission, run };

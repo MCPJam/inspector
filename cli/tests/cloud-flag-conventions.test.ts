@@ -35,6 +35,7 @@ const CLOUD_COMMAND_FILES = [
   "readiness-reviewer.ts",
   "readiness-submission-handoff.ts",
   "readiness-submissions.ts",
+  "readiness-test-plans.ts",
   "studies.ts",
   "secrets.ts",
   "server-accounts.ts",

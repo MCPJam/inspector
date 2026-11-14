@@ -155,6 +155,12 @@ import {
   recordDirectorySubmissionSnapshotOperation,
   recordDirectorySubmissionStatusOperation,
 } from "./directory-submission-handoff-operations.js";
+import {
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+} from "./directory-test-plan-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2480,6 +2486,7 @@ export type {
 export * from "./directory-submission-operations.js";
 export * from "./directory-reviewer-attempt-operations.js";
 export * from "./directory-submission-handoff-operations.js";
+export * from "./directory-test-plan-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19395,6 +19402,11 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   recordDirectorySubmissionStatusOperation,
   recordDirectorySubmissionSnapshotOperation,
   importDirectoryFindingOperation,
+  // A submission's test plan: the calls its runs may make, and what they showed.
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,

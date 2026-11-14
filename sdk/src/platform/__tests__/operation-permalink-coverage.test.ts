@@ -69,6 +69,10 @@ const ROUTE_DEBT_ALLOWLIST: Readonly<Record<string, string>> = {
   record_directory_submission_status: "readiness?submission=:submissionId",
   record_directory_submission_snapshot: "readiness?submission=:submissionId",
   import_directory_finding: "readiness?submission=:submissionId",
+  get_directory_submission_test_plan: "readiness?submission=:submissionId",
+  draft_directory_submission_test_plan: "readiness?submission=:submissionId",
+  save_directory_submission_test_plan: "readiness?submission=:submissionId",
+  get_directory_submission_tool_tests: "readiness?submission=:submissionId",
   // Saved swarm DEFINITIONS: `/swarms/:swarmId` addresses a launched wave, so
   // a definition's id on that route renders an empty run detail.
   list_swarms: "swarms/definitions/:swarmId",
