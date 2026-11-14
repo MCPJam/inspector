@@ -39,6 +39,7 @@ import {
   HarnessTurnRecord,
   harnessTurnEventSink,
   type HarnessTurnEventSink,
+  type KeptRuntimeOutcome,
 } from "../harness-turn-event.js";
 import type { WarmAttachOutcome } from "../warm-bridge-runtime.js";
 
@@ -81,6 +82,7 @@ function startSession(args: {
   resumed?: boolean;
   resetReason?: HarnessResetReason;
   warm?: WarmAttachOutcome;
+  kept?: KeptRuntimeOutcome;
   surface?: "web" | "api";
   local?: boolean;
 }) {
@@ -90,6 +92,7 @@ function startSession(args: {
   turn.mark("box");
   turn.mark("broker");
   if (args.warm) turn.warmAttach(args.warm);
+  if (args.kept) turn.keptRuntime(args.kept);
   turn.sessionStarted({
     approval: args.approval ?? false,
     resumed: args.resumed ?? false,
@@ -97,6 +100,17 @@ function startSession(args: {
   });
   return { sink, turn };
 }
+
+/** Why a local turn can refuse the runtime its last turn kept. */
+const KEPT_REFUSALS = [
+  "configuration_changed",
+  "superseded",
+  "lifetime",
+  "process_died",
+  "runtime_update",
+  "authorization_revoked",
+  "renewal_failed",
+] as const satisfies readonly KeptRuntimeOutcome[];
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -354,6 +368,50 @@ describe("harness_turn_completed: closed vocabularies", () => {
     expect(sent(sink)).toMatchObject({ start, fallback_reason: fallback });
   });
 
+  it("reports an adopted kept local runtime as a warm start on this machine", () => {
+    const { sink, turn } = startSession({
+      local: true,
+      resumed: true,
+      kept: "adopted",
+    });
+    turn.close(completed);
+    expect(sent(sink)).toMatchObject({
+      surface: "local",
+      start: "warm",
+      fallback_reason: "none",
+    });
+  });
+
+  it.each(KEPT_REFUSALS)(
+    "a local turn that did not adopt its kept runtime says why: %s",
+    (reason) => {
+      const { sink, turn } = startSession({
+        local: true,
+        resumed: true,
+        kept: reason,
+      });
+      turn.close(completed);
+      expect(sent(sink)).toMatchObject({
+        surface: "local",
+        start: "disk_resume",
+        fallback_reason: reason,
+      });
+    },
+  );
+
+  it("lets the lane's reset say why a local turn started fresh, over its kept runtime's refusal", () => {
+    const { sink, turn } = startSession({
+      local: true,
+      resetReason: "runtime-changed",
+      kept: "process_died",
+    });
+    turn.close(completed);
+    expect(sent(sink)).toMatchObject({
+      start: "new",
+      fallback_reason: "configuration_changed",
+    });
+  });
+
   it.each<[HarnessBootstrapOutcome | undefined, string]>([
     ["baked", "baked"],
     ["installed", "installed"],
@@ -393,12 +451,16 @@ describe("harness_turn_completed: closed vocabularies", () => {
       ...HARNESS_TURN_DURATIONS,
     ]);
     const seen = new Map<string, Set<unknown>>();
-    const warms: Array<WarmAttachOutcome | undefined> = [
-      undefined,
-      "attached",
-      "probe_refused",
-      "attach_failed",
-      "attach_timeout",
+    // A hosted turn's warm attach, or a local turn's kept runtime.
+    const reuses: Array<{
+      warm?: WarmAttachOutcome;
+      kept?: KeptRuntimeOutcome;
+    }> = [
+      {},
+      ...(
+        ["attached", "probe_refused", "attach_failed", "attach_timeout"] as const
+      ).map((warm) => ({ warm })),
+      ...(["adopted", ...KEPT_REFUSALS] as const).map((kept) => ({ kept })),
     ];
     const resets: Array<HarnessResetReason | undefined> = [
       undefined,
@@ -411,7 +473,7 @@ describe("harness_turn_completed: closed vocabularies", () => {
       for (const local of [false, true])
         for (const approval of [false, true])
           for (const resumed of [false, true])
-            for (const warm of warms)
+            for (const reuse of reuses)
               for (const resetReason of resets)
                 for (const bootstrap of [
                   "baked",
@@ -424,7 +486,7 @@ describe("harness_turn_completed: closed vocabularies", () => {
                       local,
                       approval,
                       resumed,
-                      warm,
+                      ...reuse,
                       resetReason,
                     });
                     turn.close({ aborted, completed: !aborted, bootstrap });

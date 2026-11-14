@@ -18,8 +18,9 @@ export const HARNESS_TURN_KINDS = ["first", "follow_up"] as const;
 
 /**
  * How the session started: re-attached to the bridge an earlier turn left
- * running (`warm`), resumed from saved files (`disk_resume`), started fresh
- * (`new`), or continued a turn paused on an approval (`approval_continuation`).
+ * running, or adopted the local runtime an earlier turn kept (`warm`);
+ * resumed from saved files (`disk_resume`), started fresh (`new`), or
+ * continued a turn paused on an approval (`approval_continuation`).
  */
 export const HARNESS_TURN_STARTS = [
   "warm",
@@ -29,13 +30,23 @@ export const HARNESS_TURN_STARTS = [
 ] as const;
 
 /**
- * Why a reuse was refused, or `none`. The lane's runtime fingerprint changed
- * (`configuration_changed`); the saved session belongs to another box or
- * runtime (`sandbox_replaced`); resuming from saved files failed
+ * Why a reuse was refused, or `none`. The lane's runtime fingerprint changed,
+ * or a kept local runtime was started with another configuration than the
+ * turn's (`configuration_changed`); the saved session belongs to another box
+ * or runtime (`sandbox_replaced`); resuming from saved files failed
  * (`resume_failed`); or a warm attach fell back to saved files because the
  * box's probe refused the bridge (`probe_refused`: its process, birth,
  * configuration, token or expiry), the attach threw (`attach_failed`), or it
  * ran out of time (`attach_timeout`).
+ *
+ * A local turn that did not adopt the runtime its conversation's last turn
+ * kept, and started another, says why, in the words that end the kept one:
+ * it is not the runtime the lane's committed state names, or not this
+ * person's (`superseded`); it reached its lifetime (`lifetime`); its process
+ * had stopped (`process_died`); its pack is no longer the one a turn would
+ * select, or an install is in flight (`runtime_update`); the checks a turn
+ * re-runs no longer allow it (`authorization_revoked`); or a new model lease
+ * could not be bound to it (`renewal_failed`).
  */
 export const HARNESS_TURN_FALLBACK_REASONS = [
   "none",
@@ -45,6 +56,12 @@ export const HARNESS_TURN_FALLBACK_REASONS = [
   "probe_refused",
   "attach_failed",
   "attach_timeout",
+  "superseded",
+  "lifetime",
+  "process_died",
+  "runtime_update",
+  "authorization_revoked",
+  "renewal_failed",
 ] as const;
 
 /**

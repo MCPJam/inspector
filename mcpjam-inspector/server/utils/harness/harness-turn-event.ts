@@ -4,8 +4,9 @@
  *
  * Built from what the turn already measures, as it learns it: the stage marks
  * of its `[harness][timing]` line, the lane claim's state version, how its
- * session started, the warm attach's answer and the bootstrap observation.
- * The route's `TurnTiming` supplies `first_text_ms`, the time the route spent
+ * session started, the answer of its attempt to reuse a running agent (a
+ * warm attach, or a kept local runtime) and the bootstrap observation. The
+ * route's `TurnTiming` supplies `first_text_ms`, the time the route spent
  * acquiring the turn's box before the turn started, and the sink: a turn
  * with none (an eval, a swarm) sends nothing.
  *
@@ -58,6 +59,24 @@ export function harnessTurnEventSink(
   };
 }
 
+/**
+ * A local turn's answer about the runtime its conversation's last turn kept
+ * (`HarnessTurnRecord.keptRuntime`): adopted, or why it was refused, in the
+ * event's words (`HARNESS_TURN_FALLBACK_REASONS`).
+ */
+export type KeptRuntimeOutcome =
+  | "adopted"
+  | Extract<
+      HarnessTurnFallbackReason,
+      | "configuration_changed"
+      | "superseded"
+      | "lifetime"
+      | "process_died"
+      | "runtime_update"
+      | "authorization_revoked"
+      | "renewal_failed"
+    >;
+
 /** The `[harness][timing]` line's marks, in the order a turn reaches them. */
 export type HarnessTurnStage =
   "start" | "claim" | "box" | "broker" | "connect" | "dispatch" | "stream";
@@ -84,7 +103,9 @@ export class HarnessTurnRecord {
   private lane: Pick<HarnessTurnEventProperties, "kind"> | undefined;
   private session:
     Pick<HarnessTurnEventProperties, "start" | "fallback_reason"> | undefined;
-  private warm: WarmAttachOutcome | undefined;
+  /** How the turn's attempt to reuse a running agent ended, if it made one. */
+  private reuse:
+    "reused" | Exclude<HarnessTurnFallbackReason, "none"> | undefined;
   private sent = false;
 
   constructor(
@@ -109,12 +130,21 @@ export class HarnessTurnRecord {
 
   /** The warm runtime's answer, which comes before the session starts. */
   readonly warmAttach = (outcome: WarmAttachOutcome): void => {
-    this.warm = outcome;
+    this.reuse = outcome === "attached" ? "reused" : outcome;
+  };
+
+  /**
+   * A local runtime's answer about the one its conversation's last turn kept,
+   * which also comes before the session starts: adopted, the session is
+   * `warm`; refused, the turn starts another and says why.
+   */
+  readonly keptRuntime = (outcome: KeptRuntimeOutcome): void => {
+    this.reuse = outcome === "adopted" ? "reused" : outcome;
   };
 
   /**
    * The session started. `resetReason` is the reset the turn showed the
-   * person; without one, a warm attach that fell back says why.
+   * person; without one, a refused reuse says why.
    */
   sessionStarted(session: {
     approval: boolean;
@@ -124,10 +154,10 @@ export class HarnessTurnRecord {
     let start: HarnessTurnStart = "new";
     if (session.approval) start = "approval_continuation";
     else if (session.resumed)
-      start = this.warm === "attached" ? "warm" : "disk_resume";
+      start = this.reuse === "reused" ? "warm" : "disk_resume";
     let fallback: HarnessTurnFallbackReason = "none";
     if (session.resetReason) fallback = RESET_FALLBACK[session.resetReason];
-    else if (this.warm && this.warm !== "attached") fallback = this.warm;
+    else if (this.reuse && this.reuse !== "reused") fallback = this.reuse;
     this.session = { start, fallback_reason: fallback };
     return this.mark("connect");
   }
