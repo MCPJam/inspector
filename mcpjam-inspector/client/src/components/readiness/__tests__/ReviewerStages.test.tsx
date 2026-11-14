@@ -213,7 +213,7 @@ describe("the reviewer path's stages", () => {
       "Whoever manages the reviewer account.",
     );
     expect(who.nextElementSibling?.nextElementSibling).toHaveTextContent(
-      "The reviewer account must sign in without a verification step, because directory reviewers can't complete one either. Turn it off for that account, or save credentials for an account that has none. Then resume this attempt.",
+      "Turn off the verification step for the reviewer account, or save credentials for an account without one. Then resume this attempt.",
     );
     // The rehearsal's own advice, to sign in as the reviewer elsewhere, changes
     // nothing for the attempt, so the page does not repeat it.

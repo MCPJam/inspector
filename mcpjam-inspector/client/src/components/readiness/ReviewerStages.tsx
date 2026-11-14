@@ -105,7 +105,7 @@ export function ApproximatedLabel() {
     <Badge
       variant="outline"
       className="mr-2 border-dashed align-text-bottom"
-      title="MCPJam read this page by a general rule, because AuthKit does not host this sign-in."
+      title="AuthKit does not host this sign-in page. MCPJam checked it with general rules."
     >
       Approximated
     </Badge>

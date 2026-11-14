@@ -299,7 +299,7 @@ describe("ReviewerSection", () => {
     expect(screen.getAllByText(ASKED)).toHaveLength(2);
     expect(
       screen.getByText(
-        /^The reviewer account must sign in without a verification step/,
+        /^Turn off the verification step for the reviewer account/,
       ),
     ).toBeVisible();
     expect(

@@ -144,7 +144,8 @@ function identityDetail(
   finding: PlacedStep["findings"][number]["finding"],
 ): string | undefined {
   const evidence = finding.details as
-    Partial<DirectoryReviewerIdentityEvidence> | undefined;
+    | Partial<DirectoryReviewerIdentityEvidence>
+    | undefined;
   if (finding.status === "violated") return finding.remediation;
   if (status === "established" || status === "stale") {
     const { identity, organization } = evidence?.observed ?? {};
@@ -240,7 +241,7 @@ const NEXT_STEPS = {
   verification: {
     finisher: "Whoever manages the reviewer account.",
     action:
-      "The reviewer account must sign in without a verification step, because directory reviewers can't complete one either. Turn it off for that account, or save credentials for an account that has none. Then resume this attempt.",
+      "Turn off the verification step for the reviewer account, or save credentials for an account without one. Then resume this attempt.",
   },
   "bot-check": {
     finisher: "Whoever manages your server's sign-in.",
