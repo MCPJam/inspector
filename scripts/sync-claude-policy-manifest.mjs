@@ -25,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   readConstArray,
+  readPageUrlPairs,
   syncPolicyManifest,
 } from "./lib/policy-manifest-sync.mjs";
 
@@ -47,16 +48,18 @@ function readManifestSource() {
   const source = readFileSync(MANIFEST, "utf8");
   const baseMatch = source.match(/CLAUDE_DOCS_BASE_URL\s*=\s*"([^"]+)"/);
   const pages = readConstArray(source, "CLAUDE_POLICY_PAGES");
-  if (!baseMatch || !pages) {
+  // A page outside the base carries its own URL.
+  const external = readPageUrlPairs(source, "CLAUDE_EXTERNAL_POLICY_PAGES");
+  if (!baseMatch || !pages || !external) {
     throw new Error(
-      "Could not read CLAUDE_DOCS_BASE_URL / CLAUDE_POLICY_PAGES from the manifest.",
+      "Could not read CLAUDE_DOCS_BASE_URL / CLAUDE_POLICY_PAGES / CLAUDE_EXTERNAL_POLICY_PAGES from the manifest.",
     );
   }
-  return { baseUrl: baseMatch[1], pages };
+  return { baseUrl: baseMatch[1], pages, external };
 }
 
 async function main() {
-  const { baseUrl, pages } = readManifestSource();
+  const { baseUrl, pages, external } = readManifestSource();
   const code = await syncPolicyManifest({
     manifestPath: MANIFEST,
     begin: BEGIN,
@@ -67,7 +70,9 @@ async function main() {
     // extractor is what makes the hash stable under an unrelated site rebuild.
     pages: pages.map((page) => ({
       page,
-      url: `${baseUrl}/${page}`,
+      url:
+        external.find((entry) => entry.page === page)?.url ??
+        `${baseUrl}/${page}`,
       format: "html",
     })),
     checkOnly: process.argv.includes("--check"),

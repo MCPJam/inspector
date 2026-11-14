@@ -9,6 +9,13 @@
  * `not-evaluated`, the lane is `incomplete`, and the coverage names
  * `submissionProfile` as the input that would close it.
  *
+ * A connector submission's ANSWERS replace the profile when present: the
+ * listing, link and acknowledgment checks report exactly what the portal's
+ * review page would refuse, in its words, and the screenshot checks are
+ * not-applicable because the connector form has no screenshots. The
+ * acknowledgments must also be confirmed, and the Authentication answers are
+ * held against the server's sign-in; `answer-steps.ts` grades the other steps.
+ *
  * With a profile, the split is sharp:
  *
  *   - DETERMINISTIC — presence, lengths, URL shapes, image type and pixel
@@ -22,6 +29,9 @@
  * Pure data. No transport.
  */
 
+import { CLAUDE_CONNECTOR_FLOW } from "../../directory-readiness/flows/claude-connector.js";
+import { directoryFlowField } from "../../directory-readiness/flows/fields.js";
+import type { ClaudeAnswerEvidence } from "../answers.js";
 import { claudePolicySource } from "../manifest.js";
 import { CLAUDE_SUBMISSION_LIMITS } from "../profile.js";
 import {
@@ -30,7 +40,15 @@ import {
 } from "../submission-profile.js";
 import type { ClaudeReadinessFinding } from "../types.js";
 import {
+  CLAUDE_ANSWER_STEP_KEYS,
+  compareAuthAnswersWithServer,
+  gradeOwnedAnswers,
+  unconfirmedProblems,
+} from "./answer-steps.js";
+import type { ClaudeAuthEvidence } from "./auth.js";
+import {
   informational,
+  notApplicable,
   notEvaluated,
   satisfied,
   violated,
@@ -40,7 +58,7 @@ import {
 
 const LISTING_FIELDS: ClaudeCheckDefinition = {
   id: "claude.submission.listing-fields",
-  title: "Listing name, tagline, description and categories are within limits",
+  title: "Listing name, slug, one-liner, description, categories and author are valid",
   lane: "submission-artifacts",
   class: "required",
   source: claudePolicySource("submission", "§Listing details"),
@@ -50,7 +68,7 @@ const LISTING_FIELDS: ClaudeCheckDefinition = {
 
 const LISTING_URLS: ClaudeCheckDefinition = {
   id: "claude.submission.urls",
-  title: "Documentation, privacy and support URLs are HTTPS",
+  title: "Documentation, privacy policy and support links are valid",
   lane: "submission-artifacts",
   class: "required",
   source: claudePolicySource("submission", "§Listing details → Links"),
@@ -108,12 +126,23 @@ const DECLARED_AUTH_MATCHES: ClaudeCheckDefinition = {
   intrusiveness: "passive",
 };
 
+const OTHER_ANSWERS: ClaudeCheckDefinition = {
+  id: "claude.submission.other-answers",
+  title: "Every other answer the review page asks for is complete and valid",
+  lane: "submission-artifacts",
+  class: "required",
+  source: claudePolicySource("submission", "§Submission form"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
 const DEFINITIONS = [
   LISTING_FIELDS,
   LISTING_URLS,
   SCREENSHOTS,
   SCREENSHOT_PROMPTS,
   ATTESTATIONS,
+  OTHER_ANSWERS,
   DECLARED_AUTH_MATCHES,
   ARTIFACT_QUALITY,
 ];
@@ -125,6 +154,8 @@ export const CLAUDE_SUBMISSION_PROFILE_INPUT = "submissionProfile";
 const ACCEPTED_SCREENSHOT_MIME = ["image/png"];
 
 export interface ClaudeSubmissionEvidence {
+  /** A connector submission's answers. Graded instead of a profile when present. */
+  answers?: ClaudeAnswerEvidence;
   profile?: ClaudeSubmissionProfile;
   /** Issues from parsing a profile that was supplied but malformed. */
   profileIssues?: string[];
@@ -135,6 +166,8 @@ export interface ClaudeSubmissionEvidence {
    * are indistinguishable from outside.
    */
   observedAuthMode?: string;
+  /** What the run saw of the server's sign-in, held against the answers. */
+  auth?: ClaudeAuthEvidence;
 }
 
 export function runClaudeSubmissionChecks(
@@ -142,6 +175,7 @@ export function runClaudeSubmissionChecks(
   stamp: ClaudeCheckStamp,
 ): ClaudeReadinessFinding[] {
   const { profile } = evidence;
+  if (evidence.answers) return gradeAnswers(evidence, evidence.answers, stamp);
 
   if (!profile) {
     // A malformed profile is NOT the same as no profile: the caller did the
@@ -167,7 +201,11 @@ export function runClaudeSubmissionChecks(
   // asserting something it never verified.
   const overLongFields = [
     ["name", profile.name.length, CLAUDE_SUBMISSION_LIMITS.nameMaxLength],
-    ["tagline", profile.tagline.length, CLAUDE_SUBMISSION_LIMITS.taglineMaxLength],
+    [
+      "tagline",
+      profile.tagline.length,
+      CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength,
+    ],
     [
       "description",
       profile.description.length,
@@ -184,7 +222,7 @@ export function runClaudeSubmissionChecks(
       ? violated(
           LISTING_FIELDS,
           stamp,
-          `Listing fields must fit their limits: name ≤ ${CLAUDE_SUBMISSION_LIMITS.nameMaxLength}, tagline ≤ ${CLAUDE_SUBMISSION_LIMITS.taglineMaxLength}, description ≤ ${CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength}, and ${CLAUDE_SUBMISSION_LIMITS.categoriesMin}–${CLAUDE_SUBMISSION_LIMITS.categoriesMax} categories.`,
+          `Listing fields must fit their limits: name ≤ ${CLAUDE_SUBMISSION_LIMITS.nameMaxLength}, tagline ≤ ${CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength}, description ≤ ${CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength}, and ${CLAUDE_SUBMISSION_LIMITS.categoriesMin}–${CLAUDE_SUBMISSION_LIMITS.categoriesMax} categories.`,
           {
             overLong: overLongFields.map(([field, length, limit]) => ({
               field,
@@ -201,7 +239,7 @@ export function runClaudeSubmissionChecks(
       categories: profile.categories.length,
           limits: {
             name: CLAUDE_SUBMISSION_LIMITS.nameMaxLength,
-            tagline: CLAUDE_SUBMISSION_LIMITS.taglineMaxLength,
+            tagline: CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength,
             description: CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength,
           },
         }),
@@ -299,27 +337,19 @@ export function runClaudeSubmissionChecks(
   );
 
   findings.push(
-    evidence.observedAuthMode === undefined
-      ? notEvaluated(
-          DECLARED_AUTH_MATCHES,
-          stamp,
-          "this run could not determine the server's authentication mode from the wire, so the declaration stands unchallenged",
-          { declared: profile.declaredAuthMode },
-        )
-      : contradicts(profile.declaredAuthMode, evidence.observedAuthMode)
-        ? violated(
-            DECLARED_AUTH_MATCHES,
-            stamp,
-            `The submission declares \`${profile.declaredAuthMode}\` but this run observed \`${evidence.observedAuthMode}\`. Correct whichever is wrong before submitting.`,
-            {
-              declared: profile.declaredAuthMode,
-              observed: evidence.observedAuthMode,
-            },
-          )
-        : satisfied(DECLARED_AUTH_MATCHES, stamp, {
-            declared: profile.declaredAuthMode,
-            observed: evidence.observedAuthMode,
-          }),
+    notApplicable(
+      OTHER_ANSWERS,
+      stamp,
+      "a submission profile has none of the connector form's other answers"
+    )
+  );
+
+  findings.push(
+    declaredAuthFinding(
+      profile.declaredAuthMode,
+      evidence.observedAuthMode,
+      stamp,
+    ),
   );
 
   findings.push(
@@ -329,17 +359,167 @@ export function runClaudeSubmissionChecks(
       {
         reviewItems: [
           "the screenshots show this connector rather than a generic UI",
-          "the description matches what the tools actually do",
-          "the submitter owns or is authorized for the service",
-          "the privacy policy covers the declared data handling",
+          ...REVIEW_ITEMS,
         ],
         declaredDataHandling: profile.dataHandling,
       },
-      "These cannot be settled from the wire; a reviewer has to look.",
+      REVIEW_NOTE,
     ),
   );
 
   return findings;
+}
+
+const REVIEW_ITEMS = [
+  "the description matches what the tools actually do",
+  "the submitter owns or is authorized for the service",
+  "the privacy policy covers the declared data handling",
+];
+const REVIEW_NOTE =
+  "These cannot be settled from the wire; a reviewer has to look.";
+
+/** Answers each check owns, so one portal issue is reported by one check. */
+const COPY_KEYS = [
+  "listing.name",
+  "listing.slug",
+  "listing.oneLiner",
+  "listing.description",
+  "listing.categories",
+  "listing.authorName",
+];
+const LINK_KEYS = [
+  "listing.documentationUrl",
+  "listing.privacyPolicyUrl",
+  "listing.support",
+  "listing.authorUrl",
+  "listing.iconUrl",
+  "listing.enterpriseAuthDocsUrl",
+];
+const ACKNOWLEDGMENTS_KEY = "compliance.acknowledgments";
+/** Answers some check reports; the other-answers check reports the rest. */
+const OWNED_KEYS = new Set([
+  ...COPY_KEYS,
+  ...LINK_KEYS,
+  ACKNOWLEDGMENTS_KEY,
+  ...CLAUDE_ANSWER_STEP_KEYS,
+]);
+
+function gradeAnswers(
+  evidence: ClaudeSubmissionEvidence,
+  answers: ClaudeAnswerEvidence,
+  stamp: ClaudeCheckStamp,
+): ClaudeReadinessFinding[] {
+  const { values } = answers;
+  const fields = (
+    definition: ClaudeCheckDefinition,
+    keys: readonly string[],
+    details: Record<string, unknown>,
+  ) => gradeOwnedAnswers(definition, answers, keys, stamp, details);
+  const ticked = values[ACKNOWLEDGMENTS_KEY];
+  const acknowledged = new Set<unknown>(Array.isArray(ticked) ? ticked : []);
+  const acknowledgments =
+    directoryFlowField(CLAUDE_CONNECTOR_FLOW, ACKNOWLEDGMENTS_KEY)?.options ??
+    [];
+  const lengthOf = (key: string) => {
+    const value = values[key];
+    return typeof value === "string" || Array.isArray(value)
+      ? value.length
+      : 0;
+  };
+  const noScreenshots = "an MCP connector submission has no screenshots";
+  // Every other issue, so an incomplete submission never grades as passing.
+  const otherKeys = answers.issues
+    .map((issue) => issue.key)
+    .filter((key) => !OWNED_KEYS.has(key));
+
+  return [
+    fields(LISTING_FIELDS, COPY_KEYS, {
+      oneLinerLength: lengthOf("listing.oneLiner"),
+      descriptionLength: lengthOf("listing.description"),
+      categories: lengthOf("listing.categories"),
+      limits: {
+        oneLiner: CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength,
+        description: CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength,
+        categoriesMax: CLAUDE_SUBMISSION_LIMITS.categoriesMax,
+      },
+    }),
+    fields(LISTING_URLS, LINK_KEYS, {
+      links: Object.fromEntries(LINK_KEYS.map((key) => [key, values[key]])),
+    }),
+    notApplicable(SCREENSHOTS, stamp, noScreenshots),
+    notApplicable(SCREENSHOT_PROMPTS, stamp, noScreenshots),
+    gradeOwnedAnswers(
+      ATTESTATIONS,
+      answers,
+      [ACKNOWLEDGMENTS_KEY],
+      stamp,
+      {
+        acknowledged: acknowledged.size,
+        notAcknowledged: acknowledgments
+          .filter((option) => !acknowledged.has(option.value))
+          .map((option) => option.label),
+      },
+      unconfirmedProblems(answers, [ACKNOWLEDGMENTS_KEY])
+    ),
+    fields(OTHER_ANSWERS, otherKeys, {}),
+    // A caller's own observation keeps its old meaning; otherwise the
+    // answers are held against what the run saw of the server's sign-in.
+    evidence.observedAuthMode === undefined
+      ? compareAuthAnswersWithServer(
+          DECLARED_AUTH_MATCHES,
+          answers,
+          evidence.auth,
+          stamp
+        )
+      : declaredAuthFinding(
+          answers.declaredAuthMode,
+          evidence.observedAuthMode,
+          stamp
+        ),
+    informational(
+      ARTIFACT_QUALITY,
+      stamp,
+      {
+        reviewItems: REVIEW_ITEMS,
+        declaredDataHandling: {
+          apiOwnership: values["dataHandling.apiOwnership"],
+          healthData: values["dataHandling.healthData"],
+          sponsored: values["dataHandling.sponsored"],
+        },
+      },
+      REVIEW_NOTE,
+    ),
+  ];
+}
+
+function declaredAuthFinding(
+  declared: string | undefined,
+  observed: string | undefined,
+  stamp: ClaudeCheckStamp,
+): ClaudeReadinessFinding {
+  if (declared === undefined) {
+    return notEvaluated(
+      DECLARED_AUTH_MATCHES,
+      stamp,
+      "the submission does not say how users authenticate",
+    );
+  }
+  if (observed === undefined) {
+    return notEvaluated(
+      DECLARED_AUTH_MATCHES,
+      stamp,
+      "this run could not determine the server's authentication mode from the wire, so the declaration stands unchallenged",
+      { declared },
+    );
+  }
+  return contradicts(declared, observed)
+    ? violated(
+        DECLARED_AUTH_MATCHES,
+        stamp,
+        `The submission declares \`${declared}\` but this run observed \`${observed}\`. Correct whichever is wrong before submitting.`,
+        { declared, observed },
+      )
+    : satisfied(DECLARED_AUTH_MATCHES, stamp, { declared, observed });
 }
 
 function isHttpsUrl(value: string): boolean {

@@ -101,6 +101,27 @@ describe("ErrorCard compact action face", () => {
     expect(screen.getByTestId("error-card-copy")).toBeInTheDocument();
   });
 
+  it("keeps the bordered card and shows the action when the caller asks for card density", () => {
+    const onClick = vi.fn();
+    render(
+      <ErrorCard
+        error={consent()}
+        density="card"
+        action={{ label: "Reconnect", onClick }}
+      />,
+    );
+
+    // The sentence stays on the face, so nothing has to be opened to read it.
+    expect(screen.getByRole("alert")).not.toHaveAttribute("data-compact");
+    expect(
+      screen.getByText(
+        "This server needs your permission before it can connect.",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("error-card-action"));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
   it("compacts a diagnostic card when the caller asks for row density", () => {
     render(
       <ErrorCard
