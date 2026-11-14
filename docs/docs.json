@@ -49,11 +49,9 @@
           "getting-started",
           "installation",
           "hosted/overview",
-          "hosted/slack",
           "hosted/claude-connector",
           "hosted/sso",
           "hosted/network",
-          "github-checks",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
           "changelog/overview"
@@ -70,7 +68,6 @@
               "inspector/clients",
               "inspector/connecting-servers",
               "inspector/projects",
-              "inspector/plugins",
               "inspector/protocol-versions",
               "inspector/host-compat",
               "inspector/skills"
@@ -82,7 +79,6 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
-              "inspector/compatibility",
               "inspector/view-origins",
               "inspector/host-templates"
             ]
@@ -101,7 +97,6 @@
             "icon": "puzzle",
             "pages": [
               "inspector/tools-prompts-resources",
-              "inspector/events",
               "inspector/debugging"
             ]
           },
@@ -246,6 +241,210 @@
   },
   "redirects": [
     {
+      "source": "/api-reference/agent-browsers/open-a-cloud-browser-session",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/agent-browsers/list-your-browser-sessions",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/agent-browsers/execute-a-browser-command",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/agent-browsers/append-a-session-note",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/agent-browsers/read-command-receipts",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/agent-browsers/fetch-a-browser-screenshot",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/agent-browsers/close-a-browser-session",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/harness/list-a-harnesss-native-built-in-tools",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/list-a-projects-sandbox-images",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/create-a-sandbox-image",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/get-a-sandbox-image",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/update-a-sandbox-image",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/delete-a-sandbox-image",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/list-a-sandbox-images-builds",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/build-a-sandbox-image",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/share-a-sandbox-image-with-the-project",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/boot-your-computer-from-a-sandbox-image",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/reset-your-computer-to-its-image",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/evals/list-github-checks-repositories",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/evals/run-an-eval-suite-on-a-repositorys-pull-requests",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/eval-runs/get-the-pre-run-disclosure-for-a-suite-launch-plan",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/catalog/search-or-list-unified-sessions",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/environments/create-an-environment",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/environments/update-an-environment",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/environments/promote-an-unnamed-environment",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/environments/restore-an-archived-environment",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/plugins/list-a-projects-plugins",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/plugins/get-a-plugin-version",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/skills/list-a-projects-skills",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/skills/get-a-skill",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/sandbox-images/validate-a-blueprint",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/registry/search-the-scraped-mcp-directories",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/registry/get-one-directory-server",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/registry/list-directory-sources",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/registry/list-curated-and-org-registry-cards",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/registry/list-registry-installs-in-a-project",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/registry/install-a-directory-server-into-a-project",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/registry/install-a-curated-or-org-registry-card",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/registry/uninstall-a-registry-card",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/chat-sessions/open-the-api-session-browser",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/chat-sessions/command-the-api-session-browser",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/chat-sessions/add-a-note-to-the-api-session-browser",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/chat-sessions/read-the-api-session-browser-command-trace",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/chat-sessions/read-an-api-session-browser-screenshot-url",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/chat-sessions/close-the-api-session-browser",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/api-reference/chat-sessions/create-an-api-session-shell-and-open-its-browser",
+      "destination": "/reference/public-api"
+    },
+    {
+      "source": "/inspector/compatibility",
+      "destination": "/inspector/host-compat"
+    },
+    {
+      "source": "/github-checks",
+      "destination": "/cli/ci"
+    },
+    {
+      "source": "/hosted/slack",
+      "destination": "/hosted/overview"
+    },
+    {
+      "source": "/inspector/plugins",
+      "destination": "/inspector/skills"
+    },
+    {
+      "source": "/inspector/events",
+      "destination": "/cli/events"
+    },
+    {
       "source": "/inspector/workspaces",
       "destination": "/inspector/projects"
     },
@@ -295,43 +494,43 @@
     },
     {
       "source": "/api-reference/computer-environments/boot-your-computer-from-an-environment",
-      "destination": "/api-reference/sandbox-images/boot-your-computer-from-a-sandbox-image"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/build-a-computer-environment",
-      "destination": "/api-reference/sandbox-images/build-a-sandbox-image"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/create-a-computer-environment",
-      "destination": "/api-reference/sandbox-images/create-a-sandbox-image"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/delete-a-computer-environment",
-      "destination": "/api-reference/sandbox-images/delete-a-sandbox-image"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/get-a-computer-environment",
-      "destination": "/api-reference/sandbox-images/get-a-sandbox-image"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/list-a-projects-computer-environments",
-      "destination": "/api-reference/sandbox-images/list-a-projects-sandbox-images"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/list-an-environments-builds",
-      "destination": "/api-reference/sandbox-images/list-a-sandbox-images-builds"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/reset-your-computer-to-its-image",
-      "destination": "/api-reference/sandbox-images/reset-your-computer-to-its-image"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/share-an-environment-with-the-project",
-      "destination": "/api-reference/sandbox-images/share-a-sandbox-image-with-the-project"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/computer-environments/update-a-computer-environment",
-      "destination": "/api-reference/sandbox-images/update-a-sandbox-image"
+      "destination": "/reference/public-api"
     },
     {
       "source": "/api-reference/hosts/create-a-host-from-a-template-or-a-full-config",

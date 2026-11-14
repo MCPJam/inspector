@@ -33,14 +33,14 @@ Click **New case** in the suite header (or in the empty-state screen when no cas
 
 ### Case workspace
 
-The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
+The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, or a spec preview.
 
 **Left column — the case spine**
 
 Every case opens in the spine, however it was authored — in the app, through the CLI, or from an SDK suite file. The spine is a flat, ordered list of steps. Each step is one of:
 
 - **Prompt** — a user turn the model receives. The first prompt is always present; use **Add assertion or action** to add a second prompt for multi-turn cases.
-- **Interact** — a widget interaction (click, typing) recorded against a live widget.
+- **Interact** — a widget interaction (click, typing) run against a live widget.
 - **Assert** — an assertion that grades the case.
 
 Below the step list, an **Expected outcome** field holds the goal sentence the judge grades against.
@@ -95,16 +95,15 @@ The summary line counts **required rows only**: "2 of 2 required passed · 1 adv
 
 The judge's row hosts the judge panel, so labelling a trial works where the judge sits. Under the rows, **Score rows** expands the raw score contract, including any row the backend could not join.
 
-The other tabs are unchanged: **Chat**, **Tool Calls** and **Trace** show the transcript, and **Steps** shows execution order — now with the same assertion names the rest of the page uses and the reason under a failed step.
+**Chat**, **Tool Calls** and **Trace** show the transcript, and **Steps** shows execution order, with the same assertion names the rest of the page uses and the reason under a failed step.
 
 The right column resolves to one of these views, in precedence order:
 
 1. **Explicit history pick** — a trial you selected from History.
-2. **Recording** — a live recording session is active.
-3. **Live run** — a quick run is in progress.
-4. **Latest** — the most recent persisted iteration with a trace.
-5. **Spec preview** — the authored steps rendered as a conversation preview.
-6. **Empty** — no trial yet; start typing a prompt.
+2. **Live run** — a quick run is in progress.
+3. **Latest** — the most recent persisted iteration with a trace.
+4. **Spec preview** — the authored steps rendered as a conversation preview.
+5. **Empty** — no trial yet; start typing a prompt.
 
 <Note>
   A **negative case** is one you marked **No tool should be called**. Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape. A case that simply names no tool is *not* negative — it is graded by its assertions.
@@ -125,33 +124,9 @@ Click the **Model**, **Trials**, or **Host** chip above the form to open the **N
 
 Click **Suite settings** in the sheet to configure hosts and other suite-level defaults.
 
-## Case attachments
+## Widget interactions
 
-<Note>
-  Case attachments require a **pinned computer environment** on the suite. The attachments panel is hidden for draft cases and appears only after a case is saved.
-</Note>
-
-Each saved test case has an **Attachments** section at the bottom of the case editor. Files you upload here are seeded into the iteration's fresh sandbox at `/home/user/attachments/<filename>` before the model's first turn runs — so the model finds the same files on every iteration, model, and re-run.
-
-**Limits:** up to 20 files and 30 MB total per case.
-
-To add files, click **Add file** and pick one or more files. To remove a file, click the **×** next to its name. Changes take effect on the next run.
-
-When attachments are present, a note is automatically prepended to the case's first user turn listing each file's path, so the model knows where to find them without you having to mention it in the prompt.
-
-**Fail-honest behavior:** if a file cannot be seeded — because its stored content is no longer available, the download fails, or a cap is exceeded — the iteration fails immediately rather than running silently without the file. This prevents a case that relies on a file from producing a misleading passing result.
-
-## Recording widget interactions
-
-If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions — clicks and typing — directly into a test case as `interact` steps.
-
-<Note>
-  The **Start recording** button is only shown when recording is enabled for your account.
-</Note>
-
-Click **Start recording** in the case spine. The button is disabled until the prompt is non-empty — type a prompt first, then start recording. Once active, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
-
-Recorded interact steps appear in the spine in the order they were captured. This order is also the execution order — the runner processes steps sequentially and stops at the first failure.
+If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), a case can include `interact` steps: clicks and typing run against the live widget. Interact steps execute in the order they appear in the spine, and the runner stops at the first failure.
 
 ### Widget `ui/message` follow-ups
 
@@ -166,26 +141,7 @@ The Chat/Trace tab renders widget tool calls as the same app-attributed cards yo
 - **JSON tool results** — Tool outputs that are JSON (including JSON wrapped in a text block) render as structured data in the card's **Data** tab rather than as a raw text block. There is no duplicate result row below the card.
 - **Frozen widget diagnostics** — When a widget was captured as a screenshot during the run, the card's **Sandbox** tab shows the recorded policy: resource URI, CSP declaration, permissions, permissive mode, and any console errors or blocked requests logged during that run. Live-only fields (sandbox attributes, lifecycle, view origin) show as **not recorded** because they are not available after the run completes.
 
-### The screen recording
-
-The **Replay** tab plays a recording of the run beside the screenshot
-filmstrip, and every step that captured an offset seeks the video to it.
-
-Unattended runs on a hosted browser are recorded at **15 fps**. Idle time is
-held rather than dropped, so the file's duration matches the run's wall clock
-even when the page sat still for a minute — the frame count above the player
-is the number of *distinct* frames, which is small on a page that did not move
-and is not a sign of a fault.
-
-Recordings stop at **60 MiB** and say so. A capped take is a complete, playable
-*beginning* of the run, not a corrupt file and not the whole run: the player
-shows a **Stopped at the size limit** badge, so a twelve-minute recording of a
-forty-minute run is never mistaken for the run itself. Long runs that routinely
-cap are the signal to shorten the case rather than to distrust the video.
-
-A run that never uses a browser tool records nothing, and costs nothing.
-
-
+## Assertions
 
 Assertions are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
 
@@ -215,18 +171,10 @@ models, and it goes stale on every prompt or model change. `Token budget under
 N` remains a valid assertion and keeps working wherever it is already authored,
 but for spend, two things replace it: [cost on every run](#cost), which shows
 what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
-when a change makes the suite more expensive relative to its own baseline. For
-a ceiling on what the whole organization may spend, see the [spend
-budget](/hosted/overview#spend-budget).
+when a change makes the suite more expensive relative to its own baseline. To
+cap automatic credit purchases each month, see
+[auto-reload](/hosted/overview#auto-reload).
 </Note>
-
-### Harness system tools in assertion dropdowns
-
-When a suite is configured to run under a harness host (such as Claude Code or Codex), the tool-name pickers in the case editor also offer the harness's native **system tools** — for example `bash`, `read`, `webSearch`, `WebFetch` — alongside your MCP server tools. This lets you write assertions like **Tool was never called** for `bash` or **Tool was called with…** for `read` without having to type the wire name by hand.
-
-System tools appear only in assertion pickers. They are not available in pinned tool-call steps or widget-assertion "View (tool)" selects, because those require a tool that MCPJam can invoke directly.
-
-If an MCP tool and a system tool share the same name, the MCP tool takes precedence and the system tool is not added to the list.
 
 ### Argument matching
 
@@ -252,7 +200,7 @@ A run override shows an **override** badge; click **Reset** in the popover to cl
 
 ## LLM as judge
 
-**Data sent for grading:** the hosted v4 judge sends the complete recorded conversation, trace, available tool definitions, runtime context and supported inline media through OpenRouter to the selected model provider. Existing credential redaction applies. This includes more data than the previous clipped-text judge. Automatic grading sends this evidence without a separate Run judge click; turn grading off or use manual mode if that is not appropriate for your data.
+**Data sent for grading:** the hosted v4 judge sends the complete recorded conversation, trace, available tool definitions, runtime context and supported inline media through OpenRouter to the selected model provider. Existing credential redaction applies. Automatic grading sends this evidence without a separate Run judge click; turn grading off or use manual mode if that is not appropriate for your data.
 
 For cases where "did the right tools fire" isn't enough — anything graded on the quality of the final answer — the judge grades the run against your **expected output** if you set one, and against the user prompt otherwise. It's advisory: it produces a score and a rationale, but doesn't gate the run unless you ask it to.
 
@@ -293,7 +241,7 @@ When a swarm session uses MCP App tools that return widgets, the session viewer 
 
 A run needs three things, all picked from the suite header:
 
-1. **Servers** — for environment suites, servers come from the server group selected on the environment (plus any explicit plugin pins). If no group is picked, the suite bar shows a notice and the run starts with zero servers — cases that expect tool calls will fail. For non-environment suites, one or more servers must be attached directly to the suite.
+1. **Servers** — for environment suites, servers come from the server group selected on the environment. If no group is picked, the suite bar shows a notice and the run starts with zero servers — cases that expect tool calls will fail. For non-environment suites, one or more servers must be attached directly to the suite.
 2. **Models** — the multi-model picker is the whole point. Each model produces its own iteration per case, so you can see where Claude passes and ChatGPT trips.
 3. **Run all** — kicks off every case × every model. **Run one** from a case row runs just that case.
 
@@ -305,48 +253,9 @@ A run needs three things, all picked from the suite header:
 
 When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
 
-### Pre-run credit estimate
-
-When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
-
-The estimate appears on:
-
-- **Run all** in the suite header — prices every case × model × iterations × run plans.
-- **Per-case Run** buttons in the cases list and case sidebar — prices that case's configured models for one quick run.
-- **Run / Run compare** in the template editor — prices the currently selected models and the current (possibly unsaved) prompt.
-- **Swarm journey cards** — prices the journey's next run across its live targets.
-
-The tooltip shows a headline figure and a per-model or per-component breakdown. Copy varies by how well-grounded the estimate is:
-
-| Copy | Meaning |
-|------|---------|
-| Estimated: ~N credits — based on your recent runs | Full coverage, grounded in your own run history |
-| Estimated: ~N credits — partly based on recent runs | Full coverage, partially grounded in history |
-| Rough estimate: ~N credits — improves after first run | Full coverage, heuristic only (no history yet) |
-| At least ~N credits — part of this run is unpriced | Some models or run slices could not be priced |
-| Estimate unavailable for these models | No pricing data available |
-
-1 credit = $0.01. Your free daily allowance and any BYOK keys change what is actually deducted. The estimate is informational only — it never blocks or gates a run.
-
 ### Frozen execution snapshots
 
 The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
-
-For harness runs, the run's pinned skills are also frozen at run start and delivered to each iteration from that snapshot — not re-fetched from the live project pool. This means editing a project skill mid-run does not affect iterations already in progress, and the "without skills" A/B arm (configured via `skillsOverride: "exclude"`) runs with no skills regardless of what the project currently holds.
-
-## Computer environment
-
-<Note>
-  The computer environment picker is only visible when the **computers** feature flag is enabled on your account and a project is selected for the suite.
-</Note>
-
-In suite settings, the **Computer environment** select lets you pin a built Docker environment so every eval iteration boots a fresh sandbox from the same image. This keeps results comparable across runs and edits — each iteration gets an identical starting state.
-
-- Choose an environment from the list. Environments that have not finished building are labelled **(not built)**; selecting one will cause the run to fail immediately.
-- Choose **None (default image)** to run without a pinned environment.
-- The agent receives a `bash` tool inside the sandbox.
-
-Once a run completes, the **Run detail** page shows an **Environment** row with the name of the environment used. If the environment has since been deleted, the row shows its raw identifier instead so the record remains durable. Hovering the label shows the image template, digest, and provider from the frozen snapshot taken at run time.
 
 ## Grading
 
@@ -389,8 +298,7 @@ result.
 
 Changing which criterion decides a suite re-decides every case in it. The app,
 CLI and MCP do not offer this change today; it requires a direct API `PATCH`
-with both `settings.repetitions` and `settings.passThreshold`. An explicit
-scope-change operation is a follow-up.
+with both `settings.repetitions` and `settings.passThreshold`.
 
 ### Iterations
 
@@ -432,8 +340,8 @@ The settings page lets you toggle **Any required evaluator errored** — the one
 condition that does not need a baseline. Baseline comparison conditions
 (allowed pass-rate drop, deterministic regressions, p95 latency increase) are
 set via the API or CLI only; if a suite carries one, the settings page lists it
-read-only so you can see what the run will enforce. See [Quality gates](#ci-tab)
-for the full condition reference.
+read-only so you can see what the run will enforce. See
+[`cloud eval gate`](/cli/reference#cloud-eval-gate) for the CLI's gate flags.
 
 ## Execution budgets
 
@@ -456,42 +364,24 @@ Platform-enforced ceilings apply: a value above the platform ceiling is refused 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
 
 - **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling — not just Claude. Models that lack vision or tool calling run without browser interaction.
-- **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run. Harness hosts (Claude Code, Codex) with Tool Approval on are refused before any sandbox is provisioned — nobody can answer an approval in an unattended eval run. Turn Tool Approval off in the execution config to resolve the refusal.
-- **Server selection** — Servers are not configured here. They come from the suite's environment. Specifically, an eval run connects the **server group selected on the environment** plus any explicit plugin pins — not the client's own stored servers. If the environment has no server group and no plugin pins, the run starts with zero servers and cases that expect tool calls will fail. The server picker is intentionally hidden in this editor.
+- **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
+- **Server selection** — Servers are not configured here. They come from the suite's environment. Specifically, an eval run connects the **server group selected on the environment**, not the client's own stored servers. If the environment has no server group, the run starts with zero servers and cases that expect tool calls will fail. The server picker is intentionally hidden in this editor.
 - **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
 
 Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
-
-<Note>
-  **Personal computers are not available for eval suites.** The personal computer toggle and computer-backed tools (such as Bash) are hidden and blocked in the suite execution config editor. If the project's default host config has a computer attached, resetting a suite to that default automatically strips the computer and any computer-backed tool ids.
-</Note>
-
-<Note>
-  **A host that grants `bash` requires a pinned computer environment.** If the suite's host config includes `bash` (or another computer-backed built-in) but no computer environment is pinned, the run is refused at pre-flight rather than executing with the tool silently absent. Pin a computer environment in suite settings, or remove the computer-backed built-in from the host config.
-
-  This applies to every eval run — harness and emulated alike. A single-case run (the **Run** button on an individual case outside a suite) is always refused for computer-backed built-ins because that surface never provisions a computer; run the case as part of a suite with a pinned environment instead.
-</Note>
 
 ### How suite defaults apply to test cases
 
 The suite-level **system prompt** and **temperature** are runtime defaults: when a test case does not set its own system prompt or temperature, the suite values are used for that iteration. A per-case override always wins — the suite default only fills the gap.
 
-<Note>
-  If you have existing suites where test cases do not specify a system prompt, those cases will now run with the suite's system prompt applied. Cases that already set their own system prompt are unaffected.
-</Note>
-
-## CI tab
-
-The **CI** tab (when enabled for your project) shows only CI-active suites — suites created by the SDK or suites that CI has reported into at least once. Playground-only suites stay in the **Evaluate** tab. If a project has no CI evals yet, the CI tab shows a quickstart prompt.
-
-The commit rail in the CI tab groups runs by commit SHA and only includes CI (SDK-sourced) runs. Playground runs on mixed suites are excluded from the rail so they don't appear as spurious manual-commit groups.
+## CI suites
 
 ### Pass Rate vs Accuracy
 
 The metric label shown in run headers, the runs table, charts, and hero stats follows the **run's source**, not the suite's creation source:
 
 - **Pass Rate** — shown for runs submitted by the SDK (CI runs). Reflects per-case pass/fail.
-- **Accuracy** — shown for runs triggered manually from the UI, via the API, or on a schedule.
+- **Accuracy** — shown for runs triggered manually from the UI or via the API.
 
 On a mixed suite (one that has received both CI and playground runs), the label updates to match the most recent run. Legacy runs without a recorded source fall back to the suite's creation source.
 
@@ -500,8 +390,8 @@ On a mixed suite (one that has received both CI and playground runs), the label 
 A suite marked **CI** keeps its configuration somewhere other than this app —
 either a suite file committed to a repository (`mcpjam cloud eval run --file`), or a
 suite the MCPJam SDK created when it reported a run. Those suites are
-**read-only here**: name, settings, environments, schedule, models, skills,
-execution config and cases all refuse edits, in the app and through the API
+**read-only here**: name, settings, environments, models, execution config
+and cases all refuse edits, in the app and through the API
 alike, with `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`.
 
 One caller is exempt, and only one: the suite file itself. A write that sends
@@ -513,8 +403,7 @@ naming none, so it is not a way in.
 That is not a permission problem, and no role change lifts it. The reason is
 that an edit made here would not survive: the file sync deletes any case the
 file does not name, and an SDK suite's cases are regenerated from the next
-report. Before this, such an edit lasted until the next CI run and then vanished
-with nothing recording why.
+report.
 
 Two ways forward, both offered on the suite:
 
@@ -567,7 +456,7 @@ Client and server filters on the **Suites** tab live in the column headers rathe
 #### Where a run came from
 
 Every run carries an origin badge — **UI**, **SDK**, **API**, **CLI**, **MCP**,
-**GitHub**, **Scheduled** — and the Source chips above the Overview table filter on
+**GitHub** — and the Source chips above the Overview table filter on
 it. The filter runs on the server, so an empty result means the project has no
 such runs, not that they were further down the list.
 
@@ -605,7 +494,6 @@ A dash (`—`) means **no cost was observed**, never that the trial was free:
 | Why | What you see |
 |---|---|
 | Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
-| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
 | No token usage reported | Nothing to price. |
 
 A cost your own SDK runner reported is shown but labelled **runner** — it is
@@ -621,13 +509,13 @@ rather than as a pass.
 
 While a run is in progress, the run header shows a **HOLD** or **SHIP** pill for each client/model pairing to indicate the current trajectory. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client not yet on track to pass, and a **SHIP** pill lists every client on track to pass. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. Once a run finishes, these pills are removed from the header. The **Compare runs** and **Run again** buttons are visible directly in the header.
 
-**Cancelling a run:** while a run is in progress (status `pending`, `running`, or `grading`), a **Cancel run** button replaces **Run again** in the run header. Clicking it stops every client-model pairing of that launch at once — runs that have already finished are skipped. A run still in `grading` (trials done, gating judge still running) can also be cancelled. Once cancelled, stopped trials are recorded as `cancelled` rather than as failures, so the run result reflects a deliberate stop rather than a test failure. The **Cancel run** button is also available in the suite header when any run in the suite is still going. On the **Evals** tab, where the run detail is folded into the suite body rather than shown with a full header, the **Cancel run** button appears in the run-level action row (alongside Share, Export, and Submission report) instead.
+**Cancelling a run:** while a run is in progress (status `pending`, `running`, or `grading`), a **Cancel run** button replaces **Run again** in the run header. Clicking it stops every client-model pairing of that launch at once — runs that have already finished are skipped. A run still in `grading` (trials done, gating judge still running) can also be cancelled. Once cancelled, stopped trials are recorded as `cancelled` rather than as failures, so the run result reflects a deliberate stop rather than a test failure. The **Cancel run** button is also available in the suite header when any run in the suite is still going.
 
 Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts, plus P50 and P95 latency, average tokens, and average tool calls for that pairing. When a previous launch exists and the current run has finished, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. Deltas are hidden while a run is still in progress. The first launch of a suite shows no deltas.
 
 Below the pairing rows, the hero renders a **Findings** block. When findings have been built for the run, it shows a lead finding with a carousel and a **See details** sheet. When no findings have been built yet, a **Build findings** button appears instead — building is deterministic and does not call a model. When findings are unavailable for the run, the hero falls back to a contract-derived "What broke / Next step" summary. For combined runs (multiple clients or models in one report), a **Findings for** selector scopes the findings block to one member run at a time. When an AI analysis has run, its "N of M trials" count includes only trials that were each verified against their own recorded evidence; the **See details** sheet discloses any proposed trials that did not show the mechanism or could not be verified. When recurrence history is available, the sheet shows how many of the suite’s last 20 analyzed runs contained the same verified mechanism and when it first appeared.
 
-The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
+The **Test cases** section lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row.
 
 A **Results / Metrics** toggle above the case list switches what each cell shows:
 
@@ -645,7 +533,7 @@ For CI-managed (SDK) suites, clicking a test name still opens the definition in 
   - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
 - **User-value chain** — when you expand a trial with a verified decision chain, the scorecard shows a two-column layout: a stage rail on the left lists all six user-value stages (Session connected → Tools discovered → Tool selected → Tool called → Response returned → Request satisfied) as a column of clickable links, and the selected stage's detail opens on the right. The scorecard opens on the stage where the chain broke; click any other stage in the rail to read it. Each open section's heading carries the stage's state word (passed, failed, or a neutral label such as "never ran"). A failed stage whose evaluator rows do not already explain the failure shows the chain's own reason under the heading. When no verified chain exists (for example, before a run has completed), the sections stack in chain order instead. During blind review (before you label a trial whose User value stage was decided by the judge), the rail opens on User value — where the label control lives — so you always label the same section regardless of which stage the judge decided. The User value section omits its state word, stage sentence, and tally line until you submit your label; the other five stages remain fully readable.
-- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn. The user-value chain also appears above the transcript in the trace pane, so the answer to "where did this trial stop" is on the same screen as the evidence.
+- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. The user-value chain also appears above the transcript in the trace pane, so the answer to "where did this trial stop" is on the same screen as the evidence.
 - **Per-model breakdown** to compare how the same case behaves across models.
 - **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
@@ -681,32 +569,6 @@ If generation fails because no tools are marked read-only, the workspace offers 
 Once every draft has been saved or discarded, the workspace shows **Every generated case has been reviewed** and a **Back to &lt;suite&gt;** button. A run that produced no cases at all shows **No cases were generated** instead.
 
 When the suite has a saved server group spanning two or more servers, the generator produces coverage for each server individually plus at least one cross-server case. Suites without a saved server group treat all available servers as a single pool.
-
-## Plugin provenance on runs
-
-When a run executed against an environment that pins a plugin, the run detail page shows a **Plugins** row directly below the environment label. Each chip displays the plugin name and a short bundle hash — the content-addressed identity of the exact bundle the run used.
-
-The bundle hash is what makes two runs of the "same" plugin comparable: a re-import mints a new hash even when the name is unchanged, and an edit changes the hash under an unchanged name. The row is read-only provenance — it records what ran and offers no way to restore or re-pin those versions.
-
-When a run is the "without skills" arm of an A/B compare, a **skills excluded** badge appears alongside the plugin chips. This distinguishes a deliberately skill-free run from one whose skills failed to load; the plugin's MCP servers were still connected for that run.
-
-## OpenAI submission report
-
-For runs that pinned a plugin, a **Submission report** button appears in the run header alongside **Export traces**. Clicking it downloads a Markdown document formatted for OpenAI's plugin directory review, which asks for five prompts where the plugin should be invoked and three where it must not.
-
-The report is built from the run's own frozen case records — not from the live suite — so it names the exact bundle hash the run executed. It selects up to five passing positive cases and up to three passing negative cases. When there are not enough passing cases to fill the quota, failing cases are included to reach the count and listed explicitly at the top of the document under **Not ready to submit**.
-
-The report also flags these conditions as not ready to submit:
-
-| Condition | What it means |
-|-----------|---------------|
-| Fewer than 5 positive cases | The run did not execute enough "should invoke" cases. Add cases to the suite and re-run. |
-| Fewer than 3 negative cases | The run did not execute enough "should NOT invoke" cases. Mark cases as negative tests and re-run. |
-| Failing cases included | One or more selected cases failed; they are named at the top of the document. |
-| No plugin pinned | The run pinned no plugin version, so the report cannot state which bundle was evaluated. |
-| Skills excluded | The run is the "without skills" A/B arm. Submit the arm that includes skills. |
-
-The button only appears on runs that pinned a plugin. Plugin-free runs produce no submission document.
 
 ## Exporting traces
 

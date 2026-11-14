@@ -5,7 +5,7 @@ icon: "book"
 ---
 
 <Note>
-The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+SDK 10, CLI 6, Vitest 0.3, and later versions require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. Earlier versions do not.
 </Note>
 
 `runSuiteFile(sourceText, options)` runs an MCPJam suite file locally and decides it with the v2 verdict policy. It is the engine behind [`mcpjam test`](/cli/local-evals), exposed for code that wants the same run without the CLI.
@@ -95,4 +95,4 @@ An iteration that failed its assertions is evidence, not an error: it comes back
 
 ## Eval authentication
 
-For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.
+See [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

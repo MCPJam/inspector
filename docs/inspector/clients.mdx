@@ -64,15 +64,12 @@ The **Browser** tab in the Client focus panel separates saved browser configurat
 
 **Your browser** — Personal preferences that do not change the client configuration:
 
-- **Browser location** — Shown when Cloud Browser is rolled out to your account. Choose between local and cloud for new Playground chats. Changing this affects new chats only; any chat already bound to a browser keeps its existing location. Environments always use Cloud regardless of this preference.
 - **Device permission** — Grant or revoke permission for the local browser on this machine. Appears only when local browser is available and selected.
 - **Saved profiles** — Manage your personal browser profiles.
 
 #### Browser canvas island
 
-The client canvas shows a **Browser** island (or **+ Browser** when not yet enabled) alongside the Computer island. The island displays the active profile label. Clicking it opens the Browser tab.
-
-In environment canvases (read-only views), clicking the Browser island navigates to the referenced client's Browser tab rather than editing the environment inline.
+The client canvas shows a **Browser** island (or **+ Browser** when not yet enabled). The island displays the active profile label. Clicking it opens the Browser tab.
 
 ### MCP App settings (SEP-1865)
 
@@ -85,8 +82,8 @@ When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensi
 - **Permission Policy** — Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
 - **Display modes** — Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
 - **Theme and styles** — The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
-- **`window.openai` injection** — Toggle whether the inspector injects the OpenAI Apps SDK `window.openai` shim into widget HTML before sandboxing. ChatGPT, Copilot, and MCPJam host presets enable this by default; Claude, Cursor, and Codex presets leave it off. You can override the preset per host using the toggle in the **Apps Extension** tab. The chip in the host capability matrix shows the current state and whether it comes from the preset or a manual override.
-- **Same-origin app iframe** — Toggle in the **Apps Extension** tab (under **Sandbox**) that controls whether the app's iframe shares the sandbox page's origin. When off, the inspector mounts every app with `srcdoc` and no `allow-same-origin`, so the view runs in an opaque origin — `localStorage`, `sessionStorage`, `indexedDB`, and cookies all throw, and outbound fetches send `Origin: null`. This matches how Copilot mounts apps (probe-measured: its app iframe's origin is `"null"`). Claude, Claude Desktop, ChatGPT, and Codex are measured as same-origin (`true`), so their presets leave this on. When the setting has never been probed for a client, the toggle defaults to on with a tooltip noting it has not yet been tested. If an app running in opaque mode reloads itself, the proxy stops relaying messages for it and the Sandbox Stack debug panel shows **channel closed**.
+- **`window.openai` injection** — Toggle whether the inspector injects the OpenAI Apps SDK `window.openai` shim into widget HTML before sandboxing. ChatGPT, Copilot, and MCPJam host presets enable this by default; Claude and Cursor presets leave it off. You can override the preset per host using the toggle in the **Apps Extension** tab. The chip in the host capability matrix shows the current state and whether it comes from the preset or a manual override.
+- **Same-origin app iframe** — Toggle in the **Apps Extension** tab (under **Sandbox**) that controls whether the app's iframe shares the sandbox page's origin. When off, the inspector mounts every app with `srcdoc` and no `allow-same-origin`, so the view runs in an opaque origin — `localStorage`, `sessionStorage`, `indexedDB`, and cookies all throw, and outbound fetches send `Origin: null`. This matches how Copilot mounts apps (probe-measured: its app iframe's origin is `"null"`). Claude, Claude Desktop, and ChatGPT are measured as same-origin (`true`), so their presets leave this on. When the setting has never been probed for a client, the toggle defaults to on with a tooltip noting it has not yet been tested. If an app running in opaque mode reloads itself, the proxy stops relaying messages for it and the Sandbox Stack debug panel shows **channel closed**.
 
 #### Apps Extension tab
 

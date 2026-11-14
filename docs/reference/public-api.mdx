@@ -50,8 +50,8 @@ What you can do with it today:
   does not rotate the config, so the config token cannot detect a concurrent
   one — and a concurrent edit is rejected rather than silently reverted
 - **Manage a project's environments** — list, read, create, edit, archive, and
-  restore the named execution bundles (host + optional server group + optional
-  pinned skills and plugin versions) that eval suites and goals run against,
+  restore the named execution bundles (host + optional server group) that eval
+  suites and goals run against,
   and **preview** what one resolves to before launching it
 - **List a project's studies** — name, access mode, attached servers, and
   share link — and **read one study's settings**: model, system prompt,
@@ -264,8 +264,7 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
 
 **Project environments** — the named execution bundles (one host, optionally a
-standalone server group, optionally pinned skills and plugin versions) that eval
-suites and goals run against. Reads need project membership; **every write
+standalone server group) that eval suites and goals run against. Reads need project membership; **every write
 needs project admin**. Writes are revisioned: pass the `revision` you last read
 back as `expectedRevision`, and a stale value returns `CONFLICT` (409) instead
 of overwriting a concurrent edit.
@@ -273,14 +272,12 @@ of overwriting a concurrent edit.
 | Endpoint | What it does |
 | --- | --- |
 | `GET`, `POST /projects/{projectId}/environments` | List environments (`?includeArchived=true` to include archived ones), or create one |
-| `GET`, `PATCH /projects/{projectId}/environments/{environmentId}` | Read one environment, or edit it (send `null` to clear `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`) |
-| `GET /projects/{projectId}/environments/{environmentId}/resolve` | Preview the host config, closed server set, and pinned plugin versions this environment resolves to right now |
+| `GET`, `PATCH /projects/{projectId}/environments/{environmentId}` | Read one environment, or edit it (send `null` to clear `serverAttachmentId`) |
+| `GET /projects/{projectId}/environments/{environmentId}/resolve` | Preview the host config and closed server set this environment resolves to right now |
 | `POST /projects/{projectId}/environments/{environmentId}/archive` | Archive it — reversible, and frees the name for a new one |
 | `POST /projects/{projectId}/environments/{environmentId}/restore` | Restore an archived environment |
 
-Archive and restore are explicit sub-actions rather than a `DELETE` because the
-row is kept and restore has real semantics: it re-checks the name and drops
-plugin pins whose version no longer exists.
+Archiving keeps the environment. Restoring it re-checks the name.
 
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
 
@@ -308,7 +305,7 @@ plugin pins whose version no longer exists.
 | `PATCH .../eval-suites/{suiteId}` | Edit suite settings, including `environmentIds` — the project environments the suite runs against (non-empty array sets/replaces, `null` clears) |
 | `PATCH .../eval-suites/{suiteId}/schedule` | Enable/disable scheduled runs; `environmentId` pins which environment they launch |
 | `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal. Carries `gateWaiver`: the audited override in force over this run's gate, or `null` |
-| `GET .../eval-runs/{runId}/gate` | The stored suite quality-gate report for this run (`passed` / `failed` / `non_gateable` / `not_configured`). `not_configured` is a 200 report, never a missing route. A deployment that predates the evaluator answers `422 FEATURE_NOT_SUPPORTED` |
+| `GET .../eval-runs/{runId}/gate` | The stored suite quality-gate report for this run (`passed` / `failed` / `non_gateable` / `not_configured`). `not_configured` is a 200 report, never a missing route |
 | `GET .../eval-runs/{runId}/decision-summary` | **Start here when a run did not pass.** The canonical run decision contract: the verdict and where it came from, counts labelled with the population they count, the run's own verdict decision, and per-trial diagnostics with the user-value chain, the first failed stage, the failure category, evidence scoped to that stage, and one next action (paginated) |
 | `POST .../eval-runs/{runId}/gate-waivers` | Override a **failing** run's release gate until `expiresAt` (required, future, max 30 days out), with a `reason` (required, max 500 chars). Manage tier. Does NOT change the run's `result` — the run keeps its verdict and the waiver is reported alongside it. `409` when one is already in force, returning the existing waiver |
 | `GET .../eval-runs/{runId}/gate-waivers` | The waiver in force over a run, or `null`. Readable by anyone who can view the run |
@@ -329,7 +326,7 @@ plugin pins whose version no longer exists.
 | `POST .../eval-ingest/artifacts/upload-url` | Retired. Answers `410 Gone` with `details.code: "SDK_UPGRADE_REQUIRED"`. `@mcpjam/sdk` 8.17.0 and later upload artifacts with `POST .../eval-ingest/artifacts` instead |
 
 **Agent** (`/projects/{projectId}/agent`) — a headless assistant turn for
-building conversational surfaces (the MCPJam Slack app is the first consumer):
+building conversational surfaces:
 
 | Endpoint | What it does |
 | --- | --- |
@@ -341,23 +338,6 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 | --- | --- |
 | `GET .../studies` | List the project's published studies: name, access mode, attached servers, share link |
 | `GET .../studies/{studyId}` | One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its insights envelope. The last two need workspace membership and are **absent** for a share-link visitor, never null |
-
-<Note>
-  **Swarms and User Testing are enabled per organization.** Everything in the
-  four sections below is behind that gate, enforced server-side. If it is not
-  on for your organization, the reads generally return empty and every **write**
-  — creating a persona or goal, launching a run, publishing a study,
-  requesting insights — answers `403` with a message naming the feature, not a
-  `404` and not a validation error.
-
-  Five operations are deliberately outside the gate, because every one of them
-  *reduces* exposure and spend: cancelling a goal run, unpublishing a
-  study, and archiving a persona, goal or swarm (each one's `DELETE`). An
-  organization that loses access can still stop what is running and clean up
-  what it authored.
-
-  Ask us on [Discord](https://discord.gg/JEnDtz8X6z) if you want it turned on.
-</Note>
 
 **Swarms — authoring** (`/projects/{projectId}/personas...`, `.../goals...`,
 `.../swarms...`) — the definitions a swarm run executes. A **persona** is a
@@ -386,9 +366,8 @@ under it. Nothing here starts anything — launching is
 
 **Swarms — generation** — drafts a model writes for you. Both routes return
 candidates and **persist nothing**: feed what you want to keep to the create
-routes above. That is also why neither accepts an `Idempotency-Key` — a call
-with no effect has nothing to de-duplicate, and offering one would imply the
-drafts are stable across retries when they are not.
+routes above. Neither accepts an `Idempotency-Key`, and retries return
+different drafts.
 
 | Endpoint | What it does |
 | --- | --- |
@@ -552,10 +531,8 @@ sampling, and freshness; a swarm run's displayed counts cover only its requested
 goal runs. A pending projection contributes to the unmapped count rather
 than a fabricated map node.
 
-The five analytics shapes above are documented as **open objects** on purpose.
-Their upstream projections grow with the product and the SDK types them the
-same way, so pinning a field list would turn every new metric into a spec
-violation. Read what you recognize; ignore the rest.
+The five analytics shapes above are **open objects** and gain fields over time.
+Read what you recognize; ignore the rest.
 
 <Warning>
   Requesting insights consumes **no credits** — the model cost is on MCPJam.
@@ -583,16 +560,13 @@ violation. Read what you recognize; ignore the rest.
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET .../projects/{projectId}/capabilities` | The caller's role, the beta gate's state, plan limits, and the booleans to branch on |
+| `GET .../projects/{projectId}/capabilities` | The caller's role, feature availability, plan limits, and the booleans to branch on |
 
 <Note>
   `capabilities` is a **planning aid, not a gate**. Every write still enforces
-  independently, so a `true` here that races a flag flip costs you a clean
-  `403` rather than an incorrect success — and nothing should consult it
-  *instead of* trying. It exists because agent surfaces are static: an MCP tool
-  catalog is built with no organization in hand, so the alternative is
-  attempting the write and reading the failure, by which point the agent has
-  usually already told someone what it was about to do.
+  its own checks, so a write can still fail with `403` after `capabilities`
+  reported `true`. Handle the write's own response rather than relying on this
+  read alone.
 </Note>
 
 The same surface is available as an [OpenAPI
@@ -693,10 +667,7 @@ reads the token from a file, an environment variable or stdin, and
 [CLI reference](/cli/reference#cloud-server-accounts-commands).
 
 The default is shared by every run that key starts, so don't run the same
-key's runs at the same time with different defaults. Where your organization
-has account choice for eval suites, a suite can instead save the accounts it
-runs as, in its settings in the app; a run with a saved choice uses those
-accounts and ignores the default.
+key's runs at the same time with different defaults.
 
 ### Deleting an account
 
@@ -827,8 +798,7 @@ Omitting `environmentId` is meaningful, and depends on the suite:
 - **several** attached → `400` with `details.reason: "ENVIRONMENT_REQUIRED"`,
   naming the candidates.
 
-The environment supplies the closed server set — including the servers its
-pinned plugin versions contribute — so `serverIds` is not required and is
+The environment supplies the closed server set, so `serverIds` is not required and is
 **rejected** alongside it (`400`), rather than accepted and ignored: honoring
 both would connect a different set than the run is stamped with. The same goes
 for a `serverIds` override on an environment-based suite
@@ -841,7 +811,7 @@ tools were captured. Use
 `GET /projects/{projectId}/environments/{environmentId}/resolve` to see what it
 will connect before launching.
 
-When creating a new inline suite, `POST .../eval-runs` also accepts `hosts: [{ host: "Claude", servers: ["my-server"] }]`, using the same host name or ID and optional server selection as `POST .../eval-suites`. A single host is selected for the run automatically. With multiple attachments, use `namedHostId` to select the run's client. For an existing suite, update its attachments first. If `hosts` is omitted, the backend supplies the project's default client.
+When creating a new inline suite, `POST .../eval-runs` also accepts `hosts: [{ host: "Claude", servers: ["my-server"] }]`, using the same host name or ID and optional server selection as `POST .../eval-suites`. A single host is selected for the run automatically. With multiple attachments, use `namedHostId` to select the run's client. For an existing suite, update its attachments first. If `hosts` is omitted, the run uses the project's default client.
 
 Run reads and listings expose `client: { id, name, source, hostStyle?, modelId? }` when recorded. `id` is the named host ID or `null`; `source` is `environment`, `attached_host`, `suite_default`, or `sdk`. The name is durable even if the host is deleted. SDK executions use `SDK harness`; `launcher.client` separately identifies the launching process. Older runs without a descriptor omit `client`. `modelSource: "case"` means the run's sole model came from its case snapshot; `client_default` and `override` retain their existing meanings.
 
@@ -969,8 +939,8 @@ absent rather than null when you may not have them.
 
 **Every old path still works** and is unchanged, including its old response
 spellings. Each one answers with `Deprecation: true` and a `Link` header naming
-its successor. They are undocumented on purpose — the spec is what a new
-integration reads — and they are removed at general availability.
+its successor. The old paths are not in the OpenAPI spec, and they are removed
+at general availability.
 
 A handful of operations kept their names through the rename and so have no
 deprecated twin to hold the old field spellings. `get_swarms_overview`,
@@ -979,11 +949,9 @@ one request — until general availability.
 
 ### Vocabulary
 
-A name can move behind an alias; a VALUE cannot. `sourceType` is one field with
-one string in it, and a client switching on `"scenario"` has no second name to
-fall back to. So the values negotiate.
-
-Send `x-mcpjam-api-vocabulary: 2` and the renamed values read canonically:
+Renamed field values cannot be aliased the way paths are, so they are chosen
+by header. Send `x-mcpjam-api-vocabulary: 2` and the renamed values read
+canonically:
 
 | Field | Vocabulary 1 | Vocabulary 2 |
 | --- | --- | --- |
@@ -991,13 +959,10 @@ Send `x-mcpjam-api-vocabulary: 2` and the renamed values read canonically:
 | session `parentRef.kind` | `scenario`, `journeyRun` | `study`, `goalRun` |
 | session `parentRef` ids | `scenarioId`, `journeyRunId`, `journeyRefId` | `studyId`, `goalRunId`, `goalRefId` |
 | share `resourceType` (field AND path segment) | `scenario` | `study` |
-| trace-destination `sourceTypes` | `scenario` | `study` |
 
 Absent means `1`, which is byte-for-byte today's contract. Any other value is a
 `400`. On the way IN, a vocabulary-2 request may name a filter or a path segment
-by either spelling; a vocabulary-1 request may use only the legacy one, because
-a boundary that accepts a spelling it does not announce is one two
-implementations can disagree about. A response that varies by vocabulary sends
+by either spelling; a vocabulary-1 request may use only the legacy one. A response that varies by vocabulary sends
 `Vary: x-mcpjam-api-vocabulary`.
 
 This is a **separate header** from `x-mcpjam-eval-vocabulary`, which is
@@ -1008,29 +973,9 @@ two blocks — before sending either. With the SDK:
 `new PlatformApiClient({ …, apiVocabulary: 2 })`, or
 `client.withApiVocabulary(2)` on one you already hold.
 
-Permalink resource types are the exception that proves the rule: `study` and
+Permalink resource types work differently: `study` and
 `goal_run` are the canonical keys, `user_testing_scenario` and `journey_run`
 still resolve to the same routes, and which one a response carries follows the
 OPERATION rather than the header — a renamed operation derives the canonical
 key, its deprecated twin the old one. `capabilities.apiVocabulary.resourceTypes`
 lists both.
-
-### Browser tools on chat sessions
-
-<Note>
-Hosted browser availability depends on the account and deployment. The browser workspace must be enabled to open the live pane in the Playground.
-</Note>
-
-`POST /chat-sessions/messages` accepts an optional `browser: { policy?, profileId? }`. Attach it on every turn that should browse. The initial grant and profile are fixed; the current host policy and pinned read-only mode can narrow the effective permissions. Responses and traces include the read-only `chatSessionId`, browser metadata, and screenshot URLs without inline image data.
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/chat-sessions/browser` | Create an empty API session and its browser with `projectId`, `policy`, optional `profileId`, and a stable `idempotencyKey`. |
-| POST | `/chat-sessions/{sessionId}/browser/open` | Open or wake the session browser. |
-| POST | `/chat-sessions/{sessionId}/browser/command` | Execute a browser command under the session policy with a stable `commandId`. |
-| POST | `/chat-sessions/{sessionId}/browser/note` | Append a command-ledger note. |
-| POST | `/chat-sessions/{sessionId}/browser/trace` | Read command receipts and screenshot evidence. |
-| POST | `/chat-sessions/{sessionId}/browser/artifact` | Resolve a command screenshot URL. |
-| POST | `/chat-sessions/{sessionId}/browser/close` | Release the session desktop. |
-
-Only the owning user can drive an API session's browser. All inputs use the public `sessionId`; conversation and browser identifiers in responses are informational. Capacity refusals before execution release the turn lease so the same idempotency key can be retried. An execution with an unknown outcome must be inspected before attempting a new action.

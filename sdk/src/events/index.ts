@@ -4,7 +4,7 @@
  * Runtime-agnostic (Node, browser, Worker): wire schemas and guards, the
  * coordinator core and its ports, identities, profiles, Standard Webhooks
  * primitives, and the in-memory inbox used by local runtimes and tests.
- * See `docs/plans/mcp-events.md` and `docs/plans/mcp-events-contracts.md`.
+ * See `internal-docs/plans/mcp-events.md` and `internal-docs/plans/mcp-events-contracts.md`.
  */
 
 export * from "../mcp-client-manager/events-ext-schemas.js";

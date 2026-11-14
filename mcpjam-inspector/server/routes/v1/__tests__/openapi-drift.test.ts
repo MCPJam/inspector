@@ -256,6 +256,66 @@ const KNOWN_UNDOCUMENTED = new Set([
   "patch /projects/{projectId}/directory-submissions/{submissionId}",
   "delete /projects/{projectId}/directory-submissions/{submissionId}",
   "post /projects/{projectId}/directory-submissions/{submissionId}/runs",
+  // Features that are not yet on for everyone. docs/README.md keeps a feature
+  // off the public docs until its flag is on for everyone the page is for.
+  // Document each group when its rollout finishes.
+  // Agent browsers and the API session browser (hosted-browser rollout).
+  "post /browser-sessions/session",
+  "post /browser-sessions/sessions",
+  "post /browser-sessions/command",
+  "post /browser-sessions/note",
+  "post /browser-sessions/trace",
+  "post /browser-sessions/artifact",
+  "post /browser-sessions/close",
+  "post /chat-sessions/{sessionId}/browser/open",
+  "post /chat-sessions/{sessionId}/browser/command",
+  "post /chat-sessions/{sessionId}/browser/note",
+  "post /chat-sessions/{sessionId}/browser/trace",
+  "post /chat-sessions/{sessionId}/browser/artifact",
+  "post /chat-sessions/{sessionId}/browser/close",
+  "post /chat-sessions/browser",
+  // Sandbox images and resetting a computer to its image.
+  "get /projects/{projectId}/images",
+  "post /projects/{projectId}/images",
+  "get /projects/{projectId}/images/{imageId}",
+  "patch /projects/{projectId}/images/{imageId}",
+  "delete /projects/{projectId}/images/{imageId}",
+  "get /projects/{projectId}/images/{imageId}/builds",
+  "post /projects/{projectId}/images/{imageId}/build",
+  "post /projects/{projectId}/images/{imageId}/promote",
+  "post /projects/{projectId}/images/{imageId}/use",
+  "post /projects/{projectId}/computer/reset",
+  "post /projects/{projectId}/images/validate",
+  // GitHub Checks repositories (the Integrations tab beta).
+  "get /organizations/{organizationId}/eval-check-repos",
+  "post /organizations/{organizationId}/eval-check-repos",
+  // The MCP registry.
+  "get /registry/directory-servers",
+  "get /registry/directory-servers/{idOrName}",
+  "get /registry/directory-sources",
+  "get /projects/{projectId}/registry/servers",
+  "get /projects/{projectId}/registry/connections",
+  "post /projects/{projectId}/registry/directory-installs",
+  "post /projects/{projectId}/registry/installs",
+  "delete /projects/{projectId}/registry/installs/{registryServerId}",
+  // Agent plugins.
+  "get /projects/{projectId}/plugins",
+  "get /plugin-versions/{pluginVersionId}",
+  // Cloud project skills. Server skills (skills over MCP) stay documented.
+  "get /projects/{projectId}/skills",
+  "get /projects/{projectId}/skills/{skillId}",
+  // Named-environment writes. Listing, resolving, archiving and ad hoc
+  // environments stay documented.
+  "post /projects/{projectId}/environments",
+  "patch /projects/{projectId}/environments/{environmentId}",
+  "post /projects/{projectId}/environments/{environmentId}/name",
+  "post /projects/{projectId}/environments/{environmentId}/restore",
+  // The pre-run disclosure for a suite launch plan.
+  "get /projects/{projectId}/eval-suites/{suiteId}/run-disclosure",
+  // The unified sessions feed.
+  "get /projects/{projectId}/sessions",
+  // A harness client's native built-in tools.
+  "get /harness/{harnessId}/builtin-tools",
 ]);
 
 /**
