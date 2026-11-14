@@ -6,14 +6,16 @@
  *
  * A gated check with no current verdict (not evaluated, blocked, stale or
  * never reported) makes the run `incomplete`. A check the run's path can
- * never evaluate is listed apart, with the reason, and leaves the default
- * gate unless `failOn` names it.
+ * never evaluate, or whose evidence no run gathers yet, is listed apart, with
+ * the reason, and leaves the default gate unless `failOn` names it.
  *
  * Pure. Safe from the browser entry.
  */
 
+import { UNGATHERED_EVIDENCE_DETAIL_KEY } from "../helpers.js";
 import { isDispositiveDirectoryFinding } from "../types.js";
 import type { DirectoryReadinessFinding } from "../types.js";
+import { isUnsureModelFlag } from "./place.js";
 import type { PlacedFinding } from "./types.js";
 
 /** Which checks fail a run, by check id. `failOn` wins over `warnOnly`. */
@@ -53,6 +55,10 @@ function pathLimit(
   path: DirectoryRunPath
 ): string | undefined {
   if (finding.status !== "not-evaluated") return undefined;
+  // No path gathers it, so the finding's own reason says why on every path.
+  if (finding.details?.[UNGATHERED_EVIDENCE_DETAIL_KEY] !== undefined) {
+    return finding.notEvaluatedReason ?? "no run gathers this evidence yet";
+  }
   const missing = String(finding.details?.missingInput ?? "");
   const intrusive =
     finding.intrusiveness === "side-effecting" ||
@@ -91,11 +97,11 @@ export function directoryVerdict(
         !warnOnly.has(finding.id));
     if (!inGate) continue;
     gated += 1;
-    // Stale or blocked evidence settles nothing, whatever it once said.
-    const current =
-      placed === undefined ||
-      placed.evidenceStatus === "established" ||
-      placed.evidenceStatus === "inconclusive";
+    // Stale, blocked or inconclusive evidence settles nothing, whatever it
+    // once said: a model's unsure answer is never a pass.
+    const current = placed
+      ? placed.evidenceStatus === "established"
+      : !isUnsureModelFlag(finding);
     if (finding.status === "not-evaluated" || !current) {
       undetermined.add(finding.id);
     } else if (finding.status === "violated") {

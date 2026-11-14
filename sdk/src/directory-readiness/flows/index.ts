@@ -6,12 +6,16 @@
  * browser entry; nothing added here may change that.
  */
 
+import { CHATGPT_PLUGIN_FLOW } from "./chatgpt-plugin.js";
 import { CLAUDE_CONNECTOR_FLOW } from "./claude-connector.js";
 import { DIRECTORY_FLOW_IDS } from "./types.js";
 import type { DirectoryFlow, DirectoryFlowId } from "./types.js";
 
 export const DIRECTORY_FLOWS: Readonly<Record<DirectoryFlowId, DirectoryFlow>> =
-  { "claude-connector": CLAUDE_CONNECTOR_FLOW };
+  {
+    "claude-connector": CLAUDE_CONNECTOR_FLOW,
+    "chatgpt-plugin": CHATGPT_PLUGIN_FLOW,
+  };
 
 /** The flow for an id from a request, or `undefined` for one that does not exist. */
 export function getDirectoryFlow(id: string): DirectoryFlow | undefined {
@@ -20,7 +24,7 @@ export function getDirectoryFlow(id: string): DirectoryFlow | undefined {
     : undefined;
 }
 
-export { CLAUDE_CONNECTOR_FLOW, DIRECTORY_FLOW_IDS };
+export { CHATGPT_PLUGIN_FLOW, CLAUDE_CONNECTOR_FLOW, DIRECTORY_FLOW_IDS };
 export {
   directoryFieldWordingRevision,
   directoryFlowDefaults,
@@ -32,7 +36,7 @@ export {
   validateDirectoryAnswerInput,
   validateDirectoryAnswers,
 } from "./validate.js";
-export { placeDirectoryResults } from "./place.js";
+export { directoryPlacementOf, placeDirectoryResults } from "./place.js";
 export type { PlaceDirectoryResultsInput } from "./place.js";
 export { directoryVerdict } from "./verdict.js";
 export type {
