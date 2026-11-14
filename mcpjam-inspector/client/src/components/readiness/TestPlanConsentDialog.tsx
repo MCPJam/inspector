@@ -4,8 +4,11 @@
  * calls made with that member's connection to the server, destructive ones
  * included. So the dialog names the revision, who saved it and when, and
  * shows every call it makes, in run order, with its exact arguments, then its
- * fixtures, cleanup calls and excluded tools. Revisions never change once
- * saved, so what the person reads is what the run sends.
+ * fixtures, cleanup calls and excluded tools. A created fixture's values are
+ * read from its creating call's result by the paths in `capture`, and a
+ * later call's arguments refer to them, so those paths are shown too.
+ * Revisions never change once saved, so what the person reads is what the
+ * run sends.
  *
  * Only Cancel and Escape decline: a click outside does not answer, and the
  * page unmounts the dialog once the person has.
@@ -55,12 +58,16 @@ function Calls({ plan }: { plan: DirectoryTestPlan }) {
   const runs = ({ tool, kind }: DirectoryTestCase) =>
     entries.get(tool)?.action === "run" ||
     (entries.get(tool)?.action === "negative-only" && kind === "negative");
+  const calls = plan.cases.filter(runs);
   const excluded = plan.tools
     .filter((entry) => entry.action === "excluded")
     .map(({ tool }) => tool);
+  // By its number in the list above: case ids are not shown.
   const creators = (fixture: string) =>
     listOf(
-      plan.cases.filter((c) => c.creates?.includes(fixture)).map((c) => c.id),
+      calls.flatMap((c, index) =>
+        c.creates?.includes(fixture) ? [`call ${index + 1}`] : [],
+      ),
     );
   const writers = (fixture: string) =>
     listOf(
@@ -70,7 +77,7 @@ function Calls({ plan }: { plan: DirectoryTestPlan }) {
     <div className="space-y-4 pr-3 text-sm">
       <h3 className="font-medium">Calls, in run order</h3>
       <ol className="list-decimal space-y-3 pl-5">
-        {plan.cases.filter(runs).map((testCase) => (
+        {calls.map((testCase) => (
           <li key={testCase.id} className="space-y-1">
             <p>
               {`${testCase.tool}, ${testCase.kind === "valid" ? "valid input" : "negative case"}${entries.get(testCase.tool)?.openWorld ? ", reaches outside the server" : ""}`}
@@ -85,13 +92,16 @@ function Calls({ plan }: { plan: DirectoryTestPlan }) {
                 ? "Expects a result."
                 : `Expects ${REFUSAL[testCase.expectedError ?? "any"]}.`}
             </p>
+            {testCase.creates?.length ? (
+              <p className={HINT}>{`Creates ${listOf(testCase.creates)}.`}</p>
+            ) : null}
           </li>
         ))}
       </ol>
       {plan.fixtures.length > 0 ? (
         <h3 className="font-medium">Fixtures</h3>
       ) : null}
-      {plan.fixtures.map(({ id, description, origin, values }) => (
+      {plan.fixtures.map(({ id, description, origin, values, capture }) => (
         <div key={id} className="space-y-1">
           <p>{`${id}: ${description}`}</p>
           <p className={HINT}>
@@ -99,9 +109,20 @@ function Calls({ plan }: { plan: DirectoryTestPlan }) {
               ? "Already in the reviewer's account."
               : creators(id)
                 ? `Created by ${creators(id)}.`
-                : "No case creates it."}
+                : "No call in this run creates it."}
           </p>
-          {values ? <Json value={values} /> : null}
+          {/* The run reads an existing fixture's values and captures a created one's. */}
+          {origin === "existing" && values ? <Json value={values} /> : null}
+          {origin === "created" &&
+          creators(id) &&
+          Object.keys(capture ?? {}).length > 0 ? (
+            <>
+              <p className={HINT}>
+                Its values come from these paths in that call's result:
+              </p>
+              <Json value={capture} />
+            </>
+          ) : null}
           <p className={HINT}>
             {writers(id)
               ? `Tools allowed to change it: ${writers(id)}.`
