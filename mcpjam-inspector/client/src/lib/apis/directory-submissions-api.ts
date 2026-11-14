@@ -6,6 +6,8 @@
  */
 import type { DirectoryFlow } from "@mcpjam/sdk/browser";
 import type {
+  PlatformDirectorySubmissionEvent,
+  PlatformDirectorySubmissionEventBody,
   PlatformDirectorySubmissionFinding,
   PlatformDirectorySubmissionHandoff,
   PlatformDirectorySubmissionSummary,
@@ -18,6 +20,8 @@ export type SubmissionView = PlatformDirectorySubmissionView;
 export type SubmissionSummary = PlatformDirectorySubmissionSummary;
 export type SubmissionHandoff = PlatformDirectorySubmissionHandoff;
 export type SubmissionScope = { projectId: string; submissionId: string };
+export type SubmissionEvent = PlatformDirectorySubmissionEvent;
+export type SubmissionEventBody = PlatformDirectorySubmissionEventBody;
 export type StoredFinding = PlatformDirectorySubmissionFinding;
 
 /** The flow as served by the API that stamps its wording on each write. */
@@ -75,3 +79,23 @@ export const getSubmissionFinding = (
   signal?: AbortSignal,
 ): Promise<StoredFinding> =>
   client().getDirectorySubmissionFinding({ ...scope, checkId }, { signal });
+
+/** One kind of recorded event, newest first. */
+export async function listSubmissionEvents(
+  scope: SubmissionScope,
+  kind: SubmissionEvent["kind"],
+  signal?: AbortSignal,
+): Promise<SubmissionEvent[]> {
+  const page = await client().listDirectorySubmissionEvents(
+    { ...scope, kind },
+    { signal },
+  );
+  return page.items;
+}
+
+/** A retry with the same `idempotencyKey` is answered from the first write. */
+export const recordSubmissionEvent = (
+  scope: SubmissionScope,
+  body: SubmissionEventBody,
+): Promise<SubmissionEvent> =>
+  client().recordDirectorySubmissionEvent({ ...scope, ...body });

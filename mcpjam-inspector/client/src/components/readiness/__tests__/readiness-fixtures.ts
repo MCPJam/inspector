@@ -1,5 +1,5 @@
 /**
- * Sample results and submissions for the Readiness page's tests: the
+ * Sample results, submissions and events for the Readiness page's tests: the
  * Claude flow as the API serves it, findings built by hand, and a submission
  * that places them on the flow's steps.
  */
@@ -10,7 +10,10 @@ import {
   type DirectoryAnswer,
   type PlacedFinding,
 } from "@mcpjam/sdk/browser";
-import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
+import type {
+  SubmissionEvent,
+  SubmissionView,
+} from "@/lib/apis/directory-submissions-api";
 
 export const flow = CLAUDE_CONNECTOR_FLOW;
 export const SCOPE = { projectId: "proj_1", submissionId: "sub_1" };
@@ -75,6 +78,19 @@ export function submissionView(
     steps: placeDirectoryResults({ flow, answers, findings }),
     resultsRunId: findings.length > 0 ? "run_7" : null,
     submissionUrl: flow.submissionUrl,
+    ...overrides,
+  };
+}
+
+export function recordedEvent(
+  overrides: Partial<SubmissionEvent> & Pick<SubmissionEvent, "id" | "kind">,
+): SubmissionEvent {
+  return {
+    submissionId: SCOPE.submissionId,
+    projectId: SCOPE.projectId,
+    reportedOrObserved: "observed",
+    actor: "user_1",
+    createdAt: Date.UTC(2026, 9, 29, 12),
     ...overrides,
   };
 }

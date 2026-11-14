@@ -1,17 +1,23 @@
 /**
  * The Readiness page end to end with the API mocked: a result under a field
- * opens its evidence, and the review page's gate saves through the
- * submission while the result it moved still shows on its step (V8).
+ * opens its evidence, the review page's gate saves through the submission
+ * and the result it moved still shows on its step (V8), and "Mark as
+ * submitted" records the receipt the review page then shows.
  */
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildDirectoryHandoff } from "@mcpjam/sdk/browser";
+import type {
+  SubmissionEvent,
+  SubmissionEventBody,
+} from "@/lib/apis/directory-submissions-api";
 import { ReadinessRoute } from "../ReadinessPage";
 import {
   flow,
   HTTPS,
   LISTING_FIELDS,
+  recordedEvent,
   SCOPE,
   submissionView,
 } from "./readiness-fixtures";
@@ -69,6 +75,8 @@ const api = vi.hoisted(() => ({
   updateDirectorySubmission: vi.fn(),
   startDirectorySubmissionRun: vi.fn(),
   getSubmissionFinding: vi.fn(),
+  listSubmissionEvents: vi.fn(),
+  recordSubmissionEvent: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-submissions-api", () => api);
 
@@ -81,13 +89,14 @@ async function openRehearsal() {
   );
 }
 
-describe("the Readiness page's evidence and gate", () => {
+describe("the Readiness page's evidence, gate and status", () => {
   beforeEach(() => {
     for (const mock of Object.values(api)) mock.mockReset();
     api.getDirectoryFlow.mockResolvedValue(flow);
     api.listServerSubmissions.mockResolvedValue([]);
     api.createDirectorySubmission.mockResolvedValue(submissionView());
     api.getDirectorySubmission.mockResolvedValue(submissionView());
+    api.listSubmissionEvents.mockResolvedValue([]);
     const view = submissionView();
     api.getDirectorySubmissionHandoff.mockResolvedValue(
       buildDirectoryHandoff({
@@ -157,6 +166,72 @@ describe("the Readiness page's evidence and gate", () => {
     await userEvent.click(rail.getByRole("button", { name: /Listing/ }));
     expect(
       screen.getByText("Add a one-liner of 200 characters or fewer."),
+    ).toBeVisible();
+  });
+
+  it("marks the submission as submitted from the review page's buttons", async () => {
+    let recorded: SubmissionEvent[] = [];
+    api.listSubmissionEvents.mockImplementation(
+      async (_scope: unknown, kind: string) =>
+        recorded.filter((event) => event.kind === kind),
+    );
+    api.recordSubmissionEvent.mockImplementation(
+      async (_scope: unknown, body: SubmissionEventBody) => {
+        const event = recordedEvent({
+          id: "evt_1",
+          kind: "status",
+          state: body.state,
+          reference: body.reference,
+        });
+        recorded = [event];
+        return event;
+      },
+    );
+    // The handoff summary is built from the recorded events on each read.
+    api.getDirectorySubmissionHandoff.mockImplementation(async () => {
+      const view = submissionView();
+      return buildDirectoryHandoff({
+        flow,
+        submission: view,
+        results: view.steps,
+        resultsRunId: view.resultsRunId,
+        latestRun: null,
+        events: recorded,
+        snapshots: {},
+      });
+    });
+    const rail = await openRehearsal();
+    await userEvent.click(rail.getByRole("button", { name: /Review/ }));
+    expect(
+      screen.getByRole("button", { name: "Copy for the portal" }),
+    ).toBeVisible();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Mark as submitted" }),
+    );
+    const form = within(await screen.findByRole("dialog"));
+    await userEvent.type(
+      form.getByLabelText("Confirmation reference"),
+      "SUB-2048",
+    );
+    await userEvent.click(
+      form.getByRole("button", { name: "Mark as submitted" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Server submitted for review",
+      }),
+    ).toBeVisible();
+    const card = screen.getByRole("region", { name: "Submission status" });
+    expect(within(card).getByText("Reference SUB-2048")).toBeVisible();
+    expect(screen.getByText("Recorded by you on Oct 29, 2026")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Mark as submitted" }),
+    ).toBeNull();
+    // An event changes no revision, yet the handoff summary reads again.
+    expect(
+      await screen.findByText(/^Submitted, observed by you on Oct 29, 2026/),
     ).toBeVisible();
   });
 });

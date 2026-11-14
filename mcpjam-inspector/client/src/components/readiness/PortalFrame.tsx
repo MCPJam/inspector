@@ -22,6 +22,7 @@ import type {
   AnswerValues,
   DirectorySubmissionSession,
 } from "@/hooks/use-directory-submission";
+import { useSubmissionEvents } from "@/hooks/use-submission-events";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
 import { AnswerOrigin, NO_PEOPLE, type People } from "./AnswerOrigin";
 import { ConflictNotice } from "./ConflictNotice";
@@ -33,8 +34,10 @@ import { PortalField } from "./PortalField";
 import { CopyForPortal, PortalReview, portalText } from "./PortalReview";
 import { portalMarks, PortalStepRail } from "./PortalStepRail";
 import { PortalWidget } from "./PortalWidgets";
+import { RecordStatusDialog } from "./RecordStatusDialog";
 import { DIRECTORY_NAMES } from "./RehearsalBar";
 import { OpenEvidence } from "./ShowEvidence";
+import { StatusPanel } from "./SubmissionStatus";
 
 function StepBody({
   flow,
@@ -204,6 +207,10 @@ export function PortalFrame({
   const marked = portalMarks(left, active, last, Boolean(view.lastRunId));
   const scope = { projectId: view.projectId, submissionId: view.id };
   const [evidence, setEvidence] = useState<PlacedFinding | null>(null);
+  // "first" is Mark as submitted; "next" records a later status.
+  const [recording, setRecording] = useState<"first" | "next" | null>(null);
+  // The status lives on the review page, so only that page reads it.
+  const events = useSubmissionEvents(scope, review);
   const placed = (id: string) => view.steps.find((entry) => entry.step === id);
   const issuesOf = (id: string) =>
     session.issues.filter((issue) => issue.step === id);
@@ -235,6 +242,14 @@ export function PortalFrame({
           resultsRunId={view.resultsRunId}
           entry={evidence}
           onClose={() => setEvidence(null)}
+        />
+      ) : null}
+      {recording ? (
+        <RecordStatusDialog
+          directory={directory}
+          first={recording === "first"}
+          onRecord={events.record}
+          onClose={() => setRecording(null)}
         />
       ) : null}
     </>
@@ -285,10 +300,18 @@ export function PortalFrame({
             </header>
             {review ? (
               <>
+                <StatusPanel
+                  flowId={flow.id}
+                  directory={directory}
+                  people={people}
+                  events={events}
+                  onRecord={() => setRecording("next")}
+                />
                 <HandoffPanel
                   flow={flow}
                   scope={{ projectId: view.projectId, submissionId: view.id }}
-                  version={`${view.revision}:${view.resultsRunId}:${view.lastRunId}`}
+                  // A recorded event changes the summary but not the record.
+                  version={`${view.revision}:${view.resultsRunId}:${view.lastRunId}:${events.version}`}
                   people={people}
                 />
                 <PortalReview
@@ -342,6 +365,15 @@ export function PortalFrame({
                     <CopyForPortal
                       text={() => portalText(flow, session.values)}
                     />
+                  ) : null}
+                  {review && events.loaded && events.status.length === 0 ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setRecording("first")}
+                    >
+                      Mark as submitted
+                    </Button>
                   ) : null}
                   <a
                     href={view.submissionUrl}
