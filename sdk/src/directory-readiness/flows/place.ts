@@ -21,7 +21,7 @@
 
 import { isDispositiveDirectoryFinding } from "../types.js";
 import type { DirectoryReadinessFinding } from "../types.js";
-import { withDirectoryFlowDefaults } from "./fields.js";
+import { directoryFlowField, withDirectoryFlowDefaults } from "./fields.js";
 import { validateDirectoryAnswers } from "./validate.js";
 import type {
   DirectoryAnswer,
@@ -86,9 +86,12 @@ export function placeDirectoryResults(
     })
   );
   const lacking = lackingDependencies(findings, placements);
-  const changed = input.gradedAnswers
-    ? changedKeys(flow, input.gradedAnswers, input.answers)
-    : new Set<string>();
+  const changed = (withConfirmation: boolean) =>
+    input.gradedAnswers
+      ? changedKeys(flow, input.gradedAnswers, input.answers, withConfirmation)
+      : new Set<string>();
+  const changedValues = changed(false);
+  const changedStanding = changed(true);
   const stepIds = new Set(flow.steps.map((step) => step.id));
   const fallback = flow.steps[flow.steps.length - 1]?.id ?? "";
 
@@ -98,8 +101,11 @@ export function placeDirectoryResults(
     const step =
       wanted !== undefined && stepIds.has(wanted) ? wanted : fallback;
     let evidenceStatus = statusOf(finding, placement, lacking);
+    const changedNow = placement?.readsConfirmation
+      ? changedStanding
+      : changedValues;
     const staleBecause = (placement?.reads ?? []).filter((key) =>
-      changed.has(key)
+      changedNow.has(key)
     );
     const current =
       evidenceStatus === "established" || evidenceStatus === "inconclusive";
@@ -198,14 +204,24 @@ export function isUnsureModelFlag(finding: DirectoryReadinessFinding): boolean {
   );
 }
 
-/** Answer keys whose value or wording revision differs between two sets of stored answers. */
+/**
+ * Answer keys whose value or wording revision differs between two sets of
+ * stored answers, and with `withConfirmation` a declaration's origin too.
+ */
 function changedKeys(
   flow: DirectoryFlow,
   before: readonly DirectoryAnswer[],
-  after: readonly DirectoryAnswer[]
+  after: readonly DirectoryAnswer[],
+  withConfirmation: boolean
 ): Set<string> {
-  const then = fingerprints(withDirectoryFlowDefaults(flow, before));
-  const now = fingerprints(withDirectoryFlowDefaults(flow, after));
+  const print = (answers: readonly DirectoryAnswer[]) =>
+    fingerprints(
+      flow,
+      withDirectoryFlowDefaults(flow, answers),
+      withConfirmation
+    );
+  const then = print(before);
+  const now = print(after);
   return new Set(
     [...new Set([...then.keys(), ...now.keys()])].filter(
       (key) => then.get(key) !== now.get(key)
@@ -214,13 +230,25 @@ function changedKeys(
 }
 
 function fingerprints(
-  answers: readonly DirectoryAnswer[]
+  flow: DirectoryFlow,
+  answers: readonly DirectoryAnswer[],
+  withConfirmation: boolean
 ): Map<string, string> {
   return new Map(
-    answers.map((answer) => [
-      answer.key,
-      JSON.stringify([sortedRecords(answer.value), answer.wordingRevision]),
-    ])
+    answers.map((answer) => {
+      const standing =
+        withConfirmation && directoryFlowField(flow, answer.key)?.declaration
+          ? [answer.origin]
+          : [];
+      return [
+        answer.key,
+        JSON.stringify([
+          sortedRecords(answer.value),
+          answer.wordingRevision,
+          ...standing,
+        ]),
+      ];
+    })
   );
 }
 

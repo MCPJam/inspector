@@ -10,7 +10,12 @@ import { describe, expect, it } from "vitest";
 import { claudeSubmissionEvidenceFromAnswers } from "../../src/claude-readiness/answers.js";
 import { runClaudeDeclarationChecks } from "../../src/claude-readiness/checks/declarations.js";
 import type { ClaudeToolListingCompleteness } from "../../src/claude-readiness/checks/tools.js";
-import type { DirectoryAnswer } from "../../src/directory-readiness/index.js";
+import {
+  CLAUDE_CONNECTOR_FLOW,
+  directoryFieldWordingRevision,
+  type DirectoryAnswer,
+  type DirectoryAnswerValue,
+} from "../../src/directory-readiness/index.js";
 import {
   ACKNOWLEDGMENT_VALUES,
   answer,
@@ -202,21 +207,43 @@ describe("declarations nobody confirmed", () => {
     );
   });
 
+  it("names a confirmation made before the wording changed", () => {
+    const finding = grade(
+      confirmAll([
+        {
+          ...confirmed("dataHandling.healthData", "no"),
+          wordingRevision: "2020-01-01",
+        },
+      ]),
+      []
+    ).confirmed;
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toContain(
+      "Personal health data (confirmed before its wording changed)"
+    );
+  });
+
   it("passes once every declaration was set or confirmed", () => {
     expect(grade(confirmAll(), []).confirmed.status).toBe("satisfied");
   });
 });
 
-const CONFIRMATIONS: DirectoryAnswer[] = [
-  { key: "useCases.access", value: "read-only", origin: "confirmed" },
-  { key: "dataHandling.apiOwnership", value: "own", origin: "set" },
-  { key: "dataHandling.healthData", value: "no", origin: "confirmed" },
-  { key: "testLaunch.selfTested", value: true, origin: "set" },
-  {
-    key: "compliance.acknowledgments",
-    value: ACKNOWLEDGMENT_VALUES,
+/** Confirmed under the wording the flow shows now. */
+function confirmed(key: string, value: DirectoryAnswerValue): DirectoryAnswer {
+  return {
+    key,
+    value,
     origin: "confirmed",
-  },
+    wordingRevision: directoryFieldWordingRevision(CLAUDE_CONNECTOR_FLOW, key),
+  };
+}
+
+const CONFIRMATIONS: DirectoryAnswer[] = [
+  confirmed("useCases.access", "read-only"),
+  { key: "dataHandling.apiOwnership", value: "own", origin: "set" },
+  confirmed("dataHandling.healthData", "no"),
+  { key: "testLaunch.selfTested", value: true, origin: "set" },
+  confirmed("compliance.acknowledgments", ACKNOWLEDGMENT_VALUES),
 ];
 
 /** A complete submission whose every declaration someone stood behind. */

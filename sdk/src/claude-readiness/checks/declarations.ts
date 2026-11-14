@@ -208,6 +208,8 @@ export function describeUnconfirmed(
     }
     case "account":
       return `${entry.label} (filled from your account)`;
+    case "confirmed":
+      return `${entry.label} (confirmed before its wording changed)`;
     default:
       return `${entry.label} (${entry.origin})`;
   }

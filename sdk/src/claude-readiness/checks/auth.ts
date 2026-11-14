@@ -359,6 +359,18 @@ export interface ClaudeAuthCheckOutput {
   badges: ClaudeCapabilityBadge[];
 }
 
+/** Whether a tool call made without sign-in was refused with a challenge. */
+export function challengesProtectedCall(
+  evidence: Pick<ClaudeAuthEvidence, "lazyAuthProbe"> | undefined
+): boolean {
+  const call = evidence?.lazyAuthProbe?.protectedCall;
+  return (
+    call !== undefined &&
+    !call.invalidArguments &&
+    (call.outcome === "unauthorized" || call.challenge !== undefined)
+  );
+}
+
 export function runClaudeAuthChecks(
   evidence: ClaudeAuthEvidence,
   stamp: ClaudeCheckStamp,
@@ -377,12 +389,7 @@ export function runClaudeAuthChecks(
   // OAuth even though it serves `initialize` anonymously. With no
   // discoverable metadata that is a server Claude cannot sign in to, not an
   // authless one.
-  const lazyProtectedCall = evidence.lazyAuthProbe?.protectedCall;
-  const challengedProtectedCall =
-    lazyProtectedCall !== undefined &&
-    !lazyProtectedCall.invalidArguments &&
-    (lazyProtectedCall.outcome === "unauthorized" ||
-      lazyProtectedCall.challenge !== undefined);
+  const challengedProtectedCall = challengesProtectedCall(evidence);
   const authless = servedWithoutAuth && !challengedProtectedCall;
 
   // ── Auth mode: a badge, never a verdict ──────────────────────────────
@@ -498,7 +505,18 @@ export function runClaudeAuthChecks(
     // A request nobody answered is a gap in this run, not a server that
     // publishes no metadata.
     const reason = `no request for Protected Resource Metadata was answered (${prm.fetchError ?? "no response"})`;
-    findings.push(notEvaluated(PRM_DISCOVERABLE, stamp, reason));
+    // A pointer no conforming client follows is a defect on its own; only
+    // the document's checks lack evidence.
+    findings.push(
+      prm.rejectedPointer
+        ? violated(
+            PRM_DISCOVERABLE,
+            stamp,
+            "The 401 challenge points at a Protected Resource Metadata URL on another origin or with a non-http scheme, which a conforming client refuses to follow. Point it at this connector's own origin.",
+            { fetchError: prm.fetchError, rejectedPointer: prm.rejectedPointer }
+          )
+        : notEvaluated(PRM_DISCOVERABLE, stamp, reason)
+    );
     findings.push(notEvaluated(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
   } else {
     findings.push(

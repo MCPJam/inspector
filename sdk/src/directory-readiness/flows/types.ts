@@ -202,6 +202,11 @@ export interface DirectoryCheckPlacement {
   field?: string;
   /** Answer keys the check reads; a change to one makes its result stale. */
   reads?: string[];
+  /**
+   * The result also depends on whether someone stood behind a declaration it
+   * reads, so a change of origin alone makes it stale.
+   */
+  readsConfirmation?: boolean;
   needs?: DirectoryCheckNeed[];
 }
 

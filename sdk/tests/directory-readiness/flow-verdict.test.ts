@@ -16,6 +16,7 @@ import {
 import {
   CLAUDE_CONNECTOR_FLOW as FLOW,
   directoryVerdict,
+  isDispositiveDirectoryFinding,
   placeDirectoryResults,
   type DirectoryReadinessFinding,
 } from "../../src/directory-readiness/index.js";
@@ -189,6 +190,29 @@ describe("a submission's gate", () => {
       failing: [],
       gate: { failOn: [], warnOnly: [LISTING] },
     });
+  });
+
+  it("counts a blocking check the run left out as unknown, unless warn only", () => {
+    const findings = run({
+      submissionAnswers: confirmedAnswers([
+        answer("listing.oneLiner", "x".repeat(201)),
+      ]),
+    }).findings;
+    const blocking = findings
+      .filter(isDispositiveDirectoryFinding)
+      .map((entry) => entry.id);
+    expect(blocking).toContain(LISTING);
+    const withoutListing = findings.filter((entry) => entry.id !== LISTING);
+    expect(
+      directoryVerdict(withoutListing, { ...HOSTED, blocking })
+    ).toMatchObject({ verdict: "incomplete", undetermined: [LISTING] });
+    expect(
+      directoryVerdict(withoutListing, {
+        ...HOSTED,
+        blocking,
+        checkGate: { warnOnly: [LISTING] },
+      })
+    ).toMatchObject({ verdict: "ready", undetermined: [] });
   });
 
   it("fails the run on any check failOn names, even one that is not a requirement", () => {

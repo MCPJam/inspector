@@ -40,6 +40,7 @@ import {
 } from "../submission-profile.js";
 import type { ClaudeReadinessFinding } from "../types.js";
 import {
+  CLAUDE_ANSWER_STEP_KEYS,
   compareAuthAnswersWithServer,
   gradeOwnedAnswers,
   unconfirmedProblems,
@@ -395,7 +396,13 @@ const LINK_KEYS = [
   "listing.enterpriseAuthDocsUrl",
 ];
 const ACKNOWLEDGMENTS_KEY = "compliance.acknowledgments";
-const OWNED_KEYS = new Set([...COPY_KEYS, ...LINK_KEYS, ACKNOWLEDGMENTS_KEY]);
+/** Answers some check reports; the other-answers check reports the rest. */
+const OWNED_KEYS = new Set([
+  ...COPY_KEYS,
+  ...LINK_KEYS,
+  ACKNOWLEDGMENTS_KEY,
+  ...CLAUDE_ANSWER_STEP_KEYS,
+]);
 
 function gradeAnswers(
   evidence: ClaudeSubmissionEvidence,
