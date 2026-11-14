@@ -262,6 +262,7 @@ describe("runHarnessTurn: harness_turn_completed", () => {
   });
 
   it("counts the route's acquisition of the box toward the box wake, and no other stage", async () => {
+    const info = vi.spyOn(logger, "info");
     const { sink, options } = turn("web");
     let now = 0;
     const timing = new TurnTiming({
@@ -285,6 +286,16 @@ describe("runHarnessTurn: harness_turn_completed", () => {
       expect(event[field]).toEqual(expect.any(Number));
       expect(event[field]).toBeLessThan(1_700);
     }
+    // The [harness][timing] line carries the same figures: its in-turn
+    // boxWake plus the route's boxAcquisitionMs.
+    const line = info.mock.calls
+      .map(([message]) => String(message))
+      .find((message) => message.startsWith("[harness][timing] "));
+    const boxWake = Number(/ boxWake=(\d+)ms/.exec(line ?? "")?.[1]);
+    const acquisition = Number(/ boxAcquisitionMs=(\d+)/.exec(line ?? "")?.[1]);
+    expect(acquisition).toBe(1_700);
+    expect(boxWake + acquisition).toBe(event.box_wake_ms);
+    info.mockRestore();
   });
 
   it("reports the public API's inline turn, first text included", async () => {
