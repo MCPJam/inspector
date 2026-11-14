@@ -308,7 +308,9 @@ describe("From MCP servers", () => {
     expect(screen.getByTestId("suite-clients-skills")).toHaveTextContent(
       "1 skill",
     );
-    const version = await screen.findByLabelText("Version for acme-crm/lookup");
+    const version = await screen.findByLabelText(
+      "Version for lookup from acme-crm",
+    );
     expect(version).toHaveDisplayValue("Latest (v2)");
     fireEvent.focus(version);
     await screen.findByText("v1");
@@ -332,7 +334,7 @@ describe("From MCP servers", () => {
     expect(
       screen.getByText(/or pick an older version that does/),
     ).toBeInTheDocument();
-    const version = screen.getByLabelText("Version for acme-crm/broken");
+    const version = screen.getByLabelText("Version for broken from acme-crm");
     expect(version).not.toBeDisabled();
     fireEvent.focus(version);
     await screen.findByText("v1");
@@ -367,7 +369,7 @@ describe("From MCP servers", () => {
     expect(
       screen.queryByText(/Its server lists no files for this skill/),
     ).toBeNull();
-    const version = screen.getByLabelText("Version for acme-crm/broken");
+    const version = screen.getByLabelText("Version for broken from acme-crm");
     expect(version).not.toBeDisabled();
     expect(version).toHaveDisplayValue("v1");
   });
@@ -403,7 +405,9 @@ describe("From MCP servers", () => {
     renderSettings();
     await openSkills();
     expect(screen.getByText("From MCP servers")).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Unavailable skill gone (remove)"));
+    fireEvent.click(
+      screen.getByLabelText("Unavailable skill gone. Remove it."),
+    );
     expect(await savedOverrides()).toEqual([
       { serverSkillSelection: null },
       { serverSkillSelection: null },

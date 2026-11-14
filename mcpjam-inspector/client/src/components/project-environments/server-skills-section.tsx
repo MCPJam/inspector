@@ -220,7 +220,7 @@ export function ServerSkillsSection({
               checked={everywhere ? true : "indeterminate"}
               onCheckedChange={remove}
               disabled={disabled || !everywhere}
-              aria-label={`Unavailable skill ${id} (remove)`}
+              aria-label={`Unavailable skill ${id}. Remove it.`}
             />
             <Server className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col">
@@ -263,7 +263,7 @@ function ServerSkillVersionControl({
   );
   return (
     <SkillVersionSelect
-      label={`Version for ${skill.ref}`}
+      label={`Version for ${skill.name} from ${skill.serverSlug}`}
       latestLabel={`Latest (v${skill.versionNumber})`}
       latestDisabled={skill.unpinnable !== undefined}
       versions={
