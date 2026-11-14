@@ -102,24 +102,19 @@ export function SuiteRunsHealth({
 }
 
 /**
- * The page's empty states, centered in the space under the header. They fill
- * it when no Runs card sits above them, like today's empty-cases hero.
+ * A tab's empty state, centered in the space under the tabs, like today's
+ * empty-cases hero.
  */
 function SuiteEmptyPanel({
-  fill,
   testId,
   children,
 }: {
-  fill: boolean;
   testId: string;
   children: ReactNode;
 }) {
   return (
     <section
-      className={cn(
-        "flex min-h-[20rem] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/70 px-6 py-12 text-center",
-        fill && "min-h-0 flex-1",
-      )}
+      className="flex min-h-[20rem] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/70 px-6 py-12 text-center"
       data-testid={testId}
     >
       {children}
@@ -127,7 +122,7 @@ function SuiteEmptyPanel({
   );
 }
 
-/** A suite with cases that has never run, in place of the Runs card. */
+/** The Runs tab of a suite that has never run. */
 export function SuiteNoRunsEmpty({
   runBlockedReason,
   runBusy,
@@ -138,7 +133,7 @@ export function SuiteNoRunsEmpty({
   onRun: () => void;
 }) {
   return (
-    <SuiteEmptyPanel fill testId="nav-suite-no-runs">
+    <SuiteEmptyPanel testId="nav-suite-no-runs">
       <h3 className="text-base font-semibold text-foreground">No runs yet</h3>
       <p className="max-w-md text-sm text-muted-foreground">
         Run the suite once to start a trend.
@@ -155,19 +150,16 @@ export function SuiteNoRunsEmpty({
   );
 }
 
-/** A suite with no cases. Each action is absent when the reader cannot take it. */
+/** The Test cases tab of a suite with no cases. Each action is absent when the reader cannot take it. */
 export function SuiteNoCasesEmpty({
-  fill,
   onBuildCase,
   onOpenSettings,
 }: {
-  /** No Runs card above it. */
-  fill: boolean;
   onBuildCase?: () => void;
   onOpenSettings?: () => void;
 }) {
   return (
-    <SuiteEmptyPanel fill={fill} testId="nav-suite-empty">
+    <SuiteEmptyPanel testId="nav-suite-empty">
       <h3 className="text-base font-semibold text-foreground">
         No test cases yet
       </h3>
@@ -190,42 +182,5 @@ export function SuiteNoCasesEmpty({
         </button>
       ) : null}
     </SuiteEmptyPanel>
-  );
-}
-
-/** What the Suite page shows besides the Runs card: nothing once it has runs. */
-export function SuiteNavEmptyState({
-  hasCases,
-  hasRuns,
-  onBuildCase,
-  onOpenSettings,
-  runBlockedReason,
-  runBusy,
-  onRun,
-}: {
-  hasCases: boolean;
-  hasRuns: boolean;
-  /** Absent for read-only and CI-locked suites. */
-  onBuildCase?: () => void;
-  onOpenSettings?: () => void;
-  runBlockedReason: string | null;
-  runBusy: boolean;
-  onRun: () => void;
-}) {
-  if (!hasCases) {
-    return (
-      <SuiteNoCasesEmpty
-        fill={!hasRuns}
-        onBuildCase={onBuildCase}
-        onOpenSettings={onOpenSettings}
-      />
-    );
-  }
-  return hasRuns ? null : (
-    <SuiteNoRunsEmpty
-      runBlockedReason={runBlockedReason}
-      runBusy={runBusy}
-      onRun={onRun}
-    />
   );
 }

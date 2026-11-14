@@ -2582,6 +2582,10 @@ export function SuiteIterationsView({
                   runHistoryStatus={runHistoryStatus}
                   onLoadMoreRuns={onLoadMoreRuns}
                   metricsByRun={metricsByRun ?? NO_METRICS}
+                  view={runsViewMode === "test-cases" ? "test-cases" : "runs"}
+                  onViewChange={(next) =>
+                    navigation.toSuiteOverview(suite._id, next)
+                  }
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
                   importJobId={

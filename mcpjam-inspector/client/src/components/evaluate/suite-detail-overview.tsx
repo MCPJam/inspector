@@ -98,7 +98,11 @@ import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { SUITE_COLUMN_HINTS } from "./nav-suite/suite-page-hints";
 import { SuitePageHeader } from "./nav-suite/suite-page-header";
-import { SuiteNavEmptyState } from "./nav-suite/suite-runs-health";
+import {
+  SuiteNoCasesEmpty,
+  SuiteNoRunsEmpty,
+} from "./nav-suite/suite-runs-health";
+import { SuitePageTabs, type SuitePageTab } from "./nav-suite/suite-page-tabs";
 import { useSuitePageViewed } from "./nav-suite/use-suite-page-viewed";
 import { newestLaunchPills } from "./nav-suite/newest-launch-pills";
 import { SuitePills } from "./landing/suite-pills";
@@ -173,6 +177,8 @@ export function SuiteDetailOverview({
   projectId = null,
   importJobId = null,
   onClearImportJob,
+  view = "runs",
+  onViewChange,
   onGeneratingChange,
 }: {
   suite: EvalSuite;
@@ -257,6 +263,9 @@ export function SuiteDetailOverview({
    * out was to edit the address bar.
    */
   onClearImportJob?: () => void;
+  /** The new Suite page's tab; `?view=test-cases` opens Test cases. */
+  view?: SuitePageTab;
+  onViewChange?: (view: SuitePageTab) => void;
   /** Retained for callers; verdicts are read in the report, not history rows. */
   decisionSummaryEnabled?: boolean;
   /**
@@ -673,6 +682,10 @@ export function SuiteDetailOverview({
     ) : null;
   // Today's settings page until Suite settings (EFTW-18) takes over.
   const openSettings = readOnlyConfig || configLocked ? undefined : onEditSuite;
+  // Today's page has no tabs: both sections show, as before.
+  const tab = resultsPageEnabled ? view : null;
+  const emptyTab =
+    (tab === "runs" && !showRunHistory) || (tab === "test-cases" && !hasCases);
 
   const runButton = (
     <Button
@@ -734,7 +747,7 @@ export function SuiteDetailOverview({
         // Keep intrinsic height inside the scroll pane; a long case list
         // otherwise squeezes the overflow-hidden history card to its borders.
         "flex min-h-full shrink-0 flex-col gap-4 pb-6",
-        showEmptyCasesHero && !showRunHistory && "flex-1",
+        ((showEmptyCasesHero && !showRunHistory) || emptyTab) && "flex-1",
       )}
       data-testid="suite-detail-overview"
     >
@@ -870,7 +883,11 @@ export function SuiteDetailOverview({
         </div>
       )}
 
-      {showRunHistory ? (
+      {tab ? (
+        <SuitePageTabs value={tab} onChange={(next) => onViewChange?.(next)} />
+      ) : null}
+
+      {showRunHistory && tab !== "test-cases" ? (
         <section
           className={runHistorySurfaceClass}
           data-testid="suite-detail-run-history"
@@ -1013,21 +1030,24 @@ export function SuiteDetailOverview({
         </section>
       ) : null}
 
-      {resultsPageEnabled ? (
-        <SuiteNavEmptyState
-          hasCases={hasCases}
-          hasRuns={showRunHistory}
+      {tab === "runs" ? (
+        showRunHistory ? null : (
+          <SuiteNoRunsEmpty
+            runBlockedReason={runBlockedReason}
+            runBusy={isRerunning}
+            onRun={() => setReviewRun(true)}
+          />
+        )
+      ) : tab === "test-cases" && !hasCases ? (
+        <SuiteNoCasesEmpty
           onBuildCase={
             readOnlyConfig || configLocked
               ? undefined
               : (onDescribeCases ?? onEditCases)
           }
           onOpenSettings={openSettings}
-          runBlockedReason={runBlockedReason}
-          runBusy={isRerunning}
-          onRun={() => setReviewRun(true)}
         />
-      ) : showEmptyCasesHero ? (
+      ) : !tab && showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
           readOnly={readOnlyConfig || configLocked}
           onDescribe={onDescribeCases ?? onEditCases}

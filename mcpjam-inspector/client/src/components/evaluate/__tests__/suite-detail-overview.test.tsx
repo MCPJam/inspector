@@ -1634,6 +1634,7 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
     const { onDescribeCases, onEditSuite } = renderSuitePage({
       cases: [],
       runs: [],
+      view: "test-cases",
     });
     expect(screen.getByText("No test cases yet")).toBeVisible();
     const user = userEvent.setup();
@@ -1646,7 +1647,12 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
   });
 
   it("offers neither action on a CI-locked suite with no cases", () => {
-    renderSuitePage({ cases: [], runs: [], configLocked: true });
+    renderSuitePage({
+      cases: [],
+      runs: [],
+      configLocked: true,
+      view: "test-cases",
+    });
     expect(screen.getByText("No test cases yet")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Build a test case" }),
@@ -1666,6 +1672,34 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
       .setup()
       .click(within(panel).getByRole("button", { name: "Run" }));
     expect(await screen.findByText(/^Setup Run · /)).toBeInTheDocument();
+  });
+
+  it("keeps No runs yet on the Runs tab of a suite with no cases, with Run blocked", () => {
+    renderSuitePage({ cases: [], runs: [] });
+    const panel = screen.getByTestId("nav-suite-no-runs");
+    expect(within(panel).getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(screen.queryByText("No test cases yet")).toBeNull();
+  });
+
+  it("shows today's Test Cases list on the Test cases tab, without the Runs card", () => {
+    renderSuitePage({ view: "test-cases" });
+    expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Add case/ })).toBeVisible();
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+    expect(screen.queryByTestId("nav-suite-no-runs")).toBeNull();
+  });
+
+  it("asks for the other tab from the tab bar", async () => {
+    const onViewChange = vi.fn();
+    renderSuitePage({ onViewChange });
+    const tabs = screen.getByTestId("suite-page-tabs");
+    expect(
+      within(tabs).getByRole("button", { name: "Runs" }),
+    ).toHaveAttribute("aria-current", "page");
+    await userEvent
+      .setup()
+      .click(within(tabs).getByRole("button", { name: "Test cases" }));
+    expect(onViewChange).toHaveBeenCalledWith("test-cases");
   });
 
   it("blocks the no-runs Run for the same reason as the header's", () => {
@@ -1710,6 +1744,7 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
     renderSuitePage({}, false);
     expect(pageViews()).toEqual([]);
     expect(screen.queryByTestId("suite-page-header")).toBeNull();
+    expect(screen.queryByTestId("suite-page-tabs")).toBeNull();
     expect(
       within(screen.getByTestId("suite-detail-identity")).getByRole("button", {
         name: "Suite settings",

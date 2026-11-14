@@ -99,7 +99,8 @@ export function SuitePageHeader({
       data-testid="suite-page-header"
     >
       <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+        {/* As tall as the buttons, so the name, pills and buttons share a center. */}
+        <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
           <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
             {name}
           </h2>
