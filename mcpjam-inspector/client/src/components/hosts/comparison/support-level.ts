@@ -42,7 +42,8 @@ export function isSupportField(field: HostConfigFieldDef): boolean {
 
 /**
  * Resolve a field's support level for one host. Returns `null` for
- * non-support-shaped fields (scalars, strings, data objects).
+ * non-support-shaped fields (scalars, strings, data objects) and for a
+ * boolean nobody measured.
  */
 export function getSupportLevel(
   field: HostConfigFieldDef,
@@ -55,6 +56,10 @@ export function getSupportLevel(
   if (value === NOT_SUPPORTED) return "unsupported";
   switch (field.kind.kind) {
     case "boolean":
+      // Undefined means nobody measured it: a probe row not run yet, or a
+      // value a catalog row left out. The matrix shows "—" for it, so it joins
+      // no bucket, filter or coverage count either.
+      if (value === undefined) return null;
       return value === true ? "supported" : "neutral";
     case "tri-state":
       if (value === true) return "supported";

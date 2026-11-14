@@ -28,11 +28,11 @@ import { LOCAL_HARNESS_IDS } from "../../../../shared/harness-descriptors.js";
  * `runtime-identity.ts`.
  */
 
-/** A harness this Inspector has a REVIEWED local compatibility manifest for.
- *  Deliberately narrower than the SDK's `Harness` union: shipping a local
- *  adapter is a security-sensitive act, so an id earns a place here only with
- *  a manifest entry (`compatibility.ts`) and conformance evidence. */
-export type SupportedLocalHarnessId = "claude-code" | "codex";
+/** A runtime that declares no `local` exception, and so has a reviewed local
+ *  runtime definition (`runtimes/index.ts`). Shipping a local adapter is a
+ *  security-sensitive act: the definition carries its manifest, and the
+ *  release gate still wants published packs and conformance evidence. */
+export type SupportedLocalHarnessId = (typeof LOCAL_HARNESS_IDS)[number];
 
 export const SUPPORTED_LOCAL_HARNESS_IDS: readonly SupportedLocalHarnessId[] = LOCAL_HARNESS_IDS;
 

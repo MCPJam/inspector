@@ -140,6 +140,16 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "getServerRevision",
   "get /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff":
     "diffServerRevisions",
+  // Server accounts. Write-only tokens: no method returns one.
+  "get /projects/{projectId}/servers/{serverId}/accounts": "listServerAccounts",
+  "get /projects/{projectId}/servers/{serverId}/accounts/{account}":
+    "getServerAccount",
+  "put /projects/{projectId}/servers/{serverId}/accounts/{account}":
+    "uploadServerAccountTokens",
+  "patch /projects/{projectId}/servers/{serverId}/accounts/{account}":
+    "updateServerAccount",
+  "delete /projects/{projectId}/servers/{serverId}/accounts/{account}":
+    "deleteServerAccount",
   "patch /projects/{projectId}/servers/{serverId}": "updateProjectServer",
   "delete /projects/{projectId}/servers/{serverId}": "deleteProjectServer",
 
@@ -174,6 +184,25 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "getReadinessReport",
   "post /projects/{projectId}/readiness-runs/{runId}/cancel":
     "cancelReadinessRun",
+  "post /projects/{projectId}/readiness-runs/{runId}/resume":
+    "resumeReadinessRun",
+
+  // Directory submissions and the flows they rehearse
+  "get /directory-flows": "listDirectoryFlows",
+  "get /directory-flows/{flowId}": "getDirectoryFlow",
+  "post /projects/{projectId}/directory-submissions":
+    "createDirectorySubmission",
+  "get /projects/{projectId}/directory-submissions": "listDirectorySubmissions",
+  "get /projects/{projectId}/directory-submissions/{submissionId}":
+    "getDirectorySubmission",
+  "patch /projects/{projectId}/directory-submissions/{submissionId}":
+    "updateDirectorySubmission",
+  "delete /projects/{projectId}/directory-submissions/{submissionId}":
+    "deleteDirectorySubmission",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/runs":
+    "startDirectorySubmissionRun",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/results":
+    "getDirectorySubmissionResults",
 
   // Persisted conformance runs
   "post /projects/{projectId}/servers/{serverId}/conformance-runs":
@@ -568,7 +597,7 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/servers/{serverId}/check-oauth":
     "An interactive OAuth probe for the Inspector UI's connect flow, whose result only makes sense to something that can then open a browser.",
   "post /projects/{projectId}/servers/{serverId}/oauth/import-tokens":
-    "Imports an OAuth grant obtained out of band. Deliberately hard to reach: an SDK method would make bulk credential injection the easy path.",
+    "The deprecated alias of `PUT .../accounts/{account}`, which `uploadServerAccountTokens` calls. A second method for the same upload would only outlive the alias's sunset.",
   "post /projects/{projectId}/eval-ingest/capabilities":
     "Authenticated SDK reporting capability negotiation is owned by the reporter.",
   "post /projects/{projectId}/eval-ingest/pay-iteration":

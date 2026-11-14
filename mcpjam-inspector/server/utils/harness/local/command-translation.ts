@@ -67,7 +67,8 @@
 // when a result is mapped onto the managed bundle or the session overlay.
 import { normalize, posix, sep } from "node:path";
 import { assertArgvAllowed } from "./argv-policy.js";
-import type { SupportedLocalHarnessId } from "./targets.js";
+import { SUPPORTED_LOCAL_HARNESS_IDS, type SupportedLocalHarnessId } from "./targets.js";
+import { LOCAL_RUNTIMES, localRuntime } from "./runtimes/index.js";
 
 /** What a recognized command turns into. Every arm is something the supervisor
  *  can perform WITHOUT a shell. */
@@ -220,23 +221,10 @@ export const ADAPTER_COMMAND_SHAPES: Readonly<
     "test ! -e '<skillDir>'",
     "rm -rf -- '<skillDir>' …",
   ],
-  "claude-code": [
-    "pnpm install --frozen-lockfile --store-dir .pnpm-store",
-    "./node_modules/.bin/claude --version",
-    "mkdir -p '<workDir>' '<bridgeStateDir>'",
-    "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir '<bridgeStateDir>'",
-  ],
-  // MCPJam's app-server adapter (`codex-appserver/`), the only Codex adapter
-  // that runs locally. The exec adapter's `--cli-shim-dir` launch is not a
-  // local shape and is refused.
-  codex: [
-    "pnpm install --frozen-lockfile --store-dir .pnpm-store",
-    "node node_modules/@openai/codex/bin/codex.js --version",
-    "mkdir -p '<workDir>' '<bridgeStateDir>' '<sessionDataDir>'",
-    "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir " +
-      "'<bridgeStateDir>' --session-data-dir '<sessionDataDir>' --bootstrap-dir " +
-      "'<bootstrapDir>'",
-  ],
+  // Each runtime's own shapes, from its definition (`commands.shapes`).
+  ...(Object.fromEntries(
+    SUPPORTED_LOCAL_HARNESS_IDS.map((id) => [id, LOCAL_RUNTIMES[id].commands.shapes]),
+  ) as Record<SupportedLocalHarnessId, readonly string[]>),
 };
 
 /**
@@ -580,7 +568,7 @@ function matchBootstrapInstall(
   command: string,
   ctx: CommandTranslationContext,
 ): TranslatedCommand | null {
-  if (command === "pnpm install --frozen-lockfile --store-dir .pnpm-store") {
+  if (command === localRuntime(ctx.harnessId).commands.install) {
     return {
       kind: "noop",
       reason:
@@ -588,12 +576,7 @@ function matchBootstrapInstall(
         "runtime bundle; no package manager runs during a session",
     };
   }
-  if (
-    (ctx.harnessId === "claude-code" &&
-      command === "./node_modules/.bin/claude --version") ||
-    (ctx.harnessId === "codex" &&
-      command === "node node_modules/@openai/codex/bin/codex.js --version")
-  ) {
+  if (command === localRuntime(ctx.harnessId).commands.versionProbe) {
     return {
       kind: "noop",
       reason:
@@ -612,23 +595,11 @@ async function matchBridgeLaunch(
   if (!command.startsWith("node ")) return null;
   const tokens = splitQuotedTokens(command.slice("node ".length), command);
 
-  // The EXACT flag vector each pinned adapter emits, in order. Matching a
-  // subset, a permutation, or another harness's flags would let an adapter
+  // The EXACT flag vector the pinned adapter emits, in order. Matching a
+  // subset, a permutation, or another runtime's flags would let an adapter
   // change slip through as a valid launch — the opposite of the fail-closed
-  // behaviour this module promises. The Codex (app-server) bridge also names
-  // its session-data directory and the bootstrap directory it loads Codex
-  // from.
-  const expected: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> =
-    {
-      "claude-code": ["--workdir", "--bridge-state-dir"],
-      codex: [
-        "--workdir",
-        "--bridge-state-dir",
-        "--session-data-dir",
-        "--bootstrap-dir",
-      ],
-    };
-  const flags = expected[ctx.harnessId];
+  // behaviour this module promises.
+  const { bridgeFlags: flags, sessionStateFlags } = localRuntime(ctx.harnessId).commands;
 
   if (tokens.length !== 1 + flags.length * 2) {
     throw new CommandTranslationError(
@@ -698,12 +669,9 @@ async function matchBridgeLaunch(
       }
       continue;
     }
-    if (
-      ctx.harnessId === "codex" &&
-      (flag === "--bridge-state-dir" || flag === "--session-data-dir")
-    ) {
-      // Runtime state (rollouts, CODEX_HOME, the relay credential) stays in
-      // the session's own directory, never in the user's checkout.
+    if (sessionStateFlags.includes(flag)) {
+      // Runtime state (Codex's rollouts, CODEX_HOME, the relay credential)
+      // stays in the session's own directory, never in the user's checkout.
       args.push(flag, await (ctx.confineToSessionState ?? ctx.confine)(value));
       continue;
     }

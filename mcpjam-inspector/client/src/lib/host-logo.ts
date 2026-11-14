@@ -26,12 +26,22 @@ export { UNKNOWN_HOST_LOGO };
  */
 const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/mcpjam/i, "mcpjam"],
+  // BEFORE the bare /claude[ -]?code/i: "Claude Code Desktop" and "Claude
+  // Code Web" are their own hosts.
+  [/claude[ -]?code[ -]?desktop/i, "claude-code-desktop"],
+  [/claude[ -]?code[ -]?web/i, "claude-code-web"],
   [/claude[ -]?code/i, "claude-code"],
   // BEFORE the bare /claude/i below, same ordering trap as claude-code: a host
   // named "Claude Desktop" would otherwise resolve to the web app's mark.
   [/claude[ -]?desktop/i, "claude-desktop"],
   [/claude/i, "claude"],
+  // BEFORE the bare /chatgpt|openai/i, most specific first.
+  [/chatgpt[ -]?work[ -]?desktop/i, "chatgpt-work-desktop"],
+  [/chatgpt[ -]?work/i, "chatgpt-work"],
+  [/chatgpt[ -]?desktop/i, "chatgpt-desktop"],
   [/chatgpt|openai/i, "chatgpt"],
+  // The bare "Codex" resolves through the exact-name pass below.
+  [/codex[ -]?cli/i, "codex-cli"],
   [/opencode/i, "opencode"],
   [/copilot[ -]cli/i, "copilot-cli"],
   [/copilot/i, "copilot"],
@@ -49,6 +59,8 @@ const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/gemini|google[ -]?adk/i, "gemini"],
   [/perplexity/i, "perplexity"],
   [/notion/i, "notion"],
+  [/grok/i, "grokbot"],
+  [/\bmuse\b/i, "muse"],
   [/slack/i, "slack"],
   [/mistral/i, "mistral"],
 ];

@@ -95,10 +95,10 @@ describe("HostConfigComparisonMatrix", () => {
       .getAllByRole("columnheader", { hidden: true })
       .map((el) => el.textContent ?? "")
       .filter((text) => /^Agent|^MCP Protocol|^Apps/.test(text.trim()));
-    // The first three matching headers should be Agent → MCP Protocol → Apps.
+    // The first three matching headers should be MCP Protocol → Agent → Apps.
     expect(sections.length).toBeGreaterThanOrEqual(3);
-    expect(sections[0]).toMatch(/^Agent/);
-    expect(sections[1]).toMatch(/^MCP Protocol/);
+    expect(sections[0]).toMatch(/^MCP Protocol/);
+    expect(sections[1]).toMatch(/^Agent/);
     expect(sections[2]).toMatch(/^Apps/);
   });
 

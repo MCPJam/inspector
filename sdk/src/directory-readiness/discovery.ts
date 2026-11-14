@@ -472,6 +472,11 @@ export interface PrmDiscoveryResult {
    * never published one.
    */
   rejectedPointer?: string;
+  /**
+   * No attempt got an HTTP answer. `not-found` then says nothing about the
+   * server's metadata: nothing answered the question.
+   */
+  unanswered?: boolean;
 }
 
 /**
@@ -529,8 +534,10 @@ export async function discoverProtectedResourceMetadata(
     ? `the challenge's resource_metadata pointer was refused (it must be an http(s) URL on the target's own origin)`
     : undefined;
   let lastError: string | undefined;
+  let answered = false;
   for (const attempt of attempts) {
     const result = await fetchDiscoveryJson(attempt.url, options);
+    answered ||= result.status !== 0;
     if (result.status >= 200 && result.status < 300 && result.document) {
       // `rejectedPointer` rides along on SUCCESS too: the fallback worked, and
       // the server still published a pointer no conforming client can follow.
@@ -548,5 +555,6 @@ export async function discoverProtectedResourceMetadata(
     fetchError:
       [rejectionNote, lastError].filter(Boolean).join("; ") || undefined,
     rejectedPointer,
+    ...(answered ? {} : { unanswered: true }),
   };
 }

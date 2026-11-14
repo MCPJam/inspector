@@ -1,6 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useProjectRunHistory } from "../use-project-run-history";
+import {
+  clearProjectRunHistoryCache,
+  useProjectRunHistory,
+} from "../use-project-run-history";
 
 const mocks = vi.hoisted(() => ({ query: vi.fn() }));
 const client = { query: mocks.query };
@@ -8,6 +11,7 @@ vi.mock("convex/react", () => ({ useConvex: () => client }));
 const rows = [{ _id: "one", status: "completed" }];
 
 beforeEach(() => {
+  clearProjectRunHistoryCache();
   mocks.query.mockReset();
   mocks.query.mockImplementation(async (name: string) =>
     name === "testSuites:getTestSuiteRun"
@@ -68,4 +72,26 @@ it("folds history metrics without fetching full run snapshots", async () => {
       ([name]) => name !== "testSuites:getTestSuiteRun",
     ),
   ).toBe(true);
+});
+
+it("shows the last snapshot at once after an unmount, while it refreshes", async () => {
+  const live = [{ _id: "live", status: "running" }];
+  mocks.query.mockImplementation(async (name: string) =>
+    name === "testSuites:getTestSuiteRun"
+      ? { ...live[0], runGroupId: "same" }
+      : { page: [], isDone: true, continueCursor: "" },
+  );
+  const first = renderHook(() => useProjectRunHistory("remount", live, true));
+  await waitFor(() => expect(first.result.current.loading).toBe(false));
+  const snapshot = first.result.current.details.get("live");
+  first.unmount();
+
+  mocks.query.mockClear();
+  mocks.query.mockImplementation(() => new Promise(() => {}));
+  const second = renderHook(() => useProjectRunHistory("remount", live, true));
+  expect(second.result.current.details.get("live")).toBe(snapshot);
+  expect(second.result.current.loading).toBe(true);
+  expect(mocks.query).toHaveBeenCalledWith("testSuites:getTestSuiteRun", {
+    runId: "live",
+  });
 });

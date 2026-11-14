@@ -136,7 +136,7 @@ describe("catalog limits agree with the host profile", () => {
 });
 
 describe("openaiPortalIssue", () => {
-  it("copies the catalog's category, severity and message", () => {
+  it("copies the catalog's category, severity and message, and the portal's code", () => {
     const issue = openaiPortalIssue("archive-too-many-entries", {
       subject: "package.zip",
       observed: 6_000,
@@ -147,6 +147,7 @@ describe("openaiPortalIssue", () => {
       category: "package-archive",
       severity: "blocking",
       message: OPENAI_PORTAL_ERRORS_BY_ID["archive-too-many-entries"].message,
+      portalCode: "archive_too_many_entries",
       subject: "package.zip",
       observed: 6_000,
       expected: 5_000,

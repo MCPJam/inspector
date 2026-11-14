@@ -39,6 +39,15 @@ describe("which hosts are gated at all", () => {
     expect(FLAG_GATED_HOST_IDS.has("cursor")).toBe(false);
   });
 
+  it("gates Codex CLI behind the Codex flag, since it runs on the Codex harness", () => {
+    expect(
+      isHostVisibleByFeatureFlags("codex-cli", { ...ALL_ON, codex: false }),
+    ).toBe(false);
+    expect(
+      isHostVisibleByFeatureFlags("codex-cli", { ...ALL_OFF, codex: true }),
+    ).toBe(true);
+  });
+
   it("leaves an ungated host visible no matter what the flags say", () => {
     for (const hostId of ["cursor", "vscode", "windsurf", "anything-else"]) {
       expect(isHostVisibleByFeatureFlags(hostId, ALL_OFF), hostId).toBe(true);
@@ -157,7 +166,7 @@ describe("every surface reads the same map", () => {
     ]) {
       const excluded = excludedFlagGatedHostIds(visibility);
       const shown = new Set(
-        filterHostsByFeatureFlags([...hosts, { id: "copilot-cli" }], visibility).map((h) => h.id),
+        filterHostsByFeatureFlags([...hosts, { id: "copilot-cli" }, { id: "codex-cli" }], visibility).map((h) => h.id),
       );
       for (const id of FLAG_GATED_HOST_IDS) {
         expect(excluded.has(id), `${id} in ${JSON.stringify(visibility)}`).toBe(

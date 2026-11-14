@@ -154,6 +154,12 @@ export interface PluginBundleInterpretation {
   manifestPath: string;
   /** Set when `.codex-plugin/plugin.json` supplied OpenAI data to a root manifest. */
   overlayPath?: string;
+  /**
+   * The archive's top-level directory the plugin sits in, when not its root
+   * (`openai-compatible`). Paths in the parse are relative to it: join it
+   * back on to read the archive.
+   */
+  rootDirectory?: string;
 }
 
 export interface ParsedPluginBundle {

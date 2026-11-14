@@ -1,5 +1,6 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
+import { DirectorySubmissionClient } from "./directory-submission-client.js";
 import type {
   PlatformWidgetSessionTarget,
   PlatformWidgetSessionCreateBody,
@@ -713,7 +714,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient {
+export class PlatformApiClient extends DirectorySubmissionClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
@@ -740,6 +741,7 @@ export class PlatformApiClient {
   private readonly constructorOptions: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    super();
     this.constructorOptions = options;
     this.evalVocabulary = options.evalVocabulary ?? 1;
     this.apiVocabulary = options.apiVocabulary ?? 1;
@@ -3307,6 +3309,25 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Run again a run that stopped on the server and was re-queued, which a
+   * read reports as `resumable`. Only the person who started it can: the
+   * server is authorized again with their credentials. Poll the run after.
+   */
+  resumeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/resume`,
       {},
       options
     );
@@ -6553,7 +6574,7 @@ export class PlatformApiClient {
     return this.request("POST", path, { body: params.body ?? {} }, options);
   }
 
-  private async request<T>(
+  protected async request<T>(
     // PUT is here for idempotent creates — `publishScenario` is the first:
     // publishing an environment that is already published returns the existing
     // scenario rather than minting a second, which is PUT's semantics and not
@@ -6574,6 +6595,8 @@ export class PlatformApiClient {
        * this is the header that says which client that was.
        */
       declareLaunch?: boolean;
+      /** Told a successful answer's status, for a route where it is the answer. */
+      onStatus?: (status: number) => void;
     },
     options?: RequestOptions
   ): Promise<T> {
@@ -6741,6 +6764,7 @@ export class PlatformApiClient {
       );
     }
 
+    init.onStatus?.(response.status);
     // Empty success bodies (204 / no content) resolve to undefined.
     return parsed as T;
   }

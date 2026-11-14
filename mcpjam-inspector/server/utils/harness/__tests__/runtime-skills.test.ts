@@ -16,13 +16,7 @@ import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
   skillsFingerprint,
-  toHarnessSkills,
   toPinnableSkill,
-  frontmatterSafeSkills,
-  prepareClaudeCodeSkills,
-  prepareCodexSkills,
-  prepareNoSkills,
-  toYamlDoubleQuoted,
   type RuntimeSkill,
 } from "../runtime-skills";
 import {
@@ -192,104 +186,5 @@ describe("toPinnableSkill", () => {
         skill({ skillId: "s1", provenance: "future-value" as never }),
       ).provenance,
     ).toBe("authored");
-  });
-});
-
-describe("description handling (adapter-agnostic vs frontmatter shim)", () => {
-  it("toHarnessSkills leaves descriptions SEMANTIC (unmodified)", () => {
-    const out = toHarnessSkills([
-      skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
-    ]);
-    expect(out[0].description).toBe('Process: PDFs "safely"');
-  });
-
-  it("frontmatterSafeSkills pre-encodes a YAML double-quoted scalar", () => {
-    const out = frontmatterSafeSkills([
-      skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
-    ]);
-    // `description: ${value}` must be valid frontmatter — quoted + escaped.
-    expect(out[0].description).toBe('"Process: PDFs \\"safely\\""');
-  });
-
-  it("toYamlDoubleQuoted neutralizes newlines/quotes/backslashes", () => {
-    expect(toYamlDoubleQuoted("a\nb")).toBe('"a\\nb"');
-    expect(toYamlDoubleQuoted('he said "hi"')).toBe('"he said \\"hi\\""');
-    expect(toYamlDoubleQuoted("c:\\path")).toBe('"c:\\\\path"');
-  });
-});
-
-describe("prepareSkills (per-adapter delivery shaping)", () => {
-  it("Claude Code delivers every skill, descriptions YAML-encoded", () => {
-    const skills = [
-      skill({ skillId: "s1", name: "alpha", description: 'a "b"' }),
-      skill({ skillId: "s2", name: "beta" }),
-    ];
-    const prepared = prepareClaudeCodeSkills(skills);
-    expect(prepared.delivered).toEqual(skills);
-    expect(prepared.skipped).toEqual([]);
-    expect(prepared.payload.map((p) => p.name)).toEqual(["alpha", "beta"]);
-    expect(prepared.payload[0].description).toBe('"a \\"b\\""');
-  });
-
-  it("Codex delivers valid names with the same YAML encoding", () => {
-    const skills = [
-      skill({ skillId: "s1", name: "pdf-tools", description: 'a "b"' }),
-    ];
-    const prepared = prepareCodexSkills(skills);
-    expect(prepared.delivered).toEqual(skills);
-    expect(prepared.skipped).toEqual([]);
-    expect(prepared.payload).toEqual([
-      {
-        name: "pdf-tools",
-        description: '"a \\"b\\""',
-        content: skills[0].content,
-      },
-    ]);
-  });
-
-  it("Codex FILTERS a name it could not write instead of failing the turn", () => {
-    // The Codex adapter validates names inside `doStart` and THROWS on a
-    // reject — one bad name would take the whole turn down, so it must never
-    // reach the adapter. The good skill still ships.
-    const good = skill({ skillId: "s1", name: "pdf-tools" });
-    const prepared = prepareCodexSkills([
-      good,
-      skill({ skillId: "s2", name: ".." }),
-      skill({ skillId: "s3", name: "Bad Name!" }),
-    ]);
-    expect(prepared.delivered).toEqual([good]);
-    expect(prepared.payload.map((p) => p.name)).toEqual(["pdf-tools"]);
-    expect(prepared.skipped).toEqual([
-      { name: "..", reason: "invalid-skill-name" },
-      { name: "Bad Name!", reason: "invalid-skill-name" },
-    ]);
-  });
-});
-
-describe("prepareNoSkills", () => {
-  // The Cursor adapter ships `supportsSkills: false`, so `runHarnessTurn` never
-  // calls this. It is tested anyway because the guard is the only thing keeping
-  // it unreachable — if that guard ever moves, this must still be honest rather
-  // than silently claiming a delivery the runtime does not perform.
-  it("delivers nothing and reports every skill as skipped", () => {
-    const result = prepareNoSkills([
-      skill({ skillId: "sk-alpha", name: "alpha" }),
-      skill({ skillId: "sk-beta", name: "beta" }),
-    ]);
-    expect(result.payload).toEqual([]);
-    expect(result.delivered).toEqual([]);
-    expect(result.skipped).toEqual([
-      { name: "alpha", reason: "harness-does-not-deliver-skills" },
-      { name: "beta", reason: "harness-does-not-deliver-skills" },
-    ]);
-  });
-
-  it("is empty in all three fields for an empty input", () => {
-    // The "nothing to deliver" case must not read as "something was skipped".
-    expect(prepareNoSkills([])).toEqual({
-      payload: [],
-      delivered: [],
-      skipped: [],
-    });
   });
 });
