@@ -412,3 +412,101 @@ describe("duplicates and limits", () => {
     ]);
   });
 });
+
+it("rejects destructive calls outside the permitted fixtures", () => {
+  const issues = issuesAfter((plan) => {
+    testCase(plan, "delete_project#valid").arguments = {
+      projectId: { $fixture: "demoProject", value: "id" },
+    };
+  });
+  expect(issues).toContainEqual(
+    expect.objectContaining({
+      code: "writeScope",
+      tool: "delete_project",
+      fixture: "demoProject",
+    })
+  );
+});
+
+it.each(["valid", "negative"] as const)(
+  "refuses a destructive %s case with no fixture target",
+  (kind) => {
+    const issues = issuesAfter((plan) => {
+      const deletion = testCase(plan, "delete_project#valid");
+      deletion.kind = kind;
+      deletion.arguments = { projectId: "opaque-project-id" };
+    });
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: "writeScope",
+        tool: "delete_project",
+        caseId: "delete_project#valid",
+      })
+    );
+  }
+);
+
+it("refuses a literal alias of an out-of-scope fixture beside an allowed reference", () => {
+  const issues = issuesAfter((plan) => {
+    const outside = plan.fixtures.find(
+      (fixture) => fixture.id === "demoProject"
+    );
+    testCase(plan, "delete_project#valid").arguments = {
+      projectId: scratch,
+      relatedProjectId: outside?.values?.id,
+    };
+  });
+  expect(issues).toContainEqual(
+    expect.objectContaining({ code: "writeScope", fixture: "demoProject" })
+  );
+});
+
+it("refuses a cleanup call targeting an out-of-scope fixture literally", () => {
+  const issues = issuesAfter((plan) => {
+    const outside = plan.fixtures.find(
+      (fixture) => fixture.id === "demoProject"
+    );
+    plan.cleanup[0].arguments = { projectId: outside?.values?.id };
+  });
+  expect(issues).toContainEqual(
+    expect.objectContaining({ code: "writeScope", fixture: "demoProject" })
+  );
+});
+
+it("refuses cleanup targeting an existing fixture even when the tool may write it", () => {
+  const issues = issuesAfter((plan) => {
+    entry(plan, "delete_project").writes.push("demoProject");
+    plan.cleanup[0].arguments = {
+      projectId: { $fixture: "demoProject", value: "id" },
+    };
+  });
+  expect(issues).toContainEqual(
+    expect.objectContaining({ code: "writeScope", fixture: "demoProject" })
+  );
+});
+
+it("does not let a declared created fixture authorize an unbounded destructive target", () => {
+  const issues = issuesAfter((plan) => {
+    plan.fixtures.push({
+      id: "claimedOutput",
+      description: "Claimed output",
+      origin: "created",
+      capture: { id: "id" },
+    });
+    entry(plan, "delete_project").writes.push("claimedOutput");
+    const deletion = testCase(plan, "delete_project#valid");
+    deletion.arguments = { projectId: "unbounded-target" };
+    deletion.creates = ["claimedOutput"];
+    plan.cleanup.push({
+      fixture: "claimedOutput",
+      tool: "delete_project",
+      arguments: { projectId: { $fixture: "claimedOutput", value: "id" } },
+    });
+  });
+  expect(issues).toContainEqual(
+    expect.objectContaining({
+      code: "writeScope",
+      caseId: "delete_project#valid",
+    })
+  );
+});

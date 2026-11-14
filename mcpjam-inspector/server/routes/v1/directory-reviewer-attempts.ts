@@ -12,6 +12,7 @@
  */
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import { makeFunctionReference } from "convex/server";
 import type { ConvexHttpClient } from "convex/browser";
 import type {
   PlatformDirectorySubmission as Submission,
@@ -276,6 +277,21 @@ reviewerAttempts.post(`${ONE}/resume`, async (c) => {
   const runKey = `reviewer-attempt:${attempt.id}:${attempt.resumedAt ?? attempt.updatedAt}`;
   const run = await startAttemptRun(c, convex, row, attempt, authorized, runKey, token);
   return v1Resource(c, { attempt, run }, 202);
+});
+
+reviewerAttempts.post(`${ONE}/handoff`, async (c) => {
+  const { scope, attemptId } = attemptScope(c);
+  parseWithSchema(emptySchema, await readJsonObjectBody(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  await readReviewerAttempt(convex, scope, attemptId, translateRead);
+  try {
+    return v1Resource(c, await convex.action(
+      makeFunctionReference<"action">("directoryReviewerHandoff:createReviewerHandoff"),
+      { attemptId },
+    ));
+  } catch (error) {
+    throw attemptWriteError(error);
+  }
 });
 
 reviewerAttempts.post(`${ONE}/cancel`, async (c) => {

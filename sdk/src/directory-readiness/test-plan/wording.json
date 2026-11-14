@@ -33,7 +33,10 @@
     "order.destructive": "Case {caseId} can destroy data and runs before case {later}. Move destructive cases to the end.",
     "cleanup.missing": "{fixture} is created by the plan and never removed. Add a cleanup step for it.",
     "cleanup.existing": "{fixture} was in the reviewer's account before the sweep, so cleanup must not remove it. Remove the step.",
-    "cleanup.tool": "Cleanup calls {tool}, which the plan does not run. Use a tool the plan includes."
+    "cleanup.tool": "Cleanup calls {tool}, which the plan does not run. Use a tool the plan includes.",
+    "writeScope.cleanup": "Cleanup for {fixture} must reference that fixture and may only target fixtures created by this run. Correct its arguments.",
+    "writeScope.target": "{tool} can delete data but names no target fixture. Use a permitted fixture reference, or exclude the case.",
+    "writeScope.reference": "{tool} uses {fixture} outside its permitted writes. Correct the arguments or authorize that fixture."
   },
   "cases": {
     "ambiguous": "The call started and did not finish, so it may have changed data. Check what it changed, then record what happened or rerun it.",

@@ -19,6 +19,7 @@
 
 import {
   classifyDirectoryTestCall,
+  validateDirectoryTestPlan,
   directoryTestCaseDigest,
   resolveDirectoryTestArguments,
   resumeDirectoryTestCall,
@@ -94,6 +95,13 @@ export async function executeDirectoryTestPlan(
   input: ExecuteTestPlanInput,
 ): Promise<TestPlanExecution> {
   const { plan, signal } = input;
+  if (validateDirectoryTestPlan(plan, input.tools).some((issue) => issue.code === "writeScope")) {
+    return {
+      calls: [...input.ledger],
+      cleanup: [],
+      stopped: { by: "setup", detail: "The plan uses a fixture outside its permitted writes. Correct the plan and authorize it again." },
+    };
+  }
   const now = input.now ?? Date.now;
   const records = new Map(input.ledger.map((call) => [call.callKey, call]));
   const entries = new Map(plan.tools.map((entry) => [entry.tool, entry]));

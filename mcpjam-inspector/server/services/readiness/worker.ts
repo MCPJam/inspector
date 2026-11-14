@@ -1,3 +1,4 @@
+import { submissionFindingInputs } from "./submission-finding-inputs.js";
 /**
  * Detached hosted execution for one leased readiness run.
  *
@@ -235,6 +236,8 @@ async function readSubmissionAnswers(
 ): Promise<{
   flow: DirectoryFlow;
   answers: ReadinessRunSubmission["answers"];
+  flowVersion: string;
+  pluginVersionId?: string;
 }> {
   const submission = await getReadinessRunSubmission(options.lease);
   const flow = getDirectoryFlow(submission.flowId);
@@ -243,7 +246,7 @@ async function readSubmissionAnswers(
       `This run's answers follow the ${submission.flowId} form, which this server cannot grade as a ${options.publisher} run. Start the run again after MCPJam updates.`,
     );
   }
-  return { flow, answers: submission.answers };
+  return { flow, answers: submission.answers, flowVersion: flow.version, pluginVersionId: submission.pluginVersionId };
 }
 
 const NO_REVIEWER_ACCOUNT: ReadinessReviewerAccount = {
@@ -299,6 +302,9 @@ async function rehearseSignIn(
 ): Promise<ReviewerSignInOutcome | undefined> {
   const attemptId = options.reviewerAttemptId;
   if (!attemptId || !attempt || !options.reviewerSignIn) return undefined;
+  if (attempt.humanSignInCompletedAt && attempt.reviewerAccountId) {
+    return { kind: "connected", reviewerAccountId: attempt.reviewerAccountId };
+  }
   return options.reviewerSignIn({
     lease: options.lease,
     attemptId,
@@ -478,7 +484,11 @@ export async function executeHostedReadinessRun(
           // and with no reviewer account's fixtures either.
           ...(directoryDeclaresNoSignIn(submission?.answers ?? [])
             ? { reviewer: NO_SIGN_IN }
-            : { reviewer, fixtures: reviewerPath?.fixtures }),
+            : {
+                reviewer,
+                fixtures: reviewerPath?.fixtures,
+                identity: reviewerPath?.identity,
+              }),
           signal: controller.signal,
           deadlineAt: startedAtMs + RUN_DEADLINE_MS,
           // The same opt-in: drafting sends the tools' text to a model.
@@ -519,7 +529,12 @@ export async function executeHostedReadinessRun(
       // A graded package adds which stored version the findings are about:
       // its ids and the hash its bytes were checked against.
       {
-        ...redactConformanceReportForSharing(result),
+        ...redactConformanceReportForSharing({
+          ...result,
+          findings: result.findings.map((finding) => submission
+            ? { ...finding, inputs: submissionFindingInputs(finding, submission) }
+            : finding),
+        }),
         ...(runPackage ? { gradedPluginVersion: runPackage.version } : {}),
         // Redacted where it is built, so the plan issues' codes stay readable.
         ...(toolTests ? { toolTests } : {}),

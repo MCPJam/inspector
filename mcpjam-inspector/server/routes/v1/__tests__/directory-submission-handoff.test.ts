@@ -207,6 +207,34 @@ describe("v1 directory submission handoff", () => {
     }
   });
 
+  it("keeps persisted findings in the handoff after report retention", async () => {
+    queries["claudeReadinessRuns:listReadinessRuns"] = () => [
+      { ...RUN_ROW, hasReport: false },
+    ];
+    const findings = await json(request("GET", `${ONE}/findings?limit=100`));
+    expect(findings.items.length).toBe(100);
+    const handoff = await json(request("GET", `${ONE}/handoff`));
+    expect(handoff.counts.findings).toBe(130);
+  });
+
+  it("reads expired named-run findings without attributing another run's rows to it", async () => {
+    queries["claudeReadinessRuns:getReadinessRun"] = () => ({
+      ...RUN_ROW,
+      hasReport: false,
+    });
+    queries["directorySubmissionResults:listDirectorySubmissionResults"] = page(
+      STORE.map((row, index) =>
+        index === 0 ? { ...row, runId: "another-run" } : row,
+      ),
+    );
+    const result = await json(request("GET", `${ONE}/results?runId=${RUN}`));
+    const findings = result.steps.flatMap(
+      (step: { findings: unknown[] }) => step.findings,
+    );
+    expect(findings).toHaveLength(129);
+    expect(result.run.id).toBe(RUN);
+  });
+
   describe("handoff", () => {
     it("builds the summary from the record, reading each event kind and the newest run", async () => {
       const handoff = await json(request("GET", `${ONE}/handoff`));

@@ -17,16 +17,12 @@ import {
   toSelectedProjectInfo,
 } from "./operation-support.js";
 import { noPermalink } from "./permalinks.js";
+import { SUBMISSION_PERMALINK } from "./directory-submission-operation-support.js";
 import type { SelectedProjectInfo } from "./show-servers.js";
 
 const GATED_BETA =
   "In beta: an organization outside the directory readiness beta is refused, and the error names the feature.";
 const OPEN_BETA = "Directory readiness is in beta; this stays open to every organization.";
-const ATTEMPT_PERMALINK = noPermalink(
-  "route-not-addressable",
-  "No app route opens a submission's reviewer sign-in yet. Owed: `readiness?submission=:submissionId`."
-);
-
 const id = () => z.string().trim().min(1);
 const secretName = () => z.string().trim().max(64).regex(/^[A-Z_][A-Z0-9_]*$/);
 const submissionInput = z.strictObject({
@@ -84,7 +80,7 @@ export const createReviewerAttemptOperation: Op<CreateReviewerAttemptInput, Revi
   description: `Start MCPJam signing in to a directory submission's saved server as the directory's reviewer, from a clean hosted browser, and the readiness run that does it. Pass secret NAMES only: first save the password as a materialized project secret whose name starts with \`MCPJAM_REVIEWER_\` (Secrets page, or REST, SDK or CLI; the value is write-only and nothing returns it), then name it here. Records "credentials saved" on the submission and returns the attempt and its run. Read it with get_reviewer_attempt: \`state\` is running, waiting-for-person (a person acts, then resume_reviewer_attempt), passed, failed, expired or cancelled, and \`stages\` say how far it got. One attempt per submission is open at a time. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
-  permalink: ATTEMPT_PERMALINK,
+  permalink: SUBMISSION_PERMALINK,
   inputSchema: createInput,
   async execute(input, context) {
     const { client, signal, scope, scoped } = await resolveScope(input, context);
@@ -102,7 +98,7 @@ export const listReviewerAttemptsOperation: Op<ListReviewerAttemptsInput, ListRe
   title: "List reviewer sign-in attempts",
   description: `List a directory submission's reviewer sign-in attempts, newest first: each one's state, stages, the secret names it signs in with and the runs that worked on it. ${OPEN_BETA}`,
   readOnly: true,
-  permalink: ATTEMPT_PERMALINK,
+  permalink: SUBMISSION_PERMALINK,
   inputSchema: listInput,
   async execute(input, context) {
     const { client, signal, scope, scoped } = await resolveScope(input, context);
@@ -116,7 +112,7 @@ export const getReviewerAttemptOperation: Op<ReviewerAttemptScopedInput, Reviewe
   title: "Get a reviewer sign-in attempt",
   description: `Read one reviewer sign-in attempt: its \`state\`, each stage with its status and evidence (screenshot and recording ids, the identity and organization observed, an HTTP status), \`waitingFor\` (why it stopped for a person and what they should do), \`testedAt\` once sign-in and connect passed, and \`expiresAt\`. Never a secret's value. ${OPEN_BETA}`,
   readOnly: true,
-  permalink: ATTEMPT_PERMALINK,
+  permalink: SUBMISSION_PERMALINK,
   inputSchema: attemptInput,
   async execute(input, context) {
     const { client, signal, scope, scoped } = await resolveScope(input, context);
@@ -131,7 +127,7 @@ export const resumeReviewerAttemptOperation: Op<ReviewerAttemptScopedInput, Revi
   description: `Continue a reviewer sign-in attempt that is waiting for a person, once the person did what its \`waitingFor.action\` says: starts a new run that carries on the same attempt, and returns both. Refused unless the attempt is waiting-for-person and has not expired. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
-  permalink: ATTEMPT_PERMALINK,
+  permalink: SUBMISSION_PERMALINK,
   inputSchema: attemptInput,
   async execute(input, context) {
     const { client, signal, scope, scoped } = await resolveScope(input, context);
@@ -153,5 +149,20 @@ export const cancelReviewerAttemptOperation: Op<ReviewerAttemptScopedInput, Revi
     const { client, signal, scope, scoped } = await resolveScope(input, context);
     const attempt = await client.cancelDirectoryReviewerAttempt({ ...scope, attemptId: input.attempt }, { signal });
     return { ...scoped, attempt };
+  },
+};
+
+export const createReviewerHandoffOperation: Op<ReviewerAttemptScopedInput, Scoped & { handoffUrl: string; expiresAt: number }> = {
+  name: "create_reviewer_handoff",
+  title: "Finish reviewer sign-in in a browser",
+  description: "Create a single-use sign-in link for a paused reviewer attempt. Only the person who started its latest run can open the link. They complete sign-in in their browser, then any authorized agent can resume the same attempt. A new link invalidates the previous one.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("external-resource", "The response carries a requester-only single-use authorization link, which is not a shareable resource permalink."),
+  inputSchema: attemptInput,
+  async execute(input, context) {
+    const { client, signal, scope, scoped } = await resolveScope(input, context);
+    const handoff = await client.createDirectoryReviewerHandoff({ ...scope, attemptId: input.attempt }, { signal });
+    return { ...scoped, ...handoff };
   },
 };

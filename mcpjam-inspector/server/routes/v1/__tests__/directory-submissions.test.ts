@@ -619,6 +619,25 @@ describe("v1 directory submissions", () => {
       });
     });
 
+    it("audit: invalidates package findings after the selected plugin version changes", async () => {
+      queries["directorySubmissions:getDirectorySubmission"] = () => ({
+        ...ROW, directory: "openai", flowId: "chatgpt-plugin", flowVersion: CHATGPT_PLUGIN_FLOW.version,
+        pluginVersionId: "version_b", lastRunId: RUN,
+      });
+      queries["claudeReadinessRuns:listReadinessRuns"] = () => [{ ...COMPLETE_RUN, readinessKind: "openai" }];
+      queries["directoryReadinessRunInputs:getReadinessRunInputs"] = () => ({
+        runId: RUN, pluginVersionId: "version_a", answers: ROW.answers,
+      });
+      stubReport({ findings: [{ ...finding("openai.package.manifest", "satisfied"), lane: "plugin-package" }] });
+      const response = await request("GET", `${BASE}/${SUBMISSION}/results`);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      const placed = body.steps.flatMap((step: { findings: { finding: {id: string}; evidenceStatus: string }[] }) => step.findings)
+        .find((entry: { finding: { id: string } }) => entry.finding.id === "openai.package.manifest");
+      expect(placed).toBeDefined();
+      expect(placed.evidenceStatus).toBe("stale");
+    });
+
     it("places the latest complete run's findings, stale where a frozen answer changed", async () => {
       const fetchMock = stubReport({
         findings: [

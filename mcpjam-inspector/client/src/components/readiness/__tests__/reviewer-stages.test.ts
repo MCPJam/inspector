@@ -311,9 +311,9 @@ describe("handoverOf", () => {
       asked: ASKED,
       approximated: false,
       frame: { recordingId: "res_1", seconds: 11.2 },
-      finisher: "Whoever manages the reviewer account.",
+      finisher: "The person who started this sign-in.",
       action:
-        "Turn off the verification step for the reviewer account, or save credentials for an account without one. Then resume this attempt.",
+        "Open Finish reviewer sign-in, complete the verification, then resume this attempt.",
       since: NOV_13,
     });
     // Signing in yourself changes nothing for the attempt, so that is never advised.
@@ -327,9 +327,9 @@ describe("handoverOf", () => {
         'The sign-in page asked for a verification step MCPJam cannot complete: "Confirm you\'re not a robot".',
       ),
     ).toMatchObject({
-      finisher: "Whoever manages your server's sign-in.",
+      finisher: "The person who started this sign-in.",
       action:
-        "Turn the bot check off for the reviewer account or its sign-in. Then resume this attempt.",
+        "Open Finish reviewer sign-in, complete the browser check, then resume this attempt.",
     });
   });
 
@@ -342,9 +342,9 @@ describe("handoverOf", () => {
       asked:
         "MCPJam could not tell which control on the consent page approves access, so it clicked none.",
       approximated: true,
-      finisher: "Whoever manages your server's sign-in.",
+      finisher: "The person who started this sign-in.",
       action:
-        "Give the consent page one button that approves access, such as Allow. Then resume this attempt.",
+        "Open Finish reviewer sign-in, approve access, then resume this attempt.",
     });
   });
 
@@ -355,9 +355,9 @@ describe("handoverOf", () => {
         "MCPJam did not recognize a page in the sign-in, so it stopped.",
       ),
     ).toMatchObject({
-      finisher: "Whoever manages your server's sign-in.",
+      finisher: "The person who started this sign-in.",
       action:
-        "Change the sign-in so it asks the reviewer only for an email and password. Then resume this attempt.",
+        "Open Finish reviewer sign-in, sign in as the reviewer, then resume this attempt.",
     });
   });
 

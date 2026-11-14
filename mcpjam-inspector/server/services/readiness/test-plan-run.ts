@@ -30,6 +30,7 @@ import {
   validateDirectoryTestPlan,
   type DirectoryDialOptions,
   type DirectoryReviewerFixtureEvidence,
+  type DirectoryReviewerPathEvidence,
   type DirectoryTestCallRecord,
   type DirectoryTestPlan,
   type DirectoryTestPlanIssue,
@@ -113,6 +114,7 @@ export interface RunDirectoryTestPlanOptions {
   reviewer: ReadinessReviewerAccount | { noSignIn: true };
   /** The reviewer path's fixture lookup, when it ran. */
   fixtures?: DirectoryReviewerFixtureEvidence;
+  identity?: DirectoryReviewerPathEvidence["identity"];
   signal: AbortSignal;
   /** When the run must have finished. */
   deadlineAt: number;
@@ -158,6 +160,12 @@ async function testPlanReport(
   if (planRevision === undefined) return undefined;
   // The reviewer-only rule: with no reviewer account, nothing is even listed.
   if ("missing" in reviewer) return notRun(reviewer.missing, planRevision);
+  if (
+    options.identity?.outcome === "wrong-account" ||
+    options.identity?.outcome === "wrong-tenant"
+  ) {
+    return notRun("The connected account does not match the intended reviewer or organization. Connect the intended reviewer account, then run the tests again.", planRevision);
+  }
   const signedIn = "noSignIn" in reviewer ? undefined : reviewer;
   const saved = await stopOr(readRunTestPlan(lease), lease);
   if (saved === null) return notRun(unreadable(planRevision), planRevision);

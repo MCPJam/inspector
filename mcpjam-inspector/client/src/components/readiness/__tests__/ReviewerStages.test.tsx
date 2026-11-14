@@ -44,6 +44,7 @@ const api = vi.hoisted(() => ({
   startReviewerAttempt: vi.fn(),
   resumeReviewerAttempt: vi.fn(),
   cancelReviewerAttempt: vi.fn(),
+  createReviewerHandoff: vi.fn(),
 }));
 vi.mock("@/lib/apis/reviewer-attempts-api", () => api);
 
@@ -194,6 +195,21 @@ describe("the reviewer path's stages", () => {
     expect(within(region()).getAllByText("Approximated")).toHaveLength(1);
   });
 
+  it("opens a requester-only sign-in link for the paused attempt", async () => {
+    const url = "https://app.example.com/connect/server/one-use";
+    api.createReviewerHandoff.mockResolvedValue({ handoffUrl: url, expiresAt: 100 });
+    renderPath(WAITING);
+    await userEvent.click(await screen.findByRole("button", { name: "Finish reviewer sign-in" }));
+    expect(api.createReviewerHandoff).toHaveBeenCalledWith(SCOPE, WAITING.id);
+    expect(await screen.findByRole("link", { name: "Open reviewer sign-in" })).toHaveAttribute("href", url);
+  });
+
+  it("shows a completed human sign-in before the same attempt resumes", async () => {
+    renderPath({ ...WAITING, reviewerAccountId: "reviewer_1", humanSignInCompletedAt: 100 });
+    expect(await screen.findByText("Reviewer sign-in completed. Resume this attempt to run the checks.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Finish reviewer sign-in" })).toBeNull();
+  });
+
   it("a verification stop: the step waits for a person, and the handover says what, who and what works", async () => {
     renderPath(WAITING);
     const verification = await rowNamed("Verification");
@@ -210,10 +226,10 @@ describe("the reviewer path's stages", () => {
     ).toHaveTextContent(ASKED);
     const who = handover.getByText("Who can finish it");
     expect(who.nextElementSibling).toHaveTextContent(
-      "Whoever manages the reviewer account.",
+      "The person who started this sign-in.",
     );
     expect(who.nextElementSibling?.nextElementSibling).toHaveTextContent(
-      "Turn off the verification step for the reviewer account, or save credentials for an account without one. Then resume this attempt.",
+      "Open Finish reviewer sign-in, complete the verification, then resume this attempt.",
     );
     // The rehearsal's own advice, to sign in as the reviewer elsewhere, changes
     // nothing for the attempt, so the page does not repeat it.

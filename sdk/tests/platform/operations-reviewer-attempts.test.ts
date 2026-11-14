@@ -3,6 +3,7 @@ import {
   PlatformApiClient,
   cancelReviewerAttemptOperation,
   createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
   getReviewerAttemptOperation,
   listReviewerAttemptsOperation,
   resumeReviewerAttemptOperation,
@@ -89,9 +90,21 @@ describe("reviewer attempt operations", () => {
     expect(scopes).toEqual([{ projectId: "project-1", organizationId: "org-a" }]);
   });
 
+  it("creates a one-use browser handoff on the same attempt", async () => {
+    const handoff = { handoffUrl: "https://app.test/connect/server/one-use", expiresAt: 100 };
+    const { client, requests } = clientWith({ [`POST ${BASE}/att-1/handoff`]: handoff });
+    const result = await createReviewerHandoffOperation.execute(
+      { submission: "sub-1", attempt: "att-1" }, { client },
+    );
+    expect(result).toEqual({ project: PROJECT_INFO, submissionId: "sub-1", ...handoff });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.key).toBe(`POST ${BASE}/att-1/handoff`);
+  });
+
   it("refuse a credential value under any key they do not name, quoting nothing", () => {
     const operations = [
       createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
       listReviewerAttemptsOperation,
       getReviewerAttemptOperation,
       resumeReviewerAttemptOperation,

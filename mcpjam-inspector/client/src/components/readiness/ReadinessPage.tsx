@@ -5,6 +5,7 @@
  * plugin page.
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import { formatDistanceToNow } from "date-fns";
 import { Blocks, Plug, Upload } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -319,6 +320,8 @@ export function ReadinessPage({
   loading = false,
   selected,
   people = NO_PEOPLE,
+  linkedSubmissionId,
+  onSubmissionChange,
   onSelect,
 }: {
   projectId: string | null;
@@ -326,21 +329,35 @@ export function ReadinessPage({
   loading?: boolean;
   selected: string | null;
   people?: People;
+  linkedSubmissionId?: string | null;
+  onSubmissionChange?: (id: string | null) => void;
   onSelect: (name: string) => void;
 }) {
-  const chosen = servers.find((entry) => entry.server.name === selected);
+  const selectedServer = servers.find((entry) => entry.server.name === selected);
   const [open, setOpen] = useState<{ serverId: string; id: string } | null>(
     null,
   );
   // A submission belongs to one server: choosing another closes it.
-  const openId = open && open.serverId === chosen?.id ? open.id : null;
+  const openId = linkedSubmissionId ?? (open && open.serverId === selectedServer?.id ? open.id : null);
   const [choice, setChoice] = useState<Directory>("claude");
   const session = useDirectorySubmission({
     projectId: projectId ?? "",
     submissionId: projectId ? openId : null,
-    server: chosen?.server ?? NO_SERVER,
+    server: selectedServer?.server ?? NO_SERVER,
   });
   const { flow, view, run } = session;
+  const chosen = linkedSubmissionId && view
+    ? servers.find((entry) => entry.id === view.serverId)
+    : selectedServer;
+  useEffect(() => {
+    if (linkedSubmissionId && chosen && chosen.server.name !== selected) {
+      onSelect(chosen.server.name);
+    }
+  }, [linkedSubmissionId, chosen, selected, onSelect]);
+  const close = () => {
+    setOpen(null);
+    onSubmissionChange?.(null);
+  };
   // The flow outlives a closed submission: it names the directory only
   // while one is open.
   const directory = view && flow ? flow.directory : choice;
@@ -401,6 +418,10 @@ export function ReadinessPage({
     body = (
       <Notice>Sign in and open a project to rehearse a submission.</Notice>
     );
+  } else if (openId && session.error) {
+    body = <Notice>{session.error}</Notice>;
+  } else if (openId && !view) {
+    body = <Notice>Opening the rehearsal…</Notice>;
   } else if (!chosen) {
     body = (
       <Notice>
@@ -416,7 +437,10 @@ export function ReadinessPage({
         serverId={chosen.id}
         directory={choice}
         onDirectory={setChoice}
-        onOpen={(id) => setOpen({ serverId: chosen.id, id })}
+        onOpen={(id) => {
+          setOpen({ serverId: chosen.id, id });
+          onSubmissionChange?.(id);
+        }}
       />
     );
   } else if (flow && view && flow.directory === "openai") {
@@ -427,7 +451,7 @@ export function ReadinessPage({
         session={session}
         projectId={projectId}
         serverUrl={serverUrl}
-        onClose={() => setOpen(null)}
+        onClose={close}
       />
     );
   } else if (flow && view) {
@@ -443,7 +467,7 @@ export function ReadinessPage({
           serverUrl={serverUrl}
           serverName={chosen.server.name}
           people={people}
-          onClose={() => setOpen(null)}
+          onClose={close}
         />
       </FieldLabels.Provider>
     );
@@ -451,7 +475,7 @@ export function ReadinessPage({
     body = (
       <Notice>
         {`This rehearsal did not open. ${session.error} Try opening it again.`}{" "}
-        <Button type="button" variant="link" onClick={() => setOpen(null)}>
+        <Button type="button" variant="link" onClick={close}>
           Back to Submissions
         </Button>
       </Notice>
@@ -470,7 +494,10 @@ export function ReadinessPage({
             servers={servers.map((entry) => entry.server)}
             loading={loading}
             selectedName={chosen?.server.name ?? null}
-            onSelect={onSelect}
+            onSelect={(name) => {
+              close();
+              onSelect(name);
+            }}
           />
         }
         status={
@@ -511,6 +538,16 @@ export function ReadinessPage({
 }
 
 export function ReadinessRoute() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedSubmissionId = searchParams.get("submission");
+  const onSubmissionChange = (id: string | null) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (id) next.set("submission", id);
+      else next.delete("submission");
+      return next;
+    });
+  };
   const enabled = useFeatureFlagEnabled("mcpjam-directory-readiness");
   const {
     displayServerConfigs,
@@ -543,6 +580,8 @@ export function ReadinessRoute() {
       loading={isLoading}
       selected={selectedServerEntry?.name ?? null}
       people={people}
+      linkedSubmissionId={linkedSubmissionId}
+      onSubmissionChange={onSubmissionChange}
       onSelect={setSelectedServer}
     />
   );

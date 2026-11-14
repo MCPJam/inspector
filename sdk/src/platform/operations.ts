@@ -151,6 +151,7 @@ import {
 import {
   cancelReviewerAttemptOperation,
   createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
   getReviewerAttemptOperation,
   listReviewerAttemptsOperation,
   resumeReviewerAttemptOperation,
@@ -19405,6 +19406,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   importDirectoryFindingOperation,
   // A submission's reviewer sign-in attempts.
   createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
   listReviewerAttemptsOperation,
   getReviewerAttemptOperation,
   resumeReviewerAttemptOperation,

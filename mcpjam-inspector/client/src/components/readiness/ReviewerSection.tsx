@@ -300,6 +300,7 @@ function RehearsalState({
       {detail ? <p className="text-muted-foreground">{detail}</p> : null}
       {waiting ? (
         <ReviewerHandover
+          key={waiting.id}
           attempt={waiting}
           handover={handover}
           scope={scope}

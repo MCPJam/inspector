@@ -236,28 +236,12 @@ export interface Handover {
   since: number;
 }
 
-/** What works today: a resumed run signs in afresh, so the sign-in must change. */
+/** The requester completes sign-in before a resumed run grades the account. */
 const NEXT_STEPS = {
-  verification: {
-    finisher: "Whoever manages the reviewer account.",
-    action:
-      "Turn off the verification step for the reviewer account, or save credentials for an account without one. Then resume this attempt.",
-  },
-  "bot-check": {
-    finisher: "Whoever manages your server's sign-in.",
-    action:
-      "Turn the bot check off for the reviewer account or its sign-in. Then resume this attempt.",
-  },
-  consent: {
-    finisher: "Whoever manages your server's sign-in.",
-    action:
-      "Give the consent page one button that approves access, such as Allow. Then resume this attempt.",
-  },
-  other: {
-    finisher: "Whoever manages your server's sign-in.",
-    action:
-      "Change the sign-in so it asks the reviewer only for an email and password. Then resume this attempt.",
-  },
+  verification: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, complete the verification, then resume this attempt." },
+  "bot-check": { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, complete the browser check, then resume this attempt." },
+  consent: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, approve access, then resume this attempt." },
+  other: { finisher: "The person who started this sign-in.", action: "Open Finish reviewer sign-in, sign in as the reviewer, then resume this attempt." },
 };
 
 /** What a person needs to know when the rehearsal stopped for one. */

@@ -133,6 +133,7 @@ function checkCases(context: Context) {
     );
     if (!testCase.arguments) add("argumentsMissing", about);
     checkReferences(context, testCase.arguments, `Case ${testCase.id}`, about);
+    checkWriteReferences(context, entry, testCase.arguments, about);
     for (const fixture of testCase.creates ?? []) {
       const where = `Case ${testCase.id}`;
       if (!fixtures.has(fixture))
@@ -194,13 +195,69 @@ function checkCleanup(context: Context) {
     const action = entries.get(step.tool)?.action;
     if (!action || action === "excluded") add("cleanup.tool", about);
     const where = `The cleanup step for ${step.fixture}`;
+    const references = directoryFixtureReferences(step.arguments);
+    if (origin === "created") {
+      if (!references.some((reference) => reference.fixture === step.fixture)) {
+        add("writeScope.cleanup", about);
+      }
+      for (const reference of references) {
+        if (fixtures.get(reference.fixture)?.origin === "existing") {
+          add("writeScope.cleanup", { ...about, fixture: reference.fixture });
+        }
+      }
+    }
     checkReferences(context, step.arguments, where, about);
+    const entry = entries.get(step.tool);
+    if (entry) checkWriteReferences(context, entry, step.arguments, about);
   }
   for (const { id, origin } of fixtures.values()) {
     const removed = plan.cleanup.some((step) => step.fixture === id);
     if (origin === "created" && !removed)
       add("cleanup.missing", { fixture: id });
   }
+}
+
+function checkWriteReferences(
+  { add, fixtures }: Context,
+  entry: DirectoryToolPlan,
+  args: unknown,
+  about: About
+) {
+  if (
+    entry.effect === "read" ||
+    entry.action === "excluded" ||
+    entry.writes.length === 0
+  )
+    return;
+  const references = directoryFixtureReferences(args);
+  if (entry.effect === "destructive" && references.length === 0) {
+    add("writeScope.target", about);
+  }
+  const literals = literalValues(args);
+  for (const fixture of fixtures.values()) {
+    if (
+      !entry.writes.includes(fixture.id) &&
+      Object.values(fixture.values ?? {}).some((value) =>
+        literals.includes(value)
+      )
+    ) {
+      add("writeScope.reference", { ...about, fixture: fixture.id });
+    }
+  }
+  for (const { fixture } of references) {
+    if (!entry.writes.includes(fixture)) {
+      add("writeScope.reference", { ...about, fixture });
+    }
+  }
+}
+
+/** Reference values are checked by identity, while literal aliases need the same scope guard. */
+function literalValues(value: unknown): Array<string | number> {
+  if (typeof value === "string" || typeof value === "number") return [value];
+  if (Array.isArray(value)) return value.flatMap(literalValues);
+  if (typeof value !== "object" || value === null || "$fixture" in value)
+    return [];
+  return Object.values(value).flatMap(literalValues);
 }
 
 function checkReferences(

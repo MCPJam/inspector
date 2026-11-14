@@ -102,13 +102,13 @@ const json = (body: unknown, status = 200) =>
   });
 
 /** The target server: lists the sample tools, and holds `projects` for each account. */
-function connector(projects: string[]) {
+function connector(projects: string[], organization = "Sample Org") {
   const seen: Seen[] = [];
   const identity = (authorization: string | null) =>
     authorization === REVIEWER
       ? {
           user: { email: "review@example.com" },
-          organization: { name: "Sample Org" },
+          organization: { name: organization },
         }
       : {
           user: { email: "staff@example.com" },
@@ -530,4 +530,35 @@ describe("a submission that says its server needs a sign-in", () => {
       }
     },
   );
+});
+
+describe("reviewer identity gates execution", () => {
+  describe.each(["claude", "openai"] as const)("%s", (engine) => {
+    it.each(["account", "tenant"] as const)(
+      "withholds writes when the reviewer has the wrong %s",
+      async (mismatch) => {
+        const backend = stubBackend(engine);
+        const server = connector(
+          ["proj_demo"],
+          mismatch === "tenant" ? "Another Org" : "Sample Org",
+        );
+        const reviewer = mismatch === "account"
+          ? {
+              accountId: "wrong-account",
+              mcpHeaders: { authorization: "Bearer wrong-reviewer" },
+            }
+          : AS_REVIEWER;
+        await run(server.fetchFn, reviewer, engine);
+
+        expect(reviewerChecks(backend)[0]?.status).toBe("violated");
+        const writes = server.calls().filter((call) =>
+          ["create_project", "rename_project", "delete_project"].includes(
+            call.tool ?? "",
+          ),
+        );
+        expect(writes).toEqual([]);
+        expect(toolTests(backend).status).toBe("not-run");
+      },
+    );
+  });
 });

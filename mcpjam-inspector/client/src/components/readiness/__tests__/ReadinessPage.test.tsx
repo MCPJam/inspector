@@ -20,6 +20,12 @@ import {
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
 import { ReadinessRoute } from "../ReadinessPage";
 
+const routeQuery = vi.hoisted(() => ({ value: new URLSearchParams() }));
+vi.mock("react-router", async (importOriginal) => ({
+  ...await importOriginal<typeof import("react-router")>(),
+  useSearchParams: () => [routeQuery.value, (update: (previous: URLSearchParams) => URLSearchParams) => { routeQuery.value = update(routeQuery.value); }],
+}));
+
 const flag = vi.hoisted(() => ({ value: undefined as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) =>
@@ -190,6 +196,7 @@ function pluginSubmission(): SubmissionView {
 
 describe("ReadinessRoute", () => {
   beforeEach(() => {
+    routeQuery.value = new URLSearchParams();
     for (const mock of Object.values(api)) mock.mockReset();
     for (const mock of Object.values(plans)) mock.mockReset();
     plans.getTestPlan.mockResolvedValue(null);
@@ -215,6 +222,15 @@ describe("ReadinessRoute", () => {
     context.convexProjectId = "proj_1";
     context.selectedServerEntry = { name: "Sample server" };
     flag.value = true;
+  });
+
+  it("opens the linked submission and selects its server without visiting the picker", async () => {
+    routeQuery.value = new URLSearchParams("submission=sub_1&project=proj_1");
+    context.selectedServerEntry = null;
+    render(<ReadinessRoute />);
+    await waitFor(() => expect(api.getDirectorySubmission).toHaveBeenCalledWith(expect.objectContaining({ submissionId: "sub_1", projectId: "proj_1" })));
+    await waitFor(() => expect(context.setSelectedServer).toHaveBeenCalledWith("Sample server"));
+    expect(await screen.findByRole("heading", { level: 1, name: "Connection" })).toBeVisible();
   });
 
   it("sends a user without the flag back to Servers", () => {
@@ -380,9 +396,8 @@ describe("ReadinessRoute", () => {
     /** Opens the rehearsal and presses the run button once it reads `label`. */
     async function pressRun(label: string) {
       const page = render(<ReadinessRoute />);
-      await userEvent.click(
-        screen.getByRole("button", { name: /MCP connector/ }),
-      );
+      const start = screen.queryByRole("button", { name: /MCP connector/ });
+      if (start) await userEvent.click(start);
       const button = await screen.findByRole("button", { name: label });
       await waitFor(() => expect(button).toBeEnabled());
       await userEvent.click(button);

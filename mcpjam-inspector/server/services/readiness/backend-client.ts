@@ -526,6 +526,7 @@ export interface ReadinessRunSubmission {
   submissionRevision: number;
   flowId: string;
   flowVersion: string;
+  pluginVersionId?: string;
   answers: DirectoryAnswer[];
 }
 

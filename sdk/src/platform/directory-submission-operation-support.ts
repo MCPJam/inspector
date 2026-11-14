@@ -10,7 +10,7 @@ import {
   resolveProjectOrThrow,
   toSelectedProjectInfo,
 } from "./operation-support.js";
-import { noPermalink } from "./permalinks.js";
+import { derivePermalinks } from "./permalinks.js";
 import type { SelectedProjectInfo } from "./show-servers.js";
 
 /** Writes and runs are gated on the beta; reads and the delete stay open. */
@@ -18,10 +18,20 @@ export const GATED_BETA =
   "In beta: an organization outside the directory readiness beta is refused, and the error names the feature.";
 export const OPEN_BETA = "Directory readiness is in beta; this stays open to every organization.";
 
-export const SUBMISSION_PERMALINK = noPermalink(
-  "route-not-addressable",
-  "No app route opens one submission yet: the Readiness page is behind a client flag and does not select a submission from its URL. Owed: `readiness?submission=:submissionId`."
-);
+export const SUBMISSION_PERMALINK = derivePermalinks((result: {
+  submissionId?: string;
+  submission?: { id: string };
+  submissions?: Array<{ id: string }>;
+  project?: SelectedProjectInfo;
+}) => {
+  const id = result.submissionId ?? result.submission?.id;
+  const submissions = result.submissions ?? (id ? [{ id }] : []);
+  return submissions.map(({ id }) => ({
+    type: "directory_submission" as const,
+    id,
+    projectId: result.project?.id,
+  }));
+});
 
 export const id = () => z.string().trim().min(1);
 export const project = id().optional().describe(PROJECT_SELECTOR_DESCRIPTION);

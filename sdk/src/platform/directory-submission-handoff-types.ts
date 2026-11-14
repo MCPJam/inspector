@@ -13,12 +13,21 @@ import type { DirectoryReadinessFinding } from "../directory-readiness/types.js"
 import type { PlatformServerRevisionDiff } from "./server-revision-types.js";
 
 export type PlatformDirectorySubmissionHandoff = DirectoryHandoff;
-export type PlatformDirectorySubmissionEvent = DirectorySubmissionEvent & { replayed?: true };
+export type PlatformDirectorySubmissionEvent = DirectorySubmissionEvent & {
+  replayed?: true;
+};
 
 /** One check's stored result, under the step and field the flow shows it at. */
 export type PlatformDirectorySubmissionFinding = Pick<
   DirectoryReadinessFinding,
-  "lane" | "class" | "status" | "title" | "remediation" | "notEvaluatedReason" | "provenance" | "requiresCapabilities"
+  | "lane"
+  | "class"
+  | "status"
+  | "title"
+  | "remediation"
+  | "notEvaluatedReason"
+  | "provenance"
+  | "requiresCapabilities"
 > & {
   checkId: string;
   /** The run that wrote it; a result outlives its run's report. */
@@ -26,6 +35,9 @@ export type PlatformDirectorySubmissionFinding = Pick<
   step: string;
   field?: string;
   inputs?: Array<{ kind: string; key: string; fingerprint: string }>;
+  /** JSON source attribution retained when the run report expires. */
+  source?: string;
+  intrusiveness?: DirectoryReadinessFinding["intrusiveness"];
   /** Epoch ms of the verdict. */
   evaluatedAt: number;
   engineVersion: string;
@@ -52,14 +64,29 @@ export interface PlatformDirectorySubmissionExportFile {
   content: string;
 }
 
-type Stamped = "id" | "submissionId" | "projectId" | "actor" | "actorLabel" | "createdAt";
+type Stamped =
+  | "id"
+  | "submissionId"
+  | "projectId"
+  | "actor"
+  | "actorLabel"
+  | "createdAt";
 
 /** What a caller records: the event less what the server stamps. Never a secret's value. */
-export type PlatformDirectorySubmissionEventBody = Omit<DirectorySubmissionEvent, Stamped | "snapshot" | "finding"> & {
+export type PlatformDirectorySubmissionEventBody = Omit<
+  DirectorySubmissionEvent,
+  Stamped | "snapshot" | "finding"
+> & {
   /** `serverId` defaults to the submission's own server. */
-  snapshot?: Omit<NonNullable<DirectorySubmissionEvent["snapshot"]>, "serverId"> & { serverId?: string };
+  snapshot?: Omit<
+    NonNullable<DirectorySubmissionEvent["snapshot"]>,
+    "serverId"
+  > & { serverId?: string };
   /** `directory` defaults to the submission's own. */
-  finding?: Omit<NonNullable<DirectorySubmissionEvent["finding"]>, "directory"> & {
+  finding?: Omit<
+    NonNullable<DirectorySubmissionEvent["finding"]>,
+    "directory"
+  > & {
     directory?: "claude" | "openai";
   };
   idempotencyKey?: string;
@@ -69,5 +96,9 @@ export interface PlatformDirectorySubmissionSnapshotsView {
   submissionId: string;
   snapshots: DirectorySubmissionSnapshots;
   /** Asked for with `compare`: the diff between the two labels' revisions. */
-  comparison?: { from: DirectorySnapshotLabel; to: DirectorySnapshotLabel; diff: PlatformServerRevisionDiff };
+  comparison?: {
+    from: DirectorySnapshotLabel;
+    to: DirectorySnapshotLabel;
+    diff: PlatformServerRevisionDiff;
+  };
 }
