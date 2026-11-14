@@ -67,6 +67,9 @@ const plans = vi.hoisted(() => ({
   getToolTests: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-test-plan-api", () => plans);
+vi.mock("@/hooks/use-task-owner-id", () => ({
+  useTaskOwnerId: () => "user_1",
+}));
 
 function finding(
   id: string,
@@ -182,32 +185,120 @@ describe("ReadinessRoute", () => {
     );
   });
 
-  it("names the saved test plan revision on the run button, and starts the run with it", async () => {
-    plans.getTestPlan.mockResolvedValue({
+  describe("confirming a test plan revision before a run uses it", () => {
+    const KEY = "mcpjam-readiness-test-plan-confirmed:proj_1:sub_1";
+    const plan = (revision: number) => ({
       submissionId: "sub_1",
-      revision: 3,
-      plan: draftDirectoryTestPlan([]),
+      revision,
+      counts: { tools: 3, cases: 3, fixtures: 0, cleanup: 0 },
+      savedBy: "user_2",
+      savedAt: Date.now() - 3_600_000,
+      plan: draftDirectoryTestPlan([
+        { name: "search_docs", annotations: { readOnlyHint: true } },
+        { name: "create_note", annotations: { destructiveHint: false } },
+        { name: "delete_note" },
+      ]),
       issues: [],
       catalog: null,
     });
-    api.startDirectorySubmissionRun.mockResolvedValue({ runId: "run_2" });
-    render(<ReadinessRoute />);
-    await userEvent.click(
-      screen.getByRole("button", { name: /MCP connector/ }),
-    );
-    await userEvent.click(
-      await screen.findByRole("button", {
-        name: "Run checks with test plan revision 3",
-      }),
-    );
-    await waitFor(() =>
+    const sentRevisions = () =>
+      api.startDirectorySubmissionRun.mock.calls.map((call) => call[3]);
+
+    /** Opens the rehearsal and presses the run button once it reads `label`. */
+    async function pressRun(label: string) {
+      const page = render(<ReadinessRoute />);
+      await userEvent.click(
+        screen.getByRole("button", { name: /MCP connector/ }),
+      );
+      const button = await screen.findByRole("button", { name: label });
+      await waitFor(() => expect(button).toBeEnabled());
+      await userEvent.click(button);
+      return page;
+    }
+
+    beforeEach(() => {
+      window.localStorage.clear();
+      api.startDirectorySubmissionRun.mockResolvedValue({ runId: "run_2" });
+      plans.getTestPlan.mockResolvedValue(plan(3));
+    });
+
+    it("asks before a run uses a revision this browser has not confirmed, and Cancel starts nothing", async () => {
+      await pressRun("Run checks with test plan revision 3");
+      const dialog = screen.getByRole("alertdialog", {
+        name: "Run checks with test plan revision 3?",
+      });
+      expect(dialog).toHaveTextContent(
+        "Revision 3 was saved by a project member about 1 hour ago. It calls 3 tools on Sample server with your connection.",
+      );
+      expect(dialog).toHaveTextContent("create_note can change data.");
+      expect(dialog).toHaveTextContent("delete_note can destroy data.");
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(api.startDirectorySubmissionRun).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it("starts the run with the revision confirmed, and does not ask for it again", async () => {
+      const first = await pressRun("Run checks with test plan revision 3");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Run with revision 3" }),
+      );
+      await waitFor(() => expect(sentRevisions()).toEqual([3]));
       expect(api.startDirectorySubmissionRun).toHaveBeenCalledWith(
         { projectId: "proj_1", submissionId: "sub_1" },
         expect.any(String),
         undefined,
         3,
-      ),
-    );
+      );
+      first.unmount();
+      await pressRun("Run checks with test plan revision 3");
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      await waitFor(() => expect(sentRevisions()).toEqual([3, 3]));
+    });
+
+    it("asks again for a newer revision", async () => {
+      window.localStorage.setItem(KEY, "3");
+      plans.getTestPlan.mockResolvedValue(plan(4));
+      await pressRun("Run checks with test plan revision 4");
+      expect(
+        screen.getByRole("alertdialog", {
+          name: "Run checks with test plan revision 4?",
+        }),
+      ).toBeVisible();
+      expect(api.startDirectorySubmissionRun).not.toHaveBeenCalled();
+    });
+
+    it("asks every time when storage is unavailable", async () => {
+      const blocked = (key: string) => {
+        if (key === KEY) throw new Error("Storage is blocked");
+        return null;
+      };
+      vi.spyOn(window.localStorage, "getItem").mockImplementation(blocked);
+      vi.spyOn(window.localStorage, "setItem").mockImplementation(blocked);
+      const first = await pressRun("Run checks with test plan revision 3");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Run with revision 3" }),
+      );
+      await waitFor(() => expect(sentRevisions()).toEqual([3]));
+      first.unmount();
+      await pressRun("Run checks with test plan revision 3");
+      expect(screen.getByRole("alertdialog")).toBeVisible();
+      expect(sentRevisions()).toEqual([3]);
+    });
+
+    it("sends no revision and asks nothing when no plan is saved", async () => {
+      plans.getTestPlan.mockResolvedValue(null);
+      render(<ReadinessRoute />);
+      await userEvent.click(
+        screen.getByRole("button", { name: /MCP connector/ }),
+      );
+      await waitFor(() => expect(plans.getTestPlan).toHaveBeenCalled());
+      const button = await screen.findByRole("button", { name: "Run checks" });
+      await waitFor(() => expect(button).toBeEnabled());
+      await userEvent.click(button);
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      await waitFor(() => expect(sentRevisions()).toEqual([undefined]));
+    });
   });
 
   it("shows the test plan on Test & launch, marked as MCPJam's", async () => {
