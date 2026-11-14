@@ -3870,6 +3870,7 @@ export function useServerState({
         // project-server snapshot yet, and a name lookup would fall through
         // to create-if-missing, which returns the row without the edit.
         hostedWriteTarget?: HostedServerWriteTarget;
+        onConfigSaved?: () => void;
         requestOAuthAuthorization?: (
           serverName: string,
         ) => Promise<
@@ -4060,18 +4061,14 @@ export function useServerState({
         showConnectionError(errorMessage);
         return;
       }
-      if (!isAuthenticated) {
+      if (!isAuthenticated || useLocalFallback) {
         const project = appState.projects[appState.activeProjectId];
         if (project) {
           dispatch({
-            type: "UPDATE_PROJECT",
+            type: "UPDATE_PROJECT_SERVER",
             projectId: appState.activeProjectId,
-            updates: {
-              servers: {
-                ...project.servers,
-                [formData.name]: serverEntryForSave,
-              },
-            },
+            name: formData.name,
+            server: serverEntryForSave,
           });
         }
       }
@@ -4080,6 +4077,8 @@ export function useServerState({
       // the server URL first, so reading it afterward would make a stale
       // resource indicator look like it belonged to the edited endpoint.
       const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
+      if (!isAuthenticated || useLocalFallback || hostedServerId)
+        options?.onConfigSaved?.();
       const storedServerUrlBeforeSave = HOSTED_MODE
         ? undefined
         : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
@@ -6864,12 +6863,6 @@ export function useServerState({
         if (!formData.useOAuth && !formData.useXaa) {
           clearOAuthData(nextServerName);
         }
-        dispatch({
-          type: "UPSERT_SERVER",
-          name: nextServerName,
-          server: updatedServer,
-        });
-
         if (!isAuthenticated || useLocalFallback) {
           persistServerToLocalProject(nextServerName, updatedServer, {
             originalServerName: isRename ? originalServerName : undefined,
@@ -6891,6 +6884,11 @@ export function useServerState({
             return { ok: false, serverName: originalServerName };
           }
         }
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: nextServerName,
+          server: updatedServer,
+        });
         // The row now has the new name; only the old name's local state goes.
         if (renameTarget) {
           cleanupServerLocalArtifacts(originalServerName);
@@ -6973,16 +6971,24 @@ export function useServerState({
 
       await handleDisconnect(originalServerName);
       const accepted = await submitServerDraft(
-        (data, options) => handleConnect(data, { ...options, ...(renameTarget ? { hostedWriteTarget: renameTarget } : {}) }),
+        (data, options) =>
+          handleConnect(data, {
+            ...options,
+            hostedWriteTarget: renameTarget,
+            onConfigSaved: () => {
+              if (renameTarget) {
+                cleanupServerLocalArtifacts(originalServerName);
+                dispatch({ type: "REMOVE_SERVER", name: originalServerName });
+              }
+            },
+          }),
         formData,
       );
-      if (!accepted) return { ok: false, serverName: originalServerName };
-      if (renameTarget) {
-        // handleConnect saves to this row by id; only the old name's local
-        // state goes.
-        cleanupServerLocalArtifacts(originalServerName);
-        dispatch({ type: "REMOVE_SERVER", name: originalServerName });
-      } else if (isRename) {
+      if (!accepted) {
+        if (isRename) dispatch({ type: "REMOVE_SERVER", name: nextServerName });
+        return { ok: false, serverName: originalServerName };
+      }
+      if (isRename && !renameTarget) {
         await removeServerFromStateAndCloud(originalServerName);
       }
       if (

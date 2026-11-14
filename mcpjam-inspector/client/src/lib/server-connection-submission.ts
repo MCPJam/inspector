@@ -2,6 +2,7 @@ import type { ServerFormData } from "@/shared/types";
 
 export type ServerConnectionSubmissionOptions = {
   onAccepted?: () => void;
+  onConfigSaved?: () => void;
   suppressErrorToast?: boolean;
 };
 
