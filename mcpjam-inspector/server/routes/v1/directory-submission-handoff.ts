@@ -31,6 +31,7 @@ import {
 import { isCredentialShapedAuthValue } from "@mcpjam/sdk/browser";
 import type { PlatformDirectorySubmissionFinding as Finding } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
+import { readIdempotencyKey } from "../../utils/idempotency.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
@@ -285,10 +286,14 @@ handoff.post(`${ONE}/events`, async (c) => {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, message);
   }
   const label = actorLabel(c);
+  // The agent keys each write on its header, so a retried turn replays the
+  // event instead of recording it twice; that key wins over the body's.
+  const key = readIdempotencyKey(c) ?? event.idempotencyKey;
   let recorded: DirectorySubmissionEvent & { replayed?: true };
   try {
     recorded = await convex.mutation(fn.record, {
       ...event,
+      ...(key ? { idempotencyKey: key } : {}),
       submissionId: row.id,
       ...(snapshot && serverId
         ? {

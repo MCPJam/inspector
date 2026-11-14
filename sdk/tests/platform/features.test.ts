@@ -238,6 +238,9 @@ describe("disabledOperations", () => {
         // A reviewer sign-in starts a run too.
         "create_reviewer_attempt",
         "resume_reviewer_attempt",
+        "record_directory_submission_status",
+        "record_directory_submission_snapshot",
+        "import_directory_finding",
       ].sort()
     );
     expect(operationFeature("start_claude_readiness_run")).toBe("conformance");
@@ -251,6 +254,11 @@ describe("disabledOperations", () => {
       "list_reviewer_attempts",
       "get_reviewer_attempt",
       "cancel_reviewer_attempt",
+      "get_directory_submission_handoff",
+      "list_directory_submission_findings",
+      "get_directory_submission_finding",
+      "export_directory_submission",
+      "list_directory_submission_events",
     ]) {
       expect(isOperationAvailable(name, {}), name).toBe(true);
     }
