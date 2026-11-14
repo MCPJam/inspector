@@ -143,7 +143,12 @@ const PINNED: Record<Engine, Expected> = {
     serverSkillsVia: "box-files",
     recorded: RUN_SKILLS,
   },
-  cursor: noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
+  cursor: {
+    delivered: RUN_SKILLS,
+    excluded: [],
+    serverSkillsVia: "box-files",
+    recorded: RUN_SKILLS,
+  },
   opencode: noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
   "copilot-cli": noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
 };
@@ -306,7 +311,7 @@ const liveRows = (
     },
     "claude-code": harness,
     codex: harness,
-    cursor: noSkillsOn(refs),
+    cursor: harness,
     opencode: noSkillsOn(refs),
     "copilot-cli": noSkillsOn(refs),
   };
@@ -457,7 +462,12 @@ const OLDER_STUDY_TURN: Surface = {
       serverSkillsVia: "none",
       recorded: [],
     },
-    cursor: noSkillsOn(["release-notes"]),
+    cursor: {
+      delivered: ["release-notes"],
+      excluded: [],
+      serverSkillsVia: "none",
+      recorded: [],
+    },
     opencode: noSkillsOn(["release-notes"]),
     "copilot-cli": noSkillsOn(["release-notes"]),
   },
