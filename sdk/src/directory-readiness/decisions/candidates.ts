@@ -94,9 +94,21 @@ const GENERATORS: Record<
     }),
   "openai.decision.secret-seeking": (evidence) =>
     sentenceProposals(evidence, (text) => {
-      const secret = text.search(SECRETS);
-      if (secret < 0) return [0, 0];
-      return [ASKS.test(text) ? 2 : 1, secret];
+      const secrets = starts(text, SECRETS);
+      if (secrets.length === 0) return [0, 0];
+      const asks = starts(text, ASKS);
+      if (asks.length === 0) return [1, secrets[0]!];
+      // Centre on the request nearest a secret, so a long sentence that names
+      // one secret early and asks for another later shows the request.
+      let best: [ask: number, secret: number] = [asks[0]!, secrets[0]!];
+      for (const ask of asks) {
+        for (const secret of secrets) {
+          if (Math.abs(ask - secret) < Math.abs(best[0] - best[1])) {
+            best = [ask, secret];
+          }
+        }
+      }
+      return [2, Math.min(...best)];
     }),
   "both.decision.annotation-matches-behaviour": ({ tools = [] }) =>
     tools.flatMap(annotationProposal),
@@ -110,6 +122,14 @@ export function findDecisionCandidates(
   return DIRECTORY_DECISION_QUESTIONS.filter((question) =>
     question.directories.includes(directory)
   ).flatMap(({ id }) => keyed(id, GENERATORS[id](evidence)));
+}
+
+/** Where each match of `pattern` starts in `text`. */
+function starts(text: string, pattern: RegExp): number[] {
+  const flags = `${pattern.flags.replace("g", "")}g`;
+  return [...text.matchAll(new RegExp(pattern.source, flags))].map(
+    (match) => match.index
+  );
 }
 
 /**
