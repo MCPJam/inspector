@@ -72,6 +72,7 @@ import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
 import directorySubmissions from "./directory-submissions.js";
+import directorySubmissionHandoff from "./directory-submission-handoff.js";
 import conformanceRuns from "./conformance-runs.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
@@ -187,6 +188,7 @@ v1.route("/", readiness);
 // by default (no GUEST_ALLOWED_V1_RULES entry): writes need a project member,
 // and a run started here dials the submission's server.
 v1.route("/", directorySubmissions);
+v1.route("/", directorySubmissionHandoff);
 v1.route("/", conformanceRuns);
 v1.route("/", clients);
 v1.route("/", harness);
