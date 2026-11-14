@@ -108,6 +108,11 @@ export interface StartHostedReadinessRunInput {
    * worker only: the backend run takes no attempt, and the run joins it.
    */
   reviewerAttemptId?: string;
+  /**
+   * The submission's saved test plan revision the run executes. The backend
+   * refuses one that is not the current revision, then freezes it.
+   */
+  testPlanRevision?: number;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -210,6 +215,9 @@ export async function startHostedReadinessRun(
         ...(input.submissionId ? { submissionId: input.submissionId } : {}),
         ...(input.pluginVersionId
           ? { pluginVersionId: input.pluginVersionId }
+          : {}),
+        ...(input.testPlanRevision !== undefined
+          ? { testPlanRevision: input.testPlanRevision }
           : {}),
       },
     );

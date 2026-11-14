@@ -119,6 +119,8 @@ export interface PlatformDirectorySubmissionRunBody {
   pluginVersionId?: string;
   /** A running reviewer sign-in attempt of this submission for the run to work on. */
   reviewerAttemptId?: string;
+  /** The saved test plan revision to run; naming it authorizes its calls. */
+  testPlanRevision?: number;
 }
 
 export interface PlatformDirectorySubmissionDeleted {
