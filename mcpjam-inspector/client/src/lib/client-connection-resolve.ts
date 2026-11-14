@@ -1,4 +1,5 @@
 import type { HostConfigConnectionDefaults } from "./client-config-v2";
+import { mergeHeadersCaseInsensitive } from "./client-config";
 
 /**
  * Resolve the effective connection settings for a single server within a host.
@@ -34,11 +35,11 @@ export function resolveServerConnectionSettings(
   },
 ): { headers: Record<string, string>; timeout: number } {
   return {
-    headers: {
-      ...serverBase.headers,
-      ...hostDefaults.headers,
-      ...override?.headersOverride,
-    },
+    headers: mergeHeadersCaseInsensitive(
+      serverBase.headers,
+      hostDefaults.headers,
+      override?.headersOverride,
+    ),
     timeout:
       override?.requestTimeoutOverride ??
       serverBase.timeout ??
