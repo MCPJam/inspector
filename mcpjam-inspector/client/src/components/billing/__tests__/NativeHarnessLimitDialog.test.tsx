@@ -202,7 +202,7 @@ describe("NativeHarnessLimitDialog", () => {
       screen.getByRole("heading", { name: "This test is paused" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      "The owner of this test has used their organization's free native harness turns. Let them know.",
+      "The owner of this test has used their organization's free native harness turns. Ask them to upgrade to continue.",
     );
     expect(upgradeOrganizationIds).not.toHaveBeenCalled();
   });

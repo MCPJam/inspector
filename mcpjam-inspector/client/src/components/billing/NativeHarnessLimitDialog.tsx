@@ -32,7 +32,7 @@ export function NativeHarnessLimitDialog() {
   if (notice.surface === "scenario") {
     return (
       <ScenarioOwnerLimitDialogView
-        description="The owner of this test has used their organization's free native harness turns. Let them know."
+        description="The owner of this test has used their organization's free native harness turns. Ask them to upgrade to continue."
         onDismiss={close}
       />
     );
