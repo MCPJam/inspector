@@ -8,7 +8,10 @@
  * `resolveTurnSkills` itself.
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
-import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
+import type {
+  EffectiveCapabilitySet,
+  RuntimeStandaloneSkill,
+} from "../../services/environments/effective-capabilities.js";
 import type { PluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import {
   runtimeSkills,
@@ -30,8 +33,16 @@ import {
   planBoxSkills,
   writeBoxSkills,
 } from "../../utils/harness/box-skills-writer.js";
+import {
+  harnessServerSkills,
+  withServedSkills,
+} from "../../utils/harness/harness-server-skills.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
-import { harnessTurnSkills } from "../../utils/harness/skill-delivery.js";
+import { takesServerSkillsAsTools } from "../../utils/harness/skills-descriptor.js";
+import {
+  harnessTurnSkills,
+  selectHarnessSkillSource,
+} from "../../utils/harness/skill-delivery.js";
 import { BOX_HOME, fakeSkillBox, type FakeSkillBox } from "./fake-skill-box.js";
 
 /** A supporting file as a run snapshot serves it, readable without a network. */
@@ -265,7 +276,8 @@ export async function agentLoads(
 /**
  * One harness turn's box write, as `runHarnessTurn` makes it: the turn's
  * skills read from their source, planned by the runtime's rules (none on a
- * runtime that takes none), and written to `box` by the box writer.
+ * runtime that takes none), written to `box` by the box writer, and reported
+ * with the server skills the turn's tools served.
  */
 export async function writeTurnToBox(
   harnessId: string,
@@ -273,18 +285,74 @@ export async function writeTurnToBox(
   box: FakeSkillBox,
 ) {
   const adapter = getHarnessAdapter(harnessId);
-  const turn = await harnessTurnSkills(source);
+  const turn = await harnessTurnSkills({
+    ...source,
+    serverSkillsAsTools: takesServerSkillsAsTools(adapter),
+  });
   const plan = planBoxSkills(
     adapter.skills,
     adapter.supportsSkills ? (turn.skills ?? []) : [],
   );
-  return await writeBoxSkills({
+  const written = await writeBoxSkills({
     session: box.session,
     descriptor: adapter.skills,
     home: BOX_HOME,
     plan,
     readFiles: turn.readFiles,
   });
+  return withServedSkills(written, await turnServerSkills(harnessId, source));
+}
+
+/** A connection to no server: a turn whose servers serve no skills. */
+const NO_SERVERS = {
+  getSkillsSupport: () => ({
+    declared: false,
+    advertised: false,
+    directoryRead: false,
+    active: false,
+  }),
+} as never;
+
+/**
+ * A hosted harness turn's server skills, built as `runHarnessTurn` builds them
+ * from its skill source, with no server connected; none on a runtime that
+ * takes them no other way. `environment` is the set an environment turn
+ * carries.
+ */
+function turnServerSkills(
+  harnessId: string,
+  source: Parameters<typeof harnessTurnSkills>[0],
+  environment?: EffectiveCapabilitySet,
+) {
+  const selected = selectHarnessSkillSource(source);
+  // The set the turn carries: `runHarnessTurn` hands it to both the box and
+  // the tools.
+  const effectiveCapabilities = environment ?? source.effectiveCapabilities;
+  return harnessServerSkills(getHarnessAdapter(harnessId), {
+    localUnattended: false,
+    mode: selected.mode,
+    // `HarnessTurnSkills.live`: the project's pool, or a client's environment.
+    live: selected.mode !== "pinned" && source.liveTurn === true,
+    ...(source.pinnedHarnessSkills
+      ? { pinnedHarnessSkills: source.pinnedHarnessSkills }
+      : {}),
+    ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+    manager: NO_SERVERS,
+    serverIds: [],
+    messages: [],
+  });
+}
+
+/** The refs a harness turn's prompt lists for its MCPJam skill tools. */
+export async function harnessToolsServe(
+  harnessId: string,
+  source: Parameters<typeof harnessTurnSkills>[0],
+  environment?: EffectiveCapabilitySet,
+): Promise<string[]> {
+  const served = await turnServerSkills(harnessId, source, environment);
+  return [...(served?.promptSection ?? "").matchAll(/^- \*\*(.+?)\*\*/gm)].map(
+    (match) => match[1]!,
+  );
 }
 
 /**

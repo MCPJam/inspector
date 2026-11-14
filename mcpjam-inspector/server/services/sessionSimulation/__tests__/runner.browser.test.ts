@@ -678,11 +678,20 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(prepareOpts.skills).toMatchObject({
       runtime: { kind: "harness", harnessId: "claude-code" },
       agent: null,
-      serverSkillsVia: "box-files",
+      // The captured server skill goes through MCPJam's skill tools, as in an
+      // eval run.
+      serverSkillsVia: "harness-tools",
     });
-    expect(
-      (runAssistantTurnMock.mock.calls[0]![0] as any).pinnedHarnessSkills,
-    ).toEqual(target.harnessSkills);
+    const handed = (runAssistantTurnMock.mock.calls[0]![0] as any)
+      .pinnedHarnessSkills as Array<{ server?: { ref: string } }>;
+    expect(handed).toEqual(target.harnessSkills);
+    // Only the server skill's copy carries its capture, which is how the turn
+    // knows to serve it through the tools rather than write it to the box.
+    expect(handed.map((copy) => copy.server?.ref)).toEqual([
+      undefined,
+      undefined,
+      "docs/search",
+    ]);
     const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
     expect(
       persisted.turnTrace.skillsAtTurn.map((row: any) => row.name),

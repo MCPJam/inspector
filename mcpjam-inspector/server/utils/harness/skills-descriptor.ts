@@ -47,11 +47,15 @@ export interface HarnessSkillsDescriptor {
    *  runtime at the folder before its headless mode loads them. */
   headlessLoading: "native" | "bridge-opt-in";
   /**
+   * `harness-tools`: MCPJam's skill tools serve them over the harness tools
+   * channel (`harness-server-skills.ts`), from the turn's set with the
+   * connected servers' skills added (`listLiveServerSkills`, then
+   * `withLiveServerSkills`), and the runtime's commands go to MCPJam's gate
+   * while one is in use (`server-skill-command-gate.ts`). Nothing from a
+   * server lands on the box.
    * `box-files`: a frozen run copies each captured MCP-server skill to the box
-   * as a plain skill folder, and a live turn leaves them off.
-   * `harness-tools`: MCPJam's skill tools serve them, from the turn's set with
-   * the connected servers' skills added (`listLiveServerSkills`, then
-   * `withLiveServerSkills`).
+   * as a plain skill folder, and a live turn leaves them off. A runtime stays
+   * here until the gate is checked against its permission requests.
    */
   serverSkills: "box-files" | "harness-tools";
 }
@@ -75,7 +79,8 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       strictYaml: false,
     },
     headlessLoading: "native",
-    serverSkills: "box-files",
+    // Its bridge asks before `Bash` and `Monitor` in the gate's mode.
+    serverSkills: "harness-tools",
   },
   // Also reads `.agents/skills` up to the repository root, `/etc/codex/skills`
   // and its bundled skills.
@@ -89,7 +94,9 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       strictYaml: false,
     },
     headlessLoading: "native",
-    serverSkills: "box-files",
+    // `untrusted` asks before every command and file change, and the relay
+    // that carries MCPJam's tools is told to ask before none of them.
+    serverSkills: "harness-tools",
   },
   // The adapter writes Codex's folder under the same adapter manifest, and
   // OpenCode also reads Claude Code's. OpenCode itself checks no name rule.
@@ -151,6 +158,17 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
     serverSkills: "box-files",
   },
 };
+
+/** Whether a runtime takes MCP-server skills through MCPJam's skill tools:
+ *  it must take skills at all, and its descriptor must say so. */
+export function takesServerSkillsAsTools(adapter: {
+  supportsSkills: boolean;
+  skills: HarnessSkillsDescriptor;
+}): boolean {
+  return (
+    adapter.supportsSkills && adapter.skills.serverSkills === "harness-tools"
+  );
+}
 
 /**
  * The folders besides its own that a runtime's turn clears: the ones it reads
