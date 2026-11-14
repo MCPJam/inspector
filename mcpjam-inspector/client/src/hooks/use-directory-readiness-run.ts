@@ -1,5 +1,5 @@
 /**
- * One directory-readiness section's run, in either execution mode.
+ * One directory-readiness run, in either execution mode.
  *
  * ## Why this is not `use-conformance-run`
  *
@@ -103,7 +103,7 @@ function pollIntervalFor(tick: number): number {
 export interface UseDirectoryReadinessRunOptions {
   publisher: DirectoryReadinessPublisher;
   server: ServerLike;
-  /** Required for OpenAI. Never inferred — see the section component. */
+  /** Required for OpenAI, and never inferred: the submitter declares it. */
   submissionMode?: HostedSubmissionMode;
   includeLlmObservations?: boolean;
   /**
@@ -411,7 +411,7 @@ export function useDirectoryReadinessRun({
   /**
    * Adopt the newest run for this server after a reload.
    *
-   * Only when this section holds no run of its own, and only for a matching
+   * Only when this hook holds no run of its own, and only for a matching
    * server and publisher — the list endpoint's "newest" is the wrong answer
    * for somebody who was watching an older run.
    */
