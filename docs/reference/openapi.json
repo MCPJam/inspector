@@ -7328,9 +7328,6 @@
         "tags": ["Swarms"],
         "summary": "List personas",
         "description": "The project's personas, newest first. Archived personas are excluded.",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/cursorBody"
-        },
         "responses": {
           "200": {
             "description": "A page of personas.",
@@ -8014,9 +8011,6 @@
         "operationId": "listSwarms",
         "tags": ["Swarms"],
         "summary": "List swarms",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/cursorBody"
-        },
         "responses": {
           "200": {
             "description": "A page of swarms.",
@@ -8240,9 +8234,6 @@
         "tags": ["Swarms"],
         "summary": "List journeys",
         "description": "The project's goals, newest first. Archived goals are excluded.",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/cursorBody"
-        },
         "responses": {
           "200": {
             "description": "A page of goals.",
@@ -8347,9 +8338,29 @@
         "tags": ["Swarm runs"],
         "summary": "List a journey's runs",
         "description": "Newest first. Compact records — `attempts` is on the single-run read.",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/cursorBody"
-        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum runs to return, 1-200. Defaults to 50. Larger values are clamped to 200.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque pagination cursor from a previous response's `nextCursor`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "A page of runs.",
@@ -8497,9 +8508,29 @@
         "tags": ["Swarm runs"],
         "summary": "List a run's sessions",
         "description": "One entry per chat session the run produced. Summaries, not transcripts — read a transcript through the chat-session routes using `id`.",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/cursorBody"
-        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum sessions to return, 1-200. Defaults to 50. Larger values are clamped to 200.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque pagination cursor from a previous response's `nextCursor`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "A page of sessions.",
@@ -8669,9 +8700,6 @@
         "tags": ["Swarm insights"],
         "summary": "List swarm findings",
         "description": "Criteria that keep failing, tracked across waves. One finding is one problem OVER TIME — `occurrenceCount` and `status` carry the history, so do not treat repeat appearances as separate problems.",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/cursorBody"
-        },
         "responses": {
           "200": {
             "description": "A page of findings.",
@@ -9123,9 +9151,29 @@
         "tags": ["Studies"],
         "summary": "List a scenario's sessions",
         "description": "What visitors did, as summaries. Project members only — this route is deliberately absent from the guest allowlist, so a share-link visitor can never read other visitors' sessions.",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/cursorBody"
-        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum sessions to return, 1-200. Defaults to 50. Larger values are clamped to 200.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque pagination cursor from a previous response's `nextCursor`. Any other value is a 400.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "A page of sessions.",
@@ -9172,9 +9220,29 @@
         "tags": ["Studies"],
         "summary": "Get a session transcript",
         "description": "The projected transcript, paged. Tool payloads and blobs are dropped, and the stored blob URL is never returned.\n\nCheck `transcriptUnavailable` before trusting `messageCount`: an unreadable transcript reports `null`, never `0`.",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/cursorBody"
-        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum transcript messages to return, 1-200. Defaults to 50. Larger values are clamped to 200.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque pagination cursor from a previous response's `nextCursor`. Any other value is a 400.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "The session and its messages.",
