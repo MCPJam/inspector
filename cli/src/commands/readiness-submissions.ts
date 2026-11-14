@@ -4,8 +4,9 @@
  * grade that rehearsal on the platform.
  *
  * Each command is a bound platform operation, so it answers as the REST API
- * and the MCP tools do. `run --wait` is the addition: it polls the run and
- * exits with the readiness codes, 0 ready, 1 not ready and 3 incomplete.
+ * and the MCP tools do. `run --wait` and `results` add the verdict: the run
+ * judged under the submission's gate, which `gate` chooses, as the readiness
+ * exit codes 0 ready, 1 not ready and 3 incomplete.
  */
 import type { Command } from "commander";
 import {
@@ -19,11 +20,19 @@ import {
   listDirectorySubmissionsOperation,
   startDirectorySubmissionRunOperation,
   updateDirectorySubmissionOperation,
+  type GetDirectorySubmissionResultsResult,
   type PlatformApiClient,
   type PlatformReadinessRun,
   type UpdateDirectorySubmissionInput,
 } from "@mcpjam/sdk/platform";
 import { directoryReadinessExitCode, reportReadinessVerdict } from "../lib/directory-readiness-exit-code.js";
+import {
+  judgeResults,
+  parseGateChange,
+  reportGate,
+  saveGate,
+  withVerdictExit,
+} from "../lib/directory-submission-gate.js";
 import { CliError, setProcessExitCode, usageError, writeResult } from "../lib/output.js";
 import {
   addPlatformOptions,
@@ -58,6 +67,8 @@ type SetOptions = Options & {
 
 type RunOptions = Options & { wait?: boolean; aiObservations?: boolean };
 
+type GateOptions = Options & { failOn: string[]; warnOnly: string[]; clear?: boolean };
+
 /** The worker's 15-minute run deadline, plus time spent queued. */
 const RUN_WAIT_MS = 20 * 60_000;
 const RUN_POLL_MS = 5_000;
@@ -65,6 +76,13 @@ const RUN_ENDED = new Set(["completed", "failed", "cancelled"]);
 
 /** `--project`, and the `<submission>` argument Commander guarantees. */
 const scoped = (options: Options, submission = "") => ({ project: options.project, submission });
+
+/** Hosted readiness prints no Cloud audience line, as bindOperation keeps it. */
+const extrasOf = (command: Command, name: string) => ({
+  announce: false,
+  quiet: getGlobalOptions(command).quiet,
+  command: `readiness submission ${name}`,
+});
 
 function jsonOrText(text: string): unknown {
   try {
@@ -172,7 +190,7 @@ async function waitForRun(
 async function runSubmission(submission: string, command: Command): Promise<void> {
   const options = platformOptionsOf<RunOptions>(command);
   const globals = getGlobalOptions(command);
-  const extras = { announce: false, quiet: globals.quiet, command: "readiness submission run" };
+  const extras = extrasOf(command, "run");
   const input = {
     ...scoped(options, submission),
     includeLlmObservations: options.aiObservations ? true : undefined,
@@ -183,11 +201,26 @@ async function runSubmission(submission: string, command: Command): Promise<void
   if (!options.wait) return writeResult(started, globals.format);
   const ids = { projectId: started.project.id, runId: started.run.runId };
   const run = await waitForRun(options, globals.timeout, ids, extras);
-  writeResult({ ...started, run }, globals.format);
-  // A run that did not complete graded nothing: incomplete, never not ready.
-  const status = run.status === "completed" ? (run.overallStatus ?? undefined) : undefined;
-  reportReadinessVerdict({ status, summary: status ? undefined : `the run ${run.status}` }, command);
-  setProcessExitCode(directoryReadinessExitCode({ status }));
+  if (run.status !== "completed") {
+    writeResult({ ...started, run }, globals.format);
+    // A run that did not complete graded nothing: incomplete, never not ready.
+    reportReadinessVerdict({ summary: `the run ${run.status}` }, command);
+    return setProcessExitCode(directoryReadinessExitCode({}));
+  }
+  // Judged from its results under the submission's gate, not the run's rollup.
+  const scope = { project: ids.projectId, submission, run: ids.runId };
+  const read = getDirectorySubmissionResultsOperation;
+  let results: GetDirectorySubmissionResultsResult;
+  try {
+    results = await runPlatformOperation(options, globals.timeout, (context) => read.execute(scope, context), extras);
+  } catch (error) {
+    if (!(error instanceof CliError)) throw error;
+    const later = `mcpjam readiness submission results ${submission} --run ${ids.runId}`;
+    const message = `${error.message} The run finished. Read its results with \`${later}\`.`;
+    throw new CliError(error.code, message, error.exitCode, error.details);
+  }
+  writeResult({ ...started, run, verdict: results.verdict }, globals.format);
+  judgeResults(results, command);
 }
 
 /** Register `readiness flows` and `readiness submission` on the readiness group. */
@@ -300,25 +333,52 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
       .option("--ai-observations", "Add optional model observations, included with MCPJam")
       .option("--idempotency-key <key>", "Replay guard: a retry returns the run already started")
   );
-  run.action(async (id: string, _options: RunOptions, command: Command) => {
-    try {
-      await runSubmission(id, command);
-    } catch (error) {
-      const waiting = platformOptionsOf<RunOptions>(command).wait;
-      if (!waiting || !(error instanceof CliError) || error.exitCode === 2) throw error;
-      // Under --wait the exit code is the verdict, and no run gave one.
-      throw new CliError(error.code, error.message, 3, error.details);
-    }
-  });
+  run.action((id: string, _options: RunOptions, command: Command) =>
+    // Under --wait the exit code is the verdict.
+    platformOptionsOf<RunOptions>(command).wait
+      ? withVerdictExit(() => runSubmission(id, command))
+      : runSubmission(id, command)
+  );
 
-  const results = verb("results", "Read a submission's results, grouped by the portal's steps")
-    .option("--run <id>", "A completed run's id. Defaults to the latest.")
-    .option("--json", "Print JSON (same as --format json)")
-    .hook("preAction", (command) => {
-      if (command.opts().json) command.setOptionValue("format", "json");
-    });
-  bindOperation(results, getDirectorySubmissionResultsOperation, (options: Options, id = "") => ({
-    ...scoped(options, id),
-    run: options.run,
-  }));
+  const results = addPlatformOptions(
+    verb("results", "Read a submission's results by the portal's steps, and exit with its verdict")
+      .option("--run <id>", "A completed run's id. Defaults to the latest.")
+      .option("--json", "Print JSON (same as --format json)")
+      .hook("preAction", (command) => {
+        if (command.opts().json) command.setOptionValue("format", "json");
+      })
+  );
+  results.action((id: string, _options: Options, command: Command) =>
+    withVerdictExit(async () => {
+      const options = platformOptionsOf<Options>(command);
+      const input = { ...scoped(options, id), run: options.run };
+      const read = getDirectorySubmissionResultsOperation;
+      const { timeout, format } = getGlobalOptions(command);
+      const execute = (context: ClientContext) => read.execute(input, context);
+      const result = await runPlatformOperation(options, timeout, execute, extrasOf(command, "results"));
+      writeResult(result, format);
+      judgeResults(result, command);
+    })
+  );
+
+  const gate = addPlatformOptions(
+    verb("gate", "Choose which checks fail the submission's runs. Check ids are in its results.")
+      .option(
+        "--fail-on <id>",
+        "Fail a run when this check fails, even one the directory does not require. Repeatable.",
+        collectRepeated,
+        []
+      )
+      .option("--warn-only <id>", "Show this check's result without failing the run. Repeatable.", collectRepeated, [])
+      .option("--clear", "Start from the directory's blocking checks, dropping earlier choices")
+  );
+  gate.action(async (id: string, _options: GateOptions, command: Command) => {
+    const options = platformOptionsOf<GateOptions>(command);
+    const change = parseGateChange(options, id);
+    const { timeout, format } = getGlobalOptions(command);
+    const save = (context: ClientContext) => saveGate(scoped(options, id), change, context);
+    const saved = await runPlatformOperation(options, timeout, save, extrasOf(command, "gate"));
+    writeResult(saved, format);
+    reportGate(saved.submission.checkGate, command);
+  });
 }

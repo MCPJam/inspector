@@ -475,6 +475,8 @@ describe("v1 directory submissions", () => {
       ["confirming an unknown field", { expectedRevision: 3, confirm: ["listing.nope"] }],
       ["an unknown key", { expectedRevision: 3, actorLabel: "me" }],
       ["no expected revision", { answers: { "listing.name": "x" } }],
+      ["a gate list it does not know", { expectedRevision: 3, checkGate: { skip: ["a"] } }],
+      ["a blank check id in the gate", { expectedRevision: 3, checkGate: { failOn: [" "] } }],
     ])("refuses %s before anything is written", async (_label, body) => {
       const res = await request("PATCH", `${BASE}/${SUBMISSION}`, { body });
       expect(res.status).toBe(400);
@@ -554,6 +556,21 @@ describe("v1 directory submissions", () => {
       );
     });
 
+    it("forwards a gate on its own, and null to clear it", async () => {
+      const gate = { failOn: ["claude.a"], warnOnly: ["claude.submission.listing-fields"] };
+      for (const checkGate of [gate, null]) {
+        const res = await request("PATCH", `${BASE}/${SUBMISSION}`, {
+          body: { expectedRevision: 3, checkGate },
+        });
+        expect(res.status).toBe(200);
+      }
+      const sent = convexMutationMock.mock.calls.map(([, args]) => args);
+      expect(sent).toEqual([
+        { submissionId: SUBMISSION, expectedRevision: 3, checkGate: gate, setVia: "api" },
+        { submissionId: SUBMISSION, expectedRevision: 3, checkGate: null, setVia: "api" },
+      ]);
+    });
+
     it("marks a replayed write", async () => {
       mutations["directorySubmissions:updateDirectorySubmission"] = () => ({
         ...ROW,
@@ -624,6 +641,8 @@ describe("v1 directory submissions", () => {
       expect(byId["claude.submission.urls"].evidenceStatus).toBe("established");
       expect(body.counts.blockers).toBe(1);
       expect(body.counts.notChecked).toBe(1);
+      // No gate saved: the directory's own.
+      expect(body.checkGate).toBeNull();
       // Frozen inputs read under the caller's own bearer, for this run.
       const inputsCall = convexQueryMock.mock.calls.find(
         ([ref]) => nameOf(ref) === "directoryReadinessRunInputs:getReadinessRunInputs",
@@ -634,6 +653,18 @@ describe("v1 directory submissions", () => {
       const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, any];
       expect(String(url)).toContain(`/internal/v1/claude-readiness/runs/report?runId=${RUN}`);
       expect(init.headers["x-inspector-service-token"]).toBe("service-token");
+    });
+
+    it("answers with the gate the submission has now", async () => {
+      const checkGate = { warnOnly: ["claude.submission.listing-fields"] };
+      queries["directorySubmissions:getDirectorySubmission"] = () => ({
+        ...ROW,
+        lastRunId: RUN,
+        checkGate,
+      });
+      stubReport({ findings: [finding("claude.submission.listing-fields", "violated")] });
+      const res = await request("GET", `${BASE}/${SUBMISSION}/results`);
+      expect(((await res.json()) as { checkGate: unknown }).checkGate).toEqual(checkGate);
     });
 
     it("marks nothing stale when the run's frozen answers are gone", async () => {
