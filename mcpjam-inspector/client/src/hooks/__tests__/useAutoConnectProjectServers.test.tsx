@@ -169,7 +169,7 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
 
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
-    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"], { automatic: true });
   });
 
   it("is a no-op when the required set is empty (host has no required servers)", async () => {
@@ -260,7 +260,7 @@ describe("useAutoConnectProjectServers", () => {
 
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
-    expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha"], { automatic: true });
   });
 
   it("never re-attempts after a failure (refresh-keeps-failing guard)", async () => {
@@ -324,7 +324,7 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
 
     expect(ensureServersReady).toHaveBeenCalledTimes(2);
-    expect(ensureServersReady).toHaveBeenLastCalledWith(["alpha"]);
+    expect(ensureServersReady).toHaveBeenLastCalledWith(["alpha"], { automatic: true });
   });
 
   it("reconnects ALL connected servers on client switch, not just the required ones", async () => {
@@ -722,7 +722,7 @@ describe("useAutoConnectProjectServers", () => {
     expect(reconnectServer).toHaveBeenCalledTimes(1);
     expect(reconnectServer).toHaveBeenCalledWith("up");
     expect(ensureServersReady).toHaveBeenCalledTimes(2);
-    expect(ensureServersReady).toHaveBeenCalledWith(["needed"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["needed"], { automatic: true });
   });
 
   it("does not recycle again on a same-scope re-render (only lead changes recycle)", async () => {
@@ -809,7 +809,7 @@ describe("useAutoConnectProjectServers", () => {
 
     expect(reconnectServer).not.toHaveBeenCalled();
     expect(mocks.toastLoading).not.toHaveBeenCalled();
-    expect(ensureServersReady).toHaveBeenCalledWith(["gamma"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["gamma"], { automatic: true });
   });
 
   it("re-attempts on every host transition, including returning to a previously-visited host", async () => {
@@ -960,7 +960,7 @@ describe("useAutoConnectProjectServers", () => {
 
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
-    expect(ensureServersReady).toHaveBeenCalledWith(["bart"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["bart"], { automatic: true });
 
     // Auto-connect succeeded → bart is connected.
     appStateHolder.current = {
@@ -1026,7 +1026,7 @@ describe("useAutoConnectProjectServers", () => {
 
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
-    expect(ensureServersReady).toHaveBeenCalledWith(["bart", "foo"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["bart", "foo"], { automatic: true });
 
     // Both connected.
     appStateHolder.current = {

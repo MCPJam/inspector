@@ -18,6 +18,7 @@ import { registerServerCommands } from "./commands/server.js";
 import { registerSubscriptionsCommands } from "./commands/subscriptions.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerTasksCommands } from "./commands/tasks.js";
+import { registerEventsCommands } from "./commands/events.js";
 import { registerToolsCommands } from "./commands/tools.js";
 import {
   registerTestCommand,
@@ -33,6 +34,8 @@ import {
   usageError,
   writeError,
 } from "./lib/output.js";
+import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
+import { installProxyDispatcher } from "./lib/network-proxy.js";
 import { addGlobalOptions } from "./lib/server-config.js";
 import {
   captureCommandEvent,
@@ -91,6 +94,7 @@ export async function main(
       }),
   );
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
+  installDeploymentPreflight(program);
 
   program.commandsGroup("Local MCP testing:");
   registerTestCommand(program, dependencies.localTest);
@@ -103,6 +107,7 @@ export async function main(
   registerPromptCommands(program);
   registerAppsCommands(program);
   registerTasksCommands(program);
+  registerEventsCommands(program);
   registerOAuthCommands(program);
   registerXaaCommands(program);
   registerProtocolCommands(program);
@@ -184,6 +189,9 @@ export async function runCliEntrypoint(
   argv: readonly string[] = process.argv,
   dependencies: CliEntrypointDependencies = {},
 ): Promise<CliMainResult> {
+  // Here and not in `main`: a program embedding the CLI keeps its own
+  // process-wide networking.
+  installProxyDispatcher();
   const result = await main(argv, dependencies);
   process.exitCode = result.exitCode;
 

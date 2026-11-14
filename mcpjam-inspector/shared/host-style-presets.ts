@@ -210,7 +210,28 @@ export const HOST_STYLE_CAPABILITIES = {
   "claude-code": {
     mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
   },
+  // Claude Code in the desktop app and on the web renders through Claude
+  // Desktop's and claude.ai's widget hosts.
+  "claude-code-desktop": {
+    mcpAppsCapabilities: MCP_APPS_CLAUDE_SURFACE,
+  },
+  "claude-code-web": {
+    mcpAppsCapabilities: MCP_APPS_CLAUDE_SURFACE,
+  },
   chatgpt: {
+    mcpAppsCapabilities: MCP_APPS_CHATGPT_SURFACE,
+    hostCapabilitiesReplacement: OPENAI_APP_HOST_CAPABILITIES_REPLACEMENT,
+  },
+  // ChatGPT's desktop app and work mode run the same OpenAI app runtime.
+  "chatgpt-desktop": {
+    mcpAppsCapabilities: MCP_APPS_CHATGPT_SURFACE,
+    hostCapabilitiesReplacement: OPENAI_APP_HOST_CAPABILITIES_REPLACEMENT,
+  },
+  "chatgpt-work": {
+    mcpAppsCapabilities: MCP_APPS_CHATGPT_SURFACE,
+    hostCapabilitiesReplacement: OPENAI_APP_HOST_CAPABILITIES_REPLACEMENT,
+  },
+  "chatgpt-work-desktop": {
     mcpAppsCapabilities: MCP_APPS_CHATGPT_SURFACE,
     hostCapabilitiesReplacement: OPENAI_APP_HOST_CAPABILITIES_REPLACEMENT,
   },
@@ -258,7 +279,12 @@ export const HOST_STYLE_CAPABILITIES = {
       serverResources: { listChanged: false },
     },
   },
+  "copilot-cli": { mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE },
   "cursor-cli": {
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+  },
+  // Terminal client: no widget rendering.
+  "codex-cli": {
     mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
   },
   copilot: {
@@ -321,6 +347,15 @@ export const HOST_STYLE_CAPABILITIES = {
     mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
   },
   notion: {
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+  },
+  // A tools-only client: no widget rendered during its probe.
+  muse: {
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+  },
+  // Renders widgets, but its probe recorded none, so no MCP Apps capability
+  // is measured and none is claimed.
+  grokbot: {
     mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
   },
   mcpjam: {

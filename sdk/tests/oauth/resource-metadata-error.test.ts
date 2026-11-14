@@ -127,6 +127,24 @@ describe("discoverOAuthProtectedResourceMetadata failure messages", () => {
     );
   });
 
+  // CQT-16: a catch-all server answers the well-known path with its HTML
+  // landing page and a 200.
+  it("names the content type when a 200 body is not JSON", async () => {
+    const fetchFn = vi.fn(
+      async () =>
+        new Response("<!doctype html><html></html>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        })
+    );
+
+    await expect(
+      discoverOAuthProtectedResourceMetadata(SERVER_URL, undefined, fetchFn)
+    ).rejects.toThrow(
+      "Protected resource metadata is not valid JSON (got text/html)."
+    );
+  });
+
   it("still calls it not-implemented when every attempt was a real 404", async () => {
     const fetchFn = vi.fn(async () => new Response("", { status: 404 }));
 

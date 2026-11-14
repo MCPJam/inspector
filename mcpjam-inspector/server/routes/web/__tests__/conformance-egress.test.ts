@@ -98,7 +98,10 @@ beforeEach(() => {
   runProtocolConformanceMock.mockResolvedValue({
     result: { outcome: "passed", checks: [] },
   });
-  startOAuthConformanceMock.mockResolvedValue({ phase: "complete" });
+  startOAuthConformanceMock.mockResolvedValue({
+    phase: "complete",
+    result: { passed: true, steps: [] },
+  });
 });
 
 afterEach(() => {

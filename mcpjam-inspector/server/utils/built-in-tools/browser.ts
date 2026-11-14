@@ -22,11 +22,12 @@ import {
  *      and an unthreaded surface would now gate correctly — but because
  *      `approvalDelivery` is the one thing this file cannot work out for
  *      itself: whether A PERSON IS WATCHING. That answer decides the browser's
- *      context mode (a persistent, signed-in profile or a blank ephemeral
- *      one), the owner key, and whether an unattended run's policy is
- *      mandatory. A surface that has not said which kind of run it is has not
- *      chosen any of those, and defaulting them is how an eval comes to run
- *      against whatever profile the last playground session left signed in.
+ *      context mode (a persistent, signed-in profile or an ephemeral one that
+ *      keeps nothing between runs), the owner key, and whether an unattended
+ *      run's policy is mandatory. A surface that has not said which kind of
+ *      run it is has not chosen any of those, and defaulting them is how an
+ *      eval comes to run against whatever profile the last playground session
+ *      left signed in.
  *
  *   2. A SCREENSHOT REACHES THE MODEL AS AN IMAGE, via `toModelOutput`. The
  *      implementation result carries the capture as base64 in an ordinary
@@ -93,6 +94,11 @@ import {
   BrowserProtocolMismatchError,
   type BrowserSessionHandle,
 } from "../../services/browserd/browser-session.js";
+import {
+  loopbackUrl,
+  openPreviewForNavigation,
+  type PreviewWorkspaceSource,
+} from "../../services/workspace-preview/workspace-tunnel.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { getConfiguredInspectorServiceToken } from "../../middleware/internal-service-auth.js";
@@ -309,6 +315,8 @@ export interface BrowserToolsOptions {
    * produce one.
    */
   sandboxTarget?: { sandboxRowId: string; sandboxId: string; record?: boolean };
+  /** The shell's workspace, opened at `http://localhost:<port>`. */
+  previewWorkspace?: PreviewWorkspaceSource;
   ensureSession?: (args: {
     bearer: string;
     projectId: string;
@@ -1306,6 +1314,9 @@ export function buildBrowserTools(
       throw error;
     }
     lastBootId = handle.bootId;
+    const preview = await openPreviewForNavigation({ action, workspace: opts.previewWorkspace, handle });
+    if ("refusal" in preview) return { ok: false, error: preview.refusal, tabId: args.tabId ?? "@session" };
+    action = preview.action;
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
     const pinned = args.expectedState
@@ -1662,7 +1673,10 @@ export function buildBrowserTools(
           engine,
         )} (or go back / forward / reload). Returns the page ` +
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
-        "so you do not need to observe separately before acting.",
+        "so you do not need to observe separately before acting." +
+        (opts.previewWorkspace
+          ? " Apps running on the shell's computer open at http://localhost:<port>."
+          : ""),
       inputSchema: z.object({
         url: z
           .string()
@@ -1683,11 +1697,14 @@ export function buildBrowserTools(
       }),
       needsApproval,
       execute: async (
-        { url, action, tabId, newTab },
+        { url: rawUrl, action, tabId, newTab },
         { abortSignal, toolCallId },
       ) => {
         const verb = action ?? "goto";
-        if (verb === "goto" && !url) return { error: "navigate needs a url" };
+        if (verb === "goto" && !rawUrl) return { error: "navigate needs a url" };
+        // Judged as the address the browser will open, so a 0.0.0.0 a dev
+        // server printed is allowed or refused as the localhost it becomes.
+        const url = rawUrl === undefined ? undefined : loopbackUrl(rawUrl);
         if (url && policy && !isOriginAllowed(url, policy.originAllowlist)) {
           // Enforced BEFORE the command leaves this process: an unattended run
           // must not reach an origin its policy never named.

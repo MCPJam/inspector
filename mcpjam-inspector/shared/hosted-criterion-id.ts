@@ -34,6 +34,15 @@ export const HOSTED_TOOL_ARGUMENTS_SCORER_ID = "toolCalls:arguments";
 export const HOSTED_JUDGE_SCORER_ID = "judge:goalCompletion";
 
 /**
+ * The model every rubric-check DEFINITION names. The row names the model
+ * that actually answered (Jev, the organization's decision model, or a
+ * fallback model), outside `definitionHash`, so a fallback on one trial never
+ * forks a criterion's identity across the run. Here so the client names Jev
+ * from the same constant.
+ */
+export const HOSTED_RUBRIC_CHECKS_MODEL = "typesafe-ai/jev";
+
+/**
  * The criterion identity of one hosted predicate.
  *
  * Pinned by a golden test: these strings are persisted on every hosted

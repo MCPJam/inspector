@@ -76,8 +76,8 @@ export interface ConformanceProfile {
 }
 
 /**
- * `mcp-protocol` v2026-08-21.1 — the 36 checks shipping before the
- * conformance-gap program's new checks land.
+ * `mcp-protocol` v2026-11-02.1 — the 36 checks shipping before the
+ * conformance-gap program's new checks landed, plus eight of those checks.
  *
  * FROZEN AT EXACTLY TODAY'S POOL, deliberately. Every check the gap program
  * adds (wire-schema validation, the SEP-2243 header cases, the split caching
@@ -89,10 +89,27 @@ export interface ConformanceProfile {
  * Spelled as literals rather than `[...MCP_CHECK_IDS]`. A spread would make
  * the manifest track the inventory automatically, which is the exact drift the
  * profile exists to prevent: every future check would silently arrive scored.
+ *
+ * v2026-08-21.1 → v2026-11-01.1 promotes the seven gap-program checks the
+ * 2026-07-28 revision states as requirements: `wire-schema-valid` (the schema
+ * is "the source of truth for all protocol messages"), the three caching
+ * checks (hints MUST appear on the six named operations, `ttlMs` MUST be
+ * `>= 0`, `cacheScope` MUST match across pages), the missing `Mcp-Method` and
+ * header-case checks, and the empty-`contents` MUST NOT for a missing
+ * resource. One stays pending: `modern-tool-output-schema-conformant` states
+ * a MUST but cannot run without operator tool-call fixtures, so scoring it
+ * would mark nearly every run incomplete until the inspector can collect
+ * them.
+ *
+ * v2026-11-01.1 → v2026-11-02.1 promotes `modern-tool-output-schema-conformant`
+ * ("Servers MUST provide structured results that conform to this schema").
+ * The inspector now collects the tool to call in step 2. A run that names none
+ * is not applicable when no tool declares an `outputSchema`, and could not run
+ * when one does: the MUST went unverified, as with any unnamed probe tool.
  */
 const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
   id: "mcp-protocol",
-  version: "2026-08-21.1",
+  version: "2026-11-02.1",
   scored: [
     "server-initialize",
     "ping",
@@ -130,12 +147,52 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
     "modern-subscription-ack-precedes-notifications",
     "modern-subscription-filter-and-tagging",
     "modern-subscription-graceful-close",
+    "wire-schema-valid",
+    "modern-cache-hint-coverage",
+    "modern-cache-hint-values-valid",
+    "modern-cache-scope-stable-across-pages",
+    "modern-missing-method-header-rejected",
+    "modern-header-names-case-insensitive",
+    "modern-resource-read-no-empty-contents",
+    "modern-tool-output-schema-conformant",
   ] satisfies MCPCheckId[],
 };
 
 /**
- * `mcp-tasks` v2026-08-22.1 — the eight checks the Tasks suite shipped before
- * the gap program's scenario depth.
+ * `mcp-tasks` v2026-11-02.1 — every check the Tasks suite ships: the eight it
+ * shipped before the gap program's scenario depth, plus the six that depth
+ * added.
+ *
+ * v2026-08-22.1 → v2026-10-31.1 promotes `tasks-ttl-integer-shape`. The
+ * extension's schema types `ttlMs` and `pollIntervalMs` as integers
+ * (`@format int` in schema.ts, `"type": "integer"` in schema.json), and the
+ * schema is the source of truth for every message, so a fractional value is a
+ * spec violation, not a style choice.
+ *
+ * v2026-10-31.1 → v2026-11-01.1 promotes `tasks-update-ack-shape`, which
+ * asserts nothing beyond two MUSTs the extension states outright for the
+ * `tasks/update` acknowledgement (an empty result, `resultType: "complete"`).
+ * It is not applicable unless the operator supplies `inputResponses` for a task
+ * that asks for input, so a run that creates a task without them scores as it
+ * did under v2026-10-31.1. A run that creates no task was already incomplete;
+ * this check joins its siblings there as could-not-run.
+ *
+ * v2026-11-01.1 → v2026-11-01.2 promotes the last four pending checks, each a
+ * MUST the extension states: `tasks/get` answers an unknown task id with
+ * `-32602`, every status carries its required payload, `tasks/cancel` is
+ * acknowledged with an empty result, and a `-32021` lists the missing
+ * capabilities in `data.requiredCapabilities` (core 2026-07-28). The three
+ * that need a task need one the scored lifecycle checks already need, so a run
+ * that creates none was already incomplete.
+ *
+ * v2026-11-01.2 → v2026-11-02.1 keeps the same checks but tightens two, each
+ * of which used to pass with a warning:
+ *   - `tasks-undeclared-creation-refused` fails a refusal with any code other
+ *     than `-32021`, or a `-32021` that does not name the tasks extension;
+ *     tasks.md:63 states both as a MUST.
+ *   - `tasks-undeclared-capability-names-requirements` fails a `-32021` whose
+ *     `requiredCapabilities` does not name the tasks extension; the core spec
+ *     requires it to list the missing capabilities (basic/index.mdx, a MUST).
  *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
@@ -151,7 +208,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  */
 const MCP_TASKS_PROFILE: ConformanceProfile = {
   id: "mcp-tasks",
-  version: "2026-08-22.1",
+  version: "2026-11-02.1",
   scored: [
     "tasks-wire-resolvable",
     "tasks-declaration-hygiene",
@@ -161,6 +218,12 @@ const MCP_TASKS_PROFILE: ConformanceProfile = {
     "tasks-ttl-shape",
     "tasks-inline-result",
     "tasks-mcp-name-routing",
+    "tasks-ttl-integer-shape",
+    "tasks-update-ack-shape",
+    "tasks-invalid-task-id-rejected",
+    "tasks-status-payload-shape",
+    "tasks-cancel-ack-shape",
+    "tasks-undeclared-capability-names-requirements",
   ] satisfies MCPTasksCheckId[],
 };
 

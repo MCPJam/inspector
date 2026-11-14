@@ -1,15 +1,21 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch";
+import { authorizeManagedProject } from "./turn-authorization.js";
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
+import { buildHostConnectionPins } from "../host-connection-pins.js";
+import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
   localHarnessIdOf,
   shouldUseLocalHarness,
 } from "../../utils/harness/local/run-resources.js";
 import {
   ensureLocalHarnessTarget,
-  LOCAL_HARNESS_DISPLAY_NAMES,
   LocalAutoApproveConsentRequiredError,
 } from "../../utils/harness/local/readiness.js";
+import { DEFAULT_LOCAL_HARNESS_ID } from "../../utils/harness/local/runtimes/index.js";
+import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
-import { apiSessionWriteAllowed } from "../../routes/web/api-session-write-guard";
+import { readWebConversationState } from "../../routes/web/web-conversation-state.js";
+import { enforceNativeDiscoverySessionPin } from "../../utils/harness/native-discovery.js";
 import { BrowserSessionService } from "../browserd/session-service";
 import { type Context } from "hono";
 import { ranTurnSelection } from "../../utils/session-model-selection.js";
@@ -19,25 +25,16 @@ import {
   resolveChatSelection,
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
-import {
-  listCloudRuntimeSkills,
-  shouldEnableCloudSkillTools,
-} from "../../utils/computers/cloud-skill-tools.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
-import {
-  checkAgentLoopGuard,
-  refuseAgentLoop,
-} from "../../utils/agent-loop-guard.js";
+import { checkAgentLoopGuard, refuseAgentLoop } from "../../utils/agent-loop-guard.js";
 import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import {
   hostedChatSchema,
-  authorizeProject,
-  callerContextFromHono,
   parseWithSchema,
   ErrorCode,
   WebRouteError,
@@ -61,28 +58,26 @@ import {
   harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { orgKeyHarnessSurfaceError } from "../../utils/harness/org-key-surfaces.js";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
 } from "../../utils/harness/local/request-target.js";
-import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../evals/route-helpers.js";
 import {
   runtimeServerIds,
   runtimeServerNames,
-  runtimeSkills as environmentRuntimeSkills,
-  turnSkillProvenance,
-  type EnvironmentSkillDelivery,
 } from "../environments/runtime.js";
+import { pluginOriginByServerId } from "../environments/effective-capabilities.js";
 import {
-  buildLiveEffectiveCapabilities,
-  pluginOriginByServerId,
-  withLiveProjectSkills,
-  type EffectiveCapabilitySet,
-} from "../environments/effective-capabilities.js";
+  environmentTurnSkills,
+  studyLibraryTurnSkills,
+} from "../environments/live-turn-skills.js";
+import { resolveTurnSkills, turnRuntime } from "../environments/turn-skills.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
+import { HOSTED_APP_HANDLERS, qualifyHarnessHostCapabilities } from "../../../shared/harness-host-capabilities.js";
 import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { logger } from "../../utils/logger.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
@@ -99,36 +94,10 @@ export async function resolveManagedTurnSetup(args: {
 }) {
   const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
-  if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
-    const allowed = await apiSessionWriteAllowed(
-      rawBody.origin,
-      async (signal) => {
-        const service = new BrowserSessionService();
-        if (!service.enabled) return { writable: true };
-        return service.agentRequest<{
-          writable: boolean;
-        }>("assert_web_writable", {
-          bearer: bearerToken,
-          projectId: hostedBody.projectId!,
-          body: { conversationId: hostedBody.chatSessionId },
-          signal: AbortSignal.any([signal, c.req.raw.signal]),
-        });
-      },
-    );
-    if (!allowed)
-      return {
-        response: c.json(
-          {
-            code: "API_SESSION_READ_ONLY",
-            error:
-              "This API session is view-only in Playground. Continue it through the session API.",
-          },
-          409,
-        ),
-      };
-  }
-  const { initializePins, mcpProtocolVersionsByServerId } =
-    extractMcpInitializeOptions(rawBody);
+  const {
+    initializePins,
+    mcpProtocolVersionsByServerId: requestedProtocolPins,
+  } = extractMcpInitializeOptions(rawBody);
   const body = rawBody as unknown as ChatV2Request & {
     projectId: string;
     selectedServerIds: string[];
@@ -187,22 +156,23 @@ export async function resolveManagedTurnSetup(args: {
       "model is not supported",
     );
   }
-  let chatEnvironmentsSupported = false;
-  if (!isScenarioRequest) {
-    const authorized = await authorizeProject(
-      callerContextFromHono(c),
-      bearerToken,
-      hostedBody.projectId,
-    );
-    chatEnvironmentsSupported = authorized.chatEnvironments;
-  }
+  const authorized = isScenarioRequest
+    ? undefined
+    : await authorizeManagedProject(c, bearerToken, {
+        projectId: hostedBody.projectId,
+        chatSessionId: hostedBody.chatSessionId,
+        target: executionTarget,
+        serverIds: selectedServerIds,
+      });
   const {
     mode: turnMode,
     hostRuntimeConfig,
     environmentSpec,
     scenarioEnvironment,
     effectiveCapabilities: resolvedCapabilities,
-    usesLiveSkills,
+    clientTurn,
+    attribution,
+    pluginDisabled,
     authoritativeConnectionPolicy,
     pinsEnvironment,
     authoritativeCapabilities: isHostAuthoritative,
@@ -210,6 +180,8 @@ export async function resolveManagedTurnSetup(args: {
     toolConfigurationUnavailable,
     workspaceToolsBarred,
   } = await resolveHostedChatSetup({
+    prepareChatTurn: authorized?.chatPreparation,
+    preparedChatTurn: authorized?.preparedChatTurn,
     target: executionTarget,
     access:
       executionTarget.kind === "scenario"
@@ -222,15 +194,49 @@ export async function resolveManagedTurnSetup(args: {
             kind: "project",
             projectId: hostedBody.projectId,
             guest: Boolean(c.get("guestId")),
-            chatEnvironments: chatEnvironmentsSupported,
+            chatEnvironments: authorized?.chatEnvironments ?? false,
           },
     projectId: hostedBody.projectId,
     selectedServerIds: requestedServerIds,
     bearer: bearerToken,
     signal: c.req.raw.signal,
     getClient: async () =>
-      createConvexClient(await getConvexBearerForRequest(c)),
+      createConvexClient(await getConvexBearerForRequest(c), c.req.raw.signal),
+    hiddenEnvironment: rawBody.includeProjectSkills === true,
   });
+  let requiredNativeDiscoveryPin = false;
+  if (turnMode === "interactive" && !c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
+    const service = new BrowserSessionService();
+    if (service.enabled) {
+      const state = authorized?.conversationState ?? await readWebConversationState(
+        (signal) =>
+          service.agentRequest<{
+            writable: boolean;
+            requireNativeToolDiscovery?: boolean;
+          }>("assert_web_writable", {
+            bearer: bearerToken,
+            projectId: hostedBody.projectId,
+            body: { conversationId: hostedBody.chatSessionId },
+            signal,
+          }),
+        c.req.raw.signal,
+      );
+      requiredNativeDiscoveryPin = state.requireNativeToolDiscovery === true;
+      if (!state.writable) {
+        return {
+          response: c.json(
+            {
+              code: "API_SESSION_READ_ONLY",
+              error:
+                "This API session is view-only in Playground. Continue it through the session API.",
+            },
+            409,
+          ),
+        };
+      }
+    }
+  }
+  enforceNativeDiscoverySessionPin(hostRuntimeConfig, requiredNativeDiscoveryPin);
   let effectiveCapabilities = resolvedCapabilities;
   if (effectiveCapabilities) {
     rpcCollector?.setPluginOriginByServerId(
@@ -249,41 +255,25 @@ export async function resolveManagedTurnSetup(args: {
       ? environmentServerNameList
       : undefined
     : selectedServerNames;
-  const environmentSkills = environmentSpec
-    ? environmentRuntimeSkills(environmentSpec)
-    : scenarioEnvironment
-      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+  const hostPins =
+    authoritativeConnectionPolicy && hostRuntimeConfig
+      ? buildHostConnectionPins(hostRuntimeConfig, WEB_STREAM_TIMEOUT_MS)
       : undefined;
+  const mcpProtocolVersionsByServerId = hostPins
+    ? hostPins.mcpProtocolVersionsByServerId
+    : requestedProtocolPins;
   const xaaPolicy =
     authoritativeConnectionPolicy && hostRuntimeConfig
-      ? xaaPolicyFromMcpProfile(
-          (
-            hostRuntimeConfig as {
-              mcpProfile?: unknown;
-            }
-          ).mcpProfile,
-        )
+      ? xaaPolicyFromMcpProfile(hostRuntimeConfig.mcpProfile)
       : parseXaaPolicyValue(rawBody.xaaPolicy);
   const effectiveInitializePins =
     authoritativeConnectionPolicy && hostRuntimeConfig
       ? applyHostConformanceKnobs(
-          applyHostParamMirroring(
-            initializePins,
-            mirrorToolParamHeadersFromMcpProfile(
-              (
-                hostRuntimeConfig as {
-                  mcpProfile?: unknown;
-                }
-              ).mcpProfile,
-            ),
+          applyHostParamMirroring<NonNullable<typeof initializePins>>(
+            hostPins?.initializePins,
+            mirrorToolParamHeadersFromMcpProfile(hostRuntimeConfig.mcpProfile),
           ),
-          conformanceKnobsFromMcpProfile(
-            (
-              hostRuntimeConfig as {
-                mcpProfile?: unknown;
-              }
-            ).mcpProfile,
-          ),
+          conformanceKnobsFromMcpProfile(hostRuntimeConfig.mcpProfile),
         )
       : initializePins;
   const resolvedExecution = resolveExecutionContext({
@@ -314,22 +304,6 @@ export async function resolveManagedTurnSetup(args: {
     if (loopVerdict)
       return { response: refuseAgentLoop(c, loopVerdict, "chat_v2") };
   }
-  const skillDeliveryMode: EnvironmentSkillDelivery = !resolvedExecution.harness
-    ? "emulated"
-    : harnessSupportsSkills(resolvedExecution.harness)
-      ? "harness"
-      : "unsupported";
-  const turnProvenance = environmentSpec
-    ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
-    : scenarioEnvironment
-      ? turnSkillProvenance(
-          {
-            environmentRef: scenarioEnvironment.environmentRef,
-            skills: scenarioEnvironment.skills ?? [],
-          },
-          { delivery: skillDeliveryMode },
-        )
-      : undefined;
   for (const entry of resolvedExecution.drift) {
     if (entry.field === "requireToolApproval") {
       logger.warn(
@@ -379,12 +353,13 @@ export async function resolveManagedTurnSetup(args: {
     workspaceToolsBarred,
     requestedToolApproval: resolvedExecution.requireToolApproval,
     loadProjectAccess: async () =>
-      (await createConvexClient(await getConvexBearerForRequest(c)).query(
+      authorized?.projectAccess ??
+      ((await createConvexClient(await getConvexBearerForRequest(c)).query(
         "projects:getProjectCapabilities" as never,
         { projectId: hostedBody.projectId } as never,
       )) as {
         projectRole?: string | null;
-      } | null,
+      } | null),
   });
   if (builtInToolPolicy.dropped.length > 0) {
     getRequestLogger(c, "routes.web.chat-v2").event(
@@ -438,9 +413,14 @@ export async function resolveManagedTurnSetup(args: {
     harnessUsesExternalAccount(resolvedExecution.harness),
   );
   if (resolvedExecution.harness) {
+    // User Testing boxes never receive the org's vendor key: refused first.
+    if (externalAccountHarnessTurn && turnMode === "recorded") {
+      throw orgKeyHarnessSurfaceError(resolvedExecution.harness, "study");
+    }
     const hostModelRefusal = externalAccountHostModelRefusalReason({
       harnessId: resolvedExecution.harness,
       modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
+      requestedModelId: String(modelDefinition.id),
     });
     if (hostModelRefusal) {
       throw new WebRouteError(
@@ -456,7 +436,7 @@ export async function resolveManagedTurnSetup(args: {
     }
   }
   if (
-    (turnMode === "recorded" || externalAccountHarnessTurn) &&
+    turnMode === "recorded" &&
     hostRuntimeConfig &&
     resolvedExecution.modelId &&
     resolvedExecution.modelId !== modelDefinition.id
@@ -483,6 +463,7 @@ export async function resolveManagedTurnSetup(args: {
     model: modelDefinition,
     hostWins: turnMode === "recorded",
     allowLocal: localIngress,
+    harnessId: resolvedExecution.harness,
   });
   if (!selected.ok) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, selected.error);
@@ -538,8 +519,8 @@ export async function resolveManagedTurnSetup(args: {
     turnMode === "interactive"
   ) {
     const localHarnessId =
-      localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
-    const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
+      localHarnessIdOf(resolvedExecution.harness) ?? DEFAULT_LOCAL_HARNESS_ID;
+    const localHarnessName = harnessDisplayName(localHarnessId);
     if (!hostedBody.projectId)
       return {
         response: c.json(
@@ -589,7 +570,10 @@ export async function resolveManagedTurnSetup(args: {
   }
   if (resolvedExecution.harness) {
     const availability = checkHarnessRuntimeAvailable({
+      mcpClient: resolveAgentLoop(hostRuntimeConfig ?? { harness: resolvedExecution.harness }).mcpClient,
       harnessId: resolvedExecution.harness,
+      surface: turnMode === "recorded" ? "user-testing" : "playground",
+      agentLoop: hostRuntimeConfig?.agentLoop !== undefined,
       localExecution: Boolean(harnessExecutionTarget),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       requireToolApproval,
@@ -655,75 +639,65 @@ export async function resolveManagedTurnSetup(args: {
   )?.computer?.workdir;
   const harnessComputerWorkdir =
     typeof rawComputerWorkdir === "string" ? rawComputerWorkdir : undefined;
-  const requestedProjectSkills =
-    turnMode === "interactive" &&
-    (usesLiveSkills ||
-      (rawBody as Record<string, unknown>).includeProjectSkills === true);
-  const includeProjectSkills =
-    requestedProjectSkills && environmentSpec?.environmentOrigin === "adhoc";
-  if (requestedProjectSkills && !includeProjectSkills) {
-    logger.warn(
-      "[chat-v2] includeProjectSkills ignored: not an ad-hoc environment",
-      {
-        environmentId: environmentSpec?.environmentRef.environmentId ?? null,
-        projectId: hostedBody.projectId ?? null,
-        environmentOrigin: environmentSpec?.environmentOrigin ?? null,
-      },
-    );
-  }
-  const cloudSkillsEnabled =
-    (!environmentServers || includeProjectSkills) &&
-    shouldEnableCloudSkillTools({
-      isGuest: Boolean(c.get("guestId")),
-      harness: resolvedExecution.harness,
-      modelId: String(modelDefinition.id),
-      provider: modelDefinition.provider,
-      hosted: modelDefinition.hosted,
-      ...(routingSelection ? { selection: routingSelection } : {}),
-      hasProjectId: Boolean(hostedBody.projectId),
-    });
-  let liveProjectCapabilities: EffectiveCapabilitySet | undefined;
-  let projectSkillReadFailed = false;
-  if (cloudSkillsEnabled && hostedBody.projectId) {
-    try {
-      liveProjectCapabilities = buildLiveEffectiveCapabilities({
-        standaloneSkills: await listCloudRuntimeSkills({
-          authHeader: `Bearer ${bearerToken}`,
+  // One skill plan for this turn's engine, from the environment the turn
+  // resolved. A client's turn in the local app hands MCPJam's agent this
+  // machine's skills too; a study whose scenario predates environments reads
+  // its shared Library. Every project turn resolves an environment; a turn
+  // with neither still gets its connected servers' own skills.
+  const runtime = turnRuntime({ harness: resolvedExecution.harness });
+  const environment = environmentSpec ?? scenarioEnvironment;
+  const turnSkills = environment
+    ? environmentTurnSkills({
+        spec: environment,
+        attribution,
+        pluginDisabled,
+        ...(clientTurn
+          ? {
+              liveExtras: {
+                localSkills:
+                  localIngress && !resolvedExecution.harness
+                    ? await listLocalRuntimeSkills().catch((error) => {
+                        logger.warn("[chat-v2] local skill scan failed", {
+                          error:
+                            error instanceof Error
+                              ? error.message
+                              : String(error),
+                        });
+                        return [];
+                      })
+                    : [],
+              },
+            }
+          : {}),
+        runtime,
+        modelContextTokens: modelDefinition.contextLength,
+      })
+    : turnMode === "recorded"
+      ? await studyLibraryTurnSkills({
+          bearer: bearerToken,
           projectId: hostedBody.projectId,
-        }),
-      });
-    } catch (error) {
-      projectSkillReadFailed = true;
-      logger.warn(
-        "[chat-v2] project skill catalog fetch failed; turn proceeds without them",
-        {
-          projectId: hostedBody.projectId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-    }
-  }
-  // This machine's skills are an interactive extra, like
-  // `includeProjectSkills` above: a recorded scenario turn never takes them.
-  if (
-    localIngress &&
-    turnMode === "interactive" &&
-    !resolvedExecution.harness &&
-    (usesLiveSkills || includeProjectSkills)
-  ) {
-    const localSkills = await listLocalRuntimeSkills().catch((error) => {
-      logger.warn("[chat-v2] local skill scan failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    });
-    const localCapabilities = buildLiveEffectiveCapabilities({ localSkills });
-    liveProjectCapabilities = liveProjectCapabilities
-      ? withLiveProjectSkills(liveProjectCapabilities, localCapabilities)
-      : localCapabilities;
-  }
+          ...(executionScope ? { executionScope } : {}),
+          runtime,
+          modelContextTokens: modelDefinition.contextLength,
+        })
+      : {
+          skills: resolveTurnSkills({
+            source: { kind: "live", projectSkills: [] },
+            runtime,
+            modelContextTokens: modelDefinition.contextLength,
+          }),
+          live: true,
+        };
   return {
     value: {
+      authorizedOrganizationId: authorized?.organizationId,
+      // Only the backend's own answer for this turn's conversation counts; the
+      // `assert_web_writable` fallback and older backends never say bound.
+      executionBound: authorized?.conversationState?.executionBound === true,
+      harnessHostCapabilities:
+        resolvedExecution.harness && hostRuntimeConfig
+          ? qualifyHarnessHostCapabilities(hostRuntimeConfig, HOSTED_APP_HANDLERS)
+          : undefined,
       hostedBody,
       initializePins,
       mcpProtocolVersionsByServerId,
@@ -750,11 +724,11 @@ export async function resolveManagedTurnSetup(args: {
       environmentServers,
       effectiveServerIds,
       effectiveServerNames,
-      environmentSkills,
       xaaPolicy,
       effectiveInitializePins,
       resolvedExecution,
-      turnProvenance,
+      turnSkills,
+      clientTurn,
       builtInToolPolicy,
       turnBuiltInToolIds,
       localBrowserSettingsUnavailable,
@@ -775,9 +749,6 @@ export async function resolveManagedTurnSetup(args: {
       executionScope,
       scenarioParticipant,
       harnessComputerWorkdir,
-      includeProjectSkills,
-      liveProjectCapabilities,
-      projectSkillReadFailed,
     },
   };
 }

@@ -2,6 +2,7 @@ import { convertToModelMessages } from "ai";
 import { describe, expect, it } from "vitest";
 import { hydratedToolResultOutput } from "@/shared/hydrated-tool-output";
 import {
+  buildRawToolResultOverrides,
   mergeTranscriptToolResults,
   preserveHydratedMessageIds,
   transcriptToUIMessages,
@@ -767,6 +768,19 @@ describe("transcriptToUIMessages", () => {
 
 describe("persisted supplied App image", () => {
   const image = "data:image/png;base64,AAAA";
+  it("restores a stored image larger than the default update budget", () => {
+    // Admitted under the client's policy when it was stored.
+    const large = "data:image/png;base64," + "AAAA".repeat(100000);
+    const messages = transcriptToUIMessages([
+      {
+        role: "user",
+        content: [{ type: "file", mediaType: "image/png", data: large }],
+      },
+    ]);
+    expect(messages[0].parts).toEqual([
+      { type: "file", mediaType: "image/png", url: large },
+    ]);
+  });
   it("restores the actual model file/data shape as a UI file/url part", () => {
     const messages = transcriptToUIMessages([
       {
@@ -788,8 +802,9 @@ describe("persisted supplied App image", () => {
     { mediaType: "image/png", data: "data:image/png;base64,%%%" },
     { mediaType: "image/png", data: { 0: 1, 1: 2 } },
     {
+      // Past the ceiling any client policy may admit.
       mediaType: "image/png",
-      data: "data:image/png;base64," + "AAAA".repeat(100000),
+      data: "data:image/png;base64," + "AAAA".repeat(1_100_000),
     },
   ])("refuses unqualified stored image representations %#", (part) => {
     const messages = transcriptToUIMessages([
@@ -802,5 +817,71 @@ describe("persisted supplied App image", () => {
       },
     ]);
     expect(messages[0].parts).toEqual([{ type: "text", text: "Image prompt" }]);
+  });
+});
+
+describe("buildRawToolResultOverrides", () => {
+  const rawResult = {
+    content: [{ type: "text", text: "Showing card Visa" }],
+    structuredContent: { card: "Visa" },
+    _meta: { ui: { resourceUri: "ui://repro/card.html" } },
+  };
+  const modelCopy = {
+    type: "json",
+    value: { content: [{ type: "text", text: "Showing card Visa" }] },
+  };
+  const transcriptWith = (toolResult: Record<string, unknown>) => [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-card",
+          toolName: "show_card",
+          args: { name: "Visa" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-card",
+          toolName: "show_card",
+          ...toolResult,
+        },
+      ],
+    },
+  ];
+
+  it("gives a reopened App its raw result and leaves the model copy alone", () => {
+    const transcript = transcriptWith({ output: modelCopy, result: rawResult });
+
+    expect(buildRawToolResultOverrides(transcript)).toEqual({
+      "call-card": { toolOutput: rawResult },
+    });
+    const toolPart = transcriptToUIMessages(transcript)[0].parts[0] as {
+      output: unknown;
+    };
+    expect(toolPart.output).toEqual(modelCopy);
+  });
+
+  it("unwraps an older result saved only as output", () => {
+    const legacyOutput = { type: "json", value: rawResult };
+
+    expect(
+      buildRawToolResultOverrides(transcriptWith({ output: legacyOutput })),
+    ).toEqual({ "call-card": { toolOutput: rawResult } });
+  });
+
+  it("adds nothing for a failed call or a call with no result", () => {
+    const failed = transcriptWith({
+      output: { type: "error-text", value: "boom" },
+      result: rawResult,
+    });
+
+    expect(buildRawToolResultOverrides(failed)).toEqual({});
+    expect(buildRawToolResultOverrides(failed.slice(0, 1))).toEqual({});
   });
 });

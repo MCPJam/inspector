@@ -23,6 +23,8 @@ export interface OAuthProxyRequest {
    * Link-local and cloud-metadata addresses stay refused either way.
    */
   allowPrivateNetwork?: boolean;
+  /** Operator admission for each private destination, checked at socket pinning. */
+  admitPrivateDestination?: EgressPolicy["admitPrivateDestination"];
   /** Redirect handling. httpsOnly always forces "manual" (cannot be
    * weakened); otherwise an explicit value is honored and omission preserves
    * the historical "follow". */
@@ -550,6 +552,7 @@ async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
   const policy = resolveEgressPolicy({
     httpsOnly: req.httpsOnly,
     allowPrivateNetwork: req.allowPrivateNetwork,
+    admitPrivateDestination: req.admitPrivateDestination,
     startUrl: initialUrl.toString(),
   });
   const redirectMode = req.httpsOnly ? "manual" : req.redirect ?? "follow";

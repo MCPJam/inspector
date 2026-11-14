@@ -52,9 +52,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { HOSTED_MODE } from "@/lib/config";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
-import { LOCAL_CODEX_FEATURE_FLAG } from "@/hooks/useCodexHostEnabled";
+import { useLocalHarnessRollouts } from "@/hooks/useComputersEnabled";
+import { DEFAULT_LOCAL_HARNESS_ID } from "@/shared/harness-descriptors";
 import {
   fetchLocalHarnessAvailability,
   fetchLocalHarnessRuntimeStatus,
@@ -124,23 +123,21 @@ export function localHarnessGrantIsCurrent(
 
 function storageKey(
   projectId: string,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): string {
-  // Claude Code keeps its original key; every other harness has its own.
-  return harnessId === "claude-code"
+  // The default runtime keeps its original key; every other harness has its own.
+  return harnessId === DEFAULT_LOCAL_HARNESS_ID
     ? `${STORAGE_PREFIX}:${projectId}`
     : `${STORAGE_PREFIX}:${harnessId}:${projectId}`;
 }
 
 /**
  * Whether local execution of THIS harness is enabled for the member. Each
- * harness is its own rollout; both flags are read unconditionally (hooks
+ * harness is its own rollout; every flag is read unconditionally (hooks
  * cannot be conditional) and the harness picks its own.
  */
 function useLocalHarnessFlag(harnessId: LocalHarnessClientId): boolean {
-  const claudeCode = useLocalHarnessEnabled();
-  const codex = useFeatureFlagEnabled(LOCAL_CODEX_FEATURE_FLAG) === true;
-  return harnessId === "codex" ? codex : claudeCode;
+  return useLocalHarnessRollouts()[harnessId];
 }
 
 /**
@@ -165,7 +162,7 @@ const sessionTargets = new Map<string, HarnessExecutionTarget>();
 
 export function loadStoredHarnessTarget(
   projectId: string,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): HarnessExecutionTarget | null {
   const key = storageKey(projectId, harnessId);
   // The unstored choice FIRST, and it is not shadowing a good stored value:
@@ -189,7 +186,7 @@ export function loadStoredHarnessTarget(
 export function saveHarnessTarget(
   projectId: string,
   target: HarnessExecutionTarget,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): void {
   const key = storageKey(projectId, harnessId);
   try {
@@ -404,7 +401,7 @@ export function useLocalHarnessController(
   args: UseLocalHarnessControllerArgs,
 ): LocalHarnessControllerState {
   const { projectId, userKey, inScope, scopeKey } = args;
-  const harnessId: LocalHarnessClientId = asLocalHarnessClientId(args.harnessId) ?? "claude-code";
+  const harnessId: LocalHarnessClientId = asLocalHarnessClientId(args.harnessId) ?? DEFAULT_LOCAL_HARNESS_ID;
   const harnessName = LOCAL_HARNESS_CLIENT_NAMES[harnessId];
   const flagEnabled = useLocalHarnessFlag(harnessId);
   const offerable = !HOSTED_MODE && flagEnabled;
@@ -1171,7 +1168,7 @@ export function useLocalHarnessRunsHere(args: {
   harnessId: string | null | undefined;
 }): boolean {
   const harnessId = asLocalHarnessClientId(args.harnessId);
-  const flagEnabled = useLocalHarnessFlag(harnessId ?? "claude-code");
+  const flagEnabled = useLocalHarnessFlag(harnessId ?? DEFAULT_LOCAL_HARNESS_ID);
   const consentSnapshot = useSyncExternalStore(
     subscribeLocalHarnessConsent,
     () => (harnessId ? readLocalHarnessConsentSnapshot(args.projectId, harnessId) : null),

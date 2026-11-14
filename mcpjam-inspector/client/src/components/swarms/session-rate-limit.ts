@@ -11,8 +11,13 @@
 import {
   humanizeSwarmAttemptError,
   isAccountLimit,
+  isDeclinedCardRefusal,
   isHeldCreditsRefusal,
 } from "@/shared/swarm-attempt-error";
+import {
+  AUTO_TOPUP_DECLINED_MESSAGE,
+  AUTO_TOPUP_DECLINED_TITLE,
+} from "@/lib/mcpjam-limit";
 import {
   describeError,
   mcpjamLimitSlugForMessage,
@@ -134,6 +139,27 @@ export function describeHeldCredits(message: string): NormalizedError {
 }
 
 /**
+ * The card shown on a session stopped because a declined card paused
+ * auto-reload. Not "Out of MCPJam credits": the card, not a purchase plan, is
+ * what to fix, though adding credits also gets the run going again.
+ */
+export function describeDeclinedCard(message: string): NormalizedError {
+  return {
+    ...describeAsSlug("provider/mcpjam_limit"),
+    title: AUTO_TOPUP_DECLINED_TITLE,
+    oneLine: AUTO_TOPUP_DECLINED_MESSAGE,
+    likelyCauses: [
+      "Auto-reload could not add credits because your card was declined. Update your payment method and turn auto-reload back on, or add credits.",
+    ],
+    nextSteps: [
+      "Update your payment method and turn auto-reload back on in Organization \u2192 Billing.",
+      "Add credits to keep running sessions in the meantime.",
+    ],
+    rawMessage: message,
+  };
+}
+
+/**
  * The card for a session the organization's AI key policy (or its own
  * provider) refused, or `undefined`. A stored code is the answer; the message
  * is read only when the row has none, since it may mention a code
@@ -178,6 +204,23 @@ export function describeSwarmAttemptFailure(
 ): NormalizedError {
   const info = humanizeSwarmAttemptError(rawMessage, errorCode);
   const code = errorCode ?? info.code;
+  // Setup stopped the target before any conversation. The stored sentence
+  // already names what stopped it and what to do, so the card adds no list.
+  if (errorCode === "prerequisites_unavailable") {
+    return {
+      ...describeAsSlug("internal/unknown"),
+      slug: "swarm/attempt_failed",
+      // The page root, not the unknown-error section this case is not.
+      docsAnchor: "/troubleshooting/error-codes",
+      title: "Setup stopped this target",
+      oneLine: info.message,
+      likelyCauses: [],
+      nextSteps: [],
+      severity: "warning",
+      rawMessage: rawMessage ?? info.message,
+      rawCode: errorCode,
+    };
+  }
   // The organization's AI key policy (or its own provider) refused the
   // session's model. Checked first: read by status it would card as a
   // provider credential failure or an MCPJam limit, and offer a top-up for
@@ -197,6 +240,15 @@ export function describeSwarmAttemptFailure(
   ) {
     return {
       ...describeProviderNotAllowlisted(info.message),
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
+  // A declined card outranks a hold: the held credits will not come back
+  // while it stays declined.
+  if (isDeclinedCardRefusal(info.refusalReason, info.message)) {
+    return {
+      ...describeDeclinedCard(info.message),
       rawMessage: rawMessage ?? info.message,
       rawCode: code,
     };

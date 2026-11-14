@@ -71,6 +71,8 @@ export function ModelCompareCardHeader({
   tabsInline = false,
   actionsSlot,
   titleAccessory,
+  identityActions,
+  identitySummary,
   className,
 }: {
   /** Full model definition (used in Chat multi-model). Optional when `modelLabel` is provided. */
@@ -138,6 +140,10 @@ export function ModelCompareCardHeader({
    * effort chip).
    */
   titleAccessory?: ReactNode;
+  /** Controls at the end of the identity row (a Compare pane's settings). */
+  identityActions?: ReactNode;
+  /** A row under the identity row (a Compare pane's model and servers). */
+  identitySummary?: ReactNode;
   className?: string;
 }) {
   if (!showComparisonChrome && !showTraceTabs && !showIdentityHeader) {
@@ -326,15 +332,17 @@ export function ModelCompareCardHeader({
             {displayName.slice(0, 2)}
           </span>
         )}
-        <span className="min-w-0 truncate text-sm font-semibold leading-tight">
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-tight">
           {displayName}
         </span>
+        {identityActions}
       </div>
     ) : null;
 
   return (
     <>
       {identityHeader}
+      {identityHeader ? identitySummary : null}
 
       {showComparisonChrome ? (
         <div

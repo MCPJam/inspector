@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { COMPARE_PLAN_MARKETING_SECTIONS } from "@/components/organization/compare-plan-marketing";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
+import { buildV2ComparePlanSections } from "../compare-plan-v2";
 import type { PlanCatalog } from "@/hooks/useOrganizationBilling";
 
 function createPlanCatalog(
@@ -264,5 +265,23 @@ describe("buildComparePlanSectionsFromCatalog", () => {
       text: "Unlimited",
       emphasize: true,
     });
+  });
+});
+
+it("describes supported enterprise roles in both compare tables", () => {
+  const legacy = COMPARE_PLAN_MARKETING_SECTIONS.flatMap(({ rows }) => rows)
+    .find(({ label }) => label === "Role-based access control (RBAC)");
+  const current = buildV2ComparePlanSections(createPlanCatalog())
+    .flatMap(({ rows }) => rows)
+    .find(({ label }) => label === "Role-based access control");
+
+  expect(legacy?.enterprise).toEqual({
+    kind: "text",
+    text: "Basic",
+    emphasize: true,
+  });
+  expect(current?.enterprise).toEqual({
+    kind: "text",
+    text: "Roles, SCIM",
   });
 });

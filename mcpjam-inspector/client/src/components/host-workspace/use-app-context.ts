@@ -11,7 +11,9 @@ import type {
 import type { PluginIcons } from "@/lib/plugins/plugin-api-types";
 import {
   createModelContextController,
+  PLUGIN_CONTEXT_NOT_PERSISTED_CODES,
   PluginContextHeld,
+  PluginContextNotPersisted,
 } from "./model-context-controller";
 import {
   createThreadAppApi,
@@ -27,6 +29,15 @@ const EMPTY: PluginContextSnapshot = { revision: 0, sequence: 0, state: null };
 const REMOVE_ALL = "*";
 
 type ContextItem = ReturnType<typeof pluginContextAttachments>[number];
+
+function appContextGroupTitle(item: ContextItem): string {
+  const group = item.block?._meta?.["openai/group"];
+  if (group && typeof group === "object" && "title" in group &&
+      typeof group.title === "string" && group.title.trim()) {
+    return group.title.trim();
+  }
+  return "Context";
+}
 
 function plainJson(text: string) {
   const trimmed = text.trim();
@@ -160,8 +171,22 @@ export function useAppContext(
               throw new PluginContextHeld(
                 "Context was removed from this chat. Use the App to attach it again.",
               );
+            // Its diagnostic is already in Logs (`thread-app-api` posts it).
+            if (
+              error instanceof ThreadAppError &&
+              PLUGIN_CONTEXT_NOT_PERSISTED_CODES.has(error.code)
+            )
+              throw new PluginContextNotPersisted(error.code);
             throw error;
           }),
+      onRefused: (refusal) =>
+        logPluginExtensionIssue({
+          code: refusal.reason,
+          level: "warning",
+          message: `${handle.toolTitle ?? "App"}: ${describePluginError(refusal.reason)}`,
+          ...(refusal.excess ? { detail: refusal.excess } : {}),
+          dedupeKey: `context-refused:${handle.instanceToken}`,
+        }),
       userAttaching: () => appFrameFocused(toolNameRef.current),
       onHeld: () =>
         logPluginExtensionIssue({
@@ -273,8 +298,8 @@ export function useAppContext(
         );
     };
     const group = {
-      id: handle.instanceId,
-      title: handle.toolTitle,
+      appTitle: handle.toolTitle ?? "App",
+      removeAllLabel: `Remove all ${handle.toolTitle ?? "App"} context`,
       serverName,
       ...(pluginIcons ? { icons: pluginIcons } : {}),
       ...(serverIcons?.length ? { serverIcons } : {}),
@@ -284,11 +309,16 @@ export function useAppContext(
       const updateId = snapshot.state!.updateId;
       const id = `${handle.instanceId}:${updateId}:${item.index}`;
       const shown = appContextBlock(item);
+      const groupTitle = appContextGroupTitle(item);
       return {
         id,
         title: shown.title,
         description: handle.toolTitle,
-        group,
+        group: {
+          ...group,
+          id: JSON.stringify([handle.instanceId, groupTitle]),
+          title: groupTitle,
+        },
         block: shown.block,
         removing: removing === REMOVE_ALL,
       };

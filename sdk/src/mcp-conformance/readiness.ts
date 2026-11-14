@@ -1,10 +1,10 @@
 /**
  * The readiness / interoperability channel — Phase 7 §15.4.
  *
- * Everything reported here is NON-MUST advice: SHOULD, RECOMMENDED, or MAY
- * strength. A readiness warning is attached to
- * `MCPConformanceResult.readiness` and is NEVER converted into a check result,
- * so it cannot change `passed`, any check status, or the category summary.
+ * Everything reported here is NON-MUST advice: SHOULD or MAY strength. A
+ * readiness warning is attached to `MCPConformanceResult.readiness` and is
+ * NEVER converted into a check result, so it cannot change `passed`, any
+ * check status, or the category summary.
  * That separation is the point: a server that is fully conformant but awkward
  * to interoperate with should read as "conformant, with advice", never as a
  * failure — and a conformance verdict must stay a statement about MUSTs.
@@ -14,14 +14,16 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/client";
-import { scanXMcpHeaderDeclarations } from "../mcp-client-manager/mcp-header-mirror.js";
+import { READINESS_CATALOG } from "../conformance-catalog.js";
 import { listTools } from "../operations.js";
-import type {
-  MCPClientCheckContext,
-  MCPReadinessSpecStrength,
-  MCPReadinessWarning,
-  MCPServerSurfaceSnapshot,
-  RawHttpCheckContext,
+import {
+  MCP_LOG_LEVELS,
+  type MCPClientCheckContext,
+  type MCPReadinessId,
+  type MCPReadinessSpecStrength,
+  type MCPReadinessWarning,
+  type MCPServerSurfaceSnapshot,
+  type RawHttpCheckContext,
 } from "./types.js";
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
@@ -29,11 +31,11 @@ import {
   jsonRpcResult,
   legacyHeaders,
   legacyInitialize,
+  logRecords,
   rawHeadersProbe,
   modernHeaders,
   modernRequestBody,
   rawRequest,
-  walkToolsList,
 } from "./raw-http.js";
 
 /** Capabilities whose 2025-era mechanics were replaced in the 2026 revision. */
@@ -50,12 +52,19 @@ const DEPRECATED_MODERN_CAPABILITIES: Array<{
 
 function warning(
   id: MCPReadinessWarning["id"],
-  title: string,
   specStrength: MCPReadinessSpecStrength,
   message: string,
   details?: Record<string, unknown>
 ): MCPReadinessWarning {
-  return { id, title, severity: "warning", specStrength, message, details };
+  return {
+    id,
+    // One title per advice, shared with the static catalog UIs list.
+    title: READINESS_CATALOG[id].title,
+    severity: "warning",
+    specStrength,
+    message,
+    details,
+  };
 }
 
 /**
@@ -66,12 +75,22 @@ function warning(
  */
 function informational(
   id: MCPReadinessWarning["id"],
-  title: string,
   specStrength: MCPReadinessSpecStrength,
   message: string,
   details?: Record<string, unknown>
 ): MCPReadinessWarning {
-  return { ...warning(id, title, specStrength, message, details), informational: true };
+  return {
+    ...warning(id, specStrength, message, details),
+    informational: true,
+  };
+}
+
+/** Whether the run asked for this advice: all of it, unless `readinessIds` narrows it. */
+function adviceSelected(
+  config: { readinessIds?: readonly MCPReadinessId[] },
+  id: MCPReadinessId
+): boolean {
+  return config.readinessIds === undefined || config.readinessIds.includes(id);
 }
 
 function toolOrderWarning(
@@ -84,50 +103,94 @@ function toolOrderWarning(
 
   return warning(
     "readiness-tool-order-deterministic",
-    "Deterministic Tool Order",
     "SHOULD",
     "tools/list returned the tools in a different order on a repeated call; a stable order keeps client-side caches, diffs, and model prompts stable across calls",
     { firstListing: first, secondListing: second }
   );
 }
 
-function metadataQualityWarning(
-  tools: Tool[],
-  serverName: string | undefined
+/**
+ * The core "Tool Names" SHOULDs (length, character set, uniqueness), checked
+ * over every tool. They first appear in 2025-11-25, so an older negotiated
+ * revision gets no advice. Informational until advice has a grading rubric.
+ */
+function toolNameConventionsWarning(
+  ctx: MCPClientCheckContext,
+  tools: Tool[]
 ): MCPReadinessWarning | undefined {
-  const missingDescription = tools
-    .filter((tool) => !tool.description?.trim())
-    .map((tool) => tool.name);
-  const missingTitle = tools
-    .filter((tool) => !tool.title?.trim() && !tool.annotations?.title?.trim())
-    .map((tool) => tool.name);
-  const problems: string[] = [];
+  if (
+    ctx.config.era !== "modern" &&
+    negotiatedBefore(ctx, "2025-11-25") !== false
+  ) {
+    return undefined;
+  }
 
-  if (missingDescription.length > 0) {
-    problems.push(`${missingDescription.length} tool(s) have no description`);
-  }
-  if (missingTitle.length > 0) {
-    problems.push(
-      `${missingTitle.length} tool(s) have no human-readable title`
-    );
-  }
-  if (!serverName?.trim()) {
-    problems.push("the server does not report an identity name");
-  }
+  // A server can hand back a tool whose name is not a string; advice must
+  // never throw, so those are left to the checks that judge tool shape.
+  const names = tools
+    .map((tool) => tool.name as unknown)
+    .filter((name): name is string => typeof name === "string");
+  const unique = [...new Set(names)];
+  const badLength = unique.filter(
+    (name) => name.length < 1 || name.length > 128
+  );
+  // An empty name is already a length problem; the character rule is about
+  // what a name contains.
+  const badCharacters = unique.filter(
+    (name) => name.length > 0 && !/^[A-Za-z0-9_\-.]+$/.test(name)
+  );
+  const duplicates = unique.filter(
+    (name) => names.indexOf(name) !== names.lastIndexOf(name)
+  );
+
+  const problems = [
+    badLength.length > 0
+      ? `not between 1 and 128 characters: ${listNames(badLength)}`
+      : null,
+    badCharacters.length > 0
+      ? `characters other than A-Z, a-z, 0-9, underscore, hyphen, or dot: ${listNames(badCharacters)}`
+      : null,
+    duplicates.length > 0
+      ? `used more than once: ${listNames(duplicates)}`
+      : null,
+  ].filter((problem): problem is string => problem !== null);
 
   if (problems.length === 0) {
     return undefined;
   }
 
-  return warning(
-    "readiness-metadata-quality",
-    "Metadata Quality",
+  return informational(
+    "readiness-tool-name-conventions",
     "SHOULD",
-    `Primitive metadata is incomplete: ${problems.join(
-      "; "
-    )}. Models and human operators both select primitives from this metadata`,
-    { missingDescription, missingTitle }
+    `Tool names break the spec's naming conventions: ${problems.join("; ")}`,
+    { badLength, badCharacters, duplicates }
   );
+}
+
+/** Names the user has to rename, quoted, with a count for any beyond three. */
+function listNames(names: string[]): string {
+  const shown = names
+    .slice(0, 3)
+    .map((name) => JSON.stringify(name))
+    .join(", ");
+  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+}
+
+/**
+ * Whether the negotiated revision is older than `revision`, or undefined when
+ * there is no date-shaped revision to compare (a draft label, or none at all).
+ * Revisions are ISO dates, so string order is date order once the shape is
+ * known.
+ */
+function negotiatedBefore(
+  ctx: MCPClientCheckContext,
+  revision: string
+): boolean | undefined {
+  const negotiated = ctx.initializationInfo?.protocolVersion;
+  if (negotiated === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(negotiated)) {
+    return undefined;
+  }
+  return negotiated < revision;
 }
 
 function deprecatedFeatureWarning(
@@ -152,12 +215,9 @@ function deprecatedFeatureWarning(
         "resources.subscribe advertises the removed resources/subscribe flow; modern clients subscribe through subscriptions/listen"
       );
     }
-  } else if (
-    ctx.initializationInfo?.protocolVersion !== undefined &&
-    ctx.initializationInfo.protocolVersion < "2025-11-25"
-  ) {
+  } else if (negotiatedBefore(ctx, "2025-11-25") === true) {
     findings.push(
-      `the negotiated revision ${ctx.initializationInfo.protocolVersion} is superseded; newer clients negotiate a later revision`
+      `the negotiated revision ${ctx.initializationInfo?.protocolVersion} is superseded; newer clients negotiate a later revision`
     );
   }
 
@@ -167,8 +227,7 @@ function deprecatedFeatureWarning(
 
   return warning(
     "readiness-deprecated-feature-use",
-    "Deprecated Feature Use",
-    "SHOULD",
+    "Deprecation Notice",
     `Server advertises superseded functionality: ${findings.join("; ")}`,
     { findings }
   );
@@ -185,184 +244,43 @@ export async function collectClientReadiness(
 ): Promise<MCPReadinessWarning[]> {
   const warnings: MCPReadinessWarning[] = [];
 
-  try {
-    const secondListing = await listTools(ctx.manager, {
-      serverId: ctx.serverId,
-    });
-    const orderWarning = toolOrderWarning(
-      surface.toolNames,
-      secondListing.tools.map((tool) => tool.name)
-    );
-    if (orderWarning) {
-      warnings.push(orderWarning);
+  if (adviceSelected(ctx.config, "readiness-tool-order-deterministic")) {
+    try {
+      const secondListing = await listTools(ctx.manager, {
+        serverId: ctx.serverId,
+        signal: ctx.config.signal,
+      });
+      const orderWarning = toolOrderWarning(
+        surface.toolNames,
+        secondListing.tools.map((tool) => tool.name)
+      );
+      if (orderWarning) {
+        warnings.push(orderWarning);
+      }
+    } catch {
+      // A server without tools (or one that failed the repeat listing) simply
+      // yields no ordering advice.
     }
-  } catch {
-    // A server without tools (or one that failed the repeat listing) simply
-    // yields no ordering advice.
   }
 
-  const metadataWarning = metadataQualityWarning(
-    surface.tools,
-    ctx.initializationInfo?.serverVersion?.name
-  );
-  if (metadataWarning) {
-    warnings.push(metadataWarning);
+  if (adviceSelected(ctx.config, "readiness-tool-name-conventions")) {
+    const toolNameWarning = toolNameConventionsWarning(ctx, surface.tools);
+    if (toolNameWarning) {
+      warnings.push(toolNameWarning);
+    }
   }
 
-  const deprecated = deprecatedFeatureWarning(
-    ctx,
-    surface.serverCapabilities ?? {}
-  );
-  if (deprecated) {
-    warnings.push(deprecated);
+  if (adviceSelected(ctx.config, "readiness-deprecated-feature-use")) {
+    const deprecated = deprecatedFeatureWarning(
+      ctx,
+      surface.serverCapabilities ?? {}
+    );
+    if (deprecated) {
+      warnings.push(deprecated);
+    }
   }
 
   return warnings;
-}
-
-async function cacheTtlWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  if (ctx.config.era !== "modern") {
-    return undefined;
-  }
-
-  const version = ctx.config.protocolVersion ?? "2026-07-28";
-  const result = await rawRequest(ctx, {
-    headers: modernHeaders({ protocolVersion: version, method: "tools/list" }),
-    body: modernRequestBody({
-      id: 8100,
-      method: "tools/list",
-      protocolVersion: version,
-    }),
-  });
-
-  const ttlMs = jsonRpcResult(result)?.ttlMs;
-  if (typeof ttlMs !== "number" || ttlMs > 0) {
-    return undefined;
-  }
-
-  return warning(
-    "readiness-cache-ttl-useful",
-    "Useful Cache TTLs",
-    "SHOULD",
-    "Cacheable results advertise ttlMs: 0, so no client can reuse them; a non-zero TTL on stable listings removes a round trip per call",
-    { method: "tools/list", ttlMs }
-  );
-}
-
-/**
- * SEP-2243 `x-mcp-header` declarations, on the ADVICE channel.
- *
- * The MUST is `tools-x-mcp-header-declarations-valid`; this is the
- * interoperability half of the same observation, said in the words an operator
- * needs. The spec's consequence for a bad declaration is not "the header is
- * skipped" — a conforming client treats the whole TOOL DEFINITION as invalid
- * and drops it from `tools/list`, so the tool silently disappears from that
- * client. A pass/fail verdict does not convey that; this does.
- *
- * Raw, for the same unavoidable reason as the check: the official client
- * applies the exclusion itself, so `surface.tools` never contains an offender
- * and a client-side scan would always come back clean.
- */
-async function xMcpHeaderDeclarationsWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  if (ctx.config.era !== "modern") {
-    // Before 2026-07-28 the annotation carries no meaning; advising on it
-    // would invent a requirement the revision never stated.
-    return undefined;
-  }
-
-  const version = ctx.config.protocolVersion ?? "2026-07-28";
-
-  // The SAME bounded, cycle-safe walk the declaration check runs. A
-  // first-page-only scan would let a paginated server keep hiding tools from
-  // conforming clients without ever earning the advice, and a second copy of
-  // the walk would be a second place for a cursor bug to live. What a
-  // truncated walk MEANS still differs by caller: the check cannot pass over
-  // tools it never read, while advice simply reports on what it saw.
-  const walk = await walkToolsList({
-    startId: 8110,
-    request: ({ id, cursor }) =>
-      rawRequest(ctx, {
-        headers: modernHeaders({
-          protocolVersion: version,
-          method: "tools/list",
-        }),
-        body: modernRequestBody({
-          id,
-          method: "tools/list",
-          protocolVersion: version,
-          ...(cursor !== undefined ? { params: { cursor } } : {}),
-        }),
-      }),
-  });
-
-  const invalid: Array<{ tool: string; reason: string }> = [];
-  for (const entry of walk.tools) {
-    if (entry.inputSchema === undefined) continue;
-    const scan = scanXMcpHeaderDeclarations(entry.inputSchema);
-    if (!scan.valid) {
-      invalid.push({
-        tool: typeof entry.name === "string" ? entry.name : "<unnamed>",
-        reason: scan.reason,
-      });
-    }
-  }
-
-  if (invalid.length === 0) return undefined;
-
-  return warning(
-    "readiness-x-mcp-header-declarations",
-    "x-mcp-header Declarations",
-    "SHOULD",
-    `${invalid.length} tool(s) declare x-mcp-header in a way SEP-2243 does not permit: ${invalid
-      .map((entry) => `${entry.tool} (${entry.reason})`)
-      .join(
-        "; "
-      )}. Clients that implement the mirroring exclude these tools from tools/list entirely, so they become invisible rather than merely losing a header`,
-    { invalid }
-  );
-}
-
-/**
- * No revision of the transports spec maps an unparseable POST body to ANY
- * HTTP status or JSON-RPC error — the docs are silent in every version — so
- * this can never be a check. JSON-RPC 2.0 itself names `-32700 Parse error`
- * for exactly this, and a server that answers garbage with a SUCCESS status
- * confuses every client on the far side of a proxy bug or truncated body.
- * Advice therefore fires only when the server ACCEPTS the unparseable body
- * without an in-band parse error.
- */
-async function parseErrorHandlingWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  const result = await rawRequest(ctx, {
-    rawBody: '{"jsonrpc": "2.0",',
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-    },
-    // A server that hangs on garbage instead of answering is not worth the
-    // full check timeout — this is advice, not a verdict.
-    timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
-  });
-  if (result.status >= 300) {
-    // Any rejection is unobjectionable: the spec never says which one.
-    return undefined;
-  }
-  if (jsonRpcError(result)?.code === -32700) {
-    return undefined;
-  }
-
-  return warning(
-    "readiness-parse-error-handling",
-    "Parse Error Handling",
-    "MAY",
-    `The server answered an unparseable JSON body with HTTP ${result.status} and no JSON-RPC -32700 Parse error. No MCP revision mandates a particular response here, but accepting garbage as success hides transport corruption from clients`,
-    { status: result.status }
-  );
 }
 
 /**
@@ -418,14 +336,16 @@ async function sessionTerminationWarning(
     }
     return warning(
       "readiness-session-termination",
-      "Explicit Session Termination",
       "SHOULD",
       `A 2026-07-28 server SHOULD answer stray GET/DELETE traffic from older clients with HTTP 405 Method Not Allowed; ${offenders.join(
         ", "
       )}`,
       // A probe that never completed is reported as such rather than as a
       // status, so the advice cannot read as though both were observed.
-      { getStatus: get?.status ?? "not observed", deleteStatus: del?.status ?? "not observed" }
+      {
+        getStatus: get?.status ?? "not observed",
+        deleteStatus: del?.status ?? "not observed",
+      }
     );
   }
 
@@ -443,101 +363,26 @@ async function sessionTerminationWarning(
     }),
     timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
   });
-  if (deleteResult.status < 500) {
-    // 2xx terminated it, 405 declined to support termination (MAY), and any
-    // other 4xx is at worst odd — none of these earn advice.
+  // The spec names exactly two answers: terminating the session, and 405 to
+  // decline termination (MAY). It names no success code, so any 2xx counts as
+  // terminated; every other answer is one the spec never offers.
+  if (
+    (deleteResult.status >= 200 && deleteResult.status < 300) ||
+    deleteResult.status === 405
+  ) {
     return undefined;
   }
 
   return warning(
     "readiness-session-termination",
-    "Explicit Session Termination",
     "SHOULD",
-    `DELETE with the session id got HTTP ${deleteResult.status}. Clients SHOULD send this DELETE when abandoning a session (servers MAY answer 405 to decline), but a 5xx means the termination handler itself is broken`,
+    `DELETE with the session id got HTTP ${deleteResult.status}. Clients SHOULD send this DELETE when abandoning a session; the server should terminate it (2xx) or decline with 405 Method Not Allowed (MAY)`,
     { status: deleteResult.status }
   );
 }
 
-function metadataUrl(serverUrl: string, wellKnown: string): string {
-  const url = new URL(serverUrl);
-  return new URL(wellKnown, `${url.protocol}//${url.host}`).toString();
-}
-
 /**
- * A plain JSON document fetched over HTTP — OAuth metadata, not MCP traffic.
- *
- * `record: false` is load-bearing. These documents are not JSON-RPC and never
- * were, so letting them into the run-wide wire record fed them to
- * `wire-schema-valid`, which graded them against `JSONRPCMessage` and reported
- * both metadata documents as missing `id` and `jsonrpc` — on every server,
- * including ones with nothing else to report.
- *
- * This is the ONLY caller in this module that opts out, and deliberately so.
- * Every other `rawRequest` here speaks JSON-RPC to the MCP endpoint, including
- * the deliberately malformed body in `parseErrorHandlingWarning`, whose
- * response is exactly the kind of frame the wire check exists to grade.
- */
-async function fetchJson(
-  ctx: RawHttpCheckContext,
-  url: string
-): Promise<Record<string, unknown> | undefined> {
-  const result = await rawRequest(ctx, {
-    url,
-    method: "GET",
-    includeBaseHeaders: false,
-    headers: { Accept: "application/json" },
-    record: false,
-  });
-  return result.status === 200 &&
-    result.json !== null &&
-    typeof result.json === "object"
-    ? (result.json as Record<string, unknown>)
-    : undefined;
-}
-
-/**
- * RFC 9207 advises an authorization server to echo `iss` on the authorization
- * response so a client can detect mix-up attacks. It is RECOMMENDED, not
- * required, so its absence is advice — probed only when the resource actually
- * advertises OAuth metadata.
- */
-async function oauthIssWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  const resourceMetadata = await fetchJson(
-    ctx,
-    metadataUrl(ctx.serverUrl, "/.well-known/oauth-protected-resource")
-  );
-  const authorizationServers = resourceMetadata?.authorization_servers;
-  const issuer = Array.isArray(authorizationServers)
-    ? authorizationServers[0]
-    : undefined;
-  if (typeof issuer !== "string") {
-    return undefined;
-  }
-
-  const asMetadata = await fetchJson(
-    ctx,
-    metadataUrl(issuer, "/.well-known/oauth-authorization-server")
-  );
-  if (!asMetadata) {
-    return undefined;
-  }
-
-  return asMetadata.authorization_response_iss_parameter_supported === true
-    ? undefined
-    : warning(
-        "readiness-oauth-iss-advertised",
-        "Authorization Response iss",
-        "RECOMMENDED",
-        `Authorization server ${issuer} does not advertise authorization_response_iss_parameter_supported; emitting iss lets clients detect authorization-server mix-up attacks`,
-        { issuer }
-      );
-}
-
-/**
- * Readiness advice that only the raw wire (or unauthenticated metadata
- * endpoints) can show. Each probe is independently guarded: readiness is
+ * Readiness advice that only the raw wire can show. Each probe is independently guarded: readiness is
  * advisory, so a probe that throws contributes nothing and never fails a run.
  */
 /**
@@ -594,7 +439,6 @@ async function protocolVersionHeaderWarning(
 
   return informational(
     "readiness-protocol-version-header-required",
-    "Protocol Version Header Required",
     "SHOULD",
     `The server answered a POST carrying no MCP-Protocol-Version header with HTTP ${result.status} and no error. SEP-2243 makes the header REQUIRED on every POST; tolerating its absence is permitted only for servers that still support pre-2025-06-18 clients, and it denies intermediaries the routing signal the header exists to provide`,
     { status: result.status }
@@ -602,77 +446,111 @@ async function protocolVersionHeaderWarning(
 }
 
 /**
- * SEP-2164's error example carries the requested uri in `error.data`:
+ * Log level filtering: call the operator's logging tool asking for logs at
+ * `logProbe.level` (default `warning`) and look at what comes back.
  *
- *   { "code": -32602, "message": "Resource not found",
- *     "data": { "uri": "file:///nonexistent.txt" } }
+ * The 2026-07-28 logging page says the server "MAY send" log notifications at
+ * or above the requested level. Sending none is allowed, and nothing states
+ * lower-level logs as a violation, so both findings are informational. They
+ * are still worth showing: the operator told us this tool logs, so silence or
+ * lower-level logs usually mean the server's filtering is off.
  *
- * ADVICE, at the weakest strength, because the spec shows it and never states
- * it — there is no MUST or SHOULD attached. Promoting an example to a
- * requirement is how a conformance suite acquires false positives, and the
- * `-32602` code itself is already a MUST covered by a real check. What the echo
- * actually buys is diagnosis: a client batching several reads gets an error per
- * request id, and without the uri a human reading a log cannot tell which read
- * failed.
+ * A call that does not complete cleanly proves nothing about filtering, so it
+ * yields no advice. Modern era only, and only when a `logProbe` (or this
+ * advice's own `logLevelFilteringProbe`) is supplied: no metadata says which
+ * tool logs, and advice never calls a tool on a guess.
  */
-async function resourceErrorUriWarning(
+async function logLevelFilteringWarning(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning | undefined> {
-  if (ctx.config.era !== "modern") {
+  const probe = ctx.config.logLevelFilteringProbe ?? ctx.config.logProbe;
+  if (ctx.config.era !== "modern" || !probe) {
     return undefined;
   }
+  const level = probe.level ?? "warning";
   const version = ctx.config.protocolVersion ?? "2026-07-28";
-  const missingUri = `mcpjam-readiness://missing/${version}`;
-  const result = await rawRequest(ctx, {
+  const response = await rawRequest(ctx, {
     headers: {
       ...modernHeaders({
         protocolVersion: version,
-        method: "resources/read",
-        name: missingUri,
+        method: "tools/call",
+        name: probe.toolName,
       }),
     },
     body: modernRequestBody({
-      id: 9402,
-      method: "resources/read",
-      params: { uri: missingUri },
+      id: 9403,
+      method: "tools/call",
+      params: { name: probe.toolName, arguments: probe.arguments ?? {} },
       protocolVersion: version,
+      logLevel: level,
     }),
-    timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
+    timeoutMs: ctx.config.checkTimeout,
   });
 
-  const error = jsonRpcError(result);
-  if (!error) {
-    // No error at all is a different finding, and it belongs to the check that
-    // asserts the -32602 MUST — not to advice about the error's contents.
-    return undefined;
-  }
-  const data = error.data as { uri?: unknown } | undefined;
-  if (typeof data?.uri === "string") {
+  const result = jsonRpcResult(response);
+  if (
+    response.bodyError ||
+    response.status < 200 ||
+    response.status >= 300 ||
+    jsonRpcError(response) ||
+    result?.resultType !== "complete" ||
+    result.isError === true
+  ) {
     return undefined;
   }
 
+  const levels = logRecords(response).map(
+    (record) => (record.params as Record<string, unknown> | undefined)?.level
+  );
+  const details = { probedTool: probe.toolName, requestedLogLevel: level };
+  if (levels.length === 0) {
+    return informational(
+      "readiness-log-level-filtering",
+      "MAY",
+      `No logs came back when ${JSON.stringify(probe.toolName)} was called asking for "${level}" logs. The spec lets a server send none, but if this tool logs at "${level}" or above, the server may be dropping those logs, or the tool did not log on this call`,
+      { ...details, logNotificationCount: 0 }
+    );
+  }
+
+  const known = MCP_LOG_LEVELS as readonly unknown[];
+  const invalidOrLowerLevels = levels.filter(
+    (found) =>
+      !known.includes(found) || known.indexOf(found) < known.indexOf(level)
+  );
+  if (invalidOrLowerLevels.length === 0) {
+    return undefined;
+  }
   return informational(
-    "readiness-resource-error-echoes-uri",
-    "Resource Errors Name Their URI",
+    "readiness-log-level-filtering",
     "MAY",
-    `The server's error for an unreadable resource carries no error.data.uri. The spec's own example echoes it, and without it a client that batches reads cannot tell a human which uri failed`,
-    { probedUri: missingUri, jsonRpcCode: error.code }
+    `The server sent logs below the requested "${level}" level, or with an unknown level: ${invalidOrLowerLevels
+      .map((found) => JSON.stringify(found) ?? "undefined")
+      .join(
+        ", "
+      )}. The spec only has the server send logs at or above the requested level`,
+    { ...details, logNotificationCount: levels.length, invalidOrLowerLevels }
   );
 }
 
 export async function collectRawReadiness(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning[]> {
-  const probes = [
-    cacheTtlWarning(ctx),
-    oauthIssWarning(ctx),
-    xMcpHeaderDeclarationsWarning(ctx),
-    parseErrorHandlingWarning(ctx),
-    sessionTerminationWarning(ctx),
-    protocolVersionHeaderWarning(ctx),
-    resourceErrorUriWarning(ctx),
+  const probes: Array<
+    [MCPReadinessId, () => Promise<MCPReadinessWarning | undefined>]
+  > = [
+    ["readiness-session-termination", () => sessionTerminationWarning(ctx)],
+    [
+      "readiness-protocol-version-header-required",
+      () => protocolVersionHeaderWarning(ctx),
+    ],
+    ["readiness-log-level-filtering", () => logLevelFilteringWarning(ctx)],
   ];
-  const settled = await Promise.allSettled(probes);
+  // An advice left out never sends its probe, not just its result.
+  const settled = await Promise.allSettled(
+    probes
+      .filter(([id]) => adviceSelected(ctx.config, id))
+      .map(([, probe]) => probe())
+  );
   return settled.flatMap((outcome) =>
     outcome.status === "fulfilled" && outcome.value ? [outcome.value] : []
   );

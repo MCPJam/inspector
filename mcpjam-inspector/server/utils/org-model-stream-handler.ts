@@ -1,3 +1,4 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
@@ -37,11 +38,11 @@ import type {
 } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
-  buildOrgModelFromResolvedConfig,
   assertOrgModelAllowed,
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "./guarded-org-model.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
   type PersistChatOutcome,
@@ -85,10 +86,12 @@ import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
+import type { SettleSuspendedToolCall } from "./direct-chat-scope-step-up.js";
 
 export interface OrgModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   projectId: string;
   providerKey: string;
   /** Progressive discovery — forwarded into handleMCPJamFreeChatModel. */
@@ -175,6 +178,8 @@ export interface OrgModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
+  /** Forwarded; see `MCPJamHandlerOptions.settleSuspendedHistoryToolCall`. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   /**
    * Extra body fields merged into the per-step Convex `/stream/org` POST.
    * Swarm runs use this to thread `journeyRunId` so the backend BYOK writer
@@ -301,6 +306,7 @@ export function formatLocalStreamError(error: unknown): string {
 // ---------------------------------------------------------------------------
 
 export interface OrgLocalModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   /**
@@ -365,8 +371,10 @@ export interface OrgLocalModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
+  /** History settlement for calls a sign-in suspended. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   shouldPauseAfterStep?: () => boolean;
-  suspendedToolCallId?: () => string | undefined;
+  suspendedToolCallIds?: () => ReadonlySet<string>;
   /**
    * Progressive tool discovery plan. When `plan.enabled === true`, each
    * step's `activeTools` is recomputed from `discoveryState` via the AI SDK
@@ -398,9 +406,9 @@ export interface OrgLocalModelHandlerOptions {
  * is nothing for the refusal to protect.
  *
  * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
- * here — this runs before the model has produced an input — and the two
- * families that use the form (`effective-skill-tools`, `server-skill-tools`)
- * declare it UNCONDITIONALLY and answer `false` on the common path. Reading
+ * here — this runs before the model has produced an input — and the skill
+ * tools that use the form (`effective-skill-tools`) declare it
+ * UNCONDITIONALLY and answer `false` on the common path. Reading
  * "unevaluable" as "asks" refused every local-runtime turn that carried a
  * skill tool, switch or no switch, where before it ran. `streamText` evaluates
  * the function per call, exactly as it did before the declaration was unified;
@@ -622,7 +630,7 @@ export function handleLocalOrgChatModel(
   try {
     assertOrgModelAllowed(provider, modelId);
     llmModel = admitEachLocalOrgAttempt(
-      buildOrgModelFromResolvedConfig(provider, modelId),
+      buildGuardedOrgModel(provider, modelId),
       options.admission,
       modelId,
       attempts,
@@ -662,6 +670,7 @@ export function handleLocalOrgChatModel(
 
   let streamErrored = false;
   return streamDirectChatWithLiveTrace({
+    turnAuthorization: options.turnAuthorization,
     llmModel,
     modelId,
     messageHistory: messages,
@@ -695,8 +704,9 @@ export function handleLocalOrgChatModel(
     onStreamComplete,
     chatSessionId: options.chatSessionId,
     scopeStepUpResume: options.scopeStepUpResume,
+    settleSuspendedHistoryToolCall: options.settleSuspendedHistoryToolCall,
     shouldPauseAfterStep: options.shouldPauseAfterStep,
-    suspendedToolCallId: options.suspendedToolCallId,
+    suspendedToolCallIds: options.suspendedToolCallIds,
     onPersist: buildLocalOrgOnPersist({
       options,
       attempts,
@@ -828,6 +838,11 @@ export async function postLocalUsage(params: {
    */
   journeyRunId?: string;
   /**
+   * MCP Events trigger run the turn served. The backend charges the usage
+   * record's cost to that run and its trigger's daily spend cap.
+   */
+  eventRunId?: string;
+  /**
    * The eval iteration (and suite run) a local-runtime eval turn belongs to.
    * With `execution`, the backend merges the record onto that iteration row;
    * a swarm turn is attributed by `journeyRunId` + `chatSessionId` instead.
@@ -883,6 +898,7 @@ export async function postLocalUsage(params: {
           ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
         ...(params.journeyRunId ? { journeyRunId: params.journeyRunId } : {}),
+        ...(params.eventRunId ? { eventRunId: params.eventRunId } : {}),
         ...(params.evalIterationId
           ? { evalIterationId: params.evalIterationId }
           : {}),
@@ -920,6 +936,7 @@ export async function handleHostedOrgChatModel(
   }
 
   return handleMCPJamFreeChatModel({
+    turnAuthorization: options.turnAuthorization,
     messages: options.messages,
     modelId: options.modelId,
     modelSelection: options.modelSelection,
@@ -956,6 +973,12 @@ export async function handleHostedOrgChatModel(
     heartbeatIntervalMs: options.heartbeatIntervalMs,
     maxSteps: options.maxSteps,
     scopeStepUpResume: options.scopeStepUpResume,
+    ...(options.settleSuspendedHistoryToolCall
+      ? {
+          settleSuspendedHistoryToolCall:
+            options.settleSuspendedHistoryToolCall,
+        }
+      : {}),
     progressivePlan: options.progressivePlan,
     discoveryState: options.discoveryState,
     failureReporter: options.failureReporter,

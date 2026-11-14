@@ -4,116 +4,134 @@
   "harnesses": {
     "claude-code": {
       "conformance": {
-        "version": "published-claude-code-1.0.5-2c5f17bc91bf",
-        "evidence": "https://github.com/MCPJam/inspector/actions/runs/40646619108"
+        "version": "published-claude-code-1.0.8-13b5fba0c451",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/43425814206"
       },
       "targets": {
         "darwin-arm64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:edf9232d7eed0cf3c1af2bbd814a105ace53322a63b011d2a4960e6e021182f0"
+            "packVersion": "1.0.8",
+            "treeDigest": "sha256:7a300decf82c93b15cfd3323fbb41173abe4ee6e68cddd5573b2acb5c725bd33"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:5611ae8b02e0f325e5a9624bacf36a583172641fd55d6473f1cb30a3956d4a40"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:3a5c06c4427693bea1bbff727ed760f4eef3679ee3b46b186b23e3cbfba27592"
           }
         },
         "darwin-x64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:28d9771865f95988066a5f05f938a2eeeeca0cb0b3335f1355afe8bab862c40c"
+            "packVersion": "1.0.8",
+            "treeDigest": "sha256:09d996cb28f08703d60f40a771b90d0b4e59e33f8727757ec66b768c3a3646fc"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:e551ee37091ac7edb2d7bf6f40dc3aea15fa5e39a5119e9f8e00dd14b0de7526"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:3dc4433d7fd53dbbae8f9dbcf7ba8d98290ec71c89b4d5b03345cdea6ccb0529"
           }
         },
         "linux-arm64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:dc38e8a3c978600983359aaebdfc0fc724c6ae3a9e364e28d2bff62c2977e719"
+            "packVersion": "1.0.8",
+            "treeDigest": "sha256:e3439187f52f8901f0624ad431f7754f351e4cd4face31a3c8b533f48d6dcf06"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:6ba6505bb2a053e35dbb50b05cf46b2a61bdee51be02935ded19091bbe220610"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:b6dd62ea7a0faf45c2538fcabd38b5c73722fe24ae892bda517b36a87ef49675"
           }
         },
         "linux-x64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:e50c4cbc612f5d32eb31ea85cb7b0e751ee77a9674ee87eb11b5aee34ee725b6"
+            "packVersion": "1.0.8",
+            "treeDigest": "sha256:217880bb508093d419b4a463ffcdc4f2a20c97a9718a5304290e76a589e526e9"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:34acb460678b6cb366513f1fb539f91ae5113f63058d6c5af65fa2f42a7a8091"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:5541f952616bfbb61e579c83c7a30e7b2415be99f1f9502ed1fd32c6c4d92ed1"
           }
         },
         "win32-x64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:49716aab69eabf900d2c2bb9c42c10c4b40609d294ece9b747af01cbcbc15fde"
+            "packVersion": "1.0.8",
+            "treeDigest": "sha256:fdc1eda0e6d782427e4aa9fc21c38187de35f2523ce51609d70d1a5416a7e0e8"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:a5cbfeefa8d33dd276d5203863bb2da93bca1c84728ce890861d7c13449ef3a3"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:5517bb7e34e39cff8c9d5a7fdec714a57d4471bdd4b73184aa0f64e69e23ab30"
           }
         }
       }
     },
     "codex": {
       "conformance": {
-        "version": "published-codex-1.0.3-28d36fb6045a",
-        "evidence": "https://github.com/MCPJam/inspector/actions/runs/39376194745"
+        "version": "published-codex-1.0.4-13b5fba0c451",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/43425814206"
       },
       "targets": {
         "darwin-arm64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:5493e2bdc61a670d295e8342703c1386b5872ca6b865220a1cbcd80e3d26637c"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:656894bb4e3bc0c0d7a2b078f8b38face49ee1bc495404d766d17b6c634d5087"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:5e2c81bf15a88f4217139e870de85fa478cada7df83cf0ed236ea80013cf75a6"
           }
         },
         "darwin-x64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:20c3a9a65a116143337c4d77e409e435b280792163751334d36e2838889a657d"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:02ece384d2ca957f902676c98226e6410b82ba0944678ef2de7135b8f4d61b92"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:907d04331f6fe1038eb76a6da33dbac08d32cd2f67493e55313546a59212273b"
           }
         },
         "linux-arm64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:542927c6ce2b4e49a29494a9e08b398ef818fba1979f5eaa1db3055be7b8071f"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:488d021c89ba0228d4a9bf7842953cb0525c0a0891471fcd252a887b7dc97131"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:7de4a4b34bbcdd6b451ca8495ded462c6bf8d16855c14baabfc5a5ea8ef63243"
           }
         },
         "linux-x64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:9dcf7926448d9cb034962b1cf92faa1176406dac3be0711cfcb49056b185d19e"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:002899b571a231bcbbe692ed8f24e4e2f7338cc69c5e9c683c580264aeac0ebd"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:a2a660fc8a26eda4e4e57d73445f267b2870ecad25ba8b30ccb6a67385ca21ee"
           }
         },
         "win32-x64": {
           "desired": {
-            "packVersion": "1.0.3",
-            "treeDigest": "sha256:851f170d891087f84619c054fcbbc6190ed41766b4f374410e158f5aa66e54f7"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:13a0fd3c3b0536c4e27cc35342707b65784d02c32d20aed530fa71af014daedf"
+            "packVersion": "1.0.4",
+            "treeDigest": "sha256:0e6dc875a8ef5ae3dbd3a19df528987fe65a6c82c6d7b608be6851714ece2e46"
+          }
+        }
+      }
+    },
+    "copilot-cli": {
+      "conformance": {
+        "version": "published-copilot-cli-1.0.0-13b5fba0c451",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/43425814206"
+      },
+      "targets": {
+        "darwin-arm64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:9c5acb29545d85eea75ea8080a2d3a76078605c412cf6b2f538e293aa07b3a81"
+          }
+        },
+        "darwin-x64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:17119f71cb64ad40e50a2f563ab6a234c1bba20e29c4554b5f10ed7d4debb9e6"
+          }
+        },
+        "linux-arm64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:9f448f9da4fcc0046cc8b1e9597040d9887c6e466a68970267ea42dcb62a0ef4"
+          }
+        },
+        "linux-x64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:18d7f34b11471d100596513401dec3fd337a42bf9d2a5e7632678bd2182ce1e6"
+          }
+        },
+        "win32-x64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:6be4ea3c18a63736c62c4f0f419d71a7712518066751862c0676040e08029910"
           }
         }
       }

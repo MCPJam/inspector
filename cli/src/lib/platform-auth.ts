@@ -20,19 +20,48 @@ import {
 import { getOAuthAccessToken as getSharedOAuthAccessToken, exchangePlatformToken } from "@mcpjam/sdk/platform-auth";
 import { PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
+  backendFetch,
+  isMcpjamDeploymentError,
+  resolveDeployment,
+} from "@mcpjam/sdk/internal/deployment";
+import {
   clearStoredAuth,
   getAuthFilePath,
   writeStoredAuth,
   type StoredPlatformAuth,
 } from "./auth-store.js";
-import { operationalError, usageError } from "./output.js";
+import {
+  deploymentCliError,
+  deploymentRefusalOf,
+  operationalError,
+  usageError,
+} from "./output.js";
 
-export const DEFAULT_PLATFORM_ORIGIN = "https://app.mcpjam.com";
 const LEGACY_API_KEY_PREFIX = "mcpjam_";
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 
-export const LEGACY_KEY_REMEDY =
-  "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam cloud login`.";
+/** Where this command's server lists API keys, for the remedy below. */
+type ServerHint = { apiUrl?: string; env?: NodeJS.ProcessEnv };
+
+/**
+ * The fix for a legacy key, naming the API keys page of the server the
+ * command uses. A refused address names no page: the command stops on that
+ * refusal before it would matter.
+ */
+export function legacyKeyRemedy(hint: ServerHint = {}): string {
+  let page = "Settings > API keys in MCPJam";
+  try {
+    const { apiUrl } = resolveDeployment({
+      apiUrl: hint.apiUrl,
+      credential: "api-key",
+      env: hint.env ?? process.env,
+    });
+    page = `${new URL(apiUrl).origin}/settings/api-keys`;
+  } catch (error) {
+    if (!isMcpjamDeploymentError(error)) throw error;
+  }
+  return `Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at ${page} or run \`mcpjam cloud login\`.`;
+}
 
 export type ExplicitApiKeyInspection =
   | { ok: true }
@@ -43,9 +72,12 @@ export type ExplicitApiKeyInspection =
  * invalid for Cloud commands. `cloud status` reports this in-band; other
  * commands still reject via {@link resolvePlatformCredential}.
  */
-export function inspectExplicitApiKey(value: string): ExplicitApiKeyInspection {
+export function inspectExplicitApiKey(
+  value: string,
+  hint: ServerHint = {}
+): ExplicitApiKeyInspection {
   if (value.startsWith(LEGACY_API_KEY_PREFIX)) {
-    return { ok: false, error: LEGACY_KEY_REMEDY };
+    return { ok: false, error: legacyKeyRemedy(hint) };
   }
   return { ok: true };
 }
@@ -66,8 +98,23 @@ export interface ResolveCredentialDependencies {
   warn?: (message: string) => void;
 }
 
-export function resolvePlatformCredential(
+/**
+ * Which credential {@link resolvePlatformCredential} would pick, without
+ * reading it or warning: what a command decides its server from at start.
+ */
+export function platformCredentialKind(
   options: { apiKey?: string },
+  env: NodeJS.ProcessEnv = process.env
+): PlatformCredential["kind"] {
+  if (options.apiKey?.trim()) return "api-key";
+  const envKey = env.MCPJAM_API_KEY?.trim();
+  return envKey && !envKey.startsWith(LEGACY_API_KEY_PREFIX)
+    ? "api-key"
+    : "oauth";
+}
+
+export function resolvePlatformCredential(
+  options: { apiKey?: string; apiUrl?: string },
   deps: ResolveCredentialDependencies = {}
 ): PlatformCredential {
   const env = deps.env ?? process.env;
@@ -76,7 +123,10 @@ export function resolvePlatformCredential(
 
   const flagKey = options.apiKey?.trim();
   if (flagKey) {
-    const inspected = inspectExplicitApiKey(flagKey);
+    const inspected = inspectExplicitApiKey(flagKey, {
+      apiUrl: options.apiUrl,
+      env,
+    });
     if (!inspected.ok) {
       throw usageError(inspected.error);
     }
@@ -91,7 +141,7 @@ export function resolvePlatformCredential(
     // Non-eval platform commands retain their migration fallback. Eval runs
     // reject an explicitly selected legacy key before reaching this resolver.
     warn(
-      `Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${LEGACY_KEY_REMEDY}`
+      `Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${legacyKeyRemedy({ apiUrl: options.apiUrl, env })}`
     );
   }
 
@@ -143,6 +193,11 @@ export interface PlatformLoginTarget {
    * later cloud commands talk to the same deployment by default.
    */
   apiUrl: string;
+  /**
+   * Edge-authenticator headers (`--api-header`). Sent to this server's login
+   * settings and `/me` only, never to the sign-in provider.
+   */
+  headers?: Readonly<Record<string, string>>;
 }
 
 interface CliAuthConfig {
@@ -158,7 +213,14 @@ export async function runPlatformLogin(
   deps: PlatformLoginDependencies = {}
 ): Promise<PlatformLoginResult> {
   const fetchFn = deps.fetchFn ?? fetch;
-  const config = await fetchCliAuthConfig(target.origin, fetchFn);
+  // MCPJam's own endpoints refuse redirects; the sign-in provider's token
+  // endpoint is not MCPJam and keeps plain `fetch`.
+  const mcpjamFetch = backendFetch(deps.fetchFn);
+  const config = await fetchCliAuthConfig(
+    target.origin,
+    mcpjamFetch,
+    target.headers
+  );
 
   const codeVerifier = generateRandomString(64);
   const state = generateRandomString(32);
@@ -228,7 +290,8 @@ export async function runPlatformLogin(
   const account = await enrichStoredAuthWithAccount(stored, {
     apiUrl: target.apiUrl,
     authFilePath,
-    fetchFn,
+    fetchFn: mcpjamFetch,
+    ...(target.headers ? { headers: target.headers } : {}),
     warn,
   });
 
@@ -258,6 +321,7 @@ async function enrichStoredAuthWithAccount(
     apiUrl: string;
     authFilePath: string;
     fetchFn: typeof fetch;
+    headers?: Readonly<Record<string, string>>;
     warn: (message: string) => void;
   }
 ): Promise<{ email?: string; plan?: string }> {
@@ -268,6 +332,7 @@ async function enrichStoredAuthWithAccount(
       baseUrl: deps.apiUrl,
       getAuth: async () => stored.accessToken,
       fetch: deps.fetchFn,
+      ...(deps.headers ? { extraHeaders: { ...deps.headers } } : {}),
     });
     const me = await client.getMe();
     if (typeof me.email === "string" && me.email.trim()) {
@@ -277,6 +342,10 @@ async function enrichStoredAuthWithAccount(
       plan = me.plan.trim();
     }
   } catch (error) {
+    // A refused redirect is the server address being wrong, not a lookup
+    // that failed: every later command would refuse it too.
+    const refusal = deploymentRefusalOf(error);
+    if (refusal) throw deploymentCliError(refusal);
     deps.warn(
       `Could not load account details after login: ${
         error instanceof Error ? error.message : String(error)
@@ -312,13 +381,15 @@ async function enrichStoredAuthWithAccount(
 
 async function fetchCliAuthConfig(
   platformOrigin: string,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  headers: Readonly<Record<string, string>> | undefined
 ): Promise<CliAuthConfig> {
   const configUrl = `${platformOrigin.replace(/\/+$/, "")}/api/cli/auth/config`;
   let response: Response;
   try {
-    response = await fetchFn(configUrl);
+    response = await fetchFn(configUrl, headers ? { headers: { ...headers } } : {});
   } catch (error) {
+    if (isMcpjamDeploymentError(error)) throw error;
     throw operationalError(
       `Could not reach ${configUrl}: ${
         error instanceof Error ? error.message : String(error)

@@ -26,6 +26,9 @@
  */
 
 import { openaiPolicySource, type OpenAIPolicySourceRef } from "./manifest.js";
+import { OPENAI_PORTAL_CODE_ERRORS } from "./portal-code-errors.js";
+import { openaiIssuePortalCode } from "./portal-codes/issue-codes.js";
+import type { OpenAIPortalCode } from "./portal-codes/table.js";
 import {
   OPENAI_ARCHIVE_LIMITS,
   OPENAI_FIELD_LIMITS,
@@ -207,6 +210,10 @@ export const OPENAI_PORTAL_ERRORS: readonly OpenAIPortalErrorDefinition[] = [
   },
 
   // --------------------------------------------------------------- manifest
+  //
+  // The reader raises the portal's codes (at the end) in place of
+  // `manifest-missing` and the two `manifest-name-*` ids, which stay listed so
+  // a caller holding one can still look it up.
   {
     id: "manifest-missing",
     category: "package-manifest",
@@ -792,6 +799,9 @@ export const OPENAI_PORTAL_ERRORS: readonly OpenAIPortalErrorDefinition[] = [
       "The package contains a surface the plugin directory does not support.",
     source: errorsPage("§Shared package checks → Excluded content"),
   },
+
+  // The portal's 269 codes, by the portal's ids and in its wording.
+  ...OPENAI_PORTAL_CODE_ERRORS,
 ] as const;
 
 /** The catalog keyed by id, for a check that already knows which code it means. */
@@ -817,6 +827,8 @@ export interface OpenAIPortalIssue {
   category: OpenAIPortalErrorCategory;
   severity: OpenAIPortalErrorSeverity;
   message: string;
+  /** The portal's code for this rule, where its page lists one. */
+  portalCode?: OpenAIPortalCode;
   /** Package path, tool name, field name — whatever the code is about. */
   subject?: string;
   /** What was actually seen, next to what was required. */
@@ -840,11 +852,13 @@ export function openaiPortalIssue(
   if (!definition) {
     throw new Error(`Unknown OpenAI portal error id: ${id}`);
   }
+  const portalCode = openaiIssuePortalCode(id);
   return {
     id: definition.id,
     category: definition.category,
     severity: definition.severity,
     message: definition.message,
+    ...(portalCode ? { portalCode } : {}),
     ...details,
   };
 }

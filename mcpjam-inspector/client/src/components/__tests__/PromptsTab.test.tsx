@@ -7,6 +7,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { PromptsTab } from "../PromptsTab";
+import {
+  markPendingDirectScopeStepUpReplayReady,
+  savePendingDirectScopeStepUpReplay,
+  setPendingDirectScopeStepUpReplayFlowDigest,
+} from "@/lib/scope-step-up-replay";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const { mockJsonEditor } = vi.hoisted(() => ({
@@ -64,6 +69,55 @@ describe("PromptsTab", () => {
     mockJsonEditor.mockClear();
     mockListPrompts.mockResolvedValue([]);
     mockGetPrompt.mockResolvedValue({ content: null });
+  });
+
+  it("restores a signed-in prompt with the arguments it was called with", async () => {
+    sessionStorage.clear();
+    mockListPrompts.mockResolvedValue([
+      { name: "weather", arguments: [{ name: "city", required: true }] },
+    ]);
+    savePendingDirectScopeStepUpReplay({
+      operation: {
+        resourceUrl: "https://bench.example",
+        method: "prompts/get",
+        operation: "weather",
+      },
+      descriptor: {
+        kind: "prompt",
+        surface: "prompts",
+        serverName: "test-server",
+        promptName: "weather",
+        arguments: { city: "Paris" },
+      },
+    });
+    setPendingDirectScopeStepUpReplayFlowDigest("test-server", "flow");
+    markPendingDirectScopeStepUpReplayReady("test-server", "flow");
+    render(
+      <PromptsTab
+        serverConfig={createServerConfig()}
+        serverName="test-server"
+      />,
+    );
+    expect(await screen.findByDisplayValue("Paris")).toBeInTheDocument();
+  });
+
+  it("keeps a failed prompt's error when the list is refreshed", async () => {
+    mockListPrompts.mockResolvedValue([{ name: "greeting" }]);
+    mockGetPrompt.mockRejectedValue(new Error("get down"));
+    render(
+      <PromptsTab
+        serverConfig={createServerConfig()}
+        serverName="test-server"
+      />,
+    );
+    fireEvent.click(await screen.findByText("greeting"));
+    await screen.findByText(/get down/);
+    fireEvent.click(screen.getByTitle("Refresh prompts"));
+    await waitFor(() => expect(mockListPrompts).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByTitle("Refresh prompts")).not.toBeDisabled(),
+    );
+    expect(screen.getByText(/get down/)).toBeInTheDocument();
   });
 
   describe("empty state", () => {

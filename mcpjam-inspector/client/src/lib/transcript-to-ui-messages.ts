@@ -1,3 +1,4 @@
+import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
 import { mergeHarnessApprovalSegments, mergeTranscriptApprovals, readTranscriptApproval } from "./transcript-tool-approvals";
 import { parsePluginModelContext } from "@/shared/plugin-model-context";
 import { readPluginMessageHistoryTitle } from "@/shared/plugin-message-history";
@@ -6,8 +7,14 @@ import { type UIMessage } from "@ai-sdk/react";
 import {
   mergeMcpToolOriginMetadata,
   readMcpToolOriginServerId,
+  mergeMcpOriginalResult,
+  readMcpWidgetContext,
 } from "@/shared/mcp-tool-origin-metadata";
 import { readHydratedToolOutput } from "@/shared/hydrated-tool-output";
+import {
+  TOOL_OUTPUT_TEXT_DEPTH,
+  unwrapToolOutputEnvelope,
+} from "@/shared/tool-output-envelope";
 import { getMessageTimestampMs, withMessageTimestamp } from "@mcpjam/chat-ui";
 
 /**
@@ -329,16 +336,22 @@ function convertParts(
         );
       if (match && part.mediaType === match[1]) {
         try {
-          parsePluginModelContext({
-            content: [{ type: "image", mimeType: match[1], data: match[2] }],
-          });
+          parsePluginModelContext(
+            {
+              content: [{ type: "image", mimeType: match[1], data: match[2] }],
+            },
+            MODEL_CONTEXT_POLICY_CEILINGS,
+          );
           parts.push({ type: "file", mediaType: match[1], url: part.data });
         } catch {
           /* Malformed/oversized stored bytes stay unavailable. */
         }
       }
     } else if (partType === "tool-call") {
-      const providerMetadata = readToolOriginMetadata(part);
+      const providerMetadata = mergeMcpOriginalResult(
+        readToolOriginMetadata(part),
+        part.result,
+      );
       // A tool-call with no merged tool-result row is UNRESOLVED — a turn
       // suspended mid-call (SEP-2350 scope step-up, MRTR). It must hydrate as
       // "input-available": stamping "output-available" with a synthetic `{}`
@@ -424,6 +437,52 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
   }
 
   return messages;
+}
+
+/**
+ * Each resolved tool call's raw result, keyed by its toolCallId, for a
+ * reopened conversation's `toolRenderOverrides`.
+ *
+ * A hydrated tool part's `output` is the model-facing copy (the value the
+ * server signs, see `readHydratedToolOutput`), and for an MCP App that copy
+ * drops `structuredContent`. A reopened App needs the result it got live, so
+ * the raw result rides beside the part, the way a hosted chat's widget
+ * snapshot supplies it. A legacy result stored only as `output` is unwrapped
+ * instead.
+ */
+export function buildRawToolResultOverrides(
+  transcript: unknown[],
+): Record<string, { toolOutput: unknown }> {
+  const overrides: Record<string, { toolOutput: unknown }> = {};
+  for (const raw of mergeTranscriptToolResults(transcript)) {
+    const msg = raw as TranscriptMessage;
+    if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+
+    for (const part of msg.content) {
+      if (!isPlainObject(part) || part.type !== "tool-call") continue;
+      const toolCallId = readToolCallId(part);
+      if (!toolCallId || !hasOwn(part, "result")) continue;
+      // A call made from inside a widget already hydrates its original result.
+      if (readMcpWidgetContext(part.providerOptions)) continue;
+      const modelOutput = isPlainObject(part.output) ? part.output : undefined;
+      if (
+        modelOutput?.type === "error-text" ||
+        modelOutput?.type === "error-json"
+      ) {
+        continue;
+      }
+
+      const unwrapped = unwrapToolOutputEnvelope(
+        part.result,
+        TOOL_OUTPUT_TEXT_DEPTH,
+      );
+      if (unwrapped.status !== "ok" || !isPlainObject(unwrapped.value)) {
+        continue;
+      }
+      overrides[toolCallId] = { toolOutput: unwrapped.value };
+    }
+  }
+  return overrides;
 }
 
 export function preserveHydratedMessageIds(

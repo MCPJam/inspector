@@ -1,3 +1,4 @@
+import { DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS } from "@/shared/conformance-timeout";
 /**
  * Persist a hosted UI conformance execution as a durable Convex run.
  *
@@ -11,6 +12,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useAction } from "convex/react";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { toast } from "@/lib/toast";
 import { makeFunctionReference } from "convex/server";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { useConformanceRun } from "@/hooks/use-conformance-run";
@@ -52,11 +55,18 @@ function suiteReport(
     error?: string;
     verdict?: string;
     result?: unknown;
-  }
+  },
+  /** OAuth steps this run leaves out of its score; marked pending in the report. */
+  oauthUnscored?: readonly string[]
 ): ConformanceReport {
   if (state.result) {
     try {
-      const report = toConformanceReport(state.result as never);
+      const report = toConformanceReport(
+        state.result as never,
+        kind === "oauth" && oauthUnscored?.length
+          ? { oauthUnscoredCheckIds: oauthUnscored }
+          : undefined
+      );
       if (state.status === "error" && report.outcome === "passed") {
         return {
           ...report,
@@ -180,7 +190,7 @@ export function PersistConformanceRun({
   snapshot: RunSnapshot;
   /**
    * The saved run's id once it is finalized, and null when a new run starts,
-   * so the live view can link to the run it just saved.
+   * so the live view can offer Share for the run it just saved.
    */
   onSavedRun?: (runId: string | null) => void;
 }) {
@@ -260,6 +270,7 @@ export function PersistConformanceRun({
       projectId: persist.projectId,
       target,
       source: "ui",
+      runTimeoutSeconds: snapshot.runTimeoutSeconds ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
       requestedSuites: suites,
       actorLabel: "Inspector UI",
     })
@@ -276,8 +287,19 @@ export function PersistConformanceRun({
         runIdRef.current = startedRunId;
         setRunId(startedRunId);
       })
-      .catch(() => {
-        // Persistence is best-effort for the live panel; the suites still run.
+      .catch((error: unknown) => {
+        // The suites still run and their results stay on screen, but a run
+        // the backend refused (plan limit, budget, access) never reaches
+        // History, so say why instead of losing it in silence.
+        if (disposedRef.current || startedVersionRef.current !== version) {
+          return;
+        }
+        toast.error("This run won't be saved to History", {
+          description: getBillingErrorMessage(
+            error,
+            "Could not save it. Run it again to save the results.",
+          ),
+        });
       });
   }, [
     isExecuting,
@@ -355,7 +377,7 @@ export function PersistConformanceRun({
           runId,
           suiteKind: kind,
           status: "completed",
-          report: suiteReport(kind, state),
+          report: suiteReport(kind, state, snapshotRef.current.oauthUnscored),
         });
         return;
       }
@@ -365,7 +387,7 @@ export function PersistConformanceRun({
           runId,
           suiteKind: kind,
           status: state.status === "error" ? "failed" : "completed",
-          report: suiteReport(kind, state),
+          report: suiteReport(kind, state, snapshotRef.current.oauthUnscored),
         });
       }
     };

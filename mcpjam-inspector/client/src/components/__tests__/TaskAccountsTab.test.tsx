@@ -1,0 +1,147 @@
+import userEvent from "@testing-library/user-event";
+import { act, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TaskAccountsTab } from "../TaskAccountsTab";
+import {
+  setTrackedTaskOwner,
+  setTrackedTaskScope,
+  trackTask,
+} from "@/lib/task-tracker";
+
+const state = vi.hoisted(() => ({
+  accounts: [
+    { connectionId: "a", label: "A", isDefault: true },
+    { connectionId: "b", label: "B", isDefault: false },
+  ],
+  revision: 0,
+  hosted: true,
+  requestKey: "ready" as string | null,
+  listener: (() => {}) as () => void,
+}));
+vi.mock("@/lib/apis/mode-client", () => ({
+  isHostedMode: () => state.hosted,
+}));
+vi.mock("@/hooks/use-hosted-oauth-connections", () => ({
+  useHostedOAuthConnections: () => ({
+    connections: state.accounts,
+    refetch: vi.fn(),
+  }),
+}));
+vi.mock("@/lib/apis/web/context", () => ({
+  subscribeApiContext: (listener: () => void) => {
+    state.listener = listener;
+    return () => {};
+  },
+  getApiContextRevision: () => state.revision,
+  getServerRequestKey: () => state.requestKey,
+  tryResolveProjectServer: (name: string) =>
+    name === "none" ? null : { projectId: "project", serverId: "server" },
+}));
+vi.mock("../TasksTab", () => ({
+  TasksTab: ({ taskTarget }: { taskTarget?: unknown }) => (
+    <output data-testid="target">{JSON.stringify(taskTarget ?? null)}</output>
+  ),
+}));
+
+function target() {
+  return JSON.parse(screen.getByTestId("target").textContent!);
+}
+function renderView() {
+  return render(
+    <TaskAccountsTab
+      serverName="Display"
+      serverConfig={{ transportType: "http", url: "https://server.test/mcp" }}
+    />,
+  );
+}
+
+describe("Task account view", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setTrackedTaskScope("project");
+    setTrackedTaskOwner("project", "owner");
+    state.revision = 0;
+    state.hosted = true;
+    state.requestKey = "ready";
+    state.accounts = [
+      { connectionId: "a", label: "A", isDefault: true },
+      { connectionId: "b", label: "B", isDefault: false },
+    ];
+  });
+  it("waits for project settings before mounting task controls, then resumes automatically", () => {
+    state.requestKey = null;
+    renderView();
+    expect(screen.queryByTestId("target")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading project settings",
+    );
+
+    act(() => {
+      state.requestKey = "ready";
+      state.revision++;
+      state.listener();
+    });
+    expect(screen.getByTestId("target")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Loading project settings..."),
+    ).not.toBeInTheDocument();
+  });
+  it("keeps local task controls available without a hosted request context", () => {
+    state.hosted = false;
+    state.requestKey = null;
+    renderView();
+    expect(screen.getByTestId("target")).toBeInTheDocument();
+  });
+  it("keeps the no-server state available instead of waiting for project settings", () => {
+    state.requestKey = null;
+    render(<TaskAccountsTab serverName="none" />);
+    expect(target()).toBeNull();
+    expect(
+      screen.queryByText("Loading project settings..."),
+    ).not.toBeInTheDocument();
+  });
+  it("opens the saved task's account and does not follow later default changes", () => {
+    trackTask({
+      serverId: "server",
+      taskId: "same",
+      connectionId: "b",
+      wire: "extension",
+      createdAt: new Date().toISOString(),
+    });
+    const view = renderView();
+    expect(target().connectionId).toBe("b");
+    state.accounts = [
+      { connectionId: "a", label: "A", isDefault: false },
+      { connectionId: "b", label: "B", isDefault: true },
+    ];
+    view.rerender(<TaskAccountsTab serverName="Display" />);
+    expect(target().connectionId).toBe("b");
+    state.accounts = [{ connectionId: "a", label: "A", isDefault: true }];
+    view.rerender(<TaskAccountsTab serverName="Display" />);
+    expect(target().connectionId).toBe("b");
+  });
+  it("lets the user choose a specific account", async () => {
+    const user = userEvent.setup();
+    renderView();
+    await user.click(screen.getByRole("combobox", { name: "Task account" }));
+    await user.click(screen.getByRole("option", { name: "B", exact: true }));
+    expect(target().connectionId).toBe("b");
+  });
+  it("remounts on an owner change without displaying the previous owner's target", () => {
+    trackTask({
+      serverId: "server",
+      taskId: "same",
+      connectionId: "b",
+      wire: "extension",
+      createdAt: new Date().toISOString(),
+    });
+    renderView();
+    expect(target().connectionId).toBe("b");
+    act(() => {
+      setTrackedTaskOwner("project", "other-owner");
+      state.revision++;
+      state.listener();
+    });
+    expect(target()).toBeNull();
+  });
+});

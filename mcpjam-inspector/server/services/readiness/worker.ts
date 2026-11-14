@@ -19,6 +19,9 @@
  * the same reason: a readiness run dials a third party's server and takes
  * longer than any request should be held open.
  *
+ * The worker's first call claims the run, `pending` to `running`, so a run's
+ * status says whether a node is executing it. A resumed run arrives claimed.
+ *
  * The heartbeat is what makes an in-process detachment safe. A node that dies
  * mid-run stops heartbeating, and the backend's recovery cron re-queues the
  * run with a FRESH job id — so this node coming back from the dead cannot
@@ -37,12 +40,17 @@ import { logger } from "../../utils/logger.js";
 import { captureServerEventForActor } from "../../utils/analytics.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import {
+  claimReadinessRun,
   failReadinessRun,
   finalizeReadinessRun,
+  getReadinessRunSubmission,
   heartbeatReadinessRun,
+  ReadinessSubmissionUnreadableError,
   requestManagedObservations,
+  type ReadinessClaimRefusal,
   type ReadinessFinalizeSummary,
   type ReadinessLease,
+  type ReadinessRunSubmission,
 } from "./backend-client.js";
 import {
   ReadinessLeaseLostError,
@@ -54,8 +62,11 @@ import {
 import {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
+  getDirectoryFlow,
   isMuseReadinessResult,
   redactConformanceReportForSharing,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 
@@ -74,15 +85,28 @@ const RUN_DEADLINE_MS = 15 * 60 * 1000;
 
 export interface ExecuteHostedReadinessOptions {
   lease: ReadinessLease;
+  /**
+   * The lease is already `running`: a resume took it on a new job id, and a
+   * second claim would be refused. A start leaves this unset, and the worker
+   * claims the run before anything else.
+   */
+  leaseClaimed?: boolean;
   publisher: ReadinessPublisher;
   /** From the SAVED project server, never from a worker-supplied URL. */
   target: string;
   submissionMode?: OpenAISubmissionMode;
-  headers?: Record<string, string>;
+  /** Sent only on MCP requests to the target, never on discovery. */
+  mcpHeaders?: Record<string, string>;
   /** The DNS-pinned transport. */
   fetchFn: typeof fetch;
   /** The requester's opt-in, read off the run row at start. */
   includeLlmObservations: boolean;
+  /** The requester's lazy-auth probe opt-in. Credential-free by construction. */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /** Features the submitter claims. */
+  claimedFeatures?: DirectoryFeatureClaim[];
+  /** The directory submission the run grades: its answers are read at the start. */
+  submissionId?: string;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -162,6 +186,56 @@ export function summarizeReadinessResult(
 }
 
 /**
+ * The frozen answers a submission run grades, checked against the run.
+ *
+ * Read before anything dials: a run that cannot see the answers it names
+ * fails with that reason instead of grading an empty form.
+ */
+async function readSubmissionAnswers(
+  options: ExecuteHostedReadinessOptions,
+): Promise<ReadinessRunSubmission["answers"]> {
+  const submission = await getReadinessRunSubmission(options.lease);
+  const flow = getDirectoryFlow(submission.flowId);
+  if (flow?.directory !== options.publisher) {
+    throw new ReadinessSubmissionUnreadableError(
+      `This run's answers follow the ${submission.flowId} form, which this server cannot grade as a ${options.publisher} run. Start the run again after MCPJam updates.`,
+    );
+  }
+  // Answers saved against another version of the form may name fields this
+  // build reads differently, so they are refused rather than graded.
+  if (submission.flowVersion !== flow.version) {
+    throw new ReadinessSubmissionUnreadableError(
+      `This run's answers follow version ${submission.flowVersion} of the ${submission.flowId} form, and this server grades version ${flow.version}. Start the run again after MCPJam updates.`,
+    );
+  }
+  return submission.answers;
+}
+
+/**
+ * Claim the run this node started. Returns why it must not execute, or
+ * nothing when it may.
+ */
+async function claimRun(
+  lease: ReadinessLease,
+): Promise<ReadinessClaimRefusal | undefined> {
+  const claim = await claimReadinessRun(lease);
+  if (claim.status === "refused") {
+    logger.info("[readiness] claim refused; the run was not executed", {
+      runId: lease.runId,
+      reason: claim.reason,
+    });
+    return claim.reason;
+  }
+  if (claim.status === "unanswered") {
+    logger.warn("[readiness] claim unanswered; executing the run unclaimed", {
+      runId: lease.runId,
+      detail: claim.detail,
+    });
+  }
+  return undefined;
+}
+
+/**
  * Execute one leased run to a terminal state.
  *
  * NEVER THROWS. Every exit lands the run somewhere terminal — completed,
@@ -215,13 +289,30 @@ export async function executeHostedReadinessRun(
   }, HEARTBEAT_INTERVAL_MS);
 
   try {
+    const refusal = options.leaseClaimed ? undefined : await claimRun(lease);
+    if (refusal) {
+      // Decided elsewhere, as for a lost lease: nothing is written.
+      terminal = { outcome: "abandoned", terminalReason: refusal };
+      return;
+    }
+    const submissionAnswers = options.submissionId
+      ? await readSubmissionAnswers(options)
+      : undefined;
     const { result } = await runDirectoryReadiness({
       publisher: options.publisher,
       target: options.target,
       submissionMode: options.submissionMode,
-      headers: options.headers,
+      mcpHeaders: options.mcpHeaders,
       fetchFn: options.fetchFn,
       signal: controller.signal,
+      ...(options.lazyAuthProbe !== undefined
+        ? { lazyAuthProbe: options.lazyAuthProbe }
+        : {}),
+      ...(options.claimedFeatures !== undefined
+        ? { claimedFeatures: options.claimedFeatures }
+        : {}),
+      // As stored: the grader merges the flow's defaults itself.
+      ...(submissionAnswers ? { submissionAnswers } : {}),
       // The requester's opt-in decides whether a requester exists AT ALL. A
       // runner with no requester structurally cannot spend, which is a
       // stronger guarantee than one that checks a flag before asking.
@@ -295,13 +386,27 @@ export async function executeHostedReadinessRun(
 
     const message =
       error instanceof Error ? error.message : String(error ?? "unknown error");
-    logger.error("[readiness] hosted run failed", error, {
-      runId: lease.runId,
-    });
-    await failReadinessRun(lease, "runner_error", message.slice(0, 2000)).catch(
+    const terminalReason =
+      error instanceof ReadinessSubmissionUnreadableError
+        ? "submission_unreadable"
+        : "runner_error";
+    if (terminalReason === "submission_unreadable") {
+      // The submission's state, not a fault in MCPJam: recorded, not captured.
+      logger.warn("[readiness] hosted run could not read its submission", {
+        runId: lease.runId,
+        terminalReason,
+        error: message,
+      });
+    } else {
+      logger.error("[readiness] hosted run failed", error, {
+        runId: lease.runId,
+        terminalReason,
+      });
+    }
+    await failReadinessRun(lease, terminalReason, message.slice(0, 2000)).catch(
       () => undefined,
     );
-    terminal = { outcome: "failed", terminalReason: "runner_error" };
+    terminal = { outcome: "failed", terminalReason };
   } finally {
     clearInterval(heartbeat);
     clearTimeout(deadline);

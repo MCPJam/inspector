@@ -661,6 +661,18 @@ describe("ChatInput", () => {
       expect(screen.getByRole("button", { name: "Options" })).toBeEnabled();
     });
 
+    it("blocks Enter and form submission while a hosted approval can be stopped", () => {
+      const onSubmit = vi.fn((event) => event.preventDefault());
+      const requestSubmit = vi.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(() => {});
+      render(<ChatInput {...defaultProps} value="Draft" canStop={true} onSubmit={onSubmit} />);
+      const input = screen.getByPlaceholderText("Type your message...");
+      fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
+      expect(requestSubmit).not.toHaveBeenCalled();
+      fireEvent.submit(input.closest("form")!);
+      expect(onSubmit).not.toHaveBeenCalled();
+      requestSubmit.mockRestore();
+    });
+
     it("does not request form submit on Enter while loading", () => {
       const requestSubmitSpy = vi
         .spyOn(HTMLFormElement.prototype, "requestSubmit")

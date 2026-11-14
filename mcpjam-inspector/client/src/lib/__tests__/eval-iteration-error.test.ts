@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { describeError } from "@mcpjam/sdk/browser";
 import { describeEvalIterationError } from "../eval-iteration-error";
 
 describe("describeEvalIterationError", () => {
@@ -108,6 +109,80 @@ describe("describeEvalIterationError — organization AI-key refusals", () => {
         error: "credential_missing: the saved org connection is gone",
       })?.slug,
     ).toBe("eval/ai_refused");
+  });
+
+  it("explains a completed iteration whose model's provider isn't on for the org", () => {
+    // A refused BYOK model turn: the iteration completes with a failed
+    // result, and only the diagnostics carry the code.
+    const sentence =
+      'The "anthropic" provider isn\'t turned on for your organization. An organization admin can add it under AI providers in organization settings, or you can pick a model from another provider.';
+    expect(
+      describeEvalIterationError({
+        status: "completed",
+        result: "failed",
+        error: sentence,
+        errorDetails: JSON.stringify({
+          ok: false,
+          code: "provider_not_configured",
+          error: sentence,
+        }),
+      }),
+    ).toMatchObject({
+      slug: "eval/ai_refused",
+      title: "Unavailable: add an organization provider",
+      rawCode: "provider_not_configured",
+      nextSteps: ["Ask an organization admin to add or reconnect a provider."],
+    });
+  });
+
+  it("reads the typed code on a refused turn recorded as a configuration error", () => {
+    // What the server writes now: a failed iteration whose infra error carries
+    // the code. The envelope here has no code, so the typed field alone counts.
+    expect(
+      describeEvalIterationError({
+        status: "failed",
+        result: "failed",
+        error: "The provider isn't turned on for your organization.",
+        errorDetails: JSON.stringify({ ok: false, error: "Not turned on." }),
+        infraError: {
+          class: "configuration",
+          layer: "model",
+          retryable: false,
+          code: "provider_not_configured",
+        },
+      }),
+    ).toMatchObject({
+      slug: "eval/ai_refused",
+      rawCode: "provider_not_configured",
+    });
+  });
+
+  it("never reads a completed iteration's own text as a refusal", () => {
+    // A failed assertion's text can be the MCP server's: only a code MCPJam
+    // recorded (the infra error, the diagnostics envelope) counts there.
+    for (const error of [
+      "credential_missing: set GITHUB_TOKEN",
+      "provider_not_configured: GITHUB_TOKEN is not set",
+    ]) {
+      expect(
+        describeEvalIterationError({
+          status: "completed",
+          result: "failed",
+          error,
+        })?.slug,
+      ).toBe(describeError(error).slug);
+    }
+  });
+
+  it("describes an ordinary failed result as it did before", () => {
+    const error = "Expected the search_notes tool to be called.";
+    expect(
+      describeEvalIterationError({
+        status: "completed",
+        result: "failed",
+        error,
+      })?.slug,
+    ).toBe(describeError(error).slug);
   });
 
   it("leaves other setup failures as they were", () => {

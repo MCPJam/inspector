@@ -83,6 +83,9 @@ describe("eval run identity", () => {
       const saved = await resolveEvalRunCredential({});
       expect(saved.baseUrl).toBe("https://staging.example");
       expect(await saved.auth.getAuth()).toBe("saved");
+      // The saved login only goes to its own server; a key may go elsewhere.
+      await expect(resolveEvalRunCredential({ baseUrl: "https://other.example" })).rejects.toMatchObject({ code: "LOGIN_DEPLOYMENT_MISMATCH" });
+      expect((await resolveEvalRunCredential({ apiKey: "sk_explicit", baseUrl: "https://other.example" })).baseUrl).toBe("https://other.example");
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
   it.each(["http://example.com", "http://192.168.1.10", "ftp://localhost"])("refuses callback credentials at %s before reading a bearer", async (baseUrl) => {

@@ -19,7 +19,9 @@
  * Pure: takes evidence, returns findings and badges. It dials nothing.
  */
 
+import { scopeFallbackWarning } from "./scope-fallback.js";
 import { parseBearerAuthenticateParameters } from "../../oauth/state-machines/shared/challenges.js";
+import type { DirectoryLazyAuthProbeEvidence } from "../../directory-readiness/lazy-auth.js";
 import { claudePolicySource } from "../manifest.js";
 import type {
   ClaudeCapabilityBadge,
@@ -73,6 +75,8 @@ export interface ClaudeAuthEvidence {
      * server never published one.
      */
     rejectedPointer?: string;
+    /** No discovery request got an HTTP answer. */
+    unanswered?: boolean;
   };
   /**
    * Metadata for `authorization_servers[0]` ONLY. Claude does not fall back to
@@ -105,9 +109,35 @@ export interface ClaudeAuthEvidence {
   accessTokenAudience?: string[];
   /** What the submitter declared, when a submission profile was supplied. */
   declaredAuthMode?: string;
+  /**
+   * The lazy-auth probe's unauthenticated calls, when a caller armed it.
+   *
+   * For a server that serves the anonymous `initialize`, the 401 contract
+   * lives on a PROTECTED CALL, and this is the only observation of one.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeEvidence;
 }
 
 // ── Check definitions ───────────────────────────────────────────────────
+
+/**
+ * The input that lets a lazy-authentication server's 401 contract be graded:
+ * its challenge arrives on a protected call, which only the probe makes.
+ */
+export const CLAUDE_LAZY_AUTH_PROBE_INPUT = "lazyAuthProbe";
+
+/**
+ * Claude's documented trigger, quoted in every finding that applies it. The
+ * clause about `isError` results is added only when the server answered with
+ * one; for a 401 without a Bearer header it would describe a different mistake.
+ */
+export function claudeSignInTrigger(answeredWithToolError: boolean): string {
+  const trigger =
+    "Claude starts sign-in only on HTTP 401 with WWW-Authenticate";
+  return answeredWithToolError
+    ? `${trigger}; a 200 isError result is an ordinary tool failure to Claude`
+    : trigger;
+}
 
 /**
  * The input that lets {@link RFC8707_RESOURCE_CANONICAL} run.
@@ -329,12 +359,25 @@ export interface ClaudeAuthCheckOutput {
   badges: ClaudeCapabilityBadge[];
 }
 
+/** Whether a tool call made without sign-in was refused with a challenge. */
+export function challengesProtectedCall(
+  evidence: Pick<ClaudeAuthEvidence, "lazyAuthProbe"> | undefined
+): boolean {
+  const call = evidence?.lazyAuthProbe?.protectedCall;
+  return (
+    call !== undefined &&
+    !call.invalidArguments &&
+    (call.outcome === "unauthorized" || call.challenge !== undefined)
+  );
+}
+
 export function runClaudeAuthChecks(
   evidence: ClaudeAuthEvidence,
   stamp: ClaudeCheckStamp,
 ): ClaudeAuthCheckOutput {
   const findings: ClaudeReadinessFinding[] = [];
-  const badges: ClaudeCapabilityBadge[] = [];
+  const warning = scopeFallbackWarning(evidence);
+  const badges: ClaudeCapabilityBadge[] = warning ? [warning] : [];
 
   const probe = evidence.unauthenticated;
   const challengeParams = parseBearerAuthenticateParameters(
@@ -342,9 +385,20 @@ export function runClaudeAuthChecks(
   );
   const requiresAuth = probe?.status === 401;
   const servedWithoutAuth = probe?.servedWithoutCredentials === true;
+  // A protected call refused with a sign-in challenge shows the server uses
+  // OAuth even though it serves `initialize` anonymously. With no
+  // discoverable metadata that is a server Claude cannot sign in to, not an
+  // authless one.
+  const challengedProtectedCall = challengesProtectedCall(evidence);
+  const authless = servedWithoutAuth && !challengedProtectedCall;
 
   // ── Auth mode: a badge, never a verdict ──────────────────────────────
-  const mode = classifyAuthMode(evidence, requiresAuth, servedWithoutAuth);
+  const mode = classifyAuthMode(
+    evidence,
+    requiresAuth,
+    servedWithoutAuth,
+    challengedProtectedCall,
+  );
   badges.push({
     id: "claude.auth.mode",
     title: "Authentication mode",
@@ -362,10 +416,36 @@ export function runClaudeAuthChecks(
   } else if (servedWithoutAuth) {
     // An authless server is a valid submission mode. Nothing about the 401
     // contract can apply to a server that never issues one.
-    const reason =
-      "the server served the request without credentials, so it does not use the 401 challenge flow";
-    findings.push(notApplicable(CHALLENGE_PRESENT, stamp, reason));
-    findings.push(notApplicable(CHALLENGE_NAMES_METADATA, stamp, reason));
+    //
+    // A LAZY-AUTHENTICATION SERVER DOES ISSUE ONE, on a protected call rather
+    // than on `initialize`. When the probe drove that call, the contract is
+    // graded on it; when the server publishes metadata and nobody drove the
+    // call, the contract is unevaluated rather than inapplicable — calling it
+    // "not applicable" would be a claim about a 401 this run never asked for.
+    const lazyShaped =
+      evidence.prm !== undefined && evidence.prm.discoveredVia !== "not-found";
+    const protectedCall = evidence.lazyAuthProbe?.protectedCall;
+    if (protectedCall) {
+      findings.push(...gradeProtectedCallChallenge(protectedCall, stamp));
+    } else if (lazyShaped) {
+      const reason = evidence.lazyAuthProbe
+        ? `the server serves an anonymous initialize and publishes Protected Resource Metadata, so its 401 belongs to a protected tool call, and the lazy-auth probe made none: ${
+            evidence.lazyAuthProbe.protectedCallSkipped ??
+            evidence.lazyAuthProbe.reason ??
+            "no protected tool was selected"
+          }`
+        : "the server serves an anonymous initialize and publishes Protected Resource Metadata (anonymous access with OAuth available, the lazy-authentication shape), so its 401 belongs to a protected tool call, which this run did not make";
+      const details = { missingInput: CLAUDE_LAZY_AUTH_PROBE_INPUT };
+      findings.push(notEvaluated(CHALLENGE_PRESENT, stamp, reason, details));
+      findings.push(
+        notEvaluated(CHALLENGE_NAMES_METADATA, stamp, reason, details),
+      );
+    } else {
+      const reason =
+        "the server served the request without credentials, so it does not use the 401 challenge flow";
+      findings.push(notApplicable(CHALLENGE_PRESENT, stamp, reason));
+      findings.push(notApplicable(CHALLENGE_NAMES_METADATA, stamp, reason));
+    }
     findings.push(
       probe.wwwAuthenticate && probe.representsProtectedOperation
         ? violated(
@@ -416,11 +496,28 @@ export function runClaudeAuthChecks(
     const reason = "the run did not attempt Protected Resource Metadata discovery";
     findings.push(notEvaluated(PRM_DISCOVERABLE, stamp, reason));
     findings.push(notEvaluated(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
-  } else if (servedWithoutAuth && prm.discoveredVia === "not-found") {
+  } else if (authless && prm.discoveredVia === "not-found") {
     const reason =
       "the server is authless, so it publishes no Protected Resource Metadata";
     findings.push(notApplicable(PRM_DISCOVERABLE, stamp, reason));
     findings.push(notApplicable(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
+  } else if (prm.discoveredVia === "not-found" && prm.unanswered) {
+    // A request nobody answered is a gap in this run, not a server that
+    // publishes no metadata.
+    const reason = `no request for Protected Resource Metadata was answered (${prm.fetchError ?? "no response"})`;
+    // A pointer no conforming client follows is a defect on its own; only
+    // the document's checks lack evidence.
+    findings.push(
+      prm.rejectedPointer
+        ? violated(
+            PRM_DISCOVERABLE,
+            stamp,
+            "The 401 challenge points at a Protected Resource Metadata URL on another origin or with a non-http scheme, which a conforming client refuses to follow. Point it at this connector's own origin.",
+            { fetchError: prm.fetchError, rejectedPointer: prm.rejectedPointer }
+          )
+        : notEvaluated(PRM_DISCOVERABLE, stamp, reason)
+    );
+    findings.push(notEvaluated(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
   } else {
     findings.push(
       prm.discoveredVia === "not-found"
@@ -428,7 +525,12 @@ export function runClaudeAuthChecks(
             PRM_DISCOVERABLE,
             stamp,
             "Publish Protected Resource Metadata — via the challenge's `resource_metadata` pointer, or at `/.well-known/oauth-protected-resource` with the resource path appended.",
-            { fetchError: prm.fetchError },
+            {
+              fetchError: prm.fetchError,
+              ...(prm.rejectedPointer
+                ? { rejectedPointer: prm.rejectedPointer }
+                : {}),
+            },
           )
         : prm.rejectedPointer
           ? // Discovery SUCCEEDED, via a fallback — and the server still
@@ -537,7 +639,7 @@ export function runClaudeAuthChecks(
       CLIENT_ACQUISITION_PATH,
     ]) {
       findings.push(
-        servedWithoutAuth
+        authless
           ? notApplicable(definition, stamp, "the server is authless")
           : notEvaluated(definition, stamp, reason),
       );
@@ -701,14 +803,25 @@ export function runClaudeAuthChecks(
   }
 
   // ── Step-up challenge shape ──────────────────────────────────────────
+  //
+  // UNOBSERVED IS NOT INAPPLICABLE. No ordinary request elicits an
+  // `insufficient_scope` challenge — it takes a call made with a token that
+  // lacks a scope, which is the intrusive step-up probe — so "this run saw
+  // none" says nothing about whether the server would send a well-formed one.
+  // Only a server with no OAuth at all is genuinely outside the rule.
   const stepUp = evidence.insufficientScopeChallenge;
+  const authlessServer =
+    authless && (!prm || prm.discoveredVia === "not-found");
   if (!stepUp) {
     findings.push(
-      notApplicable(
-        SCOPE_CHALLENGE_SHAPE,
-        stamp,
-        "this run observed no insufficient_scope challenge",
-      ),
+      authlessServer
+        ? notApplicable(SCOPE_CHALLENGE_SHAPE, stamp, "the server is authless")
+        : notEvaluated(
+            SCOPE_CHALLENGE_SHAPE,
+            stamp,
+            "no insufficient_scope challenge was observed; eliciting one takes a call with a token that lacks the tool's scope, which only the intrusive step-up probe makes",
+            { missingInput: "intrusive" },
+          ),
     );
   } else {
     const params = parseBearerAuthenticateParameters(stepUp.header);
@@ -757,6 +870,86 @@ export function runClaudeAuthChecks(
 }
 
 /**
+ * The 401 contract, graded on the lazy-auth probe's protected call.
+ *
+ * Claude's trigger is the request itself failing with HTTP 401 and a
+ * `WWW-Authenticate` header. A headerless 401 is one Claude does not act on,
+ * and a `_meta` challenge on a 200 `isError` result is, to Claude, an ordinary
+ * tool failure — so neither satisfies the contract, however correct it would
+ * be for another host.
+ */
+function gradeProtectedCallChallenge(
+  call: NonNullable<DirectoryLazyAuthProbeEvidence["protectedCall"]>,
+  stamp: ClaudeCheckStamp,
+): ClaudeReadinessFinding[] {
+  const signal = call.challenge;
+  const details = {
+    observedOn: "lazy-auth protected call",
+    toolName: call.toolName,
+    outcome: call.outcome,
+    status: call.status,
+    challengeSource: signal?.source,
+    facets: signal?.facets,
+  };
+
+  if (call.invalidArguments) {
+    const reason = "the protected call rejected the probe inputs, so its sign-in behavior was not evaluated";
+    return [
+      notEvaluated(CHALLENGE_PRESENT, stamp, reason, details),
+      notEvaluated(CHALLENGE_NAMES_METADATA, stamp, reason, details),
+    ];
+  }
+  if (call.outcome === "unreachable" || call.outcome === "succeeded") {
+    const reason =
+      call.outcome === "unreachable"
+        ? `the protected call to "${call.toolName}" could not be reached`
+        : `"${call.toolName}" ran without credentials, so it produced no challenge to grade; name a tool that requires sign-in`;
+    return [
+      notEvaluated(CHALLENGE_PRESENT, stamp, reason, details),
+      notEvaluated(CHALLENGE_NAMES_METADATA, stamp, reason, details),
+    ];
+  }
+
+  if (call.outcome === "unauthorized" && signal?.facets.challengeHeader === "bearer") {
+    return [
+      satisfied(CHALLENGE_PRESENT, stamp, details),
+      signal.resourceMetadataUrl
+        ? satisfied(CHALLENGE_NAMES_METADATA, stamp, {
+            ...details,
+            resourceMetadata: signal.resourceMetadataUrl,
+          })
+        : violated(
+            CHALLENGE_NAMES_METADATA,
+            stamp,
+            `The 401 on "${call.toolName}" carries no resource_metadata. Add \`resource_metadata="…"\` to its \`WWW-Authenticate\` challenge so Claude can find the Protected Resource Metadata without guessing a well-known path.`,
+            details,
+          ),
+    ];
+  }
+
+  const refusal =
+    call.outcome === "unauthorized"
+      ? `answered HTTP 401 without a WWW-Authenticate: Bearer challenge`
+      : signal?.source === "tool_result_meta"
+        ? `answered with a 200 isError result carrying _meta["mcp/www_authenticate"]`
+        : `answered ${call.outcome}${call.status ? ` (HTTP ${call.status})` : ""} with no 401 challenge`;
+  return [
+    violated(
+      CHALLENGE_PRESENT,
+      stamp,
+      `An unauthenticated call to the protected tool "${call.toolName}" ${refusal}. ${claudeSignInTrigger(call.outcome !== "unauthorized" && signal?.source === "tool_result_meta")}. Refuse it with HTTP 401 and \`WWW-Authenticate: Bearer resource_metadata="…"\`.`,
+      details,
+    ),
+    notEvaluated(
+      CHALLENGE_NAMES_METADATA,
+      stamp,
+      "the protected call returned no 401 challenge whose resource_metadata could be read",
+      details,
+    ),
+  ];
+}
+
+/**
  * What kind of authentication this connector uses.
  *
  * `confident` is false whenever the observation is consistent with more than
@@ -768,6 +961,7 @@ function classifyAuthMode(
   evidence: ClaudeAuthEvidence,
   requiresAuth: boolean,
   servedWithoutAuth: boolean,
+  challengedProtectedCall: boolean,
 ): { detail: string; confident: boolean } {
   const document = evidence.firstAuthorizationServer?.document;
   if (document?.registration_endpoint) {
@@ -780,6 +974,33 @@ function classifyAuthMode(
     return {
       detail: "OAuth with a preregistered client",
       // Indistinguishable from an AS whose metadata we failed to read fully.
+      confident: false,
+    };
+  }
+  if (servedWithoutAuth && challengedProtectedCall) {
+    // Claude starts sign-in only on HTTP 401 with a Bearer challenge. Any
+    // other refusal shows the server wants sign-in, not that Claude acts on it.
+    const call = evidence.lazyAuthProbe?.protectedCall;
+    const bearer401 =
+      call?.outcome === "unauthorized" &&
+      call.challenge?.facets.challengeHeader === "bearer";
+    return {
+      detail: bearer401
+        ? "anonymous access allowed; a protected call asked for sign-in (lazy authentication)"
+        : "anonymous access allowed; a protected call asked for sign-in, but not with the HTTP 401 Bearer challenge Claude acts on",
+      confident: bearer401,
+    };
+  }
+  if (
+    servedWithoutAuth &&
+    evidence.prm !== undefined &&
+    evidence.prm.discoveredVia !== "not-found"
+  ) {
+    return {
+      detail:
+        "anonymous access allowed; OAuth available (lazy-authentication shaped): the server answers without credentials and publishes Protected Resource Metadata",
+      // Consistent with lazy authentication and not proof of it: only a
+      // protected call refused with a 401 establishes the design.
       confident: false,
     };
   }

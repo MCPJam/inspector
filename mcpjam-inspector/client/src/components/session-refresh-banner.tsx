@@ -25,7 +25,7 @@ export function SessionRefreshBanner({
 }) {
   const status = useSessionRefreshStore((s) => s.status);
   const kind = useSessionRefreshStore((s) => s.kind);
-  const { signIn } = useInspectorAuth();
+  const { user, signIn } = useInspectorAuth();
 
   if (status === "idle" || !kind) return null;
 
@@ -71,6 +71,12 @@ export function SessionRefreshBanner({
           ) : (
             "Retry"
           )}
+        </Button>
+      )}
+
+      {!isSignedOut && !user && (
+        <Button size="sm" variant="outline" onClick={handleSignIn}>
+          Sign in
         </Button>
       )}
 

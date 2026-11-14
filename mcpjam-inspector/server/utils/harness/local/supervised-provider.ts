@@ -34,6 +34,7 @@
  * survive into product copy.
  */
 import { randomUUID } from "node:crypto";
+import { localRuntime } from "./runtimes/index.js";
 import {
   lstat,
   mkdir,
@@ -54,9 +55,10 @@ import {
   resolve,
   sep,
 } from "node:path";
-import type {
-  HarnessV1NetworkSandboxSession,
-  HarnessV1SandboxProvider,
+import {
+  harnessStateDirectoryPath,
+  type HarnessV1NetworkSandboxSession,
+  type HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
 import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
@@ -529,7 +531,7 @@ export function createSupervisedLocalHarnessProvider(
   // The framework requires the agent's working directory to be a proper
   // SUBDIRECTORY of the session's default working directory ("." and absolute
   // paths are both rejected), and it puts its own `.agent-runs/<session>` and
-  // `.harness-bootstrap` references under that default directory too.
+  // `.harness-bootstrap` references under `$HOME/.ai-sdk-harness`.
   //
   // Making the granted workspace the default working directory therefore had
   // two consequences, both wrong: the agent ran in
@@ -652,12 +654,11 @@ export function createSupervisedLocalHarnessProvider(
     const confineToSessionState = (path: string) =>
       confinePath(fromAdapterPath(path, platform), { roots: [roots[0]!] });
 
-    // Git Bash is how Claude Code runs shell commands on Windows. Codex runs
-    // its own shell, so it is neither looked up nor handed to it.
-    const gitBashPath =
-      opts.harnessId === "claude-code"
-        ? await resolveGitBashPath(platform)
-        : undefined;
+    // Git Bash, for a runtime that runs shell commands through Git for
+    // Windows. A runtime with its own shell is neither looked up nor handed it.
+    const gitBashPath = localRuntime(opts.harnessId).gitBashOnWindows
+      ? await resolveGitBashPath(platform)
+      : undefined;
     // The runtime this session launches from — the vendor pack and, where the
     // harness has one, the Inspector layer — must sit OUTSIDE both roots the
     // session may write. Inside one, the agent could rewrite the bytes it is
@@ -697,11 +698,11 @@ export function createSupervisedLocalHarnessProvider(
 
     const translationContext: CommandTranslationContext = {
       harnessId: opts.harnessId,
-      // Resolved exactly as the framework resolves it — against the session's
-      // default working directory — so the translator matches the string the
+      // Resolved exactly as the framework resolves it — against
+      // `$HOME/.ai-sdk-harness` — so the translator matches the string the
       // adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
-        adapterWorkRoot,
+        harnessStateDirectoryPath({ sandboxHomeDir: adapterHome }),
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
@@ -827,7 +828,7 @@ export function createSupervisedLocalHarnessProvider(
       supplied: Readonly<Record<string, string>> | undefined,
     ): Record<string, string> => ({
       ...env,
-      ...filterBridgeSuppliedEnv(supplied),
+      ...filterBridgeSuppliedEnv(supplied, opts.harnessId),
     });
 
     const runTranslated = async (

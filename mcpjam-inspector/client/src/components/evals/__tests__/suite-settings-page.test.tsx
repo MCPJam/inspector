@@ -67,7 +67,6 @@ vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
             permissions: {},
             features: {},
             judge: {
-              gating: { enabled: false, reason: "not_enabled_on_deployment" },
               role: "advisory",
               hasRubric: false,
               agreement: {
@@ -75,12 +74,7 @@ vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
                 agreements: 0,
                 rate: null,
                 lowerBound: null,
-                threshold: 0.8,
-                minReviews: 20,
-                eligible: false,
-                reasons: ["insufficient_reviews"],
               },
-              acknowledgement: null,
             },
             revisionNumber: 1,
           }
@@ -119,7 +113,11 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
-vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => true }));
+const flags = vi.hoisted(() => ({ suiteSettingsTabs: false }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "eval-suite-settings-tabs" ? flags.suiteSettingsTabs : true,
+}));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
   useEnsureAdhocEnvironments: () => vi.fn(),
@@ -152,6 +150,7 @@ vi.mock("@mcpjam/design-system/popover", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   capability.canUpgrade = false;
+  flags.suiteSettingsTabs = false;
 });
 
 describe("suite settings page", () => {
@@ -235,5 +234,82 @@ describe("suite settings page", () => {
     expect(screen.getByTestId("suite-settings-locked")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Back to suite" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
+  });
+});
+
+describe("suite settings page with the tabs flag", () => {
+  beforeEach(() => {
+    flags.suiteSettingsTabs = true;
+  });
+
+  const sectionHidden = (container: HTMLElement, key: string) =>
+    Boolean(
+      container
+        .querySelector(`[data-setting-key="${key}"]`)
+        ?.closest("[hidden]"),
+    );
+
+  it("opens on Settings with the eyebrow, subtitle and tabs, and no Back to suite", () => {
+    const { container } = renderSettingsSheet();
+    expect(screen.getByText("Suite settings")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "What this suite tests and how it grades. Changes apply to the next run.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.queryByRole("button", { name: "Back to suite" })).toBeNull();
+    expect(sectionHidden(container, "policy")).toBe(false);
+    expect(sectionHidden(container, "passOrFail")).toBe(true);
+    expect(
+      container.querySelector('[data-settings-layout="inline"]'),
+    ).not.toBeNull();
+  });
+
+  it("opens Default evaluators from the address", () => {
+    const { container } = renderSettingsSheet({
+      route: { type: "suite-edit", suiteId: "suite-1", tab: "evaluators" },
+    });
+    expect(sectionHidden(container, "policy")).toBe(true);
+    expect(sectionHidden(container, "passOrFail")).toBe(false);
+  });
+
+  it("switches tab through the address when nothing is unsaved", () => {
+    renderSettingsSheet();
+    fireEvent.click(screen.getByRole("button", { name: "Default evaluators" }));
+    expect(noopNav.toSuiteEdit).toHaveBeenCalledWith(
+      "suite-1",
+      undefined,
+      "evaluators",
+      { replace: true },
+    );
+  });
+
+  it("asks before a renamed suite's change is dropped, and Discard clears it", async () => {
+    const { container } = renderSettingsSheet();
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Default evaluators" }));
+
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "You have unsaved changes. Discard them to open Default evaluators, or keep editing and save first.",
+    );
+    expect(noopNav.toSuiteEdit).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() =>
+      expect(noopNav.toSuiteEdit).toHaveBeenCalledWith(
+        "suite-1",
+        undefined,
+        "evaluators",
+        { replace: true },
+      ),
+    );
+    expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
   });
 });

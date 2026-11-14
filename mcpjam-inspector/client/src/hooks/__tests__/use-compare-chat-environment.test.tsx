@@ -41,6 +41,13 @@ describe("compare composition", () => {
       ),
     ).toEqual(["env_a", "env_b", "env_c"]);
   });
+  it("forwards only each saved client's Computer choice", () => {
+    renderHook(() => [
+      useCompareChatEnvironment({ hostedContext: { projectId: "p", hostId: "a" }, hostResolved: true, computerAttached: true }),
+      useCompareChatEnvironment({ hostedContext: { projectId: "p", hostId: "b" }, hostResolved: true, computerAttached: false }),
+    ]);
+    expect(state.inputs.mock.calls.map(([input]) => [input.hostId, input.computerAttached])).toEqual([["a", true], ["b", false]]);
+  });
   it("attaches plugins when the environments UI is enabled but no environment is selected", () => {
     state.enabled = true;
     const { result } = renderHook(() =>

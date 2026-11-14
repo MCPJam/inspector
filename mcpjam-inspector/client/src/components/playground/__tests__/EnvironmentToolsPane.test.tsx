@@ -58,7 +58,7 @@ describe("EnvironmentToolsPane", () => {
   it("feeds the selected environment's revision into the tools hook", () => {
     setTools({ servers: SERVERS });
     render(<EnvironmentToolsPane projectId="p_1" environmentId="env_1" />);
-    expect(useEnvironmentToolsMock).toHaveBeenCalledWith("p_1", "env_1", 7);
+    expect(useEnvironmentToolsMock).toHaveBeenCalledWith("p_1", "env_1", 7, undefined);
   });
 
   it("renders every server's tools flat, badging only colliding names", () => {

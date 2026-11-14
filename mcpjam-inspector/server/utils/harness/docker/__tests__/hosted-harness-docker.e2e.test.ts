@@ -53,6 +53,8 @@ import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool } from "ai";
+import { MCPClientManager } from "@mcpjam/sdk";
+import { unsealHarnessProxyToken } from "../../harness-proxy-policy-seal";
 
 const IMAGE = process.env.HARNESS_DOCKER_IMAGE?.trim() ?? "";
 const ENABLED = IMAGE.length > 0;
@@ -103,6 +105,8 @@ vi.mock("../../harness-session-state.js", async (importOriginal) => ({
     stateVersion: 1,
     state: mocks.claimState,
     fingerprintChanged: false,
+    supportsApprovalFence: true,
+    laneId: "lane-e2e",
   })),
   commitHarnessSessionState: vi.fn(async () => true),
   heartbeatHarnessSessionState: vi.fn(async () => "ok"),
@@ -144,6 +148,9 @@ vi.mock("../../resolve-sandbox.js", async (importOriginal) => ({
 }));
 
 import { runHarnessTurn } from "../../run-harness-turn.js";
+import { admitWarmChatManager } from "../../warm-approval-binding.js";
+import { getHarnessAdapter } from "../../registry.js";
+import { imagesSent, startRecordingProxy } from "./recording-proxy";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 
 type Chunk = Record<string, unknown> & { type: string };
@@ -442,6 +449,9 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
 
       beforeAll(async () => {
         vi.stubEnv("HARNESS_SANDBOX_PROVIDER", "docker");
+        vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", "true");
+        vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", "");
+        vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", randomUUID() + randomUUID());
         upstream = await startMockUpstream(spec.mock);
         mocks.upstreamBaseUrl = upstream.url;
         if (harness === "claude-code") {
@@ -513,6 +523,10 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
           onChunk?: (chunk: Chunk, all: Chunk[], abort: () => void) => void;
           /** A chat turn: continuity is claimed, and the turn's commit kept. */
           chat?: { id: string };
+          warm?: boolean;
+          bridged?: boolean;
+          /** Files pasted with the prompt, as the composer sends them. */
+          files?: Array<{ mediaType: string; filename: string; data: string }>;
         } = {},
       ) {
         const controller = new AbortController();
@@ -524,8 +538,19 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
         mocks.revoke.mockClear();
         mocks.start.mockClear();
         const messages = [
-          { role: "user", content: [{ type: "text", text: prompt }] },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              ...(control.files ?? []).map((f) => ({ type: "file", ...f })),
+            ],
+          },
         ] as unknown as ModelMessage[];
+        const warmManager = control.warm ? new MCPClientManager() : undefined;
+        if (warmManager) admitWarmChatManager(warmManager, "org-e2e", false);
+        const manager = warmManager ?? (harness === "codex"
+          ? probeManager(spec.mcpServerId, spec.mcpToolName, probeCalls)
+          : { getServerConfig: (id: string) => id === spec.mcpServerId ? { url: mocks.mcpUrl } : undefined });
         const result = await runHarnessTurn(
           {
             messages,
@@ -534,24 +559,20 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             systemPrompt: "You are running the hosted harness e2e check.",
             authHeader: "Bearer e2e",
             projectId: "project-e2e",
-            mcpClientManager:
-              harness === "codex"
-                ? probeManager(spec.mcpServerId, spec.mcpToolName, probeCalls)
-                : {
-                    getServerConfig: (id: string) =>
-                      id === spec.mcpServerId
-                        ? { url: mocks.mcpUrl }
-                        : undefined,
-                  },
-            selectedServers: [spec.mcpServerId],
+            mcpClientManager: manager,
+            selectedServers: control.warm ? [] : [spec.mcpServerId],
             requireToolApproval: false,
             sourceType: control.chat ? "direct" : "eval",
             ...(control.chat ? { chatSessionId: control.chat.id } : {}),
             harness,
+            ...(control.bridged ? { agentLoop: harness } : {}),
             harnessSandboxBinding: {
               sandboxRowId: "sbxrow-e2e",
               sandboxId: container,
               workdir: "/home/user",
+              // The backend's idle window, as its reserve reply sends it: a
+              // warm agent runs only on a box that has one.
+              idleMs: 5 * 60_000,
             },
             harnessMcpProxy: {
               plane: "web-authorized",
@@ -614,7 +635,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             container,
             "sh",
             "-c",
-            "ls -a /home/user/.harness-bootstrap/*/ | grep -c '^.bootstrap-.*\\.ok$'",
+            "ls -a /home/user/.ai-sdk-harness/.harness-bootstrap/*/ | grep -c '^.bootstrap-.*\\.ok$'",
           ]).trim();
           const { chunks } = await turn("COUNT");
           expect(terminalParts(chunks)).toEqual([
@@ -626,7 +647,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             container,
             "sh",
             "-c",
-            'for f in /home/user/.harness-bootstrap/*/.bootstrap-*.ok; do head -c 200 "$f"; echo; done',
+            'for f in /home/user/.ai-sdk-harness/.harness-bootstrap/*/.bootstrap-*.ok; do head -c 200 "$f"; echo; done',
           ]);
           expect(markers).toContain('"bakedBy":"mcpjam-harness-bake"');
           expect(
@@ -635,7 +656,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
               container,
               "sh",
               "-c",
-              "ls -a /home/user/.harness-bootstrap/*/ | grep -c '^.bootstrap-.*\\.ok$'",
+              "ls -a /home/user/.ai-sdk-harness/.harness-bootstrap/*/ | grep -c '^.bootstrap-.*\\.ok$'",
             ]).trim(),
           ).toBe(before);
           // And it is the version the inspector pins.
@@ -645,6 +666,39 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
         },
         TURN_TIMEOUT_MS,
       );
+
+      it.each(harness === "claude-code" ? [false, true] : [false])("reuses the warm baked runtime across two chat turns (bridged=%s)", async (bridged) => {
+        const chat = { id: `warm-e2e-${randomUUID()}` };
+        const markers = () => docker(["exec", container, "sh", "-c", 'for f in /home/user/.ai-sdk-harness/.harness-bootstrap/*/.bootstrap-*.ok; do echo "$f"; cat "$f"; done']);
+        const warmPids = () => docker(["exec", container, "sh", "-c",
+          `ps -eo pid,args | awk '$2 ~ /(^|\\/)node$/ && /warm-bridge[.]mjs/ {print $1}'`]).trim();
+        const vendorPids = () => docker(["exec", container, "sh", "-c",
+          `ps -eo pid,args | grep -F '${spec.vendorProcess}' | grep -v grep | awk '{print $1}'`]).trim();
+        const before = markers();
+        try {
+          const first = await turn("COUNT", { chat, warm: true, bridged });
+          expect(terminalParts(first.chunks)).toEqual([expect.objectContaining({ type: "finish" })]);
+          expect(first.engineErrors).toEqual([]);
+          expect(first.commit).toBeDefined();
+          const pid = warmPids();
+          expect(pid).not.toBe("");
+          const vendorPid = vendorPids();
+          expect(vendorPid).not.toBe("");
+          mocks.claimState = first.commit;
+          const second = await turn("COUNT", { chat, warm: true, bridged });
+          expect(terminalParts(second.chunks)).toEqual([expect.objectContaining({ type: "finish" })]);
+          expect(second.engineErrors).toEqual([]);
+          expect(streamedText(second.chunks)).toMatch(/USER_TURNS=[2-9]/);
+          expect(warmPids()).toBe(pid);
+          expect(vendorPids()).toBe(vendorPid);
+          expect(markers()).toBe(before);
+          expect(mocks.revoke).toHaveBeenCalledTimes(1);
+        } finally {
+          mocks.claimState = null;
+          docker(["exec", "-u", "user", container, "pkill", "-f", "warm-bridge.mjs"], { allowFail: true });
+        }
+        expect(await leftovers()).toEqual([]);
+      }, TURN_TIMEOUT_MS);
 
       it(
         "maps a native tool turn to the golden stream and evidence",
@@ -670,6 +724,37 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
       );
 
       it(
+        "sends a pasted image to the model as an image, not a file to read",
+        async () => {
+          // A 1x1 PNG, pasted with the prompt.
+          const png =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+          const recorder = await startRecordingProxy(upstream.url);
+          mocks.upstreamBaseUrl = recorder.url;
+          try {
+            const { toolCalls, engineErrors } = await turn("COUNT", {
+              files: [{ mediaType: "image/png", filename: "shot.png", data: png }],
+            });
+            expect(engineErrors).toEqual([]);
+            expect(toolCalls).toEqual([]);
+          } finally {
+            mocks.upstreamBaseUrl = upstream.url;
+            await recorder.close();
+          }
+          // What the vendor CLI sent its model: the image, when the harness
+          // takes images; nothing when it keeps today's file path.
+          const sent = new Set(imagesSent(recorder.bodies));
+          expect(sent.size).toBe(getHarnessAdapter(harness).promptImageInput ? 1 : 0);
+          for (const image of sent) expect(image).toMatch(/^image\/(png|webp|jpeg):\d+$/);
+          // Attached or not, the original stays on the box.
+          expect(
+            docker(["exec", container, "sh", "-c", "ls /home/user/attachments"]),
+          ).toContain("shot.png");
+        },
+        TURN_TIMEOUT_MS,
+      );
+
+      it(
         "attributes an MCP call to its server, in the golden stream and evidence",
         async () => {
           const callsBefore =
@@ -688,10 +773,10 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
           if (mcp) {
             // The proxy token and the correlation the hosted `.mcp.json`
             // carries reached the server with the call.
-            expect(mcp.received.at(-1)).toEqual({
-              proxyToken: "e2e-proxy-token",
-              correlated: true,
-            });
+            const received = mcp.received.at(-1)!;
+            expect(received.correlated).toBe(true);
+            expect(unsealHarnessProxyToken(received.proxyToken, spec.mcpServerId))
+              .toEqual(expect.objectContaining({ token: "e2e-proxy-token", serverId: spec.mcpServerId }));
           }
           // Evidence attribution: the MCP call names its server; nothing else does.
           const attributed = (

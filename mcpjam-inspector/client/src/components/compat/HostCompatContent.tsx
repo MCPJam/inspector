@@ -42,8 +42,11 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
+import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 import type { ToolsDataStatus } from "@/lib/host-compat/use-host-compat";
 
 const FINDING_ICON: Record<
@@ -131,15 +134,17 @@ export function HostCompatContent({
   );
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
   const visibleReports = useMemo(
     () =>
       filterReportsByFeatureFlags(reports, {
         claudeCode: claudeCodeEnabled,
         codex: codexEnabled,
+        copilotCli: copilotCliEnabled === true,
         cursorCli: cursorCliEnabled,
       }),
-    [reports, claudeCodeEnabled, codexEnabled, cursorCliEnabled],
+    [reports, claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled],
   );
 
   // Tier-2: render the server's widget live in each host's emulation.
@@ -186,6 +191,7 @@ export function HostCompatContent({
     projectId,
   });
   const canCreateHosts = Boolean(projectId && serverId && canManageClients);
+  const orgSeed = useOrgBoundTemplateSeed(projectId ?? null);
   const handleTestInHost = async (report: HostCompatReport) => {
     const templateId = report.hostId;
     if (!projectId || !serverId) return;
@@ -210,15 +216,24 @@ export function HostCompatContent({
       server_name: server.name,
     });
 
+    const prepared = orgSeed.prepare(
+      cloneHostTemplateInput(template, { themeMode }),
+      label,
+    );
+    if (!prepared) return;
     setCreatingTemplateId(templateId);
     try {
-      const seed = cloneHostTemplateInput(template, { themeMode });
       const { hostId, hostConfigId } = await createHost({
         projectId,
         name: label,
-        input: { ...seed, serverIds: [serverId] },
+        input: { ...prepared.input, serverIds: [serverId] },
         applyDefaultSystemPrompt: true,
       });
+      if (prepared.needsModelChoice) {
+        toast.success(
+          withModelChoiceNotice(`Created ${label} client.`, prepared.needsModelChoice),
+        );
+      }
       // Same event the create dialog fires, so host creation stays one
       // unified number — filter on `via`/`location` to isolate CTA-driven
       // creates. Best-effort: a posthog throw must not surface a failure
@@ -249,7 +264,7 @@ export function HostCompatContent({
 
   return (
     <div className="pb-4">
-      <ConformanceGate server={server} />
+      <ConformanceGate server={server} location={source} />
 
       {analysisStatus === "analyzing" ? (
         <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -362,6 +377,7 @@ export function HostCompatContent({
                       className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                       disabled={
                         creatingTemplateId !== null ||
+                        !orgSeed.ready ||
                         !canCreateFromLiveTemplate
                       }
                       onClick={() => handleTestInHost(report)}

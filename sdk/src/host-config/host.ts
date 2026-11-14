@@ -194,6 +194,7 @@ export function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
       : { systemPromptDefault: c.systemPromptDefault }),
     temperature: c.temperature,
     requireToolApproval: c.requireToolApproval,
+    ...(c.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: c.requireNativeToolDiscovery } : {}),
     servers: c.serverIds,
     optionalServers: c.optionalServerIds,
     connectionDefaults: c.connectionDefaults,
@@ -291,8 +292,14 @@ export class Host {
   }
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
 
-  /** Opt into progressive MCP tool discovery (search/load meta-tools). */
+  /**
+   * Progressive MCP tool discovery (the search/load meta-tools). `true` on,
+   * `false` off. `HostRunner` reads unset as off; a saved client or host
+   * template means Auto by it, which `runWithClient` and `mcpjam test --host`
+   * apply: on once the tools reach 30 or about 10k tokens of definitions.
+   */
   progressiveToolDiscovery?: boolean;
 
   /**
@@ -410,6 +417,7 @@ export class Host {
     this.promptDefault = cfg.systemPromptDefault;
     this.temperature = cfg.temperature ?? DEFAULT_TEMPERATURE;
     this.requireToolApproval = cfg.requireToolApproval ?? false;
+    this.requireNativeToolDiscovery = cfg.requireNativeToolDiscovery;
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
     this.modelVisibleMcpToolResults = cfg.modelVisibleMcpToolResults;
@@ -592,6 +600,7 @@ export class Host {
       systemPromptDefault: this.promptDefault,
       temperature: this.temperature,
       requireToolApproval: this.requireToolApproval,
+      requireNativeToolDiscovery: this.requireNativeToolDiscovery,
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
       modelVisibleMcpToolResults: this.modelVisibleMcpToolResults,
@@ -618,6 +627,7 @@ export class Host {
       systemPromptDefault: snap.systemPromptDefault,
       temperature: snap.temperature,
       requireToolApproval: snap.requireToolApproval,
+      requireNativeToolDiscovery: snap.requireNativeToolDiscovery,
       serverIds: snap.servers,
       optionalServerIds: snap.optionalServers,
       connectionDefaults: snap.connectionDefaults,

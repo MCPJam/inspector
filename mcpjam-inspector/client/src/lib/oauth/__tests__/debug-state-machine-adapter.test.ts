@@ -312,6 +312,21 @@ describe("Inspector OAuth debug proxy failures", () => {
     const error = await createDebugRequestExecutor()(request).catch((e) => e);
     expect(error.message).toBe(reason);
   });
+
+  // PLB-428: the proxy could not connect to the server at all.
+  it("shows an unreachable server as the server's, without the proxy prefix", async () => {
+    const reason =
+      "The connection to the server failed: connect ECONNREFUSED ::1:3000; connect ECONNREFUSED 127.0.0.1:3000. Check that the server is running and reachable from this machine.";
+    authFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: reason }), {
+        status: 502,
+        statusText: "Bad Gateway",
+      }),
+    );
+
+    const error = await createDebugRequestExecutor()(request).catch((e) => e);
+    expect(error.message).toBe(reason);
+  });
 });
 
 describe("Inspector OAuth adapter SSRF loopback opt-in", () => {

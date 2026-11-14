@@ -12,6 +12,7 @@
  * still declare leaf flags where they need them.
  */
 import type { Command } from "commander";
+import { MCPJAM_CLOUD_API_URL } from "@mcpjam/sdk/internal/deployment";
 import {
   PlatformApiError,
   runOperationWithPermalinks,
@@ -31,11 +32,7 @@ import {
   announceCloudContext,
   preflightCloudCredentials,
 } from "./cloud-context.js";
-import {
-  buildPlatformClient,
-  toCliError,
-  webOriginForApiBaseUrl,
-} from "./platform-client.js";
+import { buildPlatformClient, toCliError } from "./platform-client.js";
 import { getGlobalOptions } from "./server-config.js";
 import { CliError, usageError, writeResult } from "./output.js";
 
@@ -139,7 +136,7 @@ export function addPlatformOptions(command: Command): Command {
     .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
     .option(
       "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
+      `MCPJam API base URL (defaults to your organization's server or ${MCPJAM_CLOUD_API_URL})`
     )
     .option(
       "--api-header <header...>",
@@ -161,7 +158,7 @@ export function buildCloudClientContext(
     client: built.client,
     credentialKind: built.credentialKind,
     baseUrl: built.baseUrl,
-    webOrigin: webOriginForApiBaseUrl(built.baseUrl),
+    webOrigin: new URL(built.baseUrl).origin,
   };
 }
 

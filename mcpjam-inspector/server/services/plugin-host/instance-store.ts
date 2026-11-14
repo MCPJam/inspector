@@ -11,10 +11,16 @@ import {
   type DurablePluginInstanceControl,
 } from "../../../shared/plugin-invocation-receipts.js";
 
+/**
+ * `knownContextVersion` is the context version this process already holds: a
+ * reply leaves out `contextJson` unless the stored one is newer. Context
+ * writes always send their own new version, so they get no echo.
+ */
 export interface PluginInstanceControlPort {
   read(
     token: string,
     signal: AbortSignal,
+    knownContextVersion?: number,
   ): Promise<DurablePluginInstanceControl | null>;
   issue(
     token: string,
@@ -44,6 +50,8 @@ export interface PluginInstanceControlPort {
       ownerHash: string;
       expiresAt: number;
       contextToken?: string;
+      /** A Settings App: its row also keeps the versioned settings document. */
+      settings?: boolean;
     },
     signal: AbortSignal,
   ): Promise<{ token: string; control: DurablePluginInstanceControl }>;
@@ -55,7 +63,7 @@ export interface PluginInstanceControlPort {
    * Keeps the same control, owner hash and snapshot. */
   renew?(
     token: string,
-    input: { expiresAt: number },
+    input: { expiresAt: number; knownContextVersion?: number },
     signal: AbortSignal,
   ): Promise<DurablePluginInstanceControl>;
   close(
@@ -75,6 +83,24 @@ export interface PluginInstanceControlPort {
     input: { expectedVersion: number; settingsJson: string },
     signal: AbortSignal,
   ): Promise<DurablePluginInstanceControl>;
+  /** An App opened from a Settings App action. The backend admits it only
+   * while the Settings App lives and its stored document lists the action;
+   * a retry with the same anchor gets the original handle. */
+  issueChild?(
+    childToken: string,
+    input: {
+      childAnchorHash: string;
+      childParentOwnerHash: string;
+      childParentScopeHash: string;
+      childSourceHash: string;
+      childBindingHash: string;
+      childSettingsAction: { name: string; revision: string };
+      ownerHash: string;
+      snapshotJson: string;
+      expiresAt: number;
+    },
+    signal: AbortSignal,
+  ): Promise<{ token: string; control: DurablePluginInstanceControl }>;
 }
 export const pluginInstanceIdentityHash = (identity: PluginInstanceIdentity) =>
   pluginReceiptHash([
@@ -168,6 +194,13 @@ export function createPluginInstanceControlPort(
     writeSettings: async (token, input, signal) =>
       (await request({ action: "settings", ...key(token), ...input }, signal))
         .control,
+    issueChild: async (childToken, input, signal) =>
+      checkedActivation(
+        await request(
+          { action: "issue-child", ...key(childToken), childToken, ...input },
+          signal,
+        ),
+      ),
     models: async (threadId, signal) =>
       (
         await request(
@@ -182,10 +215,24 @@ export function createPluginInstanceControlPort(
     contexts: async (signal) =>
       (await request({ action: "list-contexts", identityHash }, signal)).tokens,
     writeContext: async (token, input, signal) =>
-      (await request({ action: "context", ...key(token), ...input }, signal))
-        .control,
-    read: async (token, signal) =>
-      (await request({ action: "read", ...key(token) }, signal)).control,
+      (
+        await request(
+          {
+            action: "context",
+            ...key(token),
+            ...input,
+            knownContextVersion: input.expectedVersion + 1,
+          },
+          signal,
+        )
+      ).control,
+    read: async (token, signal, knownContextVersion) =>
+      (
+        await request(
+          { action: "read", ...key(token), knownContextVersion },
+          signal,
+        )
+      ).control,
     issue: async (token, input, signal) =>
       (await request({ action: "issue", ...key(token), ...input }, signal))
         .control,

@@ -44,7 +44,6 @@ import type { EvalServerAttachment } from "@/components/evals/types";
 import { deriveServerGroupName } from "./server-group-name";
 import {
   findSoloGroup,
-  initialPickerTab,
   listGroupsForTab,
   resolvePickerSelection,
   resolveServerConnection,
@@ -388,10 +387,9 @@ export function ServerPicker({
   const resolved =
     selection && selection.kind !== "dangling" ? selection : null;
 
-  // Seeded from the selection, then owned by the user for as long as the
-  // popover stays open — re-deriving on every render would yank them back to
-  // the Groups tab the moment they picked a group and kept browsing.
-  const [tab, setTab] = useState<PickerTab>(() => initialPickerTab(selection));
+  // Opens on the first tab, like every tab set, then owned by the user for as
+  // long as the popover stays open.
+  const [tab, setTab] = useState<PickerTab>("servers");
 
   const serverRows = useMemo<ServerPickerServerRow[]>(
     () =>
@@ -753,8 +751,7 @@ export function ServerPicker({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        // Reopening lands on the tab that holds the current selection.
-        if (next) setTab(initialPickerTab(selection));
+        if (next) setTab("servers");
       }}
     >
       {/* Who arranges the trigger and its clear control. A `field` trigger is

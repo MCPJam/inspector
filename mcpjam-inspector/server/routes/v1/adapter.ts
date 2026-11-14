@@ -11,6 +11,7 @@
  * the public envelope. Errors propagate to the v1 router's `onError`.
  */
 import type { Context } from "hono";
+import { withStampedAuthChallenge } from "../../utils/connection-effective-auth.js";
 import type { z } from "zod";
 import { HOSTED_MODE } from "../../config.js";
 import { runEphemeralConnection } from "../web/auth.js";
@@ -129,7 +130,21 @@ export async function runV1ServerOp<S extends z.ZodTypeAny, T>(
   let result: T;
   try {
     const rawBody = await synthesizeServerBody(c);
-    result = await runEphemeralConnection(c, rawBody, schema, coreFn, {
+    result = await runEphemeralConnection(
+      c,
+      rawBody,
+      schema,
+      // A failure's sign-in challenge is stamped with the connection's
+      // effective auth method here, where the server is known.
+      (manager, body) =>
+        withStampedAuthChallenge(
+          manager,
+          typeof (body as { serverId?: unknown })?.serverId === "string"
+            ? (body as { serverId: string }).serverId
+            : undefined,
+          () => coreFn(manager, body),
+        ),
+      {
       timeoutMs: options?.timeoutMs,
       rpcLogger: collector?.rpcLogger,
       httpLogger: collector?.httpLogger,

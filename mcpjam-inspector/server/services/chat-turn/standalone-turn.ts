@@ -13,7 +13,7 @@ import {
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
-import { buildLiveEffectiveCapabilities } from "../environments/effective-capabilities.js";
+import { resolveTurnSkills } from "../environments/turn-skills.js";
 import {
   validateAppToolEntries,
   validatePageToolEntries,
@@ -170,6 +170,7 @@ export async function runStandaloneTurn(
         reasoningEffort,
         explicitTemperature: effort.effort ? body.temperature : undefined,
         requireToolApproval: execution.requireToolApproval,
+        requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         respectToolVisibility: execution.respectToolVisibility,
         modelVisibleMcpToolResults: execution.modelVisibleMcpToolResults,
         customProviders: body.customProviders,
@@ -192,8 +193,17 @@ export async function runStandaloneTurn(
         widgetModelContext: validateWidgetModelContextEntries(
           body.widgetModelContext,
         ),
-        liveSkillSurface: true,
-        effectiveCapabilities: buildLiveEffectiveCapabilities({ localSkills }),
+        // No project: this machine's skills, and the connected servers' own.
+        skills: resolveTurnSkills({
+          source: {
+            kind: "live",
+            projectSkills: [],
+            liveExtras: { localSkills },
+          },
+          runtime: { kind: "agent" },
+          modelContextTokens: model.contextLength,
+        }),
+        skillsSurface: "playground",
         ...(execution.progressiveToolDiscovery !== undefined
           ? {
               progressiveToolDiscovery: {
@@ -203,6 +213,7 @@ export async function runStandaloneTurn(
           : {}),
       },
       persist: {
+        requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         projectId: "",
         chatSessionId: body.chatSessionId,
         sourceType: "direct",
@@ -227,6 +238,9 @@ export async function runStandaloneTurn(
         abortSignal: c.req.raw.signal,
         // The standalone debugger owns this manager beyond the current turn.
         dispose: async () => undefined,
+        // Mid-session sign-in with the spec defaults: a standalone chat has no
+        // host config.
+        authChallenge: {},
         localScopeStepUp: {
           bindingKey: JSON.stringify([
             process.env.CONVEX_HTTP_URL ?? "",

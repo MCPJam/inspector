@@ -36,7 +36,6 @@ function renderSection(
   overrides: {
     predicates?: Predicate[];
     judgeConfig?: Parameters<typeof SuitePassOrFailSection>[0]["judgeConfig"];
-    judgeAccessory?: React.ReactNode;
     rubricEditor?: React.ReactNode;
     stageFacts?: Parameters<typeof SuitePassOrFailSection>[0]["stageFacts"];
   } = {},
@@ -53,7 +52,6 @@ function renderSection(
       judgeConfig={overrides.judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
       availableModels={[]}
-      judgeAccessory={overrides.judgeAccessory}
       rubricEditor={overrides.rubricEditor}
       stageFacts={overrides.stageFacts}
     />,
@@ -155,10 +153,9 @@ describe("SuitePassOrFailSection", () => {
   });
 
   it("shows only the judge model in the Judge section for now", () => {
-    // The gate panel and grading instructions keep their stored values but are
-    // not rendered until they are simpler to explain.
+    // The grading instructions keep their stored values but are not rendered
+    // until they are simpler to explain.
     const { container } = renderSection({
-      judgeAccessory: <div data-testid="gate-panel" />,
       rubricEditor: <div data-testid="rubric-editor" />,
     });
     const group = container.querySelector(
@@ -166,7 +163,6 @@ describe("SuitePassOrFailSection", () => {
     ) as HTMLElement;
     expect(within(group).getByText("Judge model")).toBeTruthy();
     expect(within(group).getByTestId("suite-judge-model-trigger")).toBeTruthy();
-    expect(within(group).queryByTestId("gate-panel")).toBeNull();
     expect(within(group).queryByTestId("rubric-editor")).toBeNull();
   });
 

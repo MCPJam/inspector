@@ -22,13 +22,13 @@ export interface BrowserdConfig {
   /** `--window-size=W,H` matched to the X screen geometry, if the recipe set it. */
   windowSize?: string;
   /**
-   * `ephemeral` launches a throwaway browser with NO persistent profile
+   * `ephemeral` launches a throwaway browser, optionally from a saved profile
    * (evals/swarms: fresh state per iteration, so one iteration's cookies can
    * never decide the next one's verdict). `persistent` keeps the profile dir,
    * which is what makes a playground login survive between turns.
    *
-   * The singleton lock (L8) is a property of the persistent profile DIRECTORY,
-   * so it simply does not apply in ephemeral mode — nothing is shared to lock.
+   * Profile directories use the singleton lock, including a run-scoped
+   * directory restored from an archive. Unseeded ephemeral contexts do not.
    */
   contextMode: "persistent" | "ephemeral";
   /**

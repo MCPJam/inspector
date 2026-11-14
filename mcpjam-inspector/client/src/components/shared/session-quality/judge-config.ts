@@ -35,10 +35,7 @@ export type GoalCompletionJudgeSlot = {
    * Whether this judge's verdict may DECIDE a trial, or only describe it.
    *
    * Absent means advisory, which is what every suite written before the gate
-   * means — so a missing field can never be read as an accidental gate. The
-   * backend refuses to store `gating` unless the suite is calibrated against
-   * its current rubric and judge template, or an organization owner has
-   * acknowledged the gap.
+   * means — so a missing field can never be read as an accidental gate.
    *
    * `"required"` is the canonical spelling and `"gating"` its legacy one —
    * one value, two words. Storage said `"gating"` before the rename and says

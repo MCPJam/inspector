@@ -64,6 +64,9 @@ const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
 );
+// MCP Events (triggers): coordinator, identities, in-memory inbox, push
+// runtime. Same PREFIX-replacement reason as every subpath above.
+const sdkEventsEntry = path.resolve(rootDir, "../sdk/src/events/index.ts");
 const sdkPluginHostEntry = path.resolve(
   rootDir,
   "../sdk/src/internal/plugin-host.ts",
@@ -95,6 +98,7 @@ export default defineConfig({
     include: ["**/__tests__/**/*.test.ts", "**/*.test.ts"],
     exclude: ["node_modules", "dist"],
     setupFiles: ["./test/setup.ts"],
+    globalSetup: [path.join(rootDir, "server/test/__tests__/plugin-shim-setup.ts")],
     testTimeout: 30000,
     hookTimeout: 30000,
     server: {
@@ -116,6 +120,7 @@ export default defineConfig({
           "@mcpjam/sdk/host-compat",
           "@mcpjam/sdk/plugin-bundle",
           "@mcpjam/sdk/widget-runtime",
+          "@mcpjam/sdk/events",
           "@mcpjam/sdk/internal/plugin-host",
         ],
       },
@@ -135,6 +140,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: "@mcpjam/sdk/internal/telemetry", replacement: path.resolve(rootDir, "../sdk/src/internal/telemetry.ts") },
+      { find: "@mcpjam/sdk/internal/network-proxy", replacement: path.resolve(rootDir, "../sdk/src/internal/network-proxy.ts") },
       {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,
@@ -162,6 +168,7 @@ export default defineConfig({
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,
       },
+      { find: "@mcpjam/sdk/events", replacement: sdkEventsEntry },
       {
         find: "@mcpjam/sdk/internal/plugin-host",
         replacement: sdkPluginHostEntry,

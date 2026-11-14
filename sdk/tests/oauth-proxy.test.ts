@@ -1094,6 +1094,42 @@ describe("allowPrivateNetwork (local inspector)", () => {
     );
   }
 
+  it("admits each private DNS address under the hosted HTTPS policy", async () => {
+    resolveTo("10.0.0.5");
+    queueMetadataResponses(httpsRequestMock, [{ body: "{}" }]);
+    const admit = vi.fn(
+      ({ address }: { address?: string }) => address === "10.0.0.5"
+    );
+    await expect(
+      executeOAuthProxy({
+        url: "https://mcp.internal.example/mcp",
+        httpsOnly: true,
+        admitPrivateDestination: admit,
+      })
+    ).resolves.toMatchObject({ status: 200, targetIsPrivate: true });
+    expect(admit).toHaveBeenCalledWith({
+      hostname: "mcp.internal.example",
+      address: "10.0.0.5",
+    });
+    expect(dnsLookupMock).toHaveBeenCalledTimes(1);
+    expect(httpsRequestMock).toHaveBeenCalledOnce();
+  });
+
+  it.each(["10.0.0.5", "169.254.169.254"])(
+    "refuses an unadmitted or metadata DNS answer %s before opening a socket",
+    async (address) => {
+      resolveTo(address);
+      await expect(
+        executeOAuthProxy({
+          url: "https://mcp.internal.example/mcp",
+          httpsOnly: true,
+          admitPrivateDestination: () => address === "169.254.169.254",
+        })
+      ).rejects.toBeInstanceOf(OAuthProxyError);
+      expect(httpsRequestMock).not.toHaveBeenCalled();
+    }
+  );
+
   it("reaches a public hostname that resolves to loopback", async () => {
     // The reported case: an authorization server named `auth.local` or
     // `auth.localtest.me` that answers 127.0.0.1. Strict mode reads this as

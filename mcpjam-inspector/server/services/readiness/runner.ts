@@ -33,8 +33,11 @@ import {
   parseClaudeExperienceObservations,
   parseOpenAIExperienceObservations,
   type ClaudeReadinessResult,
+  type DirectoryAnswer,
   type DirectoryObservationEnvelope,
   type DirectoryObservationReason,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
   type DirectoryObservationState,
   type DirectoryObservationStatus,
   type MuseReadinessResult,
@@ -82,14 +85,27 @@ export interface RunReadinessOptions {
   fetchFn: typeof fetch;
   /** The DECLARED submission shape. Required for OpenAI, absent for Claude. */
   submissionMode?: OpenAISubmissionMode;
-  /** Headers the target needs, e.g. a saved server's credential. */
-  headers?: Record<string, string>;
+  /**
+   * Headers the MCP endpoint needs, e.g. a saved server's credential. The SDK
+   * sends them only on MCP requests to the endpoint, never on discovery.
+   */
+  mcpHeaders?: Record<string, string>;
   /** Cancellation. A cancelled run must stop dialling somebody else's server. */
   signal?: AbortSignal;
   /** Absent ⇒ this run cannot request observations and cannot spend. */
   requestObservations?: ObservationRequester;
   /** Per-request budget. The caller owns the run-level deadline. */
   timeoutMs?: number;
+  /**
+   * Arm the lazy-auth probe. The SDK builds the probe's requests from the
+   * target and `fetchFn` alone, so `mcpHeaders` never reach them — the same
+   * header split discovery uses.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /** Features the submitter claims. */
+  claimedFeatures?: DirectoryFeatureClaim[];
+  /** A Claude connector submission's answers, graded with the portal's rules. */
+  submissionAnswers?: readonly DirectoryAnswer[];
   now?: () => Date;
 }
 
@@ -235,7 +251,8 @@ export function renderObservationEvidence(input: {
  */
 async function resolveObservations<Kind extends string, Id extends string>(
   options: RunReadinessOptions,
-  evidence: string,
+  /** Absent when the run could not use the server: a model would read nothing. */
+  evidence: string | undefined,
   // The publisher's OWN parser, passed in so the returned state carries that
   // publisher's envelope type. A shared parser would widen it to `string` ids
   // and hand the grader an envelope it cannot tell apart from the other
@@ -252,6 +269,14 @@ async function resolveObservations<Kind extends string, Id extends string>(
       reason: "not_requested",
       detail:
         "this run did not request model-backed observations, so nothing was charged",
+    };
+  }
+  if (evidence === undefined) {
+    return {
+      status: "not-requested",
+      reason: "no_evidence",
+      detail:
+        "the server could not be used, so no model was asked to read it and nothing was charged",
     };
   }
 
@@ -316,6 +341,15 @@ async function resolveObservations<Kind extends string, Id extends string>(
   return { status: "completed", envelope: parsed.envelope };
 }
 
+/**
+ * Whether the Claude gather recorded that it could not use the server, which
+ * the SDK's partial-results gather sets as `serverFailure`. Read by name, so
+ * a gather that never sets it reads as a server that answered.
+ */
+function serverFailed(evidence: object): boolean {
+  return "serverFailure" in evidence && evidence.serverFailure !== undefined;
+}
+
 export interface ReadinessRunOutcome {
   result: DirectoryReadinessResult;
   /** The observation axis, mirrored out so a caller can report it separately. */
@@ -340,7 +374,7 @@ export async function runDirectoryReadiness(
       enteredUrl: options.target,
       fetchFn: options.fetchFn,
       timeoutMs: options.timeoutMs,
-      headers: options.headers,
+      headers: options.mcpHeaders,
       // Threaded IN, not merely checked between steps — see the OpenAI branch.
       signal: options.signal,
       now: options.now,
@@ -376,11 +410,17 @@ export async function runDirectoryReadiness(
       mode,
       fetchFn: options.fetchFn,
       timeoutMs: options.timeoutMs,
-      headers: options.headers,
+      mcpHeaders: options.mcpHeaders,
       // Threaded IN, not merely checked between steps: a cancelled run has to
       // stop the request in flight, because the traffic being stopped is aimed
       // at somebody else's server.
       signal: options.signal,
+      ...(options.lazyAuthProbe !== undefined
+        ? { lazyAuthProbe: options.lazyAuthProbe }
+        : {}),
+      ...(options.claimedFeatures !== undefined
+        ? { claimedFeatures: options.claimedFeatures }
+        : {}),
       now: options.now,
     });
     assertNotCancelled(options.signal);
@@ -409,19 +449,27 @@ export async function runDirectoryReadiness(
     enteredUrl: options.target,
     fetchFn: options.fetchFn,
     timeoutMs: options.timeoutMs,
-    headers: options.headers,
+    mcpHeaders: options.mcpHeaders,
     // Threaded IN, not merely checked between steps — see the OpenAI branch.
     signal: options.signal,
+    ...(options.lazyAuthProbe !== undefined
+      ? { lazyAuthProbe: options.lazyAuthProbe }
+      : {}),
+    ...(options.claimedFeatures !== undefined
+      ? { claimedFeatures: options.claimedFeatures }
+      : {}),
     now: options.now,
   });
   assertNotCancelled(options.signal);
 
   const observations = await resolveObservations(
     options,
-    renderObservationEvidence({
-      target: options.target,
-      tools: evidence.tools,
-    }),
+    serverFailed(evidence)
+      ? undefined
+      : renderObservationEvidence({
+          target: options.target,
+          tools: evidence.tools,
+        }),
     parseClaudeExperienceObservations,
   );
   assertNotCancelled(options.signal);
@@ -430,6 +478,9 @@ export async function runDirectoryReadiness(
     result: gradeClaudeReadiness({
       ...evidence,
       llmObservations: observations,
+      ...(options.submissionAnswers
+        ? { submissionAnswers: options.submissionAnswers }
+        : {}),
     }),
     observations,
   };

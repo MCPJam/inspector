@@ -10,10 +10,23 @@ import {
 } from "@/lib/apis/web/context";
 import type { UIMessage } from "@ai-sdk/react";
 
-const { mockDetectUIType, mockToolPart, mockWidgetReplay } = vi.hoisted(() => ({
+const {
+  mockDetectUIType,
+  mockToolPart,
+  mockWidgetReplay,
+  mockForwardedWidgetCall,
+} = vi.hoisted(() => ({
   mockDetectUIType: vi.fn(),
   mockToolPart: vi.fn(),
   mockWidgetReplay: vi.fn(),
+  mockForwardedWidgetCall: vi.fn(),
+}));
+
+vi.mock("../thread/use-forwarded-widget-calls", () => ({
+  useForwardedWidgetCalls: () => ({
+    approvals: [],
+    call: mockForwardedWidgetCall,
+  }),
 }));
 
 // Mock all part components
@@ -189,6 +202,72 @@ describe("PartSwitch", () => {
     onRequestFullscreen: vi.fn(),
     onExitFullscreen: vi.fn(),
   };
+
+  it("uses the gated widget route for context delivered in AI SDK result metadata", async () => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    const originalResult = { content: [], structuredContent: { count: 7 }, _meta: { private: "widget-only" } };
+    const context = {
+      owner: {
+        kind: "chat",
+        userId: "user",
+        serverId: "server",
+        harnessSessionId: "lane",
+      },
+      parentExecutionId: "parent",
+    };
+    render(
+      <PartSwitch
+        {...defaultProps}
+        part={{
+          type: "dynamic-tool",
+          toolName: "qa_read",
+          toolCallId: "call",
+          state: "output-available",
+          input: {},
+          output: { type: "text", value: "model projection" },
+          resultProviderMetadata: { mcpjam: { widgetContext: context, originalResult } },
+        }}
+      />,
+    );
+    const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+    expect(rendered).toBeDefined();
+    expect(rendered.toolOutput).toEqual(originalResult);
+    expect(rendered.rawOutput).toEqual(originalResult);
+    await rendered.onCallTool("qa_write", {});
+    expect(mockForwardedWidgetCall).toHaveBeenCalledWith(
+      context,
+      "qa_write",
+      {},
+    );
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("opens an attributed App result without a current catalog entry", () => {
+    mockDetectUIType.mockReturnValue(null);
+    const marker = {
+      instanceToken: "a".repeat(43), projectId: "project", workspaceId: "workspace",
+      serverId: "server-1", hostId: "chatgpt",
+    };
+    const originalResult = {
+      content: [{ type: "text", text: "Diagram displayed" }],
+      structuredContent: { checkpointId: "drawing" },
+      _meta: { "mcpjam/model-app": marker },
+    };
+    const part = {
+      type: "dynamic-tool" as const, toolName: "create_view", toolCallId: "draw",
+      input: {}, state: "output-available" as const,
+      output: { output: { content: originalResult.content } },
+      callProviderMetadata: { mcpjam: { serverId: "other-server" } },
+      resultProviderMetadata: { mcpjam: { resultPresentation: true, originalResult } },
+    };
+    const view = render(<PartSwitch {...defaultProps} part={part} />);
+    expect(view.queryByTestId("widget-replay")).toBeNull();
+    view.rerender(<PartSwitch {...defaultProps} part={{
+      ...part, callProviderMetadata: { mcpjam: { serverId: marker.serverId } },
+    }} />);
+    expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+    expect(mockWidgetReplay.mock.calls.at(-1)?.[0].rawOutput).toEqual(originalResult);
+  });
 
   it("renders titled App text as one labeled item and mention references using the same chip", () => {
     const view = render(
@@ -829,6 +908,42 @@ describe("PartSwitch", () => {
       );
     });
 
+    it("gives a reopened App the raw result from a toolOutput-only override", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const modelCopy = {
+        type: "json",
+        value: { content: [{ type: "text", text: "Showing card Visa" }] },
+      };
+      const rawResult = {
+        content: [{ type: "text", text: "Showing card Visa" }],
+        structuredContent: { card: "Visa" },
+        _meta: { ui: { resourceUri: "ui://repro/card.html" } },
+      };
+      const part = {
+        type: "dynamic-tool",
+        toolName: "show_card",
+        toolCallId: "call-card",
+        state: "output-available",
+        input: { name: "Visa" },
+        output: modelCopy,
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{
+            show_card: { ui: { resourceUri: "ui://repro/card.html" } },
+          }}
+          toolRenderOverrides={{ "call-card": { toolOutput: rawResult } }}
+        />,
+      );
+
+      const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+      expect(rendered.toolOutput).toEqual(rawResult);
+      expect(rendered.rawOutput).toEqual(modelCopy);
+    });
+
     it("uses recorded diagnostics and hides live controls for frozen widgets", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
       const part = {
@@ -928,6 +1043,116 @@ describe("PartSwitch", () => {
       );
     });
 
+    it("shows an eval run's recorded errors next to the live App", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const part = {
+        type: "tool-invocation",
+        toolName: "create_view",
+        toolCallId: "call-saved",
+        state: "output-available",
+        input: { title: "Flow" },
+        output: { content: "saved" },
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{
+            create_view: {
+              ui: { resourceUri: "ui://widget/create-view.html" },
+            },
+          }}
+          toolRenderOverrides={{
+            "call-saved": {
+              cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+              recordedWidgetErrors: {
+                consoleErrors: ["TypeError: broken"],
+                blockedRequests: [],
+              },
+            },
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+      expect(mockToolPart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recordedWidgetDiagnostics: expect.objectContaining({
+            consoleErrors: ["TypeError: broken"],
+          }),
+        }),
+      );
+    });
+
+    it.each([
+      ["the live App can render", "mcp-apps", "widget-replay"],
+      ["the live App can't render here", null, "frozen-widget-replay"],
+    ])(
+      "uses an eval run's backup picture only when needed: %s",
+      (_label, uiType, shownTestId) => {
+        mockDetectUIType.mockReturnValue(uiType);
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={
+              {
+                type: "tool-invocation",
+                toolName: "create_view",
+                toolCallId: "call-backup",
+                state: "output-available",
+                input: {},
+                output: { content: "saved" },
+              } as any
+            }
+            toolRenderOverrides={{
+              "call-backup": {
+                cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+                fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              },
+            }}
+          />,
+        );
+        expect(screen.getByTestId(shownTestId)).toBeInTheDocument();
+        const hiddenTestId =
+          shownTestId === "widget-replay" ? "frozen-widget-replay" : "widget-replay";
+        expect(screen.queryByTestId(hiddenTestId)).not.toBeInTheDocument();
+      },
+    );
+
+    it("gives a read-only eval replay no tool or message handlers", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={
+            {
+              type: "tool-invocation",
+              toolName: "create_view",
+              toolCallId: "call-replay",
+              state: "output-available",
+              input: {},
+              output: { content: "saved" },
+            } as any
+          }
+          toolRenderOverrides={{
+            "call-replay": {
+              cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+              fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              readOnly: true,
+            },
+          }}
+        />,
+      );
+      const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+      expect(rendered).toBeDefined();
+      expect(rendered.onCallTool).toBeUndefined();
+      expect(rendered.onSendFollowUp).toBeUndefined();
+      expect(mockToolPart).toHaveBeenCalledWith(
+        expect.objectContaining({ keepLiveWidgetDiagnostics: true }),
+      );
+    });
+
     // SEP-1865 `ui/notifications/request-teardown`: once the host has
     // honored the widget's teardown request, its toolCallId lands in
     // `tornDownWidgetIds` on the Thread. PartSwitch must
@@ -960,6 +1185,26 @@ describe("PartSwitch", () => {
           />,
         );
         expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
+        expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+      });
+
+      it("shows no backup picture for a dismissed eval App", () => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={dismissedPart as any}
+            toolsMetadata={widgetMetadata}
+            tornDownWidgetIds={new Set(["call-1"])}
+            toolRenderOverrides={{
+              "call-1": {
+                cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+                fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              },
+            }}
+          />,
+        );
+        expect(screen.queryByTestId("frozen-widget-replay")).not.toBeInTheDocument();
         expect(screen.getByTestId("tool-part")).toBeInTheDocument();
       });
 

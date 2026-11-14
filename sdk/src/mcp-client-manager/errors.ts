@@ -2,6 +2,12 @@
  * Custom error classes for MCP SDK
  */
 
+import {
+  parseAuthChallengeSignal,
+  type AuthChallengeSignal,
+} from "./auth-challenge.js";
+import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
+
 /**
  * Base error class for all MCP SDK errors
  */
@@ -72,7 +78,7 @@ function hasNumericCode(error: unknown): error is Error & { code: number } {
   );
 }
 
-function getNumericStatus(error: unknown): number | undefined {
+export function getNumericStatus(error: unknown): number | undefined {
   if (!error || typeof error !== "object") {
     return undefined;
   }
@@ -178,6 +184,19 @@ export function readUnsupportedVersionFailure(
     ) {
       return { supported: [] };
     }
+    // The server's own refusal of a legacy `initialize`: a 2026-07-28-only
+    // server answers it with HTTP 400 and JSON-RPC `-32022`, naming what it
+    // does support. The transport carries only the body text ("Error POSTing
+    // to endpoint: {…}"), so the code is read from the parsed body, never from
+    // loose prose a server could echo. Read before the prose match below: the
+    // body's own message may say "protocol version is not supported: <the
+    // requested version>", which that match would report as the offer.
+    if (typeof named.message === "string") {
+      const refusal = readJsonRpcVersionRefusal(named.message);
+      if (refusal) {
+        return refusal;
+      }
+    }
     // The LEGACY-pin refusal, thrown by the upstream `Client` when the
     // server's `initialize` reply names a version outside the accept-list a
     // stateful pin narrowed to. It is a plain `Error` — no `supported` array,
@@ -206,6 +225,35 @@ export function readUnsupportedVersionFailure(
     }
   }
   return undefined;
+}
+
+/** A JSON-RPC `-32022` error body inside a transport error's message. */
+function readJsonRpcVersionRefusal(
+  message: string
+): { supported: string[] } | undefined {
+  const start = message.indexOf("{");
+  const end = message.lastIndexOf("}");
+  if (start === -1 || end <= start) return undefined;
+  let body: unknown;
+  try {
+    body = JSON.parse(message.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+  const error = (body as { error?: { code?: unknown; data?: unknown } } | null)
+    ?.error;
+  if (error?.code !== MCP_ERROR_CODES.UnsupportedProtocolVersion) {
+    return undefined;
+  }
+  const supported = (error.data as { supported?: unknown } | undefined)
+    ?.supported;
+  return {
+    supported: Array.isArray(supported)
+      ? supported.filter(
+          (version): version is string => typeof version === "string"
+        )
+      : [],
+  };
 }
 
 /** The error and its `cause` links, bounded so a cycle cannot hang a connect. */
@@ -402,9 +450,8 @@ export function isInsufficientScopeError(error: unknown): boolean {
  * The fields originate from the resource server's header, so treat them as
  * UNTRUSTED when rendering.
  *
- * Returns `undefined` when no challenge field is present — a bare name match
- * carries nothing actionable — and keeps walking in that case, so a branded but
- * empty wrapper does not hide a populated challenge deeper in the chain.
+ * The first branded node in the chain answers, even with no challenge field:
+ * a bare `insufficient_scope` is still a step-up request.
  */
 export function extractInsufficientScopeChallenge(
   error: unknown,
@@ -439,11 +486,103 @@ export function extractInsufficientScopeChallenge(
         ? node.errorDescription
         : undefined;
 
-    if (requiredScope || resourceMetadataUrl || errorDescription) {
-      return { requiredScope, resourceMetadataUrl, errorDescription };
-    }
-    return undefined;
+    // A challenge with no scope and no metadata pointer is still a step-up
+    // request: the authorization flow falls back to discovery's scope
+    // selection (the requested scopes, then `scopes_supported`), as the MCP
+    // authorization spec and Claude do.
+    return { requiredScope, resourceMetadataUrl, errorDescription };
   });
+}
+
+/**
+ * The challenge the HTTP error fetch put on its own `401` error, or `undefined`.
+ *
+ * A JSON-RPC error's `data` is written by the MCP server, so a server could
+ * otherwise claim a 401 it never sent. Those errors carry numeric JSON-RPC
+ * codes and are refused. `effectiveAuth` is never part of a wire parse: the
+ * route stamps it, so a value found here is dropped.
+ */
+function httpErrorDataChallenge(
+  node: unknown,
+): AuthChallengeSignal | undefined {
+  if (!node || typeof node !== "object") return undefined;
+  const { code, data } = node as {
+    code?: unknown;
+    data?: { authChallenge?: unknown } | null;
+  };
+  if (typeof code === "number") return undefined;
+  const signal = parseAuthChallengeSignal(data?.authChallenge);
+  if (signal?.source !== "http_401") return undefined;
+  const { effectiveAuth: _wireValue, ...challenge } = signal;
+  return challenge;
+}
+
+/**
+ * Recognize a sign-in challenge anywhere in an error's cause chain.
+ *
+ * Three shapes reach a caller:
+ *   - the `SdkHttpError` the HTTP error fetch throws for a `401` on a protected
+ *     operation, which carries the parsed challenge as `data.authChallenge`;
+ *   - an upstream `InsufficientScopeError` (a `403 insufficient_scope`), mapped
+ *     to `source: "http_403_insufficient_scope"`, scope-less included;
+ *   - an error the manager attached a recorded challenge to (`authChallenge`),
+ *     which is how the auth-provider path keeps a header the transport drops.
+ *
+ * Every field originates from the resource server. Treat it as untrusted.
+ */
+export function extractAuthChallenge(
+  error: unknown,
+): AuthChallengeSignal | undefined {
+  return findInCauseChain(error, (node) => {
+    const fromData = httpErrorDataChallenge(node);
+    if (fromData) return fromData;
+    const attached = parseAuthChallengeSignal(node?.authChallenge);
+    if (attached) return attached;
+    if (!isInsufficientScopeNode(node)) return undefined;
+    const challenge = extractInsufficientScopeChallenge(node);
+    return {
+      source: "http_403_insufficient_scope",
+      error: "insufficient_scope",
+      ...(challenge?.requiredScope
+        ? { requiredScope: challenge.requiredScope }
+        : {}),
+      ...(challenge?.resourceMetadataUrl
+        ? { resourceMetadataUrl: challenge.resourceMetadataUrl }
+        : {}),
+      ...(challenge?.errorDescription
+        ? { errorDescription: challenge.errorDescription }
+        : {}),
+      facets: {
+        challengeHeader: "bearer",
+        hasResourceMetadata: challenge?.resourceMetadataUrl !== undefined,
+        hasScope: challenge?.requiredScope !== undefined,
+        hasErrorParams: challenge?.errorDescription !== undefined,
+      },
+    } satisfies AuthChallengeSignal;
+  });
+}
+
+/**
+ * Attach a challenge to an error that lost it (the auth-provider path), so
+ * `extractAuthChallenge` finds it. No-op when the error already carries one or
+ * cannot hold a property.
+ */
+export function attachAuthChallenge(
+  error: unknown,
+  challenge: AuthChallengeSignal,
+): void {
+  if (!error || typeof error !== "object") return;
+  if (extractAuthChallenge(error)) return;
+  try {
+    Object.defineProperty(error, "authChallenge", {
+      value: challenge,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  } catch {
+    // A frozen error keeps its message; the challenge is diagnostic only.
+  }
 }
 
 /**

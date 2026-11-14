@@ -72,6 +72,7 @@ export function SidebarCredits({
   // "See credits" whose card is a blank number over an empty bar, which reads
   // as a broken meter rather than as absent data. The meter this replaced made
   // the same call.
+  if ((balance?.unlimitedCreditsUntil ?? 0) > Date.now()) return null;
   if (!isLoading && !balance) {
     return null;
   }

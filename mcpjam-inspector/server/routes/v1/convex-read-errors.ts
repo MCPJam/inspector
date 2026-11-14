@@ -9,6 +9,7 @@
  * to match on, and the strings are the ones its authorization helper actually
  * throws.
  */
+import { describeError } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { translateStructuredConvexRefusal } from "./convex-errors.js";
 import { logger } from "../../utils/logger.js";
@@ -184,6 +185,57 @@ export function isMissingConvexFunction(error: unknown): boolean {
   );
 }
 
+/** `ConvexHttpClient`'s status for "the function ran and threw". */
+const CONVEX_FUNCTION_FAILED_STATUS = 560;
+
+/**
+ * A non-2xx answer from Convex's HTTP API itself: the function never ran, so
+ * the backend's function logs have no row for it. The message is the response
+ * body, exactly what `ConvexHttpClient` would have thrown, so every message
+ * classifier above reads it unchanged. The field is not `status`: generic
+ * readers such as `describeError` and `mapRuntimeError` key on that name, and
+ * would read a Convex 401 or 429 as the caller's credential or LLM quota.
+ */
+export class ConvexHttpStatusError extends Error {
+  constructor(
+    readonly convexStatus: number,
+    body: string,
+    options?: ErrorOptions,
+  ) {
+    super(body, options);
+    this.name = "ConvexHttpStatusError";
+  }
+}
+
+/**
+ * The `fetch` for a `ConvexHttpClient` whose failures go through
+ * `translateConvexReadError`. The client turns a non-2xx answer into
+ * `new Error(body)` and drops the status, and Sentry keeps neither the body
+ * nor the log message, so the only record of the failure was the word
+ * "Error" (INSPECTOR-HONO-17). Throwing here, before the client reads the
+ * response, keeps the status for the upstream report.
+ */
+export const convexReadFetch: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init);
+  if (response.ok || response.status === CONVEX_FUNCTION_FAILED_STATUS) {
+    return response;
+  }
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (cause) {
+    // A connection dropped mid-body still answered with this status. Its
+    // message ("terminated", "socket hang up") is what the transport
+    // classifiers match, so it stands in for the body.
+    throw new ConvexHttpStatusError(
+      response.status,
+      cause instanceof Error ? cause.message : "",
+      { cause },
+    );
+  }
+  throw new ConvexHttpStatusError(response.status, body);
+};
+
 export type ConvexReadFailure =
   | { kind: "membership" }
   | { kind: "authentication" }
@@ -287,9 +339,20 @@ export function translateConvexReadError(
     );
   }
   // The REDACTED error, not the original — see `redactedErrorForCapture`.
+  // Sentry's boundary drops the message and keeps only catalogued facts, so
+  // the status or slug is what says which failure this was. Only a transport
+  // slug is reported: the describer reads a 401 or 429, by status or by body
+  // text such as "Too Many Requests", as an MCP server or LLM provider
+  // failure, and this one came from Convex.
   const redacted = redactedErrorForCapture(error);
+  const { slug } = describeError(error);
   logger.error(`[${options.scope}] upstream read failed`, redacted, {
     message: redacted.message,
+    ...(error instanceof ConvexHttpStatusError
+      ? { httpStatus: error.convexStatus }
+      : slug.startsWith("transport/")
+        ? { slug }
+        : {}),
   });
   return new WebRouteError(
     502,

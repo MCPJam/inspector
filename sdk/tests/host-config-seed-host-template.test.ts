@@ -10,19 +10,28 @@ import {
 import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
 import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
+import { BUNDLED_HOST_COMPAT_CATALOG } from "../src/host-compat/catalog.generated.js";
+import { getCatalogTemplate } from "../src/host-compat/catalog.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
   "claude",
   "claude-desktop",
   "claude-code",
+  "claude-code-desktop",
+  "claude-code-web",
   "chatgpt",
+  "chatgpt-desktop",
+  "chatgpt-work",
+  "chatgpt-work-desktop",
   "mistral",
   "goose",
   "slack",
   "cursor",
   "cursor-cli",
+  "copilot-cli",
   "codex",
+  "codex-cli",
   "copilot",
   "vscode",
   "agentcore",
@@ -31,6 +40,8 @@ const ALL_IDS: HostTemplateId[] = [
   "perplexity",
   "cline",
   "notion",
+  "muse",
+  "grokbot",
 ];
 
 describe("seedHostTemplate", () => {
@@ -47,6 +58,85 @@ describe("seedHostTemplate", () => {
     );
   });
 
+  // Mid-session sign-in knobs are written ONLY where a host's published docs
+  // differ from the absent value, and every other persona leaves all four
+  // absent. Values come from docs, not a probe, so re-check them when a
+  // manual measurement pass lands.
+  // A template and the shipped host catalog describe the same host, so the
+  // same "Claude" must start sign-in on the same 401 either way.
+  it.each(["claude", "claude-desktop", "claude-code"] as const)(
+    "seeds the %s sign-in trigger the bundled host catalog ships",
+    (id) => {
+      const catalogProfile = (
+        BUNDLED_HOST_COMPAT_CATALOG.hostsById as Record<
+          string,
+          { mcpProfile?: { unauthorizedChallengeTrigger?: string } }
+        >
+      )[id]?.mcpProfile;
+      expect(
+        seedHostTemplate(id).mcpProfile?.unauthorizedChallengeTrigger
+      ).toBe(catalogProfile?.unauthorizedChallengeTrigger);
+    }
+  );
+
+  // Both follow Claude's embedded-sites doc, so a client seeded here loads a
+  // view's declared frame origins exactly when a catalog-created one does.
+  it.each(["claude", "claude-desktop"] as const)(
+    "seeds the %s frame domains the bundled host catalog ships",
+    (id) => {
+      type Overrides = { cspFrameDomains?: boolean };
+      const catalogOverrides = (
+        BUNDLED_HOST_COMPAT_CATALOG.hostsById as Record<
+          string,
+          { mcpProfile?: { apps?: { mcpAppsOverrides?: Overrides } } }
+        >
+      )[id]?.mcpProfile?.apps?.mcpAppsOverrides;
+      const seeded = seedHostTemplate(id).mcpProfile?.apps?.mcpAppsOverrides;
+      expect(seeded?.cspFrameDomains).toBe(true);
+      expect(seeded?.cspFrameDomains).toBe(catalogOverrides?.cspFrameDomains);
+    }
+  );
+
+  it("seeds the documented sign-in knobs, and only on Claude, Claude Code and ChatGPT", () => {
+    const KEYS = [
+      "unauthorizedChallenge",
+      "unauthorizedChallengeTrigger",
+      "toolResultAuthChallenge",
+      "toolResultAuthChallengeTrigger",
+    ] as const;
+    const expected: Partial<Record<HostTemplateId, Record<string, string>>> = {
+      claude: { unauthorizedChallengeTrigger: "bearer-header" },
+      "claude-desktop": { unauthorizedChallengeTrigger: "bearer-header" },
+      "claude-code": {
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
+      },
+      chatgpt: { toolResultAuthChallenge: "prompt" },
+      // Claude Code's app clients connect through claude.ai's connector stack,
+      // and the ChatGPT variants through ChatGPT's, so the same docs apply.
+      "claude-code-desktop": { unauthorizedChallengeTrigger: "bearer-header" },
+      "claude-code-web": { unauthorizedChallengeTrigger: "bearer-header" },
+      "chatgpt-desktop": { toolResultAuthChallenge: "prompt" },
+      "chatgpt-work": { toolResultAuthChallenge: "prompt" },
+      "chatgpt-work-desktop": { toolResultAuthChallenge: "prompt" },
+    };
+    for (const id of ALL_IDS) {
+      const seeded = seedHostTemplate(id);
+      const written: Record<string, unknown> = {};
+      for (const key of KEYS) {
+        const value = seeded.mcpProfile?.[key];
+        if (value !== undefined) written[key] = value;
+      }
+      expect({ id, written }).toEqual({ id, written: expected[id] ?? {} });
+      // And the canonicalizer stores them as written.
+      const canonical = canonicalizeHostConfigV2(seeded as never).mcpProfile as
+        Record<string, unknown> | undefined;
+      for (const [key, value] of Object.entries(written)) {
+        expect(canonical?.[key]).toBe(value);
+      }
+    }
+  });
+
   it("seeds a usable config for every template id and theme", () => {
     for (const id of ALL_IDS) {
       for (const theme of ["light", "dark"] as const) {
@@ -55,6 +145,42 @@ describe("seedHostTemplate", () => {
         expect(config.serverIds).toEqual([]);
         // clientCapabilities is always seeded (MCP UI extension etc.).
         expect(config.clientCapabilities).toBeTypeOf("object");
+      }
+    }
+  });
+
+  it("preserves documented discovery defaults in legacy and bundled catalog creation", () => {
+    const autoHosts = new Set<HostTemplateId>([
+      "claude",
+      "claude-desktop",
+      "copilot-cli",
+    ]);
+    const onHosts = new Set<HostTemplateId>([
+      "claude-code",
+      "claude-code-desktop",
+      "claude-code-web",
+      "codex-cli",
+      "cursor",
+      "codex",
+      "vscode",
+      "goose",
+    ]);
+
+    for (const id of ALL_IDS) {
+      const expected = autoHosts.has(id) ? undefined : onHosts.has(id);
+      for (const config of [
+        seedHostTemplate(id),
+        getCatalogTemplate(BUNDLED_HOST_COMPAT_CATALOG, id),
+      ]) {
+        if (!config) throw new Error(`Missing host template: ${id}`);
+        expect(config.progressiveToolDiscovery, id).toBe(expected);
+        const serialized = JSON.parse(JSON.stringify(config));
+        expect(serialized.progressiveToolDiscovery, id).toBe(expected);
+        if (autoHosts.has(id)) {
+          expect(serialized, id).not.toHaveProperty(
+            "progressiveToolDiscovery"
+          );
+        }
       }
     }
   });
@@ -100,10 +226,10 @@ describe("seedHostTemplate", () => {
   it("matches the documented model + style for the claude template", () => {
     const config = seedHostTemplate("claude", { theme: "dark" });
     expect(config.hostStyle).toBe("claude");
-    expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
+    expect(config.modelId).toBe("anthropic/claude-haiku-5.5");
   });
 
-  it("keeps Claude protocol and app capabilities faithful to the probe", () => {
+  it("keeps Claude protocol and app capabilities faithful to the probe, with frameDomains from Claude's docs", () => {
     const config = seedHostTemplate("claude", { theme: "dark" });
     const profile = config.mcpProfile;
 
@@ -125,7 +251,7 @@ describe("seedHostTemplate", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: false,
+      cspFrameDomains: true,
       cspBaseUriDomains: false,
       requestTeardown: false,
       resourceCacheTtl: true,
@@ -142,9 +268,8 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
-    expect(config.progressiveToolDiscovery).toBe(false);
-    // Bumped with the 2026-10-26 re-probe, from 2.1.259.
-    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.310");
+    expect(config.progressiveToolDiscovery).toBe(true);
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.312");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -169,6 +294,48 @@ describe("seedHostTemplate", () => {
     const effective = canonicalizeHostConfigV2(config);
     expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+  });
+
+  // None of these profile fields may count as a native-admission gap, so the
+  // real CLI's MCP traffic can be forwarded as it sends it. The seed and the
+  // bundled catalog row it falls back to carry the same values.
+  it("seeds Cursor CLI with the bundled catalog's pass-through profile", () => {
+    const passThroughFields = (config: {
+      respectToolVisibility?: boolean;
+      connectionDefaults: { requestTimeout: number };
+      clientCapabilities: Record<string, unknown>;
+      mcpProfile?: {
+        profileVersion?: number;
+        initialize?: unknown;
+        versionNegotiation?: unknown;
+      };
+    }) => ({
+      respectToolVisibility: config.respectToolVisibility,
+      requestTimeout: config.connectionDefaults.requestTimeout,
+      clientCapabilities: config.clientCapabilities,
+      initialize: config.mcpProfile?.initialize,
+      versionNegotiation: config.mcpProfile?.versionNegotiation,
+    });
+    const seeded = seedHostTemplate("cursor-cli", { theme: "dark" });
+    expect(passThroughFields(seeded)).toEqual({
+      respectToolVisibility: false,
+      requestTimeout: 300_000,
+      clientCapabilities: {},
+      initialize: undefined,
+      // The CLI's own negotiation, which native admission counts as no pin.
+      versionNegotiation: "legacy-first",
+    });
+    expect(
+      passThroughFields(BUNDLED_HOST_COMPAT_CATALOG.hostsById["cursor-cli"])
+    ).toEqual(passThroughFields(seeded));
+    expect(BUNDLED_HOST_COMPAT_CATALOG.hostsById["cursor-cli"]).toMatchObject({
+      provenance: "probe",
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+    });
+    expect(canonicalizeHostConfigV2(seeded).mcpProfile).toEqual({
+      profileVersion: 1,
+      versionNegotiation: "legacy-first",
     });
   });
 
@@ -203,6 +370,25 @@ describe("seedHostTemplate", () => {
     expect(variables["--color-background-primary"]).toBe(
       "light-dark(#ffffff, #22252a)"
     );
+  });
+
+  it("keeps desktop-only mentions and files off in the ChatGPT Web seed and bundled catalog", () => {
+    const seeded =
+      seedHostTemplate("chatgpt").mcpProfile?.apps?.pluginExtensions;
+    const bundled =
+      BUNDLED_HOST_COMPAT_CATALOG.hostsById.chatgpt.mcpProfile.apps
+        .pluginExtensions;
+    for (const extensions of [seeded, bundled]) {
+      expect(extensions).toMatchObject({
+        enabled: true,
+        capabilities: {
+          mentions: false,
+          fileResources: false,
+          fileViewers: false,
+          localFiles: false,
+        },
+      });
+    }
   });
 
   it("keeps ChatGPT raw host capabilities faithful to the probe", () => {
@@ -240,17 +426,9 @@ describe("seedHostTemplate", () => {
         media: true,
       },
     });
-    expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
-      "connect-src": [
-        "https://cdn.jsdelivr.net",
-        "https://unpkg.com",
-        "https://esm.sh",
-      ],
-      "script-src": [
-        "https://cdn.jsdelivr.net",
-        "https://unpkg.com",
-        "https://esm.sh",
-      ],
+    // Every undeclared CDN origin is blocked on connect and resource loads, so
+    // only the frame directive is in the baseline.
+    expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toEqual({
       "frame-src": ["'self'", "data:", "blob:"],
     });
   });
@@ -259,7 +437,8 @@ describe("seedHostTemplate", () => {
     const cspDirectivesOf = (id: HostTemplateId) =>
       seedHostTemplate(id, { theme: "dark" }).mcpProfile?.apps?.sandbox?.csp
         ?.cspDirectives ?? {};
-    // ChatGPT and Codex loaded esm.sh undeclared on every one of these.
+    // ChatGPT and Codex block esm.sh undeclared, with the other CDN canaries,
+    // so neither keeps any connect or resource baseline.
     for (const id of ["chatgpt", "codex"] as const) {
       const directives = cspDirectivesOf(id);
       for (const directive of [
@@ -270,9 +449,7 @@ describe("seedHostTemplate", () => {
         "font-src",
         "media-src",
       ]) {
-        expect(directives[directive], `${id} ${directive}`).toContain(
-          "https://esm.sh"
-        );
+        expect(directives[directive], `${id} ${directive}`).toBeUndefined();
       }
     }
     // Claude's CSP blocked it everywhere, so no directive may list it.
@@ -287,9 +464,8 @@ describe("seedHostTemplate", () => {
 
   it("keeps Cursor CSP subtype findings in the SDK seed", () => {
     const config = seedHostTemplate("cursor", { theme: "dark" });
-    // Bumped with the 2026-10-26 re-probe, from 3.21.16.
     expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(
-      "3.27.14"
+      "3.29.9"
     );
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },

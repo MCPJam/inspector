@@ -424,6 +424,10 @@ async function callBackend(
 
   switch (response.status) {
     case 400:
+      if (body?.error === "org_runtime_unsupported") {
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR,
+          "Benchmarks cannot use organization keys yet. Run an eval with your organization model instead.");
+      }
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,

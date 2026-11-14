@@ -16,6 +16,8 @@
  */
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { HarnessMcpJson } from "../../mcp-config.js";
+import { renderCodexNativeMcpServers } from "../shared/native-mcp.js";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
 
 /** TOML string literal. JSON's string grammar is a subset of TOML's basic
@@ -37,6 +39,8 @@ const tomlString = (value: string): string => JSON.stringify(value);
  */
 
 export type CodexHomeInput = {
+  closeModelConnections?: boolean;
+  nativeMcpServers?: HarnessMcpJson["mcpServers"];
   /** Where to write. Created if absent. */
   codexHome: string;
   /** The OpenAI-protocol base URL (MCPJam's metered model proxy). */
@@ -126,6 +130,7 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
     'name = "MCPJam model proxy"',
     `base_url = ${tomlString(input.baseUrl)}`,
     `env_key = ${tomlString(input.apiKeyEnvVar)}`,
+    ...(input.closeModelConnections ? ['http_headers = { Connection = "close" }'] : []),
     // The proxy allowlists exactly `POST /v1/responses` and `GET /v1/models`;
     // the responses wire API is what stays inside it.
     'wire_api = "responses"',
@@ -181,6 +186,8 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
         : []),
     );
   }
+
+  if (input.nativeMcpServers) lines.push(...renderCodexNativeMcpServers({ mcpServers: input.nativeMcpServers }));
 
   for (const path of new Set(input.untrustedProjectPaths ?? [])) {
     lines.push("", `[projects.${tomlString(path)}]`, 'trust_level = "untrusted"');

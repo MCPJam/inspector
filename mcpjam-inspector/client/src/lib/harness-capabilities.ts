@@ -61,7 +61,9 @@ import {
 export const HARNESS_DISPLAY_NAME = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].displayName,
   codex: HARNESS_DESCRIPTORS.codex.displayName,
+  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   cursor: HARNESS_DESCRIPTORS.cursor.displayName,
+  opencode: HARNESS_DESCRIPTORS.opencode.displayName,
 };
 
 /** Behavior-tab controls whose value may not cross into a harness runtime. */
@@ -92,7 +94,9 @@ const ENFORCED = ENFORCED_CONTROL;
 const HARNESS_LOOP_CONTROL_STATE = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].controls,
   codex: HARNESS_DESCRIPTORS.codex.controls,
+  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].controls,
   cursor: HARNESS_DESCRIPTORS.cursor.controls,
+  opencode: HARNESS_DESCRIPTORS.opencode.controls,
 };
 
 /**

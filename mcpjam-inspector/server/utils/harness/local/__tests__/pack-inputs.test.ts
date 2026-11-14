@@ -323,7 +323,10 @@ describe("the runtime compatibility record", () => {
     // and the committed form must be the same bytes.
     expect(renderRuntimeCompat(parseRuntimeCompat(source))).toBe(source);
     const state = parsePackTables(source);
-    for (const [harnessId, entry] of Object.entries(state)) {
+    const pinned = Object.entries(state).filter(([, entry]) => entry.version !== "");
+    expect(pinned.length).toBeGreaterThan(0);
+    // A runtime whose first pack is not published yet has no pin to write again.
+    for (const [harnessId, entry] of pinned) {
       expect(
         rewriteHarnessPackTables(source, harnessId, entry.version, entry.digests),
       ).toBe(source);

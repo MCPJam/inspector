@@ -44,7 +44,9 @@ import { createPinnedFetch } from "../utils/pinned-fetch.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
+  hostedPrivateEgressAdmission,
 } from "../utils/hosted-egress-guard.js";
+import { HOSTED_MODE } from "../config.js";
 import { logger } from "../utils/logger.js";
 
 /** Bounds the authenticated initialize. Shorter than discovery's budget: by
@@ -331,7 +333,12 @@ async function attemptInitialize(
   // attacker-supplied hostname, and a guard that covered only the
   // unauthenticated probe would leave the authenticated call — the one carrying
   // a bearer token — on the unpinned path.
-  const pinnedFetch = createPinnedFetch({ timeoutMs: VALIDATION_TIMEOUT_MS });
+  const pinnedFetch = createPinnedFetch({
+    timeoutMs: VALIDATION_TIMEOUT_MS,
+    admitPrivateDestination: HOSTED_MODE
+      ? hostedPrivateEgressAdmission()
+      : undefined,
+  });
 
   // Whether we had anything to be rejected. A 401 or 403 is only evidence that
   // a stored grant was refused if a stored grant was sent; without one it means

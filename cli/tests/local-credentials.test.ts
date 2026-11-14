@@ -1,25 +1,34 @@
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { SuiteFileRunError } from "@mcpjam/sdk";
 import {
-  appBaseFromApiBase,
+  createMcpjamConnectionResolver,
   readProviderBaseUrls,
 } from "../src/lib/local-credentials.js";
 
-test("appBaseFromApiBase strips trailing slashes, then /api/v1 exactly once", () => {
-  assert.equal(
-    appBaseFromApiBase("https://app.mcpjam.com/api/v1/"),
-    "https://app.mcpjam.com"
+test("mcpjam test reports a refused redirect as a refusal, not an outage", async () => {
+  const resolve = createMcpjamConnectionResolver(
+    { apiKey: "sk_test", apiUrl: "https://a.example.test/api/v1" },
+    {
+      env: {},
+      timeoutMs: 5_000,
+      authFilePath: path.join(os.tmpdir(), "mcpjam-no-login", "auth.json"),
+      fetchFn: async () =>
+        new Response(null, {
+          status: 307,
+          headers: { location: "https://elsewhere.example.test/collect" },
+        }),
+    }
   );
-  assert.equal(
-    appBaseFromApiBase("https://x.test/prefix/api/v1///"),
-    "https://x.test/prefix"
+  await assert.rejects(
+    resolve(),
+    (error: unknown) =>
+      error instanceof SuiteFileRunError &&
+      error.code === "OPTIONS_INVALID" &&
+      /with a redirect to https:\/\/elsewhere\.example\.test/.test(error.message)
   );
-  assert.equal(
-    appBaseFromApiBase("https://x.test/api/v1/api/v1"),
-    "https://x.test/api/v1"
-  );
-  assert.equal(appBaseFromApiBase("https://x.test"), "https://x.test");
-  assert.equal(appBaseFromApiBase("///"), "");
 });
 
 test("provider base URLs lose trailing slashes; Anthropic's gains /v1 once", () => {

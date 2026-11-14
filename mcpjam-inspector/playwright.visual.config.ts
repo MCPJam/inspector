@@ -6,6 +6,7 @@ export default defineConfig<ChromaticConfig>({
   testMatch: [
     "app.spec.ts",
     "product.spec.ts",
+    "task-accounts.spec.ts",
     "swarm.spec.ts",
     "tool-errors.spec.ts",
     "swarm-authoring.spec.ts",

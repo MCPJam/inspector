@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Command } from "commander";
 import {
   buildOAuthConformanceConfig,
+  registerOAuthCommands,
   buildOAuthLoginDebugOutcome,
   buildOAuthLoginConfig,
   buildOAuthLoginSnapshotConfig,
   summarizeOAuthLoginCommandInput,
+  withDefaultOAuthConformanceChecks,
 } from "../src/commands/oauth.js";
 import { CliError } from "../src/lib/output.js";
 
@@ -128,14 +131,106 @@ test("buildOAuthConformanceConfig enables conformance checks when flag is set", 
   assert.equal(config.oauthConformanceChecks, true);
 });
 
-test("buildOAuthConformanceConfig defaults conformance checks to false", () => {
+test("buildOAuthConformanceConfig passes advice ids through as readinessIds", () => {
+  const base = {
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "dcr",
+  } as const;
+
+  assert.equal("readinessIds" in buildOAuthConformanceConfig(base), false);
+  assert.deepEqual(
+    buildOAuthConformanceConfig({
+      ...base,
+      adviceId: ["readiness-oauth-iss-advertised"],
+    }).readinessIds,
+    ["readiness-oauth-iss-advertised"],
+  );
+});
+
+test("buildOAuthConformanceConfig rejects unknown advice ids, and another suite's", () => {
+  for (const adviceId of [["bogus"], ["readiness-log-level-filtering"], [""]]) {
+    assert.throws(
+      () =>
+        buildOAuthConformanceConfig({
+          url: "https://example.com/mcp",
+          protocolVersion: "2025-11-25",
+          registration: "dcr",
+          adviceId,
+        }),
+      (error) =>
+        error instanceof CliError && error.message.includes("advice id"),
+    );
+  }
+});
+
+test("oauth conformance threads --advice-id into readinessIds", async () => {
+  const program = new Command();
+  program.exitOverride();
+  registerOAuthCommands(program);
+  const conformance = program.commands
+    .find((c) => c.name() === "oauth")
+    ?.commands.find((c) => c.name() === "conformance");
+  assert.ok(conformance, "oauth conformance should be registered");
+  let captured: ReturnType<typeof buildOAuthConformanceConfig> | undefined;
+  // Replace the network-running action so only option parsing is exercised.
+  conformance.action((options) => {
+    captured = buildOAuthConformanceConfig(options);
+  });
+
+  await program.parseAsync(
+    [
+      "oauth",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--protocol-version",
+      "2025-11-25",
+      "--registration",
+      "dcr",
+      "--advice-id",
+      "readiness-oauth-iss-advertised",
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.readinessIds, ["readiness-oauth-iss-advertised"]);
+});
+
+test("buildOAuthConformanceConfig runs conformance checks by default", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",
     protocolVersion: "2025-11-25",
     registration: "dcr",
   });
 
-  assert.equal(config.oauthConformanceChecks, false);
+  assert.equal(config.oauthConformanceChecks, true);
+});
+
+test("withDefaultOAuthConformanceChecks turns checks on unless the suite file turns them off", () => {
+  const flows = [
+    { protocolVersion: "2025-11-25" as const, registrationStrategy: "dcr" as const },
+    {
+      protocolVersion: "2025-11-25" as const,
+      registrationStrategy: "cimd" as const,
+      oauthConformanceChecks: false,
+    },
+  ];
+
+  const unset = withDefaultOAuthConformanceChecks({
+    serverUrl: "https://example.com/mcp",
+    flows,
+  });
+  assert.equal(unset.defaults?.oauthConformanceChecks, true);
+  // A flow's own value still wins over defaults when the SDK merges them.
+  assert.equal(unset.flows[1].oauthConformanceChecks, false);
+
+  const off = withDefaultOAuthConformanceChecks({
+    serverUrl: "https://example.com/mcp",
+    defaults: { oauthConformanceChecks: false },
+    flows,
+  });
+  assert.equal(off.defaults?.oauthConformanceChecks, false);
 });
 
 test("buildOAuthLoginConfig defaults login flows to automatic protocol and registration planning", () => {

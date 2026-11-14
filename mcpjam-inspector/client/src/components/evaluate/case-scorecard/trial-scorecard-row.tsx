@@ -125,7 +125,7 @@ export function TrialScorecardRow({
    * reveal state, and it cannot know what the row around it printed. This row
    * showed the score, the glyph and the rationale beside the very control that
    * records the label, so a label taken there was recorded as blind while the
-   * answer was on screen. Calibration gates other people's builds, so it fails
+   * answer was on screen. That would inflate the agreement rate, so it fails
    * closed: hidden until the panel says it was revealed.
    */
   hideJudgeResult?: boolean;

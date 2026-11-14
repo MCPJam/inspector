@@ -22,6 +22,7 @@ import {
 } from "../eval-decision-summary-store";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { readDecisionSummaryFixture } from "@/test/eval-decision-summary-fixtures";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionSummary } from "@mcpjam/sdk/contract";
 
 const PASSING = readDecisionSummaryFixture("policyV2-passing");
@@ -74,21 +75,11 @@ function detailRequest(runId: string, extra: { revision?: string } = {}) {
 }
 
 describe("isTerminalEvalRunStatus", () => {
-  it.each(["completed", "failed", "cancelled", "timed_out"])(
-    "treats %s as terminal",
-    (status) => {
-      expect(isTerminalEvalRunStatus(status)).toBe(true);
-    },
-  );
-
-  it.each(["pending", "running", undefined, null, ""])(
-    "leaves %s lifecycle-only",
-    (status) => {
-      expect(isTerminalEvalRunStatus(status as string | null | undefined)).toBe(
-        false,
-      );
-    },
-  );
+  // The old export name, kept for its importers. It must stay the SDK
+  // predicate rather than grow its own list of terminal statuses again.
+  it("is the SDK contract's terminal-status predicate", () => {
+    expect(isTerminalEvalRunStatus).toBe(isEvalRunTerminalStatus);
+  });
 });
 
 describe("EvalDecisionSummaryStore", () => {

@@ -1,3 +1,4 @@
+import type { TurnAuthorization } from "../turn-authorization.js";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -9,7 +10,7 @@ import { describeError, describeAsSlug } from "@mcpjam/sdk";
 import type {
   ProgressiveToolPlan,
   ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import { isAbortError } from "@/shared/abort-errors";
 import type { PersistChatOutcome } from "../../utils/chat-ingestion.js";
 import { writePersistReceipt } from "../../utils/chat-ingestion.js";
@@ -35,6 +36,7 @@ import { logger } from "../../utils/logger.js";
 import {
   resumeScopeStepUpBeforeDirectTurn,
   isSuspendedScopeStepUpOutputChunk,
+  type SettleSuspendedToolCall,
 } from "../../utils/direct-chat-scope-step-up.js";
 import type { MrtrEngineResume } from "../../utils/mrtr-hosted-chat.js";
 
@@ -126,6 +128,7 @@ function formatStreamError(error: unknown, provider?: string): string {
  * headless terminal (`consumeDirectChatTurnHeadless`).
  */
 export function streamDirectChatWithLiveTrace(options: {
+  turnAuthorization?: TurnAuthorization;
   llmModel: RunDirectChatTurnOptions["llmModel"];
   modelId: string;
   provider?: string;
@@ -158,11 +161,14 @@ export function streamDirectChatWithLiveTrace(options: {
   /** Session this stream persists to; required to attribute a persist receipt. */
   chatSessionId?: string;
   scopeStepUpResume?: MrtrEngineResume;
+  /** History settlement for calls a sign-in suspended. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   shouldPauseAfterStep?: () => boolean;
-  suspendedToolCallId?: () => string | undefined;
+  suspendedToolCallIds?: () => ReadonlySet<string>;
 }): Response {
   const {
     provider,
+    turnAuthorization,
     abortSignal,
     onStreamWriterReady,
     onPersist,
@@ -173,8 +179,9 @@ export function streamDirectChatWithLiveTrace(options: {
     onPersistError,
     chatSessionId: receiptChatSessionId,
     scopeStepUpResume,
+    settleSuspendedHistoryToolCall,
     shouldPauseAfterStep,
-    suspendedToolCallId,
+    suspendedToolCallIds,
     ...turnOptions
   } = options;
   // `runDirectChatTurn` awaits `onPersist` but discards its return value, so
@@ -236,8 +243,10 @@ export function streamDirectChatWithLiveTrace(options: {
         writer,
         messageHistory: turnOptions.messageHistory,
         resume: scopeStepUpResume,
+        settleSuspendedToolCall: settleSuspendedHistoryToolCall,
       });
       if (!shouldRunModel) return;
+      const traceEvents = buildDirectChatTraceCallbacks(writer);
       handle = runDirectChatTurn({
         ...turnOptions,
         // Logical provider for span metadata (OTel gen_ai.provider.name).
@@ -254,7 +263,7 @@ export function streamDirectChatWithLiveTrace(options: {
             }
           : undefined,
         shouldPauseAfterStep,
-        suspendedToolCallId,
+        suspendedToolCallIds,
         onPersistError:
           onPersistError ??
           ((error) => {
@@ -265,7 +274,10 @@ export function streamDirectChatWithLiveTrace(options: {
         // Trace-event factory shared with route 3 (local-org BYOK) so
         // both routes emit byte-identical SSE wire output. See
         // `server/utils/direct-chat-sse-callbacks.ts`.
-        traceEvents: buildDirectChatTraceCallbacks(writer),
+        traceEvents: { ...traceEvents, onTurnStart: (event) => {
+          turnAuthorization?.start(event.turnId, writer);
+          traceEvents.onTurnStart?.(event);
+        } },
       });
 
       // `streamText` finishes an empty last step as if it were a reply, which
@@ -299,7 +311,7 @@ export function streamDirectChatWithLiveTrace(options: {
           },
         })) {
           if (
-            isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallId?.())
+            isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallIds?.())
           ) {
             continue;
           }

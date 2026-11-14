@@ -62,6 +62,8 @@ type Grant = {
   release?: () => Promise<void>;
   promoted: boolean;
   closed: boolean;
+  retainUntil: number;
+  retryAfter?: number;
   ready: Promise<void>;
   expiry: ReturnType<typeof setTimeout>;
   detach: () => void;
@@ -124,9 +126,10 @@ const accepts = pluginFormFileAccepted;
  */
 export class PluginFormFileGrants {
   private readonly records = new Map<string, Grant>();
-  private readonly deleting = new Set<Promise<void>>();
+  private readonly deleting = new Map<string, Promise<void>>();
   private readonly journal: PluginFormFileJournal;
   private startup?: Promise<unknown>;
+  private sweeping?: ReturnType<PluginFormFileJournal["sweep"]>;
   private janitor?: ReturnType<typeof setInterval>;
   private readonly local: PluginFormFileStore;
   constructor(base = FORM_FILE_DIRECTORY) {
@@ -149,21 +152,40 @@ export class PluginFormFileGrants {
       join: (...parts) => join(...parts),
     };
   }
-  start() {
-    this.startup ??= this.journal.sweep().then((result) => {
-      this.reportSweep(result);
+  private sweepLocal = false;
+  start(localJournal = true) {
+    this.sweepLocal ||= localJournal;
+    if (!this.janitor) {
       this.janitor = setInterval(() => {
-        void this.journal
-          .sweep()
-          .then((value) => this.reportSweep(value))
+        this.retryCleanup();
+        if (!this.sweepLocal) return;
+        void this.sweepJournal()
           .catch(() => {
             logger.warn("[plugin-forms] upload journal cleanup failed");
           });
       }, 60_000);
       this.janitor.unref();
-      return result;
+    }
+    if (!localJournal) return Promise.resolve();
+    this.startup ??= this.sweepJournal().catch((error: unknown) => {
+      this.startup = undefined;
+      throw error;
     });
     return this.startup;
+  }
+  private sweepJournal() {
+    // A slow sweep must finish before another starts, including when cleanup
+    // is drained while a placement is quarantined for removal.
+    this.sweeping ??= this.journal
+      .sweep()
+      .then((result) => {
+        this.reportSweep(result);
+        return result;
+      })
+      .finally(() => {
+        this.sweeping = undefined;
+      });
+    return this.sweeping;
   }
   private reportSweep(
     result: Awaited<ReturnType<PluginFormFileJournal["sweep"]>>,
@@ -282,6 +304,7 @@ export class PluginFormFileGrants {
         paths: [],
         promoted: false,
         closed: false,
+        retainUntil: Date.now() + FORM_FILE_RETENTION_MS,
         ready: Promise.resolve(),
         expiry: setTimeout(() => this.remove(key), FORM_FILE_RETENTION_MS),
         detach: () => {},
@@ -421,32 +444,52 @@ export class PluginFormFileGrants {
   }
   private remove(key: string) {
     const grant = this.records.get(key);
-    if (!grant || grant.closed) return;
+    if (
+      !grant ||
+      this.deleting.has(key) ||
+      (grant.retryAfter ?? 0) > Date.now()
+    ) return;
     grant.closed = true;
     grant.detach();
     clearTimeout(grant.expiry);
-    const cleanup = grant.ready
-      .catch(() => {})
-      .then(async () => {
+    const release = async () => {
         if (grant.release) await grant.release();
-      })
-      .catch(() => {
-        logger.warn("[plugin-forms] temporary file cleanup failed");
+        if (this.records.get(key) === grant) this.records.delete(key);
+    };
+    // A failed upload still owns its reservation and needs the same release.
+    const cleanup = grant.ready
+      .then(release, release)
+      .catch((error: unknown) => {
+        const expired = Date.now() >= grant.retainUntil;
+        if (expired && this.records.get(key) === grant) this.records.delete(key);
+        else grant.retryAfter = Math.min(Date.now() + 60_000, grant.retainUntil);
+        logger.warn("[plugin-forms] temporary file cleanup failed", {
+          expired,
+          errorName: error instanceof Error ? error.name : typeof error,
+          ...(error instanceof PluginInvocationError
+            ? { errorCode: error.code }
+            : {}),
+        });
       })
       .finally(() => {
-        if (this.records.get(key) === grant) this.records.delete(key);
-        this.deleting.delete(cleanup);
+        this.deleting.delete(key);
       });
-    this.deleting.add(cleanup);
+    this.deleting.set(key, cleanup);
+  }
+  private retryCleanup() {
+    // Retry only through retention. A refused ownership check never authorizes
+    // deleting the tree; the durable journal remains responsible for its bytes.
+    for (const [key, grant] of this.records)
+      if (grant.closed) this.remove(key);
   }
   async drain() {
-    await Promise.all([...this.deleting]);
+    await Promise.all([...this.deleting.values(), this.sweeping]);
   }
 }
 export const pluginFormFileGrants = new PluginFormFileGrants();
 /** Called after environment loading in both local product server entrypoints. */
-export function startPluginFormFileJanitor() {
-  return pluginFormFileGrants.start().catch(() => {
+export function startPluginFormFileJanitor(localJournal = true) {
+  return pluginFormFileGrants.start(localJournal).catch(() => {
     logger.warn("[plugin-forms] upload journal startup failed");
   });
 }

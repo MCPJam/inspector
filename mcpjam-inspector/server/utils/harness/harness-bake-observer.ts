@@ -3,7 +3,8 @@
  * turns it into the bootstrap fields of the turn's log line — the
  * `[harness][timing]` line when the turn succeeds, the `[harness][bootstrap]`
  * line when it fails. See `harness-bake.ts` for what the bake is and why a
- * miss is worth recording.
+ * miss is worth recording. A miss on a box booted for the turn is also the
+ * stale-template alert ({@link watchNewBoxForStaleBake}).
  */
 import { posix } from "node:path";
 import type {
@@ -12,9 +13,10 @@ import type {
 } from "@ai-sdk/harness";
 import { logger } from "../logger.js";
 import {
-  HARNESS_BAKE_HOME,
   HARNESS_BAKE_MANIFEST_PATH,
   HARNESS_BAKED_BOOTSTRAP_DIRS,
+  HARNESS_STATE_DIRECTORY_NAME,
+  harnessBakedMarkerDirectory,
   parseBakedMarker,
 } from "./harness-bake.js";
 
@@ -52,8 +54,7 @@ export interface HarnessBootstrapObservation {
   outcome: HarnessBootstrapOutcome;
   expectation: HarnessBakeExpectation;
   bakeOnBox: HarnessBakeOnBox;
-  /** Bootstrap dir relative to the working directory, e.g.
-   *  `.harness-bootstrap/claude-code`. */
+  /** Adapter-declared bootstrap dir, e.g. `.harness-bootstrap/claude-code`. */
   bootstrapDir?: string;
   /** The recipe identity in the marker the framework looked for. */
   identity?: string;
@@ -66,6 +67,36 @@ export interface HarnessBootstrapObservation {
 }
 
 const MARKER_PATH = /^(.*)\/\.bootstrap-([0-9a-f]{16})\.ok$/;
+
+function recipeBootstrapDirFromAbsolute(
+  absoluteDir: string,
+  cwd: string,
+): string {
+  const prefix = `/${HARNESS_STATE_DIRECTORY_NAME}/`;
+  const at = absoluteDir.lastIndexOf(prefix);
+  if (at >= 0) return absoluteDir.slice(at + prefix.length);
+  return posix.relative(cwd, absoluteDir) || ".";
+}
+
+function classifyBakedBootstrapDir(
+  absoluteDir: string,
+): HarnessBakeExpectation {
+  if (
+    HARNESS_BAKED_BOOTSTRAP_DIRS.some(
+      (dir) => harnessBakedMarkerDirectory(dir) === absoluteDir,
+    )
+  ) {
+    return "baked";
+  }
+  if (
+    HARNESS_BAKED_BOOTSTRAP_DIRS.some(
+      (dir) => absoluteDir === dir || absoluteDir.endsWith(`/${dir}`),
+    )
+  ) {
+    return "custom-workdir";
+  }
+  return "unbaked-recipe";
+}
 
 /** The reduced session view the framework bootstraps through. */
 type SandboxSession = ReturnType<HarnessV1NetworkSandboxSession["restricted"]>;
@@ -92,6 +123,7 @@ export function observeHarnessBootstrap(
   const state: {
     defaultWorkingDirectory?: string;
     bootstrapDir?: string;
+    absoluteBootstrapDir?: string;
     identity?: string;
     found?: "baked" | "reused";
     missed: boolean;
@@ -99,13 +131,17 @@ export function observeHarnessBootstrap(
     bakedVersions?: string;
     bakeId?: string;
     bakeOnBox: Promise<HarnessBakeOnBox> | null;
+    /** Set by {@link watchNewBoxForStaleBake}. */
+    newBoxHarnessId?: string;
   } = { missed: false, installed: false, bakeOnBox: null };
 
   const noteMarker = (path: string, cwd: string) => {
     const match = MARKER_PATH.exec(path);
     if (!match) return null;
+    const absoluteDir = match[1]!;
     state.defaultWorkingDirectory = cwd;
-    state.bootstrapDir = posix.relative(cwd, match[1]!) || ".";
+    state.absoluteBootstrapDir = absoluteDir;
+    state.bootstrapDir = recipeBootstrapDirFromAbsolute(absoluteDir, cwd);
     state.identity = match[2];
     return match;
   };
@@ -118,6 +154,21 @@ export function observeHarnessBootstrap(
         manifest === null ? "absent" : "present",
       (): HarnessBakeOnBox => "unknown",
     );
+  };
+
+  // The stale-template alert: a box booted for this turn carries a bake, yet
+  // missed the marker in the directory that bake fills.
+  const reportStaleBake = (onBox: HarnessBakeOnBox) => {
+    const { newBoxHarnessId, absoluteBootstrapDir, identity } = state;
+    if (
+      onBox === "present" &&
+      newBoxHarnessId !== undefined &&
+      identity !== undefined &&
+      absoluteBootstrapDir !== undefined &&
+      classifyBakedBootstrapDir(absoluteBootstrapDir) === "baked"
+    ) {
+      warnHarnessBakeStale(newBoxHarnessId, identity);
+    }
   };
 
   const wrapSession = <S extends SandboxSession>(
@@ -133,6 +184,7 @@ export function observeHarnessBootstrap(
           if (result === null) {
             state.missed = true;
             probeBake(probe);
+            void state.bakeOnBox?.then(reportStaleBake);
           } else {
             const baked = parseBakedMarker(result);
             state.found = baked ? "baked" : "reused";
@@ -182,12 +234,8 @@ export function observeHarnessBootstrap(
       ? "installed"
       : (state.found ?? (state.missed ? "install-failed" : "none"));
     let expectation: HarnessBakeExpectation = "none";
-    if (state.bootstrapDir !== undefined) {
-      expectation = !HARNESS_BAKED_BOOTSTRAP_DIRS.includes(state.bootstrapDir)
-        ? "unbaked-recipe"
-        : state.defaultWorkingDirectory !== HARNESS_BAKE_HOME
-          ? "custom-workdir"
-          : "baked";
+    if (state.absoluteBootstrapDir !== undefined) {
+      expectation = classifyBakedBootstrapDir(state.absoluteBootstrapDir);
     }
     return {
       outcome,
@@ -206,6 +254,9 @@ export function observeHarnessBootstrap(
   });
   // The manifest probe resolves asynchronously; expose it to the log helper.
   bakeOnBoxProbes.set(observed, () => state.bakeOnBox);
+  newBoxWatches.set(observed, (harnessId) => {
+    state.newBoxHarnessId = harnessId;
+  });
   return observed;
 }
 
@@ -213,6 +264,55 @@ const bakeOnBoxProbes = new WeakMap<
   HarnessV1SandboxProvider,
   () => Promise<HarnessBakeOnBox> | null
 >();
+
+const newBoxWatches = new WeakMap<
+  HarnessV1SandboxProvider,
+  (harnessId: string) => void
+>();
+
+/**
+ * Marks an observed provider's box as booted for this turn: a conversation's
+ * first turn, on the box just provisioned for it from the deployment's default
+ * template (or the environment image it chose, which carries no bake). If such
+ * a box carries a bake yet misses the marker, the template lacks this
+ * inspector's recipes and every new conversation installs its runtime until a
+ * template built from this inspector's `harness-bake.lock.json` is rolled out,
+ * so the miss logs `harness_bake_stale`, once per recipe identity per process.
+ * Other boxes (a follow-up turn's, a persistent computer, an eval box frozen on
+ * an earlier default) can predate the template; their misses stay in the
+ * turn's bootstrap fields only.
+ *
+ * A no-op for a provider {@link observeHarnessBootstrap} did not build.
+ */
+export function watchNewBoxForStaleBake(
+  provider: HarnessV1SandboxProvider,
+  harnessId: string,
+): void {
+  newBoxWatches.get(provider)?.(harnessId);
+}
+
+/**
+ * Identities this process has reported. The warning is an alert hook, not a
+ * metric (the timing line counts turns), so it fires once per recipe identity
+ * per process; the set holds at most the recipes this inspector resolves.
+ */
+const staleBakeReported = new Set<string>();
+
+function warnHarnessBakeStale(harnessId: string, identity: string): void {
+  if (staleBakeReported.has(identity)) return;
+  staleBakeReported.add(identity);
+  // A literal message, because the strict log row keeps only catalogued ones.
+  // The row keeps `harnessId` and, as on the timing line, drops the identity
+  // with every other free string.
+  logger.warn("[harness][bake] harness_bake_stale", {
+    harnessId,
+    harnessRecipeIdentity: identity,
+  });
+}
+
+export function resetHarnessBakeStaleWarningsForTests(): void {
+  staleBakeReported.clear();
+}
 
 /**
  * The observation for a provider built by {@link observeHarnessBootstrap}, or

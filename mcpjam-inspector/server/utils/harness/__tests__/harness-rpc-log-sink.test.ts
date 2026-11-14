@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { logger } from "../../logger";
 import {
   enqueueHarnessRpcLog,
   flushHarnessRpcLogs,
@@ -48,6 +49,17 @@ describe("config gate", () => {
 });
 
 describe("enqueue + batched flush", () => {
+  it("reports a rejected batch without retrying or exposing its payload", async () => {
+    configure();
+    const warn = vi.spyOn(logger,"warn").mockImplementation(()=>{});
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null,{status:500}));
+    vi.stubGlobal("fetch",fetchMock);
+    enqueueHarnessRpcLog({serverId:"srv-a",direction:"send",loggedAt:"t",message:{private:"do-not-log"}});
+    await expect(flushHarnessRpcLogs()).resolves.toBeUndefined();
+    await flushHarnessRpcLogs();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledExactlyOnceWith("[harness-rpc-log-sink] write rejected",{status:500,entries:1});
+  });
   it("keeps scoped writes on the versioned endpoint even when an old backend refuses it", async () => {
     configure();
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));

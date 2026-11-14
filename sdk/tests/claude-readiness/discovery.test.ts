@@ -243,6 +243,8 @@ describe("PRM discovery order", () => {
     });
     expect(evidence.prm?.discoveredVia).toBe("not-found");
     expect(evidence.prm?.fetchError).toContain("404");
+    // The server answered, so not-found is a fact about it.
+    expect(evidence.prm?.unanswered).toBeUndefined();
   });
 });
 

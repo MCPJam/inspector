@@ -1,6 +1,12 @@
+import { useUnlimitedCredits } from "@/hooks/useCreditBalance";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useCreditBalance")>(),
+  useUnlimitedCredits: vi.fn(() => false),
+}));
 
 /**
  * CONTRACT for the pre-run credit estimate's client half:
@@ -75,6 +81,20 @@ afterEach(() => {
 const MODELS = [{ model: "gpt-5-mini", provider: "openai" }];
 
 describe("QuickCaseRunCostEstimateHint — flag gate", () => {
+  it("hides credit estimates for an unlimited-credit organization", async () => {
+    vi.mocked(useUnlimitedCredits).mockReturnValueOnce(true);
+    const { container } = render(
+      <QuickCaseRunCostEstimateHint
+        suiteId="suite-1"
+        caseId="case-1"
+        models={MODELS}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    await Promise.resolve();
+    expect(queryCalls).toHaveLength(0);
+  });
+
   it("renders nothing and dispatches no query when the flag is off", async () => {
     flagEnabled = false;
     render(

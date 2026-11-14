@@ -1,0 +1,86 @@
+{
+  "description": "The Settings App's stored envelope, written by the Inspector and read by the backend when a Settings App child is issued. Each case says whether a child for `child` is admitted.",
+  "cases": [
+    {
+      "name": "an App action listed at the same revision",
+      "child": { "name": "open-panel", "revision": "r1" },
+      "admitted": true,
+      "envelope": {
+        "version": 1,
+        "document": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "units": { "type": "string", "title": "Units", "enum": ["mm", "in"] },
+              "grid": { "type": "boolean", "title": "Show grid" }
+            }
+          },
+          "values": { "units": "mm", "grid": true }
+        },
+        "actions": [
+          { "kind": "app", "name": "open-panel", "title": "Open panel", "revision": "r1" },
+          { "kind": "tool", "name": "reset", "title": "Reset", "revision": "r1" }
+        ]
+      }
+    },
+    {
+      "name": "the App action's revision changed",
+      "child": { "name": "open-panel", "revision": "r1" },
+      "admitted": false,
+      "envelope": {
+        "version": 1,
+        "document": {
+          "schema": { "type": "object", "properties": {} },
+          "values": {}
+        },
+        "actions": [
+          { "kind": "app", "name": "open-panel", "title": "Open panel", "revision": "r2" }
+        ]
+      }
+    },
+    {
+      "name": "the settings schema changed",
+      "child": { "name": "open-panel", "revision": "r1" },
+      "admitted": false,
+      "envelope": {
+        "version": 1,
+        "document": {
+          "schema": { "type": "object", "properties": {} },
+          "values": {}
+        },
+        "actions": [
+          { "kind": "app", "name": "open-panel", "title": "Open panel", "revision": "r1" }
+        ],
+        "schemaChanged": true
+      }
+    },
+    {
+      "name": "the action runs a tool, not an App",
+      "child": { "name": "reset", "revision": "r1" },
+      "admitted": false,
+      "envelope": {
+        "version": 1,
+        "document": {
+          "schema": { "type": "object", "properties": {} },
+          "values": {}
+        },
+        "actions": [
+          { "kind": "tool", "name": "reset", "title": "Reset", "revision": "r1" }
+        ]
+      }
+    },
+    {
+      "name": "the action is no longer listed",
+      "child": { "name": "open-panel", "revision": "r1" },
+      "admitted": false,
+      "envelope": {
+        "version": 1,
+        "document": {
+          "schema": { "type": "object", "properties": {} },
+          "values": {}
+        },
+        "actions": []
+      }
+    }
+  ]
+}

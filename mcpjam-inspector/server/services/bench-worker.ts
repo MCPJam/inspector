@@ -91,6 +91,8 @@ import {
 } from "./bench-probe-child.js";
 import type { ConformanceSuiteKind, OAuthConformanceConfig } from "@mcpjam/sdk";
 import { getServiceCredential } from "./service-credential.js";
+import { resolveConfiguredXaaIssuer } from "./xaa-configured-issuer.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const BENCH_SERVICE_BASE = "/internal/v1/bench";
 
@@ -1451,6 +1453,23 @@ function buildWriteGuard(
 }
 
 /**
+ * How every connection this run opens to the target is set up, each cell's and
+ * the cleanup's alike.
+ *
+ * One answer for all of them, because cleanup has to reach what a write cell
+ * created, and it runs after every cell under no cell's host. So no host's XAA
+ * policy applies: the measured server's own auth settings decide, and an
+ * XAA-configured server mints with the deployment's configured issuer, since
+ * there is no request to read one from.
+ */
+function targetConnectOptions(job: ClaimedBenchmarkJob) {
+  return {
+    ...(job.serverName ? { serverNames: [job.serverName] } : {}),
+    xaaIssuer: resolveConfiguredXaaIssuer(),
+  };
+}
+
+/**
  * Run ONE matrix cell as an eval child.
  *
  * The connection is opened with the run's own scoped bearer, so stored OAuth
@@ -1478,7 +1497,7 @@ async function defaultRunEvalCell(
     WEB_CALL_TIMEOUT_MS,
     undefined,
     undefined,
-    job.serverName ? { serverNames: [job.serverName] } : undefined,
+    targetConnectOptions(job),
   );
 
   try {
@@ -1800,7 +1819,7 @@ async function defaultCleanupArtifacts(
     WEB_CALL_TIMEOUT_MS,
     undefined,
     undefined,
-    job.serverName ? { serverNames: [job.serverName] } : undefined,
+    targetConnectOptions(job),
   ).catch((error: unknown) => {
     logger.error("[bench] cleanup could not connect to the target", error, {
       benchmarkRunId: job.benchmarkRunId,
@@ -1837,6 +1856,9 @@ async function defaultCleanupArtifacts(
     await authorized.manager.disconnectAllServers().catch(() => {});
   }
 }
+
+/** Test seam: cleanup's connection has to authenticate the way the cells did. */
+export const defaultCleanupArtifactsForTests = () => defaultCleanupArtifacts;
 
 /** Observe the target's unauthenticated behaviour from our own infrastructure. */
 async function defaultRunAuthProbe(
@@ -2520,10 +2542,7 @@ export function startBenchWorker(options?: {
     options?.claimedBy ??
     `inspector-bench-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
   const claim = options?.claim ?? claimNext;
-  const execute =
-    options?.execute ??
-    ((claimed: ClaimedBenchmarkJob, by: string) =>
-      executeClaimedJob(claimed, by));
+  const execute = options?.execute ?? executeClaimedJob;
 
   // Checked BEFORE the loop, not on the first claim: an unset or unsafe
   // CONVEX_HTTP_URL is a deployment mistake, and a worker that starts anyway
@@ -2562,7 +2581,7 @@ export function startBenchWorker(options?: {
           // doesn't need an Inspector restart.
           waitMs = ERROR_BACKOFF_MS;
         } else if (claimed) {
-          await execute(claimed, claimedBy);
+          await serverDrain.track("claimed_job", execute(claimed, claimedBy));
           // Drain mode: another run may be queued behind this one.
           waitMs = 1_000;
         }

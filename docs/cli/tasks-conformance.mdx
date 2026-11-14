@@ -88,9 +88,12 @@ mcpjam tasks conformance \
 |------|-------------|
 | `--category <category>` | Check category to run. Repeat for multiple. Default: all. |
 | `--check-id <id>` | Specific check id to run. Repeat for multiple. Default: all. |
+| `--advice-id <id>` | Specific advice id to run. Repeat for multiple. Default: all. An unknown id is an error that lists the valid ones. |
 | `--tool-name <tool>` | Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire). |
 | `--tool-args <json>` | Tool arguments as a JSON object. |
+| `--check-overrides <json>` | A different tool for some checks, keyed by check id: `{"tasks-cancel-ack-shape":{"toolName":"slow_job","toolArguments":{"seconds":5}}}`. Checks left out use `--tool-name` and `--tool-args`. Only checks that call a tool accept one. |
 | `--poll-timeout <ms>` | How long to poll a created task for a terminal status. Default: `30000`. |
+| `--protocol-version <version>` | Pin the MCP protocol version for the conformance connection (e.g. `2026-07-28`). HTTP targets only. Without it, the version is negotiated. |
 | `--reporter <reporter>` | Structured reporter output: `json-summary` or `junit-xml`. |
 
 ## Example output

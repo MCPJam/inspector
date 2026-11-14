@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { taskGroupFailure, type MCPTasksCheckId } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 const mockRunProtocol = vi.fn();
@@ -8,16 +9,18 @@ const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
 const mockStartOAuth = vi.fn();
 
-const { startRun, finalizeRun, cancelRun, navigate } = vi.hoisted(() => ({
+const { startRun, finalizeRun, cancelRun, upsertReport } = vi.hoisted(() => ({
+  upsertReport: vi.fn().mockResolvedValue(undefined),
   startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
   finalizeRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
   cancelRun: vi.fn().mockResolvedValue({ cancelled: true }),
-  navigate: vi.fn(),
 }));
 
-vi.mock("@/lib/app-navigation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
-  useAppNavigate: () => navigate,
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(async () => ({
+    status: "ready",
+    protocolVersion: "2026-07-28",
+  })),
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
@@ -53,18 +56,22 @@ vi.mock("convex/react", async () => {
       if (name === "conformanceRuns:cancelRun") return cancelRun;
       return vi.fn().mockResolvedValue(undefined);
     },
-    useAction: () => vi.fn().mockResolvedValue(undefined),
+    useAction: () => upsertReport,
   };
 });
 
-vi.mock(
-  "@/components/conformance/directory-readiness/DirectoryReadinessSection",
-  () => ({
-    DirectoryReadinessSection: () => null,
-  }),
-);
+// The share dialog reads Convex queries this file doesn't mock. What these
+// tests check is the name Share hands the card.
+vi.mock("../ConformanceRunActions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ConformanceRunActions")>()),
+  ConformanceRunShareButton: ({ serverName }: { serverName?: string }) => (
+    <button type="button" data-server-name={serverName ?? ""}>
+      Share
+    </button>
+  ),
+}));
 
-import { ConformanceTab } from "../ConformancePanel";
+import { ConformanceTab } from "../ConformanceTab";
 import { RUN_LABEL } from "../ConformancePageChrome";
 
 function createHttpServer(): ServerWithName {
@@ -140,9 +147,9 @@ function mockPassingSuites() {
 describe("ConformanceTab persist", () => {
   beforeEach(() => {
     startRun.mockClear();
+    upsertReport.mockClear();
     finalizeRun.mockClear();
     cancelRun.mockClear();
-    navigate.mockClear();
     mockRunProtocol.mockImplementation(hang);
     mockRunApps.mockImplementation(hang);
     mockRunTasks.mockImplementation(hang);
@@ -253,7 +260,7 @@ describe("ConformanceTab persist", () => {
     );
   });
 
-  it("links a finished run to its saved page and does not cancel it on leave", async () => {
+  it("finalizes a finished run without a link to it, and does not cancel it on leave", async () => {
     const user = userEvent.setup();
     mockPassingSuites();
     const { unmount } = render(
@@ -264,14 +271,178 @@ describe("ConformanceTab persist", () => {
     );
     await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
 
-    const link = await screen.findByRole("button", { name: "View saved run" });
-    expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" });
-    await user.click(link);
-    expect(navigate).toHaveBeenCalledWith(
-      expect.stringContaining("/conformance/runs/run_1"),
+    await waitFor(() =>
+      expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" }),
     );
+    // The results are already on screen and the run is in History.
+    expect(
+      screen.queryByRole("button", { name: "View saved run" }),
+    ).not.toBeInTheDocument();
 
     unmount();
     expect(cancelRun).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["a saved server", "srv_1", "http-server"],
+    // Saved as an external target, the run's card shows no name in History.
+    ["a server the project doesn't have", null, ""],
+  ])(
+    "puts the server's name on the share card only for %s",
+    async (_label, serverId, cardName) => {
+      const user = userEvent.setup();
+      mockPassingSuites();
+      render(
+        <ConformanceTab
+          server={createHttpServer()}
+          persist={{ projectId: "proj_1", serverId }}
+        />,
+      );
+      await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Share" })).toHaveAttribute(
+          "data-server-name",
+          cardName,
+        ),
+      );
+    },
+  );
+
+  it("saves the OAuth checks a server leaves out as pending in the report", async () => {
+    const user = userEvent.setup();
+    mockPassingSuites();
+    mockStartOAuth.mockResolvedValue({
+      phase: "complete",
+      result: {
+        passed: false,
+        outcome: "failed",
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        serverUrl: "https://example.com/mcp",
+        summary: "OAuth summary",
+        durationMs: 1,
+        steps: [
+          {
+            step: "verify_profile_shape",
+            title: "Profile Shape",
+            summary: "…",
+            status: "failed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+            error: { message: "bad shape" },
+          },
+          {
+            step: "oauth_token_format",
+            title: "Token Format",
+            summary: "…",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
+        ],
+      },
+    });
+    render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+        serverDefaults={{
+          "http-server": { oauthUnscored: ["verify_profile_shape"] },
+        }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() =>
+      expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" }),
+    );
+
+    const oauthUpload = upsertReport.mock.calls
+      .map(([payload]) => payload)
+      .find(
+        (payload: { suiteKind?: string; report?: unknown }) =>
+          payload.suiteKind === "oauth" && payload.report,
+      ) as {
+      report: {
+        score: { pending: number; failed: number };
+        groups: Array<{ cases: Array<{ id: string; pending?: boolean }> }>;
+      };
+    };
+    const cases = oauthUpload.report.groups.flatMap((group) => group.cases);
+    expect(cases.find((c) => c.id === "verify_profile_shape")?.pending).toBe(
+      true,
+    );
+    expect(cases.find((c) => c.id === "oauth_token_format")?.pending).toBe(
+      undefined,
+    );
+    // The backend recomputes from these cases: the failure is not counted.
+    expect(oauthUpload.report.score).toMatchObject({ pending: 1, failed: 0 });
+  });
+});
+
+
+it("saves one Tasks report after multiple groups, including a timed-out group", async () => {
+  mockPassingSuites();
+  mockStartOAuth.mockClear();
+  upsertReport.mockClear();
+  mockRunTasks.mockClear();
+  mockRunTasks
+    .mockImplementationOnce(
+      async (_server: string, options: { checkIds: MCPTasksCheckId[] }) => {
+        const result = taskGroupFailure(
+          options.checkIds,
+          "",
+          "fixture",
+          "finish",
+        );
+        result.checks = result.checks.map((check) => ({
+          ...check,
+          status: "passed",
+          skipReason: undefined,
+          error: undefined,
+          details: { toolName: "finish", taskId: "first-task" },
+        }));
+        return { success: true, result };
+      },
+    )
+    .mockRejectedValueOnce(new Error("Hosted request timed out"));
+  render(
+    <ConformanceTab
+      server={createHttpServer()}
+      persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      serverDefaults={{
+        "http-server": {
+          protocol: [],
+          apps: [],
+          oauth: false,
+          tasks: ["tasks-inline-result", "tasks-cancel-ack-shape"],
+        },
+      }}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+  await waitFor(() =>
+    expect(
+      upsertReport.mock.calls.filter(
+        ([payload]) => payload.suiteKind === "tasks" && payload.report,
+      ),
+    ).toHaveLength(1),
+  );
+  expect(mockRunTasks).toHaveBeenCalledTimes(2);
+  expect(mockStartOAuth).not.toHaveBeenCalled();
+  const payload = upsertReport.mock.calls.find(
+    ([payload]) => payload.suiteKind === "tasks" && payload.report,
+  )?.[0];
+  expect(payload.report.score).toMatchObject({ passed: 1, couldNotRun: 1 });
+  const cases = payload.report.groups.flatMap(
+    (group: { cases: { id: string }[] }) => group.cases,
+  );
+  expect(cases.map((item: { id: string }) => item.id)).toEqual([
+    "tasks-inline-result",
+    "tasks-cancel-ack-shape",
+  ]);
 });

@@ -12,6 +12,7 @@
  * (it owns React state, refs, and inspector command registrations — calling
  * it twice would double-register handlers).
  */
+import { authorizationRequiredCommandErrorFromSignal } from "@/lib/auth-challenge-lifecycle";
 import {
   createContext,
   createElement,
@@ -71,6 +72,7 @@ import type {
 } from "@/shared/inspector-command.js";
 import { getPlaygroundAgentControls } from "@/components/playground/playground-agent-controls-bridge";
 import { useSavedRequests, useServerKey, useToolExecution } from "./index";
+import { useToolAuthChallengeReplay } from "./useToolAuthChallengeReplay";
 import { PANEL_SIZES } from "../constants";
 
 const SERVER_SYNC_TIMEOUT_MS = 10000;
@@ -123,7 +125,8 @@ export interface UsePlaygroundStateOptions {
     hostContext: ProjectHostContextDraft
   ) => Promise<void>;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
+    options?: { allowInteractiveOAuthFlow?: boolean }
   ) => Promise<EnsureServersReadyResult>;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -135,6 +138,7 @@ export interface UsePlaygroundStateOptions {
    * Empty / undefined falls back to single-server mode driven by `serverName`.
    */
   selectedServerNames?: string[];
+  onSelectMultipleServers?: (names: string[]) => void;
 }
 
 /**
@@ -313,6 +317,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setToolOutput,
     setToolResponseMetadata,
     modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+    tools,
   });
 
   const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
@@ -466,12 +471,12 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   );
 
   /**
-   * `resetSelection: false` replaces only the list and its metadata, for a
-   * request that changed under the same server and status (a host switch, a
-   * new OAuth token): the selected tool, its form and its output stay.
+   * Replaces only the list and its metadata by default, so a refresh, a host
+   * switch or a reconnect after sign-in keeps the selected tool, its form and
+   * its output. `resetSelection: true` is for a different server.
    */
   const fetchTools = useCallback(
-    async ({ resetSelection = true }: { resetSelection?: boolean } = {}) => {
+    async ({ resetSelection = false }: { resetSelection?: boolean } = {}) => {
       if (!serverName) return;
 
       const seq = ++toolsRequestSeqRef.current;
@@ -642,7 +647,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
   useEffect(() => {
     const prev = prevServerRef.current;
-    const serverChanged = serverName !== prev.serverName;
+    const serverChanged = (serverName ?? null) !== prev.serverName;
     const statusChanged = serverConnectionStatus !== prev.status;
     prevServerRef.current = {
       serverName: serverName ?? null,
@@ -658,16 +663,18 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       toolsFailedAtRevisionRef.current = null;
       setFetchingTools(false);
     };
-    if (serverChanged) dropListing();
+    // Only a different server clears the selection: a reconnect after
+    // sign-in keeps the restored call on screen.
+    if (serverChanged) {
+      dropListing();
+      reset();
+    }
 
     if (serverConfig && serverName && serverConnectionStatus === "connected") {
       // Wait for a context that can build the request rather than send one
       // the route would refuse.
       if (toolsRequestKey === null) {
-        if (serverChanged || statusChanged) {
-          reset();
-          setToolsMetadata({});
-        }
+        if (serverChanged || statusChanged) setToolsMetadata({});
         return;
       }
       // This exact request is being listed, or listed successfully with
@@ -679,11 +686,11 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         inFlight === toolsRequestKey ||
         (inFlight === null && toolsSettledKeyRef.current === toolsRequestKey);
       if (!serverChanged && !statusChanged && listed) return;
-      fetchTools({ resetSelection: serverChanged || statusChanged });
+      fetchTools({ resetSelection: serverChanged });
     } else {
       dropListing();
-      reset();
-      setToolsMetadata({});
+      if (Object.keys(tools).length > 0) setTools({});
+      if (serverChanged || statusChanged) setToolsMetadata({});
     }
   }, [
     serverConfig,
@@ -698,13 +705,22 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
       setFormFields(
-        generateFormFieldsFromSchema(tools[selectedTool].inputSchema)
+        applyParamsToFields(
+          generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
+          buildParametersFromFields(useUIPlaygroundStore.getState().formFields),
+        ),
       );
       return;
     }
-    setFormFields([]);
+    if (!selectedTool) setFormFields([]);
   }, [selectedTool, tools, setFormFields]);
 
+  useToolAuthChallengeReplay(
+    activeServerNames,
+    serverName,
+    { servers },
+    executeTool,
+  );
   const selectToolForCommand = useCallback(
     async (
       command:
@@ -817,9 +833,19 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         const outcome = await executeTool({
           toolName: command.payload.toolName,
           parameters: selection.parameters,
+          fromCommand: true,
         });
         await waitForUiCommit();
 
+        // A sign-in challenge is reported as such; a command never signs in.
+        const authorizationRequired =
+          authorizationRequiredCommandErrorFromSignal(
+            outcome.response && "authChallenge" in outcome.response
+              ? outcome.response.authChallenge
+              : undefined,
+            selection.serverName,
+          );
+        if (authorizationRequired) throw authorizationRequired;
         if (!outcome.ok) {
           throw createInspectorCommandClientError(
             "execution_failed",
@@ -1159,6 +1185,12 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     activeServerNames,
 
     // misc
+    selectedServerNames,
+    onSelectMultipleServers: options.onSelectMultipleServers,
+    servers,
+    activeProjectId: options.activeProjectId,
+    areServersHydrated,
+    ensureServersReady: options.ensureServersReady,
     // Surfaces that connect a server in place (the Tools rail's empty state)
     // need the handler, not just the connection status.
     onConnect,

@@ -67,7 +67,10 @@ function crc32(bytes: Uint8Array): number {
  *
  * `entries` is a LIST of pairs rather than a record, so duplicates survive.
  */
-function rawZipOf(entries: [string, string][]): Uint8Array {
+function rawZipOf(
+  entries: [string, string][],
+  encrypted: readonly string[] = []
+): Uint8Array {
   const local: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
@@ -77,10 +80,13 @@ function rawZipOf(entries: [string, string][]): Uint8Array {
     const body = encoder.encode(content);
     const sum = crc32(body);
 
+    // General purpose bit 0: the entry is encrypted.
+    const flags = encrypted.includes(name) ? 1 : 0;
     const header = new Uint8Array(30 + nameBytes.byteLength);
     const headerView = new DataView(header.buffer);
     headerView.setUint32(0, 0x04034b50, true);
     headerView.setUint16(4, 20, true);
+    headerView.setUint16(6, flags, true);
     headerView.setUint16(8, 0, true); // stored
     headerView.setUint32(14, sum, true);
     headerView.setUint32(18, body.byteLength, true);
@@ -94,6 +100,7 @@ function rawZipOf(entries: [string, string][]): Uint8Array {
     entryView.setUint32(0, 0x02014b50, true);
     entryView.setUint16(4, 20, true);
     entryView.setUint16(6, 20, true);
+    entryView.setUint16(8, flags, true);
     entryView.setUint16(10, 0, true); // stored
     entryView.setUint32(16, sum, true);
     entryView.setUint32(20, body.byteLength, true);
@@ -200,13 +207,44 @@ describe("collectZipArchiveObservations", () => {
     expect(DIRECTORY_ARCHIVE_OBSERVATIONS.encryptedEntryPaths).toBeUndefined();
   });
 
-  it("leaves encryption flags ABSENT rather than empty", async () => {
-    // JSZip cannot enumerate encrypted entries at all. Reporting `[]` would
-    // assert "checked, none found" for a check that never ran.
+  it("reads encryption flags off the central directory, so none found is a measurement", async () => {
+    // JSZip refuses an encrypted archive outright, but the central directory
+    // is plaintext and flags each encrypted entry. Reading it there is what
+    // lets a clean ZIP report every archive fact and grade ready.
     const observed = await collectZipArchiveObservations(
       await zipOf({ "plugin.json": "{}" }),
     );
+    expect(observed.encryptedEntryPaths).toEqual([]);
+  });
+
+  it("names each entry the directory flags encrypted", async () => {
+    const observed = await collectZipArchiveObservations(
+      rawZipOf(
+        [
+          ["plugin.json", "{}"],
+          ["skills/secret/SKILL.md", "x"],
+        ],
+        ["skills/secret/SKILL.md"]
+      )
+    );
+    expect(observed.encryptedEntryPaths).toEqual(["skills/secret/SKILL.md"]);
+    expect(observed.rawEntryNames).toEqual([
+      "plugin.json",
+      "skills/secret/SKILL.md",
+    ]);
+  });
+
+  it("does not call a cut-short directory a full read of the encryption flags", async () => {
+    // The last record declares an extra field longer than the bytes left, so
+    // the directory was never read to its end and "none encrypted" is not a
+    // measurement.
+    const zip = rawZipOf([["plugin.json", "{}"]]);
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    const directoryOffset = view.getUint32(zip.byteLength - 22 + 16, true);
+    view.setUint16(directoryOffset + 30, 0xffff, true);
+    const observed = await collectZipArchiveObservations(zip);
     expect(observed.encryptedEntryPaths).toBeUndefined();
+    expect(observed.rawEntryNames).toBeUndefined();
   });
 
   it("survives an archive it cannot read, keeping the one fact it still has", async () => {

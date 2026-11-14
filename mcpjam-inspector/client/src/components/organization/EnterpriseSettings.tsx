@@ -1,17 +1,7 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
-import { LockKeyhole, ShieldCheck } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Dialog,
-  DialogTrigger,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogClose,
-} from "@mcpjam/design-system/dialog";
 export const enterpriseContactHref = "https://www.mcpjam.com/contact";
 export function DataManagementSettings({
   enterprise,
@@ -45,67 +35,5 @@ export function DataManagementSettings({
         </Button>
       </div>
     </section>
-  );
-}
-export function PermissionGroupsDialog({
-  enterprise,
-}: {
-  enterprise: boolean;
-}) {
-  return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <ShieldCheck className="size-4" />
-          Permission groups
-          <Badge variant="secondary" className="text-[10px]">
-            ENTERPRISE
-          </Badge>
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
-            {enterprise
-              ? "Custom permission groups"
-              : "Access custom permission groups with Enterprise"}
-          </DialogTitle>
-          <DialogDescription>
-            Talk with us about your organization’s access-control requirements
-            and a tailored Enterprise setup.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 py-4 sm:grid-cols-2">
-          <div>
-            <ShieldCheck
-              aria-hidden="true"
-              className="mb-2 size-5 text-primary"
-            />
-            <h3 className="font-medium">Permission groups</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Discuss roles and access policies for your teams.
-            </p>
-          </div>
-          <div>
-            <LockKeyhole
-              aria-hidden="true"
-              className="mb-2 size-5 text-primary"
-            />
-            <h3 className="font-medium">Enterprise support</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Plan your security and data-management requirements with us.
-            </p>
-          </div>
-        </div>
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="outline">Dismiss</Button>
-          </DialogClose>
-          <Button asChild>
-            <a href={enterpriseContactHref}>Contact us</a>
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

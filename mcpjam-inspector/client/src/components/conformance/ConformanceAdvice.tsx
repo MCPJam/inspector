@@ -1,0 +1,189 @@
+/**
+ * Every suite's SHOULD/MAY advice in one container above the suites: the spec
+ * words are explained once in its header, and each row says how strong the
+ * advice is, which suite it came from, and what to change. Closed by default
+ * with a count, so the first thing a run shows is its score, not a long list.
+ */
+import { useState } from "react";
+import { ChevronRight, Info } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Collapse, SUITE_COPY } from "./conformance-ui";
+
+export interface AdviceItem {
+  id: string;
+  title: string;
+  specStrength: string;
+  message: string;
+}
+
+/** One suite's advice, as its result reports it. */
+export interface AdviceGroup {
+  suite: string;
+  readiness?: readonly AdviceItem[];
+}
+
+const ADVICE_SUITES = ["protocol", "apps", "tasks", "oauth"] as const;
+
+/** A suite's run state, read only for the advice its result carries. */
+interface AdviceSource {
+  result?: { readiness?: readonly AdviceItem[] } | null;
+}
+
+/** One group per suite, in the order the panel lists the suites. */
+export function suiteAdviceGroups(
+  runs: Record<(typeof ADVICE_SUITES)[number], AdviceSource>,
+): AdviceGroup[] {
+  return ADVICE_SUITES.map((suite) => ({
+    suite: SUITE_COPY[suite].title,
+    readiness: runs[suite].result?.readiness,
+  }));
+}
+
+/** One advisory as a saved suite report stores it. */
+interface SavedReportAdvisory {
+  id?: unknown;
+  title?: unknown;
+  kind?: unknown;
+  status?: unknown;
+  message?: unknown;
+}
+
+/**
+ * One group per saved suite report, from the advice the report saved. Reports
+ * from before advice was saved have none, so their suites add nothing.
+ */
+export function reportAdviceGroups(
+  reports: ReadonlyArray<{
+    suiteKind: string;
+    /** Read as saved, so it is checked here: a shared report can be anything. */
+    advisories?: unknown;
+  }>,
+): AdviceGroup[] {
+  return reports.map(({ suiteKind, advisories }) => ({
+    suite: SUITE_COPY[suiteKind as keyof typeof SUITE_COPY]?.title ?? suiteKind,
+    readiness: (Array.isArray(advisories) ? advisories : []).flatMap(
+      (entry: unknown) => {
+        const advisory = (entry ?? {}) as SavedReportAdvisory;
+        return advisory.kind === "readiness" &&
+          typeof advisory.id === "string" &&
+          typeof advisory.title === "string" &&
+          typeof advisory.status === "string"
+          ? [
+              {
+                id: advisory.id,
+                title: advisory.title,
+                specStrength:
+                  suiteKind === "protocol" &&
+                  advisory.id === "readiness-deprecated-feature-use" &&
+                  advisory.status === "SHOULD"
+                    ? "Deprecation Notice"
+                    : advisory.status,
+                message:
+                  typeof advisory.message === "string" ? advisory.message : "",
+              },
+            ]
+          : [];
+      },
+    ),
+  }));
+}
+
+/** RFC 2119 defines each requirement word in its own section. */
+const RFC_2119_URLS = {
+  SHOULD: "https://www.rfc-editor.org/info/rfc2119/#section-3",
+  MAY: "https://www.rfc-editor.org/info/rfc2119/#section-5",
+};
+
+function SpecWord({ word }: { word: keyof typeof RFC_2119_URLS }) {
+  return (
+    <a
+      href={RFC_2119_URLS[word]}
+      target="_blank"
+      rel="noreferrer"
+      className="text-primary underline underline-offset-2 hover:text-primary/80"
+    >
+      {word}
+    </a>
+  );
+}
+
+/** MAY is optional; SHOULD is what the spec asks for. */
+function isOptional(item: AdviceItem): boolean {
+  return item.specStrength === "MAY";
+}
+
+/** A field the spec deprecates without a SHOULD or MAY. */
+function isDeprecation(item: AdviceItem): boolean {
+  return item.specStrength === "Deprecation Notice";
+}
+
+export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
+  const [open, setOpen] = useState(false);
+  // Suggested before Optional, each in suite order.
+  const items = groups
+    .flatMap((group) =>
+      (group.readiness ?? []).map((item) => ({ ...item, suite: group.suite })),
+    )
+    .sort((a, b) => Number(isOptional(a)) - Number(isOptional(b)));
+  if (items.length === 0) return null;
+
+  return (
+    <section className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 px-4 pt-4 pb-1 text-left transition-colors hover:bg-muted/30"
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={cn(
+            "size-4 shrink-0 transition-transform duration-300 ease-out motion-reduce:transition-none",
+            open ? "rotate-90 text-foreground" : "text-muted-foreground",
+          )}
+        />
+        <span className="text-sm font-semibold">Additional enhancements</span>
+        <span className="rounded-full bg-info/10 px-1.5 py-px text-xs font-medium tabular-nums text-info">
+          {items.length}
+        </span>
+      </button>
+      {/* Outside the toggle: a link can't sit inside a button. */}
+      <p className="px-4 pb-4 pl-11 text-sm text-muted-foreground">
+        None of these fail a check. Suggested (<SpecWord word="SHOULD" />) means
+        the spec asks for it. Optional (<SpecWord word="MAY" />) means it helps
+        but the spec doesn't require it.
+      </p>
+      <Collapse open={open}>
+        <ul className="border-t border-border/60 px-4">
+          {items.map((item) => (
+            <li
+              key={`${item.suite}-${item.id}`}
+              // Indented like a suite's check rows (`pl-7`), so the icon sits
+              // under the header's text rather than its chevron.
+              className="flex items-start gap-2.5 border-b border-border/60 py-2.5 pl-7 last:border-0"
+            >
+              <Info
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0 text-info"
+              />
+              <span className="flex min-w-0 flex-col gap-0.5 text-sm">
+                <span>
+                  <span className="font-medium text-info">
+                    {/* A deprecation asks for a change, like SHOULD, but the
+                        spec states no SHOULD for it, so no strength is shown. */}
+                    {isDeprecation(item)
+                      ? "Suggested"
+                      : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
+                  </span>{" "}
+                  <span className="text-muted-foreground">{item.suite}</span>{" "}
+                  <span className="font-medium">{item.title}</span>
+                </span>
+                <span className="text-muted-foreground">{item.message}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Collapse>
+    </section>
+  );
+}

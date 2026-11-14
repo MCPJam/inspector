@@ -1,4 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const deployment = vi.hoisted(() => ({ hosted: false }));
+vi.mock("../../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../config.js")>()),
+  get HOSTED_MODE() {
+    return deployment.hosted;
+  },
+}));
+
 import { shouldAdoptSandboxSkills } from "../adopt-sandbox-skills";
 
 /**
@@ -21,11 +30,20 @@ const base = {
   hasExecutionScope: false,
   hasCredentials: true,
   hasFileSession: true,
-  adoptionDisabled: false,
 };
 
+beforeEach(() => {
+  // A self-hosted Inspector with no operator setting, whatever the shell has.
+  deployment.hosted = false;
+  vi.stubEnv("HARNESS_SKILL_ADOPTION_DISABLED", undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("shouldAdoptSandboxSkills", () => {
-  it("adopts on a clean, unpinned, in-scope turn", () => {
+  it("adopts on a clean, unpinned, in-scope turn on a self-hosted Inspector", () => {
     expect(shouldAdoptSandboxSkills(base)).toBe(true);
   });
 
@@ -71,9 +89,20 @@ describe("shouldAdoptSandboxSkills", () => {
     );
   });
 
-  it("honours the operator kill switch", () => {
-    expect(shouldAdoptSandboxSkills({ ...base, adoptionDisabled: true })).toBe(
-      false
-    );
+  it("honours the operator kill switch on a self-hosted Inspector", () => {
+    vi.stubEnv("HARNESS_SKILL_ADOPTION_DISABLED", "1");
+    expect(shouldAdoptSandboxSkills(base)).toBe(false);
+  });
+
+  it("never adopts on the hosted app, with no operator setting", () => {
+    // An agent's SKILL.md on a hosted box must not become a project skill.
+    deployment.hosted = true;
+    expect(shouldAdoptSandboxSkills(base)).toBe(false);
+  });
+
+  it("the operator setting cannot turn adoption back on for the hosted app", () => {
+    deployment.hosted = true;
+    vi.stubEnv("HARNESS_SKILL_ADOPTION_DISABLED", "0");
+    expect(shouldAdoptSandboxSkills(base)).toBe(false);
   });
 });

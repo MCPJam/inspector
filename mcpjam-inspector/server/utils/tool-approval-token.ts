@@ -92,6 +92,11 @@ export const UNVERIFIED_APPROVAL_RESULT =
  * result and no verified approval. The server only executes calls its own
  * model step produced in THIS request, or ones a verified approval covers;
  * anything else in the history is a claim, not a request.
+ *
+ * Not for a call a mid-session sign-in suspended: it was never awaiting an
+ * approval, and the engine answers it first with the sign-in cancel copy
+ * (`settleSuspendedHistoryToolCall`) whenever its continuation can still
+ * be found.
  */
 export const UNAPPROVED_HISTORY_CALL_RESULT =
   "Not run: this tool call came from the conversation history the client sent, without an approval the server issued, so the server did not execute it.";

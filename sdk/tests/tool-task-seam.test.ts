@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MCPClientManager } from "../src/mcp-client-manager/MCPClientManager.js";
 import {
   toolTaskSeamOptionsFor,
+  runToolTaskSeam,
   TASK_SEAM_META_KEY,
   type ToolTaskSeamMeta,
 } from "../src/mcp-client-manager/tool-task-seam.js";
@@ -210,6 +211,44 @@ describe("byte-identity: no tasks option", () => {
 });
 
 describe("expose mode", () => {
+  it("captures the selected account before dispatch and carries it into the handle", async () => {
+    const selected = { serverId: "canonical", connectionId: "account-a" };
+    const { events, options } = collectingSeam({
+      resolveIdentity: () => selected,
+    });
+    const result = await runToolTaskSeam(
+      {
+        serverId: "alias",
+        toolName: "work",
+        wire: "extension",
+        callPlain: async () => {
+          throw new Error("unexpected plain call");
+        },
+        callEligible: async () => {
+          selected.connectionId = "account-b";
+          return {
+            resultType: "task",
+            taskId: "same",
+            status: "working",
+            createdAt: new Date().toISOString(),
+            lastUpdatedAt: new Date().toISOString(),
+            ttlMs: null,
+          };
+        },
+      },
+      options
+    );
+    expect(events[0].identity).toMatchObject({
+      serverId: "canonical",
+      connectionId: "account-a",
+      taskId: "same",
+    });
+    expect(seamMeta(result)).toMatchObject({
+      serverId: "canonical",
+      connectionId: "account-a",
+    });
+  });
+
   it("declares eligibility, fires the fan-out, and returns a valid result", async () => {
     const fixture = await serve();
     const manager = await connect(fixture.url);

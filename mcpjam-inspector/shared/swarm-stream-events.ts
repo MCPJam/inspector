@@ -124,7 +124,14 @@ export type SwarmStreamLifecyclePayload =
        */
       errorCode?: string;
     }
-  | { type: "run_complete" };
+  | { type: "run_complete" }
+  /**
+   * This server has no live stream for a run the backend has not reported as
+   * settled: another replica owns its runner, the runner has not started yet,
+   * or it was lost before the backend settled the run. Not a completion; the
+   * stream closes and the client keeps its durable view and may reconnect.
+   */
+  | { type: "run_remote" };
 
 export type SwarmStreamPayload =
   | SwarmStreamTurnPayload
@@ -198,6 +205,7 @@ export function swarmEventToEvalPayload(
     case "session_complete":
     case "attempt_status":
     case "run_complete":
+    case "run_remote":
       return null;
   }
 }
