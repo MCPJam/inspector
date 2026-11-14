@@ -52,6 +52,6 @@ export const LOCAL_RUNTIME_COPY: {
       "Usage runs on your organization’s Cursor account. Personal Cursor subscriptions don’t apply.",
     ],
     setup:
-      "It runs commands in its project folder with your account’s permissions, signed in to your organization’s Cursor account. Evals and swarms use this client’s approval settings.",
+      "It runs commands in its project folder with your account’s permissions. Evals and swarms use this client’s approval settings.",
   },
 };
