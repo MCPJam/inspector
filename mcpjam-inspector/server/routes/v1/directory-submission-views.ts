@@ -171,15 +171,16 @@ export async function resultsOf(
 }
 
 /**
- * The findings in a run's stored report, or `undefined` when retention
- * removed it after the run was read. Over the service-token route, by RUN id,
- * as the report route reads it: the caller's own read of the run is the
- * authorization.
+ * A run's stored report, or `undefined` when retention removed it after the
+ * run was read. Over the service-token route, by RUN id, as the report route
+ * reads it: the caller's own read of the run is the authorization.
  */
-async function readFindings(runId: string): Promise<Finding[] | undefined> {
+export async function readStoredReport(
+  runId: string,
+): Promise<Record<string, unknown> | undefined> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   let status: number;
-  let report: { findings?: unknown };
+  let report: Record<string, unknown> | null;
   try {
     const response = await fetch(
       `${convexUrl}/internal/v1/claude-readiness/runs/report?runId=${encodeURIComponent(runId)}`,
@@ -195,8 +196,18 @@ async function readFindings(runId: string): Promise<Finding[] | undefined> {
     throw unreadableReport();
   }
   if (status === 404) return undefined;
+  if (status !== 200 || typeof report !== "object" || !report) {
+    throw unreadableReport();
+  }
+  return report;
+}
+
+/** The findings in a run's stored report, or `undefined` when retention removed it. */
+async function readFindings(runId: string): Promise<Finding[] | undefined> {
+  const report = await readStoredReport(runId);
+  if (!report) return undefined;
   const { findings } = report;
-  if (status !== 200 || !Array.isArray(findings) || !findings.every(isFinding)) {
+  if (!Array.isArray(findings) || !findings.every(isFinding)) {
     throw unreadableReport();
   }
   return findings;

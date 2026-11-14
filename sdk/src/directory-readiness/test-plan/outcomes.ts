@@ -120,8 +120,13 @@ export function directoryTestCaseDigest(
 
 export interface SummarizeDirectoryToolTestsInput {
   plan: DirectoryTestPlan;
-  /** The tools the server lists now: a result from another schema is stale. */
-  tools: readonly DirectoryTestPlanTool[];
+  /**
+   * The tools the server lists now: a result from another schema is stale.
+   * Leave it out to grade the calls as they were made, when the listing they
+   * were made against is not at hand: a stored catalog normalizes schemas
+   * and annotations, so its tools would make every result read as stale.
+   */
+  tools?: readonly DirectoryTestPlanTool[];
   /** Ledger records; a later record for a case replaces an earlier one. */
   calls: readonly DirectoryTestCallRecord[];
   /** The reviewer account tests run as now: a result from another is stale. */
@@ -141,7 +146,8 @@ export function summarizeDirectoryToolTests(
 ): DirectoryToolTestResult[] {
   const { plan } = input;
   const latest = new Map(input.calls.map((call) => [call.callKey, call]));
-  const listed = new Map(input.tools.map((tool) => [tool.name, tool]));
+  const listed =
+    input.tools && new Map(input.tools.map((tool) => [tool.name, tool]));
   const entries = new Map(plan.tools.map((entry) => [entry.tool, entry]));
   const graded = new Map<string, DirectoryTestCaseResult>();
   const byTool = new Map<string, DirectoryTestCaseResult[]>();
@@ -150,11 +156,9 @@ export function summarizeDirectoryToolTests(
     const ran = record && record.phase !== "planned";
     const verdict = ran
       ? ranVerdict(testCase, record, input.account, {
-          digest: directoryTestCaseDigest(
-            plan,
-            testCase,
-            listed.get(testCase.tool)
-          ),
+          digest:
+            listed &&
+            directoryTestCaseDigest(plan, testCase, listed.get(testCase.tool)),
           effect: entries.get(testCase.tool)?.effect ?? "destructive",
         })
       : notRunVerdict(testCase, input, graded);
@@ -178,7 +182,8 @@ function ranVerdict(
   testCase: DirectoryTestCase,
   record: DirectoryTestCallRecord,
   account: string | undefined,
-  now: { digest: string; effect: DirectoryToolEffect }
+  /** `digest` is absent when the tools now are not known. */
+  now: { digest: string | undefined; effect: DirectoryToolEffect }
 ): Verdict {
   // An unfinished write outranks any later edit: data may have changed.
   if (
@@ -194,7 +199,7 @@ function ranVerdict(
   ) {
     return { status: "stale", reason: caseWords("staleAccount") };
   }
-  if (record.inputDigest !== now.digest) {
+  if (now.digest !== undefined && record.inputDigest !== now.digest) {
     return { status: "stale", reason: caseWords("staleInputs") };
   }
   if (record.phase === "started")

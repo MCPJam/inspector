@@ -127,6 +127,18 @@ export type {
   PlatformDirectorySubmissionHandoff,
   PlatformDirectorySubmissionSnapshotsView,
 } from "./directory-submission-handoff-types.js";
+export type {
+  PlatformDirectoryTestCaseCounts,
+  PlatformDirectoryTestPlanCatalog,
+  PlatformDirectoryTestPlanDraft,
+  PlatformDirectoryTestPlanRevision,
+  PlatformDirectoryTestPlanSaveBody,
+  PlatformDirectoryTestPlanSaved,
+  PlatformDirectoryTestPlanView,
+  PlatformDirectoryToolTestSweep,
+  PlatformDirectoryToolTests,
+} from "./directory-test-plan-types.js";
+export { directoryTestPlanSchema } from "./directory-test-plan-schema.js";
 export { directorySubmissionConflict } from "./directory-submission-client.js";
 export type {
   PlatformReviewerAttempt,
