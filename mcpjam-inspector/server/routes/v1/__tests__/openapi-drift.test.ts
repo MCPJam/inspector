@@ -273,6 +273,10 @@ const KNOWN_UNDOCUMENTED = new Set([
   "put /projects/{projectId}/directory-submissions/{submissionId}/test-plan",
   "get /projects/{projectId}/directory-submissions/{submissionId}/test-plan/draft",
   "get /projects/{projectId}/directory-submissions/{submissionId}/tool-tests",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/evals",
+  "patch /projects/{projectId}/directory-submissions/{submissionId}/evals",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/evals/import",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/evals/export",
 ]);
 
 /**

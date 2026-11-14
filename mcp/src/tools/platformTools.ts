@@ -41,6 +41,10 @@ import {
   getDirectorySubmissionTestPlanOperation,
   getDirectorySubmissionToolTestsOperation,
   saveDirectorySubmissionTestPlanOperation,
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -387,6 +391,10 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   draftDirectorySubmissionTestPlanOperation,
   saveDirectorySubmissionTestPlanOperation,
   getDirectorySubmissionToolTestsOperation,
+  getDirectorySubmissionEvalsOperation,
+  setDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  exportDirectorySubmissionTestCasesOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -893,6 +901,8 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "duplicate_client",
   // A new rehearsal; a replayed key returns the one it made.
   "create_directory_submission",
+  // New eval cases from a package; a case an earlier import made is left alone.
+  "import_directory_submission_test_cases",
   "send_feedback",
 ]);
 
@@ -925,6 +935,9 @@ const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
   // Saving the plan that is already current changes nothing and answers the
   // saved revision with `replayed: true`, whatever revision it names.
   "save_directory_submission_test_plan",
+  // Importing the same plugin version again writes nothing and answers the
+  // cases the first import made.
+  "import_directory_submission_test_cases",
   "delete_project_server",
   "cancel_eval_run",
   "cancel_goal_run",

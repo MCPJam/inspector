@@ -86,6 +86,10 @@ beta; they are listed [after the table](#held-tools).
 | `draft_directory_submission_test_plan` | Draft a test plan that calls every tool the server lists, destructive calls last, with what still needs filling in. Saves nothing. | — |
 | `save_directory_submission_test_plan` | Save a submission's test plan as its next revision, at the revision you read; a plan saved since is never overwritten. In beta. | — |
 | `get_directory_submission_tool_tests` | Read what a run's test plan calls showed, tool by tool, valid input apart from expected refusals, with the calls that may have changed data named. | — |
+| `get_directory_submission_evals` | Read the eval suite holding a submission's test cases, its linked run, and each case's result there: how it was graded, whether the judge's verdict counts, and the client that ran it. | — |
+| `set_directory_submission_evals` | Link a submission to the eval suite in its project that holds its test cases, or to the run that last ran them, at the revision you read. In beta. | — |
+| `import_directory_submission_test_cases` | Import the review test cases a ChatGPT plugin package declares into the submission's linked suite; importing a version again writes nothing. In beta. | — |
+| `export_directory_submission_test_cases` | Export the linked suite's cases as the successful and graceful-failure lists ChatGPT's form takes, as a JSON file's exact bytes. | — |
 | `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
 | `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
 | `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |
