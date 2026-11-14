@@ -313,7 +313,7 @@ describe("handoverOf", () => {
       frame: { recordingId: "res_1", seconds: 11.2 },
       finisher: "Whoever manages the reviewer account.",
       action:
-        "The reviewer account must sign in without a verification step, because directory reviewers can't complete one either. Turn it off for that account, or save credentials for an account that has none. Then resume this attempt.",
+        "Turn off the verification step for the reviewer account, or save credentials for an account without one. Then resume this attempt.",
       since: NOV_13,
     });
     // Signing in yourself changes nothing for the attempt, so that is never advised.

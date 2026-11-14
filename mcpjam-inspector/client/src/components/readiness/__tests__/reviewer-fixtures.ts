@@ -101,7 +101,7 @@ export const PASSED = attemptIn("passed", {
 export const ASKED =
   'The sign-in page asked for a verification step MCPJam cannot complete: "Enter the code we sent to your email".';
 export const ACTION =
-  "The reviewer account must sign in without a verification step or a bot check, because directory reviewers can't complete one either. Turn it off for that account, or save credentials for an account that has none. Then resume this attempt.";
+  "Turn off the verification step or bot check for the reviewer account, or save credentials for an account without one. Then resume this attempt.";
 
 /** Paused at a verification code, as the sign-in rehearsal records it. */
 export const WAITING = attemptIn("waiting-for-person", {
