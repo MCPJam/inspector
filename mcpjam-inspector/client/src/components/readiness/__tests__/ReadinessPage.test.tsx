@@ -3,7 +3,7 @@
  * portal's first screen for a saved server, then the form rendered from the
  * flow with MCPJam's results under the answers they read.
  */
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -235,12 +235,12 @@ describe("ReadinessPage", () => {
     },
   ] as unknown as Parameters<typeof ReadinessPage>[0]["servers"];
 
-  const page = (selected: string) => (
+  const page = (selected: string, onSelect = vi.fn()) => (
     <ReadinessPage
       projectId="proj_1"
       servers={SERVERS}
       selected={selected}
-      onSelect={vi.fn()}
+      onSelect={onSelect}
     />
   );
 
@@ -265,6 +265,19 @@ describe("ReadinessPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
     await userEvent.type(screen.getByLabelText(/^Name/), " 2");
+  }
+
+  /** Picks a server in the rehearsal bar's picker. */
+  async function chooseServer(name: string) {
+    await userEvent.click(screen.getByRole("button", { name: "Server" }));
+    const rows = within(screen.getByRole("dialog")).getAllByRole("button", {
+      name: new RegExp(`${name}$`),
+    });
+    await userEvent.click(
+      rows.find(
+        (row) => !row.getAttribute("aria-label")?.startsWith("Connect"),
+      )!,
+    );
   }
 
   it("starts over on another server while a rehearsal is being created", async () => {
@@ -312,24 +325,50 @@ describe("ReadinessPage", () => {
     expect(api.startDirectorySubmissionRun).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the form open when Save and exit cannot save", async () => {
+  it.each(["Save and exit", "Submissions"])(
+    "keeps the form open when %s cannot save",
+    async (button) => {
+      api.updateDirectorySubmission.mockRejectedValue(
+        new Error("The name is too long."),
+      );
+      render(page("Sample server"));
+      await editName();
+
+      await userEvent.click(screen.getByRole("button", { name: button }));
+      expect(
+        screen.getByRole("heading", { level: 1, name: "Listing" }),
+      ).toBeVisible();
+      expect(
+        screen.getByText(
+          /Your last change was not saved\. The name is too long\./,
+        ),
+      ).toBeVisible();
+    },
+  );
+
+  it("keeps the rehearsal open, on its server, when another server is chosen and the save fails", async () => {
     api.updateDirectorySubmission.mockRejectedValue(
       new Error("The name is too long."),
     );
-    render(page("Sample server"));
+    const onSelect = vi.fn();
+    render(page("Sample server", onSelect));
     await editName();
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save and exit" }),
-    );
-    expect(
-      screen.getByRole("heading", { level: 1, name: "Listing" }),
-    ).toBeVisible();
+    await chooseServer("Other server");
+    expect(onSelect).not.toHaveBeenCalled();
     expect(
       screen.getByText(
         /Your last change was not saved\. The name is too long\./,
       ),
     ).toBeVisible();
+
+    api.updateDirectorySubmission.mockResolvedValue({
+      ...submission(),
+      revision: 3,
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await chooseServer("Other server");
+    expect(onSelect).toHaveBeenCalledWith("Other server");
   });
 
   it("closes the form once Save and exit has saved", async () => {

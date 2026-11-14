@@ -250,6 +250,12 @@ export function ReadinessPage({
       starting.current = false;
     }
   };
+  // Another server closes the open submission, so its edits are saved
+  // first; a save that fails or conflicts keeps it open with its notice.
+  const select = async (name: string) => {
+    if (openId && !(await session.saveNow())) return;
+    onSelect(name);
+  };
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -319,7 +325,7 @@ export function ReadinessPage({
             servers={servers.map((entry) => entry.server)}
             loading={loading}
             selectedName={chosen?.server.name ?? null}
-            onSelect={onSelect}
+            onSelect={(name) => void select(name)}
           />
         }
         status={view && flow ? runStatus(run, flow.version) : "Not checked yet"}

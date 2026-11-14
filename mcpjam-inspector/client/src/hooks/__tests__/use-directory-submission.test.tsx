@@ -94,6 +94,26 @@ function heldSave() {
   return (view: SubmissionView) => answer(view);
 }
 
+/** Edits sub_1, closes it, and opens it again once its save has settled. */
+async function reopenAfterSave() {
+  const hook = renderHook(
+    ({ submissionId }) =>
+      useDirectorySubmission({
+        projectId: "proj_1",
+        submissionId,
+        server: { name: "Sample server" },
+      }),
+    { initialProps: { submissionId: "sub_1" as string | null } },
+  );
+  await settle();
+  act(() => hook.result.current.setAnswer("listing.name", "Mine"));
+  hook.rerender({ submissionId: null });
+  await settle();
+  hook.rerender({ submissionId: "sub_1" });
+  await settle();
+  return hook;
+}
+
 describe("useDirectorySubmission", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -317,6 +337,26 @@ describe("useDirectorySubmission", () => {
       expectedRevision: 3,
       answers: { "listing.slug": "mine" },
     });
+  });
+
+  it("reopening a submission whose save failed after it closed shows the edit", async () => {
+    api.updateDirectorySubmission.mockRejectedValueOnce(
+      new PlatformApiError("The slug is not valid.", "VALIDATION_ERROR", {
+        status: 400,
+      }),
+    );
+    const hook = await reopenAfterSave();
+    expect(hook.result.current.error).toBe("The slug is not valid.");
+    expect(hook.result.current.values["listing.name"]).toBe("Mine");
+  });
+
+  it("reopening a submission whose save conflicted after it closed offers the edit", async () => {
+    api.updateDirectorySubmission.mockRejectedValueOnce(
+      conflict(5, ["listing.name"], viewAt(5, "Theirs")),
+    );
+    const hook = await reopenAfterSave();
+    expect(hook.result.current.conflict).toEqual({ "listing.name": "Mine" });
+    expect(hook.result.current.values["listing.name"]).toBe("Theirs");
   });
 
   it("saves what is waiting before it starts a run", async () => {

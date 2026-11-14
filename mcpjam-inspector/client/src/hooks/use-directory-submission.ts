@@ -234,6 +234,10 @@ function createSubmissionDraft(
     detach() {
       live = false;
     },
+    /** Open again, with whatever it still holds. */
+    attach() {
+      live = true;
+    },
     setAnswer(key: string, value: DirectoryAnswerValue) {
       const conflict = draft.conflict && keep(draft.conflict, (k) => k !== key);
       edit({ [key]: value }, conflict && !isEmpty(conflict) ? conflict : null);
@@ -243,8 +247,18 @@ function createSubmissionDraft(
   };
 }
 
+type SubmissionDraft = ReturnType<typeof createSubmissionDraft>;
+const keyOf = (scope: SubmissionScope) =>
+  `${scope.projectId}/${scope.submissionId}`;
+
 export function createDraftStore(render: () => void) {
   let current = createSubmissionDraft(null, EMPTY, render);
+  /**
+   * Drafts left behind until their edits are saved. A save that fails or
+   * conflicts keeps its draft here, so reopening the submission shows the
+   * unsaved edits and the notice again.
+   */
+  const left = new Map<string, SubmissionDraft>();
   return {
     draft: () => current.draft(),
     load: () => current.load(),
@@ -262,12 +276,26 @@ export function createDraftStore(render: () => void) {
       }
       const outgoing = current;
       outgoing.detach();
-      void outgoing.flush();
-      current = createSubmissionDraft(
-        submissionId ? { projectId, submissionId } : null,
-        { ...EMPTY, flow: outgoing.draft().flow },
-        render,
-      );
+      if (outgoing.scope) {
+        const key = keyOf(outgoing.scope);
+        left.set(key, outgoing);
+        void outgoing.flush().then((saved) => {
+          if (saved && left.get(key) === outgoing) left.delete(key);
+        });
+      }
+      const next = submissionId ? { projectId, submissionId } : null;
+      const resumed = next ? left.get(keyOf(next)) : undefined;
+      if (next && resumed) {
+        left.delete(keyOf(next));
+        resumed.attach();
+      }
+      current =
+        resumed ??
+        createSubmissionDraft(
+          next,
+          { ...EMPTY, flow: outgoing.draft().flow },
+          render,
+        );
       render();
       void current.load();
     },

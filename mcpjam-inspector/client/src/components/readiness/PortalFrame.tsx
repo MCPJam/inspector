@@ -173,6 +173,10 @@ export function PortalFrame({
   const placed = (id: string) => view.steps.find((entry) => entry.step === id);
   const issuesOf = (id: string) =>
     session.issues.filter((issue) => issue.step === id);
+  // A save that fails or conflicts keeps the form open with its notice.
+  const close = async () => {
+    if (await session.saveNow()) onClose();
+  };
   const go = (index: number) => {
     if (index === active) return;
     setLeft((current) => new Set(current).add(active));
@@ -194,7 +198,7 @@ export function PortalFrame({
       <div className="flex shrink-0 items-center justify-between gap-4 px-10 py-3">
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => void close()}
           className="flex items-center gap-2 rounded-md text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ArrowLeft aria-hidden="true" className="size-4" />
@@ -208,10 +212,7 @@ export function PortalFrame({
             type="button"
             variant="secondary"
             size="sm"
-            // A save that fails or conflicts keeps the form open with its notice.
-            onClick={async () => {
-              if (await session.saveNow()) onClose();
-            }}
+            onClick={() => void close()}
           >
             Save and exit
           </Button>
