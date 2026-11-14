@@ -29,7 +29,10 @@ import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { preparePlaygroundTerminalSandbox } from "../computers/control-plane-client.js";
 import { logger } from "../logger.js";
-import { harnessBootstrapObservation } from "./harness-bake-observer.js";
+import {
+  harnessBootstrapObservation,
+  watchNewBoxForStaleBake,
+} from "./harness-bake-observer.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import {
   releaseHarnessBoxReservation,
@@ -248,6 +251,10 @@ export async function prepareConversationBox(args: {
       commandTimeoutMs: COMMAND_BOUND_MS + FENCE_MARGIN_MS,
       skipPnpmGuard: true,
     });
+    // The box was just booted for this chat, as a first Send's would be, and
+    // its Send will find this install: a bake miss here is the stale-template
+    // alert the Send would have raised.
+    watchNewBoxForStaleBake(provider, args.harnessId);
     // Attaching starts nothing in the box; the guard runs below, fenced.
     const session = (
       await provider.createSession({ abortSignal: signal })

@@ -38,7 +38,16 @@ vi.mock("../sandbox-provider-factory.js", () => ({
   createHarnessSandboxProvider: mocks.createProvider,
 }));
 
-import { harnessRecipeIdentity } from "../harness-bake";
+import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
+import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
+import { logger } from "../../logger";
+import { HARNESS_BAKE_MANIFEST_PATH, harnessRecipeIdentity } from "../harness-bake";
+import {
+  harnessBootstrapObservation,
+  observeHarnessBootstrap,
+  resetHarnessBakeStaleWarningsForTests,
+  watchNewBoxForStaleBake,
+} from "../harness-bake-observer";
 import {
   COMMAND_BOUND_MS,
   hostedBootstrapRuntimes,
@@ -64,7 +73,9 @@ const isInstall = (command: string) =>
  * otherwise the framework installs. `hang` makes the install wait on its
  * signal, as a long `pnpm install` does, until `finishInstall`; `installing`
  * settles once it runs. `guardMs` is how long the pnpm guard takes, and
- * `gnuTimeout: false` a box whose `timeout` is not coreutils'.
+ * `gnuTimeout: false` a box whose `timeout` is not coreutils'. `staleTemplate`
+ * is a box from a computer template without this inspector's recipes: it
+ * carries a bake but none of their markers, and keeps what is written to it.
  */
 function fakeBox(
   opts: {
@@ -72,20 +83,29 @@ function fakeBox(
     hang?: boolean;
     guardMs?: number;
     gnuTimeout?: boolean;
+    staleTemplate?: boolean;
   } = {},
 ) {
   const runs: Run[] = [];
   const spawn = vi.fn();
+  const written = new Map<string, string>();
   let installStarted = () => {};
   let finishInstall = () => {};
   const installing = new Promise<void>((resolve) => {
     installStarted = resolve;
   });
   const session = {
-    readTextFile: vi.fn(async ({ path }: { path: string }) =>
-      opts.baked && path.includes(".bootstrap-") ? "" : null,
+    readTextFile: vi.fn(async ({ path }: { path: string }) => {
+      const content = written.get(path);
+      if (content !== undefined) return content;
+      if (opts.staleTemplate && path === HARNESS_BAKE_MANIFEST_PATH) return "{}";
+      return opts.baked && path.includes(".bootstrap-") ? "" : null;
+    }),
+    writeTextFile: vi.fn(
+      async ({ path, content }: { path: string; content: string }) => {
+        if (opts.staleTemplate) written.set(path, content);
+      },
     ),
-    writeTextFile: vi.fn(async () => undefined),
     run: vi.fn(async (run: Run) => {
       // An aborted call never reaches the box, as with E2B's request signal.
       run.abortSignal?.throwIfAborted();
@@ -447,6 +467,61 @@ describe("preparing a new chat's box", () => {
       reason: "disabled",
     });
     expect(mocks.reserve).not.toHaveBeenCalled();
+  });
+});
+
+describe("a preparation on a box from a stale template", () => {
+  const STALE = "[harness][bake] harness_bake_stale";
+  const MODEL = "anthropic/claude-haiku-4.5";
+  /** What `createHarnessSandboxProvider` builds: a provider the bake observer wraps. */
+  const observedProvider = (session: unknown) =>
+    observeHarnessBootstrap({
+      createSession: vi.fn(async () => session),
+    } as unknown as HarnessV1SandboxProvider);
+
+  beforeEach(() => resetHarnessBakeStaleWarningsForTests());
+
+  it("warns once per recipe it installs, and the Send that reuses the box warns no more", async () => {
+    const warn = vi.spyOn(logger, "warn");
+    const staleWarnings = () =>
+      warn.mock.calls.filter(([message]) => message === STALE);
+    try {
+      const box = fakeBox({ staleTemplate: true });
+      mocks.createProvider.mockImplementation(() =>
+        observedProvider(box.session),
+      );
+      await expect(prepare()).resolves.toEqual({ outcome: "prepared" });
+      const runtimes = hostedBootstrapRuntimes("claude-code", MODEL);
+      const identities = await Promise.all(
+        runtimes.map(async (runtime) =>
+          harnessRecipeIdentity((await runtime.getBootstrap!({}))!),
+        ),
+      );
+      expect(staleWarnings()).toEqual(
+        [...new Set(identities)].map((identity) => [
+          STALE,
+          { harnessId: "claude-code", harnessRecipeIdentity: identity },
+        ]),
+      );
+
+      // The chat's first Send watches its own provider on the same box, as a
+      // new box's first turn does, and finds what the preparation installed.
+      const send = observedProvider(box.session);
+      watchNewBoxForStaleBake(send, "claude-code");
+      const session = (await send.createSession({})).restricted();
+      for (const runtime of runtimes) {
+        const template = await createHarnessSandboxTemplate({
+          harnesses: [runtime],
+        });
+        await template?.prepare({ session });
+      }
+      expect(await harnessBootstrapObservation(send)).toMatchObject({
+        outcome: "reused",
+      });
+      expect(staleWarnings()).toHaveLength(new Set(identities).size);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
