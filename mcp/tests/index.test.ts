@@ -34,17 +34,6 @@ const RESOURCE_METADATA_URL = `${ORIGIN}/.well-known/oauth-protected-resource/mc
  * from the hold fails here instead of passing by construction.
  */
 const HELD_TOOLS = [
-  "start_claude_readiness_run",
-  "start_openai_readiness_run",
-  "start_muse_readiness_run",
-  "get_readiness_run",
-  "list_readiness_runs",
-  "cancel_readiness_run",
-  "get_readiness_report",
-  "start_conformance_run",
-  "get_conformance_run",
-  "list_conformance_runs",
-  "get_conformance_report",
   "search_sessions",
   "search_registry_directory",
   "get_registry_directory_server",
@@ -417,6 +406,63 @@ describe("held beta tools", () => {
   });
 });
 
+describe("directory readiness over MCP alone", () => {
+  it("lists the readiness tools and reads a flow through the catalog", async () => {
+    // An agent with only connected tools: no CLI, no app, one JSON-RPC
+    // endpoint. The tools are listed for every caller while in beta.
+    const flowUrl =
+      "https://app.example.test/api/v1/directory-flows/claude-connector";
+    stubOutboundFetch({
+      [flowUrl]: {
+        id: "claude-connector",
+        steps: [
+          { id: "connection", title: "Connection", fields: [] },
+          { id: "listing", title: "Listing", fields: [{ key: "listing.name" }] },
+        ],
+        placements: [],
+      },
+    });
+    const env = makeEnv({ guestAccess: "off" });
+    const token = await authkitToken();
+    const listed = await jsonRpcResult(
+      await worker.fetch(mcpRequest("tools/list", {}, token), env)
+    );
+    const names: string[] = listed.tools.map(
+      (tool: { name: string }) => tool.name
+    );
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "start_claude_readiness_run",
+        "get_readiness_run",
+        "get_directory_flow",
+        "create_directory_submission",
+        "update_directory_submission",
+        "start_directory_submission_run",
+        "get_directory_submission_results",
+      ])
+    );
+
+    const called = await jsonRpcResult(
+      await worker.fetch(
+        mcpRequest(
+          "tools/call",
+          {
+            name: "get_directory_flow",
+            arguments: { flow: "claude-connector", step: "listing" },
+          },
+          token
+        ),
+        env
+      )
+    );
+    expect(called.isError).toBeFalsy();
+    expect(
+      called.structuredContent.steps.map((step: { id: string }) => step.id)
+    ).toEqual(["listing"]);
+    expect(fetched).toContain(flowUrl);
+  });
+});
+
 describe("routes that need no token", () => {
   it("answers the /mcp CORS preflight", async () => {
     stubOutboundFetch();
@@ -452,6 +498,25 @@ describe("routes that need no token", () => {
         bearer_methods_supported: ["header"],
       });
     }
+  });
+
+  it("serves the configured OpenAI ownership challenge without authentication", async () => {
+    const response = await worker.fetch(
+      new Request(`${ORIGIN}/.well-known/openai-apps-challenge`),
+      { ...makeEnv(), OPENAI_APPS_CHALLENGE: "review-challenge" }
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await response.text()).toBe("review-challenge");
+  });
+
+  it("does not publish an unconfigured challenge or accept writes to it", async () => {
+    const url = `${ORIGIN}/.well-known/openai-apps-challenge`;
+    expect((await worker.fetch(new Request(url), makeEnv())).status).toBe(404);
+    expect((await worker.fetch(
+      new Request(url, { method: "POST" }),
+      { ...makeEnv(), OPENAI_APPS_CHALLENGE: "review-challenge" }
+    )).status).toBe(404);
   });
 
   it("answers the discovery preflight", async () => {
@@ -516,7 +581,7 @@ describe("the served catalog meets Claude's directory criteria", () => {
     };
   }
 
-  it("gives every tool a title annotation, a short name and an explicit hint", async () => {
+  it("gives every tool a title, a short name and explicit directory safety hints", async () => {
     const { tools } = await servedCatalog();
     expect(tools.length).toBeGreaterThan(0);
     for (const tool of tools) {
@@ -525,6 +590,11 @@ describe("the served catalog meets Claude's directory criteria", () => {
         ""
       );
       expect(tool.annotations?.title, tool.name).toBe(tool.title);
+      for (const hint of ["readOnlyHint", "destructiveHint", "openWorldHint"]) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe(
+          "boolean"
+        );
+      }
       if (tool.annotations?.readOnlyHint === true) continue;
       // Not left to the spec's "assume destructive" default: the directory
       // wants the hint stated on every tool that is not read-only.

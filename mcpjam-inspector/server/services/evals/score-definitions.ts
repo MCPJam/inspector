@@ -68,6 +68,7 @@ import {
   hostedCriterionId,
   hostedRubricCheckScorerId,
   HOSTED_JUDGE_SCORER_ID,
+  HOSTED_RUBRIC_CHECKS_MODEL,
   HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "@/shared/hosted-criterion-id";
@@ -76,6 +77,7 @@ export {
   hostedCriterionId,
   hostedPredicateScorerId,
   hostedRubricCheckScorerId,
+  HOSTED_RUBRIC_CHECKS_MODEL,
   HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
   HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
@@ -270,14 +272,6 @@ export function hostedJudgeScoreDefinition(args: {
 
 /** Version of the hosted rubric-check projection (NOT the question template). */
 export const HOSTED_RUBRIC_CHECKS_PROJECTION_VERSION = "1";
-
-/**
- * The model every rubric-check DEFINITION names. The row names the rail that
- * actually answered (Jev, or the fallback model when Jev could not be
- * reached), outside `definitionHash`, so a fallback on one trial never forks a
- * criterion's identity across the run.
- */
-export const HOSTED_RUBRIC_CHECKS_MODEL = "typesafe-ai/jev";
 
 /** One asked rubric-check question, as the backend's verdict describes it. */
 export type HostedRubricCheckDefinitionInput = {

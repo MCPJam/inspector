@@ -1,7 +1,7 @@
+import { useUnlimitedCredits } from "@/hooks/useCreditBalance";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import {
   DataManagementSettings,
-  PermissionGroupsDialog,
   enterpriseContactHref,
 } from "./organization/EnterpriseSettings";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -723,6 +723,7 @@ function OrganizationPage({
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
+  const unlimitedCredits = useUnlimitedCredits();
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
   const discordAgentEnabled = useDiscordAgentEnabled();
@@ -1797,7 +1798,7 @@ function OrganizationPage({
                 ? "Compare plans and manage your subscription."
                 : "Review usage, manage credits, and update your billing details."}
             </SettingsPageDescription>
-            {activeSection === "billing" && (
+            {activeSection === "billing" && !unlimitedCredits && (
               <a
                 href={`/organizations/${organization._id}/billing/byok`}
                 className="inline-block text-sm text-primary underline-offset-4 hover:underline"
@@ -2035,13 +2036,6 @@ function OrganizationPage({
                     role={memberRoleFilter}
                     onRoleChange={setMemberRoleFilter}
                     roles={["owner", "admin", "member", "guest", "pending"]}
-                    actions={
-                      <PermissionGroupsDialog
-                        enterprise={
-                          billingStatus?.effectivePlan === "enterprise"
-                        }
-                      />
-                    }
                   />
                   <div className="overflow-hidden rounded-lg border border-border">
                     <MemberListHeader

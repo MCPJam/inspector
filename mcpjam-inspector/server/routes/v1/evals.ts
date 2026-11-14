@@ -1,4 +1,5 @@
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
+import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
 import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
@@ -164,10 +165,10 @@ import {
   hostClientCapabilities,
 } from "../../services/host-connection-pins.js";
 import {
-  TERMINAL_ITERATION_STATUSES,
-  TERMINAL_RUN_STATUSES,
-} from "../../services/evals/run-status.js";
-import { shouldSkipExecution } from "../shared/evals.js";
+  isEvalIterationTerminalStatus,
+  isEvalRunTerminalStatus,
+} from "@mcpjam/sdk/contract";
+import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import {
   createEvalCasesInBatches,
   withMintedCaseIds,
@@ -233,6 +234,7 @@ import {
 } from "./convex-errors.js";
 import {
   classifyConvexReadError,
+  convexReadFetch,
   translateConvexReadError,
 } from "./convex-read-errors.js";
 import {
@@ -1150,7 +1152,7 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
       "Server missing CONVEX_URL configuration",
     );
   }
-  const client = new ConvexHttpClient(convexUrl);
+  const client = new ConvexHttpClient(convexUrl, { fetch: convexReadFetch });
   client.setAuth(convexAuthToken);
   return client;
 }
@@ -1621,30 +1623,6 @@ export async function fetchSuiteRunServerSelection(
   return { serverIds, serverNames };
 }
 
-/**
- * Whether the run record already reached a terminal status. Used by the
- * detached-execution catch: `runEvalSuiteWithAiSdk` finalizes a failed run
- * itself before rethrowing, so a rejected `execute()` usually means the
- * terminal write already happened — re-finalizing would restamp
- * `completedAt` and overwrite the runner's notes.
- */
-async function isRunAlreadyTerminal(
-  convexAuthToken: string,
-  runId: string,
-): Promise<boolean> {
-  try {
-    const run: RunDoc | null = await createConvexReadClient(
-      convexAuthToken,
-    ).query("testSuites:getTestSuiteRun" as any, { runId });
-    return TERMINAL_RUN_STATUSES.has(String(run?.status));
-  } catch {
-    // Can't tell — let the defensive finalize proceed. recorder.finalize
-    // tolerates deleted/unauthorized runs, so the worst case is the
-    // duplicate terminal write we'd have done unconditionally before.
-    return false;
-  }
-}
-
 // ── DTO mapping ──────────────────────────────────────────────────────
 
 type RunDoc = Record<string, any>;
@@ -2086,7 +2064,7 @@ function toIterationDto(
   // with the trial, so its duration is measurable (a setup failure has a real
   // elapsed time) and withholding it would report `durationMs: null` for the
   // one class of failure an operator is trying to time.
-  const isTerminal = TERMINAL_ITERATION_STATUSES.has(iteration.status);
+  const isTerminal = isEvalIterationTerminalStatus(iteration.status);
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -2733,6 +2711,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
     clientCapabilities: dto.clientCapabilities,
     hostContext: dto.hostContext,
     ...opt("progressiveToolDiscovery"),
+    ...opt("requireNativeToolDiscovery"),
     ...opt("respectToolVisibility"),
     ...opt("modelVisibleMcpToolResults"),
     ...opt("mcpToolResultImageRendering"),
@@ -3390,10 +3369,8 @@ const suiteSettingsShape = {
        *
        * `required` is the canonical spelling and `gating` its legacy one;
        * under vocabulary 1 only `gating` is accepted, because that is what
-       * today's contract takes. The platform still refuses the value
-       * itself unless the suite is calibrated and the deployment allows a
-       * judge gate — this only makes the field reach the place that can
-       * refuse it.
+       * today's contract takes. This only makes the field reach the platform,
+       * which stores it.
        */
       role: z.enum(["advisory", "gating", "required"]).optional(),
       /**
@@ -4425,6 +4402,11 @@ async function launchEvalRun(params: {
         conformanceKnobsFromMcpProfile(params.hostConfig.mcpProfile),
       )
     : undefined;
+  // The key owner's saved accounts for this suite; an inline suite has none.
+  const connectionIdSets = await loadSuiteConnectionIdSets(
+    createConvexClients(convexAuthToken).convexClient,
+    { suiteId: body.suiteId },
+  );
   const { manager } = await createAuthorizedManager(
     params.callerContext,
     convexAuthToken,
@@ -4434,6 +4416,9 @@ async function launchEvalRun(params: {
     undefined,
     params.hostConfig ? hostClientCapabilities(params.hostConfig) : undefined,
     {
+      // Eval setup has no iteration sandbox and cannot reserve a personal Computer.
+      pluginComputerRuntime: false,
+      ...(connectionIdSets ? { connectionIdSets } : {}),
       serverNames,
       // The issuer makes per-server XAA servers mint instead of failing with
       // 'Missing XAA issuer'. The enterprise policy now comes from the run's
@@ -4505,77 +4490,25 @@ async function launchEvalRun(params: {
     throw error;
   }
 
-  // Detach: the runner owns terminal run status (it finalizes a failed
-  // run itself, then rethrows). The catch is defense for errors thrown
-  // outside the runner's own try (provider construction, etc.) — it only
-  // finalizes when the run record is still non-terminal, so the runner's
-  // completedAt/notes are never restamped by a second terminal write.
-  // A REPLAY of a finished run executes nothing. `prepared.execute()` would
-  // re-run every case and bill for it, writing over results that are already
-  // final — the exact double-spend the caller sent an idempotency key to
-  // prevent. The slot and the manager still have to be settled here, because
-  // the `.finally` that normally does it belongs to an execution that is not
-  // going to happen.
-  if (shouldSkipExecution(prepared)) {
-    logger.info("[v1 evals] idempotent replay — not re-executing", {
-      runId: prepared.runId,
-      suiteId: prepared.suiteId,
-      status: prepared.status,
-      projectId,
-    });
-    onSettled();
-    void manager.disconnectAllServers().catch(() => {});
-    return {
-      runId: prepared.runId,
-      suiteId: prepared.suiteId,
-      status: prepared.status ?? "running",
-      deduped: true,
-      caseUpsert: prepared.caseUpsert,
-      servers: serverIds.map((serverId, index) => ({
-        id: serverId,
-        ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
-      })),
-      environment: environmentLaunch
-        ? {
-            id: environmentLaunch.environmentRef.environmentId,
-            name: environmentLaunch.environmentRef.name,
-            revision: environmentLaunch.environmentRef.revision,
-          }
-        : null,
-    };
-  }
-
-  void prepared
-    .execute()
-    .catch(async (error) => {
-      logger.error("[v1 evals] background eval run failed", error, {
-        runId: prepared.runId,
-        suiteId: prepared.suiteId,
-        projectId,
-      });
-      if (await isRunAlreadyTerminal(convexAuthToken, prepared.runId)) {
-        return;
-      }
-      await prepared.recorder
-        .finalize({
-          status: "failed",
-          notes:
-            error instanceof Error
-              ? error.message.slice(0, 500)
-              : String(error).slice(0, 500),
-        })
-        .catch(() => {});
-    })
-    .finally(() => {
+  // Detach: the runner owns terminal run status. A replay of a finished run
+  // executes nothing (see `detachPreparedEvalRun`), and the slot and the
+  // manager are settled either way.
+  detachPreparedEvalRun({
+    prepared,
+    convexAuthToken,
+    logPrefix: "[v1 evals]",
+    logContext: { projectId },
+    cleanup: () => {
       onSettled();
-      void manager.disconnectAllServers().catch(() => {});
-    });
+      return manager.disconnectAllServers();
+    },
+  });
 
   return {
     runId: prepared.runId,
     suiteId: prepared.suiteId,
-    // Executing now. A replay of a run still IN FLIGHT lands here too and is
-    // reported as running, which is what it is.
+    // `running` for a launch or a replay still in flight; a replay of a
+    // finished run reports what it finished as.
     status: prepared.status ?? "running",
     deduped: prepared.deduped === true,
     caseUpsert: prepared.caseUpsert,
@@ -5624,7 +5557,7 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
 
 // GET /v1/projects/:projectId/eval-runs/:runId
 // Run status + summary. Poll this until status is terminal
-// (completed | failed | cancelled).
+// (completed | failed | cancelled | timed_out).
 evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
@@ -6001,7 +5934,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     return v1Resource(c, toRunDto(run!));
   }
   // Completed/failed runs can't be cancelled — surface a clear 409.
-  if (TERMINAL_RUN_STATUSES.has(status)) {
+  if (isEvalRunTerminalStatus(status)) {
     throw new WebRouteError(
       409,
       ErrorCode.VALIDATION_ERROR,

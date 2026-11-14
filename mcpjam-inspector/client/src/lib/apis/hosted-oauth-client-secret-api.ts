@@ -11,10 +11,12 @@ export interface OAuthClientSecretResult {
 
 export async function fetchOAuthClientSecret(
   request: FetchOAuthClientSecretRequest,
+  options?: { signal?: AbortSignal },
 ): Promise<OAuthClientSecretResult> {
   const body = await webPost<FetchOAuthClientSecretRequest, unknown>(
     "/api/web/oauth/client-secret",
     request,
+    options,
   );
   const result =
     body && typeof body === "object" ? (body as Record<string, unknown>) : null;

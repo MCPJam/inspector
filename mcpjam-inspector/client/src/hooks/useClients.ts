@@ -42,6 +42,12 @@ export interface HostListItem {
   hasComputer?: boolean;
   /** Something still uses it, so `deleteHost` would refuse. Absent = unknown. */
   inUse?: boolean;
+  /**
+   * The MCP Events delivery modes it receives events by, resolved by the
+   * backend from its saved setting or style default. Absent on older
+   * backends: fall back to the style default.
+   */
+  eventDeliveryModes?: Array<"poll" | "push" | "webhook">;
   createdAt: number;
   updatedAt: number;
 }

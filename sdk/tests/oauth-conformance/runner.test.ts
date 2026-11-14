@@ -213,6 +213,35 @@ describe("OAuthConformanceTest", () => {
       "authenticated_mcp_request",
       "complete",
     ]);
+
+    // The metadata does not advertise RFC 9207 `iss`: advice, read off what
+    // discovery already fetched.
+    expect(result.readiness).toEqual([
+      expect.objectContaining({
+        id: "readiness-oauth-iss-advertised",
+        title: "Authorization Response iss",
+        specStrength: "SHOULD",
+        details: { issuer: expect.stringContaining("auth.example.com") },
+      }),
+    ]);
+    // Left out, it is not reported.
+    const quiet = await new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        auth: { mode: "headless" },
+        fetchFn,
+        readinessIds: [],
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      }
+    ).run();
+    expect(quiet.passed).toBe(true);
+    expect(quiet.readiness).toBeUndefined();
   });
 
   it("fails early when CIMD is requested but AS does not advertise client_id_metadata_document_supported", async () => {
@@ -1238,18 +1267,379 @@ describe("OAuthConformanceTest", () => {
       );
       expect(probeStep?.status).toBe("skipped");
       expect(probeStep?.skipReason).toBe("not-applicable");
-      expect(result.summary).toContain("not applicable");
+      expect(result.summary).toBe(
+        "No login required: the server answered without a token.",
+      );
 
       // The regression this fixes: the run used to march into Protected
-      // Resource Metadata discovery, 404, and report a hard failure.
+      // Resource Metadata discovery, 404, and report a hard failure. It now
+      // ASKS whether metadata is published — on the server's own origin, at
+      // the two well-known paths — and a 404 there is the answer "no OAuth",
+      // never a failure. It goes no further than that.
+      const prmRequests = requestedUrls.filter((url) =>
+        url.includes("oauth-protected-resource")
+      );
       expect(
-        requestedUrls.some((url) => url.includes("oauth-protected-resource")),
-      ).toBe(false);
+        prmRequests.every((url) =>
+          url.startsWith("https://public.example.com/.well-known/")
+        )
+      ).toBe(true);
+      expect(prmRequests.length).toBeLessThanOrEqual(2);
       expect(
         requestedUrls.some((url) => url.includes("oauth-authorization-server")),
       ).toBe(false);
     },
   );
+
+  it.each(["2025-06-18", "2025-11-25", "2026-07-28"] as const)(
+    "reports a 200 the flow's own probe got as not applicable, not a passed 401, on %s",
+    async (protocolVersion) => {
+      const serverUrl = "https://flaky.example.com/mcp";
+      const requestedUrls: string[] = [];
+      let tokenlessRequests = 0;
+
+      // The pre-flight's request hits a 503, so it is inconclusive and the
+      // flow runs; the flow's own probe then gets through with a 200.
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url !== serverUrl) {
+          return new Response(null, { status: 404 });
+        }
+        tokenlessRequests += 1;
+        if (tokenlessRequests === 1) {
+          return jsonResponse({ error: "unavailable" }, 503);
+        }
+        return createMcpInitializeResponse(protocolVersion);
+      }) as unknown as typeof fetch;
+
+      const test = new OAuthConformanceTest({
+        serverUrl,
+        protocolVersion,
+        registrationStrategy: "dcr",
+        fetchFn,
+      });
+
+      const result = await test.run();
+
+      expect(result.outcome).toBe("not-applicable");
+      expect(result.steps.some((step) => step.status === "failed")).toBe(false);
+      expect(result.steps.map((step) => step.step)).toEqual([
+        "request_without_token",
+      ]);
+      expect(result.steps[0]).toMatchObject({
+        status: "skipped",
+        skipReason: "not-applicable",
+      });
+      expect(result.steps[0].httpAttempts.length).toBeGreaterThan(0);
+      expect(
+        requestedUrls.some((url) => url.includes("oauth-protected-resource")),
+      ).toBe(false);
+    },
+  );
+
+  it("fails the 401 step on a 403 Bearer challenge but still runs the flow and the extra checks", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    // The 2025-11-25 CIMD server from the passing flow above, except it
+    // answers a request without a token with 403 instead of 401.
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 403,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+          scopes_supported: ["openid", "profile", "mcp"],
+        });
+      }
+
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          client_id_metadata_document_supported: true,
+          scopes_supported: ["openid", "profile", "mcp"],
+        });
+      }
+
+      if (url === DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL) {
+        return jsonResponse({
+          client_id: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+          client_name: "MCPJam SDK OAuth Conformance",
+          redirect_uris: ["http://127.0.0.1:3333/callback"],
+        });
+      }
+
+      if (url === `${authServerUrl}/token`) {
+        return jsonResponse({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+
+      if (url === serverUrl && headers.get("Authorization") === "Bearer access-token") {
+        return createMcpInitializeResponse("2025-11-25");
+      }
+
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        auth: { mode: "headless" },
+        oauthConformanceChecks: true,
+        fetchFn,
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      },
+    );
+
+    const result = await test.run();
+    const stepIds = result.steps.map((step) => step.step);
+
+    expect(
+      result.steps.find((step) => step.step === "received_401_unauthorized"),
+    ).toMatchObject({
+      status: "failed",
+      error: { message: expect.stringContaining("HTTP 403") },
+    });
+    expect(stepIds).toContain("complete");
+    expect(stepIds).toContain("oauth_unauthenticated_challenge");
+    expect(result.outcome).toBe("failed");
+    expect(result.passed).toBe(false);
+  });
+
+  it("reports a stateless 2026-07-28 server without auth as not applicable, not a passed 401", async () => {
+    const serverUrl = "https://stateless.example.com/mcp";
+    const requestedUrls: string[] = [];
+
+    // A real 2026-07-28 server: it rejects the legacy `initialize` handshake
+    // with 400 -32020 and serves the stateless `tools/list` with no token. The
+    // pre-flight used to send `initialize`, read the 400 as inconclusive, and
+    // run the flow — whose 200 probe then printed a green "401 Unauthorized
+    // Received" row.
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url !== serverUrl) {
+        return new Response(null, { status: 404 });
+      }
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      if (body.method === "initialize") {
+        return jsonResponse(
+          {
+            jsonrpc: "2.0",
+            id: body.id,
+            error: {
+              code: -32020,
+              message:
+                "Bad Request: an initialize request (legacy handshake) was sent with a modern MCP-Protocol-Version header",
+            },
+          },
+          400,
+        );
+      }
+      return jsonResponse({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: { tools: [], resultType: "complete" },
+      });
+    }) as unknown as typeof fetch;
+
+    const test = new OAuthConformanceTest({
+      serverUrl,
+      protocolVersion: "2026-07-28",
+      registrationStrategy: "dcr",
+      fetchFn,
+    });
+
+    const result = await test.run();
+
+    expect(result.outcome).toBe("not-applicable");
+    expect(result.steps.some((step) => step.status === "failed")).toBe(false);
+    expect(result.steps.map((step) => step.step)).not.toContain(
+      "received_401_unauthorized",
+    );
+    // Only the question "is metadata published?", asked on its own origin.
+    const prmRequests = requestedUrls.filter((url) =>
+      url.includes("oauth-protected-resource")
+    );
+    expect(
+      prmRequests.every((url) =>
+        url.startsWith("https://stateless.example.com/.well-known/")
+      )
+    ).toBe(true);
+    expect(prmRequests.length).toBeLessThanOrEqual(2);
+  });
+
+  it.each([
+    [
+      "describes another endpoint on the same origin",
+      {
+        resource: "https://gw.example.com/private/mcp",
+        authorization_servers: ["https://auth.example.com"],
+      },
+    ],
+    [
+      "has no authorization servers",
+      { resource: "https://gw.example.com/public/mcp" },
+    ],
+    ["is an empty object", {}],
+  ])(
+    "keeps an anonymous server not applicable when the published PRM %s",
+    async (_label, rootDocument) => {
+      // A shared gateway origin: the path-suffixed document is absent and the
+      // root one is not this server's metadata.
+      const serverUrl = "https://gw.example.com/public/mcp";
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        if (url === serverUrl) {
+          return createMcpInitializeResponse("2025-11-25");
+        }
+        if (
+          url === "https://gw.example.com/.well-known/oauth-protected-resource"
+        ) {
+          return jsonResponse(rootDocument);
+        }
+        return new Response(null, { status: 404 });
+      }) as unknown as typeof fetch;
+
+      const result = await new OAuthConformanceTest({
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        fetchFn,
+      }).run();
+
+      expect(result.outcome).toBe("not-applicable");
+      expect(result.steps.some((step) => step.status === "failed")).toBe(false);
+    }
+  );
+
+  it("grades a server that serves anonymously but publishes PRM, instead of calling it not applicable", async () => {
+    // The lazy-authentication shape: the unauthenticated initialize succeeds,
+    // and the server still publishes Protected Resource Metadata for the
+    // protected tools that ask for sign-in mid-session.
+    const serverUrl = "https://lazy.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://lazy.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      const url = String(input);
+      if (url === serverUrl) {
+        // Anonymous AND authenticated requests are both served.
+        return createMcpInitializeResponse("2025-11-25");
+      }
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+          scopes_supported: ["mcp"],
+        });
+      }
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          scopes_supported: ["mcp"],
+        });
+      }
+      if (url === `${authServerUrl}/register`) {
+        return jsonResponse(
+          {
+            client_id: "lazy-client",
+            redirect_uris: ["http://127.0.0.1:3333/callback"],
+            token_endpoint_auth_method: "none",
+          },
+          201
+        );
+      }
+      if (url === `${authServerUrl}/token`) {
+        return jsonResponse({
+          access_token: "access-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const progress: string[] = [];
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        auth: { mode: "headless" },
+        oauthConformanceChecks: false,
+        onProgress: (message) => progress.push(message),
+        fetchFn,
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      }
+    );
+
+    const result = await test.run();
+
+    // The whole flow ran and passed: a lazy server's sign-in is graded like
+    // any other's, starting from proactive discovery.
+    expect(result.outcome).toBe("passed");
+    const stepIds = result.steps.map((step) => step.step);
+    expect(stepIds).toEqual(
+      expect.arrayContaining([
+        "request_resource_metadata",
+        "received_resource_metadata",
+        "request_authorization_server_metadata",
+        "received_authorization_server_metadata",
+      ])
+    );
+    expect(
+      result.steps.find((step) => step.step === "received_resource_metadata")
+        ?.status
+    ).toBe("passed");
+    expect(
+      progress.some((line) =>
+        /Anonymous access is allowed and OAuth is available/.test(line)
+      )
+    ).toBe(true);
+    expect(result.summary).not.toContain("not applicable");
+  });
 
   it("emits one row per step when a step fails, not a green/red duplicate", async () => {
     const serverUrl = "https://mcp.excalidraw.example/mcp";
@@ -1294,6 +1684,122 @@ describe("OAuthConformanceTest", () => {
     // that would only echo back a title handed to it.
     expect(result.summary).toContain("Request Resource Metadata");
     expect(result.summary).not.toContain("request_resource_metadata");
+  });
+
+  // A preregistered client whose token endpoint answers invalid_client.
+  async function runInvalidClientTokenRejection(clientSecret?: string) {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+    const tokenRequests: Array<{ authorization: string | null; body: string }> =
+      [];
+
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+        });
+      }
+
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["client_secret_basic"],
+        });
+      }
+
+      if (url === `${authServerUrl}/token`) {
+        tokenRequests.push({
+          authorization: headers.get("Authorization"),
+          body: String(init?.body ?? ""),
+        });
+        return jsonResponse(
+          {
+            error: "invalid_client",
+            error_description: "The client credentials are invalid",
+          },
+          401,
+        );
+      }
+
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "preregistered",
+        auth: { mode: "headless" },
+        client: {
+          preregistered: {
+            clientId: "prereg-client",
+            ...(clientSecret ? { clientSecret } : {}),
+          },
+        },
+        fetchFn,
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      },
+    );
+
+    const result = await test.run();
+    const tokenStep = result.steps.find((step) => step.step === "token_request");
+    return { authServerUrl, result, tokenRequests, tokenStep };
+  }
+
+  it("sends a preregistered secret and explains an invalid_client token rejection", async () => {
+    const { authServerUrl, result, tokenRequests, tokenStep } =
+      await runInvalidClientTokenRejection("prereg-secret");
+
+    expect(tokenRequests).toHaveLength(1);
+    expect(tokenRequests[0]!.authorization).toBe(
+      `Basic ${btoa("prereg-client:prereg-secret")}`,
+    );
+    expect(tokenRequests[0]!.body).not.toContain("prereg-secret");
+
+    expect(result.passed).toBe(false);
+    expect(tokenStep?.status).toBe("failed");
+    expect(tokenStep?.error?.message).toBe(
+      "The authorization server rejected this run's OAuth client credentials during token exchange. Verify the client ID and secret in server settings.",
+    );
+    const details = String(tokenStep?.error?.details).split("\n");
+    expect(details[0]).toBe("Provider code: invalid_client");
+    expect(details[1]).toBe(`Endpoint: ${authServerUrl}/token`);
+    expect(details[2]).toMatch(
+      /^Provider response: Token request failed: 401.*invalid_client: The client credentials are invalid$/,
+    );
+  });
+
+  it("does not point a client that sent no secret at one", async () => {
+    const { tokenRequests, tokenStep } = await runInvalidClientTokenRejection();
+
+    expect(tokenRequests[0]!.authorization).toBeNull();
+    expect(tokenStep?.error?.message).toBe(
+      "The authorization server rejected this run's OAuth client during token exchange. Verify the client ID and how the client is registered.",
+    );
   });
 });
 

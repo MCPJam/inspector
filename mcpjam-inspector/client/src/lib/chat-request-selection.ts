@@ -1,3 +1,4 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import {
   isLegacySelection,
   validateModelSelection,
@@ -21,6 +22,7 @@ export function chatRequestSelection(args: {
   model: ModelDefinition;
   orgConfig?: OrgVisibleConfig;
   allowLocal: boolean;
+  harnessId?: string | null;
   /** Undefined preserves saved settings; null explicitly clears effort. */
   effort?: ModelReasoningEffort | null;
   temperature?: number;
@@ -39,7 +41,8 @@ export function chatRequestSelection(args: {
     if (!validated.ok) return blocked("The saved model choice is invalid. Choose a model again.");
     selection = validated.selection;
   }
-  if (!args.allowLocal && (selection.source === "local" || selection.source === "legacy")) {
+  const accountModel = args.harnessId === "cursor" && selection.source === "legacy" && isRuntimeAccountModel(selection.modelId);
+  if (!args.allowLocal && !accountModel && (selection.source === "local" || selection.source === "legacy")) {
     return blocked("Choose a model available in this workspace before sending.");
   }
   const row = resolveCompareSelectionRow(selection, [args.model], args.orgConfig);

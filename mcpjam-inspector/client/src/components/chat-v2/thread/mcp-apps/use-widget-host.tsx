@@ -26,6 +26,7 @@ import {
 } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
+import { useChatAppDisplayBehavior } from "@/contexts/chat-app-display-behavior-context";
 import { useIsScenarioSurface } from "@/contexts/scenario-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
@@ -38,6 +39,7 @@ import { useScenarioHostCapabilitiesOverride } from "@/contexts/scenario-client-
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { useSavedClient, useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { usePaneDisplay } from "@/contexts/pane-display-context";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
@@ -69,6 +71,7 @@ import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
+import { createSandboxViewServices } from "./sandbox-view-services";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
 import type { CheckoutSession } from "@/shared/acp-types";
 import {
@@ -183,28 +186,20 @@ export function useWidgetHost(): WidgetHostImpl {
     : "chat";
 
   // Read into a ref so the memoized `services` object stays stable while the
-  // listResourceTemplates guard still observes the live value (mirrors the
+  // listResourceTemplates routing still observes the live value (mirrors the
   // renderer's existing webManagedServersRef pattern).
   const webManagedServersRef = useRef(webManagedServers);
   webManagedServersRef.current = webManagedServers;
 
   const services = useMemo<WidgetHostServices>(
     () => ({
+      ...createSandboxViewServices(() => webManagedServersRef.current),
       fetchWidgetContent: fetchMcpAppsWidgetContent,
       readResource,
       listResources,
       listPrompts,
-      // Host-owned: preserve the renderer's hosted/web-managed guard
-      // (mcp-apps-renderer.tsx:2861-2868); the raw api fn only enforces
-      // HOSTED_MODE.
-      listResourceTemplates: async (serverId: string) => {
-        if (HOSTED_MODE || webManagedServersRef.current) {
-          throw new Error(
-            "Browsing resource templates isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
-          );
-        }
-        return listResourceTemplates(serverId);
-      },
+      listResourceTemplates: (serverId: string) =>
+        listResourceTemplates(serverId, { forceHosted: webManagedServersRef.current }),
       authFetch,
       // Cached widget HTML arrives as a short-lived artifact link; these let
       // the renderer renew an expired one and ignore a re-minted one.
@@ -214,6 +209,7 @@ export function useWidgetHost(): WidgetHostImpl {
     [],
   );
 
+  const displayBehavior = useChatAppDisplayBehavior();
   const surface = useMemo<WidgetSurfaceInfo>(
     () => ({
       kind,
@@ -224,8 +220,15 @@ export function useWidgetHost(): WidgetHostImpl {
       viewMountMode: VIEW_MOUNT_MODE,
       viewSubdomainsEnabled: VIEW_SUBDOMAINS_ENABLED,
       playgroundCspMode,
+      ...(displayBehavior ? { displayBehavior } : {}),
     }),
-    [kind, persistentSurfaceHost, webManagedServers, playgroundCspMode],
+    [
+      kind,
+      persistentSurfaceHost,
+      webManagedServers,
+      playgroundCspMode,
+      displayBehavior,
+    ],
   );
 
   // --- environment inputs (Phase 1b raw ambient reads) -----------------------
@@ -239,9 +242,12 @@ export function useWidgetHost(): WidgetHostImpl {
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const scenarioHostStyle = useScenarioHostStyle();
   const ambientHostTheme = useScenarioHostTheme();
-  const scenarioHostTheme = savedClient
-    ? extractHostTheme(savedClient.hostContext) ?? null
-    : ambientHostTheme;
+  const paneDisplay = usePaneDisplay();
+  const scenarioHostTheme =
+    paneDisplay?.theme ??
+    (savedClient
+      ? extractHostTheme(savedClient.hostContext) ?? null
+      : ambientHostTheme);
   const hostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
   const activeMcpProfile = useActiveMcpProfile();
   // The profile is bound into the resolvers below (3d-iii) — it no longer leaves
@@ -259,7 +265,8 @@ export function useWidgetHost(): WidgetHostImpl {
   const playgroundSafeAreaInsets = useUIPlaygroundStore(
     (s) => s.safeAreaInsets,
   );
-  const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const sharedDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const playgroundDeviceType = paneDisplay?.deviceType ?? sharedDeviceType;
 
   const environment = useMemo<WidgetHostEnvironmentInputs>(
     () => ({
@@ -521,9 +528,12 @@ export function useWidgetHost(): WidgetHostImpl {
  */
 export function InspectorWidgetHostProvider({
   children,
+  bindResources,
 }: {
   children: ReactNode;
+  bindResources?: (host: WidgetHost) => WidgetHost;
 }) {
   const host = useWidgetHost();
-  return <WidgetHostProvider value={host}>{children}</WidgetHostProvider>;
+  const bound = useMemo(() => bindResources ? bindResources(host) : host, [host, bindResources]);
+  return <WidgetHostProvider value={bound}>{children}</WidgetHostProvider>;
 }

@@ -201,6 +201,11 @@ vi.mock("../../../utils/built-in-tools/registry.js", async (importOriginal) => {
 import { resolveHostTools } from "../../../utils/built-in-tools/registry.js";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 import { logger } from "../../../utils/logger.js";
+import localChat from "../../mcp/chat-v2.js";
+import { sessionAuthMiddleware } from "../../../middleware/session-auth.js";
+import { requestLogContextMiddleware } from "../../../middleware/request-log-context.js";
+import { generateSessionToken } from "../../../services/session-token.js";
+
 import { acquirePlaygroundHarnessBox } from "../../../utils/harness/playground-box.js";
 
 /** Two environment servers; the body will claim a DIFFERENT, single server. */
@@ -257,7 +262,7 @@ const BASE_BODY = {
   selectedServerIds: ["body-server-9"],
   selectedServerNames: ["body-server"],
   chatSessionId: "chat-session-1",
-  messages: [{ role: "user", content: "hi" }],
+  messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
   model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
 };
 
@@ -334,6 +339,9 @@ describe("web chat-v2 — environment execution target", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
@@ -383,6 +391,64 @@ describe("web chat-v2 — environment execution target", () => {
     else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     if (originalConvexUrl === undefined) delete process.env.CONVEX_URL;
     else process.env.CONVEX_URL = originalConvexUrl;
+  });
+
+  function localApp() {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware, sessionAuthMiddleware);
+    app.route("/api/mcp/chat-v2", localChat);
+    return app;
+  }
+
+  const localBody = () => ({
+    ...BASE_BODY,
+    executionTarget: { kind: "environment", environmentId: "env_1" },
+  });
+
+  it("keeps both local session authentication and managed bearer authentication", async () => {
+    const app = localApp();
+    const request = (headers: Record<string, string>) => app.request("/api/mcp/chat-v2", {
+      method: "POST", headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(localBody()),
+    });
+    expect((await request({ Authorization: "Bearer member" })).status).toBe(401);
+    expect((await request({ "X-MCP-Session-Auth": `Bearer ${generateSessionToken()}` })).status).toBe(401);
+    expect(convexQueryMock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("runs fresh managed local turns through the same resolved environment", async () => {
+    const app = localApp();
+    const token = generateSessionToken();
+    for (let turn = 0; turn < 2; turn++) {
+      const response = await app.request("/api/mcp/chat-v2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer member",
+          "X-MCP-Session-Auth": `Bearer ${token}` },
+        body: JSON.stringify(localBody()),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      await response.text();
+      expect(prepareChatV2Mock.mock.lastCall?.[0].selectedServers)
+        .toEqual(["env-server-1", "env-server-2"]);
+    }
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(2);
+    expect(disconnectAllServersMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never falls back to standalone execution after a managed refusal", async () => {
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({
+      code: "FORBIDDEN", message: "Not a member of this project",
+    }), { status: 403 }));
+    const response = await localApp().request("/api/mcp/chat-v2", {
+      method: "POST", headers: { "Content-Type": "application/json",
+        Authorization: "Bearer member",
+        "X-MCP-Session-Auth": `Bearer ${generateSessionToken()}` },
+      body: JSON.stringify(localBody()),
+    });
+    expect(response.status).toBe(403);
+    expect(prepareChatV2Mock).not.toHaveBeenCalled();
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
   it("400s scenarioId + executionTarget instead of silently picking one", async () => {
@@ -706,6 +772,9 @@ describe("web chat-v2 — environment execution target", () => {
     function needsSignIn(serverId: string) {
       const answer = global.fetch;
       global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
         const response = await answer(input, init);
         if (!String(input).endsWith("/web/authorize-batch")) return response;
         const batch = await response.json();
@@ -714,13 +783,14 @@ describe("web chat-v2 — environment execution target", () => {
       }) as typeof fetch;
     }
 
-    const environmentTurn = () => {
+    const environmentTurn = (model = BASE_BODY.model) => {
       const { app, token } = createWebTestApp();
       return postJson(
         app,
         "/api/web/chat-v2",
         {
           ...BASE_BODY,
+          model,
           executionTarget: { kind: "environment", environmentId: "env_1" },
         },
         token
@@ -759,17 +829,72 @@ describe("web chat-v2 — environment execution target", () => {
       });
     });
 
-    it.each(["claude-code", "codex", "cursor"])("%s omits an authorization refusal from harness delivery", async (harness) => {
+    it.each(["claude-code", "codex", "cursor", "opencode"])("%s omits an authorization refusal from harness delivery", async (harness) => {
       convexQueryMock.mockResolvedValue({ ...ENV_SPEC, host: {
         ...ENV_SPEC.host, runtimeConfig: { ...ENV_SPEC.host.runtimeConfig, harness, ...(harness === "cursor" ? { modelId: "cursor/auto" } : {}) },
       } });
       needsSignIn("env-server-1");
-      const response = await environmentTurn();
+      const response = await environmentTurn(harness === "cursor"
+        ? { id: "cursor/auto", provider: "cursor", name: "Auto" }
+        : BASE_BODY.model);
       expect(response.status, await response.clone().text()).toBe(200);
       expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(expect.objectContaining({
         selectedServers: ["env-server-1", "env-server-2"],
         unavailableServerIds: ["env-server-1"],
       }));
+    });
+
+    it("fails the turn on a stdio command this device has not approved, so the chat can ask", async () => {
+      vi.stubEnv(
+        "MCPJAM_STDIO_APPROVALS_FILE",
+        `${process.env.TMPDIR ?? "/tmp"}/chat-v2-approvals-${process.pid}-missing.json`,
+      );
+      const stdio = {
+        transportType: "stdio",
+        command: "node",
+        args: ["server.js"],
+        env: {},
+      };
+      const answer = global.fetch;
+      global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
+        const url = String(input);
+        if (url.endsWith("/web/authorize-batch-local")) {
+          return Response.json({
+            results: {
+              "env-server-2": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: stdio,
+              },
+            },
+          });
+        }
+        const response = await answer(input, init);
+        if (!url.endsWith("/web/authorize-batch")) return response;
+        const batch = await response.json();
+        batch.results["env-server-2"].serverConfig = stdio;
+        return Response.json(batch);
+      }) as typeof fetch;
+
+      const response = await environmentTurn();
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "STDIO_COMMAND_APPROVAL_REQUIRED",
+        details: {
+          reason: "stdio_command_approval_required",
+          serverId: "env-server-2",
+          approval: { command: "node", args: ["server.js"] },
+        },
+      });
+      expect(prepareChatV2Mock).not.toHaveBeenCalled();
+      expect(disconnectAllServersMock).toHaveBeenCalled();
+      vi.unstubAllEnvs();
     });
 
     it("runs without an unavailable server selected by the environment", async () => {
@@ -1004,13 +1129,13 @@ describe("web chat-v2 — environment execution target", () => {
     // Captured, not live: the environment's spec already froze which server
     // skills this turn gets, so composing the connected servers' live catalogs
     // on top would deliver skills the capture deliberately excluded.
-    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
+    expect(args.skills.agent).toEqual({ kind: "environment" });
     // INS-3: the emulated engine now receives the whole EffectiveCapabilitySet
     // rather than a flat skill list, because its tools address skills by REF
     // (`<plugin>/<skill>` for a plugin skill). This environment pins no
     // plugins, so the one resolved skill is standalone and its ref is its name.
-    expect(args.skillsSource.kind).toBe("resolved");
-    expect(args.skillsSource.capabilities.standaloneSkills).toEqual([
+    expect(args.skills.runtime).toEqual({ kind: "agent" });
+    expect(args.skills.set.standaloneSkills).toEqual([
       {
         ref: "release-notes",
         skillId: "sk_env",
@@ -1022,8 +1147,8 @@ describe("web chat-v2 — environment execution target", () => {
         files: [],
       },
     ]);
-    expect(args.skillsSource.capabilities.pluginSkills).toEqual([]);
-    expect(args.skillsSource.capabilities.problems).toEqual([]);
+    expect(args.skills.set.pluginSkills).toEqual([]);
+    expect(args.skills.set.problems).toEqual([]);
   });
 
   it("hands the resolved skills to the HARNESS engine instead when the host runs one", async () => {
@@ -1049,7 +1174,7 @@ describe("web chat-v2 — environment execution target", () => {
     );
     // Emulated skill tools must NOT be advertised on a harness turn.
     const prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(prepareArgs.skillsSource).toBeUndefined();
+    expect(prepareArgs.skills).toBeUndefined();
 
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
     expect(handlerArgs.harness).toBe("claude-code");
@@ -1062,6 +1187,9 @@ describe("web chat-v2 — environment execution target", () => {
         aggregateHash: "agg_env",
       },
     ]);
+    // A named environment captured its server skills: the harness lists no
+    // connected server's own.
+    expect(handlerArgs).not.toHaveProperty("liveTurn");
   });
 
   it("propagates a resolver ENV_* failure as a 409 rather than running the turn", async () => {
@@ -1094,17 +1222,10 @@ describe("web chat-v2 — environment execution target", () => {
         description: "Project onboarding",
         aggregateHash: "agg_project",
       },
-      {
-        // The same row the environment already delivers: not added twice.
-        skillId: "sk_env",
-        name: "release-notes",
-        description: "Write release notes",
-        aggregateHash: "agg_env",
-      },
     ];
 
-    // The resolver says which kind of row it read; only an ad-hoc one may
-    // take the project's pool.
+    // The resolver says which kind of row it read; only an ad-hoc one is a
+    // client's hidden environment.
     const ADHOC_SPEC = { ...ENV_SPEC, environmentOrigin: "adhoc" };
 
     function resolveTo(spec: unknown) {
@@ -1117,18 +1238,20 @@ describe("web chat-v2 — environment execution target", () => {
       resolveTo(ADHOC_SPEC);
     });
 
-    function deliveredRefs(args: {
-      skillsSource: { capabilities: { standaloneSkills: { ref: string }[] } };
-    }) {
-      return args.skillsSource.capabilities.standaloneSkills.map(
-        (skill) => skill.ref
-      );
+    function deliveredRefs(args: { skills: { delivered: { ref: string }[] } }) {
+      return args.skills.delivered.map((ref) => ref.ref);
     }
 
     function projectPoolWasRead() {
       return convexQueryMock.mock.calls.some(
         ([ref]) => ref === "projectSkills:listSkills"
       );
+    }
+
+    function resolveArgs(): Record<string, unknown> | undefined {
+      return convexQueryMock.mock.calls.findLast(
+        ([ref]) => ref === "projectEnvironments:resolveEnvironmentForRuntime",
+      )?.[1];
     }
 
     async function sendEnvironmentTurn(extra: Record<string, unknown>) {
@@ -1147,150 +1270,63 @@ describe("web chat-v2 — environment execution target", () => {
       return prepareChatV2Mock.mock.calls.at(-1)![0];
     }
 
-    it("delivers the project's skills beside the environment's own, as a client turn does", async () => {
+    it("asks the backend for the client's selection and plans a live turn from it", async () => {
       const args = await sendEnvironmentTurn({ includeProjectSkills: true });
-      expect(args.skillsSource.kind).toBe("resolved");
-      expect(
-        args.skillsSource.capabilities.standaloneSkills.map(
-          (skill: { ref: string }) => skill.ref
-        )
-      ).toEqual(["release-notes", "onboarding"]);
-      // Live, like the client turn it stands in for: its servers are
-      // connected now, so their skills compose too.
-      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
-      // Read with the caller's own bearer, as a client turn reads it.
-      expect(
-        convexQueryMock.mock.calls.some(
-          ([ref]) => ref === "projectSkills:listSkills"
-        )
-      ).toBe(true);
-    });
-
-    it("a NAMED environment ignores it: its own skills only, the pool never read", async () => {
-      resolveTo({ ...ENV_SPEC, environmentOrigin: "named" });
-      const warn = vi.spyOn(logger, "warn");
-      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(resolveArgs()).toMatchObject({ skillScope: "visible" });
+      expect(args.skills.runtime).toEqual({ kind: "agent" });
       expect(deliveredRefs(args)).toEqual(["release-notes"]);
-      expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
+      // Live, like the client turn it is: its servers are connected now, so
+      // their skills compose too.
+      expect(args.skills.agent).toEqual({ kind: "live" });
+      // The backend's scope carries the client's skills; the turn never
+      // reads the project's pool itself.
       expect(projectPoolWasRead()).toBe(false);
-      const ignored = warn.mock.calls.filter(([message]) =>
-        String(message).includes("includeProjectSkills ignored")
-      );
-      // Once, with ids only.
-      expect(ignored).toHaveLength(1);
-      expect(ignored[0][1]).toEqual({
-        environmentId: "env_1",
-        projectId: "project-1",
-        environmentOrigin: "named",
-      });
-      warn.mockRestore();
-    });
-
-    it("a backend that does not say the origin is treated as named", async () => {
-      resolveTo(ENV_SPEC);
-      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
-      expect(deliveredRefs(args)).toEqual(["release-notes"]);
-      expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
-      expect(projectPoolWasRead()).toBe(false);
-    });
-
-    it("an unknown origin value is treated as named", async () => {
-      resolveTo({ ...ENV_SPEC, environmentOrigin: "hidden" });
-      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
-      expect(deliveredRefs(args)).toEqual(["release-notes"]);
-      expect(projectPoolWasRead()).toBe(false);
-    });
-
-    it("an environment turn without it never reads the project's pool", async () => {
-      const args = await sendEnvironmentTurn({});
-      expect(
-        args.skillsSource.capabilities.standaloneSkills.map(
-          (skill: { ref: string }) => skill.ref
-        )
-      ).toEqual(["release-notes"]);
-      expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
-      expect(
-        convexQueryMock.mock.calls.some(
-          ([ref]) => ref === "projectSkills:listSkills"
-        )
-      ).toBe(false);
-    });
-
-    function runOnHarness(spec: Record<string, unknown> = ADHOC_SPEC) {
-      convexQueryMock.mockImplementation(async (ref: string) =>
-        ref === "projectSkills:listSkills"
-          ? PROJECT_SKILLS
-          : {
-              ...spec,
-              host: {
-                ...ENV_SPEC.host,
-                runtimeConfig: {
-                  ...ENV_SPEC.host.runtimeConfig,
-                  harness: "claude-code",
-                },
-              },
-            }
-      );
-    }
-
-    it("a harness turn asks the harness for the project's pool beside the environment's skills", async () => {
-      runOnHarness();
-      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
-      expect(args.skillsSource).toBeUndefined();
-      const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-      // The environment's own skills travel unchanged; the harness adds the
-      // pool itself (it writes skills to the box, so it reads the pool with
-      // its own tri-state fetch).
-      expect(
-        handlerArgs.runtimeSkillsOverride.map(
-          (skill: { name: string }) => skill.name
-        )
-      ).toEqual(["release-notes"]);
-      expect(handlerArgs.includeProjectSkills).toBe(true);
-      expect(handlerArgs.effectiveCapabilities).toBeDefined();
-      // The route itself does not read the pool for a harness turn.
-      expect(
-        convexQueryMock.mock.calls.some(
-          ([ref]) => ref === "projectSkills:listSkills"
-        )
-      ).toBe(false);
     });
 
     it.each([
-      ["a named environment", { ...ENV_SPEC, environmentOrigin: "named" }],
+      ["a NAMED environment", { ...ENV_SPEC, environmentOrigin: "named" }],
       ["a backend that does not say the origin", ENV_SPEC],
-    ])(
-      "%s's harness turn is not asked for the pool, even when the body asks",
-      async (_label, spec) => {
-        runOnHarness(spec);
-        await sendEnvironmentTurn({ includeProjectSkills: true });
-        const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-        // Only the route's verified value reaches the harness.
-        expect(handlerArgs.includeProjectSkills).toBeUndefined();
-        expect(
-          handlerArgs.runtimeSkillsOverride.map(
-            (skill: { name: string }) => skill.name
-          )
-        ).toEqual(["release-notes"]);
-      }
-    );
+      ["an unknown origin value", { ...ENV_SPEC, environmentOrigin: "hidden" }],
+    ])("%s keeps its own set, as an environment turn", async (_label, spec) => {
+      resolveTo(spec);
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(deliveredRefs(args)).toEqual(["release-notes"]);
+      expect(args.skills.agent).toEqual({ kind: "environment" });
+      expect(projectPoolWasRead()).toBe(false);
+    });
 
-    it("an environment harness turn without the flag keeps exactly its own set", async () => {
-      runOnHarness();
-      await sendEnvironmentTurn({});
+    it("an environment turn without it does not ask for the client's selection", async () => {
+      const args = await sendEnvironmentTurn({});
+      expect(resolveArgs()).not.toHaveProperty("skillScope");
+      expect(deliveredRefs(args)).toEqual(["release-notes"]);
+      expect(args.skills.agent).toEqual({ kind: "environment" });
+    });
+
+    it("a harness turn gets the environment's skills on its box, and no agent plan", async () => {
+      convexQueryMock.mockImplementation(async () => ({
+        ...ADHOC_SPEC,
+        host: {
+          ...ENV_SPEC.host,
+          runtimeConfig: {
+            ...ENV_SPEC.host.runtimeConfig,
+            harness: "claude-code",
+          },
+        },
+      }));
+      const args = await sendEnvironmentTurn({ includeProjectSkills: true });
+      expect(args.skills).toBeUndefined();
       const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-      expect(handlerArgs.includeProjectSkills).toBeUndefined();
       expect(
         handlerArgs.runtimeSkillsOverride.map(
           (skill: { name: string }) => skill.name
         )
       ).toEqual(["release-notes"]);
-    });
-
-    it("an emulated turn's handler is not asked for the pool (its union rides the merged set)", async () => {
-      await sendEnvironmentTurn({ includeProjectSkills: true });
-      const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-      expect(handlerArgs.includeProjectSkills).toBeUndefined();
+      expect(handlerArgs.effectiveCapabilities).toBeDefined();
+      expect(handlerArgs).not.toHaveProperty("includeProjectSkills");
+      // A client's turn is live: the harness may offer the connected
+      // servers' own skills, as MCPJam's agent does.
+      expect(handlerArgs.liveTurn).toBe(true);
+      expect(projectPoolWasRead()).toBe(false);
     });
   });
 });
@@ -1361,6 +1397,9 @@ describe("web chat-v2 — plugin capability attribution", () => {
       new Response("ok", { status: 200 })
     );
     global.fetch = vi.fn(async (input: any, init: any) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
@@ -1433,7 +1472,7 @@ describe("web chat-v2 — plugin capability attribution", () => {
     );
 
     const capabilities =
-      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+      prepareChatV2Mock.mock.calls.at(-1)![0].skills.set;
     expect(capabilities.pluginSkills).toEqual([
       expect.objectContaining({
         ref: "linear/summarize",
@@ -1474,7 +1513,7 @@ describe("web chat-v2 — plugin capability attribution", () => {
 
     expect(response.status).toBe(200);
     const capabilities =
-      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+      prepareChatV2Mock.mock.calls.at(-1)![0].skills.set;
     // The server set is untouched; only what we can SAY about it degraded.
     expect(capabilities.pluginServerIds).toEqual(["env-server-2"]);
     expect(capabilities.pluginSkills[0].ref).toBe("summarize");
@@ -1534,6 +1573,9 @@ describe("web chat-v2 — turn provenance (P1)", () => {
       return new Response("ok", { status: 200 });
     });
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),

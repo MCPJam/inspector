@@ -6,12 +6,14 @@ import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
 import { POSTHOG_PROJECT_KEY } from "../utils/analytics.js";
+import { telemetryOptedOut } from "../../shared/sentry-identity.js";
 import { createFixedWindowMap } from "../middleware/passthrough-rate-limit.js";
 import {
   edgeAttestationConfigured,
   getAttestedClientIp,
   getClientIp,
   ipRateLimitKey,
+  resolveTrustedClientIpHeader,
 } from "../utils/client-ip.js";
 import { getSystemLogger } from "../utils/request-logger.js";
 import { resolveTelemetryPolicy } from "../services/telemetry-privacy-policy.js";
@@ -1570,6 +1572,16 @@ async function processCapture(
 
 const relayRoutes = new Hono();
 
+// DO_NOT_TRACK: the relay forwards nothing, whatever a page sends it. The
+// browser learns the opt-out from its runtime config and sends nothing; this
+// holds for a page that did not. A 4xx, which posthog-js does not retry.
+relayRoutes.use("*", async (c, next) => {
+  if (telemetryOptedOut(process.env.DO_NOT_TRACK)) {
+    return c.json({ error: "telemetry_disabled" }, 403);
+  }
+  await next();
+});
+
 // Anonymous by design, like PostHog capture, and charged to the same ingest
 // budget. Bounded and validated separately from the opaque PostHog proxy;
 // never forwards this payload upstream twice.
@@ -1624,10 +1636,14 @@ relayRoutes.all("*", async (c) => {
   }
 
   const headers = new Headers();
+  // The header an operator's ingress writes the client address into is one
+  // more client address, whatever its name.
+  const trustedClientIpHeader = resolveTrustedClientIpHeader();
   for (const [key, value] of Object.entries(c.req.header())) {
     const name = key.toLowerCase();
     if (
       !STRIPPED_REQUEST_HEADERS.has(name) &&
+      name !== trustedClientIpHeader &&
       !name.startsWith(STRIPPED_REQUEST_HEADER_PREFIX)
     ) {
       headers.set(key, value);

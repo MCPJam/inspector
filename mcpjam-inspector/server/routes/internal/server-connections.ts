@@ -25,12 +25,15 @@
 
 import { Hono } from "hono";
 import { internalServiceAuthMiddleware } from "../../middleware/internal-service-auth.js";
+import { refuseDoorbellWhileDraining } from "../../services/lifecycle/admission.js";
+import { serverDrain } from "../../services/lifecycle/drain.js";
 import { runConnectionJob } from "../../services/server-connection-worker.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const internalServerConnections = new Hono();
 
 internalServerConnections.use("*", internalServiceAuthMiddleware());
+internalServerConnections.use("*", refuseDoorbellWhileDraining());
 
 internalServerConnections.post("/dispatch", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
@@ -46,7 +49,8 @@ internalServerConnections.post("/dispatch", async (c) => {
   }
 
   // Deliberately not awaited. See the note above: the caller is a doorbell.
-  void runConnectionJob(requestId).catch((error: unknown) => {
+  const pass = serverDrain.track("doorbell", runConnectionJob(requestId));
+  void pass.catch((error: unknown) => {
     // Nothing upstream is listening by now — the 202 below has already gone out
     // — so this is the last place the failure can be seen. `console.error` put
     // it only in a container log; `reportRouteFailure` is the route catch-site

@@ -151,6 +151,60 @@ describe("local installs keep App controls in-process", () => {
       request({ action: "read", identityHash, controlHash }, signal()),
     ).rejects.toThrow("INSTANCE_UNAVAILABLE");
   });
+  it("leaves out context the caller holds, as the backend does", async () => {
+    const store = new LocalPluginControlStore(() => 1_000_000);
+    const request = store.handler(PLUGIN_INSTANCE_CONTROL_PATH, "UNAVAILABLE");
+    const key = { identityHash: "a".repeat(64), controlHash: "b".repeat(64) };
+    const token = "t".repeat(43);
+    const sent = async (command: Record<string, unknown>) => {
+      try {
+        const { control } = await request({ ...key, ...command }, signal());
+        return "contextJson" in control;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    const outcomes = [];
+    for (const command of [
+      {
+        action: "issue",
+        ownerHash: "c".repeat(64),
+        snapshotJson: JSON.stringify({ instance: { activation: {} } }),
+        expiresAt: 1_001_000,
+        contextToken: token,
+        activation: {
+          token,
+          anchorHash: "d".repeat(64),
+          bindingHash: "e".repeat(64),
+          renewable: true,
+        },
+      },
+      {
+        action: "context",
+        expectedVersion: 0,
+        contextJson: '{"a":1}',
+        knownContextVersion: 1,
+      },
+      { action: "read", knownContextVersion: 1 },
+      { action: "read", knownContextVersion: 0 },
+      { action: "read" },
+      { action: "renew", expiresAt: 1_002_000, knownContextVersion: 1 },
+      { action: "renew", expiresAt: 1_003_000 },
+      { action: "read", knownContextVersion: 1.5 },
+    ])
+      outcomes.push(await sent(command));
+    // The same answers as the backend's parity scenario.
+    expect(outcomes).toEqual([
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      "INVALID_INSTANCE_CONTROL",
+    ]);
+  });
   it("refuses to renew unattended runs and past host-selected file bytes", async () => {
     let now = 1_000_000;
     const store = new LocalPluginControlStore(() => now);
@@ -268,5 +322,93 @@ describe("local installs keep App controls in-process", () => {
     await expect(
       request({ action: "read", identityHash, controlHash }, signal()),
     ).resolves.toMatchObject({ control: { expiresAt: now + 30 * 60_000 } });
+  });
+  it("keeps, discovers, renews and closes model Apps like the backend", async () => {
+    let now = 1_000_000;
+    const store = new LocalPluginControlStore(() => now);
+    const request = store.handler(PLUGIN_INSTANCE_CONTROL_PATH, "UNAVAILABLE");
+    const identityHash = "a".repeat(64);
+    const controlHash = "b".repeat(64);
+    const threadHash = "c".repeat(64);
+    const token = "m".repeat(43);
+    const model = {
+      action: "issue",
+      identityHash,
+      controlHash,
+      ownerHash: "d".repeat(64),
+      snapshotJson: JSON.stringify({ version: 1, kind: "model-app" }),
+      expiresAt: now + 60_000,
+      contextToken: token,
+      modelToken: token,
+      modelThreadHash: threadHash,
+    };
+    const list = () =>
+      request({ action: "list-models", identityHash, threadHash }, signal());
+    // Discovery fields come together, well formed, and never with an activation.
+    await expect(
+      request({ ...model, modelThreadHash: undefined }, signal()),
+    ).rejects.toThrow("INVALID_INSTANCE_CONTROL");
+    await expect(
+      request({ ...model, modelToken: "short" }, signal()),
+    ).rejects.toThrow("INVALID_INSTANCE_CONTROL");
+    await expect(
+      request(
+        {
+          ...model,
+          activation: {
+            token,
+            anchorHash: "e".repeat(64),
+            bindingHash: "f".repeat(64),
+            renewable: true,
+          },
+        },
+        signal(),
+      ),
+    ).rejects.toThrow("INVALID_INSTANCE_CONTROL");
+    await request(model, signal());
+    await expect(
+      request({ ...model, modelThreadHash: "e".repeat(64) }, signal()),
+    ).rejects.toThrow("INSTANCE_CONTROL_CHANGED");
+    expect(await list()).toEqual({ tokens: [token] });
+    // Renewal extends the same row past its original deadline.
+    now += 50_000;
+    await request(
+      { action: "renew", identityHash, controlHash, expiresAt: now + 60_000 },
+      signal(),
+    );
+    now += 50_000;
+    await expect(
+      request({ action: "read", identityHash, controlHash }, signal()),
+    ).resolves.toMatchObject({ control: { expiresAt: now + 10_000 } });
+    await request({ action: "close", identityHash, controlHash }, signal());
+    expect(await list()).toEqual({ tokens: [] });
+    await expect(
+      request(
+        { action: "renew", identityHash, controlHash, expiresAt: now + 60_000 },
+        signal(),
+      ),
+    ).rejects.toThrow("INSTANCE_UNAVAILABLE");
+    // A model row whose snapshot is not a model App's has no lease to renew.
+    await request(
+      {
+        ...model,
+        controlHash: "9".repeat(64),
+        ownerHash: "8".repeat(64),
+        snapshotJson: JSON.stringify({ exact: true }),
+        expiresAt: now + 30_000,
+      },
+      signal(),
+    );
+    await expect(
+      request(
+        {
+          action: "renew",
+          identityHash,
+          controlHash: "9".repeat(64),
+          expiresAt: now + 60_000,
+        },
+        signal(),
+      ),
+    ).rejects.toThrow("INVALID_INSTANCE_CONTROL");
   });
 });

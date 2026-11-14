@@ -94,11 +94,9 @@ export function engineLabel(engine: ChatSessionEngine): string {
 /**
  * The host-level `harness` selector, or undefined for the emulated engine.
  *
- * Only a REGISTERED id counts. This is the same membership test
- * `host-execution-context.ts`'s `readHarness` and
- * `evals/harness-admission.ts`'s `harnessOfHostConfig` apply — asked of the
- * shared `isHarness` primitive rather than re-listing ids here, so the three
- * readers cannot disagree about what a host runs.
+ * Only a REGISTERED id counts, asked of the shared `isHarness` primitive
+ * rather than re-listing ids here. A host whose `agentLoop` names the runtime
+ * is refused before this is read; see {@link resolveChatSessionEngine}.
  */
 export function harnessOfRuntimeConfig(
   runtimeConfig: Record<string, unknown> | null | undefined,
@@ -145,6 +143,7 @@ export type ChatSessionEngineRefusal = {
   /** `surface-*` kinds are this route's own; the rest come from the shared gate. */
   kind:
     | HarnessUnavailableKind
+    | "surface-agent-loop"
     | "surface-tool-policy"
     | "surface-approval"
     | "surface-unpinnable-host";
@@ -211,6 +210,8 @@ export function hostRoutingSelectionForModel(
  *      request gets past it, so nothing may precede it: telling a caller to
  *      restructure their target and letting them hit an unconfigured computers
  *      plane afterwards is the same wasted round trip in the other direction.
+ *      A host running a vendor's agent loop is refused here too: this route
+ *      cannot run one, whatever the request says.
  *   2. UNPINNABLE HOST. A property of the SESSION, fixable only by starting a
  *      different one. Nothing in the next request can change it.
  *   3. APPROVAL. Fixable on the HOST (`requireToolApproval`), keeping the
@@ -293,6 +294,20 @@ export function resolveChatSessionEngine(args: {
    */
   selection?: RequestedModelSelection;
 }): ChatSessionEngineResult {
+  // A client running a vendor's agent loop keeps MCPJam's MCP client in the
+  // loop, which this route has never driven. Refused rather than run on the
+  // emulated engine under that client's name.
+  const agentLoop = args.hostTarget?.runtimeConfig.agentLoop;
+  if (isHarness(agentLoop)) {
+    return {
+      ok: false,
+      harness: agentLoop,
+      kind: "surface-agent-loop",
+      reason: `The API can't run this client's ${
+        getHarnessAdapter(agentLoop).displayName
+      } agent yet. Use the client in the Playground, or choose a different client.`,
+    };
+  }
   const harness = harnessOfRuntimeConfig(args.hostTarget?.runtimeConfig);
   if (!harness || !args.hostTarget)
     return { ok: true, engine: { kind: "emulated" } };
@@ -308,6 +323,7 @@ export function resolveChatSessionEngine(args: {
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
+    surface: "api",
     requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
     model: args.model,

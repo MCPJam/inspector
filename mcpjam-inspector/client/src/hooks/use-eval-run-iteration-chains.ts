@@ -32,10 +32,8 @@ import {
   isEvalRunIterationsError,
   type EvalRunIterationsFailureKind,
 } from "@/lib/apis/eval-run-iterations-api";
-import {
-  evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
-} from "@/lib/evals/eval-decision-summary-store";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 
 /**
@@ -95,7 +93,7 @@ export function useEvalRunIterationChains({
   run,
   enabled,
 }: EvalRunIterationChainsTarget): EvalRunIterationChainsState {
-  const terminal = isTerminalEvalRunStatus(run?.status);
+  const terminal = isEvalRunTerminalStatus(run?.status);
   const active = Boolean(enabled && projectId && run && terminal);
   // The revision is part of the identity, so a judge landing after the run
   // terminalized re-reads instead of serving a chain that has since changed.

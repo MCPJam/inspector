@@ -112,6 +112,7 @@ import {
   EVAL_SUITE_SCHEMA_VERSION,
   EVAL_SUITE_SCHEMA_VERSIONS,
   composeSuiteGateWithBaseReport,
+  isEvalRunTerminalStatus,
   type EvalSuiteSchemaVersion,
 } from "@mcpjam/sdk/contract";
 import type {
@@ -159,7 +160,6 @@ import {
 import {
   EVAL_GATE_INCOMPLETE_EXIT_CODE,
   EVAL_GATE_USAGE_EXIT_CODE,
-  TERMINAL_RUN_STATUSES,
   evalGateExitCode,
   isNonVerdictRunResult,
   isNonVerdictRunStatus,
@@ -205,7 +205,6 @@ import {
   writeReporterArtifact,
   writeReporterResult,
 } from "../lib/reporting.js";
-import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import { preflightCloudCredentials } from "../lib/cloud-context.js";
 import {
   addProjectOption,
@@ -231,6 +230,7 @@ import {
   effortShorthand,
   parseModelSelectionFlag,
 } from "../lib/model-selection-flags.js";
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
 
 type CreateOptions = PlatformOptions & {
   project?: string;
@@ -1463,7 +1463,7 @@ async function waitForEvalRun(
 ) {
   let extended = false;
   let run = await client.getEvalRun({ projectId, runId }, { signal });
-  while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+  while (!isEvalRunTerminalStatus(run.status)) {
     if (run.status === "grading" && !extended && gradingExtensionMs > 0) {
       extended = true;
       deadline = Math.max(deadline, Date.now() + gradingExtensionMs);
@@ -1680,7 +1680,7 @@ async function runEvalGate(
           { signal }
         );
 
-        while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+        while (!isEvalRunTerminalStatus(run.status)) {
           // Granted once, on first seeing the hold. See `waitForEvalRun`.
           if (
             run.status === "grading" &&
@@ -3732,7 +3732,8 @@ export function registerEvalCommands(program: Command): void {
         // Zero when the caller named their own budget: they meant it.
         const gradingExtensionMs =
           options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
-        let webOrigin = DEFAULT_PLATFORM_ORIGIN;
+        // Set by the operation's first step, before any use.
+        let webOrigin = "";
         const resolved = resolveCloudProjectArgs(options);
         // Auth -> 3 is scoped to THIS action, and only under --wait: the shared
         // `runPlatformOperation` preflight (below) stays the chokepoint every
@@ -4051,7 +4052,7 @@ export function registerEvalCommands(program: Command): void {
               const soloSummary =
                 result.targets.length === 1 &&
                 runs.length === 1 &&
-                TERMINAL_RUN_STATUSES.has(runs[0]!.status)
+                isEvalRunTerminalStatus(runs[0]!.status)
                   ? await readEvalRunDecisionSummary(
                       client,
                       signal,
@@ -4315,7 +4316,8 @@ export function registerEvalCommands(program: Command): void {
         command
       ) => {
         const globalOptions = evalGlobalOptions(command);
-        let webOrigin = DEFAULT_PLATFORM_ORIGIN;
+        // Set by the operation's first step, before any use.
+        let webOrigin = "";
         let decisionSummary: EvalRunDecisionSummary | undefined;
         const resolved = resolveCloudProjectArgs(options);
         // VALIDATED, not cast. The cast this replaced asserted a shape rather
@@ -4367,7 +4369,7 @@ export function registerEvalCommands(program: Command): void {
             // network read (and, on old deployments, a second iteration walk).
             if (
               globalOptions.format === "human" &&
-              TERMINAL_RUN_STATUSES.has(result.run.status) &&
+              isEvalRunTerminalStatus(result.run.status) &&
               result.run.result !== "passed"
             ) {
               decisionSummary = result.decisionSummary;
@@ -4829,7 +4831,8 @@ export function registerEvalCommands(program: Command): void {
       const gradingExtensionMs =
         options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
       const resolved = resolveCloudProjectArgs(options);
-      let webOrigin = DEFAULT_PLATFORM_ORIGIN;
+      // Set by the operation's first step, before any use.
+      let webOrigin = "";
 
       let outcome;
       try {
@@ -5458,8 +5461,10 @@ export function registerEvalCommands(program: Command): void {
       }
     );
 
-  evals
-    .command("validate")
+  // Offline unless --project asks for the live tool-reference check.
+  declareMcpjamUse(evals.command("validate"), {
+    when: (options) => options.project !== undefined,
+  })
     .description(
       "Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)"
     )

@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { toast } from "sonner";
 import { runIterationTargetKey } from "@/lib/eval-target-key";
 import type { EvalIteration, EvalSuiteRunListItem } from "../../evals/types";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 export type CaseLaunchScope = {
   projectId: string;
@@ -208,10 +209,7 @@ export function usePendingCaseRows(
           .filter((row) => {
             const acceptedRun = runs.find((run) => run._id === row.suiteRunId);
             return (
-              (acceptedRun &&
-                ["completed", "failed", "cancelled", "timed_out"].includes(
-                  acceptedRun.status,
-                )) ||
+              (acceptedRun && isEvalRunTerminalStatus(acceptedRun.status)) ||
               caseRowArrived(
                 row,
                 iterations,

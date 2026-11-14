@@ -25,6 +25,15 @@ define (legacy locations) or forbids (entry `extensions`), so it is not
 Agent Plugins conformance and makes no claim to be. A root `plugin.json`
 and root `mcp.json` are read by the strict rules under both profiles.
 
+`openai-compatible` also accepts what the ChatGPT portal accepts and the
+spec does not: a plugin root in one top-level directory of the archive
+(`plugin-root.ts`), and a `name` that meets the portal's rule though not the
+spec's, such as one with an uppercase letter or `_` (`plugin-name.ts`). It
+refuses in the portal's words (`PLUGIN_ROOT_AMBIGUOUS`,
+`PLUGIN_ROOT_HAS_SIBLINGS`, and the portal's messages on `MANIFEST_MISSING`
+and `MANIFEST_INVALID_NAME`). The ChatGPT readiness reader takes the root and
+the manifest from the same module.
+
 ## Deviations that are stricter than the spec
 
 These reject or drop input the spec would accept.

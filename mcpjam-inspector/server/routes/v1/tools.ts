@@ -4,6 +4,11 @@ import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { listTools } from "../../utils/route-handlers.js";
 import { runV1ServerOp } from "./adapter.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import {
+  connectionEffectiveAuth,
+  toolResultAuthChallengeEnvelope,
+} from "../../utils/connection-effective-auth.js";
+import { projectAuthChallenge } from "../../utils/hosted-upstream-projection.js";
 
 const tools = new Hono();
 
@@ -54,11 +59,27 @@ tools.post("/projects/:projectId/servers/:serverId/tools/call", async (c) =>
       // object verbatim, so agents can read latency without a second hop.
       if (result && typeof result === "object" && !Array.isArray(result)) {
         const record = result as Record<string, unknown>;
+        // A ChatGPT-style sign-in challenge (`_meta["mcp/www_authenticate"]`
+        // on an `isError` result), parsed and stamped with the connection's
+        // effective auth method, reduced like every relayed answer. Additive,
+        // and never shadowing a server field of the same name.
+        const authChallenge = projectAuthChallenge(
+          toolResultAuthChallengeEnvelope(
+            result,
+            connectionEffectiveAuth(manager, body.serverId)
+          )
+        );
         // Never shadow the server's own field. `CallToolResult` allows extra
         // keys, so a server may already report a `durationMs` of its own —
         // overwriting it would destroy upstream data to report our copy of
         // roughly the same number.
-        return "durationMs" in record ? record : { ...record, durationMs };
+        return {
+          ...record,
+          ...("durationMs" in record ? {} : { durationMs }),
+          ...(authChallenge && !("authChallenge" in record)
+            ? { authChallenge }
+            : {}),
+        };
       }
       return result;
     },

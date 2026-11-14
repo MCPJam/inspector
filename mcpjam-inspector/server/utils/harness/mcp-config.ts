@@ -73,6 +73,7 @@ export interface HarnessProxyServerInput {
 export interface HarnessMcpHttpEntry {
   type: "http";
   url: string;
+  timeout?: number;
   headers?: Record<string, string>;
 }
 
@@ -316,12 +317,19 @@ export function attributeCursorToolCall(args: {
   keyToServerId: Record<string, string>;
 }): { serverId?: string; toolName: string } {
   const { rawToolName, input, keyToServerId } = args;
+  const hostCall = parseHarnessToolName(rawToolName, keyToServerId);
+  if (hostCall.serverId) return hostCall;
   const record =
     input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const provider = record.providerIdentifier;
   const inner = record.toolName;
   if (typeof provider !== "string" || typeof inner !== "string" || !inner) {
-    return { toolName: rawToolName };
+    return parseHarnessToolName(rawToolName, keyToServerId);
+  }
+  // The reserved host-tool channel wraps an already namespaced MCP name.
+  if (provider === "ai-sdk-harness-tools") {
+    const hosted = parseHarnessToolName(inner, keyToServerId);
+    if (hosted.serverId) return hosted;
   }
   // Exact key first, THEN the `user-`-stripped form. Never the other way round.
   const serverId =

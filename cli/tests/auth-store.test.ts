@@ -109,7 +109,7 @@ test("readStoredAuth tolerates absent optional fields", async () => {
   assert.deepEqual(readStoredAuth(filePath), minimal);
 });
 
-test("readStoredAuth round-trips apiUrl and drops a non-URL value", async () => {
+test("readStoredAuth round-trips apiUrl and keeps a non-URL value for the resolver to refuse", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-auth-"));
   const filePath = path.join(directory, "auth.json");
   const withApiUrl = storedAuth({
@@ -119,16 +119,25 @@ test("readStoredAuth round-trips apiUrl and drops a non-URL value", async () => 
   await writeStoredAuth(withApiUrl, filePath);
   assert.deepEqual(readStoredAuth(filePath), withApiUrl);
 
-  // A hand-edited, unparseable apiUrl is dropped rather than handed to the
-  // HTTP client, so readers fall back to the default deployment.
+  // A hand-edited apiUrl is kept as written. Dropping it would make the login
+  // look like one that recorded no server, which counts as MCPJam Cloud, and
+  // send its token there; the resolver refuses the value instead.
   const { writeFile } = await import("node:fs/promises");
   await writeFile(
     filePath,
     JSON.stringify({ ...storedAuth(), apiUrl: "not a url" }),
     "utf8"
   );
-  assert.equal(readStoredAuth(filePath)?.apiUrl, undefined);
+  assert.equal(readStoredAuth(filePath)?.apiUrl, "not a url");
   assert.equal(readStoredAuth(filePath)?.accessToken, "access-token");
+
+  // An empty value records no server.
+  await writeFile(
+    filePath,
+    JSON.stringify({ ...storedAuth(), apiUrl: "  " }),
+    "utf8"
+  );
+  assert.equal(readStoredAuth(filePath)?.apiUrl, undefined);
 });
 
 test("readStoredAuth round-trips optional email and plan and drops invalid values", async () => {

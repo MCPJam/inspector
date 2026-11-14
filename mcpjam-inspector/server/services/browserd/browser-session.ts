@@ -35,6 +35,7 @@ import type {
   BrowserdHandle,
   BrowserdSandbox,
 } from "./boot-browserd";
+import { BROWSERD_READY_TIMEOUT_MS } from "./boot-browserd";
 import type {
   BrowserdRecordArgs,
   BrowserdRecordResult,
@@ -68,6 +69,7 @@ import {
   shouldTouchSessionCommand,
 } from "../../utils/computers/activity-touch.js";
 import type { BrowserSessionService } from "./session-service.js";
+import type { PreviewGrantClient } from "../workspace-preview/workspace-tunnel.js";
 
 /** Where the daemon lives inside the sandbox — the probe's proven recipe. */
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -142,6 +144,8 @@ export interface SessionClient {
   recordStatus?(): Promise<BrowserdRecordState>;
   /** Export the persistent profile after the daemon queue has drained. */
   exportProfile?(): Promise<Uint8Array>;
+  /** Serve a workspace port on the browser box's loopback (hosted only). */
+  previewGrant?: PreviewGrantClient["previewGrant"];
 }
 
 /** The sandbox pieces the ensure path needs, once connected. */
@@ -310,11 +314,11 @@ export interface EnsureBrowserSessionArgs {
   /**
    * Persistent Chrome profile (playground/inspector) unless stated.
    *
-   * `ephemeral` boots the daemon with no profile directory at all, so an
-   * eval or swarm iteration cannot inherit the previous one's cookies. The
-   * mode is part of session identity: a row in the other mode is never
-   * reused, because handing an eval a logged-in profile (or a human a blank
-   * one) is a silent correctness failure either way.
+   * `ephemeral` never carries state between runs: the daemon starts blank, or
+   * from a saved-profile archive copied in for this run, and never exports it
+   * back. The mode is part of session identity: a row in the other mode is
+   * never reused, because handing an eval a member's live profile (or a human
+   * a blank one) is a silent correctness failure either way.
    */
   contextMode?: BrowserContextMode;
   /** Durable logical identity, when this surface has one. */
@@ -767,6 +771,13 @@ async function trySandboxReuse(
 const RELAUNCH_HOLDER_PREFIX = "relaunch:";
 const RELAUNCH_FENCE_TTL_MS = 30_000;
 
+/**
+ * How long a relaunch claim lasts: the whole boot deadline, plus a minute for
+ * the wake, kill, upload, stream and record around it. Shorter than a slow
+ * boot, an expired claim lets another replica pkill the daemon mid-launch.
+ */
+export const RELAUNCH_CLAIM_TTL_MS = BROWSERD_READY_TIMEOUT_MS + 60_000;
+
 /** A lease this relaunch is holding, to be given back if the kill fails. */
 interface RelaunchFence {
   release(): Promise<void>;
@@ -1168,6 +1179,10 @@ function withActivityTouches(
     // exported fine.
     ...(client.exportProfile
       ? { exportProfile: () => client.exportProfile!() }
+      : {}),
+    // Same rule: without it a hosted session cannot open the workspace's apps.
+    ...(client.previewGrant
+      ? { previewGrant: (grant) => client.previewGrant!(grant) }
       : {}),
   };
 }
@@ -1706,6 +1721,7 @@ async function ensureOnSandbox(
         sandboxRowId: target.sandboxRowId,
         watched: true,
         claimId,
+        ttlMs: RELAUNCH_CLAIM_TTL_MS,
         ...(args.signal ? { signal: args.signal } : {}),
       });
       // Only a REFUSAL stops us, exactly as on the computer arm. `undefined`
@@ -1953,6 +1969,7 @@ async function ensureOnComputer(
     const claimed = await deps.store.claimRelaunch?.({
       computerId,
       claimId,
+      ttlMs: RELAUNCH_CLAIM_TTL_MS,
       ...(args.signal ? { signal: args.signal } : {}),
     });
     if (claimed?.ok === false && claimed.reason === "claimed") {

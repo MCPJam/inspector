@@ -1,4 +1,5 @@
 import { MCPConformanceTest } from "./runner.js";
+import { captureConformanceRun } from "../telemetry.js";
 import type {
   MCPConformanceConfig,
   MCPConformanceResult,
@@ -55,6 +56,7 @@ export class MCPConformanceSuite {
   }
 
   async run(): Promise<MCPConformanceSuiteResult> {
+    if (!this.config.__suppressTelemetry) void captureConformanceRun("sdk");
     const startedAt = Date.now();
     const results: Array<MCPConformanceResult & { label: string }> = [];
 
@@ -65,6 +67,8 @@ export class MCPConformanceSuite {
         serverUrl: this.config.serverUrl,
         ...this.config.defaults,
         ...runConfig,
+        // The suite already counted this run. Last, so no spread undoes it.
+        __suppressTelemetry: true,
       };
 
       const result = await new MCPConformanceTest(mergedConfig).run();

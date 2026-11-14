@@ -35,6 +35,8 @@ vi.mock("../auth", () => ({
 }));
 
 import { harnessMcp } from "../harness-mcp.js";
+import { createAuthorizedManager } from "../auth";
+import { sealHarnessProxyToken } from "../../../utils/harness/harness-proxy-policy-seal";
 import { signTestProxyToken } from "../../../utils/harness/__tests__/sign-test-token.js";
 import { __resetHarnessRpcLogSinkForTest } from "../../../utils/harness/harness-rpc-log-sink.js";
 
@@ -67,6 +69,34 @@ const post = (serverId: string, headers: Record<string, string> = {}) =>
   });
 
 describe("/api/web/harness-mcp", () => {
+  it("rebuilds the saved capability declaration and connection behavior from the sealed profile", async () => {
+    const profile = {
+      clientCapabilities: { extensions: { "future.test/capability": {} } },
+      clientInfo: { name: "saved-client", version: "1" },
+      timeout: 17_000,
+      firstPageOnly: true,
+    };
+    const token = sealHarnessProxyToken({
+      token: webToken("srv-a"),
+      serverId: "srv-a",
+      expiresAtMs: Date.now() + 60_000,
+      policy: { mode: "default", denied: {}, known: [], unknownTool: "allow" },
+      profile,
+    });
+    expect(
+      (await post("srv-a", { "X-MCPJam-Proxy-Token": token })).status,
+    ).toBe(200);
+    expect(createAuthorizedManager).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "",
+      "p1",
+      ["srv-a"],
+      17_000,
+      undefined,
+      profile.clientCapabilities,
+      expect.objectContaining({ initializePins: profile }),
+    );
+  });
   it("401s without a token (token IS the auth here)", async () => {
     expect((await post("srv-a")).status).toBe(401);
   });
@@ -95,7 +125,9 @@ describe("/api/web/harness-mcp", () => {
     const data = await res.json();
     expect(data.jsonrpc).toBe("2.0");
     expect(data.result.tools).toEqual([{ name: "echo" }]);
-    expect(mockManager.listTools).toHaveBeenCalledWith("srv-a");
+    expect(mockManager.listTools).toHaveBeenCalledWith("srv-a", {}, {
+      signal: undefined,
+    });
   });
 
   const postRaw = (bodyText: string) =>

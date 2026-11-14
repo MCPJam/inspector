@@ -8,8 +8,8 @@ import {
   pluginSkillDeliverySummary,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
-  skillsHashWithPlugins,
 } from "../plugin-delivery";
+import { boxSkillsFolder } from "../box-skills-writer";
 import { getHarnessAdapter } from "../registry";
 import type {
   EffectiveCapabilitySet,
@@ -309,11 +309,12 @@ describe("plugin delivery into a Computer sandbox (end-to-end)", () => {
 
     const result = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: capabilitySkillFiles(set),
       skillNamesById: new Map(skills.map((s) => [s.skillId, s.name])),
     });
 
-    expect(result).toEqual({ written: 2, skipped: 0 });
+    expect(result).toEqual({ written: 2, skipped: 0, failed: new Map() });
     expect(writes.map((w) => w.path)).toEqual([
       `${SKILLS_BASE}/forecast/scripts/run.py`,
       `${SKILLS_BASE}/notes/references/a.md`,
@@ -333,7 +334,10 @@ describe("plugin delivery into a Computer sandbox (end-to-end)", () => {
       session,
       files: capabilitySkillFiles(set),
       skillNamesById: new Map(skills.map((s) => [s.skillId, s.name])),
-      skillsBase: getHarnessAdapter("codex").skillsBaseDir,
+      skillsBase: boxSkillsFolder(
+        getHarnessAdapter("codex").skills,
+        "/home/user",
+      ),
     });
 
     expect(writes.map((w) => w.path)).toEqual([
@@ -352,6 +356,7 @@ describe("plugin delivery into a Computer sandbox (end-to-end)", () => {
 
     await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: capabilitySkillFiles(set),
       skillNamesById: new Map(skills.map((s) => [s.skillId, s.name])),
     });
@@ -438,7 +443,10 @@ describe("deliveredPluginSkillOrigins (INS-8 origin mapping)", () => {
     expect(
       deliveredPluginSkillOrigins({
         set,
-        skillsBaseDir: getHarnessAdapter("codex").skillsBaseDir,
+        skillsBaseDir: boxSkillsFolder(
+          getHarnessAdapter("codex").skills,
+          "/home/user",
+        ),
         deliveredNameBySkillId: new Map([["sk_1", "forecast"]]),
       })
     ).toEqual([
@@ -459,7 +467,10 @@ describe("deliveredPluginSkillOrigins (INS-8 origin mapping)", () => {
     expect(
       deliveredPluginSkillOrigins({
         set,
-        skillsBaseDir: getHarnessAdapter("claude-code").skillsBaseDir,
+        skillsBaseDir: boxSkillsFolder(
+          getHarnessAdapter("claude-code").skills,
+          "/home/user",
+        ),
         deliveredNameBySkillId: delivered,
       })[0]?.dir
     ).toBe("/home/user/.claude/skills/forecast");
@@ -471,7 +482,10 @@ describe("deliveredPluginSkillOrigins (INS-8 origin mapping)", () => {
     });
     const origins = deliveredPluginSkillOrigins({
       set,
-      skillsBaseDir: getHarnessAdapter("codex").skillsBaseDir,
+      skillsBaseDir: boxSkillsFolder(
+        getHarnessAdapter("codex").skills,
+        "/home/user",
+      ),
       deliveredNameBySkillId: new Map([["sk_1", "forecast"]]),
     });
     expect(origins.map((o) => o.skillId)).toEqual(["sk_1"]);
@@ -496,29 +510,15 @@ describe("deliveredPluginSkillOrigins (INS-8 origin mapping)", () => {
     expect(
       deliveredPluginSkillOrigins({
         set,
-        skillsBaseDir: getHarnessAdapter("codex").skillsBaseDir,
+        skillsBaseDir: boxSkillsFolder(
+          getHarnessAdapter("codex").skills,
+          "/home/user",
+        ),
         deliveredNameBySkillId: new Map([
           ["sk_1", "forecast"],
           ["sk_std", "notes"],
         ]),
       })
     ).toEqual([]);
-  });
-});
-
-describe("skillsHashWithPlugins", () => {
-  it("is the plain skills hash when no plugin ran", () => {
-    expect(skillsHashWithPlugins("abc", [])).toBe("abc");
-  });
-
-  it("changes when the plugin versions change, even with identical skills", () => {
-    const one = skillsHashWithPlugins("abc", [
-      version({ pluginVersionId: "pv_1" }),
-    ]);
-    const two = skillsHashWithPlugins("abc", [
-      version({ pluginVersionId: "pv_2" }),
-    ]);
-    expect(one).not.toBe("abc");
-    expect(one).not.toBe(two);
   });
 });

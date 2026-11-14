@@ -17,6 +17,7 @@ export default defineConfig({
     "src/operations.ts",
     "src/skill-reference.ts",
     "src/model-factory.ts",
+    "src/model-native-ids.ts",
     "src/matchers.ts",
     "src/assertions/index.ts",
     "src/predicates/index.ts",
@@ -34,6 +35,9 @@ export default defineConfig({
     // Framework-free public-API wire contract (error codes + envelopes) shared
     // by the Inspector gateway and (eventually) the Convex backend.
     "src/public-api/index.ts",
+    // MCP Events (triggers): wire, coordinator, identities, profiles —
+    // runtime-agnostic, shared by the inspector server, client and CLI.
+    "src/events/index.ts",
     // Framework-free widget/app runtime building blocks (SEP-1865).
     "src/widget-runtime/index.ts",
     // Shared host-compatibility verdict engine (UI / CLI / API / MCP).
@@ -44,6 +48,8 @@ export default defineConfig({
     // and instance session reducer. Published as `./internal/plugin-host`.
     "src/internal/plugin-host.ts",
     "src/internal/telemetry.ts",
+    "src/internal/deployment.ts",
+    "src/internal/network-proxy.ts",
     // Node-only SSRF-hardened OAuth networking (classifier + DNS-pinned
     // transport) for backend actions that must not load the whole SDK graph.
     "src/oauth/node.ts",

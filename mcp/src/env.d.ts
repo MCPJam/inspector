@@ -3,6 +3,9 @@
 // Declaration-merge them onto the global `Env` here so they survive type
 // regeneration.
 interface Env {
+  /** Public domain-ownership challenge; configured only for production. */
+  OPENAI_APPS_CHALLENGE?: string;
+
   /**
    * Shared secret presented to the inspector guest-mint route as
    * `x-inspector-service-token` (matches the inspector's

@@ -1,9 +1,9 @@
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
-import { externalAccountCredentialFor } from "../../../shared/external-credential-selection.js";
-import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
-import { resolvePlaygroundCredentialEnvironment } from "../../utils/harness/playground-box.js";
+import {
+  fetchHostRuntimeConfig,
+  type HostRuntimeConfig,
+} from "../../utils/host-runtime-config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { translateEnvironmentRuntimeError } from "../environments/runtime.js";
 
@@ -32,11 +32,13 @@ export async function composeTurnEnvironment(args: {
   client: ConvexHttpClient;
   projectId: string;
   hostId?: string;
+  preparedHost?: { hostId: string; config: HostRuntimeConfig };
   bearer: string;
   signal?: AbortSignal;
 }): Promise<{ environmentId: string; harness: string | null }> {
   try {
     const hostId =
+      args.preparedHost?.hostId ??
       args.hostId ??
       (
         await args.client.mutation(ensureClient, {
@@ -45,11 +47,13 @@ export async function composeTurnEnvironment(args: {
           purpose: "chat",
         })
       ).hostId;
-    const runtime = await fetchHostRuntimeConfig({
-      hostId,
-      bearer: args.bearer,
-      signal: args.signal,
-    });
+    const runtime = args.preparedHost
+      ? { ok: true as const, config: args.preparedHost.config }
+      : await fetchHostRuntimeConfig({
+          hostId,
+          bearer: args.bearer,
+          signal: args.signal,
+        });
     if (!runtime.ok) {
       const status =
         runtime.status >= 500 ? 502 : runtime.status === 401 ? 401 : 404;
@@ -65,32 +69,6 @@ export async function composeTurnEnvironment(args: {
       );
     }
     const harness = runtime.config.agentLoop ?? runtime.config.harness ?? null;
-    if (
-      externalAccountCredentialFor(harness) &&
-      !(await shouldUseLocalHarness(
-        harness ?? undefined,
-        args.bearer,
-        args.projectId,
-      ))
-    ) {
-      const credential = await resolvePlaygroundCredentialEnvironment({
-        projectId: args.projectId,
-        hostId,
-        bearer: args.bearer,
-        harnessId: harness!,
-        chat: true,
-      });
-      if (!credential.ok)
-        throw new WebRouteError(
-          credential.status,
-          credential.status === 502
-            ? ErrorCode.SERVER_UNREACHABLE
-            : ErrorCode.CONFLICT,
-          credential.message,
-          { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
-        );
-      return { environmentId: credential.environmentId, harness };
-    }
     const result = await args.client.mutation(ensureEnvironment, {
       projectId: args.projectId,
       hostId,

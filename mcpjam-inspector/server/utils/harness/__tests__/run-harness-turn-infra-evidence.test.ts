@@ -80,7 +80,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -287,8 +286,8 @@ describe("runHarnessTurn — structured failure evidence", () => {
     });
   });
 
-  it("a box that cannot be reserved is a typed SANDBOX setup failure", async () => {
-    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
+  it("a busy broker admission remains a typed setup failure", async () => {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
       ok: false,
       status: 409,
       error: "box is busy",

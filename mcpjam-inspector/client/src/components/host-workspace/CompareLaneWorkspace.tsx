@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { OwnedPluginFormHost } from "@/components/elicitation/OwnedPluginFormHost";
+import { registerComposerSlot } from "@/components/elicitation/composer-form-store";
 import { HostWorkspace } from "./HostWorkspace";
 import { WorkspaceFileActionsProvider } from "./file-actions";
 import type { ThreadAppWorkspace } from "./ThreadAppPanel";
@@ -18,12 +19,20 @@ export function CompareLaneWorkspace({
   children,
   diagnostics,
   showDiagnostics,
+  active = true,
 }: {
-  apps: ThreadAppWorkspace | null;
+  apps: Pick<ThreadAppWorkspace, "scope" | "fileActions" | "panel" | "open"> | null;
   children: ReactNode;
   diagnostics: ReactNode;
   showDiagnostics: boolean;
+  active?: boolean;
 }) {
+  const slot = useRef<HTMLDivElement>(null);
+  const workspaceId = apps?.scope?.pluginWorkspace.workspaceId;
+  useLayoutEffect(() => {
+    if (workspaceId && slot.current)
+      return registerComposerSlot(workspaceId, slot.current);
+  }, [workspaceId]);
   if (!apps?.scope) return <>{showDiagnostics ? diagnostics : children}</>;
   return (
     <>
@@ -31,7 +40,7 @@ export function CompareLaneWorkspace({
       <div
         data-compare-lane-workspace
         className="flex min-h-0 flex-1 flex-col"
-        style={showDiagnostics ? { display: "none" } : undefined}
+        style={!active || showDiagnostics ? { display: "none" } : undefined}
       >
         <WorkspaceFileActionsProvider value={apps.fileActions}>
           <HostWorkspace appPanel={apps.panel} appOpen={apps.open}>
@@ -39,8 +48,10 @@ export function CompareLaneWorkspace({
             <OwnedPluginFormHost
               projectId={apps.scope.projectId}
               workspaceId={apps.scope.pluginWorkspace.workspaceId}
+              active={active && !showDiagnostics}
             />
           </HostWorkspace>
+          <div ref={slot} className="shrink-0" data-compare-lane-form-slot />
         </WorkspaceFileActionsProvider>
       </div>
     </>

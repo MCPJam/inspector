@@ -437,6 +437,40 @@ describe("isMcpProfileEmpty (shared by every profile write path)", () => {
     }
   });
 
+  it("treats a profile carrying only a mid-session sign-in knob as NON-empty", () => {
+    // Each of the four is a single enum, so a profile holding just one of them
+    // is real content. Missing any key here would silently drop that setting
+    // on save.
+    for (const profile of [
+      { profileVersion: 1 as const, unauthorizedChallenge: "notify" as const },
+      {
+        profileVersion: 1 as const,
+        unauthorizedChallengeTrigger: "bearer-header" as const,
+      },
+      { profileVersion: 1 as const, toolResultAuthChallenge: "prompt" as const },
+      {
+        profileVersion: 1 as const,
+        toolResultAuthChallengeTrigger: "oauth2-scheme" as const,
+      },
+    ]) {
+      expect(isMcpProfileEmpty(profile)).toBe(false);
+    }
+  });
+
+  it("treats cleared sign-in knobs as empty", () => {
+    // The ProtocolTab setter writes `undefined` when the default is picked;
+    // that must collapse rather than mint a row hashing like no profile.
+    expect(
+      isMcpProfileEmpty({
+        profileVersion: 1,
+        unauthorizedChallenge: undefined,
+        unauthorizedChallengeTrigger: undefined,
+        toolResultAuthChallenge: undefined,
+        toolResultAuthChallengeTrigger: undefined,
+      })
+    ).toBe(true);
+  });
+
   it("treats a profile whose only content was a storage toggle as empty", () => {
     // The BrowserStorageCard setter deletes the leaf when an API is switched
     // back on, leaving `{ profileVersion: 1, apps: undefined }`. If that does

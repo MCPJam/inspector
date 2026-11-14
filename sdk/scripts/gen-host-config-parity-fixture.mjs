@@ -186,6 +186,46 @@ const inputs = [
       },
     },
   },
+  // ── Mid-session sign-in knobs (same enum discipline as above) ──
+  // Absent is omitted; the absent-value literals are stored and hash
+  // distinctly. For the `_meta` pair the absent ACTION is "passthrough".
+  {
+    // Claude Code's seeded pair: notify, and only on a Bearer 401.
+    label: "mcp-profile-auth-challenge-unauthorized-notify-bearer-header",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
+      },
+    },
+  },
+  {
+    label: "mcp-profile-auth-challenge-tool-result-prompt-any",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        toolResultAuthChallenge: "prompt",
+        toolResultAuthChallengeTrigger: "any",
+      },
+    },
+  },
+  {
+    label: "mcp-profile-auth-challenge-absent-value-literals",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallenge: "prompt",
+        unauthorizedChallengeTrigger: "any",
+        toolResultAuthChallenge: "passthrough",
+        toolResultAuthChallengeTrigger: "oauth2-scheme+error-params",
+      },
+    },
+  },
   {
     label: "sandbox-csp-restrictto-sorted-plus-directives",
     input: {
@@ -276,6 +316,134 @@ const inputs = [
     },
   },
   {
+    // Plugin App context budgets: keys sorted, values stored as given. An
+    // empty policy collapses to absent (covered by canonicalize tests).
+    label: "apps-model-context-policy-sorted",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          modelContextPolicy: {
+            updateMaxBytes: 2548000,
+            turnMaxBytes: 8388608,
+            maxBlocks: 256,
+          },
+        },
+      },
+    },
+  },
+  {
+    // The budgets beside the `apps` keys they sort between, given out of
+    // order. The backend restores the policy after the pinned SDK runs, so
+    // this pins where it lands.
+    label: "apps-model-context-policy-beside-other-keys",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: {
+            permissions: { mode: "custom", allow: { camera: true } },
+          },
+          pluginExtensions: {
+            enabled: true,
+            capabilities: { mentions: false },
+          },
+          modelContextPolicy: { maxBlocks: 64 },
+          mcpAppsOverrides: { logging: true },
+        },
+      },
+    },
+  },
+  // ── Plugin extension behavior (`pluginExtensions.behavior`) ──
+  // The canonical setting is `{ behavior?, capabilities?, enabled }` in that
+  // key order. A setting without `behavior` keeps its bytes; an empty one
+  // collapses to absent.
+  {
+    label: "plugin-extensions-claude-no-behavior",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { pluginExtensions: { enabled: true } },
+      },
+    },
+  },
+  {
+    label: "plugin-extensions-behavior-empty-omitted",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { pluginExtensions: { behavior: {}, enabled: true } },
+      },
+    },
+  },
+  {
+    label: "plugin-extensions-claude-behavior-display-start",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          pluginExtensions: {
+            enabled: true,
+            behavior: { displayStart: "hint-first" },
+          },
+        },
+      },
+    },
+  },
+  {
+    // Keys given out of order at both levels, beside capabilities.
+    label: "plugin-extensions-claude-desktop-behavior-and-capabilities",
+    input: {
+      ...base(),
+      hostStyle: "claude-desktop",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          pluginExtensions: {
+            enabled: true,
+            capabilities: { sidebarApps: true, forms: false },
+            behavior: {
+              entrypointNames: "any",
+              displayHints: "openai/ui",
+              displayStart: "hint-first",
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    // Every field with Claude's value, on a ChatGPT client switched off.
+    label: "plugin-extensions-chatgpt-every-behavior-field",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          pluginExtensions: {
+            behavior: {
+              entrypointQuickActions: "hide",
+              entrypointWithoutFullscreen: "inline",
+              entrypointVisibility: "require-model",
+              entrypointNames: "no-double-separators",
+              displayStart: "inline-then-move",
+              displayHints: "ui",
+            },
+            enabled: false,
+          },
+        },
+      },
+    },
+  },
+  {
     label: "host-capabilities-override-explicit-empty",
     input: { ...base(), hostCapabilitiesOverride: {}, chatUiOverride: { logo: "x" } },
   },
@@ -321,6 +489,12 @@ const inputs = [
     // and every shim-era row would need a rehash at the next dep bump.
     label: "harness-cursor",
     input: { ...base(), harness: "cursor" },
+  },
+  {
+    // OpenCode is the id a backend pin that predates this SDK release must
+    // mask past its HARNESS_IDS guard (`withSdkSafeHarness`).
+    label: "harness-opencode",
+    input: { ...base(), harness: "opencode" },
   },
   {
     // Empty builtInToolIds collapses to absent → canonical JSON has no key,
@@ -381,7 +555,7 @@ const inputs = [
   },
 ];
 
-for (const agentLoop of ["claude-code", "codex", "cursor"]) {
+for (const agentLoop of ["claude-code", "codex", "cursor", "opencode"]) {
   inputs.push({
     label: `agent-loop-${agentLoop}`,
     input: { ...base(), agentLoop, computer: { kind: "personal" } },

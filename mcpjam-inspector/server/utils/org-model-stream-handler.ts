@@ -1,3 +1,5 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
+import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 /**
@@ -36,14 +38,13 @@ import type {
 } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
-  buildOrgModelFromResolvedConfig,
   assertOrgModelAllowed,
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "./guarded-org-model.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
-  writePersistReceipt,
   type PersistChatOutcome,
   type PersistedTurnTrace,
 } from "./chat-ingestion";
@@ -74,36 +75,23 @@ import {
   type StreamFailureReporter,
 } from "./stream-failure-reporter.js";
 import {
-  runDirectChatTurn,
-  withMcpToolOriginChunkMetadata,
   type DirectChatTurnPersistEvent,
-  type DirectChatTurnTraceEvents,
-  type RunDirectChatTurnHandle,
 } from "./direct-chat-turn.js";
-import { buildDirectChatTraceCallbacks } from "./direct-chat-sse-callbacks.js";
-import {
-  createEmptyTurnWatcher,
-  hasSettledToolCallThisPrompt,
-} from "./empty-step-failure.js";
-import { emitError } from "./chat-stream-chunks.js";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "./provider-error-normalization.js";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
-import { isAbortError } from "@/shared/abort-errors";
 import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
-import {
-  isSuspendedScopeStepUpOutputChunk,
-  resumeScopeStepUpBeforeDirectTurn,
-} from "./direct-chat-scope-step-up.js";
+import type { SettleSuspendedToolCall } from "./direct-chat-scope-step-up.js";
 
 export interface OrgModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   projectId: string;
   providerKey: string;
   /** Progressive discovery — forwarded into handleMCPJamFreeChatModel. */
@@ -190,6 +178,8 @@ export interface OrgModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
+  /** Forwarded; see `MCPJamHandlerOptions.settleSuspendedHistoryToolCall`. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   /**
    * Extra body fields merged into the per-step Convex `/stream/org` POST.
    * Swarm runs use this to thread `journeyRunId` so the backend BYOK writer
@@ -316,6 +306,7 @@ export function formatLocalStreamError(error: unknown): string {
 // ---------------------------------------------------------------------------
 
 export interface OrgLocalModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   /**
@@ -380,8 +371,10 @@ export interface OrgLocalModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
+  /** History settlement for calls a sign-in suspended. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   shouldPauseAfterStep?: () => boolean;
-  suspendedToolCallId?: () => string | undefined;
+  suspendedToolCallIds?: () => ReadonlySet<string>;
   /**
    * Progressive tool discovery plan. When `plan.enabled === true`, each
    * step's `activeTools` is recomputed from `discoveryState` via the AI SDK
@@ -413,9 +406,9 @@ export interface OrgLocalModelHandlerOptions {
  * is nothing for the refusal to protect.
  *
  * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
- * here — this runs before the model has produced an input — and the two
- * families that use the form (`effective-skill-tools`, `server-skill-tools`)
- * declare it UNCONDITIONALLY and answer `false` on the common path. Reading
+ * here — this runs before the model has produced an input — and the skill
+ * tools that use the form (`effective-skill-tools`) declare it
+ * UNCONDITIONALLY and answer `false` on the common path. Reading
  * "unevaluable" as "asks" refused every local-runtime turn that carried a
  * skill tool, switch or no switch, where before it ran. `streamText` evaluates
  * the function per call, exactly as it did before the declaration was unified;
@@ -637,7 +630,7 @@ export function handleLocalOrgChatModel(
   try {
     assertOrgModelAllowed(provider, modelId);
     llmModel = admitEachLocalOrgAttempt(
-      buildOrgModelFromResolvedConfig(provider, modelId),
+      buildGuardedOrgModel(provider, modelId),
       options.admission,
       modelId,
       attempts,
@@ -675,217 +668,57 @@ export function handleLocalOrgChatModel(
 
   const resolvedMaxSteps = resolveLocalOrgMaxSteps(options.maxSteps);
 
-  // Declared before `createUIMessageStream` so the top-level `onError`
-  // (which can fire before `execute` runs) can read it; assigned inside
-  // `execute` once the engine is configured. Mirrors the route-4 pattern
-  // in `streamDirectChatWithLiveTrace`.
-  let handle: RunDirectChatTurnHandle | undefined;
-
-  const stream = createUIMessageStream({
-    onError: (error) => {
-      // Silent-cancel invariant — match route 4: abort either reads from
-      // the inbound signal directly or from the engine's `isAborted`. A
-      // non-AbortError that arrives after the signal flipped is still
-      // suppressed because the downstream controller is being torn down.
-      if (
-        options.abortSignal?.aborted ||
-        handle?.isAborted() ||
-        isAbortError(error)
-      ) {
-        return "";
-      }
-      // Reporter, not a bare logger.error: the old call captured to Sentry
-      // unconditionally and left no typed record (this is a 200 stream).
-      failureReporter({
-        message: "[org/local] stream error",
-        error,
-        source: "web.chat-v2.org-local-stream",
-        hop: "user_server_hop",
-        transport: "http_stream",
-        context: { providerKey: provider.providerKey, modelId },
+  let streamErrored = false;
+  return streamDirectChatWithLiveTrace({
+    turnAuthorization: options.turnAuthorization,
+    llmModel,
+    modelId,
+    messageHistory: messages,
+    systemPrompt,
+    temperature,
+    providerOptions: options.providerOptions,
+    tools: turnTools,
+    progressivePlan: options.progressivePlan,
+    discoveryState: options.discoveryState,
+    abortSignal: options.abortSignal,
+    maxSteps: resolvedMaxSteps,
+    onLiveTextDelta,
+    onEngineError: () => { streamErrored = true; },
+    ...(historyPresentation ? {
+      transformStepMessages: (stepMessages) =>
+        presentHistoryForModel(stepMessages, turnTools, historyPresentation),
+    } : {}),
+    formatError: formatLocalStreamError,
+    reportError: (error, phase) => failureReporter({
+      message: `[org/local] ${phase} error`,
+      error,
+      source: phase === "stream" ? "web.chat-v2.org-local-stream"
+        : phase === "direct-stream" ? "web.chat-v2.org-local-direct-stream"
+        : "web.chat-v2.org-local-direct-empty-step",
+      hop: "user_server_hop",
+      transport: "http_stream",
+      context: { providerKey: provider.providerKey, modelId },
+    }),
+    mapChunk: signChunk,
+    onStreamWriterReady,
+    onStreamComplete,
+    chatSessionId: options.chatSessionId,
+    scopeStepUpResume: options.scopeStepUpResume,
+    settleSuspendedHistoryToolCall: options.settleSuspendedHistoryToolCall,
+    shouldPauseAfterStep: options.shouldPauseAfterStep,
+    suspendedToolCallIds: options.suspendedToolCallIds,
+    onPersist: buildLocalOrgOnPersist({
+      options,
+      attempts,
+      isStreamErrored: () => streamErrored,
+      onConversationComplete,
+    }),
+    onPersistError: (error) => {
+      logger.warn("[org/local] onFinish ingestion error", {
+        error: error instanceof Error ? error.message : String(error),
       });
-      return formatLocalStreamError(error);
-    },
-    onFinish: async () => {
-      await onStreamComplete?.();
-    },
-    execute: async ({ writer }) => {
-      onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
-      const shouldRunModel = await resumeScopeStepUpBeforeDirectTurn({
-        writer,
-        messageHistory: messages,
-        resume: options.scopeStepUpResume,
-      });
-      if (!shouldRunModel) return;
-
-      // Cursor PR-review fix (Medium "Failed turns persist sessions"):
-      // legacy route 3 gated `onConversationComplete` on `!streamErrored`
-      // so a provider error mid-stream skipped chat ingestion (post-error
-      // partials weren't persisted). `runDirectChatTurn.onPersist` fires
-      // regardless of prior error (only gates on abort). Capture the
-      // error state here via `onEngineError` — the engine's parity
-      // callback fires from its `streamText` `onError` branch — and
-      // gate `onConversationComplete` below.
-      let streamErrored = false;
-      let persistReceipt:
-        | { outcome: PersistChatOutcome; turnId: string }
-        | undefined;
-
-      handle = runDirectChatTurn({
-        // The org-resolved model is typed as the AI SDK `LanguageModel`
-        // union, while `RunDirectChatTurnOptions.llmModel` is typed as
-        // the narrower `createLlmModel` return (a provider-specific
-        // union). Both reach the same `streamText(model: ...)` slot and
-        // the SDK accepts both at runtime; cast to bridge the typing
-        // gap rather than widen the engine's option shape.
-        llmModel: llmModel as unknown as Parameters<
-          typeof runDirectChatTurn
-        >[0]["llmModel"],
-        modelId,
-        messageHistory: messages,
-        systemPrompt,
-        ...(temperature !== undefined ? { temperature } : {}),
-        ...(options.providerOptions
-          ? { providerOptions: options.providerOptions }
-          : {}),
-        tools: turnTools,
-        progressivePlan: options.progressivePlan,
-        discoveryState: options.discoveryState,
-        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-        ...(onLiveTextDelta ? { onLiveTextDelta } : {}),
-        maxSteps: resolvedMaxSteps,
-        shouldPauseAfterStep: options.shouldPauseAfterStep,
-        suspendedToolCallId: options.suspendedToolCallId,
-        ...(historyPresentation
-          ? {
-              transformStepMessages: (stepMessages: ModelMessage[]) =>
-                presentHistoryForModel(
-                  stepMessages,
-                  turnTools,
-                  historyPresentation,
-                ),
-            }
-          : {}),
-        // Shared SSE-callback factory — byte-identical wire output with
-        // route 4 (`streamDirectChatWithLiveTrace`).
-        traceEvents: buildDirectChatTraceCallbacks(writer),
-        // Cursor PR-review fix (Medium "Failed turns persist sessions"):
-        // capture the engine-error state so `onPersist` below can skip
-        // ingestion on provider errors, matching legacy behavior.
-        // `postLocalUsage` still fires regardless (billing — matches
-        // legacy unconditional usage writeback). Per-turn `onTurnError`
-        // (SSE) still fires through `buildDirectChatTraceCallbacks`.
-        onEngineError: () => {
-          streamErrored = true;
-        },
-        // The engine suppresses persistence on abort; completed work posts usage.
-        onPersist: buildLocalOrgOnPersist({
-          options,
-          attempts,
-          isStreamErrored: () => streamErrored,
-          onConversationComplete,
-          onOutcome: (outcome, turnId) => {
-            persistReceipt = { outcome, turnId };
-          },
-        }),
-        onPersistError: (err) => {
-          logger.warn("[org/local] onFinish ingestion error", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        },
-      });
-
-      // `streamText` finishes an empty last step as if it were a reply, which
-      // left a blank bubble and no record. Same verdict as the hosted engine.
-      const emptyTurn = createEmptyTurnWatcher({
-        settledToolBeforeStream: hasSettledToolCallThisPrompt(
-          messages,
-          handle.traceTurn.promptMessageStartIndex,
-        ),
-      });
-      try {
-        for await (const chunk of handle.result.toUIMessageStream({
-          messageMetadata: ({ part }) => {
-            if (part.type === "finish-step") {
-              return {
-                inputTokens: part.usage.inputTokens,
-                outputTokens: part.usage.outputTokens,
-                totalTokens: part.usage.totalTokens,
-              };
-            }
-          },
-          onError: (error) => {
-            if (handle!.isAborted() || isAbortError(error)) return "";
-            // toUIMessageStream CONSUMES the error (no rethrow), so the
-            // top-level onError above never sees it — this is the only
-            // chance to record it. The two sites are exclusive per error.
-            failureReporter({
-              message: "[org/local] direct stream error",
-              error,
-              source: "web.chat-v2.org-local-direct-stream",
-              hop: "user_server_hop",
-              transport: "http_stream",
-              context: { providerKey: provider.providerKey, modelId },
-            });
-            return formatLocalStreamError(error);
-          },
-        })) {
-          if (
-            isSuspendedScopeStepUpOutputChunk(
-              chunk,
-              options.suspendedToolCallId?.()
-            )
-          ) {
-            continue;
-          }
-          emptyTurn.observe(chunk);
-          const emptyTurnMessage =
-            chunk.type === "finish" && !handle.isAborted()
-              ? emptyTurn.failureFor(chunk)
-              : undefined;
-          if (emptyTurnMessage) {
-            // The error REPLACES the finish chunk, as on the hosted engine,
-            // and is written before the report so a reporter throw cannot
-            // swallow it.
-            emitError(writer, emptyTurnMessage);
-            failureReporter({
-              message: "[org/local] direct step returned no content",
-              error: new Error(emptyTurnMessage),
-              source: "web.chat-v2.org-local-direct-empty-step",
-              hop: "user_server_hop",
-              transport: "http_stream",
-              context: { providerKey: provider.providerKey, modelId },
-            });
-            continue;
-          }
-          const outgoing = withMcpToolOriginChunkMetadata(chunk, options.tools);
-          for (const out of signChunk ? signChunk(outgoing) : [outgoing]) {
-            writer.write(out);
-          }
-        }
-      } catch (error) {
-        if (handle.isAborted() || isAbortError(error)) {
-          return;
-        }
-        throw error;
-      } finally {
-        handle.cleanup();
-      }
-
-      // Safe to read here: `streamText`'s own `onFinish` — which is what
-      // `onPersist` runs inside — resolves before the UI-message stream this
-      // loop drains can end, so the persist has settled by the time we exit it.
-      // The stream itself is still open until `execute` returns.
-      if (persistReceipt && options.chatSessionId) {
-        writePersistReceipt(writer, persistReceipt.outcome, {
-          chatSessionId: options.chatSessionId,
-          turnId: persistReceipt.turnId,
-        });
-      }
     },
   });
-
-  return createUIMessageStreamResponse({ stream });
 }
 
 // ---------------------------------------------------------------------------
@@ -927,7 +760,7 @@ function buildLocalOrgOnPersist(params: {
    * caller for no benefit.
    */
   onOutcome?: (outcome: PersistChatOutcome, turnId: string) => void;
-}): (event: DirectChatTurnPersistEvent) => Promise<void> {
+}): (event: DirectChatTurnPersistEvent) => Promise<void | PersistChatOutcome> {
   const { options, isStreamErrored, onConversationComplete, onOutcome } =
     params;
   return async (event) => {
@@ -972,6 +805,7 @@ function buildLocalOrgOnPersist(params: {
     if (outcome) {
       onOutcome?.(outcome, event.turnTrace.turnId);
     }
+    return outcome;
   };
 }
 
@@ -1003,6 +837,11 @@ export async function postLocalUsage(params: {
    * up in one query. Omitted for real chat.
    */
   journeyRunId?: string;
+  /**
+   * MCP Events trigger run the turn served. The backend charges the usage
+   * record's cost to that run and its trigger's daily spend cap.
+   */
+  eventRunId?: string;
   /**
    * The eval iteration (and suite run) a local-runtime eval turn belongs to.
    * With `execution`, the backend merges the record onto that iteration row;
@@ -1059,6 +898,7 @@ export async function postLocalUsage(params: {
           ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
         ...(params.journeyRunId ? { journeyRunId: params.journeyRunId } : {}),
+        ...(params.eventRunId ? { eventRunId: params.eventRunId } : {}),
         ...(params.evalIterationId
           ? { evalIterationId: params.evalIterationId }
           : {}),
@@ -1096,6 +936,7 @@ export async function handleHostedOrgChatModel(
   }
 
   return handleMCPJamFreeChatModel({
+    turnAuthorization: options.turnAuthorization,
     messages: options.messages,
     modelId: options.modelId,
     modelSelection: options.modelSelection,
@@ -1132,6 +973,12 @@ export async function handleHostedOrgChatModel(
     heartbeatIntervalMs: options.heartbeatIntervalMs,
     maxSteps: options.maxSteps,
     scopeStepUpResume: options.scopeStepUpResume,
+    ...(options.settleSuspendedHistoryToolCall
+      ? {
+          settleSuspendedHistoryToolCall:
+            options.settleSuspendedHistoryToolCall,
+        }
+      : {}),
     progressivePlan: options.progressivePlan,
     discoveryState: options.discoveryState,
     failureReporter: options.failureReporter,

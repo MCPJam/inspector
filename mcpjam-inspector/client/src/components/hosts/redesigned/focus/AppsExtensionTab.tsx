@@ -43,10 +43,12 @@ import {
   PLUGIN_EXTENSION_CAPABILITY_KEYS,
   PLUGIN_EXTENSION_CAPABILITY_LABELS,
   pluginExtensionsForHost,
+  readPluginExtensionBehavior,
   setPluginExtensionCapabilityOnDraft,
   setPluginExtensionsEnabledOnDraft,
 } from "@/lib/client-config-v2-plugin-extensions";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
+import { parseModelContextPolicyDoc } from "@/lib/client-config-v2-model-context-policy";
 
 interface AppsExtensionTabProps {
   draft: HostConfigInputV2;
@@ -235,6 +237,13 @@ type AppsDoc = {
    */
   pluginExtensions?: NonNullable<
     NonNullable<HostConfigMcpProfileV1["apps"]>["pluginExtensions"]
+  >;
+  /**
+   * Round-trips with `mcpProfile.apps.modelContextPolicy`, the client's
+   * plugin App context budgets. Present only when the client saved one.
+   */
+  modelContextPolicy?: NonNullable<
+    NonNullable<HostConfigMcpProfileV1["apps"]>["modelContextPolicy"]
   >;
 };
 
@@ -527,6 +536,10 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   if (pluginExtensions !== undefined) {
     doc.pluginExtensions = pluginExtensions;
   }
+  const modelContextPolicy = draft.mcpProfile?.apps?.modelContextPolicy;
+  if (modelContextPolicy !== undefined) {
+    doc.modelContextPolicy = modelContextPolicy;
+  }
 
   return doc;
 }
@@ -534,7 +547,7 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
 /**
  * Soft-validate a hand-edited `pluginExtensions` block: `enabled` must be a
  * boolean (otherwise the block is dropped), and only known extension keys
- * with boolean values survive.
+ * with boolean values, and known behavior fields with known values, survive.
  */
 function parsePluginExtensionsDoc(
   value: unknown
@@ -549,9 +562,12 @@ function parsePluginExtensionsDoc(
       if (typeof entry === "boolean") capabilities[key] = entry;
     }
   }
-  return Object.keys(capabilities).length > 0
-    ? { enabled: value.enabled, capabilities }
-    : { enabled: value.enabled };
+  const behavior = readPluginExtensionBehavior(value.behavior);
+  return {
+    ...(Object.keys(behavior).length > 0 ? { behavior } : {}),
+    ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
+    enabled: value.enabled,
+  };
 }
 
 export function applyJsonToDraft(
@@ -955,6 +971,12 @@ export function applyJsonToDraft(
   );
   if (nextPluginExtensions !== undefined) {
     appsBlock.pluginExtensions = nextPluginExtensions;
+  }
+  const nextModelContextPolicy = parseModelContextPolicyDoc(
+    parsed.modelContextPolicy,
+  );
+  if (nextModelContextPolicy !== undefined) {
+    appsBlock.modelContextPolicy = nextModelContextPolicy;
   }
   const hasApps = Object.keys(appsBlock).length > 0;
 
@@ -2095,8 +2117,9 @@ function WidgetToolResultsCard({
 /**
  * `mcpProfile.apps.pluginExtensions` — which OpenAI plugin extensions this
  * client offers. Defaults follow the client style (on for ChatGPT and Codex,
- * off for everything else). Turning one extension off removes only that
- * extension; the master switch turns them all off.
+ * Display modes only for Claude, off for everything else). Turning one
+ * extension off removes only that extension; the master switch turns them
+ * all off.
  */
 function PluginExtensionsCard({
   draft,

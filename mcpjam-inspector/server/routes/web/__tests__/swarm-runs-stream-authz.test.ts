@@ -113,12 +113,59 @@ describe("swarm run stream authorization", () => {
   });
 
   it("checks authorization even for a run with no live hub on this process", async () => {
-    // The no-hub branch replies `run_complete` and closes, which is a perfectly
-    // good oracle for "this run id is real and running somewhere" if it is
-    // reached without a check. It must not be.
+    // The no-hub branch replies with the run's settled-or-not state and
+    // closes, which is a perfectly good oracle for "this run id is real" if it
+    // is reached without a check. It must not be.
     queryMock.mockResolvedValue(null);
     getRunningJourneyStreamHubMock.mockReturnValue(undefined);
 
     expect((await stream()).status).toBe(404);
   });
+});
+
+/**
+ * With no runner on this process the hub is absent, which happens for a run
+ * another replica owns, one whose runner has not registered yet, and one whose
+ * runner was lost before the backend settled it. Only the backend's settled
+ * status may end the client's live view.
+ */
+describe("swarm run stream with no live hub on this process", () => {
+  async function eventTypes(): Promise<string[]> {
+    const res = await stream();
+    expect(res.status).toBe(200);
+    return (await res.text())
+      .split("\n\n")
+      .filter((frame) => frame.startsWith("data: "))
+      .map((frame) => JSON.parse(frame.slice(6)).type);
+  }
+
+  beforeEach(() => {
+    getRunningJourneyStreamHubMock.mockReturnValue(undefined);
+  });
+
+  it.each(["completed", "partial", "failed", "rate_limited"])(
+    "reports run_complete for a run the backend settled as %s",
+    async (status) => {
+      queryMock.mockResolvedValue({ _id: RUN_ID, status, attempts: [] });
+
+      expect(await eventTypes()).toEqual(["run_complete"]);
+    },
+  );
+
+  it.each([
+    ["running", { status: "running" }],
+    [
+      "running with a cancel in cleanup",
+      { status: "running", cancelRequested: true },
+    ],
+    ["missing a status", {}],
+    ["in a status this build does not know", { status: "archived" }],
+  ])(
+    "reports run_remote, not completion, for a run %s",
+    async (_label, run) => {
+      queryMock.mockResolvedValue({ _id: RUN_ID, attempts: [], ...run });
+
+      expect(await eventTypes()).toEqual(["run_remote"]);
+    },
+  );
 });

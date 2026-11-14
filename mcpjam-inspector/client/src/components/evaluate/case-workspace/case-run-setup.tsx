@@ -42,6 +42,8 @@ export type CaseRunControls = {
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /** The same, under any key policy, for a model search with no match (see `useAvailableModels`). */
+  onAddProvider: (() => void) | null;
   onModelChange?: (next: string) => void;
   trials: number;
   onTrialsChange?: (next: number) => void;
@@ -190,6 +192,7 @@ export function CaseRunSetup({
                 availableModels={availableModels}
                 requireOrgKeys={controls.requireOrgKeys}
                 onManageOrgProviders={controls.onManageOrgProviders}
+                onAddProvider={controls.onAddProvider}
                 disabled={Boolean(controls.disabled)}
                 testId="case-run-models"
                 onChange={(next) => {

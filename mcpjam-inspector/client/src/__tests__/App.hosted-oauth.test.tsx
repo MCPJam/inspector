@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import { resolveSessionPrivacy } from "@/lib/session-privacy";
 import { useApiContext } from "../hooks/hosted/use-hosted-api-context";
 import {
   beginOrganizationDeletion,
@@ -54,6 +55,16 @@ import {
   writeAppSignInReturnPath,
 } from "../lib/app-signin-return-path";
 import { getGuestSessionRefusal } from "../lib/guest-session";
+
+// The organization key policy binding has its own tests; here a template
+// seed is created as it is.
+vi.mock("@/hooks/use-org-bound-template-seed", () => ({
+  useOrgBoundTemplateSeed: () => ({
+    ready: true,
+    bind: (input: unknown) => ({ kind: "unchanged", input }),
+    prepare: (input: unknown) => ({ input }),
+  }),
+}));
 
 /** Convex-shaped project ids for the cross-organization switch cases. */
 const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
@@ -319,6 +330,15 @@ vi.mock("posthog-js/react", () => ({
   // These tests don't exercise that wall, so control (undefined) is fine.
   useFeatureFlagVariantKey: () => undefined,
 }));
+
+// Pass-through, so a test can see which context the shell resolved replay for.
+vi.mock("@/lib/session-privacy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/session-privacy")>();
+  return {
+    ...actual,
+    resolveSessionPrivacy: vi.fn(actual.resolveSessionPrivacy),
+  };
+});
 
 vi.mock("@/lib/analytics", () => ({
   track: mockTrack,
@@ -4286,7 +4306,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://mcp.example.com/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4399,7 +4419,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4445,7 +4465,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4497,7 +4517,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4560,7 +4580,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4609,7 +4629,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: 'node server.js --config "My Files/config.json" ""' },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4812,7 +4832,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4859,7 +4879,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -5851,7 +5871,10 @@ describe("App hosted OAuth callback handling", () => {
     mockConvexAuthState.isLoading = false;
     mockWorkOsAuthState.user = null;
     // One stable object: the banner reads it as a useSyncExternalStore snapshot.
-    const refusal = { until: Date.now() + 540_000 };
+    const refusal = {
+      until: Date.now() + 540_000,
+      reason: "rate_limited" as const,
+    };
     vi.mocked(getGuestSessionRefusal).mockReturnValue(refusal);
 
     render(<App />);
@@ -6032,6 +6055,49 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
+  it.each([
+    { path: "/conformance", enabled: true },
+    { path: "/conformance/runs/saved-run", enabled: true },
+    { path: "/conformance", enabled: false },
+    { path: "/conformance/runs/saved-run", enabled: false },
+  ])(
+    "waits for the conformance flag on $path before resolving to $enabled",
+    async ({ path, enabled }) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", `${path}?view=history#saved`);
+      mockPosthogState.featureFlags.hasLoadedFlags = false;
+      let conformanceFlag: boolean | undefined;
+      mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+        flag === "mcpjam-conformance" ? conformanceFlag : false,
+      );
+
+      const { rerender } = render(<App />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(window.location.pathname).toBe(path);
+      expect(window.location.search).toBe("?view=history");
+      expect(window.location.hash).toBe("#saved");
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+      expect(screen.queryByRole("tab", { name: "Overview" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Run conformance checks" }),
+      ).toBeNull();
+
+      conformanceFlag = enabled;
+      mockPosthogState.featureFlags.hasLoadedFlags = true;
+      rerender(<App />);
+      await waitFor(() => {
+        expect(window.location.pathname).toBe(enabled ? path : "/home");
+      });
+      if (enabled) {
+        expect(window.location.search).toBe("?view=history");
+        expect(window.location.hash).toBe("#saved");
+      }
+    },
+  );
+
   it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -6045,6 +6111,60 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(window.location.pathname).toBe("/home");
     });
+  });
+
+  it.each([false, undefined])("keeps a conformance share link open when its flag is %s", async (conformanceFlag) => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance/shared/share-token");
+    mockHandleOAuthCallback.mockReset();
+
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "mcpjam-conformance" ? conformanceFlag : false,
+    );
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Conformance report" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toMatch(/^\/conformance\/shared/);
+    // A guest's replay follows the shared-link rule, not their own policy.
+    expect(vi.mocked(resolveSessionPrivacy)).toHaveBeenCalledWith(
+      expect.objectContaining({ sharedLink: true }),
+    );
+  });
+
+  it("leaves the conformance server choice to the page, so the last-selected server is restored", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance");
+    localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "mcpjam-conformance",
+    );
+    const connected = (name: string) => ({
+      name,
+      config: { transportType: "http", url: `https://${name}.example/mcp` },
+      connectionStatus: "connected",
+      enabled: true,
+      retryCount: 0,
+    });
+    const appState = createAppStateMock();
+    appState.appState.servers = {
+      alpha: connected("alpha"),
+      beta: connected("beta"),
+    };
+    appState.projectServers = appState.appState.servers;
+    appState.displayServerConfigs = appState.projectServers;
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(appState.setSelectedServer).toHaveBeenCalledWith("beta");
+    });
+    expect(appState.setSelectedServer).not.toHaveBeenCalledWith("alpha");
   });
 
   it("keeps host template deep links in place while auth is loading", async () => {

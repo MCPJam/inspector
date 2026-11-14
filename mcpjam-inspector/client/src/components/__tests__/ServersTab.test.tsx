@@ -23,6 +23,29 @@ import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { DbUserReadyProvider } from "@/contexts/db-user-ready-context";
+import { describeError } from "@mcpjam/sdk/browser";
+import { toast } from "@/lib/toast";
+
+const { captureException, posthogCaptureException } = vi.hoisted(() => ({
+  captureException: vi.fn(),
+  posthogCaptureException: vi.fn(),
+}));
+vi.mock("@sentry/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sentry/react")>()),
+  captureException,
+}));
+vi.mock("posthog-js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("posthog-js")>();
+  return {
+    ...actual,
+    default: { ...actual.default, captureException: posthogCaptureException },
+  };
+});
+vi.mock("@/lib/PosthogUtils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/PosthogUtils")>()),
+  isErrorCaptureSurface: () => true,
+  isCredentialBearingPath: () => false,
+}));
 
 // The header Auto-connect switch reads the real preferences store, which
 // throws without a provider — wrap every render in one.
@@ -1208,6 +1231,46 @@ describe("ServersTab shared detail modal", () => {
       screen.getByRole("button", { name: "Connect Linear" })
     ).toBeDisabled();
   });
+
+  it.each([
+    ["user_server", false],
+    ["mcpjam", true],
+  ] as const)(
+    "handles %s quick-connect errors without losing the toast",
+    async (origin, reported) => {
+      mockIsAuthenticated = true;
+      mockCatalogCards = [createLinearCatalogCard()];
+      const error = Object.assign(new Error("Registry connection failed"), {
+        normalized: {
+          ...describeError(new Error("Registry connection failed")),
+          origin,
+        },
+      });
+      mockConnectRegistry.mockRejectedValueOnce(error);
+      const showError = vi.spyOn(toast, "error").mockReturnValue("error-toast");
+      try {
+        render(<ServersTab {...defaultProps} projectServers={{}} />);
+        fireEvent.click(screen.getByRole("button", { name: "Connect Linear" }));
+        await waitFor(() => expect(showError).toHaveBeenCalledWith(error.message));
+        expect(captureException).toHaveBeenCalledTimes(reported ? 1 : 0);
+        expect(posthogCaptureException).toHaveBeenCalledTimes(reported ? 1 : 0);
+        if (reported) {
+          expect(captureException).toHaveBeenCalledWith(
+            error,
+            expect.objectContaining({
+              tags: expect.objectContaining({ source: "registry_quick_connect" }),
+            })
+          );
+        }
+        expect(localStorage.getItem("mcp-quick-connect-pending")).toBeNull();
+        expect(
+          screen.getByRole("button", { name: "Connect Linear" })
+        ).toBeEnabled();
+      } finally {
+        showError.mockRestore();
+      }
+    }
+  );
 
   it("keeps quick connect visible during oauth-flow after return", () => {
     mockIsAuthenticated = true;

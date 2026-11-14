@@ -72,6 +72,40 @@ export type {
   EvidenceReuseRefusal,
 } from "./directory-readiness/evidence-reuse.js";
 
+/**
+ * Lazy authentication's vocabulary and bounds, so a client can offer the
+ * claims and the probe's tool names and validate them as every other surface
+ * does. The gate and the probe itself stay where the run is gathered.
+ */
+export {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+} from "./directory-readiness/lazy-auth.js";
+export type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthCallOutcome,
+  DirectoryLazyAuthProbeConfig,
+  DirectoryLazyAuthProbeEvidence,
+  DirectoryLazyAuthRediscovery,
+  DirectoryLazyAuthToolCall,
+} from "./directory-readiness/lazy-auth.js";
+
+/**
+ * Directory submission forms, so a page can draw the portal's steps and
+ * check answers as the API does. A wildcard on purpose: the flows barrel
+ * lists its exports by name and is pure data and functions by contract.
+ */
+export * from "./directory-readiness/flows/index.js";
+/** The decision scan, for the same reason: its barrel is pure by contract. */
+export * from "./directory-readiness/decisions/index.js";
+
+/**
+ * Directory test plans, so a page can draft, edit and check a plan and show
+ * per-tool outcomes as the API does. A wildcard: the barrel is pure by
+ * contract and its modules export only public names.
+ */
+export * from "./directory-readiness/test-plan/index.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,
@@ -568,9 +602,12 @@ export {
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
 // A proxy route's verdict that the server under test presented a certificate
-// Node.js would not accept: the debugger shows it as the server's and keeps it
-// out of the host's exception tracker.
-export { isTlsTrustFailure } from "./oauth-proxy-error.js";
+// Node.js would not accept, or could not be reached at all: the debugger shows
+// it as the server's and keeps it out of the host's exception tracker.
+export {
+  isTlsTrustFailure,
+  isUnreachableTargetFailure,
+} from "./oauth-proxy-error.js";
 export { stepFailureFindingKey } from "./oauth/state-machines/shared/step-failure-key.js";
 export {
   isResourceMetadataNotImplemented,
@@ -627,6 +664,38 @@ export {
   type StepUpAuthMode,
   type StepUpAction,
 } from "./oauth/state-machines/shared/challenges.js";
+// Mid-session sign-in ("lazy authentication") challenges: recognition, the
+// per-host policy, and the shared copy. Browser-safe.
+export {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_LIMITS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_META_KEY,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengeNotifyText,
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  hasOAuth2Scheme,
+  parseAuthChallengeSignal,
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+  resolveToolSecuritySchemes,
+  type AuthChallengeAction,
+  type AuthChallengeDecision,
+  type AuthChallengeDecisionReason,
+  type AuthChallengeEffectiveAuth,
+  type AuthChallengeFacets,
+  type AuthChallengePolicy,
+  type AuthChallengeSignal,
+  type AuthChallengeSource,
+  type ToolResultAuthChallengeTrigger,
+  type ToolSecurityScheme,
+  type ToolSecuritySchemeResolution,
+  type ToolSecuritySchemeSource,
+  type UnauthorizedChallengeTrigger,
+} from "./mcp-client-manager/auth-challenge.js";
 // The unauthenticated probe's acceptance gate. Exported so the debugger UI
 // decides "is this exchange an expected challenge?" from the same rule the flow
 // advances on, rather than re-testing `status === 401` and painting an accepted
@@ -682,6 +751,7 @@ export {
 export {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  isDynamicClientRegistrationHttpError,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export type {
   DynamicClientRegistrationCredentials,
@@ -814,15 +884,35 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
+  MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
 } from "./mcp-conformance/types.js";
-export type { MCPCheckEra, MCPCheckId } from "./mcp-conformance/types.js";
+export type {
+  MCPCheckEra,
+  MCPCheckId,
+  MCPLogLevel,
+  MCPReadinessId,
+} from "./mcp-conformance/types.js";
 export { MCP_APPS_CHECK_IDS } from "./apps-conformance/types.js";
 export type { MCPAppsCheckId } from "./apps-conformance/types.js";
-export { MCP_TASKS_CHECK_IDS } from "./tasks-conformance/types.js";
-export type { MCPTasksCheckId } from "./tasks-conformance/types.js";
-export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/types.js";
-export type { OAuthConformanceCheckId } from "./oauth-conformance/types.js";
+export {
+  MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
+} from "./tasks-conformance/types.js";
+export type {
+  MCPTasksCheckId,
+  MCPTasksReadinessId,
+} from "./tasks-conformance/types.js";
+export {
+  CONFORMANCE_CHECK_METADATA,
+  MCP_OAUTH_READINESS_IDS,
+} from "./oauth-conformance/types.js";
+export type {
+  MCPOAuthReadinessId,
+  OAuthConformanceCheckId,
+} from "./oauth-conformance/types.js";
 
 // The shared verdict vocabulary and the score built on it. Both are pure data
 // reasoning (no MCP client, no transport, no Node built-ins) — the score's
@@ -834,6 +924,12 @@ export {
   isUnrunCheck,
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
+export { isTimedOutCheck } from "./conformance-timeout.js";
+export {
+  isMissingInputCheck,
+  missingInputMessage,
+  noTaskCreatedMessage,
+} from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -843,6 +939,7 @@ export {
   computeConformanceScore,
   describeConformanceScore,
   pooledConformanceScore,
+  scorableOAuthIds,
   scoreFromAppsResult,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
@@ -894,9 +991,27 @@ export {
 export {
   APPS_CHECK_CATALOG,
   PROTOCOL_CHECK_CATALOG,
+  OAUTH_READINESS_CATALOG,
+  READINESS_CATALOG,
   TASKS_CHECK_CATALOG,
+  TASKS_READINESS_CATALOG,
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
+
+// The spec section each check tests, per protocol era, so a row can link to
+// the requirement it is graded against.
+export {
+  APPS_CHECK_SOURCES,
+  CONFORMANCE_CHECK_SOURCES,
+  OAUTH_CHECK_SOURCES,
+  PROTOCOL_CHECK_SOURCES,
+  TASKS_CHECK_SOURCES,
+  conformanceCheckSourceUrl,
+} from "./conformance-sources.js";
+export type {
+  ConformanceCheckSource,
+  ConformanceSourcedCheckId,
+} from "./conformance-sources.js";
 
 export {
   buildConformanceRunReport,
@@ -1027,6 +1142,12 @@ export type {
   PaginationTraversalMode,
   MrtrSupport,
 } from "./host-config/index.js";
+
+// Reviewed canonical ↔ native model ids (also at `@mcpjam/sdk/model-factory`).
+// Pure and browser-safe: the Inspector client canonicalizes picker rows with
+// the same rows the SDK sends.
+export { ANTHROPIC_NATIVE_MODEL_IDS } from "./model-native-ids.js";
+export type { NativeModelIdMapping } from "./model-native-ids.js";
 
 // Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
 // browser-safe.
@@ -1162,6 +1283,32 @@ export type {
   TaskSurface,
 } from "./host-config/tasks-policy.js";
 
+// A host's MCP Events support (`com.mcpjam/events`, MCPJam policy, never
+// advertised) and the modes a subscription may use. Browser-safe.
+export {
+  MCPJAM_EVENTS_EXTENSION_ID,
+  EVENT_DELIVERY_MODES,
+  HOST_STYLE_EVENT_DELIVERY_MODES,
+  RUNTIME_EVENT_DELIVERY_MODES,
+  isEventDeliveryMode,
+  readEventsHostSetting,
+  hostStyleEventDeliveryModes,
+  resolveHostEventDeliveryModes,
+  setEventsHostSetting,
+  clearEventsHostSetting,
+  subscribableModes,
+  describeModeRefusal,
+  describeNoSubscribableMode,
+} from "./host-config/events-support.js";
+export type {
+  EventDeliveryMode,
+  EventsRuntime,
+  EventsSupportHost,
+  EventsHostSetting,
+  EventModeRefusal,
+  SubscribableModes,
+} from "./host-config/events-support.js";
+
 // Skills over MCP (SEP-2640) — the browser-safe halves only. The dispatch
 // gate is pure predicates over capability objects, and the integrity helpers
 // are WebCrypto-backed by construction (never `node:crypto`), so the Skills
@@ -1212,3 +1359,26 @@ export type {
 export { modelRejectsTemperature } from "./model-sampling-support.js";
 
 export { aiRequestHeaders } from "./ai-request-headers.js";
+
+/** Use the same validation before rendering embedded Task or MRTR input. */
+export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";
+export {
+  RENAMED_MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_TOOL_CHECK_IDS,
+  isTasksToolCheck,
+} from "./tasks-conformance/types.js";
+export type {
+  MCPTasksToolCheckId,
+  MCPTasksToolSetup,
+  MCPTasksCheckOverrides,
+  MCPTasksRunOptions,
+} from "./tasks-conformance/types.js";
+export {
+  planTasksConformance,
+  validateTaskOverrides,
+} from "./tasks-conformance/plan.js";
+export type { MCPTasksRunGroup } from "./tasks-conformance/plan.js";
+export {
+  mergeTasksConformanceResults,
+  taskGroupFailure,
+} from "./tasks-conformance/report.js";

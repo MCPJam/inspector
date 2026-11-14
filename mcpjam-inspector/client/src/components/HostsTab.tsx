@@ -23,6 +23,8 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
+import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
+import { needsOrgModelMessage } from "@/lib/org-bound-template-seed";
 import { DEFAULT_CATALOG_HOST_ID } from "@/lib/host-ui-metadata";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
@@ -73,6 +75,7 @@ export function HostsTab({
 }: HostsTabProps) {
   const navigate = useAppNavigate();
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
+  const orgSeed = useOrgBoundTemplateSeed(projectId);
   const { hosts, isLoading: isHostListLoading } = useHostList({
     isAuthenticated,
     projectId,
@@ -279,14 +282,28 @@ export function HostsTab({
             `Unknown template "${templateId}". Use a catalog template id (e.g. 'claude', 'cursor', 'mcpjam').`,
           );
         }
+        if (!orgSeed.ready) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            "The organization's model settings are still loading. Try again in a moment.",
+          );
+        }
         // The SAME seed the New Client dialog uses; new hosts start with no
         // attached servers (attach afterward with ui_set_host_servers).
-        const seed = cloneHostTemplateInput(templateInput, { themeMode });
+        const bound = orgSeed.bind(
+          cloneHostTemplateInput(templateInput, { themeMode }),
+        );
+        if (bound.kind === "needs_model") {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            needsOrgModelMessage(name, false),
+          );
+        }
         try {
           const { hostId } = await createHost({
             projectId: pid,
             name,
-            input: { ...seed, serverIds: [] },
+            input: { ...bound.input, serverIds: [] },
             applyDefaultSystemPrompt: true,
           });
           setPreviewedHostId(hostId);
@@ -296,7 +313,9 @@ export function HostsTab({
             hostId,
             name,
             template: templateId,
-            note: "The new host's editor is open. Change its model or behavior there; attach servers with ui_set_host_servers.",
+            note: bound.kind === "needs_choice"
+              ? "The client editor is open. Choose an organization model in the Agent tab before running it."
+              : "The new host's editor is open. Change its model or behavior there; attach servers with ui_set_host_servers.",
           };
         } catch (e) {
           throw createInspectorCommandClientError(

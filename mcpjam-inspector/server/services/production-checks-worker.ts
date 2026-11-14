@@ -44,6 +44,7 @@ import type { Predicate } from "@/shared/eval-matching";
 import type { RunnerWidgetRenderObservation } from "@/shared/eval-trace";
 import { extractToolCallsFromEnvelopeMessages } from "./checks/chat-session-envelope.js";
 import { getServiceCredential } from "./service-credential.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -366,7 +367,7 @@ export function startProductionChecksWorker(options?: {
           // A stale trigger was consumed; live work may be queued behind it.
           waitMs = 250;
         } else if (outcome.kind === "claimed") {
-          await execute(outcome.claim);
+          await serverDrain.track("claimed_job", execute(outcome.claim));
           // Drain mode: an idle scenario enqueues sessions in a burst.
           waitMs = 1_000;
         }

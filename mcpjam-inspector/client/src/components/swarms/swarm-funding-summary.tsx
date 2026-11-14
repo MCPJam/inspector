@@ -1,3 +1,4 @@
+import { useUnlimitedCredits } from "@/hooks/useCreditBalance";
 import type { SwarmFundingPreviewState } from "@/hooks/use-swarm-funding-preview";
 import {
   creditFundingExplanation,
@@ -30,6 +31,7 @@ export function SwarmFundingSummary({
   /** Set when a launch stopped for review or a 409 moved the split. */
   notice: string | null;
 }) {
+  const unlimited = useUnlimitedCredits();
   const split =
     state.status === "ready"
       ? fundingSplitOf(state.preview, requestedRuns)
@@ -40,6 +42,7 @@ export function SwarmFundingSummary({
       ? creditFundingExplanation(state.preview, split)
       : null;
 
+  if (unlimited) return null;
   return (
     <div
       className="flex flex-col gap-1.5 rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm"

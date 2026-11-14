@@ -21,6 +21,7 @@ import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
  * the `useComputerEngine` config fetch (it would perturb every chat surface).
  */
 const mockState = vi.hoisted(() => ({
+  hostedMode: false,
   chatOnData: null as ((part: unknown) => void) | null,
   chatOnToolCall: null as
     | ((options: { toolCall: unknown }) => void | Promise<void>)
@@ -73,7 +74,9 @@ vi.mock("@/state/oauth-orchestrator", () => ({
   applyToolCallStepUp: vi.fn(),
 }));
 vi.mock("@/lib/config", () => ({
-  HOSTED_MODE: false,
+  get HOSTED_MODE() {
+    return mockState.hostedMode;
+  },
 }));
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [byokModel]),
@@ -220,6 +223,7 @@ describe("useChatSession — local computer engine transmission", () => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     localStorage.clear();
+    mockState.hostedMode = false;
     mockState.chatOnData = null;
     mockState.chatOnToolCall = null;
     mockState.transportOptions = [];
@@ -281,11 +285,15 @@ describe("useChatSession — local computer engine transmission", () => {
     expect(JSON.stringify(body)).not.toContain("browser-capability");
   });
 
-  it("environment transport never carries local Browser credentials", async () => {
+  it("a hosted environment turn never carries local Browser credentials", async () => {
+    // A local build sends environment turns to its own endpoint, which runs
+    // them on this machine. Only a hosted build must never offer the machine.
+    mockState.hostedMode = true;
     await renderWithEngine(
       undefined,
       {
         projectId: "p",
+        selectedServerIds: ["server-1-id"],
         requiresWebChatApi: true,
         executionTarget: { kind: "environment", environmentId: "env-1" },
       },
@@ -364,13 +372,17 @@ describe("useChatSession — local computer engine transmission", () => {
     expect(headers[LOCAL_CONSENT_HEADER]).toBeUndefined();
   });
 
-  it("never sends the local engine when the turn routes to the org-aware web API", async () => {
-    // The local engine only exists on the local /api/mcp path. A turn forced
-    // to /api/web/chat-v2 (environment mode, a hidden environment) must NOT
-    // carry the field or leak the consent header onto the web route.
+  it("never sends the local engine from a hosted build", async () => {
+    // Only a hosted build routes to /api/web/chat-v2. It must NOT carry the
+    // field or leak the consent header, even for a member with a token.
+    mockState.hostedMode = true;
     await renderWithEngine(
       { engine: "local", consentToken: "cap-token-123" },
-      { projectId: "proj-1", requiresWebChatApi: true },
+      {
+        projectId: "proj-1",
+        selectedServerIds: ["server-1-id"],
+        requiresWebChatApi: true,
+      },
       { selectionIntent: "inherit" },
     );
     const { body, headers } = lastTransport();
@@ -381,7 +393,12 @@ describe("useChatSession — local computer engine transmission", () => {
   it("never sends the local engine on a scenario (share-link) session", async () => {
     await renderWithEngine(
       { engine: "local", consentToken: "cap-token-123" },
-      { projectId: "proj-1", scenarioId: "cbx-1", accessVersion: 1 },
+      {
+        projectId: "proj-1",
+        selectedServerIds: ["server-1-id"],
+        scenarioId: "cbx-1",
+        accessVersion: 1,
+      },
     );
     const { body, headers } = lastTransport();
     expect(body.computerEngine).toBeUndefined();

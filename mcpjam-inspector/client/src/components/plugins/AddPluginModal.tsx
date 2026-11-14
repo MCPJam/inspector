@@ -294,7 +294,9 @@ export function AddPluginModal({
       // minting an upload URL.
       assertPluginBundleWithinCap(file);
       const zipBytes = await readSelectedFileBytes(file);
-      const parsed = await parsePluginBundleFromZip(zipBytes);
+      const parsed = await parsePluginBundleFromZip(zipBytes, {
+        profile: "openai-compatible",
+      });
       if (runRef.current !== run) return;
       setSelected({
         kind: "zip",
@@ -327,7 +329,9 @@ export function AddPluginModal({
       //
       // Validates AND builds the uploadable ZIP from exactly the entries the
       // parser judged, so the backend inspects the same facts.
-      const { parsed, zipBytes } = await folderSelectionToPluginZip(files);
+      const { parsed, zipBytes } = await folderSelectionToPluginZip(files, {
+        profile: "openai-compatible",
+      });
       if (runRef.current !== run) return;
       const rootName =
         (files[0] as { webkitRelativePath?: string })?.webkitRelativePath?.split(

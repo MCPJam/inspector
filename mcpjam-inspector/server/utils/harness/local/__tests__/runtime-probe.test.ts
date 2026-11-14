@@ -57,6 +57,24 @@ async function claudePack(name: string, opts: { sdk?: boolean; cli?: string } = 
   return root;
 }
 
+async function copilotPack(name: string, opts: { sdk?: boolean } = {}): Promise<string> {
+  const root = await packWithNode(name, "copilot-cli");
+  const cli = join(root, "node_modules", "@github", "copilot");
+  await mkdir(cli, { recursive: true });
+  await writeFile(join(cli, "package.json"), JSON.stringify({ name: "@github/copilot", version: "1.0.92" }));
+  await writeFile(join(cli, "npm-loader.js"), 'console.log("1.0.92");\n');
+  if (opts.sdk !== false) {
+    const sdk = join(root, "node_modules", "@github", "copilot-sdk");
+    await mkdir(sdk, { recursive: true });
+    await writeFile(
+      join(sdk, "package.json"),
+      JSON.stringify({ name: "@github/copilot-sdk", version: "1.0.11", type: "module", exports: { ".": "./sdk.mjs" } }),
+    );
+    await writeFile(join(sdk, "sdk.mjs"), "export class CopilotClient {}\n");
+  }
+  return root;
+}
+
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-probe-test-")));
 });
@@ -64,7 +82,7 @@ afterAll(async () => {
   await removeTestTree(base);
 });
 
-const probe = (harnessId: "claude-code" | "codex", packRoot: string) =>
+const probe = (harnessId: "claude-code" | "codex" | "copilot-cli", packRoot: string) =>
   probeRuntimeCandidate({ harnessId, packRoot, platform: process.platform as "linux", target: TARGET, layerRuntimeRoot: join(base, "runtime") });
 
 describe.skipIf(!POSIX)("the candidate startup probe", () => {
@@ -88,6 +106,19 @@ describe.skipIf(!POSIX)("the candidate startup probe", () => {
 
   it("passes a Codex pack whose codex.js reports the version it carries", async () => {
     expect(await probe("codex", await codexPack("good-codex"))).toEqual({ ok: true, node: process.version, vendorVersion: "0.42.0" });
+  });
+
+  it("passes a Copilot pack whose SDK the layer resolves and whose CLI answers", async () => {
+    expect(await probe("copilot-cli", await copilotPack("good-copilot"))).toEqual({
+      ok: true,
+      node: process.version,
+      vendorVersion: "1.0.92",
+    });
+  });
+
+  it("fails a Copilot pack whose SDK the layer cannot reach", async () => {
+    const result = await probe("copilot-cli", await copilotPack("no-copilot-sdk", { sdk: false }));
+    expect(result).toMatchObject({ ok: false, message: expect.stringMatching(/did not start on the candidate pack/) });
   });
 
   it("fails a Codex pack whose CLI reports another version, or has no codex.js", async () => {

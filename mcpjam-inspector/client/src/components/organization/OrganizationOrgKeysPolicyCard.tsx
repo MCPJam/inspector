@@ -1,4 +1,10 @@
 import { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
 import { Card, CardContent, CardHeader } from "@mcpjam/design-system/card";
 import {
   Alert,
@@ -67,7 +73,7 @@ export function OrganizationOrgKeysPolicyCard({
   // that left Enterprise must still be able to turn it off.
   const enterpriseLocked = configReady && !config.canEnable && !requireOrgKeys;
   const leftEnterprise = configReady && !config.canEnable && requireOrgKeys;
-  const disabled = !canManage || isSaving || !configReady || enterpriseLocked;
+  const disabled = !canManage || isSaving || !configReady || enterpriseLocked || config?.contractKeysRequired === true;
   const showConfirmOff = confirmingOff && requireOrgKeys && canManage;
 
   const turnOff = () => {
@@ -115,10 +121,13 @@ export function OrganizationOrgKeysPolicyCard({
                 </Badge>
               ) : null}
             </div>
-            <p className="text-xs text-muted-foreground">
-              AI requests must use an approved organization provider.
-              MCPJam-provided models are disabled. Features without a compatible
-              provider are unavailable.
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="org-ai-keys-description"
+            >
+              {requireOrgKeys
+                ? "AI requests must use an approved organization provider. MCPJam-provided models are disabled. Features without a compatible provider are unavailable."
+                : "When on, AI requests must use an approved organization provider and MCPJam-provided models are disabled."}
             </p>
           </div>
           {configReady ? (
@@ -158,6 +167,7 @@ export function OrganizationOrgKeysPolicyCard({
           </p>
         ) : null}
 
+        {config?.contractKeysRequired ? <p className="text-sm text-muted-foreground">Your contract requires organization keys. Contact support to change this policy.</p> : null}
         {enterpriseLocked ? (
           <div
             className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"
@@ -243,8 +253,8 @@ export function OrganizationOrgKeysPolicyCard({
             className="text-xs text-muted-foreground"
             data-testid="org-ai-keys-off-summary"
           >
-            MCPJam-provided models are used where you haven&apos;t chosen an
-            organization model.
+            Now off: MCPJam-provided models are used where you haven&apos;t
+            chosen an organization model.
           </p>
         ) : null}
 
@@ -263,7 +273,7 @@ export function OrganizationOrgKeysPolicyCard({
                 data-testid="org-ai-keys-no-eligible-provider"
               >
                 {canManage
-                  ? "No eligible organization provider is configured yet. Add a direct cloud provider below; OpenRouter and local providers don't qualify."
+                  ? "No eligible organization provider is configured yet. Add a direct cloud provider in Providers; OpenRouter and local providers don't qualify."
                   : "No eligible organization provider is configured yet. Ask an organization admin to add one."}
               </p>
             ) : null}
@@ -291,79 +301,81 @@ function FeatureCoverage({
   eligibleConnectionIds?: string[];
   canManage: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   if (features.length === 0) return null;
   const operationById = new Map(operations.map((op) => [op.operation, op]));
 
   return (
-    <section
-      aria-labelledby="org-ai-feature-coverage-heading"
-      className="space-y-2 pt-1"
-    >
-      <h3
-        id="org-ai-feature-coverage-heading"
-        className="text-xs font-medium text-muted-foreground"
-      >
-        Feature coverage
-      </h3>
-      <ul className="space-y-1">
-        {orderedFeatures(features).map((feature) => {
-          const { label, tone } = statusPresentation(feature.status);
-          const guidance = featureGuidance(feature, {
-            eligibleConnectionIds,
-            operations,
-            canManage,
-          });
-          // A blocked feature lists what blocks it (never itself); what
-          // would merely narrow it is noise until it runs at all.
-          const blockedBy = blockedBySentence(listedBlockers(feature));
-          const degradedBy =
-            feature.status === "ready" ? (feature.degradedBy ?? []) : [];
-          return (
-            <li
-              key={feature.id}
-              className="space-y-1 rounded-md border border-border/40 px-3 py-2.5"
-              data-testid={`org-ai-feature-${feature.id}`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">
-                  {featureLabel(feature)}
-                </span>
-                <Badge
-                  variant="outline"
-                  className={cn(STATUS_TONE_CLASSES[tone])}
-                  data-testid={`org-ai-feature-status-${feature.id}`}
-                >
-                  {label}
-                </Badge>
-              </div>
-              {guidance ? (
-                <p className="text-xs text-muted-foreground">{guidance}</p>
-              ) : null}
-              {blockedBy ? (
-                <p className="text-xs text-muted-foreground">{blockedBy}</p>
-              ) : null}
-              {degradedBy.map((op) => {
-                const readiness = operationById.get(op);
-                // "until the default model is set" only when it isn't set.
-                const modelFix = operationModelFix(
-                  readiness,
-                  eligibleConnectionIds,
-                );
-                return (
-                  <p key={op} className="text-xs text-muted-foreground">
-                    {degradationSentence(
-                      feature.id,
-                      op,
-                      readiness?.status,
-                      modelFix?.reason === "unset" ? modelFix.kind : undefined,
-                    )}
-                  </p>
-                );
-              })}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <Collapsible open={open} onOpenChange={setOpen} className="space-y-2 pt-1">
+      <CollapsibleTrigger asChild>
+        <Button variant="ghost" size="sm" className="w-full justify-between">
+          Feature coverage
+          <ChevronDown
+            className={cn("size-4 transition-transform", open && "rotate-180")}
+          />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ul className="space-y-1">
+          {orderedFeatures(features).map((feature) => {
+            const { label, tone } = statusPresentation(feature.status);
+            const guidance = featureGuidance(feature, {
+              eligibleConnectionIds,
+              operations,
+              canManage,
+            });
+            // A blocked feature lists what blocks it (never itself); what
+            // would merely narrow it is noise until it runs at all.
+            const blockedBy = blockedBySentence(listedBlockers(feature));
+            const degradedBy =
+              feature.status === "ready" ? (feature.degradedBy ?? []) : [];
+            return (
+              <li
+                key={feature.id}
+                className="space-y-1 rounded-md border border-border/40 px-3 py-2.5"
+                data-testid={`org-ai-feature-${feature.id}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium">
+                    {featureLabel(feature)}
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={cn(STATUS_TONE_CLASSES[tone])}
+                    data-testid={`org-ai-feature-status-${feature.id}`}
+                  >
+                    {label}
+                  </Badge>
+                </div>
+                {guidance ? (
+                  <p className="text-xs text-muted-foreground">{guidance}</p>
+                ) : null}
+                {blockedBy ? (
+                  <p className="text-xs text-muted-foreground">{blockedBy}</p>
+                ) : null}
+                {degradedBy.map((op) => {
+                  const readiness = operationById.get(op);
+                  // "until the default model is set" only when it isn't set.
+                  const modelFix = operationModelFix(
+                    readiness,
+                    eligibleConnectionIds,
+                  );
+                  return (
+                    <p key={op} className="text-xs text-muted-foreground">
+                      {degradationSentence(
+                        feature.id,
+                        op,
+                        readiness?.status,
+                        modelFix?.reason === "unset" ? modelFix.kind : undefined,
+                      )}
+                    </p>
+                  );
+                })}
+              </li>
+            );
+          })}
+        </ul>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

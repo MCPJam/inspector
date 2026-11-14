@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { ThinkingIndicator } from "../shared/thinking-indicator";
 import type { ModelDefinition } from "@/shared/types";
@@ -47,6 +47,56 @@ describe("ThinkingIndicator", () => {
         {ui}
       </PreferencesStoreProvider>,
     );
+
+  const renderUnmapped = (startupPhase: "agent" | "computer" | null) => (
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      <ThinkingIndicator model={unmappedProviderModel} startupPhase={startupPhase} />
+    </PreferencesStoreProvider>
+  );
+
+  it("shows a startup phase immediately and returns to thinking when it clears", () => {
+    vi.useFakeTimers();
+    try {
+      const view = renderThinkingIndicator(
+        <ThinkingIndicator model={unmappedProviderModel} startupPhase="agent" />,
+      );
+      expect(screen.getByText("Starting your agent…")).toBeInTheDocument();
+      expect(screen.queryByText(/Thinking/)).not.toBeInTheDocument();
+
+      view.rerender(renderUnmapped("computer"));
+      expect(screen.getByText("Starting your agent…")).toBeInTheDocument();
+      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(499));
+      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1));
+      expect(screen.getByText("Starting your computer…")).toBeInTheDocument();
+      expect(screen.queryByText("Starting your agent…")).not.toBeInTheDocument();
+
+      view.rerender(renderUnmapped(null));
+      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
+      expect(screen.getByText(/Thinking/)).toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not flash a startup phase that ends before it replaces the current line", () => {
+    vi.useFakeTimers();
+    try {
+      const view = renderThinkingIndicator(
+        <ThinkingIndicator model={unmappedProviderModel} startupPhase="agent" />,
+      );
+      view.rerender(renderUnmapped("computer"));
+      act(() => vi.advanceTimersByTime(200));
+      view.rerender(renderUnmapped(null));
+      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
+      expect(screen.getByText(/Thinking/)).toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("renders a leading assistant avatar outside host-style contexts", () => {
     renderThinkingIndicator(<ThinkingIndicator model={openaiModel} />);

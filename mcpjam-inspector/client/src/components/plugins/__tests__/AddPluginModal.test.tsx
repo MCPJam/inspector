@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   commitImport: vi.fn(),
   track: vi.fn(),
   parseZip: vi.fn(),
+  parseFolder: vi.fn(),
   readBytes: vi.fn(),
   /** Every id the modal actually subscribed with, in order. */
   usedImportIds: [] as Array<string | null | undefined>,
@@ -48,7 +49,7 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
 }));
 vi.mock("@/lib/plugins/folder-bundle", () => ({
   parsePluginBundleFromZip: h.parseZip,
-  folderSelectionToPluginZip: vi.fn(),
+  folderSelectionToPluginZip: h.parseFolder,
   readSelectedFileBytes: h.readBytes,
 }));
 
@@ -148,6 +149,37 @@ beforeEach(() => {
     importId: "imp_1",
     status: "completed",
     pluginVersionId: "pv_1",
+  });
+});
+
+describe("AddPluginModal — OpenAI bundle interpretation", () => {
+  it("selects the compatible profile for ZIP imports", async () => {
+    await reachPreview();
+    expect(h.parseZip).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), {
+      profile: "openai-compatible",
+    });
+  });
+
+  it("uses the same profile for folder imports", async () => {
+    h.parseFolder.mockResolvedValue({
+      parsed: {
+        manifest: { name: "demo" },
+        bundleHash: "aa11bb22cc33dd44",
+        warnings: [],
+      },
+      zipBytes: new Uint8Array([1, 2, 3]),
+    });
+    render(<AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />);
+    const file = new File(["{}"], "plugin.json");
+    const input = document.querySelector("input[webkitdirectory]");
+    expect(input).not.toBeNull();
+    await act(async () => {
+      fireEvent.change(input!, { target: { files: [file] } });
+    });
+    await screen.findByTestId("add-plugin-selected-source");
+    expect(h.parseFolder).toHaveBeenCalledWith([file], {
+      profile: "openai-compatible",
+    });
   });
 });
 

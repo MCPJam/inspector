@@ -543,71 +543,38 @@ describe("useServerDirectory — pending marker rollback", () => {
 });
 
 describe("useServerDirectory — the source facet", () => {
-  it("opens on the Claude directory, the daily and reliable one", () => {
+  it("opens on the Claude directory", () => {
     const { result } = renderDirectory();
     expect(result.current.source).toBe("anthropic-directory");
     expect(result.current.hasTiers).toBe(true);
   });
 
-  it("switching source re-scopes the query", async () => {
+  it("a source we no longer browse still queries Claude", () => {
     const { result } = renderDirectory();
-    act(() => result.current.setSource("chatgpt-directory"));
-    await waitFor(() => {
-      expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
-        "serverCatalogQueries:searchCatalogServers",
-        { source: "chatgpt-directory" },
-        expect.anything()
-      );
-    });
+    act(() =>
+      result.current.setSource(
+        "chatgpt-directory" as typeof result.current.source
+      )
+    );
+    expect(result.current.source).toBe("anthropic-directory");
+    expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
+      "serverCatalogQueries:searchCatalogServers",
+      { source: "anthropic-directory" },
+      expect.anything()
+    );
   });
 
-  it("switching to a source without tiers CLEARS the tier", async () => {
-    // A tier that survived the switch would silently narrow a catalog that
-    // publishes no tiers at all — i.e. empty it, with a filter the UI is no
-    // longer even showing.
-    const { result } = renderDirectory();
-    act(() => result.current.setTier("partner"));
-    act(() => result.current.setSource("chatgpt-directory"));
-
-    expect(result.current.tier).toBe("all");
-    expect(result.current.hasTiers).toBe(false);
-    await waitFor(() => {
-      expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
-        "serverCatalogQueries:searchCatalogServers",
-        { source: "chatgpt-directory" },
-        expect.anything()
-      );
-    });
-  });
-
-  it("never sends a tier the current source does not publish", async () => {
-    const { result } = renderDirectory();
-    act(() => result.current.setSource("chatgpt-directory"));
-    act(() => result.current.setTier("partner"));
-    await waitFor(() => {
-      expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
-        "serverCatalogQueries:searchCatalogServers",
-        { source: "chatgpt-directory" },
-        expect.anything()
-      );
-    });
-  });
-
-  it("reports how fresh the SELECTED source is", () => {
+  it("reports the scrape time, not the ingest time", () => {
+    // Uploading a Tuesday sweep on Friday makes the catalog Tuesday-fresh.
+    // Saying "Friday" would overstate it by three days.
     mockUseQuery.mockImplementation((name: string) =>
       name === "serverCatalogQueries:getCatalogSourceStatus"
         ? [
             {
               source: "anthropic-directory",
-              lastSyncedAt: 1_000,
-              liveCount: 2000,
-              upstreamFetchedAt: null,
-            },
-            {
-              source: "chatgpt-directory",
               lastSyncedAt: 9_000,
-              liveCount: 2900,
-              upstreamFetchedAt: 8_000,
+              liveCount: 2000,
+              upstreamFetchedAt: 1_000,
             },
           ]
         : []
@@ -615,12 +582,6 @@ describe("useServerDirectory — the source facet", () => {
 
     const { result } = renderDirectory();
     expect(result.current.lastSyncedAt).toBe(1_000);
-
-    act(() => result.current.setSource("chatgpt-directory"));
-    // The SCRAPE time, not the ingest time: uploading a Tuesday sweep on
-    // Friday makes the catalog Tuesday-fresh, and saying "Friday" would
-    // overstate it by three days.
-    expect(result.current.lastSyncedAt).toBe(8_000);
   });
 
   it("connectable-only asks the backend, and does NOT narrow to `fixed`", async () => {
@@ -694,9 +655,8 @@ describe("useServerDirectory — the source facet", () => {
     expect(result.current.connectableOnly).toBe(false);
   });
 
-  it("sourceHasTiers is what the UI hides the filter on", () => {
+  it("the Claude directory publishes verification tiers", () => {
     expect(sourceHasTiers("anthropic-directory")).toBe(true);
-    expect(sourceHasTiers("chatgpt-directory")).toBe(false);
   });
 });
 

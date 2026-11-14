@@ -184,6 +184,12 @@ describe("buildAppAtlas", () => {
     }
   });
 
+  it("leaves the flag-gated Readiness page out", () => {
+    // The atlas cannot read the flag, and the page redirects without it.
+    expect(buildAppAtlas()).not.toContain("### Readiness");
+    expect(buildAppAtlas()).not.toContain("(readiness)");
+  });
+
   it("omits hosted-blocked surfaces when built for a hosted deployment", () => {
     // Handing the model a map to a door that's locked wastes a turn on an
     // error it can't act on.

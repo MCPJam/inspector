@@ -10,6 +10,8 @@ import {
 import {
   createAppToolsRegistry,
   createAppToolInvocationLog,
+  useAppToolsRegistryApi,
+  useAppToolInvocationLogApi,
 } from "./app-tools-registry";
 import {
   createWidgetSurfaceStore,
@@ -28,15 +30,25 @@ import {
 export function WidgetWorkspaceProvider({
   workspaceId,
   children,
+  inheritAppTools = false,
 }: {
   workspaceId: string;
   children: ReactNode;
+  /** Share model tools with the surrounding chat, while retaining owned surfaces. */
+  inheritAppTools?: boolean;
 }) {
+  const parentRegistry = useAppToolsRegistryApi();
+  const parentInvocations = useAppToolInvocationLogApi();
   const [value] = useState(() => ({
     workspaceId,
     surfaces: createWidgetSurfaceStore({ retainInstances: true }),
-    registry: createAppToolsRegistry({ maxInstances: 64 }),
-    invocations: createAppToolInvocationLog(),
+    ownsAppTools: !inheritAppTools,
+    registry: inheritAppTools
+      ? parentRegistry
+      : createAppToolsRegistry({ maxInstances: 64 }),
+    invocations: inheritAppTools
+      ? parentInvocations
+      : createAppToolInvocationLog(),
   }));
   if (value.workspaceId !== workspaceId)
     throw new Error(
@@ -46,18 +58,30 @@ export function WidgetWorkspaceProvider({
   useEffect(() => {
     if (cleanupTimer.current !== null) clearTimeout(cleanupTimer.current);
     cleanupTimer.current = null;
-    value.registry.getState().setEnabled(true);
-    value.invocations.getState().setEnabled(true);
+    if (value.ownsAppTools) {
+      value.registry.getState().setEnabled(true);
+      value.invocations.getState().setEnabled(true);
+    }
     value.surfaces.getState().setEnabled(true);
     return () => {
-      // Admission and cancellation stop synchronously, even before final cleanup.
-      value.registry.getState().setEnabled(false);
-      value.invocations.getState().setEnabled(false);
+      // Owned admission stops synchronously; a shared registry still serves siblings.
+      if (value.ownsAppTools) {
+        value.registry.getState().setEnabled(false);
+        value.invocations.getState().setEnabled(false);
+      }
       value.surfaces.getState().setEnabled(false);
       // React's development effect replay immediately reattaches this owner.
       cleanupTimer.current = setTimeout(() => {
-        value.registry.getState().dispose();
-        value.invocations.getState().dispose();
+        if (value.ownsAppTools) {
+          value.registry.getState().dispose();
+          value.invocations.getState().dispose();
+        } else {
+          for (const instance of value.registry
+            .getState()
+            .instancesByBridgeId.values())
+            if (instance.chatSessionId === value.workspaceId)
+              value.registry.getState().unregisterInstance(instance.bridgeId);
+        }
         value.surfaces.getState().dispose();
       }, 0);
     };

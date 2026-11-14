@@ -1,3 +1,4 @@
+import { PLUGIN_FILE_MAX_BYTES } from "../../../shared/plugin-file-transfer.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { constants, watch } from "node:fs";
 import { lstat, realpath, open, rename, unlink } from "node:fs/promises";
@@ -139,7 +140,7 @@ const digest = (bytes: Uint8Array) =>
 /** CAS is guaranteed among writers honoring the explicit exclusive-root contract. */
 export function createLocalFileTargetAdapter(
   target: LocalFileTarget,
-  maxBytes = 1024 * 1024,
+  maxBytes = PLUGIN_FILE_MAX_BYTES,
 ): BoundResourceAdapter {
   const absolute = path.join(target.root, target.relativePath);
   const validate = async () => {
@@ -152,8 +153,10 @@ export function createLocalFileTargetAdapter(
         throw new ResourceGrantError("RESOURCE_DENIED");
     }
     const stat = await lstat(absolute);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size > maxBytes)
+    if (!stat.isFile() || stat.nlink !== 1)
       throw new ResourceGrantError("RESOURCE_DENIED");
+    if (stat.size > maxBytes)
+      throw new ResourceGrantError("RESOURCE_TOO_LARGE");
   };
   const read = async (key: string, signal: AbortSignal) => {
     if (key !== target.uri) throw new ResourceGrantError("RESOURCE_DENIED");
@@ -165,8 +168,10 @@ export function createLocalFileTargetAdapter(
     );
     try {
       const stat = await file.stat();
-      if (!stat.isFile() || stat.size > maxBytes || stat.nlink !== 1)
+      if (!stat.isFile() || stat.nlink !== 1)
         throw new ResourceGrantError("RESOURCE_DENIED");
+      if (stat.size > maxBytes)
+        throw new ResourceGrantError("RESOURCE_TOO_LARGE");
       const bytes = await file.readFile();
       if (bytes.length > maxBytes)
         throw new ResourceGrantError("RESOURCE_TOO_LARGE");
@@ -179,8 +184,10 @@ export function createLocalFileTargetAdapter(
   return {
     read,
     async conditionalWrite(key, bytes, ifMatch, signal) {
-      if (key !== target.uri || bytes.byteLength > maxBytes)
+      if (key !== target.uri)
         throw new ResourceGrantError("RESOURCE_DENIED");
+      if (bytes.byteLength > maxBytes)
+        throw new ResourceGrantError("RESOURCE_TOO_LARGE");
       await validate();
       const lockPath = path.join(
         path.dirname(absolute),

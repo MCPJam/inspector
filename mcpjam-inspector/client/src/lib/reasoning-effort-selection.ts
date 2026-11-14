@@ -23,6 +23,7 @@ import {
   selectionBesideLegacyId,
 } from "@/components/chat-v2/shared/model-selection";
 import { modelTarget, sameModelTarget } from "@/lib/model-target";
+import { orgCanonicalTarget } from "@/lib/org-keys-model-target";
 import type { ModelSelectionPurpose } from "@mcpjam/sdk/browser";
 
 /**
@@ -74,8 +75,8 @@ export type EffortCarryResult = {
  * Pick a new model for a saved config. The effort is kept only when the new
  * row lists it AND the row can be saved as a selection (an effort lives on the
  * selection); otherwise it is dropped and reported, never silently carried.
- * With no effort involved the legacy behaviour is unchanged: a selection is
- * stored only beside an unchanged row id.
+ * An explicit organization choice always carries its connection, including
+ * when no effort survives. The key policy only controls which rows are offered.
  */
 export function carryEffortToModel(args: {
   row: ModelDefinition;
@@ -85,7 +86,13 @@ export function carryEffortToModel(args: {
   selectionsSupported: boolean;
   harness?: Harness;
 }): EffortCarryResult {
-  const { row, previousEffort, purpose, selectionsSupported, harness } = args;
+  const {
+    row,
+    previousEffort,
+    purpose,
+    selectionsSupported,
+    harness,
+  } = args;
   const legacyId = String(row.id);
   if (!selectionsSupported) {
     return {
@@ -111,9 +118,10 @@ export function carryEffortToModel(args: {
       };
     }
   }
+  const org = orgCanonicalTarget(row, purpose);
   return {
-    modelId: legacyId,
-    selection: selectionBesideLegacyId(row, purpose),
+    modelId: org?.modelId ?? legacyId,
+    selection: org?.selection ?? selectionBesideLegacyId(row, purpose),
     ...(previousEffort ? { dropped: previousEffort } : {}),
   };
 }

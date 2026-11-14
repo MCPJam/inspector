@@ -109,6 +109,7 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
     systemPromptDefault: json.systemPromptDefault,
     temperature: json.temperature,
     requireToolApproval: json.requireToolApproval,
+    ...(json.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: json.requireNativeToolDiscovery } : {}),
     connectionDefaults: json.connectionDefaults,
     clientCapabilities: json.clientCapabilities,
     hostContext: json.hostContext,

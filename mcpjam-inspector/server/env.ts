@@ -2,7 +2,10 @@ import dotenv from "dotenv";
 import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
 import { tryGetGuestAuthority } from "./utils/guest-authority.js";
-import { logger as appLogger } from "./utils/logger.js";
+import { logger as appLogger, printForOperator } from "./utils/logger.js";
+import { telemetryOptedOut } from "../shared/sentry-identity.js";
+import { sandboxOriginOf } from "../shared/sandbox-origin.js";
+import { isPlatformAgentEnabled } from "./utils/platform-agent.js";
 
 export type InspectorEnvMode = "development" | "production";
 
@@ -18,6 +21,12 @@ export interface InspectorClientRuntimeConfig {
   convexSiteUrl?: string;
   workosClientId?: string;
   workosApiHostname?: string;
+  /** Present only under DO_NOT_TRACK: the browser then starts no Sentry and sends PostHog nothing. */
+  doNotTrack?: boolean;
+  /** `MCPJAM_SANDBOX_ORIGIN`; the browser prefers it to its build-time sandbox origin. */
+  sandboxOrigin?: string;
+  /** Present only under `MCPJAM_PLATFORM_AGENT=off`: the browser then hides the agent. */
+  platformAgentDisabled?: boolean;
 }
 
 function getInspectorEnvMode(): InspectorEnvMode {
@@ -144,6 +153,28 @@ function getNonEmptyEnv(name: string): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+/** The value last reported as invalid, so a bad one is logged once rather than per document. */
+let reportedSandboxOrigin: string | undefined;
+
+/**
+ * `MCPJAM_SANDBOX_ORIGIN` as the browser should use it: an http(s) origin,
+ * checked by the same rule the client applies to its build-time value. Served
+ * at runtime so one image can point every deployment at its own sandbox host.
+ */
+function getRuntimeSandboxOrigin(): string | undefined {
+  const raw = getNonEmptyEnv("MCPJAM_SANDBOX_ORIGIN");
+  if (!raw) return undefined;
+  const origin = sandboxOriginOf(raw);
+  if (!origin && reportedSandboxOrigin !== raw) {
+    reportedSandboxOrigin = raw;
+    const warning =
+      "[sandbox] MCPJAM_SANDBOX_ORIGIN is not an http(s) origin, so the browser uses its build-time sandbox origin instead. Set it to one like https://sandbox.example.com.";
+    appLogger.warn(warning);
+    printForOperator(warning);
+  }
+  return origin ?? undefined;
+}
+
 export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig {
   const convexSiteUrl =
     normalizeUrlOrigin(process.env.CONVEX_HTTP_URL) ??
@@ -187,6 +218,13 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
     convexSiteUrl,
     workosClientId,
     workosApiHostname,
+    // The server's opt-out reaches the browser here rather than as a build
+    // argument, so one image serves installs that opt out and ones that do not.
+    ...(telemetryOptedOut(process.env.DO_NOT_TRACK)
+      ? { doNotTrack: true }
+      : {}),
+    sandboxOrigin: getRuntimeSandboxOrigin(),
+    ...(isPlatformAgentEnabled() ? {} : { platformAgentDisabled: true }),
   };
 }
 

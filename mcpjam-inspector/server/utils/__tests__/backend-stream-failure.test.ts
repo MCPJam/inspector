@@ -104,6 +104,17 @@ describe("describeBackendStreamFailure", () => {
     },
   );
 
+  it("reads a 413 guest_input_too_large as the guest cap, not an MCPJam fault", () => {
+    const normalized = describeBackendStreamFailure(
+      413,
+      "Guest input is estimated at 57002 tokens, above the 32000 token limit. Disconnect servers, shorten the conversation, or sign in.",
+      "guest_input_too_large",
+    );
+
+    expect(normalized.slug).toBe("account/guest_input_too_large");
+    expect(originOf(normalized)).toBe("user_config");
+  });
+
   // The regression this change exists for. `categorizeError` in the backend
   // mirrors the UPSTREAM provider's status onto our own response, so MCPJam's
   // revoked managed key arrives as a 401 and MCPJam's own quota as a 429 —
@@ -442,6 +453,30 @@ describe("the organization AI-key policy's refusals", () => {
     // On the hosted route the code is not the org connection's.
     expect(
       describeBackendStreamFailure(422, "x", "credential_missing", {
+        endpointPath: "/stream",
+      }).slug,
+    ).not.toBe("org/credential_missing");
+  });
+
+  it("reads provider_not_configured on /stream/org as the org's missing credential", () => {
+    const onOrg = { endpointPath: "/stream/org" };
+    for (const normalized of [
+      describeBackendStreamFailure(422, "x", "provider_not_configured", onOrg),
+      describeStreamErrorChunkFailure(
+        422,
+        "x",
+        "provider_not_configured",
+        onOrg,
+      ),
+    ]) {
+      expect(normalized.slug).toBe("org/credential_missing");
+      expect(originOf(normalized)).toBe("user_config");
+    }
+    expect(isAiPolicyRecognizedDenialCode("provider_not_configured")).toBe(
+      true,
+    );
+    expect(
+      describeBackendStreamFailure(422, "x", "provider_not_configured", {
         endpointPath: "/stream",
       }).slug,
     ).not.toBe("org/credential_missing");

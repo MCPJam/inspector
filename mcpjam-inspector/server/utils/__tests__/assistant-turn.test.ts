@@ -410,7 +410,7 @@ describe("runAssistantTurn", () => {
           } as ModelDefinition,
           "cursor"
         )
-      ).rejects.toThrow(/chooses its own model/);
+      ).rejects.toThrow(/Cursor account/);
 
       // The load-bearing half: NEITHER engine ran. A resolved turn here is a
       // completed run that never touched Cursor — the emulated engine's only

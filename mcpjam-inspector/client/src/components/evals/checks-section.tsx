@@ -168,6 +168,9 @@ export interface ChecksSectionProps {
   showAllErrors?: boolean;
 }
 
+/** Set by {@link ToolCallArgsEditor}: the arguments are sent, not expected. */
+const ArgsToSendContext = createContext(false);
+
 /**
  * Where the raw-JSON editors report an unparsable draft, keyed by editor
  * instance rather than row index: a row deleted or reordered above unmounts
@@ -1838,6 +1841,46 @@ function ArgMatcherSubform({
   );
 }
 
+/** Arguments to CALL a tool with: {@link ArgMatcherSubform}'s editors, literal
+ *  values only, same Raw JSON switch. `onInvalidChange`: the raw text won't parse. */
+export function ToolCallArgsEditor({
+  value,
+  onChange,
+  argProperties,
+  onInvalidChange,
+}: {
+  value: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+  argProperties?: Record<string, any>;
+  onInvalidChange?: (invalid: boolean) => void;
+}) {
+  const rawId = useId();
+  const [useRaw, setUseRaw] = useState(() => !argsAreFlat(value));
+  const editor = { value, onChange, mode: "exact" as const, readOnly: false };
+  return (
+    <ArgsToSendContext.Provider value>
+      <CheckDraftBoundary onValidityChange={onInvalidChange}>
+        <div className="space-y-2">
+          <div className="flex items-center justify-end gap-2">
+            <Switch id={rawId} checked={useRaw} onCheckedChange={setUseRaw} />
+            <Label
+              htmlFor={rawId}
+              className="text-[11px] text-muted-foreground"
+            >
+              Raw JSON
+            </Label>
+          </div>
+          {useRaw ? (
+            <RawArgsJsonEditor {...editor} />
+          ) : (
+            <StructuredArgsEditor {...editor} argProperties={argProperties} />
+          )}
+        </div>
+      </CheckDraftBoundary>
+    </ArgsToSendContext.Provider>
+  );
+}
+
 /** Pick a fresh unique key. Don't collide with existing keys; numeric
  *  suffixes are an ergonomic default familiar from ExpectedToolsEditor. */
 function freshArgKey(args: Record<string, unknown>): string {
@@ -1872,6 +1915,7 @@ function StructuredArgsEditor({
 }) {
   // Stable ordering for the row list: insertion order via Object.entries.
   const entries = Object.entries(value);
+  const toSend = useContext(ArgsToSendContext);
 
   const setEntry = (oldKey: string, newKey: string, newValue: unknown) => {
     // Preserve insertion order when renaming a key; replace in place.
@@ -1894,7 +1938,9 @@ function StructuredArgsEditor({
   return (
     <div className="space-y-2">
       {entries.length === 0 ? (
-        paper ? null : (
+        // Arguments to send are optional, so an empty list needs no notice;
+        // Add argument below is enough.
+        paper || toSend ? null : (
           <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] text-muted-foreground">
             No expected arguments. Use Add argument below.
           </div>
@@ -1976,6 +2022,7 @@ function StructuredArgsRow({
   paper?: boolean;
 }) {
   const [draftKey, setDraftKey] = useState(persistedKey);
+  const valueLabel = useContext(ArgsToSendContext) ? "Value" : "Expected value";
 
   // Re-sync the draft when the persisted key changes (e.g. a successful
   // upstream commit, or an out-of-band reset).
@@ -2140,11 +2187,11 @@ function StructuredArgsRow({
               : "text-[10px] text-muted-foreground"
           }
         >
-          Expected value
+          {valueLabel}
         </Label>
         <ArgLeafPicker
           compact={paper}
-          ariaLabel={paper ? `Expected value for ${persistedKey}` : undefined}
+          ariaLabel={paper ? `${valueLabel} for ${persistedKey}` : undefined}
           value={value}
           onChange={(next) => onChangeValue(next)}
           argumentMatching={mode}
@@ -2199,6 +2246,7 @@ function RawArgsJsonEditor({
   paper?: boolean;
 }) {
   const argsId = useId();
+  const toSend = useContext(ArgsToSendContext);
   const formatValue = (v: unknown): string => {
     try {
       return paper ? JSON.stringify(v ?? {}) : JSON.stringify(v ?? {}, null, 2);
@@ -2230,7 +2278,7 @@ function RawArgsJsonEditor({
   return (
     <div className="space-y-1">
       <Label htmlFor={argsId} className="text-[11px]">
-        {paper ? "Arguments" : "Expected args (JSON)"}
+        {paper || toSend ? "Arguments" : "Expected args (JSON)"}
         {!paper && mode === "partial" ? (
           <span className="ml-2 text-muted-foreground font-normal">
             Placeholders allowed: "string", "number", "boolean", "object",

@@ -59,7 +59,6 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-10-28T00:00:00Z"));
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
-  vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "1");
   for (const fn of Object.values(logger)) fn.mockReset();
 });
 
@@ -94,6 +93,74 @@ describe("hosted-browser verdict freshness", () => {
     expect(mod.hostedBrowserAdvertisable()).toBe(false);
   });
 
+  it("a stale answer does not strip the browser from a run that already booked its desktop", async () => {
+    stubBackend(BOOT, []);
+    const mod = await load(true);
+    const { resolveHostTools } = await import("../../built-in-tools/registry");
+    const ctx = {
+      authHeader: "Bearer token-123",
+      projectId: "project-1",
+      chatSessionId: "session-1",
+    };
+
+    vi.advanceTimersByTime(mod.HOSTED_BROWSER_VERDICT_MAX_AGE_MS + 1);
+
+    // The runner asks this before booking, so no new box is booked.
+    expect(mod.hostedBrowserAdvertisable()).toBe(false);
+    const bookedRun = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+        runKey: "iteration-7",
+        isJourneySession: true,
+        sandboxBinding: {
+          sandboxId: "sbx_desktop_1",
+          sandboxRowId: "row_desktop_1",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    );
+    expect(Object.keys(bookedRun ?? {})).toContain("browser_navigate");
+    // A desktop paired with a pinned shell box is booked just the same.
+    const pairedRun = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+        runKey: "iteration-8",
+        sandboxBinding: {
+          sandboxId: "sbx_pinned_1",
+          sandboxRowId: "row_pinned_1",
+        },
+        browserSandboxBinding: {
+          sandboxId: "sbx_desktop_2",
+          sandboxRowId: "row_desktop_2",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    );
+    expect(Object.keys(pairedRun ?? {})).toContain("browser_navigate");
+
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const projectComputer = resolveHostTools(
+      { builtInToolIds: ["browser"], computer: { kind: "personal" } },
+      {
+        ...ctx,
+        browserApprovalDelivery: { kind: "attested" },
+        onToolSuppressed: (info) => suppressed.push(info),
+      },
+    );
+    expect(projectComputer).toBeUndefined();
+    expect(suppressed[0]?.reason).toContain("out of date");
+  });
+
   it("a successful refresh renews the answer", async () => {
     const fetchMock = stubBackend(BOOT, [
       () => respond({ ok: true, hostedBrowser: BOOT }),
@@ -125,6 +192,8 @@ describe("hosted-browser verdict freshness", () => {
     await mod.refreshHostedBrowserVerdict();
 
     expect(mod.isHostedBrowserRefused()).toBe(true);
+    // A refusal, unlike age, holds for a run that already booked its box.
+    expect(mod.isHostedBrowserRefused({ boxBooked: true })).toBe(true);
     expect(mod.isHostedDesktopUnavailable()).toBe(true);
   });
 
@@ -166,6 +235,25 @@ describe("hosted-browser verdict freshness", () => {
     expect(verdictRefreshCalls(fetchMock)).toBe(1);
   });
 
+  it("still expires the answer when a route that answered starts returning 404", async () => {
+    // A rollback or a misrouted deploy, not an older backend.
+    const fetchMock = stubBackend(BOOT, [
+      () => respond({ ok: true, hostedBrowser: BOOT }),
+      () => respond({}, 404),
+      () => respond({}, 404),
+    ]);
+    const mod = await load(true);
+
+    await expect(mod.refreshHostedBrowserVerdict()).resolves.toBe("answered");
+    await expect(mod.refreshHostedBrowserVerdict()).resolves.toBe("failed");
+    vi.advanceTimersByTime(mod.HOSTED_BROWSER_VERDICT_MAX_AGE_MS + 1);
+
+    expect(mod.isHostedBrowserRefused()).toBe(true);
+    // And it keeps asking.
+    await mod.refreshHostedBrowserVerdict();
+    expect(verdictRefreshCalls(fetchMock)).toBe(3);
+  });
+
   it("never goes stale on a local inspector", async () => {
     stubBackend(BOOT, []);
     const mod = await load(false);
@@ -178,6 +266,54 @@ describe("hosted-browser verdict freshness", () => {
 });
 
 describe("startHostedBrowserVerdictRefresh", () => {
+  it("recovers data-plane credentials when the backend outlasts boot retries", async () => {
+    for (const name of [
+      "E2B_API_KEY",
+      "E2B_API_URL",
+      "E2B_DOMAIN",
+      "E2B_TEMPLATE_ID",
+      "COMPUTERS_TERMINAL_TOKEN_SECRET",
+    ]) {
+      vi.stubEnv(name, "");
+    }
+    let available = false;
+    let bootstrapCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/internal/v1/computers/runtime-config")) {
+          bootstrapCalls += 1;
+          return available
+            ? respond({
+                enabled: true,
+                e2bApiKey: "test-key",
+                e2bApiUrl: "https://embed.test",
+                e2bDomain: null,
+                e2bTemplateId: "test-template",
+                terminalTokenSecret: "test-terminal-secret",
+                hostedBrowser: BOOT,
+              })
+            : respond({}, 503);
+        }
+        return respond({ ok: true, hostedBrowser: BOOT });
+      }),
+    );
+    const mod = await load(true);
+    const { isComputersDataPlaneConfigured } = await import(
+      "../control-plane-client"
+    );
+    expect(bootstrapCalls).toBe(3);
+    expect(isComputersDataPlaneConfigured()).toBe(false);
+
+    available = true;
+    mod.startHostedBrowserVerdictRefresh();
+    await vi.advanceTimersByTimeAsync(mod.HOSTED_BROWSER_VERDICT_REFRESH_MS);
+
+    expect(bootstrapCalls).toBe(4);
+    expect(isComputersDataPlaneConfigured()).toBe(true);
+    mod.stopHostedBrowserVerdictRefresh();
+  });
+
   it("re-asks every minute in hosted mode, once however often it is started", async () => {
     const fetchMock = stubBackend(BOOT, [
       () => respond({ ok: true, hostedBrowser: BOOT }),

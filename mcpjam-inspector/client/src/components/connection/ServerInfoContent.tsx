@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Copy,
-  Check,
-  ExternalLink,
-  ChevronDown,
-  ChevronRight,
-  Eye,
-  EyeOff,
-  Loader2,
-} from "lucide-react";
+import { ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections";
 import { connectionLabel } from "@/shared/oauth-connections";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -20,9 +11,13 @@ import { serverDeclaresSkillsExtension } from "@mcpjam/sdk/browser";
 import { HOSTED_MODE } from "@/lib/config";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
-import { decodeJWT } from "@/lib/oauth/jwt-decoder";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
 import { ErrorCard } from "@/components/ui/error-card";
+import {
+  RevealTokensButton,
+  TokenRevealError,
+  TokenValue,
+} from "./shared/TokenValue";
 
 interface ServerInfoContentProps {
   /**
@@ -42,8 +37,6 @@ export function ServerInfoContent({
   projectId = null,
   hostedServerId = null,
 }: ServerInfoContentProps) {
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
   // Keyed by connection id ("" is the default connection, and the only key a
   // single-account server ever uses).
   const [hostedTokensByConnection, setHostedTokensByConnection] = useState<
@@ -98,15 +91,6 @@ export function ServerInfoContent({
     setHostedTokensByConnection({});
     setHostedTokenErrors({});
     setLoadingConnection(null);
-    setExpandedTokens((prev) => {
-      const next = new Set(prev);
-      for (const key of next) {
-        if (key.startsWith("hosted")) {
-          next.delete(key);
-        }
-      }
-      return next;
-    });
   }, [server.name, projectId, hostedServerId]);
 
   // Build capabilities list
@@ -130,28 +114,6 @@ export function ServerInfoContent({
   ) {
     capabilities.push("Skills");
   }
-
-  const copyToClipboard = async (text: string, fieldName: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(fieldName);
-      setTimeout(() => setCopiedField(null), 2000);
-    } catch (error) {
-      console.error("Failed to copy text:", error);
-    }
-  };
-
-  const toggleTokenExpansion = (tokenName: string) => {
-    setExpandedTokens((prev) => {
-      const next = new Set(prev);
-      if (next.has(tokenName)) {
-        next.delete(tokenName);
-      } else {
-        next.add(tokenName);
-      }
-      return next;
-    });
-  };
 
   const revealHostedTokens = async (connectionId?: string) => {
     if (!projectId || !hostedServerId || loadingConnection !== null) return;
@@ -187,97 +149,6 @@ export function ServerInfoContent({
     }
   };
 
-  const renderToken = (
-    label: string,
-    tokenValue: string | undefined,
-    tokenKey: string,
-    options?: { maskedByDefault?: boolean }
-  ) => {
-    if (!tokenValue) return null;
-    const isExpanded = expandedTokens.has(tokenKey);
-    const isMasked = options?.maskedByDefault === true && !isExpanded;
-    const shouldDecodeJwt = !isMasked && tokenValue.split(".").length === 3;
-    const decoded = shouldDecodeJwt ? decodeJWT(tokenValue) : null;
-    const displayValue = isMasked
-      ? "****************"
-      : isExpanded || options?.maskedByDefault || tokenValue.length <= 50
-      ? tokenValue
-      : `${tokenValue.substring(0, 50)}...`;
-    const showDecodedControls =
-      decoded && (!options?.maskedByDefault || isExpanded);
-
-    return (
-      <div>
-        <span className="text-muted-foreground font-medium">{label}:</span>
-        <div
-          className="font-mono text-foreground break-all bg-background/50 p-2 rounded mt-1 group cursor-pointer hover:bg-background/70 transition-colors"
-          onClick={() => toggleTokenExpansion(tokenKey)}
-        >
-          <div className="flex items-start gap-2">
-            <div className="min-w-0 flex-1">{displayValue}</div>
-            {options?.maskedByDefault ? (
-              <button
-                type="button"
-                aria-label={`${isExpanded ? "Hide" : "Reveal"} ${label}`}
-                title={`${isExpanded ? "Hide" : "Reveal"} ${label}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleTokenExpansion(tokenKey);
-                }}
-                className="mt-0.5 flex-shrink-0 p-1 text-muted-foreground/60 hover:text-foreground transition-colors cursor-pointer"
-              >
-                {isExpanded ? (
-                  <EyeOff className="h-3 w-3" />
-                ) : (
-                  <Eye className="h-3 w-3" />
-                )}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              aria-label={`Copy ${label}`}
-              title={`Copy ${label}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                copyToClipboard(tokenValue, tokenKey);
-              }}
-              className="mt-0.5 flex-shrink-0 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-            >
-              {copiedField === tokenKey ? (
-                <Check className="h-3 w-3 text-green-500" />
-              ) : (
-                <Copy className="h-3 w-3" />
-              )}
-            </button>
-          </div>
-        </div>
-        {showDecodedControls && (
-          <div className="mt-1">
-            <button
-              type="button"
-              onClick={() => toggleTokenExpansion(`${tokenKey}Decoded`)}
-              className="text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
-            >
-              {expandedTokens.has(`${tokenKey}Decoded`) ? (
-                <ChevronDown className="h-3 w-3" />
-              ) : (
-                <ChevronRight className="h-3 w-3" />
-              )}
-              View Decoded JWT
-            </button>
-            {expandedTokens.has(`${tokenKey}Decoded`) && (
-              <ScrollableJsonView
-                value={decoded}
-                showLineNumbers={false}
-                containerClassName="mt-1 max-h-96 rounded-lg"
-              />
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const renderHostedOAuthVaultSection = () => {
     // One block per connected account. A multi-account server used to show a
     // single pair — the default connection's — however many accounts were
@@ -299,7 +170,6 @@ export function ServerInfoContent({
         {targets.map((target) => {
           const tokens = hostedTokensByConnection[target.key]?.tokens;
           const error = hostedTokenErrors[target.key];
-          const suffix = target.key ? `:${target.key}` : "";
           return (
             <div
               key={target.key || "default"}
@@ -310,11 +180,7 @@ export function ServerInfoContent({
                   {target.title}
                 </div>
               )}
-              {error ? (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
-                  {error}
-                </div>
-              ) : null}
+              {error ? <TokenRevealError message={error} /> : null}
 
               {target.needsReauth ? (
                 <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
@@ -322,21 +188,14 @@ export function ServerInfoContent({
                 </div>
               ) : !tokens ? (
                 canRevealHostedOAuthTokens ? (
-                  <button
-                    type="button"
+                  <RevealTokensButton
+                    label="Reveal tokens"
+                    isRevealing={loadingConnection === target.key}
+                    disabled={loadingConnection !== null}
                     onClick={() =>
                       void revealHostedTokens(target.key || undefined)
                     }
-                    disabled={loadingConnection !== null}
-                    className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {loadingConnection === target.key ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : null}
-                    {loadingConnection === target.key
-                      ? "Revealing..."
-                      : "Reveal tokens"}
-                  </button>
+                  />
                 ) : (
                   <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
                     Token reveal is unavailable until this server is synced to
@@ -345,24 +204,21 @@ export function ServerInfoContent({
                 )
               ) : (
                 <>
-                  {renderToken(
-                    "Access Token",
-                    tokens.access_token,
-                    `hostedAccessToken${suffix}`,
-                    { maskedByDefault: true },
-                  )}
-                  {renderToken(
-                    "Refresh Token",
-                    tokens.refresh_token,
-                    `hostedRefreshToken${suffix}`,
-                    { maskedByDefault: true },
-                  )}
-                  {renderToken(
-                    "ID Token",
-                    tokens.id_token,
-                    `hostedIdToken${suffix}`,
-                    { maskedByDefault: true },
-                  )}
+                  <TokenValue
+                    label="Access Token"
+                    value={tokens.access_token}
+                    maskedByDefault
+                  />
+                  <TokenValue
+                    label="Refresh Token"
+                    value={tokens.refresh_token}
+                    maskedByDefault
+                  />
+                  <TokenValue
+                    label="ID Token"
+                    value={tokens.id_token}
+                    maskedByDefault
+                  />
                 </>
               )}
             </div>
@@ -400,13 +256,9 @@ export function ServerInfoContent({
           OAuth Tokens
         </div>
         <div className="space-y-3 rounded-md bg-muted/40 p-3">
-          {renderToken("Access Token", oauthTokens.access_token, "accessToken")}
-          {renderToken(
-            "Refresh Token",
-            oauthTokens.refresh_token,
-            "refreshToken"
-          )}
-          {renderToken("ID Token", (oauthTokens as any).id_token, "idToken")}
+          <TokenValue label="Access Token" value={oauthTokens.access_token} />
+          <TokenValue label="Refresh Token" value={oauthTokens.refresh_token} />
+          <TokenValue label="ID Token" value={(oauthTokens as any).id_token} />
 
           <div className="flex flex-wrap gap-4 text-muted-foreground pt-1">
             <span>Type: {oauthTokens.token_type || "Bearer"}</span>

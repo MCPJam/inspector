@@ -10,12 +10,32 @@ import {
   chatHistoryAction,
   createChatHistoryWidgetSnapshot,
   getChatHistoryDetail,
+  getChatHistoryState,
   listChatHistory,
 } from "../chat-history-api";
 
 describe("chat history API in non-hosted mode", () => {
   beforeEach(() => {
     mockAuthFetch.mockReset();
+  });
+
+  it("requests current state without replacing the full history read", async () => {
+    const controller = new AbortController();
+    mockAuthFetch.mockImplementation(async () => new Response(JSON.stringify({
+      ok: true, session: { _id: "session-1", version: 4, directVisibility: "private" },
+    }), { status: 200 }));
+    const params = { sessionId: "session-1", chatSessionId: "chat-1", projectId: "project-1" };
+    const result = await getChatHistoryState(params, { signal: controller.signal });
+    expect(result.session.version).toBe(4);
+    expect(mockAuthFetch).toHaveBeenLastCalledWith(
+      "/api/web/chat-history/detail?sessionId=session-1&chatSessionId=chat-1&projectId=project-1&view=state",
+      expect.objectContaining({ method: "GET", signal: controller.signal }),
+    );
+    await getChatHistoryDetail(params);
+    expect(mockAuthFetch).toHaveBeenLastCalledWith(
+      "/api/web/chat-history/detail?sessionId=session-1&chatSessionId=chat-1&projectId=project-1",
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 
   it("lets authFetch choose the bearer when listing history", async () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { V1_ERROR_STATUS } from "./public-api/index.js";
 import { z } from "zod";
+import { isMcpjamDeploymentError } from "./deployment/address.js";
 import {
   reportingRequest,
   ReportingHttpError,
@@ -114,6 +115,7 @@ export async function startEvalRun(
   } catch (error) {
     if (options.signal?.aborted) throw options.signal.reason;
     if (error instanceof EvalRunStartError) throw error;
+    if (isMcpjamDeploymentError(error)) throw error;
     if (error instanceof ReportingHttpError && error.status < 500) {
       const details = error.body.details;
       const detailCode = details && typeof details === "object"

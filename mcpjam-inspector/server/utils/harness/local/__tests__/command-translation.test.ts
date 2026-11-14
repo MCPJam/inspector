@@ -11,8 +11,8 @@ const BUNDLE = "/opt/mcpjam/runtimes/claude-code";
 const SESSION = "/home/dev/project";
 const HOME = "/home/dev/.mcpjam/harness-local/sessions/s1/home";
 const OVERLAY = "/home/dev/.mcpjam/harness-local/sessions/s1/bootstrap";
-/** As the framework resolves it: relative to the default working directory. */
-const BOOT = `${SESSION}/.harness-bootstrap/claude-code`;
+/** As the framework resolves it: relative to `$HOME/.ai-sdk-harness`. */
+const BOOT = `${HOME}/.ai-sdk-harness/.harness-bootstrap/claude-code`;
 
 function ctx(
   overrides: Partial<CommandTranslationContext> = {},
@@ -220,7 +220,7 @@ describe("the pinned command grammar", () => {
   });
 
   describe("codex (app-server adapter)", () => {
-    const CODEX_BOOT = `${SESSION}/.harness-bootstrap/codex-appserver`;
+    const CODEX_BOOT = `${HOME}/.ai-sdk-harness/.harness-bootstrap/codex-appserver`;
     const CODEX_BUNDLE = "/opt/mcpjam/runtimes/codex";
     const STATE = "/home/dev/.mcpjam/harness-local-sessions/s1/work";
     const codex = (overrides: Partial<CommandTranslationContext> = {}) =>

@@ -227,7 +227,7 @@ const BASE_BODY = {
   accessVersion: 3,
   selectedServerIds: ["body-server-9"],
   chatSessionId: "chat-session-1",
-  messages: [{ role: "user", content: "hi" }],
+  messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
   model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
 };
 
@@ -284,6 +284,9 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds: string[] = payload?.serverIds ?? [];

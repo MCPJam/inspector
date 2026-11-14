@@ -1,5 +1,6 @@
+import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import type { UIMessage } from "@ai-sdk/react";
 
@@ -30,11 +31,14 @@ vi.mock("../shared/loading-indicator-content", async (importOriginal) => {
     ...actual,
     LoadingIndicatorContent: ({
       modelProvider,
+      startupPhase,
     }: {
       className?: string;
       modelProvider?: string | null;
+      startupPhase?: HarnessStartupPhase | null;
     }) => {
       const hostStyle = useScenarioHostStyle();
+      if (startupPhase) return <actual.LoadingIndicatorContent modelProvider={modelProvider} startupPhase={startupPhase} />;
       let resolved: string | null = hostStyle;
       if (!resolved && modelProvider) {
         const normalized = modelProvider.toLowerCase();
@@ -62,10 +66,7 @@ vi.mock("../shared/loading-indicator-content", async (importOriginal) => {
 });
 
 vi.mock("@/lib/client-styles/indicators/claude-mark", () => ({
-  ClaudeLoadingIndicator: ({ mode = "animated" }: { mode?: string }) => (
-    <div data-testid={`claude-indicator-${mode}`} />
-  ),
-  ClaudeMarkIndicator: () => <div data-testid="claude-indicator-animated" />,
+  ClaudeMarkIndicator: () => <div data-testid="claude-indicator" />,
 }));
 
 describe("FullscreenChatOverlay", () => {
@@ -118,6 +119,59 @@ describe("FullscreenChatOverlay", () => {
       </ScenarioHostStyleProvider>
     );
 
+  it.each([false, true])("keeps draft context visible and removable with collapsed messages (contained=%s)", (contained) => {
+    const removeMention = vi.fn();
+    const removeApp = vi.fn();
+    const removeOtherApp = vi.fn();
+    const view = renderWithProviders(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        open={false}
+        contained={contained}
+        contextAttachments={[
+          { id: "mention", title: "Design notes", remove: removeMention },
+          { id: "first-a", title: "Bearing", group: { id: "first", title: "Parts", removeAll: removeApp }, block: { kind: "text", detail: "8mm bearing" } },
+          { id: "first-b", title: "Preview", group: { id: "first", title: "Parts", removeAll: removeApp }, block: { kind: "image", format: "PNG" } },
+          { id: "second", title: "Washer", group: { id: "second", title: "Parts", removeAll: removeOtherApp } },
+        ]}
+      />,
+    );
+    const composer = within(screen.getByTestId("fullscreen-composer"));
+    expect(composer.getByText("Design notes")).toBeVisible();
+    expect(composer.getAllByTestId("context-group-chip")).toHaveLength(2);
+    fireEvent.click(composer.getByRole("button", { name: "Parts context, 2 items" }));
+    expect(screen.getByText("8mm bearing")).toBeVisible();
+    expect(screen.getByText("PNG")).toBeVisible();
+    fireEvent.click(composer.getAllByRole("button", { name: "Remove all Parts context" })[0]);
+    expect(removeApp).toHaveBeenCalledOnce();
+    expect(removeOtherApp).not.toHaveBeenCalled();
+    fireEvent.click(composer.getByRole("button", { name: "Remove Design notes" }));
+    expect(removeMention).toHaveBeenCalledOnce();
+
+    view.rerender(
+      <PreferencesStoreProvider themeMode="light" themePreset="default">
+        <FullscreenChatOverlay {...defaultProps} open={false} contained={contained} contextAttachments={[]} />
+      </PreferencesStoreProvider>,
+    );
+    expect(screen.queryByText("Design notes")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("context-group-chip")).not.toBeInTheDocument();
+  });
+
+  it("shows a startup phase immediately and restores the brand indicator when it ends", () => {
+    const view = renderWithProviders(
+      <FullscreenChatOverlay {...defaultProps} isThinking modelProvider="openai" startupPhase="computer" />,
+    );
+    expect(screen.getByText("Starting your computer…")).toBeInTheDocument();
+    expect(screen.queryByTestId("loading-indicator-chatgpt-dot")).not.toBeInTheDocument();
+    view.rerender(
+      <PreferencesStoreProvider themeMode="light" themePreset="default">
+        <FullscreenChatOverlay {...defaultProps} isThinking modelProvider="openai" startupPhase={null} />
+      </PreferencesStoreProvider>,
+    );
+    expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
+    expect(screen.getByTestId("loading-indicator-chatgpt-dot")).toBeInTheDocument();
+  });
+
   it("shows a standalone Claude placeholder row before the first assistant token appears", () => {
     renderWithProviders(
       <ScenarioHostStyleProvider value="claude">
@@ -134,7 +188,7 @@ describe("FullscreenChatOverlay", () => {
       screen.getByTestId("loading-indicator-claude-mark")
     ).toBeInTheDocument();
     expect(
-      screen.queryByTestId("fullscreen-claude-footer-animated")
+      screen.queryByTestId("fullscreen-claude-footer")
     ).not.toBeInTheDocument();
   });
 
@@ -305,7 +359,7 @@ describe("FullscreenChatOverlay", () => {
       screen.queryByTestId("fullscreen-thinking-row")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByTestId("fullscreen-claude-footer-animated")
+      screen.getByTestId("fullscreen-claude-footer")
     ).toBeInTheDocument();
   });
 
@@ -468,12 +522,12 @@ describe("FullscreenChatOverlay", () => {
       screen.queryByTestId("fullscreen-thinking-row")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByTestId("fullscreen-claude-footer-animated")
+      screen.getByTestId("fullscreen-claude-footer")
     ).toBeInTheDocument();
-    expect(screen.getByTestId("claude-indicator-animated")).toBeInTheDocument();
+    expect(screen.getByTestId("claude-indicator")).toBeInTheDocument();
   });
 
-  it("keeps only one static Claude footer on the latest assistant bubble after loading", () => {
+  it("clears the Claude footer once loading finishes", () => {
     renderWithProviders(
       <ScenarioHostStyleProvider value="claude">
         <FullscreenChatOverlay
@@ -500,10 +554,9 @@ describe("FullscreenChatOverlay", () => {
       screen.queryByTestId("fullscreen-thinking-row")
     ).not.toBeInTheDocument();
     expect(
-      screen.getByTestId("fullscreen-claude-footer-static")
-    ).toBeInTheDocument();
-    expect(screen.getAllByTestId(/fullscreen-claude-footer-/)).toHaveLength(1);
-    expect(screen.getByTestId("claude-indicator-static")).toBeInTheDocument();
+      screen.queryByTestId("fullscreen-claude-footer")
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("claude-indicator")).not.toBeInTheDocument();
   });
 
   it("uses Claude host shell colors in the fullscreen overlay", () => {

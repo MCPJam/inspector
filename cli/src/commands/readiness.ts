@@ -29,6 +29,8 @@
 
 import { Command } from "commander";
 import {
+  OPENAI_SUBMISSION_MODES,
+  OPENAI_SUBMISSION_MODE_SHAPES,
   collectZipArchiveObservations,
   createDirectoryPluginFileSource,
   createZipPluginFileSource,
@@ -39,8 +41,6 @@ import {
   gradeMuseReadiness,
   gradeOpenAIReadiness,
   xmldomParseXml,
-  OPENAI_SUBMISSION_MODES,
-  OPENAI_SUBMISSION_MODE_SHAPES,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 import { readFile, stat } from "node:fs/promises";
@@ -74,6 +74,7 @@ import {
   getReadinessReportOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
+  resumeReadinessRunOperation,
   startClaudeReadinessRunOperation,
   startMuseReadinessRunOperation,
   startOpenAIReadinessRunOperation,
@@ -83,8 +84,21 @@ import {
   type StartMuseReadinessInput,
   type StartOpenAIReadinessInput,
 } from "@mcpjam/sdk/platform";
+import {
+  addLazyAuthOptions,
+  hostedLazyAuthFields,
+  lazyAuthProbeFromOptions,
+  parseFeatureClaims,
+} from "./readiness-lazy-auth.js";
+import { registerDirectorySubmissionCommands } from "./readiness-submissions.js";
+export {
+  lazyAuthProbeFromOptions,
+  parseFeatureClaims,
+} from "./readiness-lazy-auth.js";
 
-interface ReadinessCheckOptions {
+
+
+export interface ReadinessCheckOptions {
   submissionMode?: string;
   package?: string;
   accessToken?: string;
@@ -93,6 +107,10 @@ interface ReadinessCheckOptions {
   timeout?: number;
   reporter?: string;
   submissionProfile?: string;
+  claim?: string[];
+  lazyAuthProbe?: boolean;
+  lazyAuthTool?: string;
+  lazyAuthPublicTool?: string;
 }
 
 function getFormat(
@@ -123,7 +141,11 @@ function resolveAccessToken(
   return options.accessToken?.trim() || undefined;
 }
 
-function requestHeaders(
+/**
+ * Headers for MCP requests to the server. The SDK never sends them on
+ * discovery.
+ */
+function mcpRequestHeaders(
   options: ReadinessCheckOptions,
   target: string,
 ): Record<string, string> | undefined {
@@ -216,6 +238,10 @@ async function runClaudeCheck(
 ): Promise<void> {
   const reporter = parseReporterFormat(options.reporter);
   const format = getFormat(command, reporter);
+  // Validated before anything dials, so a typo is a usage error rather than a
+  // run that silently graded without the probe.
+  const claimedFeatures = parseFeatureClaims(options.claim);
+  const lazyAuthProbe = lazyAuthProbeFromOptions(options);
 
   const evidence = await gatherClaudeReadinessEvidence({
     enteredUrl: target,
@@ -224,8 +250,10 @@ async function runClaudeCheck(
     // the developer's own machine, where pinning would only stop them from
     // grading a server on their own network.
     fetchFn: fetch,
-    headers: requestHeaders(options, target),
+    mcpHeaders: mcpRequestHeaders(options, target),
     timeoutMs: options.timeout,
+    ...(claimedFeatures ? { claimedFeatures } : {}),
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
   });
 
   const result = gradeClaudeReadiness(evidence);
@@ -265,6 +293,13 @@ async function runOpenAICheck(
   }
   const mode = options.submissionMode as OpenAISubmissionMode;
   assertModeInputs(mode, target, options.package);
+  const claimedFeatures = parseFeatureClaims(options.claim);
+  const lazyAuthProbe = lazyAuthProbeFromOptions(options);
+  if (lazyAuthProbe && !target) {
+    throw usageError(
+      "The lazy-auth probe calls tools on an MCP server; this submission mode has none.",
+    );
+  }
 
   const pkg = options.package ? await openPackage(options.package) : undefined;
 
@@ -276,7 +311,7 @@ async function runOpenAICheck(
     // Absent for a package-only run, and absent means "dialled nothing" rather
     // than "found nothing" — the wire lanes report their gaps.
     fetchFn: target ? fetch : undefined,
-    headers: target ? requestHeaders(options, target) : undefined,
+    mcpHeaders: target ? mcpRequestHeaders(options, target) : undefined,
     timeoutMs: options.timeout,
     packageSource: pkg?.source,
     archive: pkg?.archive,
@@ -284,6 +319,8 @@ async function runOpenAICheck(
     // graded, so it is passed even when no package is supplied — costing
     // nothing and removing one way to produce a quietly weaker grade.
     parseXml: xmldomParseXml,
+    ...(claimedFeatures ? { claimedFeatures } : {}),
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
   });
 
   const result = gradeOpenAIReadiness(evidence);
@@ -326,7 +363,7 @@ async function runMuseCheck(
     enteredUrl: target,
     // The global fetch — see `runClaudeCheck`.
     fetchFn: fetch,
-    headers: requestHeaders(options, target),
+    headers: mcpRequestHeaders(options, target),
     timeoutMs: options.timeout,
     submissionProfile: options.submissionProfile
       ? await readSubmissionProfile(options.submissionProfile)
@@ -359,18 +396,21 @@ export function registerReadinessCommands(program: Command): void {
     .command("check")
     .description("Grade locally, without a MCPJam account (free)");
 
-  check
+  const checkClaude = check
     .command("claude")
     .description("Grade an MCP server against Anthropic's connector directory")
     .argument("<url>", "MCP server URL")
-    .option("--access-token <token>", "Bearer access token for the server")
+    .option(
+      "--access-token <token>",
+      "Bearer access token, sent on MCP requests, never on discovery",
+    )
     .option(
       "--credentials-file <path>",
       "Load the access token from a file written by oauth login",
     )
     .option(
       "--header <header>",
-      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      'HTTP header in "Key: Value" format, sent on MCP requests, never on discovery. Repeat to send multiple headers.',
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
@@ -382,12 +422,14 @@ export function registerReadinessCommands(program: Command): void {
     .option(
       "--reporter <reporter>",
       "Structured reporter output: json-summary or junit-xml",
-    )
-    .action(async (url: string, options: ReadinessCheckOptions, command) => {
+    );
+  addLazyAuthOptions(checkClaude).action(
+    async (url: string, options: ReadinessCheckOptions, command) => {
       await runClaudeCheck(url, options, command);
-    });
+    },
+  );
 
-  check
+  const checkOpenAI = check
     .command("openai")
     .description("Grade a server or plugin against OpenAI's app directory")
     .argument(
@@ -399,14 +441,17 @@ export function registerReadinessCommands(program: Command): void {
       `Declared submission shape: ${OPENAI_SUBMISSION_MODES.join(" | ")}`,
     )
     .option("--package <path>", "Plugin package directory or .zip to grade")
-    .option("--access-token <token>", "Bearer access token for the server")
+    .option(
+      "--access-token <token>",
+      "Bearer access token, sent on MCP requests, never on discovery",
+    )
     .option(
       "--credentials-file <path>",
       "Load the access token from a file written by oauth login",
     )
     .option(
       "--header <header>",
-      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+      'HTTP header in "Key: Value" format, sent on MCP requests, never on discovery. Repeat to send multiple headers.',
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
@@ -418,16 +463,16 @@ export function registerReadinessCommands(program: Command): void {
     .option(
       "--reporter <reporter>",
       "Structured reporter output: json-summary or junit-xml",
-    )
-    .action(
-      async (
-        url: string | undefined,
-        options: ReadinessCheckOptions,
-        command,
-      ) => {
-        await runOpenAICheck(url, options, command);
-      },
     );
+  addLazyAuthOptions(checkOpenAI).action(
+    async (
+      url: string | undefined,
+      options: ReadinessCheckOptions,
+      command,
+    ) => {
+      await runOpenAICheck(url, options, command);
+    },
+  );
 
   check
     .command("muse")
@@ -462,6 +507,7 @@ export function registerReadinessCommands(program: Command): void {
     });
 
   registerHostedReadinessCommands(readiness);
+  registerDirectorySubmissionCommands(readiness);
 }
 
 /**
@@ -479,7 +525,7 @@ export function registerReadinessCommands(program: Command): void {
  * `--wait` in this version, because a flag that blocks a terminal for fifteen
  * minutes deserves its own design rather than a default.
  */
-interface HostedStartOptions extends PlatformOptions {
+export interface HostedStartOptions extends PlatformOptions {
   project?: string;
   server: string;
   /**
@@ -491,6 +537,10 @@ interface HostedStartOptions extends PlatformOptions {
   submissionMode: HostedSubmissionMode;
   aiObservations?: boolean;
   idempotencyKey?: string;
+  claim?: string[];
+  lazyAuthProbe?: boolean;
+  lazyAuthTool?: string;
+  lazyAuthPublicTool?: string;
 }
 
 /** The two shapes a hosted run can grade; the package pair is CLI-local. */
@@ -514,15 +564,17 @@ function registerHostedReadinessCommands(readiness: Command): void {
     .description("Start a hosted readiness run against a saved server");
 
   const startClaude = addProjectOption(
-    start
-      .command("claude")
-      .description("Grade a saved server against Anthropic's directory")
-      .requiredOption("--server <idOrName>", "Saved server to grade")
-      .option(
-        "--ai-observations",
-        "Add optional model observations. CONSUMES MCPJam credits.",
-      )
-      .option("--idempotency-key <key>", "Replay guard for a retried start"),
+    addLazyAuthOptions(
+      start
+        .command("claude")
+        .description("Grade a saved server against Anthropic's directory")
+        .requiredOption("--server <idOrName>", "Saved server to grade")
+        .option(
+          "--ai-observations",
+          "Add optional model observations. CONSUMES MCPJam credits.",
+        )
+        .option("--idempotency-key <key>", "Replay guard for a retried start"),
+    ),
   );
   bindOperation<HostedStartOptions, StartClaudeReadinessInput>(
     startClaude,
@@ -534,23 +586,26 @@ function registerHostedReadinessCommands(readiness: Command): void {
       ...(options.idempotencyKey
         ? { idempotencyKey: options.idempotencyKey }
         : {}),
+      ...hostedLazyAuthFields(options),
     }),
   );
 
   const startOpenAI = addProjectOption(
-    start
-      .command("openai")
-      .description("Grade a saved server against OpenAI's directory")
-      .requiredOption("--server <idOrName>", "Saved server to grade")
-      .requiredOption(
-        "--submission-mode <mode>",
-        "Declared submission shape: mcp-only | mcp-imported-skills. Never inferred. Package shapes run locally — see `readiness check openai`.",
-      )
-      .option(
-        "--ai-observations",
-        "Add optional model observations. CONSUMES MCPJam credits.",
-      )
-      .option("--idempotency-key <key>", "Replay guard for a retried start"),
+    addLazyAuthOptions(
+      start
+        .command("openai")
+        .description("Grade a saved server against OpenAI's directory")
+        .requiredOption("--server <idOrName>", "Saved server to grade")
+        .requiredOption(
+          "--submission-mode <mode>",
+          "Declared submission shape: mcp-only | mcp-imported-skills. Never inferred. Package shapes run locally — see `readiness check openai`.",
+        )
+        .option(
+          "--ai-observations",
+          "Add optional model observations. CONSUMES MCPJam credits.",
+        )
+        .option("--idempotency-key <key>", "Replay guard for a retried start"),
+    ),
   );
   bindOperation<HostedStartOptions, StartOpenAIReadinessInput>(
     startOpenAI,
@@ -563,6 +618,7 @@ function registerHostedReadinessCommands(readiness: Command): void {
       ...(options.idempotencyKey
         ? { idempotencyKey: options.idempotencyKey }
         : {}),
+      ...hostedLazyAuthFields(options),
     }),
   );
 
@@ -627,6 +683,20 @@ function registerHostedReadinessCommands(readiness: Command): void {
   bindOperation<HostedRunOptions, ReadinessRunScopedInput>(
     cancel,
     cancelReadinessRunOperation,
+    (options) => ({ project: options.project, run: options.run }),
+  );
+
+  const resume = addProjectOption(
+    readiness
+      .command("resume")
+      .description(
+        "Run again a hosted run that stopped on the server. Only the person who started it can.",
+      )
+      .requiredOption("--run <id>", "Readiness run id"),
+  );
+  bindOperation<HostedRunOptions, ReadinessRunScopedInput>(
+    resume,
+    resumeReadinessRunOperation,
     (options) => ({ project: options.project, run: options.run }),
   );
 

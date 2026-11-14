@@ -1,4 +1,8 @@
 import { Hono } from "hono";
+import type { MrtrBridgeInputRequest, MrtrRoundEvent } from "@/shared/local-mrtr.js";
+import { LOCAL_MRTR_MAX_FRAME_BYTES, type LocalMrtrEvent } from "@/shared/local-mrtr-wire.js";
+import { OPENAI_ELICITATION_EXTENSION } from "@mcpjam/sdk";
+import { selectLocalMrtrForm, selectLocalMrtrSchema, validateLocalMrtrAnswer } from "./local-mrtr-forms.js";
 import type {
   ElicitResult,
   InputRequests,
@@ -8,7 +12,7 @@ import type {
   MrtrInputCollector,
   MrtrOperationState,
 } from "@mcpjam/sdk";
-import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 /**
  * `mrtr.ts` — the LOCAL Inspector bridge for the modern multi-round-trip
@@ -19,7 +23,7 @@ import { reportRouteFailure, readRequestJson } from "../../utils/route-error-rep
  * `requestState`; the SDK's manual driver (PR1) collects the responses and
  * retries the original operation. On the LOCAL surface the driver runs
  * server-side inside `manager.executeTool` / `readResource` / `getPrompt`, so
- * the human-input collection is bridged to the browser over SSE — the exact
+ * the human-input collection is bridged to the browser over WebSocket — the exact
  * shape as the legacy `elicitation/create` bridge (`elicitation.ts`), except
  * the collected responses are returned INTO the driver loop rather than into a
  * `setRequestHandler` resolver.
@@ -43,13 +47,13 @@ import { reportRouteFailure, readRequestJson } from "../../utils/route-error-rep
  */
 
 // ---------------------------------------------------------------------------
-// SSE fan-out (one channel shared across every local surface)
+// Notification fan-out (one channel shared across every local surface)
 // ---------------------------------------------------------------------------
 
-type Subscriber = { send: (event: unknown) => void; close: () => void };
+type Subscriber = { send: (event: LocalMrtrEvent) => void; close: () => void };
 const subscribers = new Set<Subscriber>();
 
-function broadcast(event: unknown): void {
+function broadcast(event: LocalMrtrEvent): void {
   for (const sub of Array.from(subscribers)) {
     try {
       sub.send(event);
@@ -72,6 +76,7 @@ type PendingRound = {
   serverId: string;
   /** The exact server-assigned keys this round must answer. */
   keys: string[];
+  event: MrtrRoundEvent;
   resolve: (responses: InputResponses) => void;
   reject: (error: unknown) => void;
   /** Detaches the abort listener once the round settles. */
@@ -80,20 +85,20 @@ type PendingRound = {
 
 const pendingRounds = new Map<string, PendingRound>();
 
-/**
- * The browser-facing description of one embedded elicitation request. Untrusted
- * server strings (`message`, `url`, `requestedSchema`) travel verbatim and are
- * rendered as plain text on the client (never linkified).
- */
-export type MrtrBridgeInputRequest = {
-  key: string;
-  mode: "form" | "url";
-  message: string;
-  /** Present for form mode only. */
-  requestedSchema?: Record<string, unknown>;
-  /** Present for url mode only. */
-  url?: string;
-};
+/** Subscribe before taking the pending snapshot so no round can fall between them. */
+export function subscribeLocalMrtrEvents(
+  subscriber: Subscriber,
+  replay: (rounds: readonly MrtrRoundEvent[]) => void,
+): () => void {
+  subscribers.add(subscriber);
+  try {
+    replay(Array.from(pendingRounds.values(), (round) => round.event));
+  } catch (error) {
+    subscribers.delete(subscriber);
+    throw error;
+  }
+  return () => { subscribers.delete(subscriber); };
+}
 
 /**
  * Projects the driver's validated `inputRequests` map (elicitation-only by the
@@ -113,13 +118,15 @@ export function projectInputRequests(
     };
     const params = req?.params ?? {};
     const mode = (params.mode as string | undefined) === "url" ? "url" : "form";
+    const selected = mode === "form" ? selectLocalMrtrForm(params) : undefined;
     out.push({
       key,
       mode,
+      ...(selected?.pluginForm ? { pluginForm: true } : {}),
       message: typeof params.message === "string" ? params.message : "",
-      ...(mode === "form" && params.requestedSchema !== undefined
+      ...(mode === "form" && selected?.schema !== undefined
         ? {
-            requestedSchema: params.requestedSchema as Record<string, unknown>,
+            requestedSchema: selected.schema as Record<string, unknown>,
           }
         : {}),
       ...(mode === "url" && typeof params.url === "string"
@@ -132,7 +139,7 @@ export function projectInputRequests(
 
 /**
  * Builds the collector for one `(manager, serverId)`. On each round it
- * publishes the round to the SSE channel and returns a promise that settles
+ * publishes the round to the notification channel and returns a promise that settles
  * when the browser posts the round's responses (or the operation aborts). Only
  * JSON-serializable data crosses the boundary; no `Client`/promise/closure is
  * persisted anywhere (the resume-safe stepper is a PR3+ concern — local blocks
@@ -152,6 +159,19 @@ function makeCollector(serverId: string): MrtrInputCollector {
     const round = state.round;
     const keys = Object.keys(inputRequests);
     const requests = projectInputRequests(inputRequests);
+
+    const event: MrtrRoundEvent = {
+      type: "mrtr_input_request",
+      opId,
+      roundKey: `${opId}:${round}`,
+      round,
+      serverId,
+      requests,
+      timestamp: new Date().toISOString(),
+    };
+    if (Buffer.byteLength(JSON.stringify(event), "utf8") > LOCAL_MRTR_MAX_FRAME_BYTES) {
+      return Promise.reject(new Error("The form round exceeds the 30 MiB local limit. Ask the server to split it into smaller rounds."));
+    }
 
     return new Promise<InputResponses>((resolve, reject) => {
       // An abort of the whole operation rejects the collector — never a
@@ -192,22 +212,12 @@ function makeCollector(serverId: string): MrtrInputCollector {
         round,
         serverId,
         keys,
+        event,
         resolve,
         reject,
         cleanup,
       });
-
-      broadcast({
-        type: "mrtr_input_request",
-        opId,
-        // A per-round identity so the browser can dedupe SSE redelivery and key
-        // its dialog to exactly one round.
-        roundKey: `${opId}:${round}`,
-        round,
-        serverId,
-        requests,
-        timestamp: new Date().toISOString(),
-      });
+      broadcast(event);
     });
   };
 }
@@ -276,6 +286,10 @@ export function withLocalMrtrElicitationCapability<T extends MCPServerConfig>(
       ...era,
       modern: {
         ...era?.modern,
+        extensions: {
+          [OPENAI_ELICITATION_EXTENSION]: { form: {} },
+          ...(isPlainObject(era?.modern?.extensions) ? era.modern.extensions : {}),
+        },
         elicitation: {
           ...MRTR_ELICITATION_CAPABILITY,
           ...(isPlainObject(era?.modern?.elicitation)
@@ -326,7 +340,10 @@ export function registerLocalMrtrCollector(
   serverId: string,
 ): void {
   try {
-    manager.setMrtrInputCollector(serverId, makeCollector(serverId));
+    manager.setMrtrInputCollector(serverId, makeCollector(serverId), {
+      extensionClaims: [OPENAI_ELICITATION_EXTENSION],
+      selectFormSchema: selectLocalMrtrSchema,
+    });
   } catch (err) {
     // Pass the original error as the 2nd (error) arg so Sentry captures a stack
     // and Axiom serializes the real message; serverId is the context (3rd) arg.
@@ -376,10 +393,15 @@ export function submitMrtrResponses(
     string,
     { action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> }
   >,
+  expectedRoundKey: string,
 ): MrtrRespondResult {
   const pending = pendingRounds.get(opId);
   if (!pending) {
     return { ok: false, status: 404, error: "Unknown or already-answered opId" };
+  }
+
+  if (pending.event.roundKey !== expectedRoundKey) {
+    return { ok: false, status: 400, error: "The form changed. Review the current round and try again." };
   }
 
   const answeredKeys = Object.keys(responsesByKey);
@@ -417,6 +439,15 @@ export function submitMrtrResponses(
     }
   }
 
+  for (const request of pending.event.requests) {
+    const answer = responsesByKey[request.key];
+    if (request.pluginForm && answer?.action === "accept") {
+      const validation = validateLocalMrtrAnswer(request.requestedSchema, answer.content);
+      if (!validation.valid)
+        return { ok: false, status: 400, error: "The form answer is invalid. Check its fields and try again." };
+    }
+  }
+
   // Null-prototype map — the keys are server-chosen and untrusted.
   const responses = Object.create(null) as InputResponses;
   for (const key of answeredKeys) {
@@ -441,73 +472,10 @@ export function pendingMrtrRoundCount(): number {
 
 const mrtr = new Hono();
 
-// SSE stream of MRTR round events (mirrors the legacy elicitation bridge).
-mrtr.get("/stream", async (c) => {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const send = (event: unknown) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-      };
-      const keepAlive = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(`: keep-alive\n\n`));
-        } catch {}
-      }, 25000);
-      const close = () => {
-        clearInterval(keepAlive);
-        try {
-          controller.close();
-        } catch {}
-      };
-
-      controller.enqueue(encoder.encode(`retry: 1500\n\n`));
-      const subscriber: Subscriber = { send, close };
-      subscribers.add(subscriber);
-
-      (c.req.raw as any).signal?.addEventListener?.("abort", () => {
-        subscribers.delete(subscriber);
-        close();
-      });
-    },
-  });
-
-  return new Response(stream as any, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-      "Access-Control-Allow-Origin": "*",
-    },
-  });
-});
-
-// Submit a whole round's responses (all keys together).
-mrtr.post("/respond", async (c) => {
-  try {
-    const body = (await readRequestJson(c)) as {
-      opId?: string;
-      responses?: Record<
-        string,
-        {
-          action: "accept" | "decline" | "cancel";
-          content?: Record<string, unknown>;
-        }
-      >;
-    };
-    if (!body.opId || !body.responses || typeof body.responses !== "object") {
-      return c.json({ error: "Missing opId or responses" }, 400);
-    }
-    const result = submitMrtrResponses(body.opId, body.responses);
-    if (!result.ok) {
-      return c.json({ error: result.error }, result.status);
-    }
-    return c.json({ ok: true });
-  } catch (e: any) {
-    return c.json({ error: e?.message || "Failed to submit MRTR responses" }, 400);
-  }
-});
+// Stale browser bundles must reload instead of holding another HTTP connection
+// or answering a newer round through the retired unbound HTTP transport.
+const retiredTransport = { error: "Reload the inspector to continue answering local forms." };
+mrtr.get("/stream", (c) => c.json(retiredTransport, 410));
+mrtr.post("/respond", (c) => c.json(retiredTransport, 410));
 
 export default mrtr;

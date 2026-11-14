@@ -76,7 +76,7 @@ interface HostConfigComparisonMatrixProps {
  * WPT-style host comparison surface, but caniuse semantically: every row
  * is a hostConfig field, every column is a saved host, every cell shows
  * the actual stored value. Sections mirror the focus-dialog tabs
- * (Agent · MCP Protocol · Apps) via `HOST_CONFIG_SECTIONS`.
+ * (MCP Protocol · Agent · Apps) via `HOST_CONFIG_SECTIONS`.
  *
  * Pure presentation — data fetching lives in the container.
  */

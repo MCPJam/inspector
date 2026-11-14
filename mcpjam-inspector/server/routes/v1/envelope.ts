@@ -258,6 +258,25 @@ export function mapErrorToV1(
   // 403, or a message-pattern match) and carries no grant for the caller to
   // drive. 403 also matches the status the hosted `/api/web/*` twin returns
   // for the same throw.
+  // A sign-in challenge for one call (lazy authentication): the server
+  // allowed the connection and asked for sign-in on this operation. Its own
+  // public code, so a caller can tell it from a bad MCPJam key (UNAUTHORIZED)
+  // and from a server that refused the credentials it was given (FORBIDDEN),
+  // with the parsed challenge in `details.authChallenge`.
+  if (
+    routeError.code === ErrorCode.UPSTREAM_AUTH_FAILED &&
+    routeError.details?.authChallenge
+  ) {
+    return {
+      code: "AUTH_REQUIRED",
+      captured: routeError.captured === true,
+      message: routeError.message,
+      details: routeError.details,
+      headers: routeError.headers,
+      origin: routeError.origin,
+      slug: routeError.normalized?.slug,
+    };
+  }
   if (routeError.code === ErrorCode.UPSTREAM_AUTH_FAILED) {
     return {
       code: "FORBIDDEN",
@@ -284,7 +303,13 @@ export function mapErrorToV1(
     };
   }
   return {
-    code: mapInternalCode(routeError.code),
+    // Inspector-only, so mapped here like the two above: this device has not
+    // approved a stdio server's command. The credential is valid and
+    // a retry will not help until a person approves it in the UI.
+    code:
+      routeError.code === ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED
+        ? "FORBIDDEN"
+        : mapInternalCode(routeError.code),
     message: routeError.message,
     details: routeError.details,
     headers: routeError.headers,

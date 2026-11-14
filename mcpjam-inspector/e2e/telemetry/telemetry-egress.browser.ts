@@ -149,11 +149,17 @@ test("a resolved open context delivers the permitted account identity", async ({
   const scan = expectClean(recorder, "open-context identity", {
     posthogFullSnapshot: true,
   });
-  // PostHog sends $set instead of another $identify after resolving the actor.
-  expect(posthogEvents(scan.decoded)).toEqual(expect.arrayContaining([
+  // Initial identify and later profile updates use different SDK envelopes.
+  const identities = posthogEvents(scan.decoded)
+    .filter(event => event.event === "$identify" || event.event === "$set")
+    .map(event => ({
+      actor: event.properties.distinct_id,
+      person: "$set" in event ? event.$set : event.properties.$set,
+    }));
+  expect(identities).toEqual(expect.arrayContaining([
     expect.objectContaining({
-      properties: expect.objectContaining({ distinct_id: TELEMETRY_ACTOR_ID }),
-      $set: expect.objectContaining({ email: "telemetry@example.invalid", name: "Telemetry Member" }),
+      actor: TELEMETRY_ACTOR_ID,
+      person: expect.objectContaining({ email: "telemetry@example.invalid", name: "Telemetry Member" }),
     }),
   ]));
 });

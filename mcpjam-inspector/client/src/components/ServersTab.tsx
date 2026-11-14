@@ -1,3 +1,4 @@
+import { pluginExtensionProfileForHost } from "@/lib/client-config-v2-plugin-extensions";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useServerCardOrder } from "@/hooks/use-server-card-order";
 import {
@@ -86,7 +87,7 @@ import {
   type OrgRegistryDialogSeed,
 } from "./registry/OrgRegistryServerDialog";
 import { track } from "@/lib/analytics";
-import { reportCaught } from "@/lib/error-reporting";
+import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 import {
   HoverCard,
   HoverCardContent,
@@ -1479,10 +1480,10 @@ export function ServersTab({
     try {
       await connectRegistryServer(server);
     } catch (err) {
-      // This used to swallow the failure entirely: the pending state was
-      // cleared and the user was left with a card that silently never
-      // connected.
-      reportCaught(err, {
+      // Gated and origin-filtered: a registry server that fails on its own
+      // side (an upstream 5xx, its GitHub quota) is surfaced in the toast,
+      // not paged.
+      reportPossiblyOurFailure(err, {
         source: "registry_quick_connect",
         extra: { registryServerId: server._id },
       });
@@ -2307,6 +2308,7 @@ export function ServersTab({
             existingServerNames={Object.keys(projectServers)}
             projectClientConfig={selectedProject?.clientConfig}
             projectId={hostedProjectId}
+            extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
             extensionSettingsScope={extensionSettingsEnabled && hostedProjectId && previewedHostId ? {
               projectId: hostedProjectId,
               hostId: previewedHostId,
@@ -2338,6 +2340,7 @@ export function ServersTab({
             plugin={pluginParts.detail}
             onClose={() => pluginParts.setDetail(null)}
             projectId={hostedProjectId}
+            extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
             extensionSettingsScope={
               extensionSettingsEnabled && hostedProjectId && previewedHostId
                 ? {

@@ -45,7 +45,7 @@ describe("detectSandboxOriginFault", () => {
     expect(second?.shouldCapture).toBe(false);
     // The console line is unconditional, so the message survives either way.
     expect(second?.message).toBe(first?.message);
-    expect(first?.message).toContain("VITE_MCPJAM_SANDBOX_ORIGIN");
+    expect(first?.message).toContain("No sandbox origin is configured");
   });
 
   it("stays silent when a distinct origin is configured", () => {

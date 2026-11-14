@@ -211,6 +211,7 @@ export async function checkPluginFormDestination(options: {
   expiresAt: number;
   server?: PluginFormServiceServer;
   signal: AbortSignal;
+  includeOperation?: true;
 }) {
   const { scope, sourceToken, parent, expiresAt, server, signal } = options;
   try {
@@ -233,6 +234,7 @@ export async function checkPluginFormDestination(options: {
             pluginWorkspace: { version: 1, workspaceId: scope.workspaceId },
             sourceToken,
             parent,
+            ...(options.includeOperation ? { includeOperation: true } : {}),
           }),
         },
       );

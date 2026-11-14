@@ -3,6 +3,7 @@ import type { NormalizedError } from "@mcpjam/sdk";
 import { z } from "zod";
 import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js";
 import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
+import { bridgeRequestMetadata, bridgeRequestParams } from "./bridge-request-metadata.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -10,6 +11,8 @@ import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 export type BridgeMode = "adapter" | "manager";
 
 export type JsonRpcBridgeOptions = {
+  signal?: AbortSignal;
+  downstreamProtocolVersion?: string;
   /**
    * Observation-only hook for a failed `tools/call`. Failures in the hook are
    * isolated so they can never change the JSON-RPC response.
@@ -440,6 +443,7 @@ export async function handleJsonRpc(
         if (info) {
           const result: any = {
             protocolVersion:
+              options.downstreamProtocolVersion ??
               info.protocolVersion ??
               (typeof params?.protocolVersion === "string"
                 ? params.protocolVersion
@@ -457,14 +461,17 @@ export async function handleJsonRpc(
         return respond({ result: buildInitializeResult(serverId, mode) });
       }
       case "tools/list": {
-        const list = await clientManager.listTools(serverId);
+        const list = await clientManager.listTools(serverId, bridgeRequestParams(params), {
+          signal: options.signal,
+        });
         const tools = (list?.tools ?? []).map((tool: any) => {
           const mappedTool: any = {
+            ...tool,
             name: tool.name,
             description: tool.description,
             inputSchema: toJsonSchemaMaybe(tool.inputSchema),
             outputSchema: toJsonSchemaMaybe(
-              tool.outputSchema ?? tool.resultSchema
+              tool.outputSchema ?? tool.resultSchema,
             ),
           };
           // Preserve _meta field for OpenAI Apps SDK and other metadata
@@ -473,7 +480,7 @@ export async function handleJsonRpc(
           }
           return mappedTool;
         });
-        return respond({ result: { tools } });
+        return respond({ result: { ...list, tools } });
       }
       case "tools/call": {
         let targetServerId = serverId;
@@ -506,6 +513,7 @@ export async function handleJsonRpc(
             string,
             unknown
           >;
+          const metadata = bridgeRequestMetadata(params?._meta);
 
           if (evidence) {
             // `beginToolCallEvidence` NEVER THROWS — that is the whole reason
@@ -539,7 +547,9 @@ export async function handleJsonRpc(
           const exec: unknown = await clientManager.executeTool(
             targetServerId,
             toolName,
-            toolArguments
+            toolArguments,
+            { request: { signal: options.signal },
+              ...(metadata === undefined ? {} : { metadata }), },
           );
 
           if (evidence) {
@@ -629,7 +639,10 @@ export async function handleJsonRpc(
         }
       }
       case "resources/list": {
-        const list = await clientManager.listResources(serverId);
+        const list = await clientManager.listResources(serverId, bridgeRequestParams(params), {
+          signal: options.signal,
+        });
+        if (mode === "adapter") return respond({ result: list });
         const resources = (list?.resources ?? []).map((r: any) => ({
           uri: r.uri,
           name: r.name,
@@ -640,9 +653,14 @@ export async function handleJsonRpc(
       }
       case "resources/read": {
         try {
-          const resource = await clientManager.readResource(serverId, {
-            uri: params?.uri,
-          });
+          const resource = await clientManager.readResource(
+            serverId,
+            {
+              ...bridgeRequestParams(params),
+              uri: params?.uri,
+            },
+            { signal: options.signal },
+          );
           if (mode === "manager") {
             const firstContent = (resource as any)?.contents?.[0];
             const text =
@@ -679,7 +697,10 @@ export async function handleJsonRpc(
         }
       }
       case "prompts/list": {
-        const list = await clientManager.listPrompts(serverId);
+        const list = await clientManager.listPrompts(serverId, bridgeRequestParams(params), {
+          signal: options.signal,
+        });
+        if (mode === "adapter") return respond({ result: list });
         const prompts = (list?.prompts ?? []).map((p: any) => ({
           name: p.name,
           description: p.description,
@@ -690,9 +711,10 @@ export async function handleJsonRpc(
       case "prompts/get": {
         try {
           const prompt = await clientManager.getPrompt(serverId, {
+            ...bridgeRequestParams(params),
             name: params?.name,
             arguments: params?.arguments,
-          });
+          }, { signal: options.signal });
           if (mode === "manager") {
             const result = {
               description:
@@ -737,7 +759,7 @@ export async function handleJsonRpc(
         const managed = clientManager.getManagedClient(serverId);
         if (managed) {
           try {
-            const result = await managed.request({ method, params } as any);
+            const result = await managed.request({ method, params: bridgeRequestParams(params) } as any);
             return respond({ result: result ?? {} });
           } catch (e: any) {
             const normalized = describeError(e, { surface: "mcpServer" });

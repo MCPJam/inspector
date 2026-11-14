@@ -170,7 +170,7 @@
       "type": "text-start"
     },
     {
-      "delta": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+      "delta": "TOOL RESULT RECEIVED: PROBE_MCP_OK\n<system-reminder>\n<total_tokens>N tokens left</total_tokens>\n</system-reminder>",
       "id": "<id-7>",
       "type": "text-delta"
     },
@@ -248,7 +248,7 @@
             {
               "content": [
                 {
-                  "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+                  "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK\n<system-reminder>\n<total_tokens>N tokens left</total_tokens>\n</system-reminder>",
                   "type": "text"
                 }
               ],
@@ -402,7 +402,7 @@
       {
         "content": [
           {
-            "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK",
+            "text": "TOOL RESULT RECEIVED: PROBE_MCP_OK\n<system-reminder>\n<total_tokens>N tokens left</total_tokens>\n</system-reminder>",
             "type": "text"
           }
         ],
