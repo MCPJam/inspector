@@ -42,7 +42,7 @@ function shown(field: DirectoryFlowField, value: DirectoryAnswerValue | undefine
   return labels.join(", ") || BLANK;
 }
 
-function PackageField({
+export function PackageField({
   field,
   value,
   findings,

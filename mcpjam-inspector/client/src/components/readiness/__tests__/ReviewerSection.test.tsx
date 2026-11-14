@@ -4,10 +4,17 @@
  * for a person, and ended. Only the API and the Convex hooks are faked; the
  * section's own hooks run as they do on the page.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CHATGPT_PLUGIN_FLOW,
   CLAUDE_CONNECTOR_FLOW,
   type DirectoryFlowField,
   type DirectoryFlowStep,
@@ -430,6 +437,30 @@ describe("ReviewerSection", () => {
     expect(onAnswer).toHaveBeenCalledWith("testLaunch.sampleAnswer", "g");
     // The portal's own fields stay where the step draws them.
     expect(within(region()).queryByText("Test setup instructions")).toBeNull();
+  });
+
+  it("names the saved password's secret in a form that asks for a secret's name, as ChatGPT's does", async () => {
+    const user = userEvent.setup();
+    const reviewer = CHATGPT_PLUGIN_FLOW.steps.find((entry) => entry.id === "reviewer");
+    if (!reviewer) throw new Error("The ChatGPT flow has no reviewer step");
+    const onAnswer = vi.fn();
+    renderSection(reviewer, onAnswer);
+    await user.type(await screen.findByLabelText("Reviewer email"), EMAIL);
+    await user.type(screen.getByLabelText("Reviewer password"), PASSWORD);
+    await user.click(screen.getByRole("button", { name: "Save credentials" }));
+    await status("Credentials saved; reviewer sign-in not tested");
+    expect(onAnswer).toHaveBeenCalledWith("reviewer.passwordSecret", PASSWORD_SECRET);
+    expect(JSON.stringify(onAnswer.mock.calls)).not.toContain(PASSWORD);
+
+    // Claude's form has no such field, so nothing is answered there.
+    cleanup();
+    onAnswer.mockClear();
+    renderSection(TEST_LAUNCH, onAnswer);
+    await user.type(await screen.findByLabelText("Reviewer email"), EMAIL);
+    await user.type(screen.getByLabelText("Reviewer password"), PASSWORD);
+    await user.click(screen.getByRole("button", { name: "Save credentials" }));
+    await status("Credentials saved; reviewer sign-in not tested");
+    expect(onAnswer).not.toHaveBeenCalled();
   });
 
   it("shows a status that did not load, with what to do", async () => {

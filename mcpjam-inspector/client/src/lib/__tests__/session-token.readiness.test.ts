@@ -71,6 +71,8 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan/draft",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/tool-tests",
+    // A status someone records from the ChatGPT page's submit dialog.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });
