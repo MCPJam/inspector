@@ -42,6 +42,35 @@ describe("createChatTurnQueue", () => {
     expect(second).toHaveBeenCalledTimes(1);
   });
 
+  it("runs queued turns one at a time, in call order", async () => {
+    const run = createChatTurnQueue();
+    const gate = createIdleGate();
+    const first = deferred();
+    const second = deferred();
+    const started: string[] = [];
+    void run(async () => {
+      started.push("reply");
+      return { result: 0, turn: first.promise };
+    }, gate);
+    const a = run(async () => {
+      started.push("a");
+      return { result: 1, turn: second.promise };
+    }, gate);
+    const b = run(async () => {
+      started.push("b");
+      return { result: 2 };
+    }, gate);
+
+    first.resolve();
+    await expect(a).resolves.toBe(1);
+    await flush();
+    expect(started).toEqual(["reply", "a"]);
+
+    second.resolve();
+    await expect(b).resolves.toBe(2);
+    expect(started).toEqual(["reply", "a", "b"]);
+  });
+
   it("releases the next turn when a turn's request rejects", async () => {
     const run = createChatTurnQueue();
     const gate = createIdleGate();
