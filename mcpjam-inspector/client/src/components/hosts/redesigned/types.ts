@@ -327,6 +327,11 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
      */
     overrideCount: number;
   };
+  /**
+   * The saved client the Harness section reads and changes, and whether its
+   * draft has unsaved edits. Absent for a canvas that names no saved client.
+   */
+  harness?: { hostId: string; isDirty: boolean };
 }
 
 export interface ServersHubNodeData extends Record<string, unknown> {
@@ -449,6 +454,8 @@ export interface HostRedesignContext {
   draft: HostConfigInputV2;
   savedSnapshotId: string;
   isDirty: boolean;
+  /** The saved client this draft edits; it gives the card its Harness section. */
+  hostId?: string;
   projectServers: ReadonlyArray<{
     id: string;
     name: string;
@@ -470,8 +477,9 @@ export interface HostRedesignContext {
    * stays pure and callers that don't surface the islands (e.g. the
    * scenario read-only canvas) can omit them. When `computersEnabled` is
    * not exactly `true` and no computer is attached, the builder emits NO
-   * island nodes/edges. A harness draft (Claude Code / Codex / Cursor) never
-   * gets a Computer island, whatever the flag: it runs on a throwaway box.
+   * island nodes/edges. A draft that runs a native harness (its `agentLoop`
+   * or `harness`) never gets a Computer island, whatever the flag: it runs on
+   * a throwaway box.
    */
   computersEnabled?: boolean;
   browsersEnabled?: boolean;

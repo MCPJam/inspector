@@ -161,6 +161,8 @@ export interface HostMatrixCardProps {
   themeMode?: HostThemeMode;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
+  /** The Harness section, between the identity strip and Client capabilities. */
+  harness?: ReactNode;
 }
 
 export const HostMatrixCard = memo(function HostMatrixCard({
@@ -177,6 +179,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   themeMode = "light",
   selectedNodeId,
   onSelectNode,
+  harness,
 }: HostMatrixCardProps) {
   const connectedClientCaps = clientCaps.filter((row) => row.on);
 
@@ -279,6 +282,8 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             </span>
           </span>
         </ClickableRegion>
+
+        {harness}
 
         {/* Client capabilities — chip row at the Host layer */}
         <div className="hp-section">
