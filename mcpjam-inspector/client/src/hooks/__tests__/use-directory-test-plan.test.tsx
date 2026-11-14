@@ -173,7 +173,32 @@ describe("useDirectoryTestPlan", () => {
     await act(() => hook.result.current.save());
     expect(hook.result.current.conflict).toBeNull();
     expect(hook.result.current.error).toBe(
-      "The plan was not saved. MCPJam has no stored tool list for this server yet. Connect the server in MCPJam, then try again.",
+      "The plan was not saved. MCPJam has no stored tool list for this server yet. Connect the server in MCPJam to store its tools, then save the plan again.",
+    );
+  });
+
+  it("names one next step for each failure, never the API's beside its own", async () => {
+    api.getTestPlan.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    api.getToolTests.mockRejectedValueOnce(
+      refusal(
+        409,
+        "Test plan revision 2 is no longer kept, so this run's calls cannot be matched to its cases. Start a new run with the current plan.",
+      ),
+    );
+    const hook = open();
+    await waitFor(() => expect(hook.result.current.error).not.toBeNull());
+    expect(hook.result.current.error).toBe(
+      "The test plan did not load. Failed to fetch. Reopen this rehearsal to load the plan again.",
+    );
+    await waitFor(() =>
+      expect(hook.result.current.resultsError).toBe(
+        "The tool test results did not load. Test plan revision 2 is no longer kept, so this run's calls cannot be matched to its cases. Run checks again to test the current plan.",
+      ),
+    );
+    api.draftTestPlan.mockRejectedValue(new TypeError("Failed to fetch"));
+    await act(() => hook.result.current.draft());
+    expect(hook.result.current.error).toBe(
+      "The plan was not drafted. Failed to fetch. Try drafting it again.",
     );
   });
 
