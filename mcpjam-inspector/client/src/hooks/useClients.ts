@@ -6,6 +6,7 @@ import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
 import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 import { resolveClientDisplayNames } from "@/lib/client-display-name";
+import { ensureProjectClientMutation } from "@/shared/ensure-project-client";
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -33,6 +34,7 @@ export interface HostListItem {
   hostStyle?: string | null;
   /** Runtime selector returned by the client list; absent on older backends. */
   harness?: HostConfigDtoV2["harness"] | null;
+  agentLoop?: HostConfigDtoV2["agentLoop"] | null;
   serverCount: number;
   // Additive (PR: standalone hosts). Older backends omit these; readers must
   // treat absent as null/false rather than assume presence.
@@ -40,6 +42,12 @@ export interface HostListItem {
   hasComputer?: boolean;
   /** Something still uses it, so `deleteHost` would refuse. Absent = unknown. */
   inUse?: boolean;
+  /**
+   * The MCP Events delivery modes it receives events by, resolved by the
+   * backend from its saved setting or style default. Absent on older
+   * backends: fall back to the style default.
+   */
+  eventDeliveryModes?: Array<"poll" | "push" | "webhook">;
   createdAt: number;
   updatedAt: number;
 }
@@ -57,7 +65,7 @@ export interface HostDetail {
  * The project's clients, with private scenario-backing ones REMOVED by default.
  *
  * The filter lives here rather than at each call site because there are ~18 of
- * them and the ones that matter are leaves: `HostPicker`, `MultiHostPicker`,
+ * them and the ones that matter are leaves: `HostPicker`,
  * `ClientAttachmentsEditor` and friends each call this hook themselves, so a
  * caller that filters the list it holds does nothing about the picker rendered
  * inside it. Defaulting to the safe set is the only version of this rule that
@@ -183,10 +191,13 @@ export function useHost({
 }
 
 export function useHostMutations() {
-  const createHost = useMutation("hosts:createHost" as any) as unknown as (args: {
+  const createHost = useMutation(
+    "hosts:createHost" as any,
+  ) as unknown as (args: {
     projectId: string;
     name: string;
     input: HostConfigInputV2;
+    applyDefaultSystemPrompt?: boolean;
     // `'journeys'` → mint a standalone (scenario-less) host owned by the Swarm
     // surface. `'user_testing'` → mint the host, an ad-hoc environment over
     // it, and an ENVIRONMENT-backed scenario, all in one transaction; the
@@ -241,11 +252,14 @@ export function useHostMutations() {
     name?: string;
   }) => Promise<{ hostId: string; hostConfigId: string }>;
 
+  const ensureProjectClient = useMutation(ensureProjectClientMutation);
+
   return {
     createHost,
     updateHost,
     updateHostServers,
     deleteHost,
     duplicateHost,
+    ensureProjectClient,
   };
 }

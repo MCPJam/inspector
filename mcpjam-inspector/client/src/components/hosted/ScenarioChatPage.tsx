@@ -1,6 +1,6 @@
 import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { startSessionRevocation } from "@/lib/auth/revoke-session";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
@@ -10,6 +10,7 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { useTaskOwnerId } from "@/hooks/use-task-owner-id";
 import { useApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -28,6 +29,10 @@ import {
   writeScenarioSession,
   writeScenarioSignInReturnPath,
 } from "@/lib/scenario-session";
+import {
+  isRedactedTesterLinkToken,
+  redactTesterLinkPath,
+} from "@/lib/tester-link-path";
 import type {
   HostedAccessErrorDetail,
   HostedAccessRecoveryResult,
@@ -406,8 +411,9 @@ export function ScenarioChatPage({
     signOut,
     user: workOsUser,
     isLoading: isWorkOsLoading,
-  } = useAuth();
+  } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const taskOwnerId = useTaskOwnerId();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
   // The embedded Preview iframe is same-origin, so it shares the tab's
@@ -474,7 +480,18 @@ export function ScenarioChatPage({
     cachedSession?.surface ??
       readScenarioSurfaceFromUrl(window.location.search),
   );
-  if (pathToken && pathToken !== retainedTokenRef.current) {
+  // A redeem that failed for good takes the token out of the address bar and
+  // leaves the registry placeholder in its place (`redactTesterLinkPath`; see
+  // the catch in the bootstrap effect). The placeholder is NOT a token: it
+  // stands for the one this page instance already tried, held here. A fresh
+  // load of a placeholder path has none, and says the link is unavailable.
+  const redactedTokenRef = useRef<string | null>(null);
+  const pathTokenIsRedacted = isRedactedTesterLinkToken(pathToken?.trim());
+  if (
+    pathToken &&
+    !pathTokenIsRedacted &&
+    pathToken !== retainedTokenRef.current
+  ) {
     retainedTokenRef.current = pathToken;
     retainedSurfaceRef.current = readScenarioSurfaceFromUrl(
       window.location.search,
@@ -483,7 +500,15 @@ export function ScenarioChatPage({
   const [isBootstrapping, setIsBootstrapping] = useState(Boolean(pathToken));
   const [routeError, setRouteError] = useState<ScenarioRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
-  const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
+  // Resolving the placeholder to the token it replaced keeps this value — and
+  // so the bootstrap effect's dependencies — unchanged when `App` re-renders
+  // with the redacted path: the failure is not redeemed a second time.
+  const tokenFromPath = useMemo(() => {
+    const trimmed = pathToken?.trim() || null;
+    return isRedactedTesterLinkToken(trimmed)
+      ? (redactedTokenRef.current ?? trimmed)
+      : trimmed;
+  }, [pathToken]);
   // Mirror `tokenFromPath` into a ref so async work (the silent re-redeem
   // below) can detect a mid-flight navigation: when the user switches
   // scenario tokens before the in-flight `/api/web/scenarios/redeem`
@@ -771,6 +796,7 @@ export function ScenarioChatPage({
   }, [session, sessionServersActive]);
 
   useApiContext({
+    taskOwnerId,
     projectId: session?.payload.projectId ?? null,
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
@@ -792,6 +818,18 @@ export function ScenarioChatPage({
 
     const resolve = async () => {
       const tokenToRedeem = tokenFromPath ?? retainedTokenRef.current;
+      // A reload of a link whose redeem already failed: the address bar holds
+      // the placeholder and this page holds no token for it. There is nothing
+      // to redeem, and sending the placeholder would only ask the backend to
+      // confirm it. The link itself is how to try again.
+      if (isRedactedTesterLinkToken(tokenToRedeem)) {
+        setSession(null);
+        setRouteError(
+          createScenarioRouteError(404, "Invalid or expired scenario link"),
+        );
+        setIsBootstrapping(false);
+        return;
+      }
       if (tokenToRedeem) {
         if (
           cachedSession?.payload.requiresSignIn &&
@@ -867,6 +905,39 @@ export function ScenarioChatPage({
               code: nextError.code,
               message: nextError.message,
             });
+          }
+
+          // A link that is refused, expired or unavailable stops being
+          // something the address bar should hold: the error screen stays up
+          // indefinitely, and every telemetry sink and `Referer` sees the URL.
+          // So the token becomes the registry placeholder — see
+          // `redactTesterLinkPath` for why not a real path. Done BEFORE the
+          // failure is tracked, so that event already sees the scrubbed URL.
+          //
+          // NOT for `unexpected` (a 5xx, a dropped connection, the rate
+          // limiter): the screen says "try again", and with no retry button
+          // the retry is a reload, which needs the token. The URL is then
+          // exactly what it was before this page ran, nothing more.
+          //
+          // The embedded Preview pane too: its frame is a page with the same
+          // telemetry, and the pane remounts it from its own `src` rather
+          // than reloading the frame's URL.
+          // Only the token that failed: the address bar must still be
+          // showing it, not some other link navigated to since.
+          if (
+            displayError.kind !== "unexpected" &&
+            extractScenarioTokenFromPath(window.location.pathname) ===
+              tokenToRedeem
+          ) {
+            const redactedPath = redactTesterLinkPath(window.location.pathname);
+            if (redactedPath) {
+              redactedTokenRef.current = tokenToRedeem;
+              window.history.replaceState(
+                window.history.state,
+                "",
+                `${redactedPath}${window.location.search}${window.location.hash}`,
+              );
+            }
           }
 
           setRouteError(nextError);
@@ -1388,6 +1459,16 @@ export function ScenarioChatPage({
 
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {session.payload.modelReadiness?.ready === false ? (
+          <div
+            role="alert"
+            className="border-b border-warning bg-muted px-4 py-3 text-sm"
+          >
+            This study's model cannot run with its current connection. Ask the
+            study owner or an editor to choose an approved organization model in
+            the study settings, then reload this link.
+          </div>
+        ) : null}
         <ScenarioUnreachableServersBanner serverNames={unreachableServerNames} />
         <ChatTabV2
           connectedOrConnectingServerConfigs={scenarioServerConfigs}
@@ -1432,12 +1513,16 @@ export function ScenarioChatPage({
           }}
           onOAuthRequired={handleOAuthRequired}
           scenarioComposerBlocked={
-            introGate.composerBlocked || isCheckingServerReachability
+            session.payload.modelReadiness?.ready === false ||
+            introGate.composerBlocked ||
+            isCheckingServerReachability
           }
           scenarioComposerBlockedReason={
-            introGate.composerBlocked
-              ? "Get started or authorize to send messages…"
-              : "Connecting to this session's tools…"
+            session.payload.modelReadiness?.ready === false
+              ? "Ask the study owner or an editor to repair the model…"
+              : introGate.composerBlocked
+                ? "Get started or authorize to send messages…"
+                : "Connecting to this session's tools…"
           }
           scenarioOptionalInventory={scenarioOptionalInventory}
           onEnableScenarioOptionalServer={handleEnableScenarioOptionalServer}

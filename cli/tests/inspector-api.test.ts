@@ -1100,3 +1100,66 @@ test("browser links carry the credential only in the fragment and preserve the t
   );
   assert.equal(new URLSearchParams(link.hash.slice(1)).get("tab"), "tools");
 });
+
+
+test("InspectorApiClient binds connect to the selected saved project and actor", async () => {
+  const seen: Array<{ body: unknown; authorization: string | undefined }> = [];
+  await withServer(
+    async (request, response) => {
+      if (request.url === "/api/session-token") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      seen.push({
+        body: await readJsonBody(request),
+        authorization: request.headers.authorization,
+      });
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ success: true }));
+    },
+    async (baseUrl) => {
+      const client = new InspectorApiClient({ baseUrl });
+      await client.connectServer(
+        "ignored",
+        { url: "https://ignored.test" },
+        {
+          target: {
+            projectId: "project-selected",
+            serverId: "saved-server",
+            serverName: "CAD",
+            accessToken: "actor-token",
+          },
+        },
+      );
+    },
+  );
+  assert.deepEqual(seen, [
+    {
+      body: {
+        projectId: "project-selected",
+        serverId: "saved-server",
+        serverName: "CAD",
+      },
+      authorization: "Bearer actor-token",
+    },
+  ]);
+});
+
+test("InspectorApiClient explains saved-server requirement on current Inspector", async () => {
+  await withServer((request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.url === "/api/session-token") {
+      response.end(JSON.stringify({ ok: true }));
+    } else {
+      response.writeHead(400);
+      response.end(JSON.stringify({ error: "projectId is required" }));
+    }
+  }, async (baseUrl) => {
+    const client = new InspectorApiClient({ baseUrl });
+    await assert.rejects(
+      client.connectServer("adhoc", { url: "https://example.test/mcp" }),
+      /--server-id <id> with --project <id-or-name>/,
+    );
+  });
+});

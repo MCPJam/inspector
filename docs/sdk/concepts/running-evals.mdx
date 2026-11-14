@@ -4,6 +4,10 @@ description: "Measure tool accuracy with statistical evaluations"
 icon: "chart-bar"
 ---
 
+<Note>
+The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+</Note>
+
 LLMs are probabilistic, so the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
 
 ## Why Run Evals?
@@ -420,3 +424,7 @@ You can also generate eval code from the MCPJam Inspector. Click **⋮ → Copy 
     Auto-save, manual APIs, CI metadata, and artifact upload
   </Card>
 </CardGroup>
+
+## Eval authentication
+
+For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

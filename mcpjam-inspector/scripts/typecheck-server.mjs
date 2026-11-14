@@ -74,6 +74,19 @@ function ensureSdkBuilt() {
   });
 }
 
+/**
+ * Telemetry catalogs are JSON imports the server type-checks against. A
+ * missing one would resolve to `any` and quietly hide errors from the
+ * ratchet, so write them first; a changed SDK catalog then makes
+ * `ensureSdkBuilt` rebuild.
+ */
+function writeTelemetryCatalogs() {
+  execFileSync(process.execPath, [join(INSPECTOR, "..", "scripts", "generate-telemetry-catalogs.mjs")], {
+    cwd: INSPECTOR,
+    stdio: "pipe",
+  });
+}
+
 function runTsc() {
   try {
     execFileSync(
@@ -101,6 +114,7 @@ function total(counts) {
 // Compared as URLs: on Windows argv[1] is a `C:\` path, and a space in the
 // checkout path is percent-encoded only in the URL.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  writeTelemetryCatalogs();
   ensureSdkBuilt();
   const output = runTsc();
   const fatal = globalErrors(output);

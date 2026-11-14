@@ -1,3 +1,4 @@
+import { makeAppInstance } from "@/test/factories";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   useAppToolsRegistry,
@@ -27,24 +28,18 @@ function nonReadonlyTool(name: string): AppToolDescriptor {
   };
 }
 
-function makeInstance(
+const makeInstance = (
   bridgeId: string,
   tools: AppToolDescriptor[],
   overrides?: Partial<AppInstance>,
-): AppInstance {
-  return {
+) =>
+  makeAppInstance({
     bridgeId,
-    parentToolCallId: "call-1",
-    serverId: "srv-1",
+    tools,
     appName: "Demo",
     appVersion: "1.0.0",
-    surface: "inline",
-    bridge: { callTool: vi.fn() } as unknown as AppInstance["bridge"],
-    tools,
-    registeredAtMs: Date.now(),
     ...overrides,
-  };
-}
+  });
 
 beforeEach(() => {
   useAppToolsRegistry.setState({
@@ -75,7 +70,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
       .registerInstance(
         makeInstance("b-1", [readonlyTool("ping"), nonReadonlyTool("mutate")]),
       );
-    const snap = useAppToolsRegistry.getState().snapshotForChatBody();
+    const snap = useAppToolsRegistry.getState().snapshotForChatBody("chat-1");
     expect(snap.map((e) => [e.rawName, e.readOnly]).sort()).toEqual([
       ["mutate", false],
       ["ping", true],
@@ -86,7 +81,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry
       .getState()
       .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
-    const snap = useAppToolsRegistry.getState().snapshotForChatBody();
+    const snap = useAppToolsRegistry.getState().snapshotForChatBody("chat-1");
     for (const entry of snap) {
       expect(entry).not.toHaveProperty("bridge");
     }
@@ -105,7 +100,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
           readonlyTool("toobig", { inputSchema: big }),
         ]),
       );
-    const snap = useAppToolsRegistry.getState().snapshotForChatBody();
+    const snap = useAppToolsRegistry.getState().snapshotForChatBody("chat-1");
     expect(snap.map((e) => e.rawName).sort()).toEqual(["ok"]);
   });
 
@@ -117,7 +112,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
           readonlyTool("long", { description: "x".repeat(1000) }),
         ]),
       );
-    const snap = useAppToolsRegistry.getState().snapshotForChatBody();
+    const snap = useAppToolsRegistry.getState().snapshotForChatBody("chat-1");
     expect(snap[0].description?.length).toBe(512);
   });
 
@@ -127,13 +122,13 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
       .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
     expect(useAppToolsRegistry.getState().aliases.size).toBe(1);
     expect(
-      useAppToolsRegistry.getState().activeBridgeByParent.get("call-1"),
+      useAppToolsRegistry.getState().activeBridgeByParent.get("chat-1\0call-1"),
     ).toBe("b-1");
 
     useAppToolsRegistry.getState().unregisterInstance("b-1");
     expect(useAppToolsRegistry.getState().aliases.size).toBe(0);
     expect(
-      useAppToolsRegistry.getState().activeBridgeByParent.has("call-1"),
+      useAppToolsRegistry.getState().activeBridgeByParent.has("chat-1\0call-1"),
     ).toBe(false);
   });
 
@@ -177,7 +172,9 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry
       .getState()
       .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
-    const snapshot = useAppToolsRegistry.getState().snapshotForChatBody();
+    const snapshot = useAppToolsRegistry
+      .getState()
+      .snapshotForChatBody("chat-1");
     expect(snapshot).toHaveLength(1);
     const aliasInFlight = snapshot[0].alias;
 
@@ -220,7 +217,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     expect(resolved?.instance.bridgeId).toBe("b-2");
     expect(resolved?.bridge).toBe(secondBridge.bridge);
     expect(state.instancesByBridgeId.has("b-1")).toBe(false);
-    expect(state.activeBridgeByParent.get("call-1")).toBe("b-2");
+    expect(state.activeBridgeByParent.get("chat-1\0call-1")).toBe("b-2");
   });
 
   // ── SEP-1865 in-flight teardown cancellation ────────────────────────────
@@ -281,7 +278,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
         appName: "TicTacToe",
       }),
     );
-    const snap = useAppToolsRegistry.getState().snapshotForChatBody();
+    const snap = useAppToolsRegistry.getState().snapshotForChatBody("chat-1");
     expect(snap.map((e) => e.description).sort()).toEqual([
       "Move (from tool call call-A; instance 1 of 2)",
       "Move (from tool call call-B; instance 2 of 2)",
@@ -294,7 +291,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
         appName: "OnlyOne",
       }),
     );
-    const snap = useAppToolsRegistry.getState().snapshotForChatBody();
+    const snap = useAppToolsRegistry.getState().snapshotForChatBody("chat-1");
     expect(snap).toHaveLength(1);
     expect(snap[0].description).toBe("Solo");
   });
@@ -362,7 +359,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     expect(state.aliases.get(inlineAlias)?.bridgeId).toBe("b-inline");
     // Modal wins as the active provider while open — snapshot/resolve
     // route to modal tools.
-    expect(state.activeBridgeByParent.get("call-1")).toBe("b-modal");
+    expect(state.activeBridgeByParent.get("chat-1\0call-1")).toBe("b-modal");
     expect(state.resolve(inlineAlias)).toBeNull();
   });
 
@@ -397,9 +394,9 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     expect(restoredState.resolve(inlineAlias)?.instance.bridgeId).toBe(
       "b-inline",
     );
-    expect(restoredState.snapshotForChatBody().map((e) => e.alias)).toEqual([
-      inlineAlias,
-    ]);
+    expect(
+      restoredState.snapshotForChatBody("chat-1").map((e) => e.alias),
+    ).toEqual([inlineAlias]);
   });
 
   it("inline → modal → inline: closing the modal restores the inline bridge as active and resolvable", async () => {
@@ -422,11 +419,11 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     expect(state.instancesByBridgeId.has("b-modal")).toBe(false);
     expect(state.instancesByBridgeId.has("b-inline")).toBe(true);
     // Active fallback promoted inline back to the provider slot.
-    expect(state.activeBridgeByParent.get("call-1")).toBe("b-inline");
+    expect(state.activeBridgeByParent.get("chat-1\0call-1")).toBe("b-inline");
     // Inline tools are once again resolvable and snapshottable.
     const resolved = state.resolve(inlineAlias);
     expect(resolved?.rawName).toBe("inline_tool");
-    expect(state.snapshotForChatBody().map((e) => e.alias)).toEqual([
+    expect(state.snapshotForChatBody("chat-1").map((e) => e.alias)).toEqual([
       inlineAlias,
     ]);
   });

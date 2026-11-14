@@ -136,12 +136,40 @@ function isSecretKeyName(raw: string): boolean {
   return /(token|secret|password|apikey|signature|credential)/.test(normalized);
 }
 
+const NORMALIZED_SECRET_QUERY_PARAMS = new Set(
+  [...SECRET_QUERY_PARAMS].map(normalizeKey)
+);
+
 function looksSensitiveParam(name: string): boolean {
-  const normalized = name.toLowerCase();
-  if (SECRET_QUERY_PARAMS.has(normalized)) return true;
-  return /(token|secret|password|apikey|api_key|auth|signature)/.test(
-    normalized
+  if (NORMALIZED_SECRET_QUERY_PARAMS.has(normalizeKey(name))) return true;
+  // Compared without separators, like `isSecretKeyName`: `x-api-key` and
+  // `X-API-KEY` are the same credential as `api_key`.
+  return /(token|secret|password|apikey|auth|signature)/.test(
+    normalizeKey(name)
   );
+}
+
+function redactParams(raw: string, isRoute = false): string | null {
+  let touched = false;
+  // Preserve safe fields verbatim: fragment readers need not use form decoding.
+  const result = raw.split("&").map((field) => {
+    const parts = isRoute ? field.split("?") : [field];
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index];
+      const name = new URLSearchParams(part).keys().next().value;
+      if (name === undefined || !looksSensitiveParam(name)) continue;
+      touched = true;
+      const equals = part.indexOf("=");
+      const key = equals < 0 ? part : part.slice(0, equals);
+      // A later question mark may belong to the secret value; drop its suffix too.
+      return [
+        ...parts.slice(0, index),
+        `${key}=${encodeURIComponent(REDACTED)}`,
+      ].join("?");
+    }
+    return field;
+  });
+  return touched ? result.join("&") : null;
 }
 
 /**
@@ -161,9 +189,9 @@ export function redactUrlSecrets(value: string): string {
   }
 
   let touched = false;
-  for (const name of Array.from(parsed.searchParams.keys())) {
-    if (!looksSensitiveParam(name)) continue;
-    parsed.searchParams.set(name, REDACTED);
+  const query = redactParams(parsed.search.slice(1));
+  if (query !== null) {
+    parsed.search = query;
     touched = true;
   }
   // Userinfo is a credential in the URL itself (`https://user:pass@host/`).
@@ -180,16 +208,22 @@ export function redactUrlSecrets(value: string): string {
     const fragment = parsed.hash.slice(1);
     // Only treat it as parameters when it actually looks like them; a plain
     // `#section-2` anchor must survive untouched.
-    if (/^[^=&]+=[^&]*(?:&[^=&]+=[^&]*)*$/.test(fragment)) {
-      const params = new URLSearchParams(fragment);
-      let fragmentTouched = false;
-      for (const name of Array.from(params.keys())) {
-        if (!looksSensitiveParam(name)) continue;
-        params.set(name, REDACTED);
-        fragmentTouched = true;
-      }
-      if (fragmentTouched) {
-        parsed.hash = `#${params.toString()}`;
+    const routeMarker = /^!?\//.exec(fragment)?.[0] ?? "";
+    const isRoute = routeMarker !== "";
+    const queryStart = isRoute ? fragment.search(/[?&]/) : -1;
+    const routePath =
+      queryStart >= 0 ? fragment.slice(0, queryStart) : fragment;
+    // A route path has no `=`. When the first segment does
+    // (`#/access_token=…`), only the marker is route; the segment is a field.
+    const prefix =
+      !isRoute || routePath.includes("=")
+        ? routeMarker
+        : fragment.slice(0, queryStart + 1);
+    const parameters = fragment.slice(prefix.length);
+    if (parameters.includes("=")) {
+      const redacted = redactParams(parameters, isRoute);
+      if (redacted !== null) {
+        parsed.hash = `#${prefix}${redacted}`;
         touched = true;
       }
     }
@@ -251,10 +285,8 @@ function redactInlineSecrets(value: string): string {
       )
       // Form-encoded / query-ish fragments that never parsed as a full URL:
       // `client_secret=…&grant_type=…`. Judged by the same predicate.
-      .replace(
-        /\b([A-Za-z0-9_-]+)=([^\s&"';,]+)/g,
-        (match, key, _value) =>
-          isSecretKeyName(key) ? `${key}=${REDACTED}` : match
+      .replace(/\b([A-Za-z0-9_-]+)=([^\s&"';,]+)/g, (match, key, _value) =>
+        isSecretKeyName(key) ? `${key}=${REDACTED}` : match
       )
   );
 }

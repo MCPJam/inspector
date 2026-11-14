@@ -204,13 +204,14 @@ describe("supportedReasoningEfforts", () => {
     // would verify it has not run, so an effort there is still refused.
     expect(HARNESS_REASONING_EFFORTS["claude-code"]).toEqual([]);
     expect(HARNESS_REASONING_EFFORTS.cursor).toEqual([]);
+    expect(HARNESS_REASONING_EFFORTS.opencode).toEqual([]);
     expect(HARNESS_REASONING_EFFORTS.codex).toEqual([
       "low",
       "medium",
       "high",
       "xhigh",
     ]);
-    for (const harness of ["claude-code", "codex", "cursor"] as const) {
+    for (const harness of ["claude-code", "codex", "cursor", "opencode"] as const) {
       expect(harnessReasoningEfforts(harness)).toEqual([
         ...HARNESS_REASONING_EFFORTS[harness],
       ]);

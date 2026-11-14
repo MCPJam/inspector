@@ -16,6 +16,10 @@ const f = vi.hoisted(() => ({
   get: vi.fn(),
   live: vi.fn(),
   lifetime: vi.fn(),
+  describeFormFiles: vi.fn(),
+  verifyCurrent: vi.fn(),
+  resolveTools: vi.fn(),
+  formOwner: vi.fn(),
 }));
 vi.mock("../../../services/evals/route-helpers.js", () => ({
   createConvexClient: () => ({ query: f.plugins }),
@@ -36,6 +40,7 @@ vi.mock("../../../services/plugin-host/instances.js", () => ({
     getPersistent: f.get,
     get: f.live,
     signal: f.lifetime,
+    getFormOwner: f.formOwner,
   },
 }));
 vi.mock("../../../services/plugin-host/request-runtime.js", async (original) => ({
@@ -47,6 +52,8 @@ vi.mock("../../../services/plugin-host/request-runtime.js", async (original) => 
     catalog: f.catalog,
     resolve: f.resolve,
     release: f.release,
+    verifyCurrent: f.verifyCurrent,
+    resolveTools: f.resolveTools,
   }),
 }));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
@@ -55,8 +62,14 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 vi.mock("../../../utils/tool-approval-token.js", () => ({
   toolApprovalSubjectFromAuthHeader: () => "verified-subject",
 }));
+vi.mock("../../../services/plugin-host/form-files.js", async original => ({
+  ...await original<typeof import("../../../services/plugin-host/form-files.js")>(),
+  describePluginFormFiles: f.describeFormFiles,
+}));
 import routes from "../plugin-instances";
 import { PluginWorkspaceAdmissionError } from "../../../services/plugin-host/admission";
+import { pluginFormSources } from "../../../services/plugin-host/form-sources.js";
+import { webReceiptApp, withReceiptSigning, expectOwnedSourceReceipt } from "./owned-source-receipt-fixture.js";
 const app = new Hono().route("/instances", routes);
 const body = {
   projectId: "project",
@@ -679,6 +692,66 @@ describe("authenticated thread adapter boundaries", () => {
       title: "Parts",
     });
   });
+  describe("openai/mentions capability", () => {
+    const search = {
+      name: "parts.search",
+      title: "Parts",
+      inputSchema: { type: "object" },
+      annotations: { readOnlyHint: true },
+      _meta: { ui: { visibility: ["app"] } },
+    };
+    const declared = (searchTool: typeof search) => ({
+      tools: [tool, searchTool],
+      transport: "mrtr",
+      serverCapabilities: {
+        extensions: { "openai/mentions": { searchTool: "parts.search" } },
+      },
+    });
+    it("reports the capability's search tool in discovery and opens it", async () => {
+      f.catalog.mockResolvedValue(declared(search));
+      expect((await (await post("discover", body)).json()).mentions).toEqual({
+        available: true,
+        toolName: "parts.search",
+        title: "Parts",
+      });
+      f.resolve.mockResolvedValue({
+        ...declared(search),
+        tool: search,
+        runtime: "chatgpt",
+        hostRevision: "host-revision",
+        bindingId: "binding",
+        serverIdentity: { kind: "saved" },
+        revision: "revision",
+      });
+      const opened = await (await post("mentions/open", body)).json();
+      expect(opened.mention).toMatchObject({
+        toolName: "parts.search",
+        title: "Parts",
+      });
+      expect(f.resolve).toHaveBeenCalledWith("parts.search", expect.anything());
+    });
+    it("explains an unusable search tool in Logs instead of offering @ search", async () => {
+      f.catalog.mockResolvedValue(declared({ ...search, annotations: {} }));
+      const discovered = await (await post("discover", body)).json();
+      expect(discovered.mentions).toEqual({ available: false });
+      expect(discovered.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY",
+          serverId: "saved-id",
+        }),
+      ]);
+      const opened = await (await post("mentions/open", body)).json();
+      expect(opened).toEqual({
+        mention: null,
+        diagnostics: [
+          expect.objectContaining({
+            code: "PLUGIN_MENTION_SEARCH_TOOL_NOT_READ_ONLY",
+          }),
+        ],
+      });
+      expect(f.resolve).not.toHaveBeenCalled();
+    });
+  });
   it("returns each entrypoint's tool icons and the server icon", async () => {
     const svg = "https://cdn.example.invalid/parts.svg";
     f.catalog.mockResolvedValue({
@@ -974,4 +1047,295 @@ describe("form preview refusals", () => {
       });
     },
   );
+});
+
+
+describe("form operation projection request", () => {
+  const request = { projectId: "project", pluginWorkspace: body.pluginWorkspace, sourceToken: "s".repeat(43), parent: { kind: "legacy", id: "form", round: 0 } };
+  it("passes only an explicit operation projection opt-in through the authorized service route", async () => {
+    f.describeFormFiles.mockResolvedValue({ userResources: false, userResourceKinds: [] });
+    const response = await post("form-files/services", { ...request, includeOperation: true });
+    expect(response.status).toBe(200);
+    expect(f.admission).toHaveBeenCalled();
+    expect(f.describeFormFiles).toHaveBeenCalledWith(expect.objectContaining({ includeOperation: true, sourceToken: request.sourceToken }));
+    expect(await response.json()).toEqual({ userResources: false, userResourceKinds: [] });
+  });
+  it("refuses a caller-authored operation tuple before service access", async () => {
+    const response = await post("form-files/services", { ...request, operation: { instanceId: "forged" } });
+    expect(response.status).toBe(400);
+    expect(f.describeFormFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe("owned App source receipts", () => {
+  const web = webReceiptApp(routes, "instances");
+  const request = (path: string, input: unknown) => web.request(`/api/web/instances/${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  });
+  const html = "<p>Owned part α</p>";
+  const csp = { connectDomains: ["https://parts.example"], resourceDomains: ["https://assets.example"] };
+  const manager = { readResource: f.read, getServerConfig: () => ({}) };
+
+  it("binds activation bytes to the verified actor/project and server-issued operation", async () => {
+    await withReceiptSigning(async () => {
+      const operationId = crypto.randomUUID();
+      f.catalog.mockResolvedValue({ tools: [tool], manager, hostRevision: "host-v1", bindingId: "binding", serverIdentity: { kind: "standalone", serverId: "saved-id" }, runtime: "chatgpt" });
+      f.read.mockResolvedValue({ contents: [{ uri: "ui://fixture", mimeType: "text/html;profile=mcp-app", text: html, _meta: { ui: { csp } } }] });
+      f.open.mockResolvedValue({ token: "a".repeat(43), instance: { owner: { instanceId: crypto.randomUUID(), generation: 1 }, activation: { operationId } } });
+      const input = { ...body, threadId: "thread", toolName: tool.name, kind: "thread" };
+      const response = await request("activation/open", input);
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.operationId).toBe(operationId);
+      expect(result.widgetContent).toMatchObject({ html, csp });
+      expectOwnedSourceReceipt(result.widgetContent, { serverId: "saved-id", resourceUri: "ui://fixture", toolCallId: operationId });
+      f.read.mockClear();
+      f.admission.mockRejectedValueOnce(new PluginWorkspaceAdmissionError());
+      const denied = await request("activation/open", input);
+      expect(denied.status).toBe(403);
+      expect(await denied.text()).not.toContain("sourceReceipt");
+      expect(f.read).not.toHaveBeenCalled();
+    });
+  });
+
+  it("binds an authorized form-preview child and withholds a receipt after its source closes", async () => {
+    await withReceiptSigning(async () => {
+      const parent = { kind: "legacy" as const, id: crypto.randomUUID(), round: 0 as const };
+      const target = { type: "mcp_app_tool" as const, name: "preview", arguments: { part: "bolt" } };
+      const owner = { actorId: "actor", projectId: "project", workspaceId: "workspace", instanceId: crypto.randomUUID(), generation: 1, serverId: "saved-id", bindingId: "binding", placement: "interactive" as const };
+      const expiresAt = Date.now() + 60_000;
+      const source = pluginFormSources.bind({ owner, hostId: "host", hostRevision: "host-v1", invocationId: "original", origin: "entrypoint", revision: "source-revision", toolName: "source", parent, expiresAt, requestedSchema: { type: "object", properties: { part: { type: "string", format: "uri", "x-openai-input": { type: "resource", options: [{ uri: "fixture://part", name: "Part", _meta: { "openai/preview": { target } } }] } } } } });
+      f.formOwner.mockReturnValue({ hostId: "host", owner });
+      f.plugins.mockResolvedValue({ actorId: "actor", expiresAt });
+      f.resolveTools.mockImplementation(async (names: string[]) => new Map(names.map(name => [name, { tool: { name, inputSchema: { type: "object", properties: { part: { type: "string" } } }, _meta: { ui: { resourceUri: "ui://preview", visibility: ["app"] } } }, revision: name === "source" ? "source-revision" : "preview-revision", hostRevision: "host-v1", bindingId: "binding", appToolsEnabled: true, manager }])));
+      f.read.mockResolvedValue({ contents: [{ uri: "ui://preview", mimeType: "text/html;profile=mcp-app", text: html, _meta: { ui: { csp } } }] });
+      const input = { projectId: "project", pluginWorkspace: body.pluginWorkspace, sourceToken: source.token, parent, target };
+      try {
+        const response = await request("form-preview/app/open", input);
+        expect(response.status).toBe(200);
+        const result = await response.json();
+        expect(result.operationId).toEqual(expect.any(String));
+        expect(result.widgetContent).toMatchObject({ html, csp });
+        expectOwnedSourceReceipt(result.widgetContent, { serverId: "saved-id", resourceUri: "ui://preview", toolCallId: result.operationId });
+        source.release();
+        f.read.mockClear();
+        const denied = await request("form-preview/app/open", input);
+        expect(denied.status).toBe(403);
+        expect(await denied.text()).not.toContain("sourceReceipt");
+        expect(f.read).not.toHaveBeenCalled();
+      } finally {
+        source.release();
+      }
+    });
+  });
+});
+
+describe("entry points under a client's rules", () => {
+  const CLAUDE = {
+    displayHints: "ui",
+    displayStart: "inline-then-move",
+    entrypointVisibility: "require-model",
+    entrypointWithoutFullscreen: "inline",
+    entrypointNames: "no-double-separators",
+    entrypointQuickActions: "hide",
+  };
+  const CHATGPT = {
+    displayHints: "openai/ui",
+    displayStart: "hint-first",
+    entrypointVisibility: "ignore",
+    entrypointWithoutFullscreen: "refuse",
+    entrypointNames: "any",
+    entrypointQuickActions: "show",
+  };
+  const global = (
+    name: string,
+    extra: { visibility?: string[]; quickAction?: boolean } = {},
+  ) => ({
+    name,
+    inputSchema: { type: "object", properties: {} },
+    _meta: {
+      ui: {
+        resourceUri: `ui://${name}`,
+        ...(extra.visibility ? { visibility: extra.visibility } : {}),
+      },
+      "openai/ui": {
+        entrypoints: [
+          {
+            type: "global",
+            ...(extra.quickAction
+              ? {
+                  quickAction: {
+                    title: "New sketch",
+                    icons: [{ src: "https://fixture.invalid/new.svg" }],
+                    target: { type: "tool", name, arguments: {} },
+                  },
+                }
+              : {}),
+          },
+        ],
+      },
+    },
+  });
+  const tools = [
+    global("open-app"),
+    global("app-only", { visibility: ["app"] }),
+    global("foo__bar"),
+    global("sketch", { quickAction: true }),
+  ];
+  const listed = (result: {
+    entries: { toolName: string; kind: string; unopenable?: string[] }[];
+  }) =>
+    result.entries.map(({ toolName, kind, unopenable }) => ({
+      toolName,
+      kind,
+      ...(unopenable ? { unopenable } : {}),
+    }));
+
+  it("lists only model-visible tools, flags unopenable names and hides quick actions for Claude", async () => {
+    f.catalog.mockResolvedValue({ tools, behavior: CLAUDE });
+    const result = await (await post("discover", body)).json();
+    expect(listed(result)).toEqual([
+      { toolName: "open-app", kind: "global" },
+      { toolName: "foo__bar", kind: "global", unopenable: ["__"] },
+      { toolName: "sketch", kind: "global" },
+    ]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        level: "warning",
+        code: "PLUGIN_ENTRYPOINT_HIDDEN",
+        serverId: "saved-id",
+        details: { tools: ["app-only"] },
+      }),
+    ]);
+  });
+
+  it.each([
+    ["ChatGPT's rules", CHATGPT],
+    ["no rules", undefined],
+  ])(
+    "lists every declared entry point under %s, as before",
+    async (_label, behavior) => {
+      f.catalog.mockResolvedValue({ tools, ...(behavior ? { behavior } : {}) });
+      const result = await (await post("discover", body)).json();
+      expect(listed(result)).toEqual([
+        { toolName: "open-app", kind: "global" },
+        { toolName: "app-only", kind: "global" },
+        { toolName: "foo__bar", kind: "global" },
+        { toolName: "sketch", kind: "global" },
+        { toolName: "sketch", kind: "quick-action" },
+      ]);
+      expect(result.diagnostics).toBeUndefined();
+    },
+  );
+
+  it.each([
+    [
+      "entrypointVisibility",
+      "require-model",
+      ["open-app", "foo__bar", "sketch", "sketch:quick-action"],
+      [],
+    ],
+    [
+      "entrypointNames",
+      "no-double-separators",
+      ["open-app", "app-only", "foo__bar", "sketch", "sketch:quick-action"],
+      ["foo__bar"],
+    ],
+    [
+      "entrypointQuickActions",
+      "hide",
+      ["open-app", "app-only", "foo__bar", "sketch"],
+      [],
+    ],
+  ])("applies %s: %s on its own", async (field, value, entries, unopenable) => {
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: { ...CHATGPT, [field]: value },
+    });
+    const result = await (await post("discover", body)).json();
+    expect(
+      listed(result).map(({ toolName, kind }) =>
+        kind === "global" ? toolName : `${toolName}:${kind}`,
+      ),
+    ).toEqual(entries);
+    expect(
+      listed(result).flatMap((entry) =>
+        entry.unopenable ? [entry.toolName] : [],
+      ),
+    ).toEqual(unopenable);
+    expect(result.diagnostics !== undefined).toBe(
+      field === "entrypointVisibility",
+    );
+  });
+
+  it("refuses to open a name Claude can't open, with a Logs row naming the characters", async () => {
+    const readResource = vi.fn().mockRejectedValue(new Error("read"));
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: CLAUDE,
+      manager: { readResource },
+    });
+    const refused = await post("activation/open", {
+      ...body,
+      threadId: "thread",
+      toolName: "foo__bar",
+      kind: "global",
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      code: "PLUGIN_ENTRYPOINT_UNOPENABLE",
+      description: expect.stringContaining("Rename the tool"),
+      diagnostics: [
+        expect.objectContaining({
+          level: "error",
+          code: "PLUGIN_ENTRYPOINT_UNOPENABLE",
+          serverId: "saved-id",
+          title: 'Entry point refused: foo__bar has "__" in its name',
+        }),
+      ],
+    });
+    expect(readResource).not.toHaveBeenCalled();
+    expect(f.open).not.toHaveBeenCalled();
+    // ChatGPT opens the same tool: it reaches the UI read.
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: CHATGPT,
+      manager: { readResource },
+    });
+    await post("activation/open", {
+      ...body,
+      threadId: "thread",
+      toolName: "foo__bar",
+      kind: "global",
+    });
+    expect(readResource).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a quick action for Claude and runs it for ChatGPT", async () => {
+    const readResource = vi.fn().mockRejectedValue(new Error("read"));
+    const open = () =>
+      post("activation/open", {
+        ...body,
+        threadId: "thread",
+        toolName: "sketch",
+        kind: "quick-action",
+        requestId: crypto.randomUUID(),
+      });
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: CLAUDE,
+      manager: { readResource },
+    });
+    const refused = await open();
+    expect(refused.status).toBe(400);
+    expect(readResource).not.toHaveBeenCalled();
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: CHATGPT,
+      manager: { readResource },
+    });
+    await open();
+    expect(readResource).toHaveBeenCalledTimes(1);
+    expect(f.open).not.toHaveBeenCalled();
+  });
 });

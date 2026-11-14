@@ -15,22 +15,15 @@ import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useHostHarnessLoader } from "@/hooks/use-host-harness-targets";
-import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 
 export function useComposerResolver(
   rawProjectId: string,
   options: {
-    /**
-     * Eval surfaces pass `true`: see `resolveComposerEnvironments`. Swarms and
-     * User Testing leave it off — their targets fall back to the client's own
-     * servers.
-     */
+    /** Explicit selection is required for eval and swarm targets. */
     requireServerAttachment?: boolean;
-    /**
-     * User Testing passes `true`: its participants are not the composer, so a
-     * Cursor client's key has to be project-shared to reach them.
-     */
-    requireSharedExternalCredential?: boolean;
+    allowEmptyServerSelection?: boolean;
+    /** User Testing: a client on the organization's vendor key can't run there. */
+    refuseOrgKeyClients?: boolean;
   } = {},
 ): (args: {
   state: EnvironmentComposerState;
@@ -47,15 +40,12 @@ export function useComposerResolver(
   const sandboxImagesEnabled = useSandboxImagesEnabled();
   const modelMatrixEnabled = useModelMatrixCapability(projectId);
   const requireServerAttachment = options.requireServerAttachment === true;
+  const allowEmptyServerSelection = options.allowEmptyServerSelection !== false;
   // Read at resolve time, per client with explicit model picks, so a pair the
   // client's harness cannot run is skipped (and reported) instead of minted.
   const loadHostHarness = useHostHarnessLoader();
   const modelSelectionsEnabled = useModelSelectionsCapability(projectId);
-  // The key a Cursor client's environment must grant. Only read at resolve time
-  // for such a client; held here because it is a reactive query.
-  const projectSecrets = useProjectSecrets(projectId || null);
-  const requireSharedExternalCredential =
-    options.requireSharedExternalCredential === true;
+  const refuseOrgKeyClients = options.refuseOrgKeyClients === true;
 
   return useCallback(
     ({ state, liveEnvironments, max }) =>
@@ -69,20 +59,20 @@ export function useComposerResolver(
         max,
         modelMatrixEnabled: modelMatrixEnabled === true,
         requireServerAttachment,
+        allowEmptyServerSelection,
         loadHostHarness,
         modelSelectionsEnabled: modelSelectionsEnabled === true,
-        projectSecrets,
-        requireSharedExternalCredential,
+        refuseOrgKeyClients,
       }),
     [
-      projectSecrets,
-      requireSharedExternalCredential,
+      refuseOrgKeyClients,
       ensureAdhocEnvironments,
       loadHostHarness,
       modelMatrixEnabled,
       modelSelectionsEnabled,
       projectId,
       requireServerAttachment,
+      allowEmptyServerSelection,
       sandboxImagesEnabled,
       skillsEnabled,
     ],

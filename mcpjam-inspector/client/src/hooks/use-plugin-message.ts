@@ -1,8 +1,9 @@
 import { useCallback, useRef } from "react";
 import {
   parsePluginMessage,
+  pluginMessageDraftIntentSchema,
   pluginMessageIntentSchema,
-  pluginMessageTarget,
+  pluginMessageSendMode,
   type PluginMessageIntent,
 } from "@/shared/plugin-message";
 import {
@@ -20,20 +21,21 @@ export function usePluginMessage(
   const action = useOwnedChatAction({ ...options, accepts: () => true });
   const send = useCallback(
     async (value: PluginMessageIntent, requireLive: () => boolean) => {
-      const intent = pluginMessageIntentSchema.parse(value);
-      intent.params = parsePluginMessage(intent.params);
+      const mode = pluginMessageSendMode(parsePluginMessage(value.params));
+      // A draft is checked block by block here, before any chat changes.
+      const intent = (
+        mode.send ? pluginMessageIntentSchema : pluginMessageDraftIntentSchema
+      ).parse(value);
       if (intent.sourceThreadId !== current.current.threadId) return false;
       // An App cannot author a server transfer receipt. Only prepareNew may add it.
       if (intent.preparationToken) return false;
-      if (
-        pluginMessageTarget(intent.params) === "new" &&
-        !current.current.prepareNew
-      )
+      if (mode.send && mode.target === "new" && !current.current.prepareNew)
         return false;
       return action.dispatch(
         intent,
-        pluginMessageTarget(intent.params),
+        mode.target,
         requireLive,
+        mode.send ? "send" : "draft",
       );
     },
     [action.dispatch],

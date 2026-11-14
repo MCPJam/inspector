@@ -220,6 +220,8 @@ describe("a persisted run in hosted mode", () => {
           resolver,
         }),
       },
+      // Reach the suites and their raw probes; Auto stops at its connection check.
+      protocolVersion: "2025-11-25",
       source: "api",
       target: { kind: "server", serverId: "s1" },
     });

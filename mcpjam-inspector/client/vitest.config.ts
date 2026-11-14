@@ -144,6 +144,7 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      { find: "@mcpjam/sdk/internal/telemetry", replacement: path.resolve(rootDir, "../sdk/src/internal/telemetry.ts") },
       // More specific subpaths must precede the bare alias (first match wins).
       { find: "@mcpjam/chat-ui/json-tokens", replacement: chatUiJsonTokensEntry },
       {

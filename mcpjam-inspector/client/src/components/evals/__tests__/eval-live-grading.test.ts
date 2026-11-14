@@ -287,3 +287,60 @@ describe("gradeLiveToolCalls — defers when it can't match the runner", () => {
     expect(verdict).toBeNull();
   });
 });
+
+describe("gradeLiveToolCalls — a failed call the model retried", () => {
+  const exportTurn = [
+    userTurn("export the scene", [
+      { toolName: "export_scene", arguments: { id: "s1" } },
+    ]),
+  ];
+  const exportPart = (toolCallId: string, failed: boolean) =>
+    failed
+      ? {
+          type: "tool-export_scene",
+          toolCallId,
+          state: "output-error",
+          input: { id: "s1" },
+          errorText: "MCP error -32001: Request timed out",
+        }
+      : {
+          type: "tool-export_scene",
+          toolCallId,
+          state: "output-available",
+          input: { id: "s1" },
+          output: { content: [] },
+        };
+  const thread = (firstFailed: boolean) => [
+    userText("u-1", "export the scene"),
+    {
+      id: "a-1",
+      role: "assistant",
+      parts: [exportPart("call-1", firstFailed), exportPart("call-2", false)],
+    } as unknown as UIMessage,
+  ];
+
+  it("marks the failed attempt and grades its retry as one call", () => {
+    expect(extractActualToolCalls(thread(true))[0]).toEqual({
+      toolName: "export_scene",
+      arguments: { id: "s1" },
+      failed: true,
+    });
+    expect(
+      gradeLiveToolCalls({
+        promptTurns: exportTurn,
+        matchOptions: { toolCallOrder: "strict", maxExtraToolCalls: 0 },
+        messages: thread(true),
+      }),
+    ).toBe("passed");
+  });
+
+  it("still fails two successful identical calls", () => {
+    expect(
+      gradeLiveToolCalls({
+        promptTurns: exportTurn,
+        matchOptions: { maxExtraToolCalls: 0 },
+        messages: thread(false),
+      }),
+    ).toBe("failed");
+  });
+});

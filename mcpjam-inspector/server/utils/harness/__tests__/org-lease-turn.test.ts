@@ -5,6 +5,7 @@ const broker = vi.hoisted(() => ({
   reserveHarnessBox: vi.fn(),
   startHarnessModelBroker: vi.fn(),
   failedTurnEvidence: vi.fn(),
+  prepareLocalHarnessTurn: vi.fn(),
 }));
 
 vi.mock("../harness-model-broker.js", () => ({
@@ -13,6 +14,10 @@ vi.mock("../harness-model-broker.js", () => ({
 }));
 vi.mock("../harness-org-lease.js", () => ({
   failedTurnEvidence: broker.failedTurnEvidence,
+}));
+
+vi.mock("../local/local-turn.js", () => ({
+  prepareLocalHarnessTurn: broker.prepareLocalHarnessTurn,
 }));
 
 import { OrgLeaseTurn } from "../org-lease-turn";
@@ -64,6 +69,10 @@ beforeEach(() => {
   broker.reserveHarnessBox.mockReset();
   broker.startHarnessModelBroker.mockReset();
   broker.failedTurnEvidence.mockReset();
+  broker.prepareLocalHarnessTurn.mockReset();
+  broker.prepareLocalHarnessTurn.mockResolvedValue({
+    ok: true, prepared: { brokerRunId: "run_1", orgUpstream: ORG_UPSTREAM },
+  });
   broker.reserveHarnessBox.mockResolvedValue({
     ok: true,
     credentialRevision: "rev_b",
@@ -77,8 +86,12 @@ beforeEach(() => {
 });
 
 describe("OrgLeaseTurn on MCPJam's key", () => {
-  it("answers the hosted defaults", async () => {
-    const org = turn();
+  it.each([undefined, {
+    modelId: "anthropic/claude-sonnet-4.5", source: "hosted" as const,
+    fallback: { provider: "none" as const, model: "none" as const },
+    settings: { reasoningEffort: "high" as const },
+  }])("keeps a hosted selection out of the org credential lease: %j", async (selection) => {
+    const org = turn(selection);
     expect(org.modelId("gpt-5-nano", "openai")).toBe("openai/gpt-5-nano");
     expect(org.brokeredEndpoint).toBe("platform");
     expect(org.fingerprint()).toEqual({});
@@ -87,7 +100,7 @@ describe("OrgLeaseTurn on MCPJam's key", () => {
       "modelSelection",
     );
     const startBody = broker.startHarnessModelBroker.mock.calls[0]![0];
-    expect(startBody).not.toHaveProperty("modelSelection");
+    expect(startBody.modelSelection).toEqual(selection);
     expect(startBody).not.toHaveProperty("expectedCredentialRevision");
     expect(org.runtimeField()).toEqual({});
     expect(org.commitState({ a: 1 })).toEqual({ a: 1 });
@@ -209,4 +222,161 @@ describe("OrgLeaseTurn on the organization's key", () => {
       turnStartedAt: expect.any(Number),
     });
   });
+});
+
+describe("OrgLeaseTurn on the organization's gateway", () => {
+  // A picker row's selection: the row id rides as its native id.
+  const GATEWAY_SELECTION: ModelSelection = {
+    source: "org",
+    modelId: "custom:litellm/anthropic/claude-haiku-4-5",
+    nativeModelId: "custom:litellm:anthropic/claude-haiku-4-5",
+    connectionRef: { kind: "orgProvider", id: "conn_gw" },
+    fallback: { provider: "none", model: "none" },
+  };
+  const LEASE_SELECTION = {
+    ...GATEWAY_SELECTION,
+    nativeModelId: "anthropic/claude-haiku-4-5",
+  };
+  const GATEWAY_UPSTREAM = {
+    credentialSource: "org" as const,
+    profile: "org-gateway" as const,
+    nativeModelId: "anthropic/claude-haiku-4-5",
+    credentialRevision: "0123456789abcdef",
+  };
+
+  function gatewayTurn() {
+    return new OrgLeaseTurn({
+      harness: "opencode",
+      modelSelection: GATEWAY_SELECTION,
+      authHeader: "Bearer t",
+    });
+  }
+
+  it("owns failures as the customer's and fingerprints the org-gateway profile", () => {
+    const org = gatewayTurn();
+    expect(org.modelId("custom:litellm:anthropic/claude-haiku-4-5", "custom")).toBe(
+      "custom:litellm/anthropic/claude-haiku-4-5",
+    );
+    expect(org.brokeredEndpoint).toBe("customer_hosted");
+    expect(org.upstreamProfile).toBe("org-gateway");
+    expect(org.fingerprint()).toEqual({
+      credential: "org:conn_gw:org-gateway",
+    });
+  });
+
+  it("sends lease start the gateway's own model name, and runs the leased name", async () => {
+    broker.startHarnessModelBroker.mockResolvedValue({
+      ok: true,
+      runId: "run_1",
+      proxyBaseUrl: "https://broker.example",
+      orgUpstream: GATEWAY_UPSTREAM,
+    });
+    const org = gatewayTurn();
+    await leaseBox(org);
+    expect(broker.reserveHarnessBox.mock.calls[0]![0]).toMatchObject({
+      modelSelection: LEASE_SELECTION,
+    });
+    expect(broker.startHarnessModelBroker.mock.calls[0]![0]).toMatchObject({
+      modelSelection: LEASE_SELECTION,
+    });
+    expect(org.runtimeField()).toEqual({
+      upstream: {
+        profile: "org-gateway",
+        nativeModelId: "anthropic/claude-haiku-4-5",
+      },
+    });
+  });
+
+  it("keeps the vendor-native profile and first-party ownership for OpenCode on Anthropic", () => {
+    const org = new OrgLeaseTurn({
+      harness: "opencode",
+      modelSelection: { ...ORG_SELECTION, modelId: "anthropic/claude-haiku-4.5" },
+      authHeader: "Bearer t",
+    });
+    expect(org.brokeredEndpoint).toBe("byok_hosted");
+    expect(org.fingerprint()).toEqual({
+      credential: "org:conn_1:anthropic-native",
+    });
+  });
+});
+
+describe("applied harness effort", () => {
+  const hosted: ModelSelection = {
+    source: "hosted",
+    modelId: ORG_SELECTION.modelId,
+    fallback: { provider: "none", model: "none" },
+  };
+  it.each([hosted, ORG_SELECTION])(
+    "forwards the cloud override on $source",
+    async (base) => {
+      const selection: ModelSelection = {
+        ...base,
+        settings: { reasoningEffort: "high", temperature: 0.2 },
+      };
+      await turn(selection).start({
+        box: BOX,
+        harnessId: "claude-code",
+        modelId: selection.modelId,
+        runId: "run_1",
+        bearer: "Bearer t",
+        reasoningEffort: "low",
+      });
+      expect(broker.startHarnessModelBroker.mock.calls[0]![0]).toMatchObject({
+        reasoningEffort: "low",
+        modelSelection: {
+          ...selection,
+          settings: { reasoningEffort: "low", temperature: 0.2 },
+        },
+      });
+      expect(selection.settings?.reasoningEffort).toBe("high");
+    },
+  );
+  it.each([hosted, ORG_SELECTION])(
+    "forwards the local override on $source",
+    async (base) => {
+      const selection: ModelSelection = {
+        ...base,
+        settings: { reasoningEffort: "high", temperature: 0.2 },
+      };
+      await turn(selection).prepareLocal(
+        {
+          harnessId: "claude-code",
+          modelId: selection.modelId,
+          runId: "run_1",
+          projectId: "p1",
+          bearer: "Bearer t",
+          reasoningEffort: "low",
+          actor: {
+            isGuest: false,
+            isScenarioSession: false,
+            isJourneySession: false,
+          },
+          target: {
+            kind: "local-native",
+            workspaceGrantId: "workspace",
+            runtimeId: "runtime",
+            machineId: "machine",
+            permissionProfile: "read-only",
+            policyVersion: "1",
+            grantToken: "fixture",
+            actingUserId: "user",
+          },
+        },
+        {
+          sessionId: "local-1",
+          eligibility: undefined,
+          continuity: undefined,
+          isApprovalResume: false,
+        },
+      );
+      expect(broker.prepareLocalHarnessTurn.mock.calls[0]![0]).toMatchObject({
+        reasoningEffort: "low",
+        modelSelection: {
+          ...selection,
+          settings: { reasoningEffort: "low", temperature: 0.2 },
+        },
+      });
+      expect(selection.settings?.reasoningEffort).toBe("high");
+    },
+  );
 });

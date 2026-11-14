@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
 import { appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { parsePluginBundle } from "@mcpjam/sdk/plugin-bundle";
 import { PluginBundleCache } from "../bundle-cache.js";
 import {
   materializePluginStdioForConnect,
@@ -15,6 +16,7 @@ import {
   fixtureBundleSource,
   fixtureBundleZip,
   makeCacheRoot,
+  legacyFixtureBundleFiles,
 } from "./fixture-bundle.js";
 import { WebRouteError } from "../../../routes/web/errors.js";
 
@@ -129,6 +131,24 @@ describe("plugin stdio origin resolution", () => {
       name: "fixture-plugin",
       bundleHash,
     });
+  });
+
+  it("prepares a local server from a verified legacy OpenAI archive and its cache hit", async () => {
+    const source = await fixtureBundleSource(legacyFixtureBundleFiles());
+    const parsed = await parsePluginBundle(source, { profile: "openai-compatible" });
+    for (const offeredSource of [source, undefined]) {
+      const prepared = await preparePluginStdioLaunch({
+        client: stubClient({ bundleHash: parsed.bundleHash }),
+        cache, projectId: PROJECT_ID, serverId: SERVER_ID,
+        spec: PLACEHOLDER_SPEC, leaseId: SERVER_ID,
+        source: offeredSource, dataRoot: join(cacheRoot, "plugin-data"),
+      });
+      expect(prepared.ok).toBe(true);
+      if (prepared.ok) {
+        expect(prepared.launch.args).toEqual([`${prepared.pluginRoot}/server/index.js`]);
+        prepared.release();
+      }
+    }
   });
 
   it.each([
@@ -454,6 +474,88 @@ describe("materializePluginStdioForConnect", () => {
         cache,
       })
     ).resolves.toBeNull();
+  });
+
+  it("names a missing runtime instead of failing the spawn", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() },
+    );
+
+    await expect(
+      materializePluginStdioForConnect({
+        createClient: () => stubClient({ bundleHash }),
+        projectId: PROJECT_ID,
+        serverId: SERVER_ID,
+        serverName: SERVER_ID,
+        pluginComponent: true,
+        spec: { command: "not-an-installed-runtime", args: [], env: {} },
+        cache,
+        dataRoot: join(cacheRoot, "plugin-data"),
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining(
+        '"not-an-installed-runtime", which isn\'t installed on this computer',
+      ),
+      details: { reason: "runtime_not_found" },
+    });
+  });
+
+  it("refuses a working directory a stored row points outside the plugin", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() },
+    );
+
+    await expect(
+      materializePluginStdioForConnect({
+        createClient: () => stubClient({ bundleHash }),
+        projectId: PROJECT_ID,
+        serverId: SERVER_ID,
+        serverName: SERVER_ID,
+        pluginComponent: true,
+        // The parser refuses this today; a row stored before it did must
+        // still not run outside the plugin.
+        spec: {
+          command: "node",
+          args: [],
+          env: {},
+          workingDirectory: "${PLUGIN_ROOT}/..",
+        },
+        cache,
+        dataRoot: join(cacheRoot, "plugin-data"),
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "working_directory_outside_plugin" },
+    });
+  });
+
+  it("prepares a component the backend marks as a plugin's, placeholders or not", async () => {
+    await cache.materialize(
+      { projectId: PROJECT_ID, pluginVersionId: VERSION_ID, bundleHash },
+      { source: await fixtureBundleSource() }
+    );
+
+    const result = await materializePluginStdioForConnect({
+      createClient: () => stubClient({ bundleHash }),
+      projectId: PROJECT_ID,
+      serverId: SERVER_ID,
+      serverName: SERVER_ID,
+      pluginComponent: true,
+      spec: { command: "node", args: ["server/index.js"], env: {} },
+      cache,
+      dataRoot: join(cacheRoot, "plugin-data"),
+    });
+
+    // It runs in the plugin root, with the root and its data directory.
+    expect(result?.workingDirectory).toBe(result?.pluginRoot);
+    expect(result?.env.PLUGIN_ROOT).toBe(result?.pluginRoot);
+    expect(result?.env.PLUGIN_DATA).toBe(
+      join(cacheRoot, "plugin-data", PROJECT_ID, PLUGIN_ID)
+    );
+    expect(cache.activeEntries()).toEqual([result?.pluginRoot]);
   });
 
   it("substitutes the root for a plugin component", async () => {

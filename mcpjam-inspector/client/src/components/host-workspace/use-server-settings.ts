@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { createServerSettingsApi } from "./server-settings-api";
 import type { ThreadAppScope } from "./thread-app-api";
+import {
+  describePluginSettingsError,
+  pluginSettingsErrorCode,
+} from "./plugin-settings-errors";
+import { logPluginExtensionIssue } from "@/lib/plugin-extension-logs";
 
 /** Discovery is metadata-only; opening settings is a separate explicit action. */
 export function useServerSettingsAvailability(
@@ -20,6 +25,7 @@ export function useServerSettingsAvailability(
     key: string | null;
     available: boolean;
     failed: boolean;
+    errorCode?: string;
   }>({ key: null, available: false, failed: false });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -32,9 +38,17 @@ export function useServerSettingsAvailability(
           if (!abort.signal.aborted)
             setState({ key, available, failed: false });
         },
-        () => {
-          if (!abort.signal.aborted)
-            setState({ key, available: false, failed: true });
+        (error: unknown) => {
+          if (abort.signal.aborted) return;
+          const errorCode = pluginSettingsErrorCode(error);
+          logPluginExtensionIssue({
+            code: errorCode ?? "PLUGIN_SETTINGS_FAILED",
+            message: describePluginSettingsError(errorCode),
+            serverId,
+            detail: { step: "discover" },
+            dedupeKey: `settings:${serverId}:discover:${errorCode ?? "unknown"}`,
+          });
+          setState({ key, available: false, failed: true, errorCode });
         },
       );
     return () => abort.abort();
@@ -43,6 +57,10 @@ export function useServerSettingsAvailability(
   return {
     available: !!key && current && state.available,
     failed: !!key && current && state.failed,
+    errorMessage:
+      current && state.failed
+        ? describePluginSettingsError(state.errorCode)
+        : undefined,
     loading: !!key && !current,
     retry: () => setAttempt((n) => n + 1),
   };

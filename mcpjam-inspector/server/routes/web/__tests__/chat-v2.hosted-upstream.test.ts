@@ -30,6 +30,29 @@ const {
   };
 });
 
+vi.mock("convex/browser", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return { ConvexHttpClient: class {
+    setAuth() {}
+    async mutation() {
+      return { hostId: "chat-host", environment: { environmentId: "chat-environment" } };
+    }
+    async query(ref: Parameters<typeof getFunctionName>[0], args: { serverOverrideIds?: string[] }) {
+      const name = getFunctionName(ref);
+      if (name === "hostConfigsV2:getProjectDefault") return null;
+      if (name === "projects:getProjectCapabilities") return { projectRole: "admin" };
+      const runtime = await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
+      return {
+        specVersion: 1, environmentOrigin: "adhoc",
+        environmentRef: { environmentId: "chat-environment", name: "Chat", revision: 1 },
+        host: { hostId: "chat-host", runtimeConfig: runtime?.config ?? {} },
+        servers: { effectiveServerIds: args.serverOverrideIds ?? [] },
+        skills: [], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
+      };
+    }
+  }};
+});
+
 vi.mock("../../../utils/pinned-fetch.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../../utils/pinned-fetch.js")>();
@@ -91,6 +114,49 @@ function json(body: unknown): Response {
   });
 }
 
+// A `new Request(input, init)` follows `init.signal` only through a weak
+// reference, so a stalled request nothing else holds can be garbage collected
+// and never see the abort. Holding it here until then keeps the abort visible.
+const stalledRequests = new Set<Request>();
+
+function stallUntilAborted(request: Request, onAbort: () => void) {
+  stalledRequests.add(request);
+  return new Promise<Response>((_resolve, reject) => {
+    const rejectOnAbort = () => {
+      stalledRequests.delete(request);
+      onAbort();
+      reject(request.signal.reason);
+    };
+    // A fetch can start after its caller's deadline has already aborted.
+    if (request.signal.aborted) rejectOnAbort();
+    else request.signal.addEventListener("abort", rejectOnAbort, { once: true });
+  });
+}
+
+it.each(["before", "after"])(
+  "observes an upstream abort %s registration",
+  async (timing) => {
+    const controller = new AbortController();
+    const reason = new Error("Upstream fixture aborted");
+    const observed = vi.fn();
+    if (timing === "before") controller.abort(reason);
+    const pending = stallUntilAborted(
+      new Request("https://upstream.invalid", { signal: controller.signal }),
+      observed,
+    );
+    const rejected = expect(pending).rejects.toBe(reason);
+    if (timing === "after") {
+      expect(observed).not.toHaveBeenCalled();
+      expect(await Promise.race([pending, Promise.resolve("pending")])).toBe(
+        "pending",
+      );
+      controller.abort(reason);
+    }
+    await rejected;
+    expect(observed).toHaveBeenCalledOnce();
+  },
+);
+
 /** An answer that is not MCP: 405 with an HTML page. */
 const htmlRejection: Upstream = () =>
   new Response("<html><body>UNEXPECTED_MARKER_BODY</body></html>", {
@@ -145,6 +211,7 @@ const body = {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
   fetchHostRuntimeConfigMock.mockResolvedValue({
     ok: true,
     config: { selectedServerIds: ["server-1"] },
@@ -167,7 +234,7 @@ beforeEach(() => {
   global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/web/authorize-project")) {
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
     }
     if (url.endsWith("/web/authorize-batch")) {
       const { serverIds = [] } = JSON.parse(String(init?.body ?? "{}"));
@@ -264,18 +331,21 @@ describe("hosted chat turn (MJ-001)", () => {
     ).toBe(true);
   });
 
-  it("fails a hung server's tool listing with our own 424 and drops the connect", async () => {
+  it("continues without a hung server and drops the stuck connect", async () => {
     // A server that accepts the request and never answers. The abort is the
     // evidence the stuck connect was cancelled rather than left to run out
     // the manager's own per-request timeout and retries.
     let aborted = false;
-    upstream.current = (request) =>
-      new Promise<Response>((_resolve, reject) => {
-        request.signal.addEventListener("abort", () => {
-          aborted = true;
-          reject(request.signal.reason);
-        });
+    let received!: () => void;
+    const requestReceived = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    upstream.current = (request) => {
+      received();
+      return stallUntilAborted(request, () => {
+        aborted = true;
       });
+    };
     const disconnectAll = vi.spyOn(
       MCPClientManager.prototype,
       "disconnectAllServers",
@@ -283,23 +353,40 @@ describe("hosted chat turn (MJ-001)", () => {
     const { prepareChatV2 } = await vi.importActual<
       typeof import("../../../utils/chat-v2-orchestration.js")
     >("../../../utils/chat-v2-orchestration.js");
-    prepareChatV2Mock.mockImplementation((args: any) => {
+    prepareChatV2Mock.mockImplementation(async (args: any) => {
       // The hosted turn asks for the real budget; shortened here so the test
       // does not wait 30 s.
       expect(args.toolListingTimeoutMs).toBe(WEB_CHAT_TOOL_LISTING_TIMEOUT_MS);
+      // The manager starts this connect when it is built, before the turn
+      // gets here. Starting the short budget only once the server holds the
+      // request keeps a slow runner from expiring it before the request is
+      // sent, which leaves nothing in flight to abort.
+      await requestReceived;
       return prepareChatV2({ ...args, toolListingTimeoutMs: 50 });
     });
 
     const { app, token } = createWebTestApp();
-    const response = await postJson(app, "/api/web/chat-v2", body, token);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = postJson(app, "/api/web/chat-v2", body, token);
+      // Start the deadline only after the fake upstream has received the call.
+      await requestReceived;
+      await vi.advanceTimersByTimeAsync(50);
+      const response = await pending;
 
-    expect(response.status).toBe(424);
-    const payload = (await response.json()) as any;
-    expect(payload.code).toBe("TIMEOUT");
-    expect(payload.message).toMatch(/MCP server ".*" timed out/);
-    expect(disconnectAll).toHaveBeenCalled();
-    expect(aborted).toBe(true);
-    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
-    disconnectAll.mockRestore();
+      expect(response.status).toBe(200);
+      await response.json();
+      expect(disconnectAll).toHaveBeenCalled();
+      expect(aborted).toBe(true);
+      expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unavailableServerIds: ["server-1"],
+          tools: {},
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+      disconnectAll.mockRestore();
+    }
   });
 });

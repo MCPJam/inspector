@@ -127,6 +127,9 @@ describe("isOperationAvailable", () => {
         "unified-share-evals": true,
       })
     ).toBe(true);
+    expect(
+      isOperationAvailable("rotate_share_link", { conformance: true })
+    ).toBe(true);
   });
 
   it("never hides a way to stop what outlives a feature being turned off", () => {
@@ -220,6 +223,31 @@ describe("disabledOperations", () => {
     expect(disabled.sort()).toEqual(
       ["drive_chat_session_browser", "observe_chat_session_browser"].sort()
     );
+  });
+
+  it("gates only a submission's writes and runs on directory readiness", () => {
+    // The readiness starts keep `conformance`; reads and the delete stay open
+    // so an organization that lost the beta can still find and remove its own.
+    expect(
+      disabledOperations({ ...allOn, "directory-readiness": false }).sort()
+    ).toEqual(
+      [
+        "create_directory_submission",
+        "start_directory_submission_run",
+        "update_directory_submission",
+      ].sort()
+    );
+    expect(operationFeature("start_claude_readiness_run")).toBe("conformance");
+    for (const name of [
+      "list_directory_flows",
+      "get_directory_flow",
+      "list_directory_submissions",
+      "get_directory_submission",
+      "get_directory_submission_results",
+      "delete_directory_submission",
+    ]) {
+      expect(isOperationAvailable(name, {}), name).toBe(true);
+    }
   });
 
   it("keeps sandbox images apart from the computer itself", () => {

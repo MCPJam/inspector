@@ -1,5 +1,9 @@
 import { ToolResourceAttachments } from "@/components/host-workspace/file-actions";
 import {
+  chatAuthRecoveryFailureMessage,
+  useChatAuthRecoveryFailures,
+} from "@/lib/chat-auth-recovery";
+import {
   useEffect,
   useMemo,
   useRef,
@@ -34,6 +38,7 @@ import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
 import { resolvePageToolAttribution } from "@/lib/webmcp-page-tools/attribution";
+import { ToolCallAccountTag, useToolCallAccountName } from "../tool-call-account";
 import {
   getToolNameFromType,
   getToolStateMeta,
@@ -67,12 +72,14 @@ import {
   harnessToolTarget,
   isHarnessActivityToolName,
 } from "../harness-tool-steps";
-import { useHostContextStore } from "@/stores/client-context-store";
+import { useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
+import { webSearchRefusalCodeOf } from "@/lib/web-search-refusal";
+import { WebSearchRefusalNotice } from "./web-search-refusal-notice";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 
@@ -109,9 +116,11 @@ export function ToolPart({
   editVersion,
   minimalMode = false,
   serverId,
+  resourceServerId = serverId,
   mcpToolResultImageRendering,
   rawOutput,
   recordedWidgetDiagnostics,
+  keepLiveWidgetDiagnostics = false,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -124,7 +133,7 @@ export function ToolPart({
   onExitFullscreen?: (toolCallId: string) => void;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
-  /** Display modes the app declared support for. If undefined, all modes are available. */
+  /** Negotiated App display modes. If undefined, only the host restricts modes. */
   appSupportedDisplayModes?: DisplayMode[];
   approvalId?: string;
   onApprove?: (id: string) => void;
@@ -161,9 +170,14 @@ export function ToolPart({
   editVersion?: number;
   minimalMode?: boolean;
   serverId?: string;
+  /** Saved server ID for resource ownership, independent of local connection aliases. */
+  resourceServerId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
   recordedWidgetDiagnostics?: RecordedWidgetPolicy;
+  /** A live App (not a picture): its own diagnostics win, and the recorded
+   *  errors are shown next to them. */
+  keepLiveWidgetDiagnostics?: boolean;
 }) {
   const hasTrackedSkillLoad = useRef(false);
 
@@ -186,7 +200,25 @@ export function ToolPart({
     pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
-  const state = part.state as ToolState | undefined;
+  const accountName = useToolCallAccountName(toolCallId);
+  const recoveryFailures = useChatAuthRecoveryFailures();
+  const recoveryFailure =
+    toolCallId !== undefined
+      ? recoveryFailures.find(
+          (item) =>
+            item.toolCallId === toolCallId &&
+            (!chatSessionId || item.chatSessionId === chatSessionId),
+        )
+      : undefined;
+  const recoveryFailed = recoveryFailure !== undefined;
+  const state = (
+    recoveryFailed &&
+    !["output-available", "output-error", "output-denied"].includes(
+      part.state ?? "",
+    )
+      ? "output-error"
+      : part.state
+  ) as ToolState | undefined;
   // The agent started browsing, so the browser gets its panel. Here because
   // this card is the one place in the client that already knows a browser tool
   // is running; it fires only while the call is LIVE, so scrolling back
@@ -273,6 +305,9 @@ export function ToolPart({
   const runLocation = localComputerEnabled
     ? readToolRunLocation(label, rawResultData)
     : null;
+  // A web search the organization's AI key policy refused. Read from the
+  // RAW output, like the run location: the editable value is not evidence.
+  const webSearchRefusalCode = webSearchRefusalCodeOf(label, rawResultData);
   const resultDisplayData =
     outputValue !== undefined ? outputValue : rawResultData;
   const imagePreviewData = rawResultData;
@@ -292,7 +327,12 @@ export function ToolPart({
   const editInputValue = inputValue !== undefined ? inputValue : inputData;
   const editOutputValue = resultDisplayData;
   const editorKeyVersion = editVersion ?? 0;
-  const errorText = (part as any).errorText ?? (part as any).error;
+  const errorText =
+    (part as any).errorText ??
+    (part as any).error ??
+    (recoveryFailure
+      ? chatAuthRecoveryFailureMessage(recoveryFailure)
+      : undefined);
   // Through the package's shared reader rather than a local copy of the same
   // field test. This channel had three hand-rolled readers with three
   // different gates — this one required a recognised mode, `PartSwitch`
@@ -321,16 +361,18 @@ export function ToolPart({
   // A completed eval can retain live store data from the streaming phase.
   // Once its widget becomes a frozen screenshot, the recorded snapshot is the
   // source of truth and stale live diagnostics must not leak into the card.
-  const widgetDebugInfo = recordedWidgetDiagnostics
-    ? undefined
-    : storedWidgetDebugInfo;
-  const hostContext = useHostContextStore((s) => s.draftHostContext);
+  const widgetDebugInfo =
+    recordedWidgetDiagnostics && !keepLiveWidgetDiagnostics
+      ? undefined
+      : storedWidgetDebugInfo;
+  const hostContext = useEffectiveHostContext();
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
     [hostContext],
   );
   const hasWidgetDebug = !!widgetDebugInfo;
-  const hasRecordedWidgetDebug = !!recordedWidgetDiagnostics;
+  const hasRecordedWidgetDebug =
+    !!recordedWidgetDiagnostics && !widgetDebugInfo;
   const hasWidgetDebugData = hasWidgetDebug || hasRecordedWidgetDebug;
   const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebugData;
 
@@ -1041,6 +1083,7 @@ export function ToolPart({
                 from {appToolAttribution.appName}
               </span>
             )}
+            <ToolCallAccountTag name={accountName} />
             {pageToolAttribution?.origin && (
               <span
                 data-testid="page-tool-origin"
@@ -1117,7 +1160,10 @@ export function ToolPart({
         </span>
       </div>
 
-      <ToolResourceAttachments result={rawResultData} serverId={serverId} />
+      <ToolResourceAttachments result={rawResultData} serverId={resourceServerId} />
+      {webSearchRefusalCode ? (
+        <WebSearchRefusalNotice code={webSearchRefusalCode} />
+      ) : null}
       {harnessStep &&
         (state === "input-streaming" || state === "input-available") && (
           <HarnessLiveOutput toolCallId={toolCallId} />
@@ -1194,6 +1240,7 @@ export function ToolPart({
                       : undefined
                   }
                   protocol={widgetDebugInfo.protocol}
+                  recordedErrors={recordedWidgetDiagnostics}
                 />
               )}
               {!hasWidgetDebug &&

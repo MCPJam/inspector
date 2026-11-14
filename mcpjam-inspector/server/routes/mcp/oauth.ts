@@ -1,6 +1,7 @@
 import oauthConnections from "../web/oauth-connections.js";
 import { Hono } from "hono";
 import { describeError, originOf } from "@mcpjam/sdk";
+import { isLoopbackOAuthUrl } from "@mcpjam/sdk/oauth/node";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { getRequestLogger } from "../../utils/request-logger";
 import { classifyError } from "../../utils/error-classify";
@@ -9,6 +10,8 @@ import {
   executeDebugOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
+  tlsTrustFailure,
+  unreachableTargetFailure,
 } from "../../utils/oauth-proxy.js";
 import { reportRouteFailureForResponse } from "../../utils/route-error-report.js";
 
@@ -35,6 +38,27 @@ function safeHostname(url: string | undefined): string {
   } catch {
     return url;
   }
+}
+
+/** Inside the Docker image, `localhost` is the container, not the user's machine. */
+const DOCKER_LOOPBACK_HINT =
+  "From Docker, use host.docker.internal instead of localhost or 127.0.0.1.";
+
+/**
+ * A certificate the server under test presented and Node.js would not accept,
+ * or a connection to it that failed, as a 502 (504 for a timeout) that says
+ * so. MCPJam's own hosts keep the 500 path: the debugger fetches our client
+ * metadata document through this proxy, and a failure there is ours (or a
+ * TLS-inspecting proxy in front of the user).
+ */
+function asTargetFailure(error: unknown, url: string | undefined) {
+  const host = safeHostname(url);
+  if (host === "mcpjam.com" || host.endsWith(".mcpjam.com")) return undefined;
+  const hint =
+    process.env.DOCKER_CONTAINER === "true" && isLoopbackOAuthUrl(url)
+      ? DOCKER_LOOPBACK_HINT
+      : undefined;
+  return tlsTrustFailure(error) ?? unreachableTargetFailure(error, hint);
 }
 
 /**
@@ -65,8 +89,9 @@ oauth.post("/debug/proxy", async (c) => {
       ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
     });
     return c.json(result);
-  } catch (error) {
+  } catch (caught) {
     const targetUrlHost = safeHostname(proxyUrl);
+    const error = asTargetFailure(caught, proxyUrl) ?? caught;
     if (error instanceof OAuthProxyError) {
       getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
         targetUrlHost,
@@ -138,8 +163,9 @@ oauth.post("/proxy", async (c) => {
     });
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
-  } catch (error) {
+  } catch (caught) {
     const targetUrlHost = safeHostname(proxyUrl);
+    const error = asTargetFailure(caught, proxyUrl) ?? caught;
     if (error instanceof OAuthProxyError) {
       getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
         targetUrlHost,
@@ -216,8 +242,9 @@ oauth.get("/metadata", async (c) => {
 
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result.metadata);
-  } catch (error) {
+  } catch (caught) {
     const targetUrlHost = safeHostname(metadataUrl);
+    const error = asTargetFailure(caught, metadataUrl) ?? caught;
     if (error instanceof OAuthProxyError) {
       getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
         targetUrlHost,

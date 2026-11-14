@@ -44,11 +44,13 @@ export type { IframeSandboxPermissions } from "./iframe-sandbox-policy.js";
 export {
   createHostAppBridge,
   registerHostBridgeHandlers,
+  RESOURCE_READS_DISABLED_MESSAGE,
 } from "./host-app-bridge.js";
 export type {
   WidgetDebugDirection,
   HostBridgeMatrix,
   HostBridgeCallbacks,
+  AppToolRequestContext,
   RegisterHostBridgeHandlersOptions,
 } from "./host-app-bridge.js";
 
@@ -59,9 +61,41 @@ export type {
 } from "./app-tool-invocations.js";
 
 export { mcpAppToolResultSchema } from "./tool-result-schema.js";
+export { WEBMCP_APP_CONTRACT } from "./webmcp-contract.js";
+export {
+  appToolSourceFor,
+  listViewWebmcpTools,
+  callViewWebmcpTool,
+  discoverViewAppTools,
+} from "./webmcp-tools.js";
+export type {
+  AppToolDescriptor,
+  AppToolSource,
+  SandboxToolsRequester,
+} from "./webmcp-tools.js";
 
 export {
   readResourceDisplayHints,
   negotiateResourceDisplayModes,
+  openAIDisplayModes,
+  pickOpenAIDisplayMode,
 } from "./resource-display.js";
-export type { ResourceDisplayHints } from "./resource-display.js";
+export type {
+  DisplayBehavior,
+  ResourceDisplayHints,
+} from "./resource-display.js";
+export {
+  inlineThenMoveModes,
+  inlineThenMoveStart,
+  shouldMoveToPanel,
+} from "./inline-then-move.js";
+export type { InlineThenMoveMode } from "./inline-then-move.js";
+
+export type {
+  SandboxViewSource,
+  SandboxViewCsp,
+  SandboxViewPolicy,
+  PrepareSandboxViewRequest,
+  PreparedSandboxView,
+  ReleaseSandboxViewRequest,
+} from "./sandbox-view-admission.js";

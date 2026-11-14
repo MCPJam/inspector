@@ -97,7 +97,9 @@ afterEach(() => {
 it("adds all staged cases explicitly and clears the draft section after saving", async () => {
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
   expect(screen.queryByText("Draft Test Cases Generated")).toBeNull();
-  expect(screen.getByRole("button", { name: "Review draft cases" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Review draft cases" }),
+  ).toBeVisible();
   expect(save).not.toHaveBeenCalled();
   await userEvent
     .setup()
@@ -178,17 +180,30 @@ it("starts every draft collapsed and opens only the selected draft", async () =>
 
 it("does not expose refinement chat outside Describe", () => {
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
-  expect(screen.queryByRole("button", {name:"Refine with chat"})).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refine with chat" })).toBeNull();
   expect(save).not.toHaveBeenCalled();
 });
 
 it("saves only the current Describe batch when other staged drafts exist", async () => {
   const ids = useEvalGeneration.getState().suites[evalSuiteKey(scope)].drafts;
-  renderWithProviders(<EvalGeneratedDrafts {...scope} visibleDraftIds={new Set([ids[0].id])} saveVisibleOnly hideChat />);
-  await userEvent.setup().click(screen.getByRole("button", {name:"Save all"}));
+  renderWithProviders(
+    <EvalGeneratedDrafts
+      {...scope}
+      visibleDraftIds={new Set([ids[0].id])}
+      saveVisibleOnly
+      hideChat
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Save all" }));
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   expect(save.mock.calls[0][0].title).toBe("First");
-  await waitFor(() => expect(screen.getByText("All tests in this batch are saved.")).toBeVisible());
+  await waitFor(() =>
+    expect(
+      screen.getByText("All tests in this batch are saved."),
+    ).toBeVisible(),
+  );
 });
 
 it("hides an empty draft section even when a previous generation failed", () => {
@@ -214,7 +229,7 @@ it("saves shared case-body outcome edits without losing generated actions", asyn
   const user = userEvent.setup();
   await user.click(screen.getAllByRole("button", { name: "Review case" })[0]);
   await user.type(
-    screen.getByLabelText("Expected Outcome"),
+    screen.getByLabelText("Expected outcome"),
     "Ticket is displayed",
   );
   await user.click(screen.getByRole("button", { name: "Add First to suite" }));
@@ -230,8 +245,12 @@ it("saves shared case-body outcome edits without losing generated actions", asyn
 
 it("keeps retained drafts collapsed on return without losing them", async () => {
   const user = userEvent.setup();
-  const view = renderWithProviders(<EvalGeneratedDrafts {...scope} defaultOpen={false} />);
-  expect(screen.getByRole("button", { name: "Review draft cases" })).toHaveAttribute("aria-expanded", "false");
+  const view = renderWithProviders(
+    <EvalGeneratedDrafts {...scope} defaultOpen={false} />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Review draft cases" }),
+  ).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Review draft cases" }));
   expect(screen.getByRole("article", { name: "Draft: First" })).toBeVisible();
@@ -240,7 +259,9 @@ it("keeps retained drafts collapsed on return without losing them", async () => 
   await user.click(screen.getByRole("button", { name: "Review draft cases" }));
   view.unmount();
   renderWithProviders(<EvalGeneratedDrafts {...scope} defaultOpen={false} />);
-  expect(screen.getByRole("button", { name: "Review draft cases" })).toHaveAttribute("aria-expanded", "false");
+  expect(
+    screen.getByRole("button", { name: "Review draft cases" }),
+  ).toHaveAttribute("aria-expanded", "false");
   expect(useEvalGeneration.getState().suites[key].drafts).toHaveLength(2);
   expect(save).not.toHaveBeenCalled();
 });
@@ -253,22 +274,38 @@ it("removes unwanted drafts without saving and persists the remaining drafts", a
   await user.click(screen.getByRole("button", { name: "Remove First" }));
   expect(screen.queryByRole("article", { name: "Draft: First" })).toBeNull();
   expect(screen.getByRole("article", { name: "Draft: Second" })).toBeVisible();
-  expect(useEvalGeneration.getState().suites[key].drafts.map((draft) => draft.id)).toEqual(["Second"]);
-  expect(JSON.parse(localStorage.getItem("mcpjam:eval-generated-drafts:v1")!)[key].drafts.map((draft: { id: string }) => draft.id)).toEqual(["Second"]);
+  expect(
+    useEvalGeneration.getState().suites[key].drafts.map((draft) => draft.id),
+  ).toEqual(["Second"]);
+  expect(
+    JSON.parse(localStorage.getItem("mcpjam:eval-generated-drafts:v1")!)[
+      key
+    ].drafts.map((draft: { id: string }) => draft.id),
+  ).toEqual(["Second"]);
   expect(save).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Remove Second" }));
-  expect(screen.queryByRole("region", { name: "Generated case drafts" })).toBeNull();
+  expect(
+    screen.queryByRole("region", { name: "Generated case drafts" }),
+  ).toBeNull();
 });
 
 it("prevents removing a draft while it is being saved", async () => {
   let finish!: () => void;
-  save.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+  save.mockReturnValue(
+    new Promise<void>((resolve) => {
+      finish = resolve;
+    }),
+  );
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
-  await userEvent.setup().click(screen.getByRole("button", { name: "Add First to suite" }));
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Add First to suite" }));
   expect(screen.getByRole("button", { name: "Remove First" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Remove Second" })).toBeEnabled();
   finish();
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Remove First" })).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Remove First" })).toBeNull(),
+  );
 });
 
 /**
@@ -330,7 +367,9 @@ it("leaves an ordinary draft error verbatim", () => {
     },
   }));
   renderWithProviders(<EvalGeneratedDrafts {...scope} />);
-  expect(screen.getByRole("alert")).toHaveTextContent("Save failed. Try again.");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Save failed. Try again.",
+  );
 });
 
 /**
@@ -410,8 +449,10 @@ it("counts what was written and what can be added, without calling it a failure"
       suiteName="Suite"
     />,
   );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "2 cases written · 1 ready to add",
+  // Drag-and-drop adds its own hidden status regions; find the counter by text.
+  expect(screen.getByText("2 cases written · 1 ready to add")).toHaveAttribute(
+    "role",
+    "status",
   );
   expect(
     screen.getByRole("button", { name: "Add the 1 ready case" }),

@@ -137,6 +137,16 @@ vi.mock("@codemirror/lint", () => ({
 
 import { HostsRoute } from "../App";
 
+// The organization key policy binding has its own tests; here a template
+// seed is created as it is.
+vi.mock("@/hooks/use-org-bound-template-seed", () => ({
+  useOrgBoundTemplateSeed: () => ({
+    ready: true,
+    bind: (input: unknown) => ({ kind: "unchanged", input }),
+    prepare: (input: unknown) => ({ input }),
+  }),
+}));
+
 beforeEach(() => {
   mockRouteContext.convexProjectId = "project-1";
   mockRouteContext.hostsTabSelectedHostId = null;

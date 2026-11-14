@@ -83,7 +83,14 @@ for (const op of ["", "/label", "/default", "/delete", "/profile"]) {
                 { connectionIds: { [body.serverId]: body.connectionId } },
               );
               const auth = batch.results[body.serverId];
-              if (!auth?.ok || !auth.oauthAccessToken || Date.now() >= deadline)
+              // Only an http server holds an OAuth profile; a stdio row would
+              // spawn here outside the command approval gate.
+              if (
+                !auth?.ok ||
+                !auth.oauthAccessToken ||
+                auth.serverConfig.transportType !== "http" ||
+                Date.now() >= deadline
+              )
                 return {
                   profile: undefined,
                   reason: "Connection unavailable",

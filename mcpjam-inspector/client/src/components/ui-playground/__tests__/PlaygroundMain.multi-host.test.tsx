@@ -1,35 +1,25 @@
-/**
- * PlaygroundMain — Phase 4 multi-host render path.
- *
- * Asserts the render-branch contract:
- *   - When `multiHostEnabled=true`, the project has >1 host, and the
- *     hook stack resolves >=2 hosts, the grid renders one card per host.
- *   - All columns share the project's `selectedServers` (project-scoped
- *     server config invariant).
- *   - Every column shares the lead's model and the global chip-edited
- *     `executionConfig` — multi-host varies the host axis only.
- *   - Two hosts with the SAME default model still render as two cards
- *     with distinct `compareId`s — the polymorphic-card regression the
- *     Phase 3 refactor enabled.
- *
- * Mocking strategy follows `PlaygroundMain.test.tsx`: heavy children are
- * stubbed; `useChatSession` is shared via a captured object; the new
- * multi-host stack (`usePersistedHost`, `useHostList`,
- * `usePlaygroundHostSlots`) is mocked at the module boundary so we can
- * drive the test fixtures.
- */
+import { useEffect, useState } from "react";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import type { UIMessage } from "ai";
+/** Saved-client comparison wiring and mode transitions. */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { useSignOutStore } from "@/stores/sign-out-store";
+import { GUEST_LOCKED_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useHostContextStore } from "@/stores/client-context-store";
 import type { HostDetail } from "@/hooks/useClients";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import {
-  loadSelectedHostIds,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
 import { savePreviewedHostId } from "@/lib/previewed-client-storage";
+import { usePluginOnboardingIntentStore } from "@/lib/plugin-onboarding-intent";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -37,6 +27,8 @@ vi.mock("framer-motion", async (importOriginal) => {
 });
 
 const mockMultiModelPlaygroundCard = vi.fn();
+const mockLaneDispose = vi.fn();
+const extensionFormFixture = vi.hoisted(() => ({ enabled: false, ownerAvailable: true, actor: "actor" }));
 
 vi.mock("lucide-react", async (importOriginal) => ({
   // Spread the real icon set so a newly-rendered icon (e.g. Columns2) never
@@ -137,7 +129,7 @@ const {
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
   useFeatureFlagEnabled: (flag: string) =>
-    flag === "project-environments-enabled" ? environmentsFlag.value : false,
+    flag === "project-environments-enabled" ? environmentsFlag.value : flag === "plugin-extensions-enabled" ? extensionFormFixture.enabled : false,
 }));
 // The preview is a network read (`/api/web/environments/:id/preview`); the
 // fixture stands in for the resolver so the test drives what the environment
@@ -166,10 +158,18 @@ vi.mock("@/lib/PosthogUtils", () => ({
 // from `hosts:getLocalBrowserSettings` (see the convex mock below). A guest
 // never reaches that query, so guest rows drive the host config's
 // `localBrowserEnabled` instead.
+const mobileFixture = vi.hoisted(() => ({ isMobile: false }));
+vi.mock("@/hooks/use-mobile", () => ({
+  useIsMobile: () => mobileFixture.isMobile,
+}));
+
 const browserFixture = vi.hoisted(() => ({
   guest: false,
   granted: false,
   setting: null as boolean | null,
+}));
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => !browserFixture.guest,
 }));
 const browserConsent = vi.hoisted(() => () => ({
   status: browserFixture.granted ? "granted" : "absent",
@@ -218,6 +218,7 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
+    if (name === "users:getCurrentUser" && extensionFormFixture.enabled) return extensionFormFixture.ownerAvailable ? { _id: extensionFormFixture.actor } : undefined;
     // Shaped like the real query: an object whose `enabled` is null when the
     // member has stored nothing. Returning a bare null would read as "still
     // loading" and mask what these tests are asserting.
@@ -231,8 +232,8 @@ vi.mock("convex/react", () => ({
   useAction: () => () => Promise.resolve({ token: "test-token" }),
 }));
 
-// Client creation is project-admin only; default to an admin so the seed tests
-// exercise the seed itself. The member case opts out explicitly.
+// Comparison setup is project-admin only; default to an admin so the lineup
+// test exercises it. The member case opts out explicitly.
 const clientsRoleFixture = vi.hoisted(() => ({
   value: { canManage: true, isLoading: false },
 }));
@@ -241,15 +242,32 @@ vi.mock("@/hooks/useProjects", async (importOriginal) => ({
   useCanManageProjectClients: () => clientsRoleFixture.value,
 }));
 
+vi.mock("@/hooks/usePluginExtensionsAccess", () => ({
+  usePluginExtensionsAccess: () => ({ enabled: extensionFormFixture.enabled, status: "ready" }),
+}));
+vi.mock("@/components/host-workspace/ExtensionWorkspaceProvider", async original => ({
+  ...await original<typeof import("@/components/host-workspace/ExtensionWorkspaceProvider")>(),
+  useExtensionRegistration: () => extensionFormFixture.enabled,
+  useExtensionOwners: () => ({ global: extensionFormFixture.enabled ? { scope: { projectId: "project", hostId: "h-A", threadId: "global", pluginWorkspace: { version: 1, workspaceId: 'playground:["actor","project","h-A","global"]' } }, contextReferences: [], contextAttachments: [] } : null, chat: null }),
+}));
+vi.mock("@/components/elicitation/OwnedPluginFormHost", () => ({
+  ChatPluginFormHosts: () => null,
+  OwnedPluginFormHost: ({ projectId, workspaceId }: { projectId: string; workspaceId: string }) => <output data-testid="global-owned-form-host">{JSON.stringify({ projectId, workspaceId })}</output>,
+}));
+
+const projectServersFixture = vi.hoisted(() => ({
+  byName: new Map<string, string>(),
+}));
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({
-    serversByName: new Map(),
+    serversByName: projectServersFixture.byName,
     serversById: new Map(),
   }),
 }));
 
 vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: vi.fn(),
+  getChatHistoryState: vi.fn(),
   chatHistoryAction: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
@@ -284,6 +302,11 @@ const mockUseChatSession = {
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
   setMultiModelEnabled: vi.fn(),
+  // The root session's catalog before its harness filter; the mock has no
+  // filter, so it is the same list (and follows per-test overrides).
+  get catalogModels() {
+    return this.availableModels;
+  },
   availableModels: [
     {
       id: "openai/gpt-5-mini",
@@ -377,15 +400,25 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
 // the right `compareId`, `hostSnapshot`, `executionConfig`, etc.
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
   MultiModelPlaygroundCard: (props: any) => {
+    const [draft, setDraft] = useState("");
+    useEffect(() => () => mockLaneDispose(props.compareId), []);
+    useEffect(() => {
+      props.onSendReadinessChange?.(
+        `${props.compareKind}:${props.compareId}`,
+        true,
+      );
+    }, [props.onSendReadinessChange, props.compareKind, props.compareId]);
     mockMultiModelPlaygroundCard(props);
     return (
       <div
         data-testid="multi-host-card"
+        className={props.className}
         data-compare-id={props.compareId}
         data-compare-kind={props.compareKind}
         data-host-style={props.hostStyle}
       >
         {props.compareLabel}
+        <input aria-label={`draft-${props.compareId}`} value={draft} onChange={(event) => setDraft(event.target.value)} />
       </div>
     );
   },
@@ -507,27 +540,39 @@ vi.mock("@/lib/utils", () => ({
 
 const multiHostFixture = {
   multiHostEnabled: true,
+  loading: false,
   selectedHostIds: [] as string[],
+  panes: undefined as
+    | {
+        paneId: string;
+        target:
+          | { kind: "host"; hostId: string }
+          | { kind: "environment"; environmentId: string };
+        pickedSelection?: unknown;
+        serverIds?: string[] | null;
+      }[]
+    | undefined,
   hostList: [] as { hostId: string; name: string }[],
   hosts: {} as Record<string, HostDetail>,
 };
 
 const previewedHostFixture = { resolve: false };
 
-// Track the project id `PlaygroundMain` passes to `usePersistedHost`
+// Track the project id `PlaygroundMain` passes to `useComparePanes`
 // (a.k.a. `multiHostProjectId`). After Blocker 2 (project-id alignment)
 // the picker must receive the SAME id; we assert both reads.
 const usePersistedHostProjectIds: (string | null)[] = [];
 const mockSetSelectedHostIds = vi.fn();
 const mockSetMultiHostEnabled = vi.fn();
-const mockCreateHost = vi.hoisted(() => vi.fn());
+const mockRestorePanes = vi.fn();
+const mockSetPaneTarget = vi.fn();
+const mockEnsureProjectClient = vi.hoisted(() => vi.fn());
 const mockHostMutations = vi.hoisted(() => ({
-  createHost: undefined as unknown as ReturnType<typeof vi.fn>,
+  ensureProjectClient: mockEnsureProjectClient,
   updateHost: vi.fn(),
   deleteHost: vi.fn(),
   duplicateHost: vi.fn(),
 }));
-mockHostMutations.createHost = mockCreateHost;
 
 // Local Claude Code execution, forced ON so the per-column wiring is
 // observable. Left to the real controller this would settle to "unavailable"
@@ -536,7 +581,8 @@ mockHostMutations.createHost = mockCreateHost;
 const localHarnessFixture = vi.hoisted(() => ({
   requestedTarget: "local-native" as string | null,
 }));
-vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+vi.mock("@/hooks/useLocalHarnessTarget", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useLocalHarnessTarget")>()),
   // ONLY `requestedTarget` is meaningful here — it is what the per-column
   // derivation reads, and it is what these tests assert on. The rest is filler
   // to satisfy the shape. `needs-consent` rather than `ready` because `ready`
@@ -571,12 +617,24 @@ vi.mock("@/hooks/useLocalHarnessTarget", () => ({
   useLocalHarnessRunsHere: () => false,
 }));
 
-vi.mock("@/hooks/use-persisted-host", () => ({
-  usePersistedHost: (projectId: string | null) => {
+vi.mock("@/hooks/use-compare-panes", () => ({
+  useComparePanes: (projectId: string | null) => {
     usePersistedHostProjectIds.push(projectId);
     return {
+      // A test can give panes their own ids; by default each client's pane
+      // is keyed by its id, as a migrated v1 lineup is.
+      panes:
+        multiHostFixture.panes ??
+        multiHostFixture.selectedHostIds.map((hostId) => ({
+          paneId: hostId,
+          target: { kind: "host", hostId },
+        })),
       selectedHostIds: multiHostFixture.selectedHostIds,
       setSelectedHostIds: mockSetSelectedHostIds,
+      restorePanes: mockRestorePanes,
+      setPaneOverrides: vi.fn(),
+      setPanePick: vi.fn(),
+      setPaneTarget: mockSetPaneTarget,
       multiHostEnabled: multiHostFixture.multiHostEnabled,
       setMultiHostEnabled: mockSetMultiHostEnabled,
     };
@@ -589,11 +647,11 @@ vi.mock("@/hooks/use-playground-host-slots", () => ({
     ids: (string | null | undefined)[]
   ) => {
     const resolve = (id: string | null | undefined) =>
-      id ? multiHostFixture.hosts[id] ?? null : null;
+      !multiHostFixture.loading && id ? multiHostFixture.hosts[id] ?? null : null;
     return [
-      { host: resolve(ids[0]), isLoading: false },
-      { host: resolve(ids[1]), isLoading: false },
-      { host: resolve(ids[2]), isLoading: false },
+      { host: resolve(ids[0]), isLoading: multiHostFixture.loading },
+      { host: resolve(ids[1]), isLoading: multiHostFixture.loading },
+      { host: resolve(ids[2]), isLoading: multiHostFixture.loading },
     ];
   },
 }));
@@ -612,87 +670,9 @@ vi.mock("@/hooks/useClients", () => ({
     hosts: multiHostFixture.hostList,
     isLoading: false,
   }),
-  // Every mutation is a STABLE reference, matching Convex's `useMutation`
-  // (which memoizes per mutation). Minting fresh `vi.fn()`s here instead
-  // would change these identities on every render, and the seed effect
-  // depends on `createHost`/`deleteHost` — so the effect would re-run on
-  // every render and quietly retry a failed seed on its own, hiding whether
-  // the real retry path works at all.
+  // Stable references, matching Convex's `useMutation`, which memoizes per
+  // mutation.
   useHostMutations: () => mockHostMutations,
-}));
-
-// PUR-11 seed backstop reads live catalog templates (chatgpt/claude/
-// cursor) to seed a guest's first 3 clients. `getCatalogHost` /
-// `getCatalogTemplate` are the REAL sdk functions running against this fake
-// "live" catalog — only the network-fetching hook is mocked.
-const seedCatalogFixture = {
-  status: "live" as const,
-  version: 1,
-  source: "test",
-  catalog: {
-    hostsById: {
-      chatgpt: {
-        id: "chatgpt",
-        label: "ChatGPT",
-        provenance: "assumed",
-        rendersMcpApps: false,
-        modelId: "openai/gpt-5.6-luna",
-        systemPrompt: "",
-        temperature: 0.7,
-        requireToolApproval: false,
-        serverIds: [],
-        optionalServerIds: [],
-        connectionDefaults: { headers: {}, requestTimeout: 30000 },
-        clientCapabilities: {},
-        hostContext: {},
-      },
-      claude: {
-        id: "claude",
-        label: "Claude",
-        provenance: "assumed",
-        rendersMcpApps: true,
-        modelId: "anthropic/claude-haiku-4.5",
-        systemPrompt: "",
-        temperature: 1,
-        requireToolApproval: false,
-        serverIds: [],
-        optionalServerIds: [],
-        connectionDefaults: { headers: {}, requestTimeout: 30000 },
-        clientCapabilities: {},
-        hostContext: {},
-      },
-      cursor: {
-        id: "cursor",
-        label: "Cursor",
-        provenance: "probe",
-        rendersMcpApps: true,
-        modelId: "anthropic/claude-sonnet-4.5",
-        systemPrompt: "",
-        temperature: 0.7,
-        requireToolApproval: false,
-        serverIds: [],
-        optionalServerIds: [],
-        connectionDefaults: { headers: {}, requestTimeout: 30000 },
-        clientCapabilities: {},
-        hostContext: {},
-      },
-    },
-  },
-};
-
-// The catalog is fetched once per page load and memoized for the session, so
-// a degraded status is permanent — the seed has to cope with it rather than
-// wait it out. Tests override this to exercise "fallback"/"error"; the
-// `beforeEach` resets it to the live fixture above.
-let seedCatalogState: {
-  status: "live" | "fallback" | "error";
-  version: number | null;
-  source: string | null;
-  catalog: unknown;
-} = seedCatalogFixture;
-
-vi.mock("@/lib/host-compat/use-host-catalog", () => ({
-  useHostCatalog: () => seedCatalogState,
 }));
 
 function readPreviewedHostId(projectId = "default"): string | null {
@@ -735,8 +715,59 @@ describe("PlaygroundMain — multi-host render path", () => {
     onExecutionInjected: vi.fn(),
   };
 
+  it("refuses imported plugin setup in Compare without selecting or sending to a lane", async () => {
+    mockSharedAppState.projects = { ...mockSharedAppState.projects, default: { ...mockSharedAppState.projects.default, sharedProjectId: "project" } };
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    usePluginOnboardingIntentStore.getState().request({
+      projectId: "project", serverIds: ["saved-server"],
+      pluginId: "plugin", pluginName: "Fixture", conversation: "new",
+    });
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("playground-multi-host-compare-section")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Setup did not start in Compare.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Switch to a single chat");
+    expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+    expect(mockSetMultiHostEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.setMultiModelEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+  });
+
+  it("consumes a resource handoff in the actual Compare branch without choosing a lane", async () => {
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const router = createMemoryRouter([{ path: "/playground", element: <PlaygroundMain {...defaultProps} /> }], {
+      initialEntries: [{ pathname: "/playground", state: { pluginResourceFile: {
+        actorId: "actor", projectId: "k57aaaaaaaaaaaaaaaaaaaaaaaaa", hostId: "h-A", serverId: "saved-server",
+        resourceUri: "fixture-file://private/triangle.stl", nonce: crypto.randomUUID(), createdAt: Date.now(),
+      } } }],
+    });
+    render(<RouterProvider router={router} />);
+    expect(screen.getByTestId("playground-multi-host-compare-section")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Switch to a single chat");
+    expect(router.state.location.state).toEqual({});
+    expect(mockSetMultiHostEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.setMultiModelEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
+    usePluginOnboardingIntentStore.getState().clear();
+    mobileFixture.isMobile = false;
     previewedHostFixture.resolve = false;
+    extensionFormFixture.enabled = false;
+    extensionFormFixture.ownerAvailable = true;
+    extensionFormFixture.actor = "actor";
+    useSignOutStore.setState({ isSigningOut: false });
+    mockPreferencesState.hostStyle = "claude";
     browserFixture.guest = false;
     browserFixture.granted = false;
     browserFixture.setting = null;
@@ -762,25 +793,27 @@ describe("PlaygroundMain — multi-host render path", () => {
       messages: [],
       multiModelEnabled: false,
       selectedModelIds: [],
+      chatSessionId: "chat-session-1",
     });
+    mockUseChatSession.startChatWithMessages.mockReset();
     mockMultiModelPlaygroundCard.mockClear();
     mockChatInput.mockClear();
-    // `mockReset`, not `mockClear`: the seed test installs a
-    // `mockImplementation` that mirrors its argument into `multiHostFixture`,
-    // and neither `mockClear` nor `vi.clearAllMocks()` drops implementations —
-    // so it would leak into every later test and quietly rewrite the fixture
-    // out from under their own assertions.
+    // Reset, not clear: `vi.clearAllMocks()` keeps a test's implementation.
     mockSetSelectedHostIds.mockReset();
     mockSetMultiHostEnabled.mockReset();
-    mockCreateHost.mockResolvedValue({
-      hostId: "seeded-host",
-      hostConfigId: "seeded-host-config",
+    mockEnsureProjectClient.mockResolvedValue({
+      hostId: "h-mcpjam",
+      created: false,
+      comparison: null,
     });
     usePersistedHostProjectIds.length = 0;
     localStorage.clear();
     // Reset fixture defaults — individual tests opt in to deviations.
     multiHostFixture.multiHostEnabled = true;
+    multiHostFixture.loading = false;
     multiHostFixture.selectedHostIds = [];
+    multiHostFixture.panes = undefined;
+    projectServersFixture.byName = new Map();
     multiHostFixture.hostList = [];
     multiHostFixture.hosts = {};
     localHarnessFixture.requestedTarget = "local-native";
@@ -789,11 +822,474 @@ describe("PlaygroundMain — multi-host render path", () => {
     mockSharedAppState.projects = {};
     mockSharedAppState.activeProjectId = "default";
     capturedChatSessionOptions = null;
-    seedCatalogState = seedCatalogFixture;
     environmentsFlag.value = false;
     environmentPreviewFixture.value = null;
     environmentPreviewLoading.value = false;
     clientsRoleFixture.value = { canManage: true, isLoading: false };
+  });
+
+  it("waits for the eval recording session to load before sending its prompt", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    localHarnessFixture.requestedTarget = null;
+    let finishHydration!: (id: string) => void;
+    mockUseChatSession.startChatWithMessages.mockReturnValue(
+      new Promise<string>((resolve) => {
+        finishHydration = resolve;
+      }),
+    );
+    const onConsumed = vi.fn();
+    const props = {
+      ...defaultProps,
+      enableMultiModelChat: false,
+      autoRunInput: "Show products",
+      evalChatHandoff: {
+        id: "eval-live:case-1",
+        messages: [],
+        serverNames: ["test-server"],
+        executionConfig: { modelId: "anthropic/claude-sonnet-4.5" },
+      },
+      onEvalChatHandoffConsumed: onConsumed,
+    };
+    const { rerender } = render(<PlaygroundMain {...props} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(1);
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    expect(onConsumed).not.toHaveBeenCalled();
+    mockUseChatSession.chatSessionId = "recording-session";
+    rerender(<PlaygroundMain {...props} />);
+    await act(async () => {
+      finishHydration("recording-session");
+    });
+    await waitFor(() =>
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+    );
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Show products" }),
+    );
+    expect(onConsumed).toHaveBeenCalledWith("eval-live:case-1");
+  });
+
+  it("allows the same eval handoff to retry after hydration fails", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    localHarnessFixture.requestedTarget = null;
+    let failHydration!: (error: Error) => void;
+    let finishRetry!: (id: string) => void;
+    mockUseChatSession.startChatWithMessages
+      .mockReturnValueOnce(
+        new Promise<string>((_, reject) => {
+          failHydration = reject;
+        }),
+      )
+      .mockReturnValue(
+        new Promise<string>((resolve) => {
+          finishRetry = resolve;
+        }),
+      );
+    const onConsumed = vi.fn();
+    const props = {
+      ...defaultProps,
+      enableMultiModelChat: false,
+      autoRunInput: "Show products",
+      evalChatHandoff: {
+        id: "eval-live:case-1",
+        messages: [],
+        serverNames: ["test-server"],
+        executionConfig: { modelId: "anthropic/claude-sonnet-4.5" },
+      },
+      onEvalChatHandoffConsumed: onConsumed,
+    };
+    const { rerender } = render(<PlaygroundMain {...props} />);
+    await act(async () => {
+      failHydration(new Error("Couldn't hydrate the session"));
+    });
+    expect(onConsumed).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    rerender(
+      <PlaygroundMain
+        {...props}
+        evalChatHandoff={{ ...props.evalChatHandoff }}
+      />,
+    );
+    await waitFor(() =>
+      expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(2),
+    );
+    await act(async () => {
+      finishRetry("chat-session-1");
+    });
+    await waitFor(() =>
+      expect(onConsumed).toHaveBeenCalledWith("eval-live:case-1"),
+    );
+    expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(2);
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores eval hydration after another chat session becomes active", async () => {
+    multiHostFixture.multiHostEnabled = false;
+    localHarnessFixture.requestedTarget = null;
+    let finishHydration!: (id: string) => void;
+    mockUseChatSession.startChatWithMessages.mockReturnValue(
+      new Promise<string>((resolve) => {
+        finishHydration = resolve;
+      }),
+    );
+    const onConsumed = vi.fn();
+    const props = {
+      ...defaultProps,
+      enableMultiModelChat: false,
+      autoRunInput: "Show products",
+      evalChatHandoff: {
+        id: "eval-live:case-1",
+        messages: [],
+        serverNames: ["test-server"],
+        executionConfig: { modelId: "anthropic/claude-sonnet-4.5" },
+      },
+      onEvalChatHandoffConsumed: onConsumed,
+    };
+    const { rerender } = render(<PlaygroundMain {...props} />);
+    mockUseChatSession.chatSessionId = "another-session";
+    rerender(<PlaygroundMain {...props} />);
+    await act(async () => {
+      finishHydration("recording-session");
+    });
+    expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(1);
+    expect(onConsumed).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps restoring comparison columns visible before their messages hydrate", () => {
+    const a = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const b = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": a, "h-B": b };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=recovery-test",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:recovery-test",
+      JSON.stringify({
+        version: 1,
+        id: "recovery-test",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: ["h-A", "h-B"],
+        selectedServers: [],
+        modelSelections: null,
+        clickedColumn: "h-A",
+        continuationId: "c1",
+        columns: ["h-A", "h-B"].map((compareId, order) => ({
+          compareId,
+          order,
+          kind: "host",
+          chatSessionId: "chat-" + compareId,
+          hasMessages: true,
+        })),
+      }),
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(
+        screen.getByTestId("playground-multi-host-compare-section"),
+      ).toHaveAttribute("aria-hidden", "false");
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("settles a restored host column whose host no longer exists", async () => {
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+    multiHostFixture.hosts = { "h-A": makeHost("h-A", "Host A") };
+    multiHostFixture.selectedHostIds = ["h-A", "h-gone"];
+    window.history.replaceState({}, "", "/playground?comparisonRecovery=gone");
+    const key = "mcp-comparison-auth-v1:gone";
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        id: "gone",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: ["h-A", "h-gone"],
+        selectedServers: [],
+        modelSelections: null,
+        clickedColumn: "h-gone",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "h-gone",
+            order: 1,
+            kind: "host",
+            chatSessionId: "chat-gone",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
+      expect(window.location.search).toBe("");
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("keeps the saved comparison server set while other servers reconnect", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=server-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:server-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "server-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["saved-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(capturedChatSessionOptions?.selectedServers).toEqual([
+        "saved-server",
+      ]);
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("uses later server selections after the saved comparison selection restores", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=selection-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:selection-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "selection-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["test-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    mockSharedAppState.servers["other-server"] = {
+      connectionStatus: "connected",
+    };
+    const selector = {
+      serverConfigs: {},
+      selectedServer: "test-server",
+      selectedMultipleServers: ["test-server"],
+      isMultiSelectEnabled: true,
+      onServerChange: vi.fn(),
+      onMultiServerToggle: vi.fn(),
+      onConnect: vi.fn(),
+    };
+    try {
+      const view = render(
+        <PlaygroundMain
+          {...defaultProps}
+          playgroundServerSelectorProps={selector}
+        />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "test-server",
+        ]),
+      );
+      view.rerender(
+        <PlaygroundMain
+          {...defaultProps}
+          playgroundServerSelectorProps={{
+            ...selector,
+            selectedMultipleServers: ["other-server"],
+          }}
+        />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "other-server",
+        ]),
+      );
+    } finally {
+      delete mockSharedAppState.servers["other-server"];
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("restores the saved servers that still exist when one was removed", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=subset-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:subset-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "subset-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["test-server", "gone-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    const selector = {
+      serverConfigs: {},
+      selectedServer: "test-server",
+      selectedMultipleServers: ["test-server"],
+      isMultiSelectEnabled: true,
+      onServerChange: vi.fn(),
+      onMultiServerToggle: vi.fn(),
+      onConnect: vi.fn(),
+    };
+    try {
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          playgroundServerSelectorProps={selector}
+        />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "test-server",
+        ]),
+      );
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("does not report a failed restore when Connect saves the comparison on this page", () => {
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    // What a comparison Connect click does just before it redirects.
+    act(() => {
+      window.history.replaceState(
+        {},
+        "",
+        "/playground?comparisonRecovery=just-saved",
+      );
+    });
+    try {
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      expect(
+        screen.queryByText(/couldn’t restore this comparison/),
+      ).not.toBeInTheDocument();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("follows a single-server change made after the saved server is back", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=single-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:single-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "single-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["test-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    const saved = mockSharedAppState.servers["test-server"];
+    mockSharedAppState.servers["test-server"] = {
+      ...saved,
+      connectionStatus: "connecting",
+    };
+    mockSharedAppState.servers["other-server"] = {
+      connectionStatus: "connected",
+    };
+    try {
+      const view = render(<PlaygroundMain {...defaultProps} />);
+      expect(capturedChatSessionOptions?.selectedServers).toEqual([
+        "test-server",
+      ]);
+      // The saved server never reconnects; the user picks another one.
+      view.rerender(
+        <PlaygroundMain {...defaultProps} serverName="other-server" />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "other-server",
+        ]),
+      );
+    } finally {
+      mockSharedAppState.servers["test-server"] = saved;
+      delete mockSharedAppState.servers["other-server"];
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
   });
 
   it("selects MCPJam as the previewed client when no current client is selected", async () => {
@@ -808,12 +1304,10 @@ describe("PlaygroundMain — multi-host render path", () => {
     await waitFor(() => {
       expect(readPreviewedHostId()).toBe("h-mcpjam");
     });
-    expect(mockCreateHost).not.toHaveBeenCalled();
   });
 
-  it("does not seed clients for a project member who can't create them", async () => {
+  it("ensures the default for a member and asks for no comparison", async () => {
     clientsRoleFixture.value = { canManage: false, isLoading: false };
-    multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [];
 
     render(<PlaygroundMain {...defaultProps} />);
@@ -821,508 +1315,45 @@ describe("PlaygroundMain — multi-host render path", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(mockCreateHost).not.toHaveBeenCalled();
+    expect(mockEnsureProjectClient.mock.calls).toEqual([
+      [{ projectId: "default", themeMode: expect.any(String) }],
+    ]);
   });
 
-  // PUR-11: guests land with 3 pre-selected clients (Claude, ChatGPT, Cursor)
-  // instead of a single blank "MCPJam" host + a toggle to find first.
-  it("seeds 3 default clients (Claude, ChatGPT, Cursor) for empty projects", async () => {
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    mockCreateHost
-      .mockResolvedValueOnce({
-        hostId: "h-claude",
-        hostConfigId: "h-claude-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-chatgpt",
-        hostConfigId: "h-chatgpt-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-cursor",
-        hostConfigId: "h-cursor-config",
-      });
-
-    // So the grid-render assertion below is actually wired to what the seed
-    // effect calls `setSelectedHostIds` with — not a value hardcoded to
-    // match it — mirror the fixture from the real call's argument, the same
-    // way `usePersistedHost`'s own state would update.
-    mockSetSelectedHostIds.mockImplementation((ids: string[]) => {
-      multiHostFixture.selectedHostIds = ids;
-    });
-
-    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledTimes(3);
-    });
-    expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "default", name: "Claude" })
-    );
-    expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "default",
-        name: "ChatGPT",
-        // Straight from the catalog template — the seed no longer carries a
-        // per-host model override on top of it.
-        input: expect.objectContaining({ modelId: "openai/gpt-5.6-luna" }),
-      })
-    );
-    expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "default",
-        name: "Cursor",
-        // The seed pins each template's default model — a modelless host
-        // breaks synthetic/swarm runs (no picker fallback on that path).
-        input: expect.objectContaining({
-          modelId: "anthropic/claude-sonnet-4.5",
-        }),
-      })
-    );
-
-    // Lead is the first seed template (Claude); the compare lineup is
-    // seeded alongside it — no manual toggle needed for a guest to land in
-    // a 3-way compare.
-    await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-claude");
-    });
-    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
-      "h-claude",
-      "h-chatgpt",
-      "h-cursor",
-    ]);
-
-    // The acceptance criterion end to end: once the host-list query catches
-    // up to the 3 just-created hosts (simulated here the same way a live
-    // Convex subscription would resolve shortly after — this half is
-    // necessarily manual, standing in for an external subscription this
-    // mock setup has no live path to), the guest actually lands in the
-    // 3-way compare grid. `multiHostFixture.selectedHostIds` is NOT set
-    // here — it was already updated above by the real `setSelectedHostIds`
-    // call via `mockSetSelectedHostIds`'s implementation, so a regression
-    // that seeds the wrong ids would show up as the wrong (or zero) cards
-    // below rather than being masked by a hardcoded fixture value.
+  it("selects the comparison lineup, Claude leading, when the backend creates it", async () => {
+    // The backend's single transaction: the lineup arrives with the default.
     multiHostFixture.hostList = [
-      { hostId: "h-chatgpt", name: "ChatGPT" },
+      { hostId: "h-mcpjam", name: "MCPJam" },
       { hostId: "h-claude", name: "Claude" },
+      { hostId: "h-chatgpt", name: "ChatGPT" },
       { hostId: "h-cursor", name: "Cursor" },
     ];
-    multiHostFixture.hosts = {
-      "h-chatgpt": makeHost("h-chatgpt", "ChatGPT", { hostStyle: "chatgpt" }),
-      "h-claude": makeHost("h-claude", "Claude", { hostStyle: "claude" }),
-      "h-cursor": makeHost("h-cursor", "Cursor", {
-        hostStyle: "cursor",
-      }),
-    };
-    rerender(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("playground-multi-host-grid")).toBeTruthy();
-    });
-    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(3);
-  });
-
-  // A "fallback" catalog is the server serving its own bundled copy, which
-  // carries all 3 seed templates — so the guest still gets the full lineup.
-  // Waiting for "live" instead would strand them with zero clients for the
-  // whole session: the catalog is fetched once per page load and memoized, so
-  // a degraded status never upgrades without a reload, and the playground
-  // hides the global host bar that would otherwise seed a default host.
-  it("seeds the full 3-client lineup from a bundled ('fallback') catalog", async () => {
-    seedCatalogState = { ...seedCatalogFixture, status: "fallback" };
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    mockCreateHost
-      .mockResolvedValueOnce({
-        hostId: "h-chatgpt",
-        hostConfigId: "h-chatgpt-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-claude",
-        hostConfigId: "h-claude-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-cursor",
-        hostConfigId: "h-cursor-config",
-      });
-
-    render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledTimes(3);
-    });
-    await waitFor(() => {
-      expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
-        "h-chatgpt",
-        "h-claude",
-        "h-cursor",
-      ]);
-    });
-  });
-
-  // "error" means no catalog at all, so there are no templates to clone —
-  // but zero clients on a surface with no host bar is a dead end. Fall back
-  // to the pre-PUR-11 backstop (one blank "MCPJam" host, no compare lineup)
-  // rather than leaving the project empty.
-  it("seeds a single blank MCPJam host when the catalog failed to load", async () => {
-    seedCatalogState = {
-      status: "error",
-      version: null,
-      source: null,
-      catalog: null,
-    };
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    mockCreateHost.mockResolvedValue({
+    mockEnsureProjectClient.mockResolvedValue({
       hostId: "h-mcpjam",
-      hostConfigId: "h-mcpjam-config",
-    });
-
-    render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledTimes(1);
-    });
-    expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "default",
-        name: "MCPJam",
-        input: expect.objectContaining({
-          modelId: "anthropic/claude-haiku-5.5",
-        }),
-      })
-    );
-    await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-mcpjam");
-    });
-    // A single-host lineup, not an empty one: `usePersistedHost` derives the
-    // lineup from the lead anyway, and writing it explicitly is what keeps a
-    // stale array from surviving (see the orphaned-lineup test below).
-    await waitFor(() => {
-      expect(loadSelectedHostIds("default")).toEqual(["h-mcpjam"]);
-    });
-    expect(mockSetSelectedHostIds).toHaveBeenCalledWith(["h-mcpjam"]);
-  });
-
-  // The fallback promises "one host, no compare" — but leaving the stored
-  // lineup alone doesn't deliver that for a project whose hosts were deleted:
-  // the dead ids are still in storage, and `usePersistedHost` PRESERVES the
-  // stored column count at read time (replacing slot 0 with the lead rather
-  // than shrinking), so they'd come back as a 3-column compare lineup around
-  // one real host and flip `isComparingHosts` (`selectedHostIds.length > 1`)
-  // on. The fallback has to overwrite the lineup, not skip it.
-  it("collapses an orphaned compare lineup when falling back to a single host", async () => {
-    saveSelectedHostIds("default", [
-      "h-deleted-1",
-      "h-deleted-2",
-      "h-deleted-3",
-    ]);
-    seedCatalogState = {
-      status: "error",
-      version: null,
-      source: null,
-      catalog: null,
-    };
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    mockCreateHost.mockResolvedValue({
-      hostId: "h-mcpjam",
-      hostConfigId: "h-mcpjam-config",
-    });
-
-    render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(loadSelectedHostIds("default")).toEqual(["h-mcpjam"]);
-    });
-    expect(readPreviewedHostId()).toBe("h-mcpjam");
-  });
-
-  // Clearing the per-project "seeded" marker only PERMITS a retry — nothing
-  // in the effect's dependency list changes when a create rejects, so
-  // without an explicit re-trigger the guest is stuck on an empty playground
-  // for the rest of the session. This is the surface with no global host bar
-  // to fall back on, so the backstop itself has to be recoverable.
-  it("retries the single-host fallback after the create fails", async () => {
-    seedCatalogState = {
-      status: "error",
-      version: null,
-      source: null,
-      catalog: null,
-    };
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    mockCreateHost
-      .mockRejectedValueOnce(new Error("backend blip"))
-      .mockResolvedValueOnce({
-        hostId: "h-mcpjam",
-        hostConfigId: "h-mcpjam-config",
-      });
-
-    render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledTimes(1);
-    });
-    // The retry is scheduled on a real (backed-off) timer, so this waits it
-    // out rather than asserting synchronously.
-    await waitFor(
-      () => {
-        expect(mockCreateHost).toHaveBeenCalledTimes(2);
+      created: false,
+      comparison: {
+        state: "complete",
+        hostIds: ["h-claude", "h-chatgpt", "h-cursor"],
+        created: true,
       },
-      { timeout: 4000 }
-    );
-    await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-mcpjam");
     });
-  });
-
-  // A project can go back to `hostList.length === 0` after being fully
-  // seeded once, if all 3 hosts are later deleted — but the array in
-  // storage isn't cleared just because the hosts it points at are gone, so
-  // `loadSelectedHostIds` still returns the 3 (now orphaned) ids. A naive
-  // "is the stored array non-empty" check would misread that leftover data
-  // as a manual selection made mid-reseed and skip applying the new lineup,
-  // permanently stranding the project. The reseed must go through as long
-  // as nothing has changed the lineup since the seed effect itself started.
-  it("reseeds a project whose hosts were all deleted, even though the stale array is non-empty", async () => {
-    saveSelectedHostIds("default", [
-      "h-deleted-1",
-      "h-deleted-2",
-      "h-deleted-3",
-    ]);
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    mockCreateHost
-      .mockResolvedValueOnce({
-        hostId: "h-chatgpt",
-        hostConfigId: "h-chatgpt-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-claude",
-        hostConfigId: "h-claude-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-cursor",
-        hostConfigId: "h-cursor-config",
-      });
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    await waitFor(() => {
-      expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
-        "h-chatgpt",
-        "h-claude",
-        "h-cursor",
-      ]);
-    });
-  });
-
-  // The lead moves independently of the compare array: the global host bar
-  // switches the previewed client through `savePreviewedHostId` alone and
-  // never touches the lineup. So a mid-seed guard that compares only the
-  // array sees "nothing changed" and the seed's own `savePreviewedHostId`
-  // overwrites the client the user just switched to.
-  it("keeps a previewed client switched mid-seed, even though the compare lineup is untouched", async () => {
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    // Hold the three creates open so the switch below lands strictly between
-    // the seed effect's snapshot and its completion — the only window in
-    // which this bug is reachable.
-    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
-    mockCreateHost.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          releaseCreate.push(resolve as (host: { hostId: string }) => void);
-        })
+    expect(mockEnsureProjectClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        initializeComparison: true,
+      }),
     );
-
-    render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(releaseCreate).toHaveLength(3);
-    });
-
-    // The user picks a client in the global host bar while the creates are
-    // still in flight. Lead only — the lineup stays exactly as snapshotted.
-    savePreviewedHostId("default", "h-user-picked");
-
-    await act(async () => {
-      releaseCreate[0]({ hostId: "h-chatgpt" });
-      releaseCreate[1]({ hostId: "h-claude" });
-      releaseCreate[2]({ hostId: "h-cursor" });
-    });
-
-    await waitFor(() => {
-      expect(mockCreateHost).toHaveBeenCalledTimes(3);
-    });
-    expect(readPreviewedHostId()).toBe("h-user-picked");
-    expect(loadSelectedHostIds("default")).toEqual([]);
-    expect(mockSetSelectedHostIds).not.toHaveBeenCalledWith([
-      "h-chatgpt",
-      "h-claude",
-      "h-cursor",
-    ]);
-  });
-
-  it("chooses a fallback lead after a user changes only the compare lineup mid-seed", async () => {
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
-    mockCreateHost.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          releaseCreate.push(resolve as (host: { hostId: string }) => void);
-        })
-    );
-
-    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
-    await waitFor(() => {
-      expect(releaseCreate).toHaveLength(3);
-    });
-
-    // The user changes only the compare lineup. With no previewed host yet,
-    // the fallback is deferred until the seed finishes so this choice is not
-    // overwritten by the seed itself.
-    saveSelectedHostIds("default", ["h-chatgpt"]);
-    multiHostFixture.selectedHostIds = ["h-chatgpt"];
-    multiHostFixture.hostList = [
-      { hostId: "h-claude", name: "Claude" },
-      { hostId: "h-chatgpt", name: "ChatGPT" },
-      { hostId: "h-cursor", name: "Cursor" },
-    ];
-    rerender(<PlaygroundMain {...defaultProps} />);
-    expect(readPreviewedHostId()).toBeNull();
-
-    await act(async () => {
-      releaseCreate[0]({ hostId: "h-claude" });
-      releaseCreate[1]({ hostId: "h-chatgpt" });
-      releaseCreate[2]({ hostId: "h-cursor" });
-    });
-
-    await waitFor(() => {
-      expect(readPreviewedHostId()).toBe("h-chatgpt");
-    });
-    expect(loadSelectedHostIds("default")).toEqual(["h-chatgpt"]);
-  });
-
-  it("keeps Claude as lead when ChatGPT reaches the host list first", async () => {
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    const releaseCreate: Array<(host: { hostId: string }) => void> = [];
-    mockCreateHost.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          releaseCreate.push(resolve as (host: { hostId: string }) => void);
-        })
-    );
-
-    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(releaseCreate).toHaveLength(3);
-    });
-
-    // ChatGPT resolves before the first seed (Claude), so a generic fallback
-    // would otherwise make ChatGPT the automatic default.
-    await act(async () => {
-      releaseCreate[1]({ hostId: "h-chatgpt" });
-    });
-    multiHostFixture.hostList = [{ hostId: "h-chatgpt", name: "ChatGPT" }];
-    rerender(<PlaygroundMain {...defaultProps} />);
-    await waitFor(() => {
-      expect(readPreviewedHostId()).toBeNull();
-    });
-
-    multiHostFixture.hostList = [
-      { hostId: "h-claude", name: "Claude" },
-      { hostId: "h-chatgpt", name: "ChatGPT" },
-      { hostId: "h-cursor", name: "Cursor" },
-    ];
-    rerender(<PlaygroundMain {...defaultProps} />);
-
-    await act(async () => {
-      releaseCreate[0]({ hostId: "h-claude" });
-      releaseCreate[2]({ hostId: "h-cursor" });
-    });
-
-    await waitFor(() => {
-      expect(loadSelectedHostIds("default")).toEqual([
-        "h-claude",
-        "h-chatgpt",
-        "h-cursor",
-      ]);
-    });
     expect(readPreviewedHostId()).toBe("h-claude");
-  });
-
-  it("seeds 3 default clients for each empty project", async () => {
-    multiHostFixture.multiHostEnabled = false;
-    multiHostFixture.hostList = [];
-    mockCreateHost
-      .mockResolvedValueOnce({
-        hostId: "h-first-chatgpt",
-        hostConfigId: "h-first-chatgpt-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-first-claude",
-        hostConfigId: "h-first-claude-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-first-cursor",
-        hostConfigId: "h-first-cursor-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-second-chatgpt",
-        hostConfigId: "h-second-chatgpt-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-second-claude",
-        hostConfigId: "h-second-claude-config",
-      })
-      .mockResolvedValueOnce({
-        hostId: "h-second-cursor",
-        hostConfigId: "h-second-cursor-config",
-      });
-
-    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
-
-    await waitFor(() => {
-      expect(readPreviewedHostId("default")).toBe("h-first-chatgpt");
-    });
-    expect(mockCreateHost).toHaveBeenCalledTimes(3);
-    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
-      "h-first-chatgpt",
-      "h-first-claude",
-      "h-first-cursor",
-    ]);
-
-    rerender(<PlaygroundMain {...defaultProps} activeProjectId="second" />);
-
-    await waitFor(() => {
-      expect(readPreviewedHostId("second")).toBe("h-second-chatgpt");
-    });
-    expect(mockCreateHost).toHaveBeenCalledTimes(6);
-    // Assert the SECOND project's seed the same way as the first: a
-    // regression that seeds the wrong templates (or leaves compare off) for
-    // a later empty project shouldn't slip through just because it isn't the
-    // first one seeded.
-    expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "second", name: "ChatGPT" })
-    );
-    expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "second", name: "Claude" })
-    );
-    expect(mockCreateHost).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "second", name: "Cursor" })
-    );
-    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([
-      "h-second-chatgpt",
-      "h-second-claude",
-      "h-second-cursor",
+    expect(mockSetSelectedHostIds).toHaveBeenLastCalledWith([
+      "h-claude",
+      "h-chatgpt",
+      "h-cursor",
     ]);
   });
 
@@ -1390,6 +1421,61 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(cards[0].getAttribute("data-compare-kind")).toBe("host");
   });
 
+  it("shows one client at a time on a phone, with a switcher between them", () => {
+    mobileFixture.isMobile = true;
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const switcher = screen.getByTestId("playground-compare-lane-switcher");
+    const tabs = within(switcher).getAllByRole("button", { hidden: true });
+    expect(tabs.map((tab) => tab.getAttribute("aria-pressed"))).toEqual([
+      "true",
+      "false",
+    ]);
+    // Both cards stay mounted: each owns its own stream and transcript.
+    const card = (id: string) =>
+      screen
+        .getAllByTestId("multi-host-card")
+        .find((node) => node.getAttribute("data-compare-id") === id)!;
+    expect(card("h-A")).not.toHaveClass("hidden");
+    expect(card("h-B")).toHaveClass("hidden");
+
+    fireEvent.click(tabs[1]);
+
+    expect(card("h-A")).toHaveClass("hidden");
+    expect(card("h-B")).not.toHaveClass("hidden");
+  });
+
+  it("keeps every client side by side on a wider screen", () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(screen.queryByTestId("playground-compare-lane-switcher")).toBeNull();
+    for (const node of screen.getAllByTestId("multi-host-card")) {
+      expect(node.className ?? "").not.toContain("hidden");
+    }
+  });
+
   // ── Local execution is per-LANE ────────────────────────────────────────
   //
   // The regression: `localHarnessExecution` was computed once from the
@@ -1403,9 +1489,12 @@ describe("PlaygroundMain — multi-host render path", () => {
   // has one local controller, for the previewed host's harness, so only the
   // columns running THAT harness can take its target.
   function seedClaudeCodeAndCodexGrid(previewed: "h-cc" | "h-codex") {
+    // Each column resolves on its own harness, so the Claude Code client
+    // saves a model Claude Code runs.
     const claudeCode = makeHost("h-cc", "Claude Code", {
       hostStyle: "claude",
       harness: "claude-code",
+      modelId: "anthropic/claude-sonnet-4.5",
     } as Partial<HostConfigDtoV2>);
     const codex = makeHost("h-codex", "Codex", {
       hostStyle: "chatgpt",
@@ -1454,9 +1543,12 @@ describe("PlaygroundMain — multi-host render path", () => {
   // it, so a Claude Code column is not special-cased into running here.
   it("leaves every column non-local when local execution is not requested", () => {
     localHarnessFixture.requestedTarget = "hosted";
+    // Each column resolves on its own harness, so the Claude Code client
+    // saves a model Claude Code runs.
     const claudeCode = makeHost("h-cc", "Claude Code", {
       hostStyle: "claude",
       harness: "claude-code",
+      modelId: "anthropic/claude-sonnet-4.5",
     } as Partial<HostConfigDtoV2>);
     const codex = makeHost("h-codex", "Codex", {
       hostStyle: "chatgpt",
@@ -1492,9 +1584,8 @@ describe("PlaygroundMain — multi-host render path", () => {
     const calls = mockMultiModelPlaygroundCard.mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
     const serversPerCard = calls.map((call) => call[0].selectedServers);
-    // Every card got the same array (by value).
-    for (const servers of serversPerCard.slice(1)) {
-      expect(servers).toEqual(serversPerCard[0]);
+    for (const servers of serversPerCard) {
+      expect(servers).toEqual(["test-server"]);
     }
   });
 
@@ -1519,7 +1610,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(lastByCompareId.get("h-B")?.hostedContext?.hostId).toBe("h-B");
   });
 
-  it("every column shares the global chip state and the lead's model (multi-host varies host only)", () => {
+  it("each column uses its own saved execution settings and model", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
       modelId: "openai/gpt-5-mini",
@@ -1551,24 +1642,15 @@ describe("PlaygroundMain — multi-host render path", () => {
     const leadProps = lastByCompareId.get("h-A");
     const secondaryProps = lastByCompareId.get("h-B");
 
-    // Both columns receive the global chip state — host's own persisted
-    // systemPrompt/temperature/requireToolApproval are NOT used at the
-    // execution-config layer (the host axis varies via hostSnapshot,
-    // hostConfig, and the per-card capability resolver, not via chip
-    // state).
-    const expectedExecutionConfig = {
-      systemPrompt: "GLOBAL_SYSTEM_PROMPT",
-      temperature: 0.42,
-      requireToolApproval: false,
-    };
-    expect(leadProps.executionConfig).toEqual(expectedExecutionConfig);
-    expect(secondaryProps.executionConfig).toEqual(expectedExecutionConfig);
-
-    // Both columns also share the lead host's resolved model — the
-    // secondary's persisted modelId is ignored.
-    expect(secondaryProps.model).toBe(leadProps.model);
+    expect(leadProps.executionConfig).toMatchObject({
+      systemPrompt: "host-A-prompt", temperature: 0.1, requireToolApproval: true,
+    });
+    expect(secondaryProps.executionConfig).toMatchObject({
+      systemPrompt: "host-B-prompt", temperature: 0.9, requireToolApproval: false,
+    });
     expect(String(leadProps.model.id)).toBe("openai/gpt-5-mini");
-    expect(leadProps.compareSubLabel).toBe(secondaryProps.compareSubLabel);
+    expect(String(secondaryProps.model.id)).toBe("anthropic/claude-sonnet-4.5");
+
   });
 
   it("multi-host cards hide Latency/Tokens chrome but show host identity", () => {
@@ -1623,7 +1705,89 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(compareIds.sort()).toEqual(["h-A", "h-B"]);
   });
 
-  it("falls back to single-pane when multiHostEnabled but no hosts resolved", () => {
+  it("keeps one global owned form host in Compare and single chat with the exact owner", () => {
+    extensionFormFixture.enabled = true;
+    mockPreferencesState.hostStyle = "chatgpt";
+    savePreviewedHostId("project", "h-A");
+    previewedHostFixture.resolve = true;
+    mockSharedAppState.projects = { ...mockSharedAppState.projects, default: { ...mockSharedAppState.projects.default, sharedProjectId: "project" } };
+    mockSharedAppState.activeProjectId = "default";
+    const a = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const b = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": a, "h-B": b };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("playground-multi-host-grid")).toBeInTheDocument();
+    expect(screen.getAllByTestId("global-owned-form-host")).toHaveLength(1);
+    const hostNode = screen.getByTestId("global-owned-form-host");
+    const owner = hostNode.textContent;
+    expect(JSON.parse(owner!)).toEqual({ projectId: "project", workspaceId: 'playground:["actor","project","h-A","global"]' });
+    multiHostFixture.multiHostEnabled = false;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("global-owned-form-host")).toHaveLength(1);
+    expect(screen.getByTestId("global-owned-form-host")).toBe(hostNode);
+    expect(hostNode).toHaveTextContent(owner!);
+    extensionFormFixture.ownerAvailable = false;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("global-owned-form-host")).toBe(hostNode);
+    extensionFormFixture.ownerAvailable = true;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("global-owned-form-host")).toBe(hostNode);
+    extensionFormFixture.actor = "another-actor";
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.queryByTestId("global-owned-form-host")).toBeNull();
+    extensionFormFixture.actor = "actor";
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    act(() => useSignOutStore.setState({ isSigningOut: true }));
+    expect(screen.queryByTestId("global-owned-form-host")).toBeNull();
+  });
+
+  it("keeps running lane owners and drafts through a temporary host-query gap", () => {
+    const a = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const b = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": a, "h-B": b };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    fireEvent.change(screen.getByLabelText("draft-h-A"), { target: { value: "left false and zero" } });
+    fireEvent.change(screen.getByLabelText("draft-h-B"), { target: { value: "right true" } });
+    multiHostFixture.loading = true;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
+    expect(mockLaneDispose).not.toHaveBeenCalled();
+    expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
+    expect(screen.getByLabelText("draft-h-A")).toHaveValue("left false and zero");
+    expect(screen.getByLabelText("draft-h-B")).toHaveValue("right true");
+    multiHostFixture.loading = false;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByLabelText("draft-h-A")).toHaveValue("left false and zero");
+    expect(mockLaneDispose).not.toHaveBeenCalled();
+  });
+
+  it("disposes retained lanes for changed configuration, confirmed removal and selection removal", () => {
+    const a = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const b = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": a, "h-B": b };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    fireEvent.change(screen.getByLabelText("draft-h-A"), { target: { value: "old owner draft" } });
+    multiHostFixture.hosts["h-A"] = { ...a, config: { ...a.config, systemPrompt: "New configuration" } };
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(mockLaneDispose).toHaveBeenCalledWith("h-A");
+    expect(screen.getByLabelText("draft-h-A")).toHaveValue("");
+    delete multiHostFixture.hosts["h-B"];
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(mockLaneDispose).toHaveBeenCalledWith("h-B");
+    expect(screen.queryByLabelText("draft-h-B")).not.toBeInTheDocument();
+    mockLaneDispose.mockClear();
+    multiHostFixture.selectedHostIds = [];
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(mockLaneDispose).toHaveBeenCalledWith("h-A");
+  });
+
+  it("shows both unavailable clients when neither configuration resolves", () => {
     multiHostFixture.hostList = [
       { hostId: "h-A", name: "Host A" },
       { hostId: "h-B", name: "Host B" },
@@ -1633,7 +1797,8 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+    expect(screen.getAllByText("This client is unavailable. Remove it to continue.")).toHaveLength(2);
+    expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
   });
 
   it("does NOT render the multi-host grid when the project has only one host (host-count gate)", () => {
@@ -1742,27 +1907,24 @@ describe("PlaygroundMain — multi-host render path", () => {
     );
   });
 
-  it("slot 0 unresolved (lead host missing) → single-pane fallback (Blocker 3)", () => {
+  it("unavailable lead stays identifiable and blocks comparison", () => {
     const hostC = makeHost("h-C", "Host C", { hostStyle: "claude" });
     multiHostFixture.hostList = [
       { hostId: "h-A", name: "Host A" },
       { hostId: "h-C", name: "Host C" },
     ];
-    // Lead id "h-A" intentionally NOT in `hosts` map — still loading
-    // or deleted. The compacted `resolvedSelectedHosts` would have
-    // collapsed slot 0 to host C; the pre-fix code would treat host C
-    // as lead (wrong). The fix gates `isMultiHostMode` on lead being
-    // fully resolved, so the grid does not render.
     multiHostFixture.hosts = { "h-C": hostC };
     multiHostFixture.selectedHostIds = ["h-A", "h-C"];
     multiHostFixture.multiHostEnabled = true;
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+    expect(screen.getByTestId("playground-multi-host-grid")).toBeTruthy();
+    expect(screen.getByText("This client is unavailable. Remove it to continue.")).toBeTruthy();
+    expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
   });
 
-  it("slot 1 unresolved with slot 0 + slot 2 resolved → 2 columns, lead preserved (Blocker 3)", () => {
+  it("missing secondary stays visible and blocks the remaining clients", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
       modelId: "openai/gpt-5-mini",
@@ -1796,32 +1958,12 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(cards[0].getAttribute("data-compare-id")).toBe("h-A");
     expect(cards[1].getAttribute("data-compare-id")).toBe("h-C");
 
-    // Lead identity assertion: with the host-only-axis contract, every
-    // column shares the GLOBAL chip state. Before, `h-C` (secondary)
-    // would have used its own host config; now host config is consumed
-    // via `hostSnapshot`/`hostConfig` only — chip state is shared.
-    const lastByCompareId = new Map<string, any>();
-    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
-      lastByCompareId.set(props.compareId, props);
-    }
-    const expectedExecutionConfig = {
-      systemPrompt: "GLOBAL_SYSTEM_PROMPT",
-      temperature: 0.42,
-      requireToolApproval: false,
-    };
-    expect(lastByCompareId.get("h-A").executionConfig).toEqual(
-      expectedExecutionConfig
-    );
-    expect(lastByCompareId.get("h-C").executionConfig).toEqual(
-      expectedExecutionConfig
-    );
+    expect(screen.getByText("This client is unavailable. Remove it to continue.")).toBeTruthy();
+    expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
+
   });
 
-  it("chat-input model unset → single-pane fallback", () => {
-    // Multi-host columns inherit the chat-input `selectedModel` for
-    // every column. If the picker has no model selected, the grid
-    // can't render a coherent execution, so we fall through to
-    // single-pane. Host modelIds are intentionally NOT consulted.
+  it("saved clients render independently of the chat-input model", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
       modelId: "openai/gpt-5-mini",
@@ -1842,21 +1984,15 @@ describe("PlaygroundMain — multi-host render path", () => {
     mockUseChatSession.selectedModel = null;
     try {
       render(<PlaygroundMain {...defaultProps} />);
-      expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+      expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
     } finally {
       mockUseChatSession.selectedModel = previousSelectedModel;
     }
   });
 
-  it("host modelIds are ignored — every column inherits the chat-input model regardless of host config", () => {
-    // Hosts ship their own persisted `modelId`, but in multi-host mode
-    // those are not the source of truth for the column model. The
-    // chat-input picker's `selectedModel` drives every column.
+  it("unavailable saved model cannot fall back to the chat-input model", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
-      // Intentionally a modelId NOT present in `availableModels` — the
-      // previous contract would have refused to render. Under the new
-      // contract this is irrelevant; grid still renders.
       modelId: "openai/gpt-4o",
     });
     const hostB = makeHost("h-B", "Host B", {
@@ -1873,32 +2009,59 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    const cards = screen.getAllByTestId("multi-host-card");
-    expect(cards).toHaveLength(2);
-    const lastByCompareId = new Map<string, any>();
-    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
-      lastByCompareId.set(props.compareId, props);
-    }
-    const leadProps = lastByCompareId.get("h-A");
-    const secondaryProps = lastByCompareId.get("h-B");
-    // Both columns receive the chat-input `selectedModel` from the
-    // mocked `useChatSession` fixture (openai/gpt-5-mini), NOT any
-    // host's persisted modelId.
-    expect(leadProps.model).toBe(mockUseChatSession.selectedModel);
-    expect(secondaryProps.model).toBe(mockUseChatSession.selectedModel);
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(1);
+    expect(screen.getByText("The saved model or connection is unavailable. Edit this client in Connect.")).toBeTruthy();
+    expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
   });
 
-  it("adding a host while compare is active seeds the new column from the lead's CURRENT transcript (not the original enter snapshot)", async () => {
-    // Regression for the reviewer-flagged P2 bug. Pre-fix:
-    //   - The model-mode added-column effect was the only place that
-    //     wrote to `compareAddColumnSeeds`. It returned early when
-    //     `isMultiModelMode` was false (i.e. during host mode).
-    //   - So a host added mid-conversation in host-compare mode would
-    //     fall back to the global `compareEnterMessages` snapshot
-    //     (frozen at the moment compare was first entered) instead of
-    //     the lead's CURRENT transcript.
-    //
-    // The new host-mode sibling effect closes that gap.
+  it("sign-in-locked saved model leaves the reason to the composer notice", () => {
+    const hostA = makeHost("h-A", "Host A", {
+      hostStyle: "chatgpt",
+      modelId: "openai/gpt-5-mini",
+    });
+    const hostB = makeHost("h-B", "Host B", {
+      hostStyle: "claude",
+      modelId: "anthropic/claude-sonnet-4.5",
+    });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    const previousModels = mockUseChatSession.availableModels;
+    mockUseChatSession.availableModels = previousModels.map((model) =>
+      model.id === "anthropic/claude-sonnet-4.5"
+        ? {
+            ...model,
+            disabled: true,
+            disabledReason: GUEST_LOCKED_MODEL_REASON,
+          }
+        : model,
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getAllByTestId("multi-host-card")).toHaveLength(1);
+      expect(
+        screen.queryByText(
+          "The saved model or connection is unavailable. Edit this client in Connect.",
+        ),
+      ).toBeNull();
+      const inputProps = mockChatInput.mock.calls.at(-1)![0];
+      expect(inputProps.submitDisabled).toBe(true);
+      render(<>{inputProps.notice}</>);
+      expect(screen.getByTestId("sign-in-model-notice").textContent).toContain(
+        "Host B can't run Claude Sonnet 4.5.",
+      );
+    } finally {
+      mockUseChatSession.availableModels = previousModels;
+    }
+  });
+
+  it("keeps client transcripts by identity when adding, removing and reordering clients", () => {
     const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
     const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
     const hostC = makeHost("h-C", "Host C", { hostStyle: "chatgpt" });
@@ -1913,10 +2076,6 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     const { rerender } = render(<PlaygroundMain {...defaultProps} />);
 
-    // Grab the most recent props the lead card was rendered with so we
-    // can drive `onTranscriptSync` ourselves. The transcript that flows
-    // through here is the lead's LIVE state; the effect should pick it
-    // up from `compareTranscriptsRef` on the next render.
     const leadCallBefore = mockMultiModelPlaygroundCard.mock.calls
       .map(([props]) => props)
       .filter((props) => props.compareId === "h-A")
@@ -1929,32 +2088,26 @@ describe("PlaygroundMain — multi-host render path", () => {
         role: "assistant",
         parts: [{ type: "text", text: "live-reply" }],
       },
-    ] as any[];
+    ] satisfies UIMessage[];
     leadCallBefore.onTranscriptSync("h-A", liveTranscript);
 
     // Now the user adds a 3rd host while compare is still running.
     multiHostFixture.selectedHostIds = ["h-A", "h-B", "h-C"];
     rerender(<PlaygroundMain {...defaultProps} />);
 
-    // After the re-render, the host-mode added-column effect should
-    // have written an `addColumnSeed` for h-C with the LIVE transcript
-    // we synced above — not the empty `compareEnterMessages` array.
-    const hostCCall = mockMultiModelPlaygroundCard.mock.calls
-      .map(([props]) => props)
-      .filter((props) => props.compareId === "h-C")
-      .at(-1);
-    expect(hostCCall).toBeDefined();
-    expect(hostCCall.addColumnSeed).not.toBeNull();
-    expect(hostCCall.addColumnSeed.messages).toHaveLength(2);
-    expect(hostCCall.addColumnSeed.messages[0].id).toBe("u-1");
-    expect(hostCCall.addColumnSeed.messages[1].id).toBe("a-1");
-    // The pre-existing columns (h-A, h-B) should NOT receive a fresh
-    // seed — only the newly-added column does.
-    const hostBCall = mockMultiModelPlaygroundCard.mock.calls
-      .map(([props]) => props)
-      .filter((props) => props.compareId === "h-B")
-      .at(-1);
-    expect(hostBCall.addColumnSeed).toBeNull();
+    const latest = (id: string) => mockMultiModelPlaygroundCard.mock.calls
+      .map(([props]) => props).filter((props) => props.compareId === id).at(-1);
+    expect(latest("h-C").compareEnterMessages).toEqual([]);
+    expect(latest("h-C").addColumnSeed).toBeUndefined();
+    expect(latest("h-B").compareEnterMessages).toEqual([]);
+    multiHostFixture.selectedHostIds = ["h-B", "h-C"];
+    rerender(<PlaygroundMain {...defaultProps} />);
+    multiHostFixture.selectedHostIds = ["h-C", "h-A", "h-B"];
+    rerender(<PlaygroundMain {...defaultProps} />);
+    expect(latest("h-A").compareEnterMessages).toEqual(liveTranscript);
+    expect(latest("h-B").compareEnterMessages).toEqual([]);
+    expect(latest("h-C").compareEnterMessages).toEqual([]);
+    expect(mockChatInput.mock.calls.at(-1)?.[0].hideExecutionControls).toBe(true);
   });
 
   // -----------------------------------------------------------------
@@ -2010,6 +2163,113 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(broadcastsAfter.length).toBeGreaterThan(0);
     const latestBroadcast = broadcastsAfter.at(-1)!;
     expect(latestBroadcast.text).toBe("hello hosts");
+  });
+
+  it("gives each pane its own servers and its picked model", () => {
+    projectServersFixture.byName = new Map([["test-server", "srv-test"]]);
+    const previousModels = mockUseChatSession.availableModels;
+    mockUseChatSession.availableModels = [
+      "openai/gpt-5-mini",
+      "openai/gpt-5.5",
+    ].map((id) => ({ id, name: id, provider: "openai", hosted: true }));
+    try {
+      const pick = {
+        source: "hosted",
+        modelId: "openai/gpt-5.5",
+        fallback: { provider: "none", model: "none" },
+      };
+      const config = {
+        hostStyle: "chatgpt" as const,
+        modelId: "openai/gpt-5-mini",
+      };
+      multiHostFixture.hostList = [
+        { hostId: "h-A", name: "Host A" },
+        { hostId: "h-B", name: "Host B" },
+      ];
+      multiHostFixture.hosts = {
+        "h-A": makeHost("h-A", "Host A", config),
+        "h-B": makeHost("h-B", "Host B", config),
+      };
+      multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+      multiHostFixture.panes = [
+        {
+          paneId: "h-A",
+          target: { kind: "host", hostId: "h-A" },
+          pickedSelection: pick,
+        },
+        {
+          paneId: "h-B",
+          target: { kind: "host", hostId: "h-B" },
+          serverIds: [],
+        },
+      ];
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      const latest = new Map<string, any>();
+      for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+        latest.set(props.compareId, props);
+      }
+      expect(latest.get("h-A")).toMatchObject({
+        model: { id: "openai/gpt-5.5" },
+        selection: pick,
+        modelPicked: true,
+        selectedServers: ["test-server"],
+        hostedContext: { selectedServerIds: ["srv-test"] },
+      });
+      expect(latest.get("h-B")).toMatchObject({
+        model: { id: "openai/gpt-5-mini" },
+        modelPicked: false,
+        selectedServers: [],
+        hostedContext: { selectedServerIds: [] },
+      });
+    } finally {
+      mockUseChatSession.availableModels = previousModels;
+    }
+  });
+
+  it("runs two panes on one client as two cards, each claiming one turn per send", async () => {
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA };
+    multiHostFixture.selectedHostIds = ["h-A"];
+    multiHostFixture.panes = ["pane-1", "pane-2"].map((paneId) => ({
+      paneId,
+      target: { kind: "host", hostId: "h-A" },
+    }));
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const cards = screen.getAllByTestId("multi-host-card");
+    expect(cards.map((card) => card.dataset.compareId)).toEqual([
+      "pane-1",
+      "pane-2",
+    ]);
+    const initialInputProps = mockChatInput.mock.calls.at(-1)![0];
+    await act(async () => {
+      initialInputProps.onChange("hello panes");
+    });
+    await act(async () => {
+      await mockChatInput.mock.calls.at(-1)![0].onSubmit({
+        preventDefault: () => {},
+      } as any);
+    });
+
+    const latest = new Map<string, any>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      latest.set(props.compareId, props);
+    }
+    const request = latest.get("pane-1")?.broadcastRequest;
+    expect(request?.text).toBe("hello panes");
+    for (const paneId of ["pane-1", "pane-2"]) {
+      const props = latest.get(paneId);
+      expect(props.hostedContext?.hostId).toBe("h-A");
+      expect(props.claimBroadcastDelivery(request)).toBe(true);
+      expect(props.claimBroadcastDelivery(request)).toBe(false);
+    }
   });
 
   it("deterministic tool execution in multi-host mode fans out to the visible cards (not the hidden root session)", () => {
@@ -2188,10 +2448,11 @@ describe("PlaygroundMain — multi-host render path", () => {
       inputProps.onMultiModelEnabledChange(true);
     });
 
-    // Multi-host was force-cleared AND the host lineup was collapsed
-    // — those are the two mutations that prevent the limbo state.
+    // Multi-host was force-cleared AND the lineup was collapsed to the lead
+    // alone, environment panes included: the two mutations that prevent the
+    // limbo state.
     expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(false);
-    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([]);
+    expect(mockRestorePanes).toHaveBeenCalledWith([]);
   });
 
   it("falls back to single-pane when multi-host is persisted on but only one host resolves (length>1 gate)", () => {
@@ -2219,6 +2480,18 @@ describe("PlaygroundMain — multi-host render path", () => {
 
 // ── Project Environments — Phase 2 (Playground integration) ────────────────
 describe("PlaygroundMain — environment mode", () => {
+  beforeEach(() => {
+    browserFixture.guest = false;
+    // The lineup and the cards it rendered, which the outer suite's reset
+    // does not cover here.
+    multiHostFixture.panes = undefined;
+    multiHostFixture.selectedHostIds = [];
+    multiHostFixture.hosts = {};
+    environmentPreviewLoading.value = false;
+    mockMultiModelPlaygroundCard.mockClear();
+    mockRestorePanes.mockClear();
+    mockSetMultiHostEnabled.mockClear();
+  });
   const defaultProps = {
     activeProjectId: "default",
     serverName: "test-server",
@@ -2280,6 +2553,13 @@ describe("PlaygroundMain — environment mode", () => {
     expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
       undefined,
     );
+  });
+
+  it("keeps a stored named setup inactive for a guest with a valid Convex session", () => {
+    selectEnvironment();
+    browserFixture.guest = true;
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBeUndefined();
   });
 
   it("targets the environment and stops sending a legacy hostId", () => {
@@ -2352,19 +2632,154 @@ describe("PlaygroundMain — environment mode", () => {
     expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);
   });
 
-  it("exits multi-host comparison when an environment is selected", () => {
-    // An environment names exactly one host; comparison exists to run one turn
-    // against several. Both being true would misreport what ran.
+  function cardProps(compareId: string) {
+    return mockMultiModelPlaygroundCard.mock.calls
+      .map(([props]) => props)
+      .filter((props) => props.compareId === compareId)
+      .at(-1);
+  }
+
+  function compareEnvironmentBeside(clientId: string) {
     selectEnvironment();
-    multiHostFixture.multiHostEnabled = true;
+    // The environment's resolved model, as the preview reports it.
+    environmentPreviewFixture.value = {
+      ...preview,
+      host: { ...preview.host, modelId: "openai/gpt-5-mini" },
+    };
+    localStorage.removeItem("mcp-previewed-environment-id");
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: clientId, name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { modelId: "openai/gpt-5-mini" }),
+      [clientId]: makeHost(clientId, "Host B", { modelId: "openai/gpt-5-mini" }),
+    };
+    multiHostFixture.selectedHostIds = [clientId];
+  }
+
+  it("keeps comparing while the page has an environment, which rests until single chat", () => {
+    selectEnvironment();
     multiHostFixture.hostList = [
       { hostId: "h-A", name: "Host A" },
       { hostId: "h-B", name: "Host B" },
     ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", {}),
+      "h-B": makeHost("h-B", "Host B", {}),
+    };
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(false);
+    expect(mockSetMultiHostEnabled).not.toHaveBeenCalledWith(false);
+    expect(screen.getByTestId("playground-multi-host-grid")).toBeTruthy();
+    // Neither the hidden single chat nor a client pane runs the environment.
+    expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
+      undefined,
+    );
+    expect(cardProps("h-A")?.hostedContext.executionTarget).toBeUndefined();
+    expect(cardProps("h-B")?.hostedContext.hostId).toBe("h-B");
+  });
+
+  it("runs an environment pane on its environment, beside a client pane on its client", () => {
+    compareEnvironmentBeside("h-B");
+    multiHostFixture.panes = [
+      { paneId: "env_1", target: { kind: "environment", environmentId: "env_1" } },
+      { paneId: "h-B", target: { kind: "host", hostId: "h-B" } },
+    ];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const environment = cardProps("env_1");
+    expect(environment?.hostedContext).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+      requiresWebChatApi: true,
+      presentationHostId: "h-A",
+    });
+    // One pointer only, and no narrowing it never asked for.
+    expect(environment?.hostedContext.hostId).toBeUndefined();
+    expect(environment?.hostedContext).not.toHaveProperty(
+      "environmentOverrides",
+    );
+    // An untouched environment pane sends no model of its own.
+    expect(environment?.selection).toBeUndefined();
+    expect(environment?.modelPicked).toBe(false);
+    expect(environment?.inheritedEnvironmentModel).toEqual({
+      modelId: "openai/gpt-5-mini",
+      modelSelection: undefined,
+    });
+    expect(environment?.compareLabel).toBe("Staging");
+
+    const client = cardProps("h-B");
+    expect(client?.hostedContext.hostId).toBe("h-B");
+    expect(client?.hostedContext.executionTarget).toBeUndefined();
+    expect(client?.inheritedEnvironmentModel).toBeUndefined();
+  });
+
+  it("keeps [] and following the environment apart per pane", () => {
+    compareEnvironmentBeside("h-B");
+    multiHostFixture.panes = [
+      {
+        paneId: "env_1",
+        target: { kind: "environment", environmentId: "env_1" },
+        serverIds: [],
+      },
+      {
+        paneId: "env_1~2",
+        target: { kind: "environment", environmentId: "env_1" },
+      },
+    ];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(cardProps("env_1")?.hostedContext.environmentOverrides).toEqual({
+      serverIds: [],
+    });
+    expect(cardProps("env_1~2")?.hostedContext).not.toHaveProperty(
+      "environmentOverrides",
+    );
+  });
+
+  it("blocks Send while a saved setup is hidden, and never runs its client instead", () => {
+    compareEnvironmentBeside("h-B");
+    environmentsFlag.value = false;
+    multiHostFixture.panes = [
+      { paneId: "env_1", target: { kind: "environment", environmentId: "env_1" } },
+      { paneId: "h-B", target: { kind: "host", hostId: "h-B" } },
+    ];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(cardProps("env_1")).toBeUndefined();
+    expect(
+      screen.getByText("Choose a client in pane settings to continue."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Staging")).toBeNull();
+    expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);
+    // The client pane beside it still runs its own client.
+    expect(cardProps("h-B")?.hostedContext.hostId).toBe("h-B");
+  });
+
+  it("starts Compare from an environment's chat with that environment in pane 0", () => {
+    selectEnvironment();
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.selectedHostIds = ["h-A"];
+
+    render(<PlaygroundMain {...defaultProps} />);
+    const chip = mockChatInput.mock.calls.at(-1)![0].clientSelector;
+    act(() => chip.onSelectedHostIdsChange(["h-A", "h-B"]));
+
+    expect(mockRestorePanes).toHaveBeenLastCalledWith([
+      { paneId: "env_1", target: { kind: "environment", environmentId: "env_1" } },
+      { paneId: "h-B", target: { kind: "host", hostId: "h-B" } },
+    ]);
+    // The environment moved into the pane; the page no longer runs it.
+    expect(localStorage.getItem("mcp-previewed-environment-id")).not.toContain(
+      "env_1",
+    );
   });
 });

@@ -174,7 +174,7 @@ describe("CheckRow untouched state", () => {
         initial={[{ type: "toolResultContains", needle: "" } as Predicate]}
       />,
     );
-    const needle = screen.getByLabelText("Text the result must contain");
+    const needle = screen.getByLabelText("Text or JSON the result must contain");
     fireEvent.blur(needle);
     expect(
       screen.getByText("Enter the text the result must contain"),

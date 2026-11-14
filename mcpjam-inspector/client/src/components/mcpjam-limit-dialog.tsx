@@ -1,9 +1,12 @@
-import { creditUpgradeBenefit } from "@/lib/credit-limit-copy";
+import {
+  creditUpgradeBenefit,
+  SWARM_INSUFFICIENT_CREDITS_COPY,
+} from "@/lib/credit-limit-copy";
 import { FrontierSignInDialogView } from "./billing/FrontierSignInDialogView";
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { GuestCreditWallView } from "@/components/billing/GuestCreditWallView";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useConvexAuth } from "convex/react";
 import {
   useActiveFeatureFlags,
@@ -58,7 +61,7 @@ const normalizeGuestVariant = (
  * keeping the experiment from ever reaching significance.
  */
 function GuestCreditWall() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp } = useInspectorAuth();
   const dismiss = useMCPJamLimitDialogStore((s) => s.dismiss);
   const posthog = usePostHog();
   // Reading the variant fires the PostHog exposure ($feature_flag_called).
@@ -201,7 +204,7 @@ export function MCPJamLimitDialog() {
   const close = useMCPJamLimitDialogStore((s) => s.close);
   const dismiss = useMCPJamLimitDialogStore((s) => s.dismiss);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
-  const { user, isLoading, signIn } = useAuth();
+  const { user, isLoading, signIn } = useInspectorAuth();
   const { isAuthenticated } = useConvexAuth();
   // Look up the user's orgs as a fallback in case there is no stored
   // active-org for this user (e.g. brand-new sign-in). Sorted most-recent
@@ -486,7 +489,15 @@ export function MCPJamLimitDialog() {
         <CreditsLimitDialogView
           engagementContext={engagementContext}
           isFreePlan={isFreeEffectivePlan}
-          title={limitShortfall ? "Not enough MCPJam credits" : undefined}
+          // A swarm stops partway, often with credits still left, so its title
+          // says the run cannot finish rather than that the balance is empty.
+          title={
+            isSwarmWall
+              ? SWARM_INSUFFICIENT_CREDITS_COPY
+              : limitShortfall
+                ? "Not enough MCPJam credits"
+                : undefined
+          }
           description={isSwarmWall ? swarmDescription : creditDescription}
           isSwarm={isSwarmWall}
           isKnownNonManager={isKnownNonManager}

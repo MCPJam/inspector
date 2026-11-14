@@ -38,12 +38,11 @@ export type PreferencesState = {
    */
   chatUiOverride: ChatUiOverride | undefined;
   /**
-   * When true (default), entering the Servers tab, a host page, or the
+   * When enabled (off by default), entering the Servers tab, a host page, or the
    * Playground triggers a one-shot batch connect of every server in the
    * project catalog. Personal and per-device: the Auto-connect switch in
    * the Servers tab header writes here, and nothing project-side reads it.
-   * Disabling it leaves every server untouched until the user manually
-   * flips its per-card connect switch.
+   * Disabling it prevents new automatic connections and reconnections.
    */
   autoConnectServersEnabled: boolean;
   setThemeMode: (mode: ThemeMode) => void;
@@ -81,14 +80,13 @@ function getStoredHostStyle(): ScenarioHostStyle {
 }
 
 function getStoredAutoConnectServersEnabled(): boolean {
-  if (typeof window === "undefined") return true;
+  if (typeof window === "undefined") return false;
   try {
     const raw = localStorage.getItem(AUTO_CONNECT_SERVERS_KEY);
-    if (raw === null) return true;
-    return raw !== "false";
+    return raw === "true";
   } catch (error) {
     console.warn("Failed to read persisted auto-connect setting:", error);
-    return true;
+    return false;
   }
 }
 

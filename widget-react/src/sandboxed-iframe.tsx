@@ -33,6 +33,7 @@ import type {
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CspSubtypePolicy } from "./widget-host";
+import { useSandboxView, type SandboxViewAdmission } from "./use-sandbox-view";
 
 function isRecorderDebugEnabled() {
   try {
@@ -227,6 +228,8 @@ export interface SandboxedIframeHandle {
 }
 
 interface SandboxedIframeProps {
+  /** An authorized host supplies this before loading any proxy document. */
+  viewAdmission?: SandboxViewAdmission;
   /** HTML content to render in the sandbox */
   html: string | null;
   /** Sandbox attribute for the inner iframe */
@@ -308,9 +311,11 @@ interface SandboxedIframeProps {
    * restores the legacy `iframe.srcdoc` mount, where the view has no URL of
    * its own. Supplied by the host (`host.surface.viewMountMode`); build-time
    * only, so it exists to exercise the srcdoc branch rather than to switch
-   * behaviour at runtime.
+   * behaviour at runtime. `"opaque"` is per client: a srcdoc mount without
+   * `allow-same-origin`, so the view runs in an opaque origin
+   * (the renderer picks it from the client's `sameOriginAppIframe: false`).
    */
-  mountMode?: "write" | "srcdoc";
+  mountMode?: "write" | "srcdoc" | "opaque";
   /**
    * Per-server label for a dedicated view origin, and whether this deploy
    * serves one. Supplied by the host; without both the view renders on the
@@ -341,6 +346,7 @@ export const SandboxedIframe = forwardRef<
 >(function SandboxedIframe(
   {
     html,
+    viewAdmission,
     sandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox",
     csp,
     permissions,
@@ -382,7 +388,8 @@ export const SandboxedIframe = forwardRef<
   // either: `viewOriginLabel` arrives with the widget-content response, after
   // this component has already mounted, so a one-shot value would leave every
   // view on the shared origin forever.
-  const sandboxProxyUrl = useMemo(
+  const preparedView = useSandboxView(viewAdmission);
+  const legacyProxyUrl = useMemo(
     () =>
       resolveSandboxProxyUrl({
         hostedMode,
@@ -396,7 +403,15 @@ export const SandboxedIframe = forwardRef<
     [hostedMode, sandboxOrigin, viewOriginLabel, viewSubdomainsEnabled]
   );
 
+  const sandboxProxyUrl = preparedView.required
+    ? preparedView.result?.proxyUrl
+    : legacyProxyUrl;
+  // Null while no proxy is loaded: `about:blank` has the opaque origin
+  // "null", which postMessage rejects as a target. An admitted view drops its
+  // URL while it is prepared again for new HTML, and `proxyReady` from the old
+  // proxy is still true for that one commit.
   const sandboxProxyOrigin = useMemo(() => {
+    if (!sandboxProxyUrl) return null;
     try {
       return new URL(sandboxProxyUrl).origin;
     } catch {
@@ -408,15 +423,16 @@ export const SandboxedIframe = forwardRef<
     ref,
     () => ({
       postMessage: (data: unknown) => {
-        outerRef.current?.contentWindow?.postMessage(data, sandboxProxyOrigin);
+        if (sandboxProxyOrigin) outerRef.current?.contentWindow?.postMessage(data, sandboxProxyOrigin);
       },
       getIframeElement: () => outerRef.current,
     }),
-    [sandboxProxyOrigin]
+    [sandboxProxyOrigin, sandboxProxyUrl]
   );
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
+      if (!sandboxProxyUrl) return;
       if (event.origin !== sandboxProxyOrigin && sandboxProxyOrigin !== "*") {
         return;
       }
@@ -443,6 +459,13 @@ export const SandboxedIframe = forwardRef<
       // real document URL, which the Sandbox Stack panel surfaces so a
       // developer can allowlist it with a referrer-restricted third party.
       if (event.data?.type === "mcpjam:view-mode") {
+        onMessageRef.current(event);
+        return;
+      }
+
+      // The opaque view navigated or reloaded itself, so the proxy stopped
+      // relaying for it (not JSON-RPC).
+      if (event.data?.type === "mcpjam:view-channel-closed") {
         onMessageRef.current(event);
         return;
       }
@@ -484,7 +507,7 @@ export const SandboxedIframe = forwardRef<
 
       onMessageRef.current(event);
     },
-    [sandboxProxyOrigin]
+    [sandboxProxyOrigin, sandboxProxyUrl]
   );
 
   useEffect(() => {
@@ -543,6 +566,7 @@ export const SandboxedIframe = forwardRef<
         clientContext: clientContext ?? null,
         browserStorage: browserStorage ?? null,
         html: html ?? null,
+        webmcpTools: true,
         permissive: permissive ?? null,
         permissions: permissions ?? null,
         sandbox,
@@ -578,7 +602,7 @@ export const SandboxedIframe = forwardRef<
 
   // Send HTML, CSP, and permissions to sandbox when ready (SEP-1865)
   useEffect(() => {
-    if (!proxyReady || !html) return;
+    if (!proxyReady || !html || !sandboxProxyOrigin) return;
     const resourceTargetKey = `${sandboxProxyOrigin}\0${resourceReadyKey}`;
     if (lastResourceReadyKeyRef.current === resourceTargetKey) return;
     lastResourceReadyKeyRef.current = resourceTargetKey;
@@ -589,17 +613,18 @@ export const SandboxedIframe = forwardRef<
         method: "ui/notifications/sandbox-resource-ready",
         params: {
           html,
+          webmcpTools: true,
           sandbox,
           csp,
           permissions,
           sandboxAttrs,
           // `allowFeatures` is intentionally NOT forwarded to the proxy:
           // it applies to the OUTER iframe only. The inner iframe gets the
-          // 4 spec permissions (via `permissions`) and nothing else, matching
-          // real claude.ai's outer-grants-fullscreen / inner-trims-to-spec
-          // pattern. Centralizing the outer/inner split here means the proxy
-          // can't accidentally widen the inner grant by reading a stale
-          // field.
+          // 4 spec permissions (via `permissions`) and nothing else — the
+          // proxy itself adds `fullscreen *` on the opaque mount, as
+          // Claude's opaque mode does. Centralizing the outer/inner split here means
+          // the proxy can't accidentally widen the inner grant by reading a
+          // stale field.
           cspDirectives,
           cspSubtypePolicy,
           clientContext,
@@ -644,7 +669,7 @@ export const SandboxedIframe = forwardRef<
 
   // Keep iframe color-scheme in sync without reloading the widget document.
   useEffect(() => {
-    if (!proxyReady || !colorScheme) return;
+    if (!proxyReady || !colorScheme || !sandboxProxyOrigin) return;
 
     outerRef.current?.contentWindow?.postMessage(
       {
@@ -673,16 +698,18 @@ export const SandboxedIframe = forwardRef<
   // to the new proxy).
   useEffect(() => {
     setProxyReady(false);
-  }, [outerSandboxAttribute, sandboxProxyOrigin]);
+  }, [outerSandboxAttribute, sandboxProxyUrl]);
+
+  if (preparedView.error) return <div role="alert">{preparedView.error}</div>;
 
   return (
     <iframe
-      // Remount on a changed origin as well as changed sandbox flags: an
-      // <iframe> whose `src` changes navigates in place, and the proxy would
-      // keep the state of whichever origin it loaded first.
-      key={`${sandboxProxyOrigin}\u0000${outerSandboxAttribute}`}
+      // Admitted views keep a stable WindowProxy while their first URL is
+      // prepared, so the bridge can attach before the document loads.
+      // A changed URL resets readiness above; sandbox flags still remount.
+      key={`${preparedView.required ? "admitted" : sandboxProxyOrigin}\u0000${outerSandboxAttribute}`}
       ref={outerRef}
-      src={sandboxProxyUrl}
+      src={sandboxProxyUrl ?? "about:blank"}
       sandbox={outerSandboxAttribute}
       allow={outerAllowAttribute}
       title={title}

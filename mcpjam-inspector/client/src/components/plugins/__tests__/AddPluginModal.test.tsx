@@ -14,12 +14,14 @@ const h = vi.hoisted(() => ({
   row: { value: undefined as unknown },
   setupStatus: { value: undefined as unknown },
   version: { value: undefined as unknown },
+  plugin: { value: undefined as unknown },
   navigateApp: vi.fn(),
   startImport: vi.fn(),
   inspectImport: vi.fn(),
   commitImport: vi.fn(),
   track: vi.fn(),
   parseZip: vi.fn(),
+  parseFolder: vi.fn(),
   readBytes: vi.fn(),
   /** Every id the modal actually subscribed with, in order. */
   usedImportIds: [] as Array<string | null | undefined>,
@@ -32,6 +34,7 @@ vi.mock("@/hooks/usePluginImportApi", () => ({
   },
   usePluginSetupStatus: () => h.setupStatus.value,
   usePluginVersion: (id?: string | null) => (id ? h.version.value : undefined),
+  useProjectPlugin: (id?: string | null) => (id ? h.plugin.value : undefined),
   usePluginImportActions: () => ({
     startImport: h.startImport,
     inspectImport: h.inspectImport,
@@ -46,7 +49,7 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
 }));
 vi.mock("@/lib/plugins/folder-bundle", () => ({
   parsePluginBundleFromZip: h.parseZip,
-  folderSelectionToPluginZip: vi.fn(),
+  folderSelectionToPluginZip: h.parseFolder,
   readSelectedFileBytes: h.readBytes,
 }));
 
@@ -131,6 +134,7 @@ beforeEach(() => {
   h.row.value = undefined;
   h.setupStatus.value = undefined;
   h.version.value = undefined;
+  h.plugin.value = undefined;
   h.usedImportIds.length = 0;
   h.readBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
   h.parseZip.mockResolvedValue({ bundleHash: "aa11bb22cc33dd44", warnings: [] });
@@ -145,6 +149,37 @@ beforeEach(() => {
     importId: "imp_1",
     status: "completed",
     pluginVersionId: "pv_1",
+  });
+});
+
+describe("AddPluginModal — OpenAI bundle interpretation", () => {
+  it("selects the compatible profile for ZIP imports", async () => {
+    await reachPreview();
+    expect(h.parseZip).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), {
+      profile: "openai-compatible",
+    });
+  });
+
+  it("uses the same profile for folder imports", async () => {
+    h.parseFolder.mockResolvedValue({
+      parsed: {
+        manifest: { name: "demo" },
+        bundleHash: "aa11bb22cc33dd44",
+        warnings: [],
+      },
+      zipBytes: new Uint8Array([1, 2, 3]),
+    });
+    render(<AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />);
+    const file = new File(["{}"], "plugin.json");
+    const input = document.querySelector("input[webkitdirectory]");
+    expect(input).not.toBeNull();
+    await act(async () => {
+      fireEvent.change(input!, { target: { files: [file] } });
+    });
+    await screen.findByTestId("add-plugin-selected-source");
+    expect(h.parseFolder).toHaveBeenCalledWith([file], {
+      profile: "openai-compatible",
+    });
   });
 });
 
@@ -471,7 +506,14 @@ describe("AddPluginModal — onboarding after import (D5)", () => {
     onboarding: { componentId: "s1", modelRef: "demo/onboarding" },
   };
 
-  beforeEach(() => usePluginOnboardingIntentStore.getState().clear());
+  beforeEach(() => {
+    usePluginOnboardingIntentStore.getState().clear();
+    h.plugin.value = {
+      pluginId: "pl_1",
+      activeVersionId: "pv_1",
+      enabled: true,
+    };
+  });
 
   it("offers Maybe later / Set up for a plugin with an onboarding skill", async () => {
     h.row.value = installedRow();
@@ -489,6 +531,7 @@ describe("AddPluginModal — onboarding after import (D5)", () => {
     expect(intent).toMatchObject({
       projectId: "p_1",
       serverIds: ["srv_1"],
+      pluginId: "pl_1",
       pluginName: "Demo",
       conversation: "new",
     });
@@ -523,6 +566,29 @@ describe("AddPluginModal — onboarding after import (D5)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Maybe later" }));
     expect(onClose).toHaveBeenCalled();
     expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+  });
+
+  it("offers Set up for a plugin with no server, by plugin", () => {
+    h.row.value = installedRow();
+    h.version.value = { ...versionWithOnboarding, servers: [] };
+    render(<AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Set up Demo" }));
+    expect(usePluginOnboardingIntentStore.getState().intent).toMatchObject({
+      serverIds: [],
+      pluginId: "pl_1",
+    });
+  });
+
+  it.each([
+    ["Install only left it inactive", { activeVersionId: null, enabled: true }],
+    ["the plugin is disabled", { activeVersionId: "pv_1", enabled: false }],
+  ])("offers no Set up when %s", (_, plugin) => {
+    h.row.value = installedRow();
+    h.version.value = versionWithOnboarding;
+    h.plugin.value = { pluginId: "pl_1", ...plugin };
+    render(<AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />);
+    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
+    expect(screen.queryByTestId("add-plugin-onboarding-prompt")).toBeNull();
   });
 
   it("keeps Done for plugins without an onboarding skill", () => {

@@ -30,6 +30,7 @@ vi.mock("@/lib/guest-session", () => ({
     (await guest.mint())?.token ?? null,
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: () => null,
+  subscribeGuestSessionChanges: () => () => {},
 }));
 
 const names = [

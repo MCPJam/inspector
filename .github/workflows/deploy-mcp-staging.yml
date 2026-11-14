@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
   # Hardcoded instead of `steps.deploy.outputs.deployment-url` because
   # cloudflare/wrangler-action@v3 returns a malformed value for
   # custom-domain deploys — e.g. `mcp-staging.mcpjam.com (custom domain)`

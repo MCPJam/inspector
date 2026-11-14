@@ -78,6 +78,8 @@ export type ShareSectionProps<TEnvelope> = {
    * stays on the settings page rather than being duplicated into a dialog.
    */
   showMembers?: boolean;
+  /** Render the "Invite with email" field. */
+  showInvite?: boolean;
   footerSlot?: ReactNode;
   activeNote?: ReactNode;
   copy: ShareSectionCopy;
@@ -110,6 +112,7 @@ export function ShareSection<TEnvelope>({
   onRevokeAll,
   disabledReason,
   showMembers = true,
+  showInvite = true,
   footerSlot,
   activeNote,
   copy,
@@ -263,9 +266,12 @@ export function ShareSection<TEnvelope>({
           {copy.linkLabel}
         </label>
         <div className="flex gap-2">
+          {/* The link IS the credential: kept out of autocapture and both
+              replays (the repo's secret-surface convention). */}
           <output
             id={testIds.linkOutput}
-            className="flex min-w-0 flex-1 items-center rounded-md border border-input bg-muted/30 px-3 py-2"
+            className="ph-no-capture rr-block flex min-w-0 flex-1 items-center rounded-md border border-input bg-muted/30 px-3 py-2"
+            data-ph-no-capture
             title={shareUrl ?? undefined}
           >
             <span className="truncate text-sm text-muted-foreground">
@@ -334,7 +340,7 @@ export function ShareSection<TEnvelope>({
       {/* Not while anyone with the link can open it: the invite grants the
           recipient nothing the link already gives them, and asking for an
           email after that choice reads as a step still owed (BB-205). */}
-      {anyoneWithLink ? null : (
+      {anyoneWithLink || !showInvite ? null : (
       <div className="space-y-2">
         <label className="text-sm font-medium" htmlFor={testIds.email}>
           {copy.inviteLabel ?? "Invite with email"}

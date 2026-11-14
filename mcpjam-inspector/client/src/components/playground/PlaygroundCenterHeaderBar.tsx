@@ -39,6 +39,7 @@ interface Props {
    * user understands the toolbar only edits the lead column.
    */
   leadHostInMultiHost?: string | null;
+  hideClientSettings?: boolean;
 }
 
 export function PlaygroundCenterHeaderBar({
@@ -52,6 +53,7 @@ export function PlaygroundCenterHeaderBar({
   trailing,
   leading,
   leadHostInMultiHost,
+  hideClientSettings = false,
 }: Props) {
   const chromeRowClass = cn(
     "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
@@ -71,14 +73,14 @@ export function PlaygroundCenterHeaderBar({
           <div className="flex shrink-0 items-center">{leading}</div>
         ) : null}
         <div className="flex min-w-0 flex-1 justify-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <ClientContextHeader
+          {!hideClientSettings && <ClientContextHeader
             activeProjectId={activeProjectId}
             onSaveHostContext={onSaveHostContext}
             protocol={protocol}
             showThemeToggle
             className="w-max max-w-full"
             leadHostInMultiHost={leadHostInMultiHost}
-          />
+          />}
         </div>
         {trailing ? (
           <div className="flex shrink-0 items-center">{trailing}</div>

@@ -87,6 +87,7 @@
                   "input": {
                     "command": "echo golden-$((6*7))"
                   },
+                  "providerExecuted": true,
                   "toolCallId": "<id-3>",
                   "toolName": "bash",
                   "type": "tool-call"
@@ -129,7 +130,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-3>",
-              "toolName": "bash"
+              "toolName": "bash",
+              "toolOrigin": "native"
             },
             {
               "category": "llm",
@@ -200,6 +202,7 @@
                   "input": {
                     "command": "echo golden-$((6*7))"
                   },
+                  "providerExecuted": true,
                   "toolCallId": "<id-3>",
                   "toolName": "bash",
                   "type": "tool-call"
@@ -251,7 +254,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-3>",
-              "toolName": "bash"
+              "toolName": "bash",
+              "toolOrigin": "native"
             },
             {
               "category": "llm",
@@ -344,6 +348,7 @@
             "input": {
               "command": "echo golden-$((6*7))"
             },
+            "providerExecuted": true,
             "toolCallId": "<id-3>",
             "toolName": "bash",
             "type": "tool-call"

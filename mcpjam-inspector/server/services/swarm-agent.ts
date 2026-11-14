@@ -8,7 +8,12 @@ import type {
 } from "@mcpjam/sdk/host-config/internal";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
-import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
+import type { PinnedSkillArtifact, PinnedSkillArtifactFile } from "../../shared/skill-types.js";
+import type {
+  RunPinnedPluginVersion,
+  RunPinnedSkill,
+  RunPinnedSkillFile,
+} from "./evals/run-plugin-snapshot.js";
 import {
   localHarnessCapabilities,
   runnerCapabilities,
@@ -53,18 +58,15 @@ export interface JourneyEnvironmentRef {
 /**
  * Per-skill metadata pinned onto a snapshot target (bodies are NOT inline —
  * the runner fetches them via {@link fetchPinnedSkill}). Mirrors the backend
- * `PinnedSkillMeta`; `channels` is the P0.2 host/environment provenance and is
- * absent on pre-P0.2 snapshots.
+ * `PinnedSkillMeta`, which one writer produces for swarm targets and suite runs
+ * alike, so it is a suite run's pin without its body: a captured server skill
+ * carries its capture's identity, a plugin skill its `<plugin>/<skill>` ref.
+ * `channels` is the P0.2 provenance and is absent on pre-P0.2 snapshots.
  */
-export interface PinnedSkillMeta {
-  skillId?: string;
-  name: string;
-  description: string;
-  contentHash: string;
-  sharing?: "user" | "project";
-  /** Stable `host` → `environment` → `plugin` order; see PinnedSkillArtifact. */
-  channels?: Array<"host" | "environment" | "plugin">;
-}
+export type PinnedSkillMeta = Omit<
+  RunPinnedSkill,
+  "content" | "files" | "extraFrontmatter"
+>;
 
 export interface PinnedHostExecutionSpec {
   hostId: string;
@@ -127,8 +129,10 @@ export interface PinnedHostExecutionSpec {
    */
   computerUnavailableReason?: string;
   harness?: Harness;
+  agentLoop?: Harness;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /**
@@ -140,6 +144,12 @@ export interface PinnedHostExecutionSpec {
    * the backend strips down to just `{ requestTimeout }`).
    */
   mcpProfile?: HostConfigMcpProfileV1;
+  /**
+   * The host's style, frozen with the target so sparse `mcpProfile` app
+   * overrides resolve against the same preset an eval run uses. Absent on
+   * runs created before the backend pinned it.
+   */
+  hostStyle?: string;
   /**
    * Pinned MCP client capabilities advertised on INITIALIZE, captured at
    * run-create time. Passed into `createAuthorizedManager` so the run negotiates
@@ -180,6 +190,12 @@ export interface PinnedHostExecutionSpec {
    * pinned no server-bearing plugin (or the run predates the field).
    */
   pluginServerIds?: string[];
+  /**
+   * The plugin versions the target's environment pinned, in pin order: the
+   * record a plugin skill's `<plugin>/<skill>` ref is attributed from.
+   * Provenance, like `pluginServerIds`. Absent ⇒ none pinned.
+   */
+  pluginVersions?: RunPinnedPluginVersion[];
   /**
    * Host-carried skill selection snapshotted from the host config (#767 —
    * inline, no skill-group ref). Provenance only on this side: the runner
@@ -432,12 +448,30 @@ export class PinnedSkillIntegrityError extends Error {
 }
 
 /**
+ * What names a captured MCP-server skill's pin besides its hash. A skill URI
+ * is unique only within its server, so two servers can serve one skill byte
+ * for byte, and their pins then share a `contentHash`.
+ */
+export interface PinnedServerSkill {
+  serverId: string;
+  skillUri: string;
+}
+
+export type FetchedPinnedSkill = Omit<PinnedSkillArtifact, "files"> & {
+  aggregateHash?: string;
+  extraFrontmatter?: Record<string, unknown>;
+  files?: Array<RunPinnedSkillFile | PinnedSkillArtifactFile>;
+};
+
+/**
  * Fetch ONE pinned skill's complete runtime artifact for an env-based target:
- * `GET /journey-execution/runs/skill?runId&projectId&targetId&contentHash`.
+ * `GET /journey-execution/runs/skill?runId&projectId&targetId&contentHash`,
+ * plus `serverId` and `skillUri` for a captured MCP-server skill, which pick
+ * that server's pin among pins sharing the hash. A backend that predates them
+ * ignores them and serves the first pin with the hash.
  * Same bearer/authorization as the attempt/heartbeat routes (project member +
- * run launcher). The response mirrors P0.2's complete artifact envelope
- * ({@link PinnedSkillArtifact}) — the shipped backend serves the SKILL.md-only
- * subset, which is the same shape with the optional extensions absent.
+ * run launcher). Newer responses also carry the frozen file manifest and
+ * signed URLs; older body-only pins have no file list.
  *
  * Error contract (consumed by the pinned-skill cache's retry policy):
  *   - 404 → {@link SwarmAgentError} with `status: 404` (never retried — the
@@ -454,18 +488,23 @@ export async function fetchPinnedSkill(
     runId: string;
     targetId: string;
     contentHash: string;
+    serverSkill?: PinnedServerSkill;
     signal?: AbortSignal;
   },
-): Promise<PinnedSkillArtifact> {
+): Promise<FetchedPinnedSkill> {
   const query = new URLSearchParams({
     runId: args.runId,
     projectId: args.projectId,
     targetId: args.targetId,
     contentHash: args.contentHash,
   });
+  if (args.serverSkill) {
+    query.set("serverId", args.serverSkill.serverId);
+    query.set("skillUri", args.serverSkill.skillUri);
+  }
   const data = await getJson<{
     ok?: boolean;
-    skill?: PinnedSkillArtifact;
+    skill?: FetchedPinnedSkill;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/skill?${query.toString()}`,

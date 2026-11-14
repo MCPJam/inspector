@@ -24,13 +24,17 @@ export { parsePluginBundle, MCP_CONFIG_PATH } from "./parse.js";
 
 export {
   DEFAULT_PLUGIN_BUNDLE_LIMITS,
+  PLUGIN_PARSER_REVISIONS,
   type ParsedPluginAsset,
   type ParsedPluginBundle,
   type ParsePluginBundleOptions,
   type PluginAssetKind,
+  type PluginBundleInterpretation,
+  type PluginBundleLayout,
   type PluginBundleLimits,
   type PluginFileEntry,
   type PluginFileSource,
+  type PluginParserProfile,
   type PluginSetupRequirement,
 } from "./types.js";
 
@@ -74,6 +78,16 @@ export {
   type PluginMcpWrapperKey,
   type PluginSkippedComponent,
 } from "./mcp-config.js";
+
+export {
+  pluginApiKeyHeaderName,
+  renderPluginApiKeyHeader,
+  type PluginApiKeyAuth,
+  type PluginOAuthClient,
+  type PluginOAuthDeclaration,
+  type PluginServerAuth,
+  type PluginTokenEndpointAuthMethod,
+} from "./openai-auth.js";
 
 export {
   type ParsedPluginSkill,

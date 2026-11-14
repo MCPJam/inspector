@@ -4,6 +4,10 @@ description: "Run MCP health checks, conformance suites, and evals in GitHub Act
 icon: "circle-check"
 ---
 
+<Note>
+The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+</Note>
+
 Run `mcpjam` in CI to catch MCP server regressions on every push. The examples below cover GitHub Actions and GitLab CI, but the same commands work in any CI environment.
 
 ## GitHub Actions
@@ -36,7 +40,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: OAuth login (headless)
         run: |
@@ -87,7 +91,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Run doctor
         run: |
@@ -128,7 +132,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Run doctor
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --access-token ${{ secrets.MCP_API_KEY }} --format json
@@ -158,7 +162,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Run doctor
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --format json
@@ -254,7 +258,7 @@ The same CLI commands work in GitLab CI. The examples below use GitLab CI/CD var
 
 ```yaml
 mcp-health-check:
-  image: node:20
+  image: node:22
   variables:
     MCP_SERVER_URL: $MCP_SERVER_URL
   script:
@@ -282,7 +286,7 @@ mcp-health-check:
 
 ```yaml
 mcp-health-check:
-  image: node:20
+  image: node:22
   variables:
     MCP_SERVER_URL: $MCP_SERVER_URL
     MCP_REFRESH_TOKEN: $MCP_REFRESH_TOKEN
@@ -305,7 +309,7 @@ mcp-health-check:
 
 ```yaml
 mcp-health-check:
-  image: node:20
+  image: node:22
   variables:
     MCP_SERVER_URL: $MCP_SERVER_URL
     MCP_API_KEY: $MCP_API_KEY
@@ -322,7 +326,7 @@ Snapshot your tool surface before and after a deploy to catch breaking changes.
 
 ```yaml
 mcp-tool-diff:
-  image: node:20
+  image: node:22
   variables:
     MCP_SERVER_URL: $MCP_SERVER_URL
     MCP_TOKEN: $MCP_TOKEN
@@ -340,7 +344,7 @@ mcp-tool-diff:
 
 ```yaml
 mcp-oauth-conformance:
-  image: node:20
+  image: node:22
   script:
     - |
       npx -y @mcpjam/cli@latest oauth conformance-suite \
@@ -705,3 +709,7 @@ steps:
 The comment carries the client/model table, the failed cases, and links into MCPJam. The checks summary carries the full report. Without `pull-requests: write` the action warns and leaves the eval verdict alone.
 
 Runs uploaded together — `runWithClient` given several clients — read as one report: one row per client and model in the same table, with a link to each client's run.
+
+## Eval authentication
+
+For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

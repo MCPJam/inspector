@@ -154,6 +154,14 @@ async function main() {
     );
   }
 
+  // Keeps telemetry catalogs current while forge rebuilds on save; if another
+  // dev process of this checkout is already watching, it stands by instead.
+  const catalogs = spawn(
+    process.execPath,
+    [join(inspectorDir, "..", "scripts", "generate-telemetry-catalogs.mjs"), "--watch"],
+    // The IPC channel closes if this launcher dies, and the watcher exits with it.
+    { cwd: inspectorDir, stdio: ["ignore", "inherit", "inherit", "ipc"] },
+  );
   const child = spawn(
     process.execPath,
     [forgeCliEntry(), "start", ...args.forgeArgs],
@@ -174,6 +182,7 @@ async function main() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => {
       if (child.exitCode === null) child.kill(signal);
+      if (catalogs.exitCode === null) catalogs.kill(signal);
     });
   }
   child.once("error", (error) => {
@@ -181,6 +190,7 @@ async function main() {
     process.exit(1);
   });
   child.once("exit", (code, signal) => {
+    if (catalogs.exitCode === null) catalogs.kill();
     process.exit(code ?? (signal ? 1 : 0));
   });
 }

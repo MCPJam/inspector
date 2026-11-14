@@ -4,6 +4,9 @@ export type SentryIdentity = SentryActor | { id: string; kind: "installation" };
 
 export const SENTRY_ACTOR_CHANNEL = "sentry:set-actor";
 export const SENTRY_INSTALLATION_ARGUMENT = "--mcpjam-sentry-installation=";
+export const SENTRY_DISABLED_CHANNEL = "sentry:is-disabled";
+export const telemetryOptedOut = (...values: unknown[]): boolean =>
+  values.some((value) => value === "1" || value === "true");
 
 export function isSentryId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9:_-]{1,256}$/.test(value);

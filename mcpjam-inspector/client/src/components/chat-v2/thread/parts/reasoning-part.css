@@ -1,0 +1,48 @@
+/* "Thinking…" label while reasoning streams (`reasoning-part.tsx`).
+   The resting tone is `currentcolor`, the header's own text colour, so the
+   label never reads fainter than the finished "Reasoning" label. Only the
+   travelling band changes, and it has to be darker than the text in light
+   and brighter in dark: there `--foreground` sits almost level with the
+   resting tone, so the band uses the brightest text role instead. */
+.reasoning-shimmer-text {
+  --reasoning-shimmer-band: var(--foreground);
+
+  background-image: linear-gradient(
+    90deg,
+    currentcolor 0%,
+    currentcolor 40%,
+    var(--reasoning-shimmer-band) 50%,
+    currentcolor 60%,
+    currentcolor 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: reasoning-shimmer-text 2s linear infinite;
+  will-change: background-position;
+}
+
+.dark .reasoning-shimmer-text {
+  --reasoning-shimmer-band: var(--card-foreground);
+}
+
+@keyframes reasoning-shimmer-text {
+  from {
+    background-position: 150% 0;
+  }
+
+  to {
+    background-position: -50% 0;
+  }
+}
+
+/* Without the sweep, drop the text-fill trick too, or the label stays
+   transparent over a frozen gradient. Forced colours get a plain label. */
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+  .reasoning-shimmer-text {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentcolor;
+  }
+}

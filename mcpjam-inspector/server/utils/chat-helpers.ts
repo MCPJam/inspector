@@ -1,4 +1,5 @@
 import { listBaseServers } from "./mcp-connections.js";
+import { createGuardedFetch } from "./hosted-egress-guard.js";
 import { ModelDefinition } from "@/shared/types";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -38,6 +39,19 @@ export interface CustomProviderConfig {
   apiKey?: string;
 }
 
+/** The Azure resource a base URL's hostname names, if it is a resource URL. */
+function azureResourceName(baseUrl: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return undefined;
+  }
+  return /^([a-z0-9-]+)\.(?:openai|cognitiveservices)\.azure\.com$/i.exec(
+    host,
+  )?.[1];
+}
+
 export const createLlmModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
@@ -63,7 +77,10 @@ export const createLlmModel = (
       const normalized = /\/api\/?$/.test(raw)
         ? raw
         : `${raw.replace(/\/+$/, "")}/api`;
-      return createOllama({ baseURL: normalized })(modelDefinition.id);
+      return createOllama({
+        baseURL: normalized,
+        fetch: createGuardedFetch({ label: "Ollama URL" }),
+      })(modelDefinition.id);
     }
     case "mistral":
       return createMistral({ apiKey })(modelDefinition.id);
@@ -82,7 +99,10 @@ export const createLlmModel = (
       // when set; otherwise the provider derives it from AWS_REGION.
       return createAmazonBedrock({
         apiKey,
-        ...(baseUrls?.bedrock && { baseURL: baseUrls.bedrock }),
+        ...(baseUrls?.bedrock && {
+          baseURL: baseUrls.bedrock,
+          fetch: createGuardedFetch({ label: "Amazon Bedrock URL" }),
+        }),
       })(modelDefinition.id);
     case "azure": {
       const azureBaseUrl = baseUrls?.azure ?? "";
@@ -91,10 +111,10 @@ export const createLlmModel = (
       // Supports both:
       //   https://<resource>.openai.azure.com/openai
       //   https://<resource>.cognitiveservices.azure.com/openai
-      const azureResourceMatch = azureBaseUrl.match(
-        /https?:\/\/([^.]+)\.(openai|cognitiveservices)\.azure\.com/i,
-      );
-      const resourceName = azureResourceMatch?.[1];
+      // Read from the parsed hostname only: a resource-shaped string in a
+      // query or path would otherwise become the resource (`localhost/x`)
+      // and send the key to a host the guard never judged.
+      const resourceName = azureResourceName(azureBaseUrl);
       // The deployment: the row's explicit `nativeModelId` when it has one
       // (an org Azure deployment row), else the row id as before. Never the
       // row id with its `azure/` prefix stripped.
@@ -102,6 +122,7 @@ export const createLlmModel = (
         modelDefinition.nativeModelId?.trim() || String(modelDefinition.id);
       return createAzure({
         apiKey,
+        fetch: createGuardedFetch({ label: "Azure OpenAI URL" }),
         ...(resourceName ? { resourceName } : { baseURL: azureBaseUrl }),
       })(deployment);
     }
@@ -123,10 +144,17 @@ export const createLlmModel = (
         : String(modelDefinition.id);
       // Use the custom provider's apiKey, falling back to the runtime apiKey
       const resolvedApiKey = cp.apiKey || apiKey || "";
+      // Hosted, the base URL is an organization's setting and this process
+      // dials it from a shared network, so every hop, redirects included,
+      // passes the hosted egress guard. Locally this is plain fetch.
+      const guardedFetch = createGuardedFetch({
+        label: `Custom provider "${providerName}" URL`,
+      });
       if (cp.protocol === "anthropic-compatible") {
         return createAnthropic({
           apiKey: resolvedApiKey,
           baseURL: cp.baseUrl,
+          fetch: guardedFetch,
         })(rawModelId);
       }
       // Default: openai-compatible
@@ -135,6 +163,7 @@ export const createLlmModel = (
       return createOpenAI({
         apiKey: resolvedApiKey,
         baseURL: cp.baseUrl,
+        fetch: guardedFetch,
       }).chat(rawModelId);
     }
     default:

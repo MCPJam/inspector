@@ -53,7 +53,11 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
 export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   availableDisplayModes: ["inline", "fullscreen"],
-  cspFrameDomains: false,
+  // From Claude's embedded-sites doc, not a probe: the origins a view declares
+  // in `_meta.ui.csp.frameDomains` load once a Verified listing or the user
+  // allows them
+  // (https://claude.com/docs/connectors/building/mcp-apps/embedded-sites).
+  cspFrameDomains: true,
   cspBaseUriDomains: false,
   cspConnectDomains: { fetch: true, xhr: true, websocket: true },
   cspResourceDomains: {
@@ -75,14 +79,12 @@ export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
  * 2026-08-19 probe declared `wss://ws.postman-echo.com` and it connected while
  * the undeclared `wss://echo.websocket.org` took a real connect-src violation
  * — no host baseline carries a Postman echo endpoint, so ChatGPT honors the
- * declared connect list. The fetch/xhr canary that passed (`unpkg.com`) is in
- * ChatGPT's own baseline allowlist, which the catalog row carries as
- * `cspDirectives`; it is not evidence the declaration was ignored.
+ * declared connect list. The fetch/xhr canaries are blocked too, and the
+ * catalog row carries no connect or resource baseline.
  *
- * The 2026-08-23 paired probe (captured 2026-08-24Z) declared
- * `fastly.jsdelivr.net`, outside that baseline, and every declared resource
- * subtype loaded in the treatment fixture, so the resource declaration is
- * honored.
+ * The 2026-08-23 paired probe (captured 2026-08-24Z) loaded every resource
+ * subtype from `fastly.jsdelivr.net`, an origin the widget declared, in the
+ * treatment fixture, so the resource declaration is honored.
  */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
@@ -94,7 +96,9 @@ export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
     font: true,
     media: true,
   },
-  downloadFile: false,
+  // `ui/initialize` advertises `downloadFile`. Mirrors the catalog's `chatgpt`
+  // row.
+  downloadFile: true,
   requestTeardown: false,
   // The 2026-09-29 capture (ChatGPT web) sends `hostContext.safeAreaInsets`
   // (all 0) and offers only inline + fullscreen — the `pip` inherited from
@@ -222,6 +226,37 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
   downloadFile: false,
   requestTeardown: false,
   // Measured 2026-09-03, both themes: the key is absent entirely.
+  safeAreaInsets: false,
+  widgetDisplayModeRequests: "accept",
+});
+
+/**
+ * Gemini, from its first capture. Mirrors the catalog's
+ * `gemini` row.
+ *
+ * The notable shape here: the host enforces CSP against the widget's
+ * declaration (every connect and resource subtype and the frame directive
+ * honored it; only `base-uri` refused) while advertising NO `sandbox`
+ * capability at all, which is why `sandboxPermissions` is false beside true
+ * CSP values. `serverTools`, `updateModelContext` and `downloadFile` are
+ * absent from `hostCapabilities`, which is a positive signal rather than an
+ * unasked question.
+ */
+export const MCP_APPS_GEMINI: McpAppsCapabilities = frozen({
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInfo: true,
+  openLinks: true,
+  logging: true,
+  message: true,
+  serverResources: true,
+  serverTools: false,
+  updateModelContext: false,
+  downloadFile: false,
+  sandboxPermissions: false,
+  cspFrameDomains: true,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: true,
+  // Absent from `hostContext` entirely.
   safeAreaInsets: false,
   widgetDisplayModeRequests: "accept",
 });

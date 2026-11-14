@@ -1,6 +1,12 @@
+import { useUnlimitedCredits } from "@/hooks/useCreditBalance";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useCreditBalance")>(),
+  useUnlimitedCredits: vi.fn(() => false),
+}));
 
 /**
  * CONTRACT for the pre-run credit estimate's client half:
@@ -75,6 +81,20 @@ afterEach(() => {
 const MODELS = [{ model: "gpt-5-mini", provider: "openai" }];
 
 describe("QuickCaseRunCostEstimateHint — flag gate", () => {
+  it("hides credit estimates for an unlimited-credit organization", async () => {
+    vi.mocked(useUnlimitedCredits).mockReturnValueOnce(true);
+    const { container } = render(
+      <QuickCaseRunCostEstimateHint
+        suiteId="suite-1"
+        caseId="case-1"
+        models={MODELS}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    await Promise.resolve();
+    expect(queryCalls).toHaveLength(0);
+  });
+
   it("renders nothing and dispatches no query when the flag is off", async () => {
     flagEnabled = false;
     render(
@@ -567,12 +587,18 @@ describe("surface-specific query dispatch", () => {
     // after someone edits the journey's targets / sessions / turns.
     const { rerender } = render(<JourneyProbe configKey="env-1|2|3" />);
     await waitFor(() => expect(queryCalls).toHaveLength(1));
-    expect(queryCalls[0].args).toEqual({ journeyId: "journey-1" });
+    expect(queryCalls[0].args).toEqual({
+      journeyId: "journey-1",
+      kind: "swarm",
+    });
 
     rerender(<JourneyProbe configKey="env-1,env-2|2|3" />);
     await waitFor(() => expect(queryCalls).toHaveLength(2));
     // The args are unchanged by design — the signature only drives the refetch.
-    expect(queryCalls[1].args).toEqual({ journeyId: "journey-1" });
+    expect(queryCalls[1].args).toEqual({
+      journeyId: "journey-1",
+      kind: "swarm",
+    });
   });
 
   it("does not re-fetch when the journey config signature is unchanged", async () => {
@@ -590,6 +616,9 @@ describe("surface-specific query dispatch", () => {
     expect(RUN_COST_ESTIMATE_QUERIES.journey).toBe(
       "journeyRuns:estimateJourneyRunCredits"
     );
-    expect(queryCalls[0].args).toEqual({ journeyId: "journey-1" });
+    expect(queryCalls[0].args).toEqual({
+      journeyId: "journey-1",
+      kind: "swarm",
+    });
   });
 });

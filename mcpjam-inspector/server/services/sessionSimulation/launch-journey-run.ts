@@ -30,19 +30,30 @@ import { eligibleUnattendedLocalHarnesses } from "../../utils/harness/local/run-
  */
 import { environmentModelRequiredError } from "../environments/resolve.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { aiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import {
   createAuthorizedManager,
   type ManagerCallerContext,
 } from "../../routes/web/auth.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
-import { createJourneyRun, SwarmAgentError } from "../swarm-agent.js";
+import {
+  createJourneyRun,
+  finalizePendingAttempts,
+  SwarmAgentError,
+} from "../swarm-agent.js";
 import { startJourneyRun } from "./swarm-runner.js";
+import {
+  readFrozenSwarmBudgets,
+  UNREADABLE_SWARM_BUDGETS_CODE,
+} from "./frozen-swarm-budgets.js";
 import { resolveTargetPluginServerIds } from "../journeys/plugin-servers.js";
 import { createConvexClient } from "../evals/route-helpers.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
-import { rolloutEnabled } from "../../utils/computers/browser-rollout.js";
+import { isHostedBrowserAvailableFor } from "../../utils/computers/hosted-browser-availability.js";
+import { assertAdmitting } from "../lifecycle/admission.js";
+import { serverDrain } from "../lifecycle/drain.js";
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import {
   parseFundingChangedDetails,
@@ -53,21 +64,24 @@ import {
 const BROWSER_TOOL_ID = "browser";
 
 /**
- * Drop `browser` from every pinned host unless the launching member is in the
- * `hosted-browser-enabled` rollout — the same server-side check chat makes
- * before advertising it. The flag used to be read only by the client, so a
- * member outside the rollout whose client still had `browser` saved got a
- * swarm that either provisioned a desktop for it or told them, on every
- * session, why a tool they cannot see was not advertised.
+ * Drop `browser` from every pinned host unless the launching member may use
+ * the hosted browser's tools in this project — the backend's answer, which is
+ * the `hosted-browser` flag evaluated by email plus deployment readiness, the
+ * same decision the desktop reservation behind it makes. A member outside it
+ * whose client still had `browser` saved would otherwise get a swarm that
+ * either provisioned a desktop for it or told them, on every session, why a
+ * tool they cannot see was not advertised.
+ *
+ * `isAvailable` must not reject; it is asked only when a host wants `browser`.
  */
 export async function withoutBrowserOutsideRollout(
   hosts: PinnedHostExecutionSpec[],
-  workosUserId: string | undefined,
+  isAvailable: () => Promise<boolean>,
 ): Promise<PinnedHostExecutionSpec[]> {
   const wantsBrowser = (host: PinnedHostExecutionSpec) =>
     (host.builtInToolIds ?? []).includes(BROWSER_TOOL_ID);
   if (!hosts.some(wantsBrowser)) return hosts;
-  if (workosUserId && (await rolloutEnabled(false, workosUserId))) return hosts;
+  if (await isAvailable()) return hosts;
   return hosts.map((host) =>
     wantsBrowser(host)
       ? {
@@ -135,6 +149,13 @@ export interface LaunchJourneyRunResult {
 }
 
 const MAX_PASSTHROUGH_REASON_LENGTH = 300;
+
+/**
+ * A launch the organization's AI key policy refused, when the backend's own
+ * sentence is too long to pass through.
+ */
+const AI_LAUNCH_REFUSED_FALLBACK =
+  "This organization requires its own provider keys for AI features, and this launch has dependencies that can't run on them.";
 
 /** The backend's refusal for a hosted harness target with a broken image pin. */
 const JOURNEY_TARGET_IMAGE_UNAVAILABLE = "JOURNEY_TARGET_IMAGE_UNAVAILABLE";
@@ -260,13 +281,22 @@ function launchFailureDetails(
     // else to read. Cheap to forward, and the same code the eval and v1
     // environment surfaces already expose.
     const code = typeof source.code === "string" ? source.code : undefined;
-    if (!bag && !code) return undefined;
+    // The organization's AI key policy refuses a launch with EVERY
+    // dependency that can't run on its providers, beside its message.
+    const problems = Array.isArray(source.problems)
+      ? source.problems
+      : undefined;
+    if (!bag && !code && !problems) return undefined;
     // The DETAILS bag wins when it carries its own `code`. A response can hold
     // both — an envelope code describing the transport failure and a domain
     // code inside `details` naming the specific refusal — and the domain one is
     // the branchable half. The envelope code only fills a gap.
     const hasDetailCode = typeof bag?.code === "string" && bag.code.length > 0;
-    return { ...(bag ?? {}), ...(code && !hasDetailCode ? { code } : {}) };
+    return {
+      ...(bag ?? {}),
+      ...(code && !hasDetailCode ? { code } : {}),
+      ...(problems && !bag?.problems ? { problems } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -293,6 +323,17 @@ function requireConvexHttpUrl(): string {
  * runner hits later is logged, because there is no longer a caller to tell.
  */
 export async function launchJourneyRun(
+  deps: LaunchJourneyRunDeps,
+  input: LaunchJourneyRunInput,
+): Promise<LaunchJourneyRunResult> {
+  // Before the run is created: a draining server could not finish it. Once
+  // admitted, the launch holds the drain through every setup step, so a
+  // shutdown that begins while the run is being created still waits for it.
+  assertAdmitting();
+  return serverDrain.track("swarm_run", createAndStartJourneyRun(deps, input));
+}
+
+async function createAndStartJourneyRun(
   deps: LaunchJourneyRunDeps,
   input: LaunchJourneyRunInput,
 ): Promise<LaunchJourneyRunResult> {
@@ -401,6 +442,22 @@ export async function launchJourneyRun(
           { ...(changed ?? {}), code: SWARM_FUNDING_CHANGED_CODE },
         );
       }
+      // The organization's AI key policy refused the launch: the same answer
+      // an eval launch gets (403 or 422 with the code and its remediation),
+      // with the problem list the client shows in full. The backend's
+      // summary sentence is often past the passthrough bound, so the
+      // fallback says what happened.
+      if (
+        details &&
+        Array.isArray(details.problems) &&
+        typeof details.code === "string"
+      ) {
+        throw aiRefusalRouteError(
+          details.code,
+          launchFailureMessage(err, AI_LAUNCH_REFUSED_FALLBACK),
+          details,
+        );
+      }
       // A hosted harness target whose pinned image cannot boot refuses the
       // whole launch. The backend's sentence names the target, and passes
       // through when it fits; a long client or environment name can push it
@@ -471,6 +528,37 @@ export async function launchJourneyRun(
   const hosts = snapshot.hosts;
   const localHarnessActor = localActorResult?.ok ? localActorResult.actor : undefined;
 
+  // The run's clocks, frozen by the backend at launch and captured here once:
+  // claims and heartbeats never carry them, so no later edit reaches a running
+  // run. Unreadable budgets refuse the launch rather than default, and the run
+  // row that already exists is closed now instead of waiting for the stale
+  // sweep.
+  const frozenBudgets = readFrozenSwarmBudgets(snapshot);
+  if (!frozenBudgets.ok) {
+    logger.warn("[swarm-runs] refused a launch with unreadable budgets", {
+      runId,
+      issues: frozenBudgets.issues,
+    });
+    // The bearer is minted inside the guard too: closing the run is best
+    // effort, and nothing that fails here may replace the refusal.
+    try {
+      await finalizePendingAttempts(convexHttpUrl, await deps.getRunBearer(), {
+        projectId,
+        runId,
+        terminalStatus: "failed",
+        errorCode: UNREADABLE_SWARM_BUDGETS_CODE,
+        errorMessage: frozenBudgets.message,
+      });
+    } catch (error) {
+      // The backend's stale-run cron still ends the run.
+      logger.warn("[swarm-runs] could not close the refused run", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw new WebRouteError(409, ErrorCode.CONFLICT, frozenBudgets.message);
+  }
+
   // Client for the run's D2 re-gates. Constructed PER CALL and deliberately
   // not memoized: a client bakes its auth token in at construction, so a
   // whole-run singleton would carry the launch-time bearer for hours and start
@@ -484,19 +572,42 @@ export async function launchJourneyRun(
   const getPluginRegateClient = async () =>
     createConvexClient(await deps.getRunBearer());
 
+  // Registered before the launch settles and released when the runner does,
+  // so the drain holds the run with no gap between setup and the runner.
+  let runnerSettled!: () => void;
+  void serverDrain.track(
+    "swarm_run",
+    new Promise<void>((resolve) => {
+      runnerSettled = resolve;
+    }),
+  );
   setImmediate(async () => {
-    // Never rejects: the rollout read treats every failure as "not enrolled".
-    const runHosts = await withoutBrowserOutsideRollout(
-      hosts,
-      deps.callerContext.workosUserId,
-    );
-    startJourneyRun({
+    // Never rejects: every failure, the bearer included, reads as "no browser".
+    const runHosts = await withoutBrowserOutsideRollout(hosts, async () => {
+      let bearer: string;
+      try {
+        bearer = await deps.getRunBearer();
+      } catch (error) {
+        logger.warn(
+          "[journeys] no run bearer for the hosted-browser check; launching without browser",
+          { error: error instanceof Error ? error.message : String(error) },
+        );
+        return false;
+      }
+      return isHostedBrowserAvailableFor({
+        bearer,
+        projectId,
+        surface: "tools",
+      });
+    });
+    const runner = startJourneyRun({
       runId,
       projectId,
       hosts: runHosts,
       personaSnapshot: snapshot.personaSnapshot,
       sessionsPerTarget: snapshot.sessionsPerTarget,
       maxTurns: snapshot.maxTurns,
+      ...(frozenBudgets.budgets ? { budgets: frozenBudgets.budgets } : {}),
       ...(created.sessions?.length ? { sessionFunding: created.sessions } : {}),
       setupWrites: snapshot.setupWrites,
       goal: snapshot.goal,
@@ -638,11 +749,9 @@ export async function launchJourneyRun(
         };
       },
     }).catch((err) => {
-      logger.error("[swarm-runs] startJourneyRun failed", {
-        runId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.error("[swarm-runs] startJourneyRun failed", err, { runId });
     });
+    void runner.finally(runnerSettled);
   });
 
   return { runId, ...(created.funding ? { funding: created.funding } : {}) };

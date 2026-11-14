@@ -1,3 +1,4 @@
+import { useUnlimitedCredits } from "@/hooks/useCreditBalance";
 import type { SwarmFundingPreviewState } from "@/hooks/use-swarm-funding-preview";
 import {
   creditFundingExplanation,
@@ -7,7 +8,7 @@ import {
 
 /**
  * The sponsored split of a launch, shown on Confirm above the launch button:
- * "5 sponsored conversations · 10 use org credits", why some use credits, and a
+ * "5 sponsored · 10 use org credits", why some use credits, and a
  * notice when a launch stopped because the split moved.
  *
  * It says what the preview says and no more. Sponsored capacity is MCPJam's and
@@ -30,6 +31,7 @@ export function SwarmFundingSummary({
   /** Set when a launch stopped for review or a 409 moved the split. */
   notice: string | null;
 }) {
+  const unlimited = useUnlimitedCredits();
   const split =
     state.status === "ready"
       ? fundingSplitOf(state.preview, requestedRuns)
@@ -40,6 +42,7 @@ export function SwarmFundingSummary({
       ? creditFundingExplanation(state.preview, split)
       : null;
 
+  if (unlimited) return null;
   return (
     <div
       className="flex flex-col gap-1.5 rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm"
@@ -64,8 +67,8 @@ export function SwarmFundingSummary({
           data-testid="new-swarm-funding-pending"
         >
           {pendingGoals === 1
-            ? "This covers your existing goals. The new goal's conversations are placed when it is created, and you will see the split before anything runs."
-            : `This covers your existing goals. The ${pendingGoals} new goals' conversations are placed when they are created, and you will see the split before anything runs.`}
+            ? "Doesn't include your new goal yet."
+            : `Doesn't include your ${pendingGoals} new goals yet.`}
         </p>
       ) : null}
       {notice ? (

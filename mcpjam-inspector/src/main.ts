@@ -5,25 +5,22 @@
 import "./ws-native-fallback.js";
 import { writeInspectorRuntime } from "../server/services/inspector-runtime";
 import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
-// Must stay below that guard: `security-policy.js` reaches into `server/`,
-// which pulls in `ws`. Hoisted above it, `ws` evaluates before
-// WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
+// Must stay below that guard: it reaches into `server/`, which can pull in
+// `ws`. Hoisted above it, `ws` evaluates before WS_NO_BUFFER_UTIL is set --
+// the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
-import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
-import * as Sentry from "@sentry/electron/main";
+import {
+  initDesktopSentry,
+  reportDesktopStartupFailure,
+} from "./strict-sentry.js";
 import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
 import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
 import {
-  buildElectronSentryConfig,
-  electronBuildSurface,
-} from "../shared/sentry-config.js";
-import {
-  crashReportingIntegrations,
-  dropUpdaterInstallSpawnRejection,
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
 import { retireConsoleOnStreamError } from "./log-console-safety.js";
+import { trustSystemCertificates } from "./system-ca.js";
 import { loadSentryInstallationId } from "./sentry-installation.js";
 import { initializeDesktopSentryIdentity } from "../shared/desktop-sentry-state.js";
 import { installDesktopSentryIdentity } from "./sentry-identity-electron.js";
@@ -33,35 +30,7 @@ const installationIdentity = initializeDesktopSentryIdentity(
   loadSentryInstallationId(app.getPath("userData")),
 );
 
-// `app.isPackaged` rather than NODE_ENV: Electron Forge never sets NODE_ENV in
-// a packaged build, so the previous NODE_ENV check reported every shipped
-// desktop event as `environment: "dev"`.
-Sentry.init({
-  ...buildElectronSentryConfig({
-    environment: app.isPackaged ? "prod" : "dev",
-    release: app.getVersion(),
-    // Matches the `--dist` forge uploads `.vite/build` under. mac and Windows
-    // publish separately compiled main bundles under the same release, so
-    // without this they share one artifact namespace.
-    dist: electronBuildSurface(process.platform),
-    deployment: "self_hosted",
-  }),
-  ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
-  initialScope: {
-    user: { id: installationIdentity.id },
-    tags: { deployment: "self_hosted", actor_kind: installationIdentity.kind },
-  },
-  // Promotes crashed/oom from breadcrumbs to captured events — see
-  // crash-reporting.ts. `sentryMinidumpIntegration` (native crash upload) is
-  // already on by default in @sentry/electron 7 and is left alone.
-  integrations: crashReportingIntegrations,
-  // Drops the ONE rejection the app cannot catch: Electron leaves
-  // `quitAndInstall`'s Squirrel spawn promise floating, so a collision with an
-  // in-flight Update.exe arrives as an unhandled rejection for something that
-  // quit cleanly and merely skipped an install (INSPECTOR-ELECTRON-WK). Every
-  // other rejection is left alone; see `dropUpdaterInstallSpawnRejection`.
-  beforeSend: dropUpdaterInstallSpawnRejection,
-});
+initDesktopSentry({ release: app.getVersion(), packaged: app.isPackaged, root: app.getAppPath() });
 
 const desktopDiagnostics = installDesktopDiagnostics();
 const desktopSentryIdentity = installDesktopSentryIdentity();
@@ -77,9 +46,13 @@ import fs from "fs";
 // BEFORE the server module graph is first evaluated. The dynamic import
 // in `startHonoServer()` enforces that ordering.
 import {
+  describeStartupFailure,
+  PORT_RETRY_ARG,
   probeFreePort,
   resolveServerPortAttempts,
   resolveServerStartPort,
+  shouldRestartForPortConflict,
+  waitForListening,
 } from "./server-port-fallback.js";
 import { computeInstanceEnv } from "../bin/runtime-profile.mjs";
 import log from "electron-log";
@@ -133,6 +106,11 @@ retireConsoleOnStreamError(
 // the user actually attaches to a bug report (and is the only diagnostic when
 // reporting is offline or opted out).
 registerMainProcessCrashHandlers(log);
+
+// Before the embedded server makes any request: on a network that re-signs
+// HTTPS, Node rejects the company root the OS (and so the window) trusts, and a
+// first launch never gets past the loading screen. See the file.
+trustSystemCertificates(log);
 
 // Wire autoUpdater event handlers BEFORE polling starts, otherwise an early
 // `update-available` event could fire before our listener exists.
@@ -213,6 +191,8 @@ let activating: Promise<void> | null = null;
 let shutdownLocalBrowserFrames: (() => void) | null = null;
 let killLocalBrowserFrames: (() => void) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
+let shutdownMrtrStreams: (() => void) | null = null;
+let killMrtrStreams: (() => void) | null = null;
 let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
@@ -569,6 +549,8 @@ async function startHonoServer(): Promise<number> {
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
+    const { registerBrowserController } =
+      await import("../server/services/browserd/local/security-policy.js");
 
     // Seal the local-harness instance key with the OS keychain. Injected
     // rather than imported by the server, which has to stay loadable under
@@ -587,6 +569,8 @@ async function startHonoServer(): Promise<number> {
     const {
       app: honoApp,
       injectWebSocket,
+      shutdownLocalMrtrStreams,
+      killLocalMrtrStreams,
       shutdownLocalComputerTerminals,
       killLocalComputerTerminals,
       shutdownWebMcpFrameSockets,
@@ -617,6 +601,8 @@ async function startHonoServer(): Promise<number> {
     // The WebMCP frame sockets are the same story: established WebSockets that
     // `server.close()` leaves attached, with a latching variant for a real quit
     // and a non-latching one for `window-all-closed`.
+    shutdownMrtrStreams = shutdownLocalMrtrStreams;
+    killMrtrStreams = killLocalMrtrStreams;
     shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
     killWebMcpFrames = killWebMcpFrameSockets;
     // The agent's browser is a real Chromium this process started. Quitting the
@@ -643,6 +629,15 @@ async function startHonoServer(): Promise<number> {
         server?.once("close", cleanup);
       },
     );
+    try {
+      // Without this, a port taken after the probe (see `probeFreePort`)
+      // surfaces as an uncaught EADDRINUSE that kills the app instead of
+      // reaching the startup failure dialog.
+      await waitForListening(server);
+    } catch (error) {
+      server = null;
+      throw error;
+    }
     registerBrowserController(`http://127.0.0.1:${port}`);
     // Attach the computer terminal WebSocket upgrade handler (mirror of
     // server/index.ts). Without this the Computer tab's Shell can't upgrade.
@@ -1032,10 +1027,16 @@ function summarizeInitError(error: unknown): {
       ? error
       : new Error(String(error ?? "Unknown error"));
 
+  const failure = describeStartupFailure(error);
   const isServerStartFailure = /bind server|EADDRINUSE|Hono/i.test(err.message);
-  const message = isServerStartFailure
-    ? "Couldn't start the internal server."
-    : "Initialization failed.";
+  const message =
+    failure.code === "port_taken"
+      ? `Another app is using ${
+          failure.port === undefined ? "MCPJam's port" : `port ${failure.port}`
+        }.`
+      : isServerStartFailure
+        ? "Couldn't start the internal server."
+        : "Initialization failed.";
 
   const logsPath = (() => {
     try {
@@ -1045,7 +1046,11 @@ function summarizeInitError(error: unknown): {
     }
   })();
 
-  const detail = `${err.message}\n\nLogs: ${logsPath}`;
+  const advice =
+    failure.code === "port_taken"
+      ? "Quit and reopen MCPJam to pick a free port."
+      : err.message;
+  const detail = `${advice}\n\nLogs: ${logsPath}`;
   return { message, detail };
 }
 
@@ -1115,8 +1120,59 @@ function showStartupFailureDialog(error: unknown): void {
   app.quit();
 }
 
+/**
+ * The one place a failed start ends up: restart once for a lost port race,
+ * otherwise the startup dialog.
+ *
+ * The restart is how the app "switches" ports: this process cannot rebind,
+ * because server config froze to the first port at module load, but a fresh
+ * one probes again and lands on a free port. It mirrors the dialog's Reset
+ * (`relaunch` + `quit`, so normal quit cleanup runs) and keeps the original
+ * arguments, so a Windows `mcpjam://` launch URL survives it.
+ *
+ * `alreadyRetried` is the loop guard. When the restarted copy fails too, the
+ * user gets the dialog and #mcpjam-alerts gets paged.
+ */
+async function handleServerStartFailure(
+  error: unknown,
+  { alreadyRetried }: { alreadyRetried: boolean },
+): Promise<void> {
+  if (
+    shouldRestartForPortConflict(error, { alreadyRetried, env: process.env })
+  ) {
+    log.warn(
+      "Server port was taken after the free-port check; restarting once to pick a free port",
+    );
+    app.relaunch({
+      args: [
+        ...process.argv.slice(1).filter((arg) => arg !== PORT_RETRY_ARG),
+        PORT_RETRY_ARG,
+      ],
+    });
+    app.quit();
+    return;
+  }
+  if (alreadyRetried) {
+    try {
+      await reportDesktopStartupFailure(describeStartupFailure(error));
+    } catch (reportErr) {
+      log.warn("Failed to report startup failure to Sentry:", reportErr);
+    }
+  }
+  try {
+    showStartupFailureDialog(error);
+  } catch (dialogErr) {
+    log.error(
+      "Failed to show startup failure dialog; quitting silently:",
+      dialogErr,
+    );
+    app.quit();
+  }
+}
+
 // App event handlers
 app.whenReady().then(async () => {
+  if (!gotTheLock) return; // A quitting second instance still gets `ready`.
   try {
     // Best-effort cleanup of GPU/HTTP caches when the app version changes.
     // Stale caches from a previous build can crash the renderer/GPU process
@@ -1165,15 +1221,9 @@ app.whenReady().then(async () => {
     log.info("MCPJam Electron app ready");
   } catch (error) {
     log.error("Failed to initialize app:", error);
-    try {
-      showStartupFailureDialog(error);
-    } catch (dialogErr) {
-      log.error(
-        "Failed to show startup failure dialog; quitting silently:",
-        dialogErr,
-      );
-      app.quit();
-    }
+    await handleServerStartFailure(error, {
+      alreadyRetried: process.argv.includes(PORT_RETRY_ARG),
+    });
   }
 });
 
@@ -1195,6 +1245,7 @@ app.on("window-all-closed", () => {
   // Same non-latching kill: latching here would 4503 every frame handshake
   // after the user reopened the window from the dock.
   killWebMcpFrames?.();
+  killMrtrStreams?.();
   if (server) {
     server.close?.();
     serverPort = 0;
@@ -1236,6 +1287,7 @@ function visibleWindows(): BrowserWindow[] {
 }
 
 async function handleActivate(): Promise<void> {
+  if (!appBootstrapped) return; // Launch emits it too; bootstrap opens that window.
   // On macOS, re-create window when the dock icon is clicked
   if (visibleWindows().length === 0) {
     // A quick reopen can arrive while the browser closed by
@@ -1260,6 +1312,11 @@ async function handleActivate(): Promise<void> {
         setTrustedUpdateWindow(mainWindow);
       } catch (error) {
         log.error("Failed to restart server:", error);
+        // No server means no window, and every retry here reuses the same
+        // cached port: restart the app instead, or show the dialog. Never
+        // `alreadyRetried`: this process may have been started by a restart
+        // hours ago, and the restart this triggers is the guarded launch.
+        await handleServerStartFailure(error, { alreadyRetried: false });
       }
     }
   }
@@ -1329,6 +1386,7 @@ app.on("before-quit", (event) => {
   recordUpdateShutdown("local_cleanup_started");
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
+  shutdownMrtrStreams?.();
   shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();

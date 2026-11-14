@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createThreadAppApi, type ThreadAppScope } from "./thread-app-api";
+import {
+  createThreadAppApi,
+  type PluginOnboardingTarget,
+  type ThreadAppScope,
+} from "./thread-app-api";
 import type {
   PluginOnboardingConversation,
   PluginOnboardingSpec,
@@ -11,12 +15,15 @@ import {
   DropdownMenuSubTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { usePluginOnboardingIntentStore } from "@/lib/plugin-onboarding-intent";
+import { toast } from "@/lib/toast";
+
+const RUN_FAILED = "Couldn’t run onboarding. Try again.";
 
 export type RunPluginOnboarding = (
   spec: PluginOnboardingSpec,
   conversation: PluginOnboardingConversation,
   signal: AbortSignal,
-  serverId: string,
+  target: PluginOnboardingTarget,
 ) => Promise<void>;
 
 /** One explicit menu action. Reading availability never sends a chat turn. */
@@ -71,7 +78,7 @@ export function usePluginOnboarding(
     };
   }, [owner]);
   async function start(
-    serverId: string,
+    target: PluginOnboardingTarget,
     conversation: PluginOnboardingConversation,
   ) {
     if (
@@ -82,11 +89,12 @@ export function usePluginOnboarding(
     )
       return;
     busy.current = true;
-    setPending(serverId);
+    setPending(typeof target === "string" ? target : target.pluginId);
     setError(null);
+    let running = false;
     try {
       const value = await owner.api.onboarding(
-        serverId,
+        target,
         true,
         owner.abort.signal,
       );
@@ -98,19 +106,24 @@ export function usePluginOnboarding(
         !value.spec
       )
         throw new Error("Unavailable");
+      running = true;
       await runRef.current(
         value.spec,
         conversation,
         owner.abort.signal,
-        serverId,
+        target,
       );
     } catch {
       if (
         owner.active &&
         !owner.abort.signal.aborted &&
         current.current === owner
-      )
-        setError("Couldn’t run onboarding. Try again.");
+      ) {
+        setError(RUN_FAILED);
+        // A run says why itself. A skill that could not be read is said here,
+        // or a Set up request would end with nothing on screen.
+        if (!running) toast.error(RUN_FAILED);
+      }
     } finally {
       if (owner.active && current.current === owner) {
         busy.current = false;
@@ -118,18 +131,60 @@ export function usePluginOnboarding(
       }
     }
   }
-  // "Set up <Plugin>" from the import dialog: run the same onboarding as
-  // the menu, once, as soon as one of the plugin's servers offers it here.
+  // "Set up <Plugin>" from the import dialog or Settings: run the same
+  // onboarding as the menu, once, as soon as one of the plugin's servers
+  // offers it here. A plugin with no server is asked about directly.
   const intent = usePluginOnboardingIntentStore((state) => state.intent);
+  const pluginIntent =
+    intent && scope && intent.projectId === scope.projectId
+      ? intent.serverIds.length === 0
+        ? intent.pluginId
+        : null
+      : null;
+  const [pluginReady, setPluginReady] = useState<string | null>(null);
+  useEffect(() => {
+    setPluginReady(null);
+    if (!pluginIntent || !owner.api) return;
+    const api = owner.api;
+    const abort = new AbortController();
+    const probe = async () => {
+      try {
+        const value = await api.onboarding(
+          { pluginId: pluginIntent },
+          false,
+          abort.signal,
+        );
+        if (
+          !abort.signal.aborted &&
+          current.current === owner &&
+          value.available
+        )
+          setPluginReady(pluginIntent);
+      } catch (error) {
+        // The request expires and says so; this only explains why.
+        if (!abort.signal.aborted)
+          console.warn("[onboarding] plugin setup is unavailable here", error);
+      }
+    };
+    void probe();
+    return () => abort.abort();
+  }, [owner, pluginIntent]);
   const startRef = useRef(start);
   startRef.current = start;
   useEffect(() => {
     if (!intent || !scope || intent.projectId !== scope.projectId) return;
-    const serverId = intent.serverIds.find((id) => available[id]);
-    if (!serverId) return;
+    // A run in flight would turn the request away, so it waits for that run
+    // to end, or expires and says why.
+    if (pending !== null) return;
+    const target: PluginOnboardingTarget | undefined =
+      intent.serverIds.find((id) => available[id]) ??
+      (pluginReady !== null && pluginReady === pluginIntent
+        ? { pluginId: pluginReady }
+        : undefined);
+    if (!target) return;
     if (!usePluginOnboardingIntentStore.getState().take(intent.id)) return;
-    void startRef.current(serverId, intent.conversation);
-  }, [intent, available, scopeKey]);
+    void startRef.current(target, intent.conversation);
+  }, [intent, available, pluginReady, pluginIntent, scopeKey, pending]);
   return {
     error,
     pending,

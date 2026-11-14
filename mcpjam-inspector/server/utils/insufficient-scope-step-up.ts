@@ -6,8 +6,16 @@ import {
   type InsufficientScopeInfo,
 } from "../routes/web/hosted-elicitation.js";
 import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
+import { parseToolResultAuthChallenge } from "@mcpjam/sdk";
+import {
+  authChallengeInfoFromToolError,
+  handleChatAuthChallenge,
+  type AuthChallengeChatObserver,
+} from "./auth-challenge-chat.js";
 import { extractInsufficientScopeChallenge } from "./mcp-error-serialize.js";
 import { ScopeStepUpSuspendSignal } from "./scope-step-up-continuation.js";
+
+export { authChallengeInfoFromToolError } from "./auth-challenge-chat.js";
 
 export type ScopeStepUpToolError = {
   error: unknown;
@@ -33,6 +41,12 @@ export type ScopeStepUpObserverOptions = {
     toolName: string;
     toolInput: unknown;
   }) => ScopeStepUpRequiredEvent | Promise<ScopeStepUpRequiredEvent>;
+  /**
+   * Mid-session sign-in (a 401, or a `_meta` challenge on a returned result).
+   * Interactive chat turns only: a wrapper without it never reacts to either,
+   * which keeps harness and non-interactive surfaces exactly as they were.
+   */
+  authChallenge?: AuthChallengeChatObserver;
 };
 
 /**
@@ -43,10 +57,10 @@ export function scopeStepUpInfoFromToolError(
   context: ScopeStepUpToolError
 ): InsufficientScopeInfo | undefined {
   const challenge = extractInsufficientScopeChallenge(context.error);
-  if (
-    !challenge ||
-    (!challenge.requiredScope?.trim() && !challenge.resourceMetadataUrl?.trim())
-  ) {
+  // A challenge with neither a scope nor a metadata pointer is actionable
+  // too: the re-authorization falls back to the previously requested scopes
+  // and discovery's `scopes_supported`, as Claude does.
+  if (!challenge) {
     return undefined;
   }
   return {
@@ -67,6 +81,12 @@ export function scopeStepUpInfoFromToolError(
  * Harness MCP-server tools execute out of process through the generated
  * `.mcp.json`; their proxy path calls {@link scopeStepUpInfoFromToolError}
  * directly and forwards the result through the harness turn bridge.
+ *
+ * With `authChallenge` (interactive chat only), a mid-session sign-in
+ * challenge, thrown as a 401 or returned as a `_meta` result, is handed to
+ * `handleChatAuthChallenge`, which may suspend the call, answer it with the
+ * host's sign-in text, or let it through unchanged. A 403 step-up never
+ * reaches it.
  */
 export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
   tools: TTools,
@@ -83,11 +103,17 @@ export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
         {
           ...tool,
           execute: async (input: unknown, options: any) => {
+            const serverId = tool._serverId ?? "unknown";
+            const toolCallId = options?.toolCallId;
+            // The server's own name: a multi-account variant renames the chat
+            // tool, while annotations and `securitySchemes` are declared under
+            // the original.
+            const mcpToolName =
+              typeof tool._mcpToolName === "string" ? tool._mcpToolName : name;
+            let result: unknown;
             try {
-              return await execute(input, options);
+              result = await execute(input, options);
             } catch (error) {
-              const serverId = tool._serverId ?? "unknown";
-              const toolCallId = options?.toolCallId;
               observerOptions.onToolError?.({ error, serverId, toolCallId });
 
               const info = scopeStepUpInfoFromToolError({
@@ -115,8 +141,50 @@ export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
                   );
                 }
               }
+              const authChallenge = observerOptions.authChallenge;
+              const authInfo =
+                !info && authChallenge
+                  ? authChallengeInfoFromToolError({
+                      error,
+                      serverId,
+                      toolCallId,
+                      effectiveAuth: authChallenge.effectiveAuthFor(serverId),
+                    })
+                  : undefined;
+              if (authChallenge && authInfo) {
+                const outcome = await handleChatAuthChallenge({
+                  observer: authChallenge,
+                  writer: getScopeChallengeWriter(),
+                  signal: authInfo.signal,
+                  serverId,
+                  toolCallId,
+                  toolName: name,
+                  mcpToolName,
+                  toolInput: input,
+                });
+                if (outcome.kind === "result") return outcome.result;
+              }
               throw error;
             }
+
+            const authChallenge = observerOptions.authChallenge;
+            const resultChallenge = authChallenge
+              ? parseToolResultAuthChallenge(result)
+              : undefined;
+            if (authChallenge && resultChallenge) {
+              const outcome = await handleChatAuthChallenge({
+                observer: authChallenge,
+                writer: getScopeChallengeWriter(),
+                signal: resultChallenge,
+                serverId,
+                toolCallId,
+                toolName: name,
+                mcpToolName,
+                toolInput: input,
+              });
+              if (outcome.kind === "result") return outcome.result;
+            }
+            return result;
           },
         },
       ];

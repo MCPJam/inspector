@@ -372,7 +372,7 @@ describe("gate parity across the dual_write flip", () => {
    * The role travels on the definition, so nothing in `src/gates.ts` changes:
    * it has always considered gating scorers and only gating scorers. What
    * changes is which definitions say gating, and these two tests pin the
-   * consequences an operator flipping `EVAL_JUDGE_GATE_ENABLED` is buying.
+   * consequences of setting a judge to required.
    */
   it("a GATING judge that ERRORS lights the error gate without failing the pass rate", () => {
     const judgeErrored = after.map((item) =>

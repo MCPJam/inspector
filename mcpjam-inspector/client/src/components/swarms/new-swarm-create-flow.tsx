@@ -8,6 +8,7 @@
  * Nothing is written until Create & launch. After launch, Run swarm shows the
  * live persona × client matrix; leaving keeps runs going on Overview.
  */
+import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
@@ -126,14 +127,17 @@ import {
 } from "@/lib/environment-label";
 import { type EnvironmentMoveRow } from "@/components/swarms/reused-environment-move";
 import { ErrorCard } from "@/components/ui/error-card";
+import { swarmLaunchRows, type SwarmLaunchRow } from "./swarm-launch-progress";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 import { WebApiError } from "@/lib/apis/web/base";
 import { signInRemedyMessage } from "@/lib/sign-in-required";
 import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { cn } from "@/lib/utils";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
+import { reusedGoalJudgeConfig } from "@/components/swarms/reused-goal-judge";
 import {
   preflightSwarmTargets,
+  resolveSwarmEnvironment,
   missingSwarmModelMessage,
   SwarmTargetPreflightError,
 } from "./swarm-target-preflight";
@@ -358,6 +362,12 @@ async function runWithConcurrency<T>(
 }
 
 function errorMessageOf(err: unknown, fallback: string): string {
+  // The org's AI key policy refused it: name every dependency that can't run
+  // on the organization's providers, not only the first. A refusal with no
+  // list (generation, until it runs on organization keys) reads as the
+  // shared copy for its code.
+  const refused = aiLaunchRefusalSentence(err);
+  if (refused) return refused;
   if (err instanceof Error && err.message) return err.message;
   return fallback;
 }
@@ -483,7 +493,10 @@ export function NewSwarmCreateFlow({
   const navigate = useAppNavigate();
   const [preflightModelFailure, setPreflightModelFailure] =
     useState<SwarmTargetPreflightError | null>(null);
-  const resolveComposerTargets = useComposerResolver(projectId);
+  const resolveComposerTargets = useComposerResolver(projectId, {
+    requireServerAttachment: true,
+    allowEmptyServerSelection: false,
+  });
   const { user: workOsUser } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -603,6 +616,11 @@ export function NewSwarmCreateFlow({
   const [iterationsByPersona, setIterationsByPersona] = useState<
     Record<string, number>
   >(restoredDraft?.iterationsByPersona ?? {});
+  // The judge picked on Confirm. Not part of the resumable draft: a reload
+  // falls back to the managed default, which is what an untouched row means.
+  const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
+    undefined,
+  );
   const handleIterationsChange = useCallback(
     (personaKey: string, value: number) => {
       // Clearing the field reports "", which Number() turns into 0; the clamp
@@ -638,6 +656,7 @@ export function NewSwarmCreateFlow({
   const [generatingSince, setGeneratingSince] = useState<number | null>(null);
   const generationElapsedSeconds = useElapsedSeconds(generatingSince);
   const [launching, setLaunching] = useState(false);
+  const [launchRows, setLaunchRows] = useState<SwarmLaunchRow[]>([]);
   // A generation that was in flight when this flow was remounted cannot be
   // resumed: the request belonged to the unmounted component. Saying so beats
   // restoring a Describe step that looks like the user never pressed Continue.
@@ -646,7 +665,11 @@ export function NewSwarmCreateFlow({
       ? "Persona generation was interrupted when this view reloaded. Nothing was saved — press Continue to generate again."
       : null,
   );
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(
+    restoredDraft?.launching && restoredDraft.launchedRuns.length === 0
+      ? "Swarm startup was interrupted. Press Start swarm to retry."
+      : null,
+  );
   /**
    * The backend refused generation because the visitor is anonymous. Held
    * separately from `errorMessage` because the remedy is a control, not a
@@ -694,7 +717,11 @@ export function NewSwarmCreateFlow({
   // What the Running screen says about a launch that stopped partway. The toast
   // that announces it disappears, and the screen then shows only the runs that
   // did launch, so the explanation stays until it is dismissed.
-  const [launchNotice, setLaunchNotice] = useState<string | null>(null);
+  const [launchNotice, setLaunchNotice] = useState<string | null>(
+    restoredDraft?.launching && restoredDraft.launchedRuns.length > 0
+      ? "Swarm startup was interrupted. Open findings to review the runs that started."
+      : null,
+  );
   /**
    * The wave id for THIS swarm, minted once and reused across a retry.
    *
@@ -760,7 +787,9 @@ export function NewSwarmCreateFlow({
       hosts,
       preferredHostId: previewedHostId,
       preferredEnvironmentId: previewedEnvironmentId,
-      serverAttachments,
+      serverAttachments: serverAttachments.filter(
+        (group) => group.serverIds.length > 0,
+      ),
       environmentsEnabled,
     });
     // Latch only once something was actually seeded. Latching first meant a
@@ -876,18 +905,12 @@ export function NewSwarmCreateFlow({
     (!composeMode && targetState.environmentIds.length > 0) ||
     (composeMode && targetState.stack.hostIds.length > 0);
 
-  /**
-   * Cloud targets need cloud-reachable servers; local Claude Code targets
-   * can use this machine's servers. An empty selection still fails resolution
-   * with `ENV_NO_SERVERS`, and only AFTER this flow has written personas, goals
-   * and (in compose mode) an ad-hoc environment row. Blocking here keeps that
-   * failure in front of the pickers that fix it. `null` = nothing measurable is
-   * wrong; the resolver stays the backstop for what we cannot see.
-   */
+  // Explicit groups need servers the selected execution venue can reach.
   const serverReadiness = useCloudServerReadiness({
     projectId,
     state: targetState,
     environments: envList,
+    requireServerSelection: true,
   });
   const serverBlock = describeCloudServerBlock(serverReadiness);
   // An explicit override can run a legacy client without a default, but an
@@ -1121,10 +1144,7 @@ export function NewSwarmCreateFlow({
         targets: resolved.environments,
         hosts,
         resolve: (environmentId) =>
-          convex.query(
-            "projectEnvironments:resolveEnvironmentForLaunch" as any,
-            { projectId, environmentId },
-          ),
+          resolveSwarmEnvironment(convex, projectId, environmentId),
       });
     } catch (error) {
       if (
@@ -1371,6 +1391,11 @@ export function NewSwarmCreateFlow({
       // window if the flag is held for the whole of it, preflight included.
       inFlightRef.current = true;
       setLaunching(true);
+      setLaunchRows(
+        swarmLaunchRows(proposed, payload.reusedTargets, persistedTargetsRef.current),
+      );
+      setLaunchedRuns([]);
+      setStep("running");
 
       // The preflight has two bail-outs — a `resolveTargets` throw, and no
       // resolvable host — and BOTH must release the latch or the exits stay
@@ -1412,6 +1437,7 @@ export function NewSwarmCreateFlow({
         if (!readyToLaunch) {
           inFlightRef.current = false;
           setLaunching(false);
+          setStep("confirm");
         }
       }
       if (!readyToLaunch) return;
@@ -1562,8 +1588,13 @@ export function NewSwarmCreateFlow({
             }
 
             // Only when the author set one. Absent must leave the journey's
-            // own judge alone, and `null` would CLEAR it.
-            if (payload.judgeConfig) patch.judgeConfig = payload.judgeConfig;
+            // own judge alone, and `null` would CLEAR it. A pick is layered
+            // onto the goal's own judge, never sent in its place.
+            if (payload.judgeConfig)
+              patch.judgeConfig = reusedGoalJudgeConfig(
+                target.judgeConfig,
+                payload.judgeConfig,
+              );
 
             if (Object.keys(patch).length > 0) {
               try {
@@ -1614,6 +1645,17 @@ export function NewSwarmCreateFlow({
                 err,
                 "A persona could not be created.",
               );
+              const error = errorMessageOf(
+                err,
+                "The persona could not be created. Try again from swarm setup.",
+              );
+              setLaunchRows((rows) =>
+                rows.map((row) =>
+                  row.personaId === persona.key
+                    ? { ...row, status: "failed", error }
+                    : row,
+                ),
+              );
               firstError ??= creationIssue;
               continue;
             }
@@ -1651,6 +1693,7 @@ export function NewSwarmCreateFlow({
                   journey.name?.trim() || journey.goal.slice(0, 40);
                 targets.push({
                   journeyId,
+                  launchProgressKey: `${persona.key}:${journey.key}`,
                   label: `${persona.name} · ${goalLabel}`,
                   goalLabel,
                   personaId: personaRefId,
@@ -1665,6 +1708,17 @@ export function NewSwarmCreateFlow({
                 creationIssue ??= errorMessageOf(
                   err,
                   "A goal could not be created.",
+                );
+                const error = errorMessageOf(
+                  err,
+                  "The goal could not be created. Try again from swarm setup.",
+                );
+                setLaunchRows((rows) =>
+                  rows.map((row) =>
+                    row.key === `${persona.key}:${journey.key}`
+                      ? { ...row, status: "failed", error }
+                      : row,
+                  ),
                 );
                 firstError ??= creationIssue;
               }
@@ -1687,20 +1741,23 @@ export function NewSwarmCreateFlow({
         // so a counter moved since reaches the preview and the launch here.
         targets = withChosenIterations(targets, iterationsByPersona);
 
-        // ── Sponsored split: verify, then launch what was shown ───────────
+        // ── Sponsored split: verify, then launch ──────────────────────────
         //
         // Every run has a goal id now, so ask the backend how THIS launch's
         // conversations would be funded (sponsored versus the organization's
-        // credits) and compare it with what the person was looking at. If it
-        // is not the same, stop BEFORE creating any run and show the new
-        // split: they launch again with it on screen. Otherwise each run is
-        // launched with the sponsored count that was shown, so the backend
-        // refuses it (409) rather than moving conversations onto org credits.
+        // credits). Stop BEFORE creating any run only when that split is worse
+        // than what was on screen: fewer sponsored, so more on org credits.
+        // Compare only goals covered by the display: sponsorship for new goals
+        // must not mask a drop for existing goals. A split at least as good as
+        // the one shown launches in the same click. Each run is
+        // launched with its previewed sponsored count, so the backend refuses
+        // it (409) rather than moving conversations onto org credits.
         //
         // A preview that fails, or sponsorship not applying here, is the
         // launch exactly as it was before this existed.
         let expectedSponsoredByRun: number[] | null = null;
         let fundingSplit: FundingSplit | null = null;
+        let shownGoalsSplit: FundingSplit | null = null;
         if (targets.length > 0) {
           try {
             const preview = await fetchSwarmFundingPreview(
@@ -1710,6 +1767,15 @@ export function NewSwarmCreateFlow({
             fundingSplit = fundingSplitOf(preview, targets.length);
             if (fundingSplit) {
               expectedSponsoredByRun = preview.runs.map((run) => run.sponsored);
+              const shownRuns = preview.runs.filter((_, index) =>
+                payload.funding.shownJourneyIds.includes(
+                  targets[index].journeyId,
+                ),
+              );
+              shownGoalsSplit = fundingSplitOf(
+                { ...preview, runs: shownRuns },
+                payload.funding.shownJourneyIds.length,
+              );
             }
           } catch {
             // Handled below with the "no usable split" case.
@@ -1723,24 +1789,30 @@ export function NewSwarmCreateFlow({
         //
         // Both stops return before the launch's own summary, so a failure from
         // earlier in this pass (a goal that could not be created) is said here.
-        if (!fundingSplit && (payload.funding.shownSponsored ?? 0) > 0) {
+        const shownSponsored = payload.funding.shownSponsored;
+        if (!shownGoalsSplit && (shownSponsored ?? 0) > 0) {
+          setFundingNotice(fundingUnverifiedNotice());
+          if (firstError) setErrorMessage(alsoFailedNotice(firstError));
+          setFundingRefreshKey((key) => key + 1);
+          setStep("confirm");
+          return;
+        }
+        if (
+          shownGoalsSplit &&
+          shownSponsored !== null &&
+          shownGoalsSplit.sponsored < shownSponsored
+        ) {
           setFundingNotice(
-            fundingUnverifiedNotice(payload.funding.shownSponsored ?? 0),
+            fundingReviewNotice({
+              shown: shownSponsored,
+              now: shownGoalsSplit,
+              partial: payload.funding.shownJourneyIds.length < targets.length,
+            }),
           );
           if (firstError) setErrorMessage(alsoFailedNotice(firstError));
           setFundingRefreshKey((key) => key + 1);
+          setStep("confirm");
           return;
-        }
-        if (fundingSplit) {
-          const shown = payload.funding.shownSponsored;
-          if ((shown ?? 0) !== fundingSplit.sponsored) {
-            setFundingNotice(
-              fundingReviewNotice({ shown, now: fundingSplit }),
-            );
-            if (firstError) setErrorMessage(alsoFailedNotice(firstError));
-            setFundingRefreshKey((key) => key + 1);
-            return;
-          }
         }
         // With sponsored conversations in the wave, runs launch one at a time
         // in the order the preview counted them, so each run's expected count
@@ -1753,6 +1825,10 @@ export function NewSwarmCreateFlow({
           targets,
           launchConcurrency,
           async (target) => {
+            const progressKey = target.launchProgressKey ?? target.journeyId;
+            setLaunchRows((rows) => rows.map((row) =>
+              row.key === progressKey ? { ...row, status: "starting" } : row,
+            ));
             try {
               const result = await launchJourney(target.journeyId, {
                 swarmRunGroupId,
@@ -1793,9 +1869,25 @@ export function NewSwarmCreateFlow({
                       ? { goalLabel: target.goalLabel }
                       : {}),
                   });
+                  launchedRunLabelsRef.current = new Map(runLabels);
+                  setLaunchedRuns([...launchedBatch]);
+                  setLaunchRows((rows) => rows.map((row) =>
+                    row.key === progressKey ? { ...row, runId: result.runId } : row,
+                  ));
                 }
               }
             } catch (err) {
+              const error = errorMessageOf(
+                err,
+                "The run could not be started. Try again from swarm setup.",
+              );
+              setLaunchRows((rows) =>
+                rows.map((row) =>
+                  row.key === progressKey
+                    ? { ...row, status: "failed", error }
+                    : row,
+                ),
+              );
               // The sponsored split moved under this run. Nothing was created
               // for it, and the rest of the wave stops with it: continuing
               // would launch runs against a split nobody looked at, and the
@@ -1849,6 +1941,11 @@ export function NewSwarmCreateFlow({
       } finally {
         inFlightRef.current = false;
         setLaunching(false);
+        setLaunchRows((rows) => rows.map((row) =>
+          !row.runId && (row.status === "queued" || row.status === "starting")
+            ? { ...row, status: "not_started" }
+            : row,
+        ));
       }
 
       track("swarm_create_launched", {
@@ -1877,6 +1974,7 @@ export function NewSwarmCreateFlow({
         setFundingRefreshKey((key) => key + 1);
         if (launched === 0 || launchedBatch.length === 0) {
           setFundingNotice(notice);
+          setStep("confirm");
           // A run that failed earlier in this pass is often why the split moved
           // (it did not take the share the preview counted on it); without it
           // a deterministic failure loops on "review the split" forever.
@@ -1899,12 +1997,14 @@ export function NewSwarmCreateFlow({
         limitDialogBlocked &&
         (launched === 0 || launchedBatch.length === 0)
       ) {
+        setStep("confirm");
         // The dialog IS the explanation, and it names the fix. A banner saying
         // the requests "were rejected" adds nothing and reads as a second,
         // unrelated failure.
         return;
       }
       if (launched === 0 || launchedBatch.length === 0) {
+        setStep("confirm");
         // Nothing is running, so leaving the flow would strand the user on an
         // empty view with no explanation. Rows that DID land are real, and the
         // copy has to say so — otherwise Retry looks like it will re-create
@@ -2046,7 +2146,7 @@ export function NewSwarmCreateFlow({
       return;
     }
     saveNewSwarmFlowDraft(projectId, {
-      step,
+      step: launching && launchedRuns.length === 0 ? "confirm" : step,
       name: swarmName,
       nameEdited,
       description: draft,
@@ -2059,6 +2159,7 @@ export function NewSwarmCreateFlow({
       reusedIds,
       proposed,
       launchedRuns,
+      launching,
       runLabels: [...launchedRunLabelsRef.current.entries()],
       generatingSince,
       attachingFile: attachingFile ?? interruptedFile,
@@ -2080,6 +2181,7 @@ export function NewSwarmCreateFlow({
     iterationsByPersona,
     nameEdited,
     launchedRuns,
+    launching,
     projectId,
     proposed,
     pushIntensity,
@@ -2131,6 +2233,7 @@ export function NewSwarmCreateFlow({
   const [runsComplete, setRunsComplete] = useState(false);
 
   const leaveRunning = useCallback(() => {
+    if (inFlightRef.current) return;
     clearNewSwarmFlowDraft();
     onDone(launchedRunLabelsRef.current, persistedRunGroupIdRef.current);
   }, [onDone]);
@@ -2139,6 +2242,7 @@ export function NewSwarmCreateFlow({
   // too, so the Sessions grouping must still be able to name the runs.
   const openRunningSession = useCallback(
     (sessionId: string) => {
+      if (inFlightRef.current) return;
       onOpenSession({
         sessionId,
         swarmRunGroupId: persistedRunGroupIdRef.current,
@@ -2320,6 +2424,8 @@ export function NewSwarmCreateFlow({
             organizationId={organizationId}
             projectId={projectId}
             runs={launchedRuns}
+            launching={launching}
+            launchRows={launchRows}
             fallbackColumns={runningFallbackColumns}
             environments={envList}
             hosts={hosts}
@@ -2365,6 +2471,8 @@ export function NewSwarmCreateFlow({
               await onUpdateJourney(journeyRefId, { goal });
             }}
             projectId={projectId}
+            judgeConfig={judgeConfig}
+            onJudgeConfigChange={setJudgeConfig}
             createdTargets={createdTargets}
             fundingRefreshKey={fundingRefreshKey}
             fundingNotice={fundingNotice}

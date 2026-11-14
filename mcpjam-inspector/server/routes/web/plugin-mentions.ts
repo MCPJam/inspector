@@ -1,7 +1,8 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
-  isPluginMentionTool,
+  isPluginMentionSearchTool,
+  pluginMentionSearchTool,
   pluginMentionToolUsesDefaultVisibility,
   parsePluginMentionItems,
   pluginMentionQuerySchema,
@@ -66,12 +67,20 @@ export function pluginMentionRoutes(ports: {
         // The client's mentions extension off: no @ search for this server.
         if (catalog.extensions?.capabilities.mentions === false)
           return c.json({ mention: null });
-        const tools = catalog.tools.filter(isPluginMentionTool);
-        if (!tools.length) return c.json({ mention: null });
-        if (tools.length !== 1)
-          throw new PluginMentionError("PLUGIN_MENTION_DECLARATION_AMBIGUOUS");
-        const current = await runtime.resolve(tools[0]!.name, c.req.raw.signal);
-        if (!isPluginMentionTool(current.tool))
+        // An unusable declaration means no @ search, explained in Logs.
+        const declared = pluginMentionSearchTool(catalog, body.serverId);
+        if (!declared.tool)
+          return c.json({
+            mention: null,
+            ...(declared.diagnostics.length
+              ? { diagnostics: declared.diagnostics }
+              : {}),
+          });
+        const current = await runtime.resolve(
+          declared.tool.name,
+          c.req.raw.signal,
+        );
+        if (!isPluginMentionSearchTool(current.tool, current))
           throw new PluginInvocationError("INSTANCE_DENIED");
         const opened = pluginMentionInstances.open(actor, {
           runtime: current.runtime,
@@ -133,7 +142,7 @@ export function pluginMentionRoutes(ports: {
         resolve: runtime.resolve,
         assertOrigin: (resolved) => {
           if (
-            !isPluginMentionTool(resolved.tool) ||
+            !isPluginMentionSearchTool(resolved.tool, resolved) ||
             resolved.tool.name !== lease.toolName ||
             resolved.revision !== lease.revision
           )

@@ -15,6 +15,7 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 import { track } from "@/lib/analytics";
 import { readAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { GATED_FEATURE_COPY } from "@/components/guest-preview/feature-highlights";
+import { expectLegalConsentLinks } from "@/test/legal-consent";
 import { FeatureSignUpNudgeDialog } from "../FeatureSignUpNudgeDialog";
 
 describe("FeatureSignUpNudgeDialog", () => {
@@ -34,6 +35,13 @@ describe("FeatureSignUpNudgeDialog", () => {
 
     expect(screen.getByText(copy.title)).toBeInTheDocument();
     expect(screen.getByText(copy.body)).toBeInTheDocument();
+  });
+
+  it("links the Terms of Use and Privacy Policy", () => {
+    render(
+      <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />,
+    );
+    expectLegalConsentLinks();
   });
 
   // The bullets are gone, and this is what stops them coming back by habit.

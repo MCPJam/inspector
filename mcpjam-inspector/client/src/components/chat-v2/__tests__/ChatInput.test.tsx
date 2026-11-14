@@ -661,6 +661,18 @@ describe("ChatInput", () => {
       expect(screen.getByRole("button", { name: "Options" })).toBeEnabled();
     });
 
+    it("blocks Enter and form submission while a hosted approval can be stopped", () => {
+      const onSubmit = vi.fn((event) => event.preventDefault());
+      const requestSubmit = vi.spyOn(HTMLFormElement.prototype, "requestSubmit").mockImplementation(() => {});
+      render(<ChatInput {...defaultProps} value="Draft" canStop={true} onSubmit={onSubmit} />);
+      const input = screen.getByPlaceholderText("Type your message...");
+      fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
+      expect(requestSubmit).not.toHaveBeenCalled();
+      fireEvent.submit(input.closest("form")!);
+      expect(onSubmit).not.toHaveBeenCalled();
+      requestSubmit.mockRestore();
+    });
+
     it("does not request form submit on Enter while loading", () => {
       const requestSubmitSpy = vi
         .spyOn(HTMLFormElement.prototype, "requestSubmit")
@@ -2061,7 +2073,7 @@ describe("ChatInput", () => {
     });
   });
   describe("App context chips", () => {
-    it("shows one Context chip per App with a removable row per block", async () => {
+    it("shows one Context chip per App, removed as a group", async () => {
       const removeAll = vi.fn();
       const removeRow = vi.fn();
       const parts = {
@@ -2109,8 +2121,11 @@ describe("ChatInput", () => {
       expect(await screen.findByText("Current view")).toBeInTheDocument();
       expect(screen.getByText("Inspecting in mm.")).toBeInTheDocument();
       expect(screen.getByText("mcp://parts/joystick")).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Remove Current view" }));
-      expect(removeRow).toHaveBeenCalledTimes(1);
+      // Rows have no × of their own, even when one is supplied.
+      expect(
+        screen.queryByRole("button", { name: "Remove Current view" }),
+      ).toBeNull();
+      expect(removeRow).not.toHaveBeenCalled();
       fireEvent.click(
         screen.getByRole("button", { name: "Remove all Parts context" })
       );

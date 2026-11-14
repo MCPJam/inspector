@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
 import {
   webBodyLimit,
   DEFAULT_WEB_BODY_LIMIT,
   AUDIO_WEB_BODY_LIMIT,
+  PLUGIN_CONTEXT_WEB_BODY_LIMIT,
 } from "../web-body-limit";
 
 function buildApp() {
@@ -23,13 +24,82 @@ function buildApp() {
   app.put("/api/web/browser-profiles/upload", readBody);
   app.post("/api/web/browser-profiles/commit", readBody);
   app.post("/api/web/other", readBody);
+  app.put("/api/web/apps/mcp-apps/view-admissions", readBody);
+  app.post("/api/web/apps/mcp-apps/view-admissions/other", readBody);
   app.post("/api/web/audio/transcriptions", readBody);
   return app;
 }
 
 const OVERSIZED = "x".repeat(DEFAULT_WEB_BODY_LIMIT + 1);
 
+describe("webBodyLimit: plugin App context updates", () => {
+  const contextPaths = [
+    "/api/web/apps/plugin-instances/context",
+    "/api/web/apps/plugin-instances/model/context",
+  ];
+  function contextApp() {
+    const app = new Hono();
+    app.use("/api/web/*", webBodyLimit());
+    // Stands in for `mcpOperationRateLimit`, which parses the body.
+    const parsed = vi.fn();
+    app.use("/api/web/apps/plugin-instances/*", async (c, next) => {
+      parsed(await c.req.text());
+      await next();
+    });
+    app.post("/api/web/apps/plugin-instances/*", (c) => c.json({ ok: true }));
+    return { app, parsed };
+  }
+
+  it.each(contextPaths)(
+    "admits an update up to the policy ceiling: %s",
+    async (path) => {
+      const { app } = contextApp();
+      const res = await app.request(path, {
+        method: "POST",
+        body: "x".repeat(PLUGIN_CONTEXT_WEB_BODY_LIMIT),
+      });
+      expect(res.status).toBe(200);
+    },
+  );
+
+  it.each(contextPaths)(
+    "refuses a larger one with a typed 413 before anything reads it: %s",
+    async (path) => {
+      const { app, parsed } = contextApp();
+      const res = await app.request(path, {
+        method: "POST",
+        body: "x".repeat(PLUGIN_CONTEXT_WEB_BODY_LIMIT + 1),
+      });
+      expect(res.status).toBe(413);
+      expect(await res.json()).toMatchObject({
+        code: "PLUGIN_CONTEXT_TOO_LARGE",
+      });
+      expect(parsed).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps 1MB on the other instance routes", async () => {
+    const { app } = contextApp();
+    const res = await app.request("/api/web/apps/plugin-instances/context/read", {
+      method: "POST",
+      body: OVERSIZED,
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("webBodyLimit", () => {
+  it("keeps the 1MiB limit on admission sibling paths and other methods", async () => {
+    for (const [path, method] of [
+      ["/api/web/apps/mcp-apps/view-admissions", "PUT"],
+      ["/api/web/apps/mcp-apps/view-admissions/other", "POST"],
+    ]) {
+      const response = await buildApp().request(path, { method, body: OVERSIZED });
+      expect(response.status, `${method} ${path}`).toBe(400);
+      expect(await response.json()).toMatchObject({ message: "Request body exceeds 1MB limit" });
+    }
+  });
+
   it("caps ordinary /api/web routes at 1MB", async () => {
     const res = await buildApp().request("/api/web/other", {
       method: "POST",

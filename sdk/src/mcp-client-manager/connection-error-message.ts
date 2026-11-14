@@ -19,8 +19,17 @@ function httpStatus(error: unknown): number | undefined {
   return undefined;
 }
 
-/** Called after auth and protocol-pin handling, before serializing to the UI. */
+/**
+ * Called after auth and protocol-pin handling, before serializing to the UI.
+ *
+ * Every rewrite keeps `MCP server "<id>"`, like the fallback it replaces. The
+ * hosted routes downgrade a connect failure to 424 only when its message names
+ * the server (`namesAnMcpServer` in the inspector's web errors); without the
+ * name a refused connection leaves as a 502, Cloudflare swaps in its own error
+ * page, and the browser reports the user's stopped server as an MCPJam outage.
+ */
 export function connectionErrorMessage(
+  serverId: string,
   url: URL,
   errors: unknown[],
   fallback: string,
@@ -30,7 +39,7 @@ export function connectionErrorMessage(
   const statuses = errors.map(httpStatus).filter((s) => s !== undefined);
   // A fallback's 404 must not hide a different HTTP failure on the first try.
   if (statuses.length > 0 && statuses.every((status) => status === 404)) {
-    return `Server returned HTTP 404 at ${endpoint}. Check the MCP endpoint and server logs.`;
+    return `MCP server "${serverId}" returned HTTP 404 at ${endpoint}. Check the MCP endpoint and server logs.`;
   }
   if (
     statuses.length === 0 &&
@@ -39,7 +48,7 @@ export function connectionErrorMessage(
         extractNodeErrno(unwrapEraNegotiationCause(error)) === "ECONNREFUSED",
     )
   ) {
-    return `Couldn't reach the server at ${endpoint}: connection refused (ECONNREFUSED). Check that it's running and that the host and port are correct.`;
+    return `Couldn't reach MCP server "${serverId}" at ${endpoint}: connection refused (ECONNREFUSED). Check that it's running and that the host and port are correct.`;
   }
   return fallback;
 }

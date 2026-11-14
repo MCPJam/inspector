@@ -21,11 +21,22 @@ import {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   connectProjectServerOperation,
   createEvalCaseOperation,
   createEvalCasesOperation,
@@ -100,6 +111,12 @@ import {
   listServerPromptsOperation,
   listServerResourcesOperation,
   listServerToolsOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  deleteServerAccountOperation,
   PlatformApiClient,
   readServerResourceOperation,
   listServerSkillsOperation,
@@ -200,6 +217,11 @@ import {
 } from "../shared/platform-widgets.js";
 import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
+import { isClosedWorldOperation } from "./closedWorldOperations.js";
+import {
+  describeGuestMintFailure,
+  guestMintErrorContent,
+} from "../guestMint.js";
 
 /**
  * Catalog tools HELD off this surface while their feature is in beta.
@@ -219,22 +241,6 @@ const HELD_WHILE_IN_BETA: ReadonlyArray<{
   feature: string;
   operations: ReadonlyArray<PlatformOperation<any, any>>;
 }> = [
-  {
-    feature: "conformance and readiness",
-    operations: [
-      startClaudeReadinessRunOperation,
-      startOpenAIReadinessRunOperation,
-  startMuseReadinessRunOperation,
-      getReadinessRunOperation,
-      listReadinessRunsOperation,
-      cancelReadinessRunOperation,
-      getReadinessReportOperation,
-      startConformanceRunOperation,
-      getConformanceRunOperation,
-      listConformanceRunsOperation,
-      getConformanceReportOperation,
-    ],
-  },
   { feature: "unified sessions", operations: [searchSessionsOperation] },
   {
     feature: "the registry directory",
@@ -327,6 +333,17 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
+  // Stored history, read without connecting: when a server's tools changed
+  // and how. Read-only and confined to MCPJam's own records.
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  // SERVER ACCOUNTS — the reads plus the delete. The upload and the update
+  // are in EXCLUDED_FROM_CATALOG; deleting the default while other accounts
+  // exist is refused, so the delete never moves runs onto another account.
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  deleteServerAccountOperation,
   callServerToolOperation,
   renderServerWidgetOperation,
   listServerPromptsOperation,
@@ -337,17 +354,30 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   getServerSkillOperation,
   readServerSkillFileOperation,
   checkHostCompatibilityOperation,
+  // Directory readiness: in beta, yet listed for every caller. The backend refuses
+  // an organization outside the beta with the reason, and each description says so.
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -680,6 +710,14 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "The plaintext value is an argument, so it would transit model context and be written into chat transcripts before any approval could run — an approval that fires after the credential is already logged is not one. Available on REST, the SDK and the CLI, where the caller controls where the value comes from. The metadata reads (list_secrets, get_secret) are in the catalog.",
   update_secret:
     "Same as create_secret: a rotation carries the new plaintext as an argument, so it would reach model context and the transcript before any approval could run. Available on REST, the SDK and the CLI. The metadata reads (list_secrets, get_secret) are in the catalog.",
+  // SERVER ACCOUNT WRITES. The upload on create_secret's argument: the token
+  // is an input. The update because the default decides which account runs
+  // with no saved account choice sign in as, which is not an unattended
+  // caller's choice.
+  upload_server_account_tokens:
+    "The access token is an argument, so it would transit model context and be written into chat transcripts before any approval could run. Available on REST, the SDK and the CLI, where the caller controls where the token comes from. The reads (list_server_accounts, get_server_account) are in the catalog.",
+  update_server_account:
+    "Making an account the default decides which account runs with no saved account choice sign in as, and a rename changes which account a name addresses. Available on REST, the SDK and the CLI, for a person who means it.",
   // TRACE DESTINATIONS. The two credential writes are excluded on exactly the
   // `create_secret` argument above: the vendor headers are arguments, so they
   // would transit model context and be written into chat transcripts before
@@ -813,6 +851,10 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
  *   stored verdicts or analysis.
  * - `upsert_study_member`: re-inviting clears `revokedAt`, so it can restore
  *   access someone revoked.
+ * - `run_eval_suite`: `refreshSnapshot` replaces the suite's saved snapshot,
+ *   and the run can invoke third-party tools with destructive effects.
+ * - `run_eval_case` and `launch_goal_run`: their agents can invoke the same
+ *   third-party write tools, even though the run records themselves are new.
  */
 const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "create_project",
@@ -822,8 +864,6 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "create_eval_cases",
   "generate_eval_cases",
   "import_eval_cases",
-  "run_eval_case",
-  "run_eval_suite",
   "backtest_eval_run",
   "backtest_eval_run_judge",
   "ensure_adhoc_environment",
@@ -831,13 +871,14 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "generate_personas",
   "create_goal",
   "generate_goals",
-  "launch_goal_run",
   "create_swarm",
   // Each call mints a new study with its own share link; a taken name is
   // refused rather than overwritten.
   "publish_study",
   "create_client",
   "duplicate_client",
+  // A new rehearsal; a replayed key returns the one it made.
+  "create_directory_submission",
   "send_feedback",
 ]);
 
@@ -883,28 +924,6 @@ const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
   // mutation is a no-op on an archived row; a repeat answered
   // `{archived: true}` on production.
   "archive_goal",
-]);
-
-/**
- * Writes whose effect reaches people OUTSIDE the caller's organization.
- *
- * `openWorldHint: true` is how MCP says a tool interacts with an open world
- * rather than a closed domain, and sending text to the MCPJam team is exactly
- * that: the report leaves the organization the caller is working in. Clients
- * that gate or label such tools read this.
- *
- * Its own list, deliberately not derived from `risk: "exposure"`: the other
- * exposure operations (the secret writes) move data WITHIN the organization's
- * own project and have not been evaluated for this claim. Opt-in, one name at
- * a time, like `IDEMPOTENT_WRITE_NAMES`.
- *
- * MCP defaults an absent `openWorldHint` to true, so leaving it off the other
- * tools claims nothing about them either way. Marking any of them `false` needs
- * its own review: several reach the caller's MCP servers, model providers or
- * GitHub, which is open-world.
- */
-const EXTERNAL_COMMUNICATION_NAMES: ReadonlySet<string> = new Set([
-  sendFeedbackOperation.name,
 ]);
 
 /**
@@ -1085,7 +1104,11 @@ function behaviorAnnotations(
   operation: PlatformOperation<unknown, unknown>
 ): ToolAnnotations {
   if (operation.readOnly) {
-    return { readOnlyHint: true };
+    return {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: !isClosedWorldOperation(operation.name),
+    };
   }
   // `mayBeDestructive` operations (call_server_tool, send_chat_message) run
   // the caller's own third-party tools, whose effects nobody upstream can
@@ -1099,9 +1122,7 @@ function behaviorAnnotations(
     readOnlyHint: false,
     destructiveHint: !additive,
     idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
-    ...(EXTERNAL_COMMUNICATION_NAMES.has(operation.name)
-      ? { openWorldHint: true }
-      : {}),
+    openWorldHint: !isClosedWorldOperation(operation.name),
   };
 }
 
@@ -1135,10 +1156,14 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
   // first tool execution), never at connect/list_tools.
-  const token = await context.getBearerToken();
-  if (!token) {
-    return toolError("No bearer token on the request.");
+  const bearer = await context.getBearerToken();
+  if (!bearer.ok) {
+    return toolError(
+      describeGuestMintFailure(bearer.failure),
+      guestMintErrorContent(bearer.failure)
+    );
   }
+  const token = bearer.token;
 
   const client = new PlatformApiClient({
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,
@@ -1210,6 +1235,21 @@ function errorStructuredContent(
     // server envelope — so an agent can wait instead of looping or suggesting
     // a top-up that cannot lift it.
     const refusal = describePlatformRefusal(error);
+    // A feature-gate refusal keeps its own code and the feature it names, so
+    // an agent can tell FEATURE_UNAVAILABLE for one beta from any other 403.
+    // Only these two keys: the rest of `details` is the server's envelope.
+    const feature =
+      typeof error.details?.feature === "string"
+        ? error.details.feature
+        : undefined;
+    const detailCode = error.details?.code;
+    const details =
+      feature !== undefined || detailCode === "FEATURE_UNAVAILABLE"
+        ? {
+            ...(typeof detailCode === "string" ? { code: detailCode } : {}),
+            ...(feature !== undefined ? { feature } : {}),
+          }
+        : {};
     return {
       error: {
         code: error.code,
@@ -1218,6 +1258,7 @@ function errorStructuredContent(
         // to the server's logs. Only responses carry one.
         ...(error.requestId ? { requestId: error.requestId } : {}),
         ...(refusal ? { refusal } : {}),
+        ...(Object.keys(details).length > 0 ? { details } : {}),
       },
     };
   }

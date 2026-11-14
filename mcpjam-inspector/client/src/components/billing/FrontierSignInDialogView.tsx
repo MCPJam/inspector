@@ -1,4 +1,5 @@
 import { JamIllustration } from "./JamIllustration";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -69,6 +70,7 @@ export function FrontierSignInDialogView({
             Not now
           </Button>
         </div>
+        <LegalConsentNotice />
       </DialogContent>
     </Dialog>
   );

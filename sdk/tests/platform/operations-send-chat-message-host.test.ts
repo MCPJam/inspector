@@ -131,3 +131,19 @@ describe("send_chat_message host targeting", () => {
     expect(bodyOf(fetchMock)).not.toHaveProperty("hostId");
   });
 });
+
+it("sends an explicit empty target without requiring a first-turn model", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(jsonResponse(TURN_RESULT));
+  const parsed = sendChatMessageOperation.inputSchema.parse({
+    projectId: "project",
+    idempotencyKey: "empty",
+    message: "hi",
+    serverIds: [],
+  });
+  await sendChatMessageOperation.execute(parsed, {
+    client: makeClient(fetchMock),
+    onScopeResolved: () => {},
+  } as never);
+  expect(bodyOf(fetchMock).serverIds).toEqual([]);
+  expect(bodyOf(fetchMock)).not.toHaveProperty("modelId");
+});

@@ -14,6 +14,7 @@ import {
   RequestUpgradeButton,
   type UpgradeRequestRecipient,
 } from "@/components/billing/RequestUpgradeButton";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 export interface PlanLimitDialogViewProps {
   title: string;
@@ -111,20 +112,23 @@ export function PlanLimitDialogView({
           </DialogDescription>
         </DialogHeader>
         {showUpgrade ? (
-          <UpgradeIntervalPicker
-            priceUnit={priceUnit}
-            interval={interval}
-            onIntervalChange={onIntervalChange}
-            annualPriceLabel={annualPriceLabel}
-            monthlyPriceLabel={monthlyPriceLabel}
-            annualDiscountPct={annualDiscountPct}
-            annualSupported={annualSupported}
-            monthlySupported={monthlySupported}
-            teamName={teamName}
-            isStarting={isStarting}
-            isLoadingPrices={isLoadingPrices}
-            onUpgrade={onUpgrade}
-          />
+          <>
+            <UpgradeIntervalPicker
+              priceUnit={priceUnit}
+              interval={interval}
+              onIntervalChange={onIntervalChange}
+              annualPriceLabel={annualPriceLabel}
+              monthlyPriceLabel={monthlyPriceLabel}
+              annualDiscountPct={annualDiscountPct}
+              annualSupported={annualSupported}
+              monthlySupported={monthlySupported}
+              teamName={teamName}
+              isStarting={isStarting}
+              isLoadingPrices={isLoadingPrices}
+              onUpgrade={onUpgrade}
+            />
+            <LegalConsentNotice />
+          </>
         ) : null}
         {showEnterprise ? (
           <DialogFooter>

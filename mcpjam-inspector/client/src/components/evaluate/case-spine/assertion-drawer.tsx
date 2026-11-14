@@ -33,6 +33,8 @@ export function EvalAddDrawer({
   wholeRunOnly = false,
   allowWidgetChecks = true,
   onOutcomeFocus,
+  onPromptFocus,
+  allowRouteChecks = false,
 }: {
   onSelect: (choice: EvalAddChoice) => void;
   authorableKinds?: readonly PredicateKind[];
@@ -43,10 +45,13 @@ export function EvalAddDrawer({
   wholeRunOnly?: boolean;
   allowWidgetChecks?: boolean;
   onOutcomeFocus?: () => void;
+  onPromptFocus?: () => void;
+  allowRouteChecks?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const outcomeSelected = useRef(false);
+  const promptSelected = useRef(false);
   const monitors = useFeatureFlagEnabled("synthetic-monitors");
   const reason = (item: EvalAddEntry) => {
     if (item.choice.kind !== "check") return undefined;
@@ -56,6 +61,7 @@ export function EvalAddDrawer({
     return undefined;
   };
   const entries = EVAL_ADD_CATALOG.filter((item) => {
+    if (item.choice.kind === "route-check" && !allowRouteChecks) return false;
     if (
       wholeRunOnly &&
       item.choice.kind !== "check" &&
@@ -100,6 +106,10 @@ export function EvalAddDrawer({
             event.preventDefault();
             outcomeSelected.current = false;
             onOutcomeFocus?.();
+          } else if (promptSelected.current && onPromptFocus) {
+            event.preventDefault();
+            promptSelected.current = false;
+            onPromptFocus();
           }
         }}
       >
@@ -147,13 +157,16 @@ export function EvalAddDrawer({
                           onClick={() => {
                             outcomeSelected.current =
                               item.choice.kind === "outcome";
+                            promptSelected.current =
+                              item.choice.kind === "step" &&
+                              item.choice.stepKind === "prompt";
                             setOpen(false);
                             if (!outcomeSelected.current) onSelect(item.choice);
                           }}
                           className="flex w-full items-start gap-3 rounded-md px-2 py-2 text-left hover:bg-accent focus-visible:outline-ring disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <item.Icon
-                            className={`mt-0.5 size-4 shrink-0 ${item.choice.kind === "step" ? "text-destructive" : "text-success"}`}
+                            className={`mt-0.5 size-4 shrink-0 ${item.choice.kind === "step" ? "text-info" : "text-success"}`}
                             aria-hidden
                           />
                           <span className="min-w-0 flex-1">
@@ -165,7 +178,7 @@ export function EvalAddDrawer({
                                 (item.scope === "outcome"
                                   ? "Edit the existing expected outcome"
                                   : item.choice.kind === "step"
-                                    ? "Add an action to the sequence"
+                                    ? "After an action"
                                     : item.choice.kind === "widget-check"
                                       ? "Check the live view at this point"
                                       : wholeRunOnly ||

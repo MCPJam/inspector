@@ -6,6 +6,11 @@ import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
   useQuery: vi.fn(),

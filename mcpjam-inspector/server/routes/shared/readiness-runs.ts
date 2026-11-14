@@ -22,10 +22,17 @@
  */
 
 import type { ConvexHttpClient } from "convex/browser";
-import type { OpenAISubmissionMode } from "@mcpjam/sdk";
+import type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthProbeConfig,
+  OpenAISubmissionMode,
+} from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
-import { executeHostedReadinessRun } from "../../services/readiness/worker.js";
+import {
+  executeHostedReadinessRun,
+  type ExecuteHostedReadinessOptions,
+} from "../../services/readiness/worker.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 
@@ -73,6 +80,21 @@ export interface StartHostedReadinessRunInput {
   idempotencyKey?: string;
   /** The one field that can SPEND. Defaults off at every call site. */
   includeLlmObservations: boolean;
+  /**
+   * Arm the lazy-auth probe: at most two calls to read-only tools, made with
+   * NO credentials. Separate from intrusive probes, which hosted runs refuse:
+   * this one holds no credential and spends nothing. Absent means no tool is
+   * called at all.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /** Features the submitter claims. Reported as claimed, never as verified. */
+  claimedFeatures?: DirectoryFeatureClaim[];
+  /**
+   * The directory submission this run grades. The backend checks it belongs
+   * to this project, server and directory, and freezes its answers with the
+   * run; the worker grades that frozen copy.
+   */
+  submissionId?: string;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -162,6 +184,17 @@ export async function startHostedReadinessRun(
           : {}),
         includeLlmObservations: input.includeLlmObservations,
         authMode: config.useOAuth ? "provided-token" : "headless",
+        // ONLY WHEN PROVIDED. The mutation validates its args strictly, so a
+        // start that asked for neither sends exactly the args it always has,
+        // and a version-skewed deployment never sees a key it cannot accept.
+        ...(input.lazyAuthProbe !== undefined
+          ? { lazyAuthProbe: input.lazyAuthProbe }
+          : {}),
+        ...(input.claimedFeatures !== undefined &&
+        input.claimedFeatures.length > 0
+          ? { claimedFeatures: input.claimedFeatures }
+          : {}),
+        ...(input.submissionId ? { submissionId: input.submissionId } : {}),
       },
     );
   } catch (error) {
@@ -189,46 +222,27 @@ export async function startHostedReadinessRun(
       // Deliberately swallowed — see above.
     }
   } else {
-    const headers: Record<string, string> = { ...(config.headers ?? {}) };
-    if (input.authorized.oauthAccessToken) {
-      headers.authorization = `Bearer ${input.authorized.oauthAccessToken}`;
-    }
-
-    void executeHostedReadinessRun({
-      lease: { runId: created.runId, jobId: created.jobId },
-      publisher: input.publisher,
-      target,
-      submissionMode: input.submissionMode,
-      headers: Object.keys(headers).length > 0 ? headers : undefined,
-      // The DNS-pinned transport: resolve once, refuse the disallowed answers,
-      // pin the surviving addresses into the socket, re-run it on every hop.
-      // A readiness run follows redirects by design, so a check performed only
-      // on the first URL would be a check on the least interesting hop.
-      fetchFn: createStreamingPinnedFetch({
-        targetLabel: "MCP server",
-        chainTimeoutMs: 30_000,
-        bodyIdleTimeoutMs: 120_000,
-        maxResponseBytes: 32 * 1024 * 1024,
-      }),
-      includeLlmObservations: input.includeLlmObservations,
-      analyticsActor: input.analyticsActor,
-    }).catch((error) => {
-      // `executeHostedReadinessRun` never throws — every exit lands the run
-      // somewhere terminal. This catch exists for the impossible case, so an
-      // unhandled rejection cannot take the process with it.
-      reportRouteFailure(
-        "[readiness] detached hosted run escaped its own handler",
-        error,
-        {
-          source: "readiness.hosted_run",
-          // OUR bug, not the graded server's: the worker contracts never to
-          // throw, so reaching this means the contract broke rather than that
-          // somebody's MCP server misbehaved.
-          hop: "mcpjam_internal",
-          context: { runId: created.runId },
-        },
-      );
-    });
+    executeHostedReadinessRunDetached(
+      {
+        lease: { runId: created.runId, jobId: created.jobId },
+        publisher: input.publisher,
+        target,
+        submissionMode: input.submissionMode,
+        includeLlmObservations: input.includeLlmObservations,
+        // The probe is built from the target and the pinned transport alone;
+        // it never receives `mcpHeaders`, so the saved credential stays on the
+        // authenticated dial.
+        ...(input.lazyAuthProbe !== undefined
+          ? { lazyAuthProbe: input.lazyAuthProbe }
+          : {}),
+        ...(input.claimedFeatures !== undefined
+          ? { claimedFeatures: input.claimedFeatures }
+          : {}),
+        ...(input.submissionId ? { submissionId: input.submissionId } : {}),
+        analyticsActor: input.analyticsActor,
+      },
+      input.authorized,
+    );
   }
 
   return {
@@ -240,6 +254,56 @@ export async function startHostedReadinessRun(
     deduped: created.reused,
     includeLlmObservations: input.includeLlmObservations,
   };
+}
+
+/**
+ * Execute a run in this process, detached, on a lease this node holds, with
+ * the credentials of the authorize exchange that let it start or resume.
+ */
+export function executeHostedReadinessRunDetached(
+  run: Omit<ExecuteHostedReadinessOptions, "mcpHeaders" | "fetchFn">,
+  authorized: AuthorizedReadinessServer,
+): void {
+  const headers: Record<string, string> = {
+    ...(authorized.serverConfig.headers ?? {}),
+  };
+  if (authorized.oauthAccessToken) {
+    headers.authorization = `Bearer ${authorized.oauthAccessToken}`;
+  }
+
+  void executeHostedReadinessRun({
+    ...run,
+    // The saved credential goes only on MCP requests to the endpoint. The
+    // SDK keeps it off discovery, including authorization-server metadata
+    // on an origin the server chooses.
+    mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
+    // The DNS-pinned transport: resolve once, refuse the disallowed answers,
+    // pin the surviving addresses into the socket, re-run it on every hop.
+    // A readiness run follows redirects by design, so a check performed only
+    // on the first URL would be a check on the least interesting hop.
+    fetchFn: createStreamingPinnedFetch({
+      targetLabel: "MCP server",
+      chainTimeoutMs: 30_000,
+      bodyIdleTimeoutMs: 120_000,
+      maxResponseBytes: 32 * 1024 * 1024,
+    }),
+  }).catch((error) => {
+    // `executeHostedReadinessRun` never throws — every exit lands the run
+    // somewhere terminal. This catch exists for the impossible case, so an
+    // unhandled rejection cannot take the process with it.
+    reportRouteFailure(
+      "[readiness] detached hosted run escaped its own handler",
+      error,
+      {
+        source: "readiness.hosted_run",
+        // OUR bug, not the graded server's: the worker contracts never to
+        // throw, so reaching this means the contract broke rather than that
+        // somebody's MCP server misbehaved.
+        hop: "mcpjam_internal",
+        context: { runId: run.lease.runId },
+      },
+    );
+  });
 }
 
 /**
@@ -269,6 +333,10 @@ export function toReadinessRunDto(
     authMode: run.authMode ?? null,
     capabilities: run.capabilities ?? [],
     attemptCount: run.attemptCount,
+    // Re-queued after its node stopped, and waiting for its requester: only a
+    // request with their credentials can run it again (`.../resume`). A
+    // backend that does not report it reads as false.
+    resumable: run.status === "pending" && run.resumable === true,
     terminalReason: run.terminalReason ?? null,
     errorMessage: run.errorMessage ?? null,
     policySnapshotDate: run.policySnapshotDate ?? null,
@@ -285,6 +353,8 @@ export function toReadinessRunDto(
     hasReport,
     reportUrl:
       hasReport && options.reportUrl ? options.reportUrl(run.id) : null,
+    submissionId: run.submissionId ?? null,
+    submissionRevision: run.submissionRevision ?? null,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };

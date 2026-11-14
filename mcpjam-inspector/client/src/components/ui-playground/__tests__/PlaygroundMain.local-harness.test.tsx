@@ -65,7 +65,8 @@ const mockLocalHarness = vi.hoisted(() => ({
 const localControllerArgs = vi.hoisted(() => ({
   last: null as { harnessId?: string | null } | null,
 }));
-vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+vi.mock("@/hooks/useLocalHarnessTarget", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useLocalHarnessTarget")>(),
   useLocalHarnessController: (args: { harnessId?: string | null }) => {
     localControllerArgs.last = args;
     return mockLocalHarness.state;
@@ -155,10 +156,6 @@ vi.mock("lucide-react", async (importOriginal) => ({
   ArrowLeft: () => <span data-testid="icon-arrow-left" />,
   Code2: () => <span data-testid="icon-code2" />,
   MessageSquare: () => <span data-testid="icon-message-square" />,
-  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
-  // header `leading` slot)
-  Server: () => <span data-testid="icon-server" />,
-  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components
@@ -305,6 +302,7 @@ vi.mock("@/hooks/useViews", () => ({
 }));
 
 vi.mock("@/lib/apis/web/chat-history-api", () => ({
+  getChatHistoryState: (...args: unknown[]) => mockGetChatHistoryDetail(...args),
   getChatHistoryDetail: (...args: unknown[]) =>
     mockGetChatHistoryDetail(...args),
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
@@ -344,6 +342,11 @@ const mockUseChatSession = {
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
   setMultiModelEnabled: vi.fn(),
+  // The root session's catalog before its harness filter; the mock has no
+  // filter, so it is the same list (and follows per-test overrides).
+  get catalogModels() {
+    return this.availableModels;
+  },
   availableModels: [],
   isAuthLoading: false,
   systemPrompt: "",
@@ -1110,6 +1113,20 @@ describe("PlaygroundMain — local Claude Code", () => {
       };
       expect(props.submitDisabled).toBeFalsy();
     });
+
+    it.each(["needs-consent", "needs-workspace"])(
+      "keeps the draft and starts no cloud turn when local setup is %s",
+      async (phase) => {
+        mockLocalHarness.state.requestedTarget = "hosted";
+        mockLocalHarness.state.phase = phase;
+        render(<PlaygroundMain {...defaultProps} />);
+        type("keep this draft");
+        await submit();
+        expect(ensureReadyMock).not.toHaveBeenCalled();
+        expect(screen.getByRole("textbox")).toHaveValue("keep this draft");
+        expect(mockLocalHarness.state.resolveSendTarget).not.toHaveBeenCalled();
+      },
+    );
 
     it("IS disabled while setup is running", () => {
       mockLocalHarness.state.phase = "installing";

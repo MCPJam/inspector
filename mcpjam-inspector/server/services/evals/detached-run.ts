@@ -1,7 +1,8 @@
 import { logger } from "../../utils/logger.js";
 import { createConvexClient } from "./route-helpers.js";
-import { TERMINAL_RUN_STATUSES } from "./run-status.js";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { shouldSkipExecution } from "../../routes/shared/evals.js";
+import { serverDrain } from "../lifecycle/drain.js";
 
 type DetachableEvalRun = {
   suiteId: string;
@@ -26,6 +27,13 @@ type DetachableEvalRun = {
   status?: string;
 };
 
+/**
+ * Whether the run record already reached a terminal status. Used by the
+ * detached-execution catch: `runEvalSuiteWithAiSdk` finalizes a failed run
+ * itself before rethrowing, so a rejected `execute()` usually means the
+ * terminal write already happened — re-finalizing would restamp
+ * `completedAt` and overwrite the runner's notes.
+ */
 async function isRunAlreadyTerminal(
   convexAuthToken: string,
   runId: string,
@@ -35,8 +43,11 @@ async function isRunAlreadyTerminal(
       "testSuites:getTestSuiteRun" as any,
       { runId },
     );
-    return TERMINAL_RUN_STATUSES.has(String(run?.status));
+    return isEvalRunTerminalStatus(run?.status);
   } catch {
+    // Can't tell — let the defensive finalize proceed. recorder.finalize
+    // tolerates deleted/unauthorized runs, so the worst case is the
+    // duplicate terminal write we'd have done unconditionally before.
     return false;
   }
 }
@@ -56,10 +67,8 @@ export function detachPreparedEvalRun(args: {
 }) {
   const { prepared, convexAuthToken, logPrefix, logContext, cleanup } = args;
 
-  // A REPLAY of a finished run has nothing to execute. Running it would repeat
-  // every case and bill for it, over results that are already final — the
-  // double-spend an idempotency key is sent to prevent. Guarded here rather
-  // than at each call site so every surface that detaches a run inherits it.
+  // An idempotent replay belongs to its original executor. Every detached
+  // surface shares this guard so retries cannot run or bill the same trials twice.
   if (shouldSkipExecution(prepared)) {
     logger.info(`${logPrefix} idempotent replay — not re-executing`, {
       ...logContext,
@@ -71,7 +80,7 @@ export function detachPreparedEvalRun(args: {
     return;
   }
 
-  void Promise.resolve()
+  const background = Promise.resolve()
     .then(() => prepared.execute())
     .catch(async (error) => {
       logger.error(`${logPrefix} background eval run failed`, error, {
@@ -120,4 +129,6 @@ export function detachPreparedEvalRun(args: {
           });
         });
     });
+  // A shutdown drains the run before it closes the connections it runs on.
+  void serverDrain.track("eval_run", background);
 }

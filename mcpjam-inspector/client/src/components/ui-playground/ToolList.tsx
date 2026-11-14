@@ -5,8 +5,7 @@
  *   - Server tools (passed in via `tools` prop)
  */
 
-import { useMemo } from "react";
-import { useShallow } from "zustand/react/shallow";
+import { useMemo, type ReactNode } from "react";
 import { Plug, RefreshCw } from "lucide-react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { Button } from "@mcpjam/design-system/button";
@@ -22,7 +21,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import { AppToolsSection } from "@/components/playground/AppToolsSection";
+import type { AppPaneGroup } from "@/components/playground/app-pane-tools";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
 import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection";
 import { ToolSourceHeader } from "@/components/playground/ToolSourceHeader";
@@ -30,15 +30,11 @@ import { WEBMCP_TOOL_NAME_PREFIX } from "@/shared/declared-tools";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 
-interface AppEntry {
-  alias: string;
-  rawName: string;
-  appName: string;
-  description?: string;
-  readOnly: boolean;
-}
-
 interface ToolListProps {
+  appGroups?: AppPaneGroup[];
+  selectedAppKey?: string | null;
+  onSelectApp?: (key: string) => void;
+  previewedHarnessId?: string | null;
   tools: Record<string, Tool>;
   toolNames: string[];
   filteredToolNames: string[];
@@ -75,9 +71,14 @@ interface ToolListProps {
    * it and the empty state keeps navigating to Servers.
    */
   onAddServerRequested?: () => void;
+  connectServerControl?: ReactNode;
 }
 
 export function ToolList({
+  appGroups = [],
+  selectedAppKey,
+  onSelectApp,
+  previewedHarnessId,
   tools,
   toolNames,
   filteredToolNames,
@@ -96,53 +97,24 @@ export function ToolList({
   onSelectBrowser,
   hasConnectedServer = true,
   onAddServerRequested,
+  connectServerControl,
 }: ToolListProps) {
   const navigate = useAppNavigate();
-  // App-provided tools are widget-lifecycle. Pull them out of the registry
-  // as a flat list of `AppEntry`. `useShallow` keeps the selector stable
-  // across renders that didn't actually change the array.
-  const { aliases, instancesByBridgeId } = useAppToolsRegistry(
-    useShallow((s) => ({
-      aliases: s.aliases,
-      instancesByBridgeId: s.instancesByBridgeId,
-    })),
-  );
-  const appEntries = useMemo<AppEntry[]>(() => {
-    const aliasByBridgeAndName = new Map<string, string>();
-    for (const [alias, info] of aliases.entries()) {
-      aliasByBridgeAndName.set(`${info.bridgeId}\0${info.rawName}`, alias);
-    }
-    const out: AppEntry[] = [];
-    for (const inst of instancesByBridgeId.values()) {
-      for (const tool of inst.tools) {
-        const alias = aliasByBridgeAndName.get(
-          `${inst.bridgeId}\0${tool.name}`,
-        );
-        if (!alias) continue;
-        out.push({
-          alias,
-          rawName: tool.name,
-          appName: inst.appName,
-          description: tool.description,
-          readOnly: tool.annotations?.readOnlyHint === true,
-        });
-      }
-    }
-    return out;
-  }, [aliases, instancesByBridgeId]);
-
-  // Apply the same search box to app entries (server entries are already
-  // filtered upstream into `filteredToolNames`).
-  const filteredAppEntries = useMemo(() => {
-    if (!searchQuery.trim()) return appEntries;
-    const q = searchQuery.toLowerCase();
-    return appEntries.filter(
-      (e) =>
-        e.rawName.toLowerCase().includes(q) ||
-        (e.description ?? "").toLowerCase().includes(q) ||
-        e.appName.toLowerCase().includes(q),
-    );
-  }, [appEntries, searchQuery]);
+  const appToolCount = onSelectApp
+    ? appGroups.reduce((count, group) => count + group.tools.length, 0)
+    : 0;
+  const filteredAppToolCount = onSelectApp
+    ? appGroups.reduce(
+        (count, group) =>
+          count +
+          group.tools.filter((tool) =>
+            `${group.appName} ${group.serverId} ${tool.rawName} ${tool.description ?? ""}`
+              .toLowerCase()
+              .includes(searchQuery.trim().toLowerCase()),
+          ).length,
+        0,
+      )
+    : 0;
 
   // Built-in (harness-native) tools filter against the same search box; the
   // section component owns the actual filtering, so we only need a count here
@@ -192,7 +164,7 @@ export function ToolList({
   const totalShown =
     browserConsentShown +
     filteredToolNames.length +
-    filteredAppEntries.length +
+    filteredAppToolCount +
     filteredBuiltinCount +
     filteredBrowserCount +
     filteredPageCount;
@@ -204,7 +176,7 @@ export function ToolList({
   // reachable — and a browser-only host is exactly that pairing).
   const hasNoTools =
     toolNames.length === 0 &&
-    appEntries.length === 0 &&
+    appToolCount === 0 &&
     builtinTools.length === 0 &&
     (browserTools?.tools.length ?? 0) === 0 &&
     !browserTools?.localConsent &&
@@ -223,7 +195,7 @@ export function ToolList({
 
       {/* Tool List */}
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
-        {fetchingTools ? (
+        {fetchingTools && appToolCount === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <RefreshCw className="h-5 w-5 text-muted-foreground animate-spin mb-2" />
             <p className="text-xs text-muted-foreground">Loading tools...</p>
@@ -237,22 +209,24 @@ export function ToolList({
                   ? "No tools found. Try refreshing and make sure the server is running."
                   : "No server connected yet. Connect one to load its tools and use them in chat."}
             </p>
-            {hasNoTools && !hasConnectedServer && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (onAddServerRequested) {
-                    onAddServerRequested();
-                    return;
-                  }
-                  navigate(routePaths.servers);
-                }}
-              >
-                <Plug className="h-3.5 w-3.5" />
-                Connect a server
-              </Button>
-            )}
+            {hasNoTools &&
+              !hasConnectedServer &&
+              (connectServerControl ?? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (onAddServerRequested) {
+                      onAddServerRequested();
+                      return;
+                    }
+                    navigate(routePaths.servers);
+                  }}
+                >
+                  <Plug className="h-3.5 w-3.5" />
+                  Connect a server
+                </Button>
+              ))}
           </div>
         ) : (
           <div className="space-y-3">
@@ -268,7 +242,16 @@ export function ToolList({
                 onRetryCatalog={browserTools.refreshPage}
               />
             ) : null}
-            {filteredToolNames.length > 0 || filteredAppEntries.length > 0 ? (
+            {onSelectApp ? (
+              <AppToolsSection
+                groups={appGroups}
+                searchQuery={searchQuery}
+                selectedKey={selectedAppKey}
+                onSelect={onSelectApp}
+                previewedHarnessId={previewedHarnessId}
+              />
+            ) : null}
+            {filteredToolNames.length > 0 ? (
               <ToolSourceHeader title="Servers">
                 <div className="space-y-0.5">
                   {filteredToolNames.map((name) => {
@@ -353,51 +336,6 @@ export function ToolList({
                             title={`SEP-1865 visibility: ${visibilityLabel}`}
                           >
                             visibility: {visibilityLabel}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                  {filteredAppEntries.map((entry) => {
-                    const isSelected = selectedToolName === entry.alias;
-                    return (
-                      <button
-                        key={entry.alias}
-                        onClick={() => {
-                          if (isSelected) {
-                            onCollapseList();
-                          } else {
-                            onSelectTool(entry.alias);
-                          }
-                        }}
-                        className={`w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 ${
-                          isSelected
-                            ? "cursor-pointer bg-primary/10"
-                            : "cursor-pointer hover:bg-muted/50"
-                        }`}
-                      >
-                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                          <code className="text-xs font-mono font-medium truncate">
-                            {entry.rawName}
-                          </code>
-                          <span
-                            className="font-mono text-[10px] bg-accent text-accent-foreground px-1.5 py-[1px] rounded"
-                            title={`App-provided by ${entry.appName} (alias: ${entry.alias})`}
-                          >
-                            from {entry.appName}
-                          </span>
-                        </div>
-                        {entry.description && (
-                          <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
-                            {entry.description}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-1.5 mt-2">
-                          <span
-                            className="font-mono text-[10px] text-muted-foreground"
-                            title="SEP-1865 app-provided tool"
-                          >
-                            readOnly: {entry.readOnly ? "true" : "false"}
                           </span>
                         </div>
                       </button>

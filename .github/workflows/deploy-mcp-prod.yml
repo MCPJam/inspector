@@ -40,6 +40,13 @@ on:
         description: "Why the eval gate is being skipped"
         required: false
         type: string
+      # Soundcheck dispatches as its token's owner, so the Slack post would
+      # name them rather than the person who clicked.
+      requested_by:
+        description: "Set by Soundcheck: who started this deploy"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -54,7 +61,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
   # Resolved once here so the environment URL, smoke test, and job
   # summary all point at the same target. Falls back to the known
   # production hostname when the override var is unset — hardcoded in
@@ -227,6 +234,51 @@ jobs:
       url: ${{ env.PRODUCTION_URL }}
 
     steps:
+      # Posts to #engineering once the reviewer has approved, so a run stopped
+      # by staging, the eval gate or the reviewer posts nothing. The result
+      # replies in its thread after the smoke test. A Slack problem never
+      # fails the deploy.
+      - name: Announce the deploy in Slack
+        id: announce
+        continue-on-error: true
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOYS_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ vars.SLACK_DEPLOYS_CHANNEL || 'C0BF4A8A1QQ' }}
+          REQUESTED_BY: ${{ inputs.requested_by }}
+          SKIPPED_GATE: ${{ inputs.skip_eval_gate }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          echo "at=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+          if [ -z "${SLACK_BOT_TOKEN:-}" ]; then
+            echo "::warning::SLACK_DEPLOYS_BOT_TOKEN is not set, so this deploy was not announced."
+            exit 0
+          fi
+          who="by $GITHUB_TRIGGERING_ACTOR"
+          if [ -n "${REQUESTED_BY:-}" ]; then who="by $REQUESTED_BY"; fi
+          gate=""
+          if [ "$SKIPPED_GATE" = true ]; then gate=" · ⚠️ eval gate skipped"; fi
+          # The commit, not a commit count: most commits since the last MCP
+          # deploy never touch the worker.
+          commit="<$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA|${GITHUB_SHA:0:9}>"
+          text="🚀 *MCP server deploy* · started $who · $commit$gate · <$RUN_URL|run>"
+          # The Web API, not a webhook: a webhook can't reply in a thread. The
+          # token goes through a header file (mktemp: mode 0600), never a command
+          # line. Slack answers 200 even on an error, so `ok` is checked, and `ts`
+          # is the thread the finish line replies in.
+          auth="$(mktemp)"
+          trap 'rm -f "$auth"' EXIT
+          printf 'Authorization: Bearer %s\n' "$SLACK_BOT_TOKEN" > "$auth"
+          resp="$(jq -n --arg channel "$SLACK_CHANNEL" --arg text "$text" \
+              '{channel: $channel, text: $text, unfurl_links: false}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST https://slack.com/api/chat.postMessage \
+                -H @"$auth" -H 'Content-Type: application/json; charset=utf-8' -d @-)" || exit 1
+          if [ "$(jq -r .ok <<< "$resp")" != true ]; then
+            echo "::warning::Slack refused the post: $(jq -r .error <<< "$resp")"
+            exit 1
+          fi
+          echo "slack_ts=$(jq -r .ts <<< "$resp")" >> "$GITHUB_OUTPUT"
+
       - name: Require Cloudflare credentials
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -293,3 +345,41 @@ jobs:
           echo "- Worker: \`mcpjam-mcp-production\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: \`$PRODUCTION_URL\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- MCP endpoint: \`$PRODUCTION_URL/mcp\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # Last, so "done" means the smoke test passed too.
+      - name: Announce the result in Slack
+        if: always() && steps.announce.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOYS_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ vars.SLACK_DEPLOYS_CHANNEL || 'C0BF4A8A1QQ' }}
+          SLACK_TS: ${{ steps.announce.outputs.slack_ts }}
+          STARTED: ${{ steps.announce.outputs.at }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          [ -n "${SLACK_BOT_TOKEN:-}" ] || exit 0
+          mins=$(( ( $(date -u +%s) - ${STARTED:-$(date -u +%s)} ) / 60 ))
+          case "$STATUS" in
+            success) text="✅ *MCP server deploy* done, smoke check passed (${mins}m) · <$RUN_URL|run>" ;;
+            cancelled) text="⚪ *MCP server deploy* cancelled (${mins}m) · <$RUN_URL|run>" ;;
+            *) text="❌ *MCP server deploy* failed (${mins}m) · <$RUN_URL|run>" ;;
+          esac
+          # Replies in the start line's thread, or on its own if that line never
+          # went out. Anything but a success is also sent to the channel.
+          broadcast=true
+          case "$text" in "✅"*) broadcast=false ;; esac
+          auth="$(mktemp)"
+          trap 'rm -f "$auth"' EXIT
+          printf 'Authorization: Bearer %s\n' "$SLACK_BOT_TOKEN" > "$auth"
+          resp="$(jq -n --arg channel "$SLACK_CHANNEL" --arg text "$text" --arg ts "${SLACK_TS:-}" \
+              --argjson broadcast "$broadcast" \
+              '{channel: $channel, text: $text, unfurl_links: false}
+               + (if $ts == "" then {} else {thread_ts: $ts, reply_broadcast: $broadcast} end)' \
+            | curl -fsS --max-time 20 --retry 2 -X POST https://slack.com/api/chat.postMessage \
+                -H @"$auth" -H 'Content-Type: application/json; charset=utf-8' -d @-)" || exit 1
+          if [ "$(jq -r .ok <<< "$resp")" != true ]; then
+            echo "::warning::Slack refused the post: $(jq -r .error <<< "$resp")"
+            exit 1
+          fi

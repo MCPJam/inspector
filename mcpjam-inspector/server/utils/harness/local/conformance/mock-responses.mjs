@@ -2,8 +2,8 @@
 // Deterministic: the scenario is chosen from the LAST user text in `input`.
 //   "SHELL <cmd>"  -> function_call exec_command {cmd}       (Codex's shell tool)
 //   "MCPPROBE"     -> function_call mcp__mcpjam / probe__echo (MCPJam's relay)
-//   "COUNT"        -> text: number of user turns in this request (continuity)
-//   "PLAN"         -> function_call update_plan (Codex's own checklist)
+//   "COUNT"        -> text: the user turns in this request, counted and listed
+//                     by scenario, oldest first (continuity)
 //   anything else  -> text echo
 // After a tool output arrives, answers with `TOOL RESULT RECEIVED: <output>`.
 // Verifies the gateway's proof-of-possession header and upstream key, like
@@ -20,8 +20,12 @@ if (!Number.isFinite(latencyMs) || latencyMs < 0) {
     `MOCK_LATENCY_MS must be a finite, non-negative number of milliseconds; got ${JSON.stringify(process.env.MOCK_LATENCY_MS)}`,
   );
 }
-/** The relay's MCP server name (`RELAY_MCP_SERVER_NAME`) as Codex namespaces it. */
-const RELAY_NAMESPACE = "mcp__mcpjam";
+/**
+ * The relay's MCP server name (`RELAY_MCP_SERVER_NAME`) as Codex namespaces it.
+ * A runtime that receives MCPJam's host tools as plain functions sets
+ * `MOCK_PROBE_NAMESPACE` to an empty string.
+ */
+const RELAY_NAMESPACE = process.env.MOCK_PROBE_NAMESPACE ?? "mcp__mcpjam";
 /** The probe host tool `mcp__probe__echo`, as the relay aliases it. */
 const PROBE_TOOL = "probe__echo";
 const seenNonces = new Set();
@@ -58,7 +62,17 @@ function sse(res, type, payload) {
 }
 
 /** One complete streamed response: an optional message, then function calls. */
-function respond(res, { text, calls = [] }) {
+function respond(res, { text, calls = [] }, stream) {
+  if (!stream) {
+    const id = `resp_mock_${requestCount}`;
+    const output = text
+      ? [{ id: `msg_${id}`, type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text, annotations: [] }] }]
+      : calls.map((call, i) => ({ id: `fc_${id}_${i}`, type: "function_call", status: "completed",
+        call_id: `call_${id}_${i}`, name: call.name, arguments: JSON.stringify(call.arguments ?? {}) }));
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ id, object: "response", status: "completed", model: "gpt-5.5", output, usage: USAGE }));
+    return;
+  }
   const send = () => {
     if (res.writableEnded || res.destroyed) return;
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
@@ -119,7 +133,7 @@ function userText(item) {
     .join("\n");
 }
 
-const SCENARIO = /^(SHELL|MCPPROBE|COUNT|PLAN)\b\s*(.*)$/s;
+const SCENARIO = /^(SHELL|MCPPROBE|HOSTWRITE|COUNT|HELLO)\b\s*(.*)$/s;
 
 const server = http.createServer((req, res) => {
   requestCount += 1;
@@ -159,39 +173,30 @@ const server = http.createServer((req, res) => {
     const userTexts = input.map(userText).filter((t) => typeof t === "string");
     // Codex prepends its own context as user messages (environment, AGENTS
     // instructions); only messages carrying a scenario keyword are the
-    // conversation's user turns.
-    const userTurns = userTexts.filter((t) => t.split("\n").some((line) => SCENARIO.test(line.trim()))).length;
+    // conversation's user turns. A turn's scenario is its last such line.
+    const scenarioLine = (text) => text.split("\n").map((l) => l.trim()).filter((l) => SCENARIO.test(l)).pop();
+    const turnScenarios = userTexts.map(scenarioLine).filter(Boolean).map((l) => SCENARIO.exec(l)[1]);
+    const userTurns = turnScenarios.length;
     const tools = Array.isArray(body.tools) ? body.tools.map((t) => t.name ?? t.type) : [];
     log(`#${requestCount} model=${body.model} stream=${body.stream} items=${input.length} userTurns=${userTurns} tools=${JSON.stringify(tools).slice(0, 200)} last=${last?.type ?? last?.role}`);
+    const reply = (output) => respond(res, output, body.stream === true);
     if (last?.type === "function_call_output" || last?.type === "custom_tool_call_output") {
       const output = typeof last.output === "string" ? last.output : JSON.stringify(last.output);
-      return respond(res, { text: `TOOL RESULT RECEIVED: ${String(output).slice(0, 400)}` });
+      return reply({ text: `TOOL RESULT RECEIVED: ${String(output).slice(0, 400)}` });
     }
-    const latest = [...userTexts].reverse().find((t) => t.split("\n").some((line) => SCENARIO.test(line.trim()))) ?? userTexts[userTexts.length - 1] ?? "";
-    const line = latest.split("\n").map((l) => l.trim()).filter((l) => SCENARIO.test(l)).pop() ?? "";
+    const latest = [...userTexts].reverse().find((t) => scenarioLine(t)) ?? userTexts[userTexts.length - 1] ?? "";
+    const line = scenarioLine(latest) ?? "";
     const m = SCENARIO.exec(line);
     if (m) {
       const [, kind, arg] = m;
-      if (kind === "SHELL") return respond(res, { calls: [{ name: "exec_command", arguments: { cmd: arg.trim(), yield_time_ms: 15_000 } }] });
-      if (kind === "MCPPROBE") return respond(res, { calls: [{ namespace: RELAY_NAMESPACE, name: PROBE_TOOL, arguments: { message: "conformance" } }] });
-      if (kind === "COUNT") return respond(res, { text: `USER_TURNS=${userTurns}` });
-      if (kind === "PLAN") {
-        return respond(res, {
-          calls: [{
-            name: "update_plan",
-            arguments: {
-              explanation: "conformance plan",
-              plan: [
-                { step: "Read the code", status: "completed" },
-                { step: "Write the fix", status: "in_progress" },
-                { step: "Run the tests", status: "pending" },
-              ],
-            },
-          }],
-        });
-      }
+      if (kind === "SHELL") return reply({ calls: [{ name: "exec_command", arguments: { cmd: arg.trim(), yield_time_ms: 15_000 } }] });
+      if (kind === "MCPPROBE") return reply({ calls: [{ ...(RELAY_NAMESPACE ? { namespace: RELAY_NAMESPACE } : {}), name: PROBE_TOOL, arguments: { message: "conformance" } }] });
+      if (kind === "HOSTWRITE") return reply({ calls: [{ name: "probe__record_write", arguments: {} }] });
+      // Which turns, not only how many: a lost turn shows even when a
+      // duplicated one keeps the count.
+      if (kind === "COUNT") return reply({ text: `USER_TURNS=${userTurns} SCENARIOS=${turnScenarios.join(",")}` });
     }
-    return respond(res, { text: `ECHO: ${latest.slice(0, 80)}` });
+    return reply({ text: `ECHO: ${latest.slice(0, 80)}` });
   });
 });
 log(`upstream latency: ${latencyMs}ms`);

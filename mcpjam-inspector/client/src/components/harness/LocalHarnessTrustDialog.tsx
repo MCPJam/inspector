@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, FolderOpen, Laptop, Loader2 } from "lucide-react";
+import { DEFAULT_LOCAL_HARNESS_ID } from "@/shared/harness-descriptors";
+import { LOCAL_RUNTIME_COPY } from "./local-runtime-copy";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -91,7 +93,7 @@ export function LocalHarnessTrustDialog({
 
   const availability = controller.availability;
   const name = controller.harnessName ?? "Claude Code";
-  const isCodex = controller.harnessId === "codex";
+  const copy = LOCAL_RUNTIME_COPY[controller.harnessId ?? DEFAULT_LOCAL_HARNESS_ID];
   const expectedPack = availability?.expectedPack ?? null;
   const suggested = availability?.suggestedWorkspace ?? null;
   const displayRoot =
@@ -254,43 +256,26 @@ export function LocalHarnessTrustDialog({
         className="sm:max-w-lg"
         data-testid="local-harness-trust-dialog"
       >
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Laptop className="size-4 text-muted-foreground" aria-hidden />
-            {displayRoot
-              ? `Run ${name} in ${displayRoot}?`
-              : `Run ${name} on this machine?`}
+        <DialogHeader className="min-w-0">
+          <DialogTitle className="flex min-w-0 items-center gap-2 break-words text-base">
+            <Laptop className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 break-words">
+              {displayRoot
+                ? `Run ${name} in ${displayRoot}?`
+                : `Run ${name} on this machine?`}
+            </span>
           </DialogTitle>
-          <DialogDescription className="text-left leading-relaxed">
-            {isCodex ? (
-              <>
-                Codex will run on this computer as your user account, in a
-                runtime MCPJam manages, with models brokered by MCPJam. It does
-                not use a personal Codex or ChatGPT subscription. The folder is
-                where it starts. With Tool Approval on it asks before commands and file changes,
-                reads included. Turning it off requires a separate confirmation
-                to run without asking. In evals and swarms nobody is there to ask, so
-                Codex runs there only on platforms where MCPJam has verified
-                Codex's own sandbox: its commands can write only that run's
-                folder and a private temp folder, and have no network.
-                Elsewhere evals and swarms do not run Codex on this computer.
-                Reads are not restricted, and MCP tools run in MCPJam under
-                your tool policy, outside that sandbox.
-              </>
-            ) : (
-              <>
-                Claude Code will run on this computer as your user account. The
-                folder is where it starts, not a sandbox — anything you can read
-                or change, it can. With Tool Approval on, commands and changes ask for
-                approval in chat. Turning it off requires a separate confirmation
-                to run without asking.
-              </>
-            )}
+          <DialogDescription asChild>
+            <div className="space-y-2 text-left leading-relaxed">
+              {copy.trust.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-muted/20 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border/60 bg-muted/20 px-3 py-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <FolderOpen
               className="size-4 shrink-0 text-muted-foreground"
               aria-hidden
@@ -353,7 +338,7 @@ export function LocalHarnessTrustDialog({
         </button>
         {detailsOpen ? (
           <dl
-            className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground"
+            className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs text-muted-foreground"
             data-testid="local-harness-trust-details"
           >
             <dt>Runtime</dt>
@@ -371,8 +356,8 @@ export function LocalHarnessTrustDialog({
             </dd>
             <dt>Permissions</dt>
             <dd>
-              Tool Approval on asks for commands and changes; off pre-approves
-              them{isCodex ? "; evals and swarms only where sandboxed" : ""}
+              Turning Tool Approval off requires a separate confirmation, then commands and changes run without asking.
+              {copy.permissions ? ` ${copy.permissions}` : null}
             </dd>
             <dt>Policy</dt>
             <dd className="font-mono">{availability?.policyVersion ?? "—"}</dd>
@@ -513,7 +498,7 @@ export function LocalHarnessAutoApproveDialog({
           if (working) event.preventDefault();
         }}
       >
-        <DialogHeader>
+        <DialogHeader className="min-w-0">
           <DialogTitle>Run commands without asking?</DialogTitle>
           <DialogDescription>
             {name} will run commands and change files on this computer as your

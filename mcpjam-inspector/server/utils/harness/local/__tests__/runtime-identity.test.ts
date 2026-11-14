@@ -37,6 +37,23 @@ let runtimeRoot: string;
  * for a bundle to resolve, so the fixtures add them unless a test is
  * specifically about their absence.
  */
+// Resolves once a fresh write gets a ctime later than `ms`.
+//
+// Consent and a real tamper never share a tick of the filesystem clock, which
+// can be 10 ms or coarser. A fast runner can fit a test's snapshot and its
+// same-size rewrite into one tick, leaving every stat field equal, so a test
+// that tampers after a snapshot waits the tick out first. The probe sits
+// outside every bundle root, where a revalidation walk would flag it.
+async function waitForFsClockPast(ms: number): Promise<void> {
+  const probe = join(runtimeRoot, "..", "fs-clock-probe");
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    await writeFile(probe, String(attempt));
+    if ((await stat(probe)).ctimeMs > ms) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("the filesystem clock did not move past the snapshot");
+}
+
 async function writeBundle(
   name: string,
   files: Record<string, string>,
@@ -672,6 +689,8 @@ describe("verification cost", () => {
       ok: true,
     });
 
+    await waitForFsClockPast((await stat(nodePath)).ctimeMs);
+
     // Rewritten in place: same length, same inode, same mode, mtime put back.
     const original = await readFile(nodePath);
     await writeFile(nodePath, Buffer.alloc(original.length, 0x7a));
@@ -775,6 +794,7 @@ describe("re-verification immediately before spawn", () => {
       ok: true,
     });
 
+    await waitForFsClockPast((await stat(join(root, "bridge.mjs"))).ctimeMs);
     await writeFile(join(root, "bridge.mjs"), "swapped");
     const result = await revalidateRuntime(resolved.runtime);
     expect(result.ok).toBe(false);

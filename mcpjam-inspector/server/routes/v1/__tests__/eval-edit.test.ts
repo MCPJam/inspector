@@ -1350,6 +1350,17 @@ describe("v1 eval-edit routes", () => {
     expect(input.connectionDefaults).toBeTruthy();
   });
 
+  it("preserves a native-discovery requirement when another execution setting changes", async () => {
+    const original = convexQueryMock.getMockImplementation();
+    convexQueryMock.mockImplementation(async (...args) => args[0] === "hostConfigsV2:getSuiteConfig"
+      ? { ...EXEC_CONFIG, requireNativeToolDiscovery: true }
+      : original?.(...args));
+    const res = await request("PATCH", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", { executionConfig: { temperature: 0.9 } });
+    expect(res.status).toBe(200);
+    const call = convexMutationMock.mock.calls.find((entry) => entry[0] === "hostConfigsV2:setSuiteConfig");
+    expect(call?.[1].input).toMatchObject({ temperature: 0.9, requireNativeToolDiscovery: true });
+  });
+
   it("schedule disable preserves the stored interval", async () => {
     const res = await request(
       "PATCH",

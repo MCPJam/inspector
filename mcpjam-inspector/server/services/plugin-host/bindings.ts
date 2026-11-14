@@ -69,9 +69,19 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
  *    conversation panels, file viewers) gate new opens only.
  *  - `mcpProfile.apps.mcpAppsOverrides.{serverTools,updateModelContext,message}`
  *    and `requireToolApproval`, recomputed by every request.
- *  - `hostConfigId`, the saved config's content address. It rotates on ANY
- *    saved edit, the toggles above included; the fields it summarizes are
+ *  - `mcpProfile.apps.modelContextPolicy`, the client's App context budgets.
+ *    They bound what an App may add, not where it runs, so whatever enforces
+ *    them must read the saved client's current value, never the binding. A
+ *    lowered budget then refuses the next update instead of closing the App.
+ *  - `hostConfigId` and `configHash`, the saved config's content addresses.
+ *    They rotate on ANY saved edit, the toggles above included; their fields are
  *    projected individually and stay bound.
+ * `selectedServerIds` also leaves it, because one host is read two ways. The
+ * `/web/host/runtime-config` read that chat binds against carries the host's
+ * server selection; the execution-context read that discovery and every
+ * retained App check against does not. Binding it would make the two reads of
+ * an unchanged host disagree on every call. An App's own server is bound by
+ * its server identity (`pluginServerBindingDigest`), not by this list.
  * Every other field is identity: changing it yields `INSTANCE_HOST_CHANGED`.
  * A config holding none of these hashes exactly as before, and containers
  * left empty are dropped, so saving a first toggle into an absent profile
@@ -81,14 +91,20 @@ export function pluginHostBindingDigest(config: unknown) {
   if (!isPlainRecord(config)) return pluginBindingDigest(config);
   const {
     hostConfigId: _contentAddress,
+    configHash: _configHash,
     requireToolApproval: _approval,
+    selectedServerIds: _selection,
     ...bound
   } = config;
   const profile = bound.mcpProfile;
   if (isPlainRecord(profile)) {
     const next: Record<string, unknown> = { ...profile };
     if (isPlainRecord(profile.apps)) {
-      const { pluginExtensions: _toggles, ...apps } = profile.apps;
+      const {
+        pluginExtensions: _toggles,
+        modelContextPolicy: _contextBudgets,
+        ...apps
+      } = profile.apps;
       if (isPlainRecord(apps.mcpAppsOverrides)) {
         const overrides = { ...apps.mcpAppsOverrides };
         for (const key of PER_REQUEST_APP_PERMISSIONS) delete overrides[key];

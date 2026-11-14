@@ -39,7 +39,10 @@ export function ToolCallsDiffView({
     [expected, actual, result],
   );
 
-  const issueCount = rows.filter((r) => r.status !== "match").length;
+  // A retried attempt is part of its retry, not a difference.
+  const issueCount = rows.filter(
+    (r) => r.status !== "match" && r.status !== "retried",
+  ).length;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5">
@@ -140,7 +143,13 @@ function LoadingDot() {
 
 // ── Rows ──────────────────────────────────────────────────────────────────────
 
-type RowStatus = "match" | "arg-mismatch" | "name-mismatch" | "missing" | "extra";
+type RowStatus =
+  | "match"
+  | "arg-mismatch"
+  | "name-mismatch"
+  | "missing"
+  | "extra"
+  | "retried";
 
 interface PairedRow {
   status: RowStatus;
@@ -158,6 +167,7 @@ const STATUS_META: Record<RowStatus, { label: string; tone: Tone }> = {
   "name-mismatch": { label: "wrong tool", tone: "bad" },
   missing: { label: "missing", tone: "bad" },
   extra: { label: "unexpected", tone: "warn" },
+  retried: { label: "retried", tone: "neutral" },
 };
 
 function DiffRow({ row, index }: { row: PairedRow; index: number }) {
@@ -173,7 +183,10 @@ function DiffRow({ row, index }: { row: PairedRow; index: number }) {
   // Inline preview only where the args are the interesting bit (something is
   // off). Matches stay a clean single line so the eye skims past them.
   const summary =
-    !expanded && (row.status === "extra" || row.status === "missing")
+    !expanded &&
+    (row.status === "extra" ||
+      row.status === "missing" ||
+      row.status === "retried")
       ? inlineSummary(row)
       : null;
 
@@ -268,13 +281,15 @@ function ExpandedDetail({
     );
   }
 
-  // One-sided: match / extra / missing — a single args block with a quiet caption.
+  // One-sided: match / extra / missing / retried — a single args block with a quiet caption.
   const caption =
     row.status === "missing"
       ? "Expected, never called"
       : row.status === "extra"
         ? "Called, not expected"
-        : "Arguments";
+        : row.status === "retried"
+          ? "Failed, then called again with the same arguments"
+          : "Arguments";
   return <SideArgs label={caption} call={primary} />;
 }
 
@@ -460,6 +475,7 @@ interface MatchResultLike {
     expectedArgs: Record<string, unknown>;
     actualArgs: Record<string, unknown>;
   }>;
+  retries?: Array<{ actualIndex: number }>;
 }
 
 /**
@@ -471,13 +487,38 @@ interface MatchResultLike {
  * list when it covers the expected entry (so we honor partial-args /
  * superset semantics), and falls back to a shallow key-diff for the rows
  * the matcher didn't comment on.
+ *
+ * A failed attempt the matcher graded as part of its retry is listed where it
+ * happened, as `retried`, and takes no place in the walk.
  */
 function buildPairedRows(
   expected: TraceViewerEvalToolCall[],
-  actual: TraceViewerEvalToolCall[],
+  allActual: TraceViewerEvalToolCall[],
   result: MatchResultLike,
 ): PairedRow[] {
   const rows: PairedRow[] = [];
+  const retried = new Set(
+    (result.retries ?? []).map((retry) => retry.actualIndex),
+  );
+  const actual: TraceViewerEvalToolCall[] = [];
+  const actualIndex: number[] = [];
+  allActual.forEach((call, index) => {
+    if (retried.has(index)) return;
+    actual.push(call);
+    actualIndex.push(index);
+  });
+  let nextAttempt = 0;
+  const pushRetriedBefore = (end: number) => {
+    for (; nextAttempt < end; nextAttempt++) {
+      if (!retried.has(nextAttempt)) continue;
+      rows.push({
+        status: "retried",
+        expected: null,
+        actual: allActual[nextAttempt] ?? null,
+        diffKeys: new Set(),
+      });
+    }
+  };
   const maxLen = Math.max(expected.length, actual.length);
 
   // Build a quick lookup: which expected tool names had argument mismatches.
@@ -496,6 +537,7 @@ function buildPairedRows(
   for (let i = 0; i < maxLen; i++) {
     const exp = expected[i] ?? null;
     const act = actual[i] ?? null;
+    if (act) pushRetriedBefore(actualIndex[i]!);
 
     if (exp && !act) {
       rows.push({ status: "missing", expected: exp, actual: null, diffKeys: new Set() });
@@ -528,6 +570,7 @@ function buildPairedRows(
       });
     }
   }
+  pushRetriedBefore(allActual.length);
 
   return rows;
 }

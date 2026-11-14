@@ -42,6 +42,18 @@ type TooltipContentProps = React.ComponentProps<
   variant?: "default" | "muted";
 };
 
+const tooltipPillShape = "rounded-md px-3 py-1.5 text-xs";
+const tooltipPillColor = "bg-primary text-primary-foreground";
+const tooltipArrowShape =
+  "z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]";
+
+/**
+ * The branded tooltip pill and its arrow. Exported so a hover card that
+ * stands in for a tooltip (see `HoverCardHeader`) paints the same pill.
+ */
+const tooltipPillClassName = `${tooltipPillShape} ${tooltipPillColor}`;
+const tooltipArrowClassName = `${tooltipArrowShape} bg-primary fill-primary`;
+
 function TooltipContent({
   className,
   sideOffset = 0,
@@ -56,20 +68,22 @@ function TooltipContent({
         data-slot="tooltip-content"
         sideOffset={sideOffset}
         className={cn(
-          "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit max-w-xs origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs",
+          "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit max-w-xs origin-(--radix-tooltip-content-transform-origin)",
+          tooltipPillShape,
           isMuted
             ? "border border-border bg-popover text-popover-foreground shadow-md"
-            : "bg-primary text-primary-foreground",
+            : tooltipPillColor,
           className,
         )}
         {...props}
       >
         {children}
         <TooltipPrimitive.Arrow
-          className={cn(
-            "z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]",
-            isMuted ? "fill-popover" : "bg-primary fill-primary",
-          )}
+          className={
+            isMuted
+              ? cn(tooltipArrowShape, "fill-popover")
+              : tooltipArrowClassName
+          }
         />
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
@@ -119,4 +133,6 @@ export {
   TooltipContent,
   TooltipProvider,
   DisabledReasonTooltip,
+  tooltipPillClassName,
+  tooltipArrowClassName,
 };

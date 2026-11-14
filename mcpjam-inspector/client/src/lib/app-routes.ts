@@ -56,11 +56,13 @@ export type AppRouteEntry =
   | {
       path: string;
       kind: "redirect" | "special";
+      standalone?: boolean;
       note: string;
       scope: AppRouteScope;
     };
 
 export const APP_ROUTES: readonly AppRouteEntry[] = [
+  { path: "redeem", kind: "special", scope: "public", standalone: true, note: "Conference card confirmation outside onboarding and project chrome." },
   {
     path: "settings/appearance",
     kind: "screen",
@@ -244,6 +246,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   { path: "prompts", kind: "screen", surfaceId: "prompts", scope: "project" },
   { path: "tasks", kind: "screen", surfaceId: "tasks", scope: "project" },
+  { path: "events", kind: "screen", surfaceId: "events", scope: "project" },
   { path: "skills", kind: "screen", surfaceId: "skills", scope: "project" },
   // Project-scoped despite the generic name, per the pre-commit audit: a
   // lesson LAUNCHES an agent session into the active project
@@ -279,6 +282,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "compatibility",
     scope: "project",
   },
+  { path: "readiness", kind: "screen", surfaceId: "readiness", scope: "project" },
   {
     path: "oauth-flow",
     kind: "screen",
@@ -361,6 +365,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     path: "playground",
     kind: "screen",
     surfaceId: "playground",
+    scope: "project",
+  },
+  {
+    path: "triggers",
+    kind: "screen",
+    surfaceId: "triggers",
     scope: "project",
   },
   {
@@ -522,10 +532,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
     scope: "project",
   },
+  { path: "evals/suite/:suiteId/settings", kind: "screen", surfaceId: "evals", scope: "project" },
+  { path: "evals/suite/:suiteId/settings/evaluators", kind: "screen", surfaceId: "evals", scope: "project" },
   {
     path: "evals/suite/:suiteId/edit",
-    kind: "screen",
-    surfaceId: "evals",
+    kind: "redirect",
+    note: "Old Suite settings address; redirects to …/settings with its query.",
     scope: "project",
   },
   // Runs mode. Same suite screens as Suites mode above, plus the cross-suite
@@ -567,10 +579,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
     scope: "project",
   },
+  { path: "evals/runs/suite/:suiteId/settings", kind: "screen", surfaceId: "evals", scope: "project" },
+  { path: "evals/runs/suite/:suiteId/settings/evaluators", kind: "screen", surfaceId: "evals", scope: "project" },
   {
     path: "evals/runs/suite/:suiteId/edit",
-    kind: "screen",
-    surfaceId: "evals",
+    kind: "redirect",
+    note: "Old Suite settings address; redirects to …/settings with its query.",
     scope: "project",
   },
   // Public Evaluate. A sibling tree of `/evals`, so
@@ -595,14 +609,28 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evaluate",
     scope: "project",
   },
+  { path: "evaluate/suite/:suiteId/settings", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/settings/evaluators", kind: "screen", surfaceId: "evaluate", scope: "project" },
   {
     path: "evaluate/suite/:suiteId/edit",
+    kind: "redirect",
+    note: "Old Suite settings address; redirects to …/settings with its query.",
+    scope: "project",
+  },
+  {
+    path: "evaluate/suite/:suiteId/runs/:runId",
     kind: "screen",
     surfaceId: "evaluate",
     scope: "project",
   },
   {
-    path: "evaluate/suite/:suiteId/runs/:runId",
+    path: "evaluate/suite/:suiteId/runs/:runId/cases/:caseId",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
+  {
+    path: "evaluate/suite/:suiteId/runs/:runId/cases/:caseId/iterations/:iterationId",
     kind: "screen",
     surfaceId: "evaluate",
     scope: "project",

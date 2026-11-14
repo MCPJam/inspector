@@ -5,12 +5,15 @@ import claudeLogo from "/claude_logo.png";
 import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import chatgptDesktopLogo from "/chatgpt_desktop_logo.png";
 import mistralLogo from "/mistral_logo.png";
 import gooseLogoDark from "/goose_logo_dark.png";
 import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
+import githubCopilotLogoDark from "/github_copilot_logo_dark.png";
+import githubCopilotLogoLight from "/github_copilot_logo_light.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
@@ -19,6 +22,9 @@ import clineLogoDark from "/cline_logo_dark.svg";
 import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
+import geminiLogo from "/google_logo.png";
+import grokbotLogo from "/grokbot_logo.png";
+import museLogo from "/muse_logo.png";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -44,6 +50,9 @@ function getClientLogo(
   const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
   if (haystack.includes("mcpjam") || haystack.includes("mcp-jam"))
     return mcpjamLogo;
+  // Claude Code's desktop and web variants carry their app's mark.
+  if (/claude[ -]?code[ -]?desktop/.test(haystack)) return claudeDesktopLogo;
+  if (/claude[ -]?code[ -]?web/.test(haystack)) return claudeLogo;
   if (haystack.includes("claude-code") || haystack.includes("claude code"))
     return claudeCodeLogo;
   if (
@@ -58,8 +67,18 @@ function getClientLogo(
   // theme to stay visible: white goose on dark, black goose on light.
   if (haystack.includes("goose"))
     return themeMode === "dark" ? gooseLogoDark : gooseLogoLight;
+  // Grokbot sends Cursor's clientInfo, so its own name is checked first.
+  if (haystack.includes("grok")) return grokbotLogo;
   if (haystack.includes("cursor")) return cursorLogo;
+  // ChatGPT's work mode sends `openai-mcp (Codex)`; its name says ChatGPT.
+  // ChatGPT's desktop app, in either mode, has its own mark.
+  if (/chatgpt[ -]?(work[ -]?)?desktop/.test(haystack)) return chatgptDesktopLogo;
+  if (haystack.includes("chatgpt")) return openaiLogo;
   if (haystack.includes("codex")) return codexLogo;
+  // GitHub Copilot CLI before the bare "copilot", which is Microsoft 365
+  // Copilot. Its flat mark flips with the theme, like Goose's.
+  if (haystack.includes("copilot cli") || haystack.includes("copilot-cli"))
+    return themeMode === "dark" ? githubCopilotLogoDark : githubCopilotLogoLight;
   if (haystack.includes("copilot")) return copilotLogo;
   // VS Code's clientInfo.name is "Visual Studio Code"; the host name is
   // "VS Code". Match both spellings (the editor, not Cursor which forks it).
@@ -77,7 +96,12 @@ function getClientLogo(
   if (haystack.includes("perplexity")) return perplexityLogo;
   if (haystack.includes("cline"))
     return themeMode === "dark" ? clineLogoDark : clineLogoLight;
+  // Gemini's clientInfo.name is "google-adk" and its host name is "Gemini",
+  // so neither spelling alone covers both call sites.
+  if (haystack.includes("gemini") || haystack.includes("google-adk"))
+    return geminiLogo;
   if (haystack.includes("notion")) return notionLogo;
+  if (haystack.includes("muse")) return museLogo;
   if (haystack.includes("slack")) return slackLogo;
   if (
     haystack.includes("openai") ||

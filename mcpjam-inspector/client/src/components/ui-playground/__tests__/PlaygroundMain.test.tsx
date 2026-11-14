@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { useMrtrElicitationStore } from "@/stores/mrtr-elicitation-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -21,6 +23,8 @@ import {
   resetShownPluginNotices,
   showPluginNotice,
 } from "@/lib/plugins/plugin-notice-display";
+import { ExtensionWorkspaceProvider } from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import { useChatAppDisplayBehavior } from "@/contexts/chat-app-display-behavior-context";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -34,8 +38,11 @@ const mockThread = vi.fn();
 const mockChatInputProps = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
+const compareSetup = { ready: true, error: undefined as string | undefined };
 const mockTraceViewer = vi.fn();
-const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
+const mockReadHistory = vi.hoisted(() => vi.fn());
+const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn((...args: unknown[]) => mockReadHistory(...args)));
+const mockGetChatHistoryState = vi.hoisted(() => vi.fn((...args: unknown[]) => mockReadHistory(...args)));
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // Convex auth is what decides whether chat history — and therefore the way back
 // from a branch — is reachable at all. Mutable so the edit/branch tests can
@@ -117,10 +124,6 @@ vi.mock("lucide-react", async (importOriginal) => ({
   ArrowLeft: () => <span data-testid="icon-arrow-left" />,
   Code2: () => <span data-testid="icon-code2" />,
   MessageSquare: () => <span data-testid="icon-message-square" />,
-  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
-  // header `leading` slot)
-  Server: () => <span data-testid="icon-server" />,
-  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components
@@ -241,6 +244,8 @@ const mockHiddenEnvironment = vi.hoisted(() => ({
   calls: [] as any[],
   state: {
     plugins: [] as any[],
+    hasRunnablePlugins: false,
+    venue: "hosted" as const,
     pluginServers: [] as any[],
     wanted: false,
     environmentId: null as string | null,
@@ -308,8 +313,8 @@ vi.mock("@/hooks/useViews", () => ({
 }));
 
 vi.mock("@/lib/apis/web/chat-history-api", () => ({
-  getChatHistoryDetail: (...args: unknown[]) =>
-    mockGetChatHistoryDetail(...args),
+  getChatHistoryDetail: mockGetChatHistoryDetail,
+  getChatHistoryState: mockGetChatHistoryState,
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
 }));
 
@@ -340,6 +345,7 @@ const mockUseChatSession = {
   },
   setSelectedModel: vi.fn(),
   seedReasoningEffort: vi.fn(),
+  hasPickedModel: false,
   reasoningEffortLevelsFor: vi.fn(() => ["low", "medium", "high"]),
   setReasoningEffortForModel: vi.fn(),
   // The steady state: the persisted lead id has matched `availableModels`.
@@ -350,6 +356,11 @@ const mockUseChatSession = {
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
   setMultiModelEnabled: vi.fn(),
+  // The root session's catalog before its harness filter; the mock has no
+  // filter, so it is the same list (and follows per-test overrides).
+  get catalogModels() {
+    return this.availableModels;
+  },
   availableModels: [],
   isAuthLoading: false,
   systemPrompt: "",
@@ -382,7 +393,6 @@ const mockUseChatSession = {
   disableForAuthentication: false,
   submitBlocked: false,
   hiddenEnvironmentActive: false,
-  hiddenEnvironmentOffReason: null,
 } as any;
 let capturedChatSessionOptions: any = null;
 
@@ -453,6 +463,8 @@ vi.mock("@/components/chat-v2/thread", () => ({
         onFullscreenChange,
         interactive,
         onToolApprovalResponse,
+        // The display rules the chat gives the Apps in this thread.
+        displayBehavior: useChatAppDisplayBehavior(),
       });
       return (
         <div data-testid="thread">
@@ -567,10 +579,24 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
   },
 }));
 
-// Mock ErrorBox
+// Mock ErrorBox. `onRetry` is forwarded so a test can see whether the
+// playground handed the banner a Retry action, and click it.
 vi.mock("@/components/chat-v2/error", () => ({
-  ErrorBox: ({ message }: { message: string }) => (
-    <div data-testid="error-box">{message}</div>
+  ErrorBox: ({
+    message,
+    onRetry,
+  }: {
+    message: string;
+    onRetry?: () => void;
+  }) => (
+    <div data-testid="error-box">
+      {message}
+      {onRetry && (
+        <button data-testid="error-box-retry" onClick={onRetry}>
+          Retry
+        </button>
+      )}
+    </div>
   ),
 }));
 
@@ -626,7 +652,13 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => {
 });
 
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
-  MultiModelPlaygroundCard: (props: { model: { name: string } }) => {
+  MultiModelPlaygroundCard: (props: {
+    model: { name: string }; compareId: string; compareKind: string;
+    onSendReadinessChange?: (id: string, ready: boolean, error?: string) => void;
+  }) => {
+    useEffect(() => {
+      props.onSendReadinessChange?.(`${props.compareKind}:${props.compareId}`, compareSetup.ready, compareSetup.error);
+    }, [props.onSendReadinessChange, props.compareKind, props.compareId, compareSetup.ready, compareSetup.error]);
     mockMultiModelPlaygroundCard(props);
     return (
       <div data-testid="multi-model-playground-card">{props.model.name}</div>
@@ -816,8 +848,16 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   >();
   return {
     ...actual,
+    // A test that needs `errorMessage.code` attaches a `formatted` bag to
+    // the Error it hands to `mockUseChatSession.error`.
     formatErrorMessage: (error: any) =>
-      error ? { message: error.message || "Error", details: null } : null,
+      error
+        ? {
+            message: error.message || "Error",
+            details: null,
+            ...error.formatted,
+          }
+        : null,
     STARTER_PROMPTS: [{ label: "Starter chip", text: "Starter chip prompt" }],
   };
 });
@@ -857,7 +897,7 @@ describe("PlaygroundMain", () => {
   };
 
   beforeEach(() => {
-    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false });
+    useActiveChatSessionStore.setState({ restoredSession: null, restorationPending: false, browserLocation: null });
     vi.clearAllMocks();
     mockEnvironmentReadiness.enabled = false;
     localStorage.clear();
@@ -869,7 +909,7 @@ describe("PlaygroundMain", () => {
     mockHarnessState.harnessId = null;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
-    mockGetChatHistoryDetail.mockReset();
+    mockReadHistory.mockReset();
     mockChatHistoryAction.mockReset();
     mockChatHistoryAction.mockResolvedValue({ ok: true });
     mockPreferencesState.themeMode = "light";
@@ -917,6 +957,25 @@ describe("PlaygroundMain", () => {
     mockChatInputProps.mockClear();
     mockFullscreenChatOverlay.mockClear();
     mockMultiModelPlaygroundCard.mockClear();
+    compareSetup.ready = true;
+    compareSetup.error = undefined;
+  });
+
+  describe("display rules for the chat's Apps", () => {
+    it("gives a Claude chat's Apps none while plugin extensions are off, though the provider is mounted", () => {
+      // PlaygroundTab mounts the provider whatever the flag says; the flag is
+      // off in this suite.
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Open it" }] },
+      ];
+      render(
+        <ExtensionWorkspaceProvider>
+          <PlaygroundMain {...defaultProps} />
+        </ExtensionWorkspaceProvider>,
+      );
+      expect(mockThread).toHaveBeenCalled();
+      expect(mockThread.mock.calls.at(-1)?.[0].displayBehavior).toBeUndefined();
+    });
   });
 
   describe("installed plugins (hidden environment)", () => {
@@ -949,6 +1008,7 @@ describe("PlaygroundMain", () => {
       mockHiddenEnvironment.state = {
         ...nothing,
         plugins: [bitsRow],
+        hasRunnablePlugins: true,
         pluginServers: [bitsServer],
         wanted: true,
         environmentId,
@@ -961,7 +1021,6 @@ describe("PlaygroundMain", () => {
       mockHiddenEnvironment.state = { ...nothing };
       mockHiddenEnvironment.calls = [];
       mockUseChatSession.hiddenEnvironmentActive = false;
-      mockUseChatSession.hiddenEnvironmentOffReason = null;
       resetShownPluginNotices();
     });
 
@@ -979,6 +1038,7 @@ describe("PlaygroundMain", () => {
       expect(hosted.hiddenEnvironment).toEqual({
         environmentId: "env_hidden",
         pluginServerIds: ["srv_bits"],
+        venue: "hosted",
         recover,
       });
       // Not an explicit environment: the chat hook decides per turn whether
@@ -1122,7 +1182,7 @@ describe("PlaygroundMain", () => {
       }
     });
 
-    it("says plugins don't run in comparisons on each comparison's first send", async () => {
+    it("does not say that plugins are disabled in comparisons", async () => {
       vi.mocked(showPluginNotice).mockClear();
       installBits();
       const models = [
@@ -1150,34 +1210,13 @@ describe("PlaygroundMain", () => {
           });
         };
         const { rerender } = render(<PlaygroundMain {...props} />);
-        // Entering a comparison says nothing; its first send does.
-        expect(showPluginNotice).not.toHaveBeenCalled();
         await compareSend("first");
-        const compare = { kind: "off", reason: "compare" };
-        expect(showPluginNotice).toHaveBeenCalledTimes(1);
-        expect(showPluginNotice).toHaveBeenLastCalledWith(
-          expect.stringContaining("chat-session-1"),
-          compare,
-        );
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          true,
-        );
-        // Not again in the same comparison.
         await compareSend("second");
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          false,
-        );
-
-        // A later comparison in the same tab is a new chat: it says so again.
         mockUseChatSession.chatSessionId = "chat-session-2";
         rerender(<PlaygroundMain {...props} />);
         await compareSend("third");
-        expect(showPluginNotice).toHaveBeenLastCalledWith(
-          expect.stringContaining("chat-session-2"),
-          compare,
-        );
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          true,
+        expect(showPluginNotice).not.toHaveBeenCalledWith(
+          expect.anything(), expect.objectContaining({ reason: "compare" }),
         );
       } finally {
         mockUseChatSession.chatSessionId = "chat-session-1";
@@ -1186,14 +1225,85 @@ describe("PlaygroundMain", () => {
       }
     });
 
+    it.each([undefined, "This project has reached its setup limit."])(
+      "retains the compare draft and attachments when a lane is unavailable: %s",
+      async (error) => {
+        compareSetup.ready = false;
+        compareSetup.error = error;
+        mockUseChatSession.availableModels = [
+          { id: "openai/gpt-5-mini", name: "Mini", provider: "openai" },
+          {
+            id: "anthropic/claude-sonnet-4.5",
+            name: "Sonnet",
+            provider: "anthropic",
+          },
+        ];
+        mockUseChatSession.multiModelEnabled = true;
+        try {
+          render(<PlaygroundMain {...defaultProps} enableMultiModelChat />);
+          type Composer = {
+            onChange: (text: string) => void;
+            onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+            value: string;
+            fileAttachments: unknown[];
+            onChangeFileAttachments: (files: unknown[]) => void;
+          };
+          const latest = () =>
+            mockChatInputProps.mock.calls.at(-1)?.[0] as Composer;
+          const attachment = {
+            id: "file-1",
+            name: "notes.txt",
+            file: new File(["notes"], "notes.txt"),
+            url: "blob:notes",
+          };
+          await act(async () => {
+            latest().onChange("Keep this prompt");
+            latest().onChangeFileAttachments([attachment]);
+          });
+          const before =
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0].broadcastRequest;
+          await act(async () => latest().onSubmit({ preventDefault() {} }));
+          await act(async () => {
+            useAgentToolPromptBridge.getState().requestRun("Keep this agent prompt");
+          });
+          await act(async () => {});
+          expect(latest().value).toBe("Keep this agent prompt");
+          expect(latest().fileAttachments).toEqual([attachment]);
+          expect(
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0].broadcastRequest,
+          ).toBe(before);
+        } finally {
+          mockUseChatSession.availableModels = [];
+          mockUseChatSession.multiModelEnabled = false;
+          compareSetup.ready = true;
+          compareSetup.error = undefined;
+        }
+      },
+    );
+
     it("shows no plugin servers on a turn that runs without them", () => {
       installBits();
       mockUseChatSession.hiddenEnvironmentActive = false;
-      mockUseChatSession.hiddenEnvironmentOffReason = "local_model";
       render(<PlaygroundMain {...defaultProps} />);
       const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
       expect(composer.pluginServers).toEqual([]);
     });
+  });
+
+  it("shows local manual-tool input before a chat thread exists", () => {
+    const store = useMrtrElicitationStore.getState();
+    vi.spyOn(store, "connect").mockImplementation(() => {});
+    store.__reset();
+    render(<PlaygroundMain {...defaultProps} />);
+    act(() => store.__ingest({
+      type: "mrtr_input_request", opId: "manual-review", roundKey: "manual-review:1", round: 1,
+      serverId: "test-server", timestamp: new Date().toISOString(),
+      requests: [{ key: "review", mode: "form", message: "Manual review input", requestedSchema: {
+        type: "object", properties: { approved: { type: "boolean" } },
+      } }],
+    }));
+    expect(screen.getByText("Manual review input")).toBeInTheDocument();
+    store.__reset();
   });
 
   describe("rendering", () => {
@@ -1201,6 +1311,9 @@ describe("PlaygroundMain", () => {
       mockConvexAuthState.isAuthenticated = true;
       mockDefaultHostConfig.result = { builtInToolIds: ["browser"] };
       mockSharedAppState.projects = { default: { sharedProjectId: "project-1" } };
+      // Cloud reads the host's capability as-is; a local Browser answers from
+      // its own setting instead.
+      localStorage.setItem("mcp-browser-engine:project-1", "cloud");
       try {
         render(<PlaygroundMain {...defaultProps} />);
         expect(capturedChatSessionOptions.builtInToolIds).toEqual(["browser"]);
@@ -1356,6 +1469,46 @@ describe("PlaygroundMain", () => {
         const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
         expect(composer.reasoningEffort).toBe("low");
         expect(composer.onReasoningEffortChange).toBeTypeOf("function");
+      });
+
+      it("settles a saved comparison column when an effort change replaces its card", () => {
+        localStorage.setItem(V2_KEY, JSON.stringify([hosted(sonnet.id)]));
+        render(
+          <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        );
+        const [lead] = renderedCardProps();
+        // The card is still restoring a comparison saved before sign-in.
+        window.history.replaceState({}, "", "/?comparisonRecovery=saved");
+        const column = { kind: "model", order: 0, hasMessages: true };
+        sessionStorage.setItem(
+          "mcp-comparison-auth-v1:saved",
+          JSON.stringify({
+            version: 1,
+            id: "saved",
+            projectId: "local",
+            multiModelEnabled: true,
+            hostIds: [],
+            modelSelections: null,
+            selectedServers: [],
+            clickedColumn: lead.compareId,
+            continuationId: "c1",
+            columns: [
+              { ...column, compareId: lead.compareId, chatSessionId: "a" },
+            ],
+          }),
+        );
+        try {
+          act(() => {
+            lead.effort.onChange("low");
+          });
+          expect(
+            sessionStorage.getItem("mcp-comparison-auth-v1:saved"),
+          ).toBeNull();
+          expect(window.location.search).toBe("");
+        } finally {
+          sessionStorage.clear();
+          window.history.replaceState({}, "", "/");
+        }
       });
 
       it("caps the line-up at three cards", () => {
@@ -1549,6 +1702,30 @@ describe("PlaygroundMain", () => {
         mockUseChatSession.availableModels = [];
       });
 
+      it("keeps the single chat's picked model on a reload, and seeds again on a host edit", async () => {
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        mockUseChatSession.hasPickedModel = true;
+        previewHost(selection("high"));
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSystemPrompt).toHaveBeenCalled();
+        });
+        expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
+        expect(mockUseChatSession.seedReasoningEffort).not.toHaveBeenCalled();
+
+        switchHost("cfg-edited", selection("high"));
+        rerender(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+        mockUseChatSession.hasPickedModel = false;
+        mockUseChatSession.availableModels = [];
+      });
+
       it("puts a BYOK host's High on the lead compare card on the user's key, and clears it on a switch to a host with none", async () => {
         const V2_KEY = "mcp-inspector-selected-model-selections.v2";
         localStorage.setItem(
@@ -1583,7 +1760,7 @@ describe("PlaygroundMain", () => {
               connectionRef: { kind: "localProvider", providerKey: "openai" },
               nativeModelId: "gpt-5",
               settings: { reasoningEffort: "high" },
-              fallback: { provider: "openrouter", model: "none" },
+              fallback: { provider: "none", model: "none" },
             },
           ]);
         });
@@ -1750,7 +1927,7 @@ describe("PlaygroundMain", () => {
         directVisibility: "project" as const,
         version: 5,
       };
-      mockGetChatHistoryDetail
+      mockReadHistory
         .mockResolvedValueOnce({
           ok: true,
           session: privateSessionLocal,
@@ -1837,7 +2014,7 @@ describe("PlaygroundMain", () => {
         { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
         { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
       ];
-      mockGetChatHistoryDetail.mockResolvedValueOnce({
+      mockReadHistory.mockResolvedValueOnce({
         ok: true,
         session,
         widgetSnapshots: [],
@@ -1863,9 +2040,12 @@ describe("PlaygroundMain", () => {
         screen.getByTestId("conversation-target-notice-acknowledge")
       );
 
+      mockGetChatHistoryDetail.mockClear();
+      mockGetChatHistoryState.mockClear();
+
       // Control: with the sync healthy the send goes through, so the assertions
       // below are about the failure and not about a submit path that never runs.
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session,
         widgetSnapshots: [],
@@ -1877,8 +2057,10 @@ describe("PlaygroundMain", () => {
         fireEvent.submit(screen.getByTestId("chat-input"));
       });
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+      expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
 
-      mockGetChatHistoryDetail.mockRejectedValue(new Error("network down"));
+      mockReadHistory.mockRejectedValue(new Error("network down"));
       fireEvent.change(screen.getByTestId("chat-input-field"), {
         target: { value: "another message" },
       });
@@ -1894,6 +2076,151 @@ describe("PlaygroundMain", () => {
       // Leave the module-level detail cache as this test found it — the ids
       // above are reused by later tests, which queue their own
       // `mockResolvedValueOnce` responses and would otherwise be served stale.
+      invalidateChatHistoryPrefetch();
+    });
+
+    it("drops the send but keeps the open thread when its pre-send read lands after another thread opened", async () => {
+      const session = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      invalidateChatHistoryPrefetch();
+      // A non-empty transcript, so a detach would show as `detachToLocalFork`.
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+      mockReadHistory.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+      const view = render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null
+        );
+      });
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge")
+      );
+      let resolveLate!: (value: unknown) => void;
+      mockReadHistory.mockReturnValue(
+        new Promise((resolve) => {
+          resolveLate = resolve;
+        })
+      );
+      mockGetChatHistoryState.mockClear();
+      try {
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "first message" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+        // Another conversation is now the open one.
+        mockUseChatSession.chatSessionId = "chat-session-2";
+        view.rerender(<PlaygroundMain {...defaultProps} />);
+        await act(async () => {
+          resolveLate({ ok: true, session, widgetSnapshots: [] });
+        });
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+      } finally {
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        invalidateChatHistoryPrefetch();
+      }
+    });
+
+    it("sends without the pre-send read only while the live session matches the thread's version and visibility", async () => {
+      // The live session subscription runs only for a Convex-authenticated user.
+      mockConvexAuthState.isAuthenticated = true;
+      const session = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      invalidateChatHistoryPrefetch();
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+      mockReadHistory.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null
+        );
+      });
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge")
+      );
+      // The live subscription holds the thread at the cursor's version.
+      mockUseChatSession.resumedVersion = 4;
+      mockReactiveHistoryState.session = { ...session };
+      mockReactiveHistoryState.widgetSnapshots = [];
+      mockGetChatHistoryState.mockClear();
+      mockReadHistory.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "first message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockGetChatHistoryState).not.toHaveBeenCalled();
+
+      // Shared elsewhere, version unchanged: the turn must not send the old
+      // visibility unchecked, so the read runs again.
+      mockReactiveHistoryState.session = {
+        ...session,
+        directVisibility: "project" as const,
+      };
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "second message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(2);
       invalidateChatHistoryPrefetch();
     });
 
@@ -1921,7 +2248,7 @@ describe("PlaygroundMain", () => {
         directVisibility: "project" as const,
         version: 5,
       };
-      mockGetChatHistoryDetail
+      mockReadHistory
         .mockResolvedValueOnce({
           ok: true,
           session: privateSession,
@@ -2340,10 +2667,19 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.chatSessionId = ORIGINAL_CONVERSATION_ID;
       // The URL is dropped from `onBeforeBranch`, which the real hook fires as
       // the branch is minted — so a refused rewind keeps its `?conversation=`.
+      // It is read right there because this mock never mints the branch's own
+      // session id: once the hook's mask lifts, its sync effect writes the
+      // mock's unchanged id, the original's, back into the URL. The read sees
+      // the clear only because nothing here renders a router: the hook's
+      // navigate then falls back to a synchronous `history.replaceState`. A
+      // data router updates `window.location` later, and a `MemoryRouter`
+      // never does.
+      let searchAfterBranch: string | undefined;
       mockUseChatSession.rewindToMessage = vi
         .fn()
         .mockImplementation(async (options) => {
           options?.onBeforeBranch?.();
+          searchAfterBranch = window.location.search;
           return { previousChatSessionId: ORIGINAL_CONVERSATION_ID };
         });
 
@@ -2358,12 +2694,8 @@ describe("PlaygroundMain", () => {
         expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
       });
 
-      // Not "no param at all": once the branch's transcript has content the sync
-      // effect writes the BRANCH's id here. What must never survive is the
-      // original's, which is what the restore effect would act on.
-      await waitFor(() => {
-        expect(window.location.search).not.toContain(ORIGINAL_CONVERSATION_ID);
-      });
+      // Gone as the branch is minted, so the restore effect has nothing to act on.
+      expect(searchAfterBranch).toBe("");
     });
 
     it("withholds the edit affordance when signed out, where there is no history to go back to", () => {
@@ -3274,6 +3606,44 @@ describe("PlaygroundMain", () => {
       });
     });
 
+    it("sends without connecting an app-wide server that is not in the Playground selection", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: ["test-server"],
+        reauthServerNames: [],
+      });
+      mockSharedAppState.servers["test-server"] = { connectionStatus: "failed" };
+      mockSharedAppState.servers["picked-server"] = { connectionStatus: "connected" };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+          playgroundServerSelectorProps={{
+            serverConfigs: {},
+            selectedServer: "test-server",
+            selectedMultipleServers: ["picked-server"],
+            isMultiSelectEnabled: true,
+            onServerChange: vi.fn(),
+            onConnect: vi.fn(),
+          }}
+        />
+      );
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "Hello from playground" },
+      });
+      fireEvent.click(screen.getByTestId("chat-submit-button"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Hello from playground" })
+        );
+      });
+      expect(ensureServersReady).not.toHaveBeenCalled();
+    });
+
     it("does not reconnect an unrelated standalone server for an environment-owned widget message", async () => {
       mockEnvironmentReadiness.enabled = true;
       mockUseChatSession.messages = [{ id: "existing", role: "assistant", parts: [{ type: "text", text: "Disposable thread" }] }];
@@ -3641,6 +4011,123 @@ describe("PlaygroundMain", () => {
         "Something went wrong"
       );
     });
+
+    it("offers Retry for a temporary organization policy refusal and resends the last user message", async () => {
+      // The organization's AI-key policy couldn't be read, or its provider
+      // was briefly down. Both lift on their own, so the playground must hand
+      // the banner a Retry action.
+      mockUseChatSession.messages = [
+        {
+          id: "1",
+          role: "user",
+          parts: [{ type: "text", text: "List my open tickets" }],
+        },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI policy couldn't be checked."),
+        { formatted: { code: "ai_key_policy_unavailable" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "List my open tickets" })
+      );
+    });
+
+    it("runs a policy Retry through the send gates and tracks it once", async () => {
+      // Retry is a send like any other: a disconnected server is connected
+      // first, and nothing is sent when it can't be.
+      mockUseChatSession.messages = [
+        {
+          id: "1",
+          role: "user",
+          parts: [{ type: "text", text: "List my open tickets" }],
+        },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } }
+      );
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "disconnected",
+      };
+      const notReady = {
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: ["test-server"],
+        reauthServerNames: [],
+      };
+      const ensureServersReady = vi
+        .fn()
+        .mockResolvedValueOnce(notReady)
+        .mockResolvedValue({
+          ...notReady,
+          readyServerNames: ["test-server"],
+          failedServerNames: [],
+        });
+      vi.mocked(track).mockClear();
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+      await waitFor(() => {
+        expect(ensureServersReady).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId("error-box-retry"));
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "List my open tickets" })
+        );
+      });
+      expect(ensureServersReady).toHaveBeenCalledTimes(2);
+      expect(
+        vi
+          .mocked(track)
+          .mock.calls.filter(([event]) => event === "app_builder_send_message")
+      ).toHaveLength(2);
+    });
+
+    it("offers Retry when the organization's provider is briefly unavailable", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getByTestId("error-box-retry")).toBeInTheDocument();
+    });
+
+    it("offers no Retry for a policy refusal that needs a configuration change", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.error = Object.assign(
+        new Error("Choose a model from an organization provider."),
+        { formatted: { code: "org_keys_required" } }
+      );
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getByTestId("error-box")).toBeInTheDocument();
+      expect(screen.queryByTestId("error-box-retry")).not.toBeInTheDocument();
+    });
   });
 
   describe("clear chat", () => {
@@ -3694,7 +4181,7 @@ describe("PlaygroundMain", () => {
         messagesBlobUrl: "https://storage.test/blob",
         resumeConfig: { selectedServers: ["test-server"] },
       };
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: savedSession,
         widgetSnapshots: [],
@@ -3780,7 +4267,7 @@ describe("PlaygroundMain", () => {
         messagesBlobUrl: "https://storage.test/blob",
         resumeConfig: { selectedServers: ["test-server"] },
       };
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: savedSession,
         widgetSnapshots: [],
@@ -4036,7 +4523,7 @@ describe("PlaygroundMain", () => {
         "",
         `/playground?conversation=${RESTORED_SESSION_ID}`
       );
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: {
           _id: "history-restored",
@@ -4081,7 +4568,7 @@ describe("PlaygroundMain", () => {
       );
 
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
@@ -4107,7 +4594,7 @@ describe("PlaygroundMain", () => {
       );
 
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
@@ -4142,14 +4629,15 @@ describe("PlaygroundMain", () => {
     const RESTORED_SESSION_ID = "restored-target-session";
 
     const arriveAtRestoredConversation = (
-      resumeConfig: Record<string, unknown>
+      resumeConfig: Record<string, unknown>,
+      sessionFields: Record<string, unknown> = {}
     ) => {
       window.history.replaceState(
         {},
         "",
         `/playground?conversation=${RESTORED_SESSION_ID}`
       );
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: {
           _id: "history-restored-target",
@@ -4166,6 +4654,7 @@ describe("PlaygroundMain", () => {
           isUnread: false,
           messagesBlobUrl: "https://storage.test/blob",
           resumeConfig,
+          ...sessionFields,
         },
         widgetSnapshots: [],
       });
@@ -4177,15 +4666,16 @@ describe("PlaygroundMain", () => {
      */
     const openRestoredConversation = async (
       resumeConfig: Record<string, unknown>,
-      extraProps: Record<string, unknown> = {}
+      extraProps: Record<string, unknown> = {},
+      sessionFields: Record<string, unknown> = {}
     ) => {
-      arriveAtRestoredConversation(resumeConfig);
+      arriveAtRestoredConversation(resumeConfig, sessionFields);
       const props = { ...defaultProps, ...extraProps };
       const { rerender: rerenderRaw } = render(
         <PlaygroundMain {...props} syncConversationToUrl />
       );
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
@@ -4237,6 +4727,32 @@ describe("PlaygroundMain", () => {
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
     });
+
+    // The binding outranks every engine default, so a local conversation
+    // bound to Cloud keeps minting hosted tokens the backend refuses.
+    it.each([
+      ["local", "local"],
+      ["hosted", "cloud"],
+    ])(
+      "binds a reopened %s browser conversation to where its browser runs",
+      async (engine, location) => {
+        await openRestoredConversation(
+          { executionTarget: { kind: "adhoc" } },
+          {},
+          {
+            projectId: "project-1",
+            browser: { browserSessionId: "logical", state: "active", engine },
+          }
+        );
+        await waitFor(() =>
+          expect(useActiveChatSessionStore.getState().browserLocation).toEqual({
+            projectId: "project-1",
+            sessionId: RESTORED_SESSION_ID,
+            engine: location,
+          })
+        );
+      }
+    );
 
     it("reopens an explicitly ad-hoc conversation without the unavailable-configuration gate", async () => {
       await openRestoredConversation({ executionTarget: { kind: "adhoc" } });

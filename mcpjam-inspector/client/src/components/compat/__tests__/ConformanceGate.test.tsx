@@ -9,10 +9,14 @@ import type { ServerWithName } from "@/state/app-types";
 
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
+const mockTrack = vi.fn();
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   runProtocolConformance: (...args: unknown[]) => mockRunProtocol(...args),
   runAppsConformance: (...args: unknown[]) => mockRunApps(...args),
+}));
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockTrack(...args),
 }));
 
 import { ConformanceGate } from "../ConformanceGate";
@@ -76,6 +80,35 @@ describe("ConformanceGate", () => {
     );
     expect(mockRunProtocol).toHaveBeenCalledWith("http-server");
     expect(mockRunApps).toHaveBeenCalledWith("http-server");
+  });
+
+  it("sends one conformance_run_triggered per click, for both suites", async () => {
+    render(
+      <MemoryRouter>
+        <ConformanceGate server={httpServer()} location="compat_page" />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
+    await waitFor(() =>
+      expect(screen.getByText(/Spec checks passed/)).toBeInTheDocument(),
+    );
+    expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(mockTrack).toHaveBeenCalledWith("conformance_run_triggered", {
+      location: "compat_page",
+      run_source: "ui",
+    });
+  });
+
+  it("counts a stdio run once, in the detail modal by default", async () => {
+    renderGate(stdioServer());
+    fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
+    await waitFor(() => expect(mockRunApps).toHaveBeenCalled());
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    expect(mockTrack).toHaveBeenCalledTimes(1);
+    expect(mockTrack).toHaveBeenCalledWith("conformance_run_triggered", {
+      location: "compat_detail_modal",
+      run_source: "ui",
+    });
   });
 
   it("surfaces a spec failure", async () => {

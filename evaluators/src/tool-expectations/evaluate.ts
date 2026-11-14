@@ -27,6 +27,7 @@
 
 import {
   evaluateToolCalls,
+  findToolCallRetries,
   pairToolCalls,
   type EvalArgumentMismatch,
   type EvalToolCall,
@@ -133,6 +134,25 @@ function matchableCalls(
 }
 
 /**
+ * The matchable calls minus each failed attempt a later identical call
+ * retried, which `evaluateToolCalls` grades as part of its retry. Dropped here
+ * too so the rows read the pairing the verdict grades with.
+ */
+function withoutRetriedAttempts(calls: {
+  matchable: ToolExpectationCall[];
+  rawIndex: number[];
+}): { matchable: ToolExpectationCall[]; rawIndex: number[] } {
+  const retried = new Set(
+    findToolCallRetries(calls.matchable).map((retry) => retry.actualIndex),
+  );
+  if (retried.size === 0) return calls;
+  return {
+    matchable: calls.matchable.filter((_, index) => !retried.has(index)),
+    rawIndex: calls.rawIndex.filter((_, index) => !retried.has(index)),
+  };
+}
+
+/**
  * Today's per-turn verdict, mirroring `evaluateMultiTurnResults`: a pinned turn
  * is exempt; a negative turn passes iff no call was made; a turn with no
  * expectations passes unless it went past a bounded extras cap; anything else
@@ -190,11 +210,11 @@ function evaluateTurn(
   exemptionNames: ReadonlySet<string>,
 ): TurnEvaluation {
   const calls = normalizeCalls(rawCalls);
-  const { matchable, rawIndex } = matchableCalls(
-    calls,
-    exemptionNames,
-    context,
-  );
+  const visible = matchableCalls(calls, exemptionNames, context);
+  // Every call breaks a negative turn, a retried attempt included.
+  const { matchable, rawIndex } = turn.negative
+    ? visible
+    : withoutRetriedAttempts(visible);
 
   // One slot per `minCount`, adjacent, all owned by one assertion.
   //

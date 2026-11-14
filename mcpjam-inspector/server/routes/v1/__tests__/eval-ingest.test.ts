@@ -67,6 +67,15 @@ describe("v1 eval-ingest proxies", () => {
     }
   });
 
+  it("forwards the identity start route with scoped project and replay response", async () => {
+    const fetchMock = vi.fn(async () => backendResponse(200, { ok: true, runStartId: "start", organizationId: "org", projectId: "project" }));
+    global.fetch = fetchMock;
+    const res = await request(makeApp(), "/api/v1/projects/project/eval-ingest/start-run", JSON.stringify({ runStartId: "start", plannedIterations: 2 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ runStartId: "start", organizationId: "org" });
+    expect(fetchMock.mock.calls[0]).toBeDefined();
+  });
+
   it("forwards the body to the backend ingest route and passes the response through", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       backendResponse(200, {

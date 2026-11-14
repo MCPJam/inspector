@@ -1,4 +1,13 @@
 import { deepJsonSafe } from "../../json-safe.js";
+import {
+  blockedByDetails,
+  blockedByMessage,
+} from "../../conformance-blocked.js";
+import {
+  checkTimedOutDetails,
+  checkTimedOutMessage,
+  isRequestTimeoutError,
+} from "../../conformance-timeout.js";
 import type {
   MCPCheckSkipReason, MCPCheckEra, MCPCheckResult } from "../types.js";
 
@@ -87,6 +96,54 @@ export function couldNotRunResult(
   details?: Record<string, unknown>,
 ): MCPCheckResult {
   return skipped(check, "could-not-run", message, details);
+}
+
+/**
+ * The check never ran because an earlier check broke. Still `could-not-run`
+ * (the server is why it never ran), but the message names the check to look
+ * at first.
+ */
+export function blockedResult(
+  check: CheckMetadata,
+  blocker: Pick<CheckMetadata, "id" | "title">,
+  details?: Record<string, unknown>,
+): MCPCheckResult {
+  return couldNotRunResult(check, blockedByMessage(blocker.title), {
+    ...details,
+    ...blockedByDetails(blocker.id),
+  });
+}
+
+/**
+ * The server did not answer within the check's time limit. The requirement
+ * went untested, so it could not run; it is not a failure.
+ */
+export function timedOutResult(
+  check: CheckMetadata,
+  timeoutMs: number
+): MCPCheckResult {
+  return couldNotRunResult(
+    check,
+    checkTimedOutMessage(timeoutMs),
+    checkTimedOutDetails(timeoutMs)
+  );
+}
+
+/** What a client-backed check reports for an error its request threw. */
+export function caughtErrorResult(
+  check: CheckMetadata,
+  startedAt: number,
+  error: unknown,
+  timeoutMs: number
+): MCPCheckResult {
+  if (isRequestTimeoutError(error)) return timedOutResult(check, timeoutMs);
+  return failedResult(
+    check,
+    Date.now() - startedAt,
+    errorMessage(error),
+    undefined,
+    error
+  );
 }
 
 export function errorMessage(error: unknown): string {

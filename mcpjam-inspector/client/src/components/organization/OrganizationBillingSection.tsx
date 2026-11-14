@@ -102,6 +102,7 @@ function getPlanRank(plan: OrganizationPlan): number {
 }
 
 function getPlanColumnCta(params: {
+  contractManaged?: boolean;
   plan: OrganizationPlan;
   currentPlan: OrganizationPlan;
   currentCatalogPlanId?: string;
@@ -170,7 +171,7 @@ function getPlanColumnCta(params: {
     return { label: "Current plan", disabled: true, variant: "outline" };
   }
 
-  if (isEnterprisePlan) {
+  if (isEnterprisePlan || params.contractManaged) {
     return {
       label: "Contact us",
       disabled: false,
@@ -486,7 +487,7 @@ const V2_ROW_EXPLANATIONS: Record<string, string> = {
   "SSO / SAML":
     "Single sign-on connects your workspace to your organization’s identity provider. Availability is shown for each plan.",
   "Role-based access control":
-    "Role-based access control manages permissions in your organization. Team includes Basic RBAC; Enterprise includes Advanced RBAC with custom role definitions.",
+    "Assign owner, admin, member, and guest roles to manage access to your organization.",
   "Data processing agreement":
     "A data processing agreement covering how MCPJam processes personal data. Request a signed DPA through sales on Enterprise.",
   "Uptime SLA":
@@ -1374,6 +1375,7 @@ export function OrganizationBillingSection({
                                     : ""
                                   : null;
                               const cta = getPlanColumnCta({
+                                contractManaged: (billingStatus?.unlimitedCreditsUntil ?? 0) > Date.now(),
                                 plan,
                                 currentPlan,
                                 currentCatalogPlanId:

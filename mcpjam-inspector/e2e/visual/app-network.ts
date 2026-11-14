@@ -1,0 +1,269 @@
+import { renderSandboxProxyHtml } from "../../server/routes/apps/mcp-apps/sandbox-proxy-html";
+import { sandboxViewHeaders } from "../../server/utils/sandbox-view-response";
+import { buildCSP } from "../../server/utils/sandbox-csp-policy";
+import { createHash } from "node:crypto";
+import type { BrowserContext, Route, WebSocketRoute } from "@playwright/test";
+import { FIXED_TIME, mutations, queries, responses } from "./app-data";
+
+const ORIGIN = "http://127.0.0.1:6289";
+type VisualView = { admissionId: string; htmlSha256: string; hostOrigin: string };
+type Message = {
+  type: string;
+  baseVersion: number;
+  newVersion: number;
+  requestId: number;
+  udfPath: string;
+  modifications: { type: string; queryId: number; udfPath: string }[];
+};
+
+export type AppFixture = {
+  queries: Record<string, unknown>;
+  responses: Record<string, unknown>;
+  mutations?: Record<string, unknown>;
+  signedIn?: boolean;
+  statuses?: Record<string, number>;
+  convexOrigin?: string;
+  localAccessToken?: string;
+  seedOnboarding?: boolean;
+};
+
+function serveConvex(
+  socket: WebSocketRoute,
+  failures: string[],
+  fixture: AppFixture,
+) {
+  let version = { querySet: 0, identity: 0, ts: "AAAAAAAAAAA=" };
+  function transition(next: typeof version, modifications: unknown[] = []) {
+    socket.send(
+      JSON.stringify({
+        type: "Transition",
+        startVersion: version,
+        endVersion: next,
+        modifications,
+      }),
+    );
+    version = next;
+  }
+  socket.onMessage((raw) => {
+    const message: Message = JSON.parse(raw.toString());
+    if (message.type === "Connect" || message.type === "Event") return;
+    if (message.type === "Authenticate") {
+      transition({ ...version, identity: message.baseVersion + 1 });
+    } else if (message.type === "ModifyQuerySet") {
+      const modifications = message.modifications.map((query) => {
+        if (query.type === "Remove")
+          return { type: "QueryRemoved", queryId: query.queryId };
+        if (!Object.hasOwn(fixture.queries, query.udfPath))
+          failures.push(`Query: ${query.udfPath}`);
+        return {
+          type: "QueryUpdated",
+          queryId: query.queryId,
+          value: fixture.queries[query.udfPath] ?? null,
+          logLines: [],
+          journal: null,
+        };
+      });
+      transition({ ...version, querySet: message.newVersion }, modifications);
+    } else if (
+      message.type === "Mutation" &&
+      (message.udfPath === "users:ensureUser" ||
+        Object.hasOwn(fixture.mutations ?? {}, message.udfPath))
+    ) {
+      socket.send(
+        JSON.stringify({
+          type: "MutationResponse",
+          requestId: message.requestId,
+          success: true,
+          result: fixture.mutations?.[message.udfPath] ?? null,
+          ts: version.ts,
+          logLines: [],
+        }),
+      );
+      transition({ ...version });
+    } else {
+      failures.push(`${message.type}: ${message.udfPath}`);
+      socket.close();
+    }
+  });
+}
+
+async function serveHttp(
+  route: Route,
+  failures: string[],
+  fixture: AppFixture,
+  origin: string,
+  views: Map<string, VisualView>,
+) {
+  const url = new URL(route.request().url());
+  if (
+    url.hostname === "o4510109778378752.ingest.us.sentry.io" &&
+    /^\/api\/\d+\/envelope\/$/.test(url.pathname)
+  )
+    return route.fulfill({ status: 204 });
+  if (
+    url.origin === "http://127.0.0.1:11434" &&
+    route.request().method() === "GET" &&
+    ["/api/version", "/api/tags"].includes(url.pathname)
+  )
+    return route.fulfill({
+      json: url.pathname.endsWith("tags")
+        ? { models: [] }
+        : { version: "0.0.0" },
+    });
+  const document = views.get(url.origin);
+  if (document && url.pathname.endsWith("/sandbox-proxy") &&
+      url.searchParams.get("view_token") === document.admissionId)
+    return route.fulfill({
+      headers: sandboxViewHeaders(`${buildCSP()}, frame-ancestors ${origin}`),
+      body: renderSandboxProxyHtml(document),
+    });
+  if (url.origin === origin) {
+    const admissionPath = "/api/web/apps/mcp-apps/view-admissions";
+    if (url.pathname === admissionPath && route.request().method() === "POST") {
+      const input = route.request().postDataJSON();
+      if (input.hostOrigin !== origin || typeof input.html !== "string" ||
+          typeof input.viewInstanceId !== "string" ||
+          !/^[a-f0-9-]{36}$/.test(input.viewInstanceId))
+        return route.fulfill({ status: 400, json: { message: "Invalid visual App admission" } });
+      const admissionId = input.viewInstanceId;
+      const viewOrigin = `https://${admissionId}.sandbox.visual.invalid`;
+      const htmlSha256 = createHash("sha256").update(input.html).digest("hex");
+      views.set(viewOrigin, { admissionId, htmlSha256, hostOrigin: origin });
+      return route.fulfill({ json: {
+        admissionId, htmlSha256, expiresAt: FIXED_TIME + 2 * 60 * 60_000,
+        proxyUrl: `${viewOrigin}/api/apps/mcp-apps/sandbox-proxy?view_token=${admissionId}`,
+      } });
+    }
+    if (url.pathname.startsWith(`${admissionPath}/`) && route.request().method() === "DELETE") {
+      const admissionId = url.pathname.slice(admissionPath.length + 1);
+      views.delete(`https://${admissionId}.sandbox.visual.invalid`);
+      return route.fulfill({ status: 204 });
+    }
+    if (
+      !fixture.signedIn &&
+      url.pathname === "/user_management/authenticate" &&
+      route.request().method() === "POST"
+    )
+      return route.fulfill({
+        status: 401,
+        json: {
+          error: "invalid_grant",
+          error_description: "Synthetic guest has no WorkOS session",
+        },
+      });
+    if (Object.hasOwn(fixture.responses, url.pathname))
+      return route.fulfill({
+        status: fixture.statuses?.[url.pathname] ?? 200,
+        json: fixture.responses[url.pathname],
+      });
+    if (
+      url.pathname === "/api/mcp/subscribe" ||
+      url.pathname === "/api/mcp/servers/rpc/stream"
+    ) {
+      return route.fulfill({
+        contentType: "text/event-stream",
+        body: ": synthetic workspace\n\n",
+      });
+    }
+    if (url.pathname.startsWith("/tlm/"))
+      return route.fulfill({
+        contentType: "application/javascript",
+        body: "",
+      });
+    if (/^\/api\/\d+\/envelope\/$/.test(url.pathname))
+      return route.fulfill({ status: 204 });
+    if (
+      !url.pathname.startsWith("/api/") &&
+      !url.pathname.startsWith("/user_management/")
+    )
+      return route.continue();
+  }
+  if (
+    url.origin === "https://api.github.com" &&
+    url.pathname === "/repos/MCPJam/inspector"
+  )
+    return route.fulfill({ json: { stargazers_count: 2500 } });
+  failures.push(`HTTP: ${url.origin}${url.pathname}`);
+  await route.abort("blockedbyclient");
+}
+
+export async function prepareApp(
+  context: BrowserContext,
+  theme: string,
+  overrides: Partial<AppFixture> = {},
+  origin = ORIGIN,
+) {
+  const fixture = {
+    ...overrides,
+    queries: { ...queries, ...overrides.queries },
+    mutations: { ...mutations, ...overrides.mutations },
+    responses: { ...responses, ...overrides.responses },
+  };
+  if (fixture.signedIn)
+    await context.addCookies([
+      { name: "workos-has-session", value: "1", url: origin },
+    ]);
+  const failures: string[] = [];
+  const views = new Map<string, VisualView>();
+  context.on("page", (page) =>
+    page.on("pageerror", (error) => failures.push(error.message)),
+  );
+  await context.addInitScript(
+    ({ theme, time, localAccessToken, seedOnboarding, origin }) => {
+      if (window.location.origin !== origin) return;
+      localStorage.setItem("themeMode", theme);
+      // Match a returning visitor; the promotional sprites animate independently
+      // of the navigation and screens covered by these snapshots.
+      localStorage.setItem(
+        "mcpjam:platform-launch-2026-09:status",
+        "dismissed",
+      );
+      localStorage.setItem("mcpjam.local-access", localAccessToken);
+      if (!seedOnboarding) return;
+      for (const key of [
+        "mcp-onboarding-state",
+        "mcp-first-run-server-choice-state",
+      ]) {
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            status: "completed",
+            completedAt: time,
+            shownAt: time,
+          }),
+        );
+      }
+    },
+    {
+      theme,
+      origin,
+      time: FIXED_TIME,
+      localAccessToken:
+        fixture.localAccessToken ?? "visual-local-access-credential",
+      seedOnboarding: fixture.seedOnboarding ?? true,
+    },
+  );
+  await context.route("**/*", (route) =>
+    serveHttp(route, failures, fixture, origin, views),
+  );
+  await context.routeWebSocket("**/*", (socket) => {
+    const url = new URL(socket.url());
+    if (url.origin === origin.replace(/^http/, "ws") && url.pathname === "/api/web/mcp/mrtr/stream") {
+      socket.send(JSON.stringify({ type: "snapshot_start" }));
+      socket.send(JSON.stringify({ type: "snapshot_end" }));
+      socket.onMessage(() => {
+        failures.push("Unexpected response to an empty local form fixture");
+        socket.close();
+      });
+      return;
+    }
+    if (
+      new URL(socket.url()).origin ===
+      (fixture.convexOrigin ?? "wss://visual.invalid")
+    )
+      return serveConvex(socket, failures, fixture);
+    failures.push(`WebSocket: ${socket.url()}`);
+    socket.close();
+  });
+  return failures;
+}

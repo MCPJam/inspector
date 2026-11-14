@@ -293,25 +293,18 @@ describe("plugin capability admission and negotiation", () => {
     expect(original.invoke).not.toHaveBeenCalled();
   });
 
-  it("keeps assumed MRTR authority explicit after prototype opt-in", async () => {
-    const assumed = setup(["forms"], {
+  it("treats MRTR forms as specified: supported and advertised on the extension key", async () => {
+    const mrtr = setup(["forms"], {
       profile: { ...profile, transport: "mrtr" },
     });
-    expect(assumed.registry.decision("forms")).toMatchObject({
-      status: "degraded",
-      allowed: false,
-      authority: "assumed",
-    });
-    expect(assumed.registry.clientCapabilities()).toEqual({});
-    const optedIn = setup(["forms"], {
-      profile: { ...profile, transport: "mrtr", allowAssumedMrtrForms: true },
-    });
-    expect(optedIn.registry.decision("forms")).toMatchObject({
+    expect(mrtr.registry.decision("forms")).toMatchObject({
       status: "supported",
       allowed: true,
-      authority: "assumed",
     });
-    await optedIn.registry.invoke("forms", {});
+    expect(mrtr.registry.clientCapabilities()).toEqual({
+      extensions: { "openai/elicitation": { form: {} } },
+    });
+    await mrtr.registry.invoke("forms", {});
   });
 
   it("permits replay and cleanup with execution disabled, without live ports", async () => {

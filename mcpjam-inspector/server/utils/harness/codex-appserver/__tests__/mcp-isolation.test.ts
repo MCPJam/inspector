@@ -55,3 +55,29 @@ notaserver = { command = "g" }
     ).toEqual({});
   });
 });
+
+
+it("disables foreign Windows MCP servers from Codex's effective config", () => {
+  expect(foreignMcpServerOverrides({
+    keep: "mcpjam", platform: "win32",
+    effectiveConfig: { config: { mcp_servers: {
+      system: { command: "system-server", args: [], environment_id: "local", enabled: true },
+      mcpjam: { command: "node", enabled: true },
+    } }, origins: {} },
+  })).toEqual({ system: { enabled: false } });
+});
+
+it.each([undefined, {}, { config: null }, { config: { mcp_servers: [] } }])(
+  "refuses a Windows thread when effective config cannot be inspected (%j)",
+  (effectiveConfig) => {
+    expect(() => foreignMcpServerOverrides({
+      keep: "mcpjam", platform: "win32", effectiveConfig,
+    })).toThrow(/config/i);
+  },
+);
+
+it("accepts a readable Windows config with no MCP servers", () => {
+  expect(foreignMcpServerOverrides({
+    keep: "mcpjam", platform: "win32", effectiveConfig: { config: {}, origins: {} },
+  })).toEqual({});
+});

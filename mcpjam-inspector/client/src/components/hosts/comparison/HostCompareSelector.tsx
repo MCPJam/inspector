@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -45,7 +46,7 @@ interface HostCompareSelectorProps {
   onToggleHost: (hostId: string) => void;
   viewMode?: "table" | "list";
   onViewModeChange?: (mode: "table" | "list") => void;
-  disableListView?: boolean;
+  filters?: ReactNode;
   divergingOnly: boolean;
   onDivergingOnlyChange: (enabled: boolean) => void;
   showDescriptions: boolean;
@@ -63,7 +64,7 @@ export function HostCompareSelector({
   onToggleHost,
   viewMode,
   onViewModeChange,
-  disableListView = false,
+  filters,
   divergingOnly,
   onDivergingOnlyChange,
   showDescriptions,
@@ -85,7 +86,12 @@ export function HostCompareSelector({
         mobileOptimized && "min-w-0",
       )}
     >
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 flex-wrap items-center gap-2",
+          mobileOptimized && "basis-full",
+        )}
+      >
         {inlineHosts.map((host) => (
           <HostCompareChip
             key={host.hostId}
@@ -114,19 +120,17 @@ export function HostCompareSelector({
         className={cn(
           "ml-auto flex shrink-0 items-center gap-4",
           mobileOptimized &&
-            "ml-0 min-w-0 w-full flex-wrap justify-center gap-2 sm:ml-auto sm:w-auto sm:flex-nowrap sm:justify-end sm:gap-3",
+            "ml-0 min-w-0 w-full flex-wrap gap-x-3 gap-y-2 sm:justify-end",
         )}
       >
-        {mobileOptimized &&
-        viewMode !== undefined &&
-        onViewModeChange !== undefined ? (
+        {viewMode !== undefined && onViewModeChange !== undefined ? (
           <CompareViewModeToggle
             viewMode={viewMode}
             onViewModeChange={onViewModeChange}
-            disableListView={disableListView}
             disabled={disabled}
           />
         ) : null}
+        {filters}
         <label
           className={cn(
             "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
@@ -172,38 +176,24 @@ function getInlineCompareHosts(
   hosts: ReadonlyArray<HostListItem>,
   selectedSet: ReadonlySet<string>,
 ): ReadonlyArray<HostListItem> {
-  if (hosts.length <= INITIAL_INLINE_CHIP_LIMIT) return hosts;
-
   const selectedHosts = hosts.filter((host) => selectedSet.has(host.hostId));
-  if (selectedHosts.length === 0) {
-    return hosts.slice(0, INITIAL_INLINE_CHIP_LIMIT);
-  }
-
   const fillerCount = Math.max(
     0,
     INITIAL_INLINE_CHIP_LIMIT - selectedHosts.length,
   );
-  const fillerIds = new Set(
-    hosts
-      .filter((host) => !selectedSet.has(host.hostId))
-      .slice(0, fillerCount)
-      .map((host) => host.hostId),
-  );
-
-  return hosts.filter(
-    (host) => selectedSet.has(host.hostId) || fillerIds.has(host.hostId),
-  );
+  return [
+    ...selectedHosts,
+    ...hosts.filter((host) => !selectedSet.has(host.hostId)).slice(0, fillerCount),
+  ];
 }
 
 function CompareViewModeToggle({
   viewMode,
   onViewModeChange,
-  disableListView,
   disabled,
 }: {
   viewMode: "table" | "list";
   onViewModeChange: (mode: "table" | "list") => void;
-  disableListView: boolean;
   disabled: boolean;
 }) {
   return (
@@ -219,19 +209,12 @@ function CompareViewModeToggle({
         ] as const
       ).map((v) => {
         const active = viewMode === v.value;
-        const viewModeDisabled =
-          disabled || (v.value === "list" && disableListView);
         return (
           <button
             key={v.value}
             type="button"
             aria-pressed={active}
-            disabled={viewModeDisabled}
-            title={
-              viewModeDisabled
-                ? "Turn descriptions off before switching to list view"
-                : undefined
-            }
+            disabled={disabled}
             data-testid={`compare-view-${v.value}`}
             onClick={() => onViewModeChange(v.value)}
             className={cn(

@@ -3,7 +3,8 @@ import { Hono } from "hono";
 
 // Covers the v1 WRITE surface: tools/call + prompts/get schema validation,
 // the async eval-run POST (mocked prepare/execute seam), the eval read
-// proxies (mocked ConvexHttpClient), and the OAuth import-tokens proxy.
+// proxies (mocked ConvexHttpClient). The deprecated OAuth import-tokens
+// alias is covered with the accounts API in server-accounts.test.ts.
 
 const {
   validateGuestTokenMock,
@@ -85,7 +86,9 @@ vi.mock("convex/browser", () => ({
   }),
 }));
 
+import { ConvexHttpClient } from "convex/browser";
 import v1Routes from "../index.js";
+import { convexReadFetch } from "../convex-read-errors.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
 import {
   __resetHostedModelCatalogForTests,
@@ -364,10 +367,12 @@ describe("v1 write routes", () => {
           "s_beta",
         ]);
         expect(createAuthorizedManagerMock.mock.calls[0][7]).toEqual({
+          pluginComputerRuntime: false,
           serverNames: ["alpha", "beta"],
           // Threaded so per-server XAA servers mint instead of 500ing —
           // the v1 eval API has no host-persona input, so no xaaPolicy.
           xaaIssuer: expect.stringContaining("/xaa"),
+          xaaPolicy: undefined,
         });
         expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
           serverIds: ["s_alpha", "s_beta"],
@@ -666,22 +671,15 @@ describe("v1 write routes", () => {
         }
       });
 
-      it("DOES execute a replay of a run still in flight", async () => {
-        // Deliberately unchanged: an in-flight run and one abandoned mid-flight
-        // are indistinguishable from here, and refusing to execute would strand
-        // the second. Deciding that needs a liveness signal, not a guess.
-        const { execute } = mockReplay("running");
-
+      it.each(["pending", "running"])("adopts a replay in %s without another executor", async (status) => {
+        const { execute } = mockReplay(status);
         const res = await request(
-          makeApp(),
-          "POST",
-          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
-          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
+          makeApp(), "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" },
         );
-
         expect(res.status).toBe(202);
-        expect((await res.json()).status).toBe("running");
-        expect(execute).toHaveBeenCalledTimes(1);
+        expect((await res.json()).status).toBe(status);
+        expect(execute).not.toHaveBeenCalled();
       });
 
       it("executes normally against a backend with no replay signal", async () => {
@@ -1777,6 +1775,37 @@ describe("v1 write routes", () => {
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
     });
 
+    it("authors a mcpjam/<vendor>/<model> test as the hosted pick", async () => {
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: {
+          listServers: () => ["s1"],
+          disconnectAllServers: vi.fn().mockResolvedValue(undefined),
+        },
+      });
+      authorEvalSuiteMock.mockResolvedValue({
+        suiteId: "suitenewxxxxxxxxxxxxxxxxxxxxxxxx",
+        suiteName: "Fresh suite",
+        caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "mcpjam/anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+        }
+      );
+
+      expect(res.status).toBe(201);
+      const authoredTest = authorEvalSuiteMock.mock.calls[0][0].tests[0];
+      expect(authoredTest.model).toBe("anthropic/claude-haiku-4.5");
+      expect(authoredTest.provider).toBe("anthropic");
+    });
+
     it("attaches the named clients after authoring the suite", async () => {
       // A suite authored over the API had no way to name its client, so every
       // CLI/MCP/SDK-created suite read back with an empty Client — and the
@@ -2702,9 +2731,7 @@ describe("v1 write routes", () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as any;
         expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
-        expect(body.message).toContain(
-          "the Codex harness can't run this host's model"
-        );
+        expect(body.message).toMatch(/not.*verified/);
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       } finally {
         vi.unstubAllEnvs();
@@ -3113,6 +3140,21 @@ describe("v1 write routes", () => {
       });
     });
 
+    it("reads through convexReadFetch, so an upstream failure keeps its HTTP status", async () => {
+      // Without this fetch the client drops the status of a non-2xx Convex
+      // answer, and Sentry gets an empty `Error` (INSPECTOR-HONO-17).
+      convexQueryMock.mockResolvedValueOnce(RUN_DOC);
+      await request(
+        makeApp(),
+        "GET",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      );
+      expect(ConvexHttpClient).toHaveBeenCalledWith(
+        "https://convex.example.com",
+        { fetch: convexReadFetch }
+      );
+    });
+
     it("surfaces a RECORDED execution engine, and only when the run has one", async () => {
       // The omission case is pinned by the exact-match assertion above: a run
       // whose snapshot predates the field must not acquire `executionEngine`,
@@ -3356,55 +3398,6 @@ describe("v1 write routes", () => {
         code: "NOT_FOUND",
         details: { reason: "TRACE_NOT_AVAILABLE" },
       });
-    });
-  });
-
-  describe("POST oauth/import-tokens", () => {
-    it("forwards to Convex and returns { imported: true }", async () => {
-      global.fetch = vi.fn(async (input: any) => {
-        expect(String(input)).toBe(
-          "https://convex-http.example.com/web/oauth/import-tokens"
-        );
-        return new Response(JSON.stringify({ expiresAt: 123 }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }) as typeof fetch;
-
-      const res = await request(
-        makeApp(),
-        "POST",
-        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
-        {
-          serverUrl: "https://server.example.com/mcp",
-          tokens: { access_token: "at", refresh_token: "rt" },
-        }
-      );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ imported: true, expiresAt: 123 });
-      const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock
-        .calls[0] as [string, RequestInit];
-      const forwarded = JSON.parse(String(init.body));
-      // Path params win over the body; kind pinned to generic.
-      expect(forwarded).toMatchObject({
-        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
-        serverId: "s1",
-        kind: "generic",
-        tokens: { access_token: "at" },
-      });
-    });
-
-    it("rejects a body without tokens (400 VALIDATION_ERROR)", async () => {
-      const res = await request(
-        makeApp(),
-        "POST",
-        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
-        { serverUrl: "https://server.example.com/mcp" }
-      );
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
-      );
     });
   });
 });

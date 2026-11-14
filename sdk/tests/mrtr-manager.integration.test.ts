@@ -7,6 +7,7 @@ import { MCPClientManager } from "../src/mcp-client-manager/index.js";
 import type {
   InputRequests,
   MrtrInputCollector,
+  MrtrLegMiddleware,
 } from "../src/mcp-client-manager/index.js";
 import {
   createMrtrFixtureHandler,
@@ -94,6 +95,77 @@ describe("MCPClientManager × modern MRTR fixture over HTTP", () => {
     })) as { content: Array<{ text?: string }> };
     expect(result.content[0]?.text).toBe("answer:apples");
     expect(collect).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["tool", "prompt", "resource"] as const)(
+    "gates each %s leg under one SDK operation",
+    async (method) => {
+      const legs: Array<{ operationId: string; round: number }> = [];
+      const aroundLeg: MrtrLegMiddleware = async ({
+        operationId,
+        round,
+        send,
+      }) => {
+        legs.push({ operationId, round });
+        return send();
+      };
+      manager.setMrtrInputCollector("fixture", acceptAllCollector(), {
+        aroundLeg,
+      });
+      await connect();
+      if (method === "tool")
+        await manager.executeTool("fixture", "confirm", { topic: "x" });
+      else if (method === "prompt")
+        await manager.getPrompt("fixture", {
+          name: "confirm-prompt",
+          arguments: { topic: "x" },
+        });
+      else await manager.readResource("fixture", { uri: MRTR_RESOURCE_URI });
+      expect(legs.map((leg) => leg.round)).toEqual([0, 1]);
+      expect(new Set(legs.map((leg) => leg.operationId)).size).toBe(1);
+      expect(legs[0].operationId).toBeTruthy();
+    }
+  );
+
+  it("does not send a continuation refused by the host gate", async () => {
+    const sent: number[] = [];
+    const aroundLeg: MrtrLegMiddleware = async ({ round, send }) => {
+      if (round > 0) throw new Error("Continuation refused");
+      sent.push(round);
+      return send();
+    };
+    manager.setMrtrInputCollector("fixture", acceptAllCollector(), {
+      aroundLeg,
+    });
+    await connect();
+    await expect(
+      manager.executeTool("fixture", "confirm", { topic: "x" })
+    ).rejects.toThrow("Continuation refused");
+    expect(sent).toEqual([0]);
+  });
+
+  it("does not spend the server timeout while a continuation awaits approval", async () => {
+    const sent: number[] = [];
+    manager.setElicitationHandler("fixture", async () => ({
+      action: "decline",
+    }));
+    manager.setMrtrInputCollector("fixture", acceptAllCollector("blue"), {
+      aroundLeg: async ({ round, send }) => {
+        if (round > 0) await new Promise((resolve) => setTimeout(resolve, 1600));
+        sent.push(round);
+        return send();
+      },
+    });
+    await connect();
+    await manager.listTools("fixture");
+    const result = await manager.executeTool(
+      "fixture",
+      "confirm",
+      { topic: "color" },
+      { timeout: 1000 }
+    );
+    expect(result).toMatchObject({ content: [{ text: "answer:blue" }] });
+    expect(sent).toEqual([0, 1]);
   });
 
   it("reconstructs tool output-schema validation on the final result", async () => {
@@ -385,6 +457,49 @@ describe("supportsMrtr: false — a client that never implemented MRTR", () => {
     const info = manager.getInitializationInfo("fixture");
     const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
     expect(caps.elicitation).toBeUndefined();
+  });
+
+  describe.each([
+    ["an exact set", "clientCapabilities"],
+    ["a merged set", "capabilities"],
+  ] as const)("a collector's extension claims in %s", (_, field) => {
+    const extensions = {
+      "fixture/elicitation": { form: {} },
+      "fixture/other": {},
+    };
+    const connect = (supportsMrtr?: false) => {
+      manager.setMrtrInputCollector("fixture", acceptAllCollector(), {
+        extensionClaims: ["fixture/elicitation"],
+      });
+      return manager.connectToServer("fixture", {
+        url: served.url,
+        mcpProtocolVersion: "2026-07-28",
+        supportsMrtr,
+        [field]: { extensions },
+        timeout: 10_000,
+      });
+    };
+    // A merged set also carries the default MCP Apps claim; only the
+    // fixture keys are under test.
+    const advertised = () => {
+      const caps = (manager.getInitializationInfo("fixture")
+        ?.clientCapabilities ?? {}) as {
+        extensions?: Record<string, unknown>;
+      };
+      return Object.keys(caps.extensions ?? {}).filter((key) =>
+        key.startsWith("fixture/")
+      );
+    };
+
+    it("are withheld: only a collector that drives rounds answers them", async () => {
+      await connect(false);
+      expect(advertised()).toEqual(["fixture/other"]);
+    });
+
+    it("are kept when the knob is absent (control)", async () => {
+      await connect();
+      expect(advertised()).toEqual(Object.keys(extensions));
+    });
   });
 
   it("suppresses a PINNED exact clientCapabilities set's elicitation", async () => {

@@ -127,6 +127,23 @@ export function fixtureBundleFiles(): Record<string, string> {
   };
 }
 
+export function legacyFixtureBundleFiles(): Record<string, string> {
+  const files = fixtureBundleFiles();
+  delete files["plugin.json"];
+  delete files["mcp.json"];
+  return {
+    ...files,
+    ".codex-plugin/plugin.json": JSON.stringify({
+      name: "fixture-plugin",
+      version: "1.0.0",
+      mcpServers: "./.mcp.json",
+      skills: "./skills/",
+    }),
+    ".mcp.json": fixtureBundleFiles()["mcp.json"],
+    "skills/inspect/SKILL.md": "---\nname: inspect\ndescription: Inspect a part.\n---\nRead the current part.\n",
+  };
+}
+
 /** Zip the fixture files, as `folderSelectionToPluginZip` does client-side. */
 export async function fixtureBundleZip(
   files: Record<string, string> = fixtureBundleFiles()

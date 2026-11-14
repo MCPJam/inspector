@@ -1,3 +1,4 @@
+import { makeFunctionReference } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../../utils/mcp-retry-policy.js";
 
@@ -16,6 +17,7 @@ vi.mock("@mcpjam/sdk", async () => {
 
 import {
   buildReplayManager,
+  createConvexClient,
   captureToolSnapshotForEvalAuthoring,
   fetchReplayConfig,
   storeReplayConfig,
@@ -303,5 +305,42 @@ describe("captureToolSnapshotForEvalAuthoring", () => {
     // dividing `chars` for a token estimate and quoting `bytes` for a payload
     // size is describing the same string.
     expect(row.chars).toBe(row.bytes);
+  });
+});
+
+
+describe("abortable request-scoped Convex client", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+  it("aborts an in-flight action with its request", async () => {
+    vi.stubEnv("CONVEX_URL", "https://test.convex.cloud");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) throw new Error("Missing request signal");
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          }),
+      ),
+    );
+    const controller = new AbortController();
+    const client = createConvexClient("test-token", controller.signal);
+    const pending = client.action(
+      makeFunctionReference<"action">("test:prepare"),
+      {},
+    );
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    controller.abort(new DOMException("Stopped", "AbortError"));
+    await rejected;
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });

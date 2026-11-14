@@ -17,6 +17,12 @@ export const PLATFORM_V1_ERROR_CODES = [
   "SERVER_UNREACHABLE",
   "TIMEOUT",
   "OAUTH_REQUIRED",
+  /**
+   * The MCP server asked the user to sign in before this call could run (a
+   * mid-session sign-in challenge). HTTP 403; `details.authChallenge` carries
+   * the parsed challenge. Distinct from `UNAUTHORIZED`, a bad MCPJam key.
+   */
+  "AUTH_REQUIRED",
   "INTERNAL_ERROR",
 ] as const;
 

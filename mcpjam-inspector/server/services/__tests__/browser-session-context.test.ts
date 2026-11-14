@@ -9,6 +9,7 @@
  * artifact draining, and disposal.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PluginWorkspaceRecorder } from "../../utils/plugin-workspace-recorder.js";
 
 const renderMcpAppToolResult = vi.fn();
 const isRenderableMcpAppTool = vi.fn();
@@ -32,6 +33,7 @@ vi.mock("../../utils/model-capabilities", () => ({
 
 const harnessInstances: Array<{
   getMountedWidgetId: ReturnType<typeof vi.fn>;
+  viewTools: { list: ReturnType<typeof vi.fn>; available: boolean };
   dismissWidget: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   executeAction: ReturnType<typeof vi.fn>;
@@ -56,6 +58,7 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
     McpAppBrowserHarness: vi.fn().mockImplementation(function () {
       const instance = {
         getMountedWidgetId: vi.fn().mockReturnValue(null),
+        viewTools: { list: vi.fn().mockResolvedValue(null), available: false },
         dismissWidget: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn().mockResolvedValue(undefined),
         executeAction: vi.fn(),
@@ -74,6 +77,8 @@ import {
   createBrowserSessionContext,
   boundFollowUpsForArtifact,
 } from "../browser-session-context";
+import { MCPClientManager } from "@mcpjam/sdk";
+import { McpAppBrowserHarness } from "../../utils/mcp-app-browser-harness";
 import type { LiveBrowserFrame } from "@/shared/browser-live-frame";
 
 const CLAUDE_MODEL = "claude-haiku-4-5";
@@ -98,6 +103,23 @@ beforeEach(() => {
     followUps: [],
     elapsedMs: 1,
   });
+});
+
+it("forwards profile capabilities and reads through the session manager", async () => {
+  const manager = new MCPClientManager();
+  const read = vi.spyOn(manager, "readResource").mockResolvedValue({ contents: [] });
+  const caps = { serverResources: {}, serverTools: {} };
+  const ctx = await createBrowserSessionContext({
+    model: CLAUDE_MODEL,
+    enableComputerUse: true,
+    mcpClientManager: manager,
+    hostCapabilities: caps,
+  });
+  const options = vi.mocked(McpAppBrowserHarness).mock.calls[0][0];
+  expect(options.hostCapabilities).toBe(caps);
+  await options.readResource?.("box-origin", { uri: "box://fixture/document" });
+  expect(read).toHaveBeenCalledWith("box-origin", { uri: "box://fixture/document" });
+  await ctx.dispose();
 });
 
 describe("boundFollowUpsForArtifact (R1 durable-artifact bounds)", () => {
@@ -351,7 +373,7 @@ describe("createBrowserSessionContext — render hook", () => {
     ).toBeUndefined();
   });
 
-  it("renders for non-Claude drivers too (observations without Computer Use)", async () => {
+  it.each([false, true])("renders without Computer Use; view-tool retention enabled: %s", async (enableViewTools) => {
     const manager = {
       executeTool: vi.fn(),
       getAllToolsMetadata: vi
@@ -371,15 +393,16 @@ describe("createBrowserSessionContext — render hook", () => {
     const ctx = await createBrowserSessionContext({
       model: NON_CLAUDE_MODEL,
       mcpClientManager: manager,
+      enableViewTools,
     });
     await ctx.handleEngineToolResult(baseEvent);
 
     expect(ctx.widgetRenderObservations).toHaveLength(1);
-    // No Computer Use → don't keep the widget mounted.
+    // View-tool discovery needs a live view even when Computer Use is disabled.
     expect(
       (renderMcpAppToolResult.mock.calls[0]![0] as { keepMounted?: boolean })
         .keepMounted
-    ).toBe(false);
+    ).toBe(enableViewTools);
   });
 });
 
@@ -1173,4 +1196,76 @@ describe("createBrowserSessionContext — widget interaction checks", () => {
       ),
     ).toBe(true);
   });
+});
+
+
+describe("view tool carry", () => {
+  it.each([
+    [CLAUDE_MODEL, true, true],
+    [CLAUDE_MODEL, true, false],
+    [NON_CLAUDE_MODEL, false, true],
+    [NON_CLAUDE_MODEL, false, false],
+  ])("keeps the view only while it exposes tools: %s / %s / %s", async (model, enableComputerUse, hasTools) => {
+    const ctx = await createBrowserSessionContext({ model, enableComputerUse, enableViewTools: true, mcpClientManager: stubManager() });
+    await ctx.viewTools.widget_tools.execute!({}, { toolCallId: "list", messages: [], context: undefined });
+    const harness = harnessInstances[0];
+    harness.getMountedWidgetId.mockReturnValue("A");
+    harness.viewTools.list.mockResolvedValue({ viewId: "A", tools: hasTools ? [{ name: "move" }] : [] });
+    await ctx.dismissCarriedWidget();
+    expect(harness.dismissWidget).toHaveBeenCalledTimes(hasTools ? 0 : 1);
+    await ctx.dispose();
+  });
+  it("uses the installed policy for every later widget server call", async () => {
+    const manager = new MCPClientManager();
+    const execute = vi.spyOn(manager, "executeTool");
+    const ctx = await createBrowserSessionContext({ model: CLAUDE_MODEL, enableComputerUse: true, enableViewTools: true, mcpClientManager: manager });
+    const policy = vi.fn(async () => ({ content: [], mcpjamPolicyBlock: true }));
+    ctx.setWidgetToolCallPolicy(policy);
+    const options = vi.mocked(McpAppBrowserHarness).mock.calls[0][0];
+    await options.callTool("server", "delete", {});
+    await options.callTool("server", "delete", { fromTimer: true });
+    expect(policy).toHaveBeenCalledTimes(2);
+    expect(execute).not.toHaveBeenCalled();
+    await ctx.dispose();
+  });
+});
+
+
+it("carries host recordings through rendered, computer and scripted artifact paths", async () => {
+  const recorder = new PluginWorkspaceRecorder();
+  recorder.open("private-test-key");
+  const recording = recorder.snapshot("chatgpt");
+  isRenderableMcpAppTool.mockReturnValue(true);
+  renderMcpAppToolResult.mockResolvedValue({
+    toolCallId: "recorded", toolName: "show_widget", serverId: "server",
+    status: "rendered", elapsedMs: 1, ts: 1, pluginWorkspace: recording,
+  });
+  const ctx = await createBrowserSessionContext({
+    model: CLAUDE_MODEL, enableComputerUse: true,
+    mcpClientManager: stubManager(),
+  });
+  await ctx.handleEngineToolResult({
+    toolCallId: "recorded", toolName: "show_widget", serverId: "server",
+    rawResult: { content: [] }, output: { content: [] }, isError: false,
+    stepIndex: 0, promptIndex: 0,
+  });
+  const harness = harnessInstances[0]!;
+  harness.getMountedWidgetId.mockReturnValue("recorded");
+  harness.executeAction.mockResolvedValue({
+    action: { action: "screenshot" }, widgetToolCalls: [], elapsedMs: 1,
+    pluginWorkspace: recording,
+  });
+  const computer = ctx.computerWidgetTools.computer as {
+    execute: (input: unknown, options: unknown) => Promise<unknown>;
+  };
+  await computer.execute({ action: "screenshot" }, {});
+  runScriptedStepImpl.mockResolvedValue({
+    ok: true, widgetToolCalls: [], followUps: [], elapsedMs: 1,
+    pluginWorkspace: recording,
+  });
+  await ctx.replayInteractStep("show_widget", { kind: "click", target: { role: { role: "button", name: "Apply" } } });
+  expect(ctx.widgetRenderObservations[0]?.pluginWorkspace).toEqual(recording);
+  expect(ctx.browserInteractionSteps).toHaveLength(2);
+  expect(ctx.browserInteractionSteps.every((step) => step.pluginWorkspace === recording)).toBe(true);
+  await ctx.dispose();
 });

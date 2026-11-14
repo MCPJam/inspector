@@ -11,6 +11,7 @@ const {
   mockValidateHostedServer,
   mockAuthorizeServer,
   mockRunAll,
+  mockRunOptions,
   mockSubmitScoreRun,
   mockScoreState,
 } = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ const {
   mockValidateHostedServer: vi.fn(),
   mockAuthorizeServer: vi.fn(),
   mockRunAll: vi.fn(),
+  mockRunOptions: vi.fn(),
   mockSubmitScoreRun: vi.fn(),
   mockScoreState: {
     pooledScore: undefined as unknown,
@@ -40,21 +42,23 @@ vi.mock("@/hooks/use-app-ready", () => ({
 }));
 
 vi.mock("@/hooks/use-conformance-run", () => ({
-  useConformanceRun: () => ({
-    runAll: mockRunAll,
-    isRunning: false,
-    pooledScore: mockScoreState.pooledScore,
-    protocolScore: mockScoreState.protocolScore,
-    appsScore: undefined,
-    tasksScore: undefined,
-    oauthScore: undefined,
-    oauthNotScored: true,
-    protocol: { status: "idle", result: mockScoreState.protocolResult },
-    apps: { status: "idle" },
-    tasks: { status: "idle" },
-    oauth: { status: "idle" },
-    authorizeOAuth: vi.fn(),
-  }),
+  useConformanceRun: (options: unknown) => {
+    mockRunOptions(options);
+    return {
+      runAll: mockRunAll,
+      isRunning: false,
+      pooledScore: mockScoreState.pooledScore,
+      protocolScore: mockScoreState.protocolScore,
+      appsScore: undefined,
+      tasksScore: undefined,
+      oauthScore: undefined,
+      protocol: { status: "idle", result: mockScoreState.protocolResult },
+      apps: { status: "idle" },
+      tasks: { status: "idle" },
+      oauth: { status: "idle" },
+      authorizeOAuth: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@/hooks/hosted/use-hosted-oauth-gate", () => ({
@@ -117,6 +121,13 @@ beforeEach(() => {
 });
 
 describe("ScoreRunnerPage", () => {
+  it("counts its runs under the score_runner location", () => {
+    render(<ScoreRunnerPage convexProjectId="proj_1" />);
+    expect(mockRunOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ analyticsLocation: "score_runner" }),
+    );
+  });
+
   it("rejects an invalid URL without starting a handshake", async () => {
     const user = userEvent.setup();
     render(<ScoreRunnerPage convexProjectId="proj_1" />);

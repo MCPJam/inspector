@@ -1,9 +1,8 @@
 /**
  * @file Cocktail widget app using MCP Apps SDK + React.
  */
-import type { McpUiHostContext } from "@modelcontextprotocol/ext-apps";
+import type { AppToolResult, McpUiHostContext } from "@modelcontextprotocol/ext-apps";
 import { useApp } from "@modelcontextprotocol/ext-apps/react";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { CocktailData } from "./lib/types";
@@ -18,7 +17,7 @@ const log = {
   error: console.error.bind(console, "[APP]"),
 };
 
-function extractCocktail(callToolResult: CallToolResult): CocktailData | null {
+function extractCocktail(callToolResult: AppToolResult): CocktailData | null {
   const structured = callToolResult.structuredContent as
     | { cocktail?: CocktailData }
     | undefined;

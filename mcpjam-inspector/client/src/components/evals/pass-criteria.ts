@@ -210,10 +210,12 @@ export function computeIterationPassed(
 
   // For positive tests with no expected calls but tools were called: pass
   // unless extras are bounded at this snapshot, in which case those calls
-  // are unexpected extras and must fail when over the cap.
+  // are unexpected extras and must fail when over the cap. With nothing
+  // expected, every call the matcher grades is an extra; a failed call the
+  // model retried is not one, as on the runner.
   if (expected.length === 0 && actual.length > 0) {
     const cap = resolveExtrasCap(snapshotMatchOptions);
-    return cap === null || actual.length <= cap;
+    return cap === null || matchResult.extra.length <= cap;
   }
 
   // Apply tolerances from criteria (aggregate-suite leniency, not

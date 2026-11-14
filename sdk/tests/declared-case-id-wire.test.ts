@@ -278,10 +278,12 @@ describe("declared case id on the upload", () => {
       caseId: _uploadedId,
       intent: _uploadedIntent,
       externalIterationId,
+      billingPaymentId,
       ...uploadedMapped
     } = uploaded;
     expect(typeof externalIterationId).toBe("string");
     expect(_uploadedIntent).toBeNull();
+    expect(typeof billingPaymentId).toBe("string");
     expect(Object.keys(uploadedMapped).sort()).toEqual(
       Object.keys(legacy[0]).sort()
     );

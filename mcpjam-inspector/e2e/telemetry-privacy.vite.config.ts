@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { telemetrySourceCatalogsPlugin } from "../client/vite-telemetry-catalog";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { realpathSync } from "node:fs";
@@ -11,7 +12,7 @@ import { realpathSync } from "node:fs";
  */
 export default defineConfig({
   root: path.resolve(__dirname, "fixtures/telemetry-privacy"),
-  plugins: [react()],
+  plugins: [telemetrySourceCatalogsPlugin(), react()],
   define: {
     __APP_VERSION__: JSON.stringify("0.0.0-telemetry-harness"),
     __BUILD_SHA__: JSON.stringify("telemetry-harness"),

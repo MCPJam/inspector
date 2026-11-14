@@ -447,9 +447,7 @@ slackLink.get("/start", async (c) => {
       workosStateHash: hashOauthState(workosState),
     });
   } catch (error) {
-    logger.error("[slack-link] could not create a link session", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error("[slack-link] could not create a link session", error);
     // 503, not 400. Nothing about the request was wrong — our backend was
     // unreachable — and monitoring that keys off status codes should see an
     // outage rather than a stream of bad client requests.
@@ -717,9 +715,7 @@ slackLink.get("/workos/callback", async (c) => {
   try {
     mcpjamUser = await resolveUserByExternalId(workosUserId);
   } catch (error) {
-    logger.error("[slack-link] identity lookup failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error("[slack-link] identity lookup failed", error);
     return unavailable(c);
   }
   if (!mcpjamUser) {
@@ -746,9 +742,7 @@ slackLink.get("/workos/callback", async (c) => {
       mapped = await resolveOrganizationByWorkosId(workosOrgId);
     } catch (error) {
       // Same rule: could-not-ask is not the same as maps-to-nothing.
-      logger.error("[slack-link] org lookup failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error("[slack-link] org lookup failed", error);
       return unavailable(c);
     }
     organizationId = mapped?.organizationId ?? null;
@@ -775,8 +769,7 @@ slackLink.get("/workos/callback", async (c) => {
   } catch (error) {
     // The session is intact (consume+upsert is one transaction, so a failure
     // rolled both back). The user can retry with a fresh link.
-    logger.error("[slack-link] link consumption failed", {
-      error: error instanceof Error ? error.message : String(error),
+    logger.error("[slack-link] link consumption failed", error, {
       is_backend_unavailable: error instanceof SlackBackendUnavailable,
     });
     // The session is intact — consume+upsert is one transaction, so a failure

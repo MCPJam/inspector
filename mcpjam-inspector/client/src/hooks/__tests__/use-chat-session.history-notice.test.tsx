@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useHistoryNoticeStore } from "@/stores/history-notice-store";
 import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
+import { usePluginServerNoticeStore } from "@/stores/plugin-server-notice-store";
+import { PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE } from "@/shared/plugin-server-unavailable";
 
 /**
  * MJ-009: when the server reports that earlier replies in a conversation are
@@ -221,6 +223,27 @@ describe("useChatSession history notice", () => {
       "chat-from-an-earlier-turn": true,
     });
     expect(useHistoryNoticeStore.getState().chats[openChat]).toBeUndefined();
+  });
+
+  it("records the plugin servers a turn ran without, for its chat", async () => {
+    usePluginServerNoticeStore.setState({ reports: {} });
+    const { result } = await renderChatSession();
+    const servers = [{ serverId: "srv_mail", reason: "needs_auth" }];
+
+    act(() => {
+      mockState.chatOnData?.({
+        type: PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE,
+        data: { servers },
+        transient: true,
+      });
+    });
+
+    expect(
+      usePluginServerNoticeStore.getState().reports[
+        result.current.chatSessionId
+      ]?.servers,
+    ).toEqual(servers);
+    expect(useHistoryNoticeStore.getState().chats).toEqual({});
   });
 
   it("ignores a part it does not recognise", async () => {

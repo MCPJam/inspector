@@ -4,6 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CreditTopupDialog } from "../CreditTopupDialog";
+import { expectLegalConsentLinks } from "@/test/legal-consent";
 
 vi.mock("@/hooks/useCreditTopupPricing", () => ({
   useCreditTopupPricing: () =>
@@ -102,6 +103,18 @@ describe("CreditTopupDialog", () => {
     presetsState = DEFAULT_PRESETS;
     presetsLoadingState = false;
     isStartingCheckoutState = false;
+  });
+
+  it("links the Terms of Use and Privacy Policy next to checkout", () => {
+    render(
+      <CreditTopupDialog
+        open
+        onOpenChange={vi.fn()}
+        organizationId="org-1"
+        source="chat_banner"
+      />,
+    );
+    expectLegalConsentLinks();
   });
 
   it("blocks ineligible manual purchases", async () => {
@@ -498,6 +511,9 @@ it("routes Free organizations to Plans instead of checkout", async () => {
   expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /Continue/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("link", { name: "Terms of Use" }),
   ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Compare plans" }));
   expect(onOpenChange).toHaveBeenCalledWith(false);

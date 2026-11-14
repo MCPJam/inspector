@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
   SNAPSHOT_PATH: mcpjam-inspector/shared/hosted-model-ids.generated.ts
   BOT_BRANCH: automation/refresh-hosted-model-ids
 

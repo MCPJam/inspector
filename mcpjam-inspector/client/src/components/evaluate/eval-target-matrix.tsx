@@ -4,8 +4,10 @@ import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { ClientSelector } from "@/components/chat-v2/chat-input/client-selector";
 import {
   ModelSelector,
+  OrgKeysDisallowedTriggerLabel,
   type ModelSelectorRowEfforts,
 } from "@/components/chat-v2/chat-input/model-selector";
+import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
@@ -13,10 +15,7 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
-import {
-  applyHarnessModelLocks,
-  type HarnessModelTarget,
-} from "@/lib/harness-model-locks";
+import type { HarnessModelTarget } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
@@ -30,6 +29,11 @@ import {
   type ModelTarget,
 } from "@/components/environment-composer/environment-stack";
 import { modelTarget } from "@/lib/model-target";
+import {
+  evalModelRows,
+  pickedModelTarget,
+  resolveEvalModelChoice,
+} from "@/lib/org-keys-model-target";
 import { modelTargetLabel } from "@/lib/environment-label";
 import {
   reasoningEffortOptions,
@@ -176,10 +180,14 @@ export function EvalTargetMatrix({
 }) {
   const reduceMotion = useReducedMotion();
   const readHarnessByHost = useHostHarnessTargets(hostIds);
-  const harnessFor = (hostId: string): HarnessModelTarget | null | undefined => {
+  const harnessFor = (
+    hostId: string,
+  ): HarnessModelTarget | null | undefined => {
     const host = hosts.find((candidate) => candidate.hostId === hostId);
     return host?.harness !== undefined
-      ? (typeof host.harness === "string" ? { harnessId: host.harness } : host.harness)
+      ? typeof host.harness === "string"
+        ? { harnessId: host.harness }
+        : host.harness
       : readHarnessByHost[hostId];
   };
   const rows = buildEvalTargetMatrixRows({
@@ -413,7 +421,12 @@ function EvalModelPicker({
   testId: string;
   defaultModelId?: string;
 }) {
-  const { availableModels } = useAvailableModels({ projectId });
+  const {
+    availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
+    onAddProvider,
+  } = useAvailableModels({ projectId, harnessTargets: [harness] });
   return (
     <EvalModelChoices
       {...{
@@ -425,6 +438,9 @@ function EvalModelPicker({
         defaultModelId,
         availableModels,
         harness,
+        requireOrgKeys,
+        onManageOrgProviders,
+        onAddProvider,
       }}
     />
   );
@@ -440,6 +456,9 @@ export function EvalModelChoices({
   availableModels: catalogModels,
   harness,
   effortEditable = true,
+  requireOrgKeys = false,
+  onManageOrgProviders,
+  onAddProvider,
 }: {
   /**
    * Offer each model's reasoning efforts in the model menus. Off where the
@@ -447,6 +466,18 @@ export function EvalModelChoices({
    * strings).
    */
   effortEditable?: boolean;
+  /**
+   * The organization requires its own provider keys for AI features: a saved
+   * model the list no longer offers shows on its trigger as not allowed.
+   */
+  requireOrgKeys?: boolean;
+  /**
+   * Opens the organization's AI providers, for a viewer who may manage them
+   * while the organization requires its own keys (see `useAvailableModels`).
+   */
+  onManageOrgProviders?: () => void;
+  /** The same, under any key policy, for a model search with no match; `null` when none is offered. */
+  onAddProvider: (() => void) | null;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;
@@ -463,23 +494,33 @@ export function EvalModelChoices({
   harness?: HarnessModelTarget | null;
 }) {
   const availableModels = useMemo(
-    () => applyHarnessModelLocks(catalogModels, [harness], "eval"),
-    [catalogModels, harness],
+    () => evalModelRows(catalogModels, harness, requireOrgKeys),
+    [catalogModels, harness, requireOrgKeys],
   );
   const selectionsSupported = useModelSelectionsSupported();
-  const resolveModel = (id: string): ModelDefinition =>
-    availableModels.find((model) => String(model.id) === id) ?? {
-      id,
-      name: compactModelLabel(id),
-      provider: "unknown",
-    };
+  // A saved selection names its source and connection. Under the policy only
+  // that exact row is the target, so a hosted target never borrows an org row
+  // that lists the same id. The warning names the model from the catalog,
+  // since the menu would otherwise mark that org row as picked.
+  const resolveModel = (
+    id: string,
+    saved = true,
+    selection?: SavedModelSelection,
+  ): ModelDefinition =>
+    resolveEvalModelChoice(id, availableModels, requireOrgKeys, {
+      saved,
+      selection,
+    });
   const targets = value.explicitTargets;
   const choices = [
     ...(value.includeClientDefaults
       ? [
           {
             key: "default",
-            model: resolveModel(defaultModelId ?? "Client default"),
+            model: resolveModel(
+              defaultModelId ?? "Client default",
+              defaultModelId !== undefined,
+            ),
             inherited: true,
             target: undefined as ModelTarget | undefined,
           },
@@ -487,7 +528,7 @@ export function EvalModelChoices({
       : []),
     ...targets.map((target) => ({
       key: modelTargetKey(target),
-      model: resolveModel(target.modelId),
+      model: resolveModel(target.modelId, true, target.selection),
       inherited: false,
       target: target as ModelTarget | undefined,
     })),
@@ -513,7 +554,7 @@ export function EvalModelChoices({
       {
         includeClientDefaults: inherited ? false : value.includeClientDefaults,
         explicitTargets: model
-          ? [...remaining, { modelId: String(model.id) }]
+          ? [...remaining, pickedModelTarget(model, requireOrgKeys)]
           : remaining,
       },
       model,
@@ -594,7 +635,9 @@ export function EvalModelChoices({
     const efforts = effortsFor()(model);
     if (!efforts) {
       return !choices.some(
-        (choice) => String(choice.model.id) === String(model.id),
+        (choice) =>
+          !isOrgKeysDisallowedRow(choice.model) &&
+          String(choice.model.id) === String(model.id),
       );
     }
     return [undefined, ...efforts.levels].some(
@@ -612,6 +655,9 @@ export function EvalModelChoices({
               currentModel={model}
               availableModels={availableModels}
               disabled={disabled}
+              requireOrgKeys={requireOrgKeys}
+              onManageOrgProviders={onManageOrgProviders}
+              onAddProvider={onAddProvider}
               analyticsLocation="eval_suite"
               workload="evalTarget"
               onModelChange={(next) => changeChoice(key, inherited, next)}
@@ -648,20 +694,34 @@ export function EvalModelChoices({
                   disabled={disabled}
                   className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left font-normal whitespace-normal"
                 >
-                  <ProviderLogo
-                    provider={model.provider}
-                    customProviderName={model.customProviderName}
-                    className="size-4 shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 break-words">
-                    {compactModelLabel(model.name)}
-                    {effort ? (
-                      <span className="text-muted-foreground">
-                        {" "}
-                        {reasoningEffortLabel(effort)}
+                  {isOrgKeysDisallowedRow(model) ? (
+                    <>
+                      <OrgKeysDisallowedTriggerLabel model={model} />
+                      {/* Tells apart two targets of one model. */}
+                      {effort ? (
+                        <span className="shrink-0 text-muted-foreground">
+                          {reasoningEffortLabel(effort)}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <ProviderLogo
+                        provider={model.provider}
+                        customProviderName={model.customProviderName}
+                        className="size-4 shrink-0"
+                      />
+                      <span className="min-w-0 flex-1 break-words">
+                        {compactModelLabel(model.name)}
+                        {effort ? (
+                          <span className="text-muted-foreground">
+                            {" "}
+                            {reasoningEffortLabel(effort)}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
+                    </>
+                  )}
                   <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
                 </Button>
               }
@@ -692,13 +752,19 @@ export function EvalModelChoices({
         }}
         availableModels={availableModels.filter(addable)}
         disabled={disabled}
+        requireOrgKeys={requireOrgKeys}
+        onManageOrgProviders={onManageOrgProviders}
+        onAddProvider={onAddProvider}
         analyticsLocation="eval_suite"
         workload="evalTarget"
         onModelChange={(model) =>
           emit(
             {
               ...value,
-              explicitTargets: [...targets, { modelId: String(model.id) }],
+              explicitTargets: [
+                ...targets,
+                pickedModelTarget(model, requireOrgKeys),
+              ],
             },
             model,
           )

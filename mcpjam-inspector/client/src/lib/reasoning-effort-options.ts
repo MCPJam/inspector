@@ -19,7 +19,7 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
-import { isMCPJamProvidedModelMenuItem } from "@/components/chat-v2/shared/model-helpers";
+import { isMCPJamProvidedModelMenuItem, type OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
 import {
   modelRowKey,
   modelSelectionFromDefinition,
@@ -51,9 +51,14 @@ export function reasoningEffortOptions(
 export function reasoningEffortRouteForRow(
   row: Pick<ModelDefinition, "id" | "provider"> &
     Partial<Pick<ModelDefinition, "hosted" | "orgProvider">>,
+  orgConfig?: OrgVisibleConfig,
 ): ReasoningEffortRoute {
   if (isMCPJamProvidedModelMenuItem(row as ModelDefinition)) return "hosted";
-  if (row.orgProvider) return "org";
+  if (row.orgProvider) {
+    const provider = orgConfig?.providers.find((entry) => entry.id === row.orgProvider?.id);
+    return provider?.runtimeLocation === "cloud" ? "orgCloud" :
+      provider?.runtimeLocation === "local" ? "direct" : "org";
+  }
   return "direct";
 }
 

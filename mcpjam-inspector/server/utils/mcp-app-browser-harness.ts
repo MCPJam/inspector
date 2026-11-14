@@ -1,4 +1,12 @@
+import { HarnessViewDocument } from "./browser-harness/view-document.js";
+import { PluginWorkspaceRecorder } from "./plugin-workspace-recorder.js";
+import type { PluginWorkspaceRecording } from "../../shared/plugin-workspace-recording.js";
+import { McpAppViewTools, type ViewToolCallRecord } from "./mcp-app-view-tools.js";
+import { WEBMCP_RELAY_SOURCE } from "./webmcp-view/webmcp-relay-source.js";
+import { WEBMCP_VIEW_POLYFILL_JS } from "./webmcp-view/webmcp-view-polyfill.js";
 import { randomUUID } from "node:crypto";
+import type { MCPClientManager, MCPReadResourceResult } from "@mcpjam/sdk";
+import { MODEL_CONTEXT_POLICY_DEFAULTS } from "@mcpjam/sdk/host-config/internal";
 import {
   parsePluginModelContext,
   type PluginContextSnapshot,
@@ -36,6 +44,7 @@ import { join } from "path";
 import type {
   Browser,
   BrowserContext,
+  Frame,
   FrameLocator,
   Locator,
   Page,
@@ -47,15 +56,21 @@ import type {
 } from "@/shared/scripted-steps";
 import {
   buildSandboxProxyWidgetCsp,
-  sanitizeProxyDomain,
 } from "./sandbox-proxy-csp";
+import { sanitizeDomain } from "./sandbox-csp-policy";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
+import type { ToolDataDelivery } from "./browser-harness/tool-data-delivery";
 import {
   ensureLocalChromiumInstalled,
   isChromiumInstalled,
 } from "./browser-rendering-setup";
 import { HOSTED_MODE } from "../config";
 import { isBlockedEgressHost } from "./hosted-egress-guard";
+import { logger } from "./logger";
+import {
+  isVisibleToModelOnly,
+  RESOURCE_READS_DISABLED_MESSAGE,
+} from "@mcpjam/sdk/widget-runtime";
 
 export { isChromiumInstalled };
 
@@ -92,6 +107,7 @@ export type WidgetRenderStatus =
   | "browser_unavailable";
 
 export interface WidgetRenderObservation {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   toolName: string;
   serverId: string;
@@ -152,6 +168,7 @@ export interface WidgetToolCall {
 }
 
 export interface BrowserActionResult {
+  pluginWorkspace?: PluginWorkspaceRecording;
   action: BrowserActionSpec;
   /** base64 screenshot after the action settled (within the byte budget). */
   screenshotBase64?: string;
@@ -175,6 +192,7 @@ const SCRIPTED_STEP_TIMEOUT_MS = 4_000;
 
 /** Result of one scripted interaction step (PR: Widget interaction checks). */
 export interface ScriptedStepResult {
+  pluginWorkspace?: PluginWorkspaceRecording;
   step: ScriptedStep;
   /** Action steps: executed without error. Assert steps: assertion held. */
   ok: boolean;
@@ -400,7 +418,11 @@ export interface RenderWidgetInput {
   keepMounted?: boolean;
 }
 
+type ResourceReadParams = Parameters<MCPClientManager["readResource"]>[1];
+
 export interface McpAppBrowserHarnessOptions {
+  enableViewTools?: boolean;
+  onViewToolCall?: (call: ViewToolCallRecord) => void;
   /** Current host transcript/appearance. Pure data; never an execution callback. */
   getWorkspacePresentation?: () => HarnessPresentation;
   /** Dispatch a widget-initiated tools/call (app->host). */
@@ -409,6 +431,11 @@ export interface McpAppBrowserHarnessOptions {
     name: string,
     args: Record<string, unknown>,
   ) => Promise<unknown>;
+  /** Read through the authenticated connection that produced the widget. */
+  readResource: (
+    serverId: string,
+    params: ResourceReadParams,
+  ) => Promise<MCPReadResourceResult>;
   /**
    * Resolve the SEP-1865 `_meta.ui.visibility` for a tool at dispatch time, so
    * the runner can route model-visible calls into model context and keep
@@ -419,7 +446,8 @@ export interface McpAppBrowserHarnessOptions {
   resolveToolVisibility?: (
     serverId: string,
     name: string,
-  ) => Array<"model" | "app"> | undefined;
+  ) => Array<"model" | "app"> | undefined |
+    Promise<Array<"model" | "app"> | undefined>;
   /** Host capabilities advertised in ui/initialize. Sensible default below. */
   hostCapabilities?: Record<string, unknown>;
   hostInfo?: { name: string; version: string };
@@ -548,13 +576,13 @@ export function pushBoundedDiagnostic(arr: string[], value: string): void {
  * `content="…"` and truncate or disable the policy we are injecting. A
  * well-formed CSP never contains `&"<>`, so this is a no-op for real policies.
  */
-export function injectCspMeta(html: string, cspContent: string): string {
+export function injectCspMeta(html: string, cspContent: string, prefix = ""): string {
   const escaped = cspContent
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-  const tag = `<meta http-equiv="Content-Security-Policy" content="${escaped}">`;
+  const tag = prefix + `<meta http-equiv="Content-Security-Policy" content="${escaped}">`;
   const headOpen = /<head\b[^>]*>/i.exec(html);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
@@ -592,11 +620,17 @@ const DEFAULT_HOST_CAPABILITIES = {
 } as const;
 
 interface MountedWidget {
+  resourceUri?: string;
   serverId: string;
   actionCount: number;
 }
 
 export class McpAppBrowserHarness {
+  private isHostBindingSource(source: { page: Page; frame: Frame }) {
+    return source.page === this.page && source.frame === this.page?.mainFrame();
+  }
+  private readonly viewDocument = new HarnessViewDocument();
+  private readonly workspaceRecorder = new PluginWorkspaceRecorder();
   private readonly opts: McpAppBrowserHarnessOptions;
   private readonly budgets: HarnessBudgets;
   private readonly viewport: { width: number; height: number };
@@ -677,11 +711,21 @@ export class McpAppBrowserHarness {
   /** SSRF guard's private-network tier (see {@link isBlockedEgressHost}). */
   private readonly blockPrivateNetworks: boolean;
 
+  readonly viewTools: McpAppViewTools;
   constructor(opts: McpAppBrowserHarnessOptions) {
     this.opts = opts;
     this.budgets = { ...DEFAULT_HARNESS_BUDGETS, ...(opts.budgets ?? {}) };
     this.viewport = opts.viewport ?? { ...DEFAULT_VIEWPORT };
     this.blockPrivateNetworks = opts.blockPrivateNetworks ?? HOSTED_MODE;
+    this.viewTools = new McpAppViewTools({
+      onCall: opts.onViewToolCall,
+      recordCall: (viewId) => this.workspaceRecorder.beginCall(viewId),
+      enabled: opts.enableViewTools === true, page: () => this.page,
+      mount: () => { const viewId = this.getMountedWidgetId(); const mount = viewId ? this.mounted.get(viewId) : null; return viewId && mount ? { viewId, serverId: mount.serverId, resourceUri: mount.resourceUri } : null; },
+      dismiss: id => this.unmount(id),
+      beginAction: () => { this.toolCallBuffer = []; this.followUpBuffer = []; },
+      drain: async () => ({ widgetToolCalls: await this.drainAfterAction(), followUps: this.followUpBuffer.splice(0) }),
+    });
   }
 
   hasRenderedWidget(): boolean {
@@ -811,7 +855,8 @@ export class McpAppBrowserHarness {
     // request may leave the machine, and records the rest. Non-network schemes
     // (data:, blob:, about:) pass through.
     const allowOrigins = new Set(this.opts.allowOrigins ?? []);
-    await this.context.route("**/*", (route) => {
+    await this.context.route("**/*", async (route) => {
+      if (await this.viewDocument.serve(route)) return;
       const url = route.request().url();
       if (
         url.startsWith("data:") ||
@@ -868,54 +913,122 @@ export class McpAppBrowserHarness {
     await this.page.exposeBinding(
       "__mcpjamHostRpc",
       async (
-        _source,
+        source,
         payload: {
           widgetId: string;
           name: string;
           args: Record<string, unknown>;
         },
       ) => {
-        const widget = this.mounted.get(payload.widgetId);
+        if (!this.isHostBindingSource(source)) return { error: "Host binding unavailable" };
+        const widget = this.mounted.get(payload?.widgetId);
         // Fail closed: a tools/call from a widget that isn't (or is no longer)
         // mounted Node-side has no server to route to. Dispatching with an empty
         // serverId would misroute to whatever resolves "" — refuse instead.
-        if (!widget) {
+        if (!widget || this.closing) {
           return { error: "widget not mounted" };
         }
-        const serverId = widget.serverId;
-        const startedAt = Date.now();
-        // Count the RPC as in-flight BEFORE awaiting so `drainAfterAction` waits
-        // for slow tool calls instead of returning before they land (and
-        // detaching the call from the action that triggered it).
+        const capabilities =
+          this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
+        if (!capabilities.serverTools) {
+          return { error: "Tool calls are disabled for this host" };
+        }
+        // Metadata admission is in flight too; action draining must await it.
         this.pendingRpcCount += 1;
-        const visibility = this.opts.resolveToolVisibility?.(
-          serverId,
-          payload.name,
-        );
+        const ownedBuffer = this.opts.enableViewTools ? this.toolCallBuffer : undefined;
         try {
-          const result = await this.opts.callTool(
-            serverId,
-            payload.name,
-            payload.args,
+          const serverId = widget.serverId;
+          let visibility: Array<"model" | "app"> | undefined;
+          try {
+            visibility = await this.opts.resolveToolVisibility?.(serverId, payload.name);
+          } catch (error) {
+            logger.warn("App tool visibility lookup failed", {
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
+            return { error: "Tool declaration could not be verified" };
+          }
+          if (this.closing || this.mounted.get(payload.widgetId) !== widget) {
+            return { error: "widget not mounted" };
+          }
+          if (!(this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES).serverTools) {
+            return { error: "Tool calls are disabled for this host" };
+          }
+          if (isVisibleToModelOnly({ ui: { visibility } })) {
+            return { error: `Tool "${payload.name}" is not callable by apps (visibility: model-only)` };
+          }
+          const startedAt = Date.now();
+          const completeRecording = this.workspaceRecorder.beginCall(
+            payload.widgetId,
           );
-          this.toolCallBuffer.push({
-            name: payload.name,
-            args: payload.args,
-            ok: true,
-            elapsedMs: Date.now() - startedAt,
-            result,
-            ...(visibility ? { visibility } : {}),
-          });
-          return { result };
+          try {
+            const result = await this.opts.callTool(
+              serverId,
+              payload.name,
+              payload.args,
+            );
+            completeRecording(true);
+            (ownedBuffer ?? this.toolCallBuffer).push({
+              name: payload.name,
+              args: payload.args,
+              ok: true,
+              elapsedMs: Date.now() - startedAt,
+              result,
+              ...(visibility ? { visibility } : {}),
+            });
+            return { result };
+          } catch (err) {
+            completeRecording(false);
+            const error = err instanceof Error ? err.message : String(err);
+            (ownedBuffer ?? this.toolCallBuffer).push({
+              name: payload.name,
+              args: payload.args,
+              ok: false,
+              error,
+              elapsedMs: Date.now() - startedAt,
+              ...(visibility ? { visibility } : {}),
+            });
+            return { error };
+          }
+        } finally {
+          this.pendingRpcCount -= 1;
+        }
+      },
+    );
+
+    await this.page.exposeBinding(
+      "__mcpjamHostReadResource",
+      // Failures come back as `{ error }`, never a thrown Node Error: a widget
+      // can call this binding directly and would otherwise see the stack.
+      async (
+        source,
+        payload: { widgetId: string; params: ResourceReadParams },
+      ): Promise<{ result: MCPReadResourceResult } | { error: string }> => {
+        if (!this.isHostBindingSource(source)) return { error: "Host binding unavailable" };
+        if (typeof payload?.params?.uri !== "string")
+          return { error: "Invalid resource read request" };
+        const widget = this.mounted.get(payload.widgetId);
+        if (!widget || this.closing)
+          return { error: "Resource read owner is closed" };
+        const capabilities =
+          this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
+        if (!capabilities.serverResources)
+          return { error: RESOURCE_READS_DISABLED_MESSAGE };
+        this.pendingRpcCount += 1;
+        try {
+          return {
+            result: await this.opts.readResource(
+              widget.serverId,
+              payload.params,
+            ),
+          };
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
-          this.toolCallBuffer.push({
-            name: payload.name,
-            args: payload.args,
-            ok: false,
+          // Unlike tool calls, reads leave no record in the run, and a widget
+          // may swallow the rejection.
+          logger.warn("MCP App resource read failed", {
+            serverId: widget.serverId,
+            uri: payload.params.uri,
             error,
-            elapsedMs: Date.now() - startedAt,
-            ...(visibility ? { visibility } : {}),
           });
           return { error };
         } finally {
@@ -926,14 +1039,19 @@ export class McpAppBrowserHarness {
 
     await this.page.exposeBinding(
       "__mcpjamHostContext",
-      async (_source, payload: { widgetId: string; params: unknown }) => {
+      async (source, payload: { widgetId: string; params: unknown }) => {
+        if (!this.isHostBindingSource(source)) throw new Error("Host binding unavailable");
         if (!this.mounted.has(payload.widgetId) || this.closing)
           throw new Error("App context owner is closed");
         const capabilities =
           this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
         if (!capabilities.updateModelContext)
           throw new Error("App context is unavailable");
-        const params = parsePluginModelContext(payload.params);
+        // Eval turns keep MCPJam's default budgets.
+        const params = parsePluginModelContext(
+          payload.params,
+          MODEL_CONTEXT_POLICY_DEFAULTS,
+        );
         const previous = this.modelContexts.get(payload.widgetId);
         if ((previous?.sequence ?? 0) >= 2048)
           throw new Error("App context update limit exceeded");
@@ -962,24 +1080,36 @@ export class McpAppBrowserHarness {
     // into a new model turn (the run-side analogue of chat's sendMessage).
     await this.page.exposeBinding(
       "__mcpjamHostFollowUp",
-      async (_source, payload: { widgetId: string; text: string }) => {
+      async (source, payload: { widgetId: string; text: string }) => {
+        if (!this.isHostBindingSource(source)) return;
         // Fail closed: ignore messages from a widget that isn't mounted.
-        if (!this.mounted.has(payload.widgetId)) return;
+        if (!this.mounted.has(payload.widgetId) || this.closing ||
+            !(this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES).message) return;
         const text =
           typeof payload.text === "string" ? payload.text.trim() : "";
         if (text) this.followUpBuffer.push(text);
       },
     );
 
-    await this.page.setContent(
-      "<!doctype html><html><head><meta charset='utf-8'></head><body></body></html>",
+    await this.viewDocument.load(this.page, buildSandboxProxyWidgetCsp(), [
+      ...(this.opts.enableViewTools ? [WEBMCP_RELAY_SOURCE] : []),
+      HARNESS_PAGE_BUNDLE,
+    ]);
+  }
+
+  private withWorkspaceRecording<T extends object>(
+    result: T,
+  ): T & { pluginWorkspace?: PluginWorkspaceRecording } {
+    const pluginWorkspace = this.workspaceRecorder.snapshot(
+      this.opts.getWorkspacePresentation?.()?.hostStyle,
     );
-    await this.page.addScriptTag({ content: HARNESS_PAGE_BUNDLE });
+    return pluginWorkspace ? { ...result, pluginWorkspace } : result;
   }
 
   /* ---- render ---- */
 
   renderWidget(input: RenderWidgetInput): Promise<WidgetRenderObservation> {
+    if (this.opts.enableViewTools && !this.renderReceipts.has(input.toolCallId)) this.viewTools.invalidate();
     const fingerprint = createHash("sha256")
       .update(JSON.stringify(input))
       .digest("hex");
@@ -1010,7 +1140,7 @@ export class McpAppBrowserHarness {
             presentation,
           );
         return {
-          ...observed,
+          ...this.withWorkspaceRecording(observed),
           screenshotBase64: await this.captureScreenshot(),
           ts: Date.now(),
         };
@@ -1030,7 +1160,8 @@ export class McpAppBrowserHarness {
         ts: Date.now(),
         consoleErrors: ["App render receipt limit reached"],
       });
-    const render = this.renderTail.then(() => this.renderWidgetSerial(input));
+    const render = this.renderTail.then(() => this.renderWidgetSerial(input))
+      .then((result) => this.withWorkspaceRecording(result));
     this.renderReceipts.set(input.toolCallId, { fingerprint, result: render });
     this.renderTail = render.catch(() => {});
     return render;
@@ -1090,8 +1221,11 @@ export class McpAppBrowserHarness {
     // widget, so drop stale Node mount entries too. Otherwise after two
     // keepMounted renders, executeAction(oldToolCallId) would pass the mount
     // check and drive the CURRENT page instead of the (gone) old widget.
+    for (const id of this.mounted.keys()) this.workspaceRecorder.close(id);
     this.mounted.clear();
+    this.workspaceRecorder.open(input.toolCallId);
     this.mounted.set(input.toolCallId, {
+      resourceUri: input.resourceUri,
       serverId: input.serverId,
       actionCount: 0,
     });
@@ -1106,7 +1240,7 @@ export class McpAppBrowserHarness {
       ...(input.cspMeta?.resource_domains ?? []),
       ...(input.cspMeta?.frame_domains ?? []),
     ]
-      .map(sanitizeProxyDomain)
+      .map(sanitizeDomain)
       .filter(Boolean);
 
     // Enforce the widget's declared CSP IN the iframe with the SAME policy the
@@ -1119,14 +1253,13 @@ export class McpAppBrowserHarness {
     // `resource_domains` origin; an undeclared widget gets the SEP restrictive
     // default (`default-src 'none'`) instead of running open.
     const cspContent = buildSandboxProxyWidgetCsp(input.cspMeta);
-    const policedHtml = injectCspMeta(input.html, cspContent);
+    await this.viewDocument.load(page, cspContent, [
+      ...(this.opts.enableViewTools ? [WEBMCP_RELAY_SOURCE] : []),
+      HARNESS_PAGE_BUNDLE,
+    ]);
+    const policedHtml = injectCspMeta(input.html, cspContent, this.opts.enableViewTools ? `<script>${WEBMCP_VIEW_POLYFILL_JS}</script>` : "");
 
-    let pageResult: {
-      mounted: boolean;
-      bridgeInitialized: boolean;
-      blank: boolean;
-      mountError?: string;
-    };
+    let pageResult: HarnessPageRenderResult;
     try {
       pageResult = await page.evaluate(
         (opts) =>
@@ -1135,6 +1268,7 @@ export class McpAppBrowserHarness {
           ).__mcpjamHarness.renderWidget(opts),
         {
           widgetId: input.toolCallId,
+          enableViewTools: this.opts.enableViewTools,
           html: policedHtml,
           presentation: this.opts.getWorkspacePresentation?.(),
           hostCapabilities:
@@ -1182,6 +1316,7 @@ export class McpAppBrowserHarness {
         elapsedMs: Date.now() - started,
       };
     }
+    const toolDataProblems = pageResult.toolData?.problems ?? [];
 
     // `pageResult.blank` is a DOM check sampled the instant the bridge
     // handshakes — but handshaking is not painting, and DOM-presence is not
@@ -1218,15 +1353,19 @@ export class McpAppBrowserHarness {
         ...base,
         status: "screenshot_failed",
         bridgeInitialized: pageResult.bridgeInitialized,
-        consoleErrors: [...this.consoleErrors],
+        consoleErrors: [...toolDataProblems, ...this.consoleErrors],
         elapsedMs: Date.now() - started,
       };
     }
 
     let status: WidgetRenderStatus;
     if (!pageResult.bridgeInitialized) status = "bridge_timeout";
+    // A widget that rejected its data, or never received it, has not rendered
+    // it, however much it painted.
+    else if (toolDataProblems.length) status = "render_error";
     else if (blank) status = "blank_screenshot";
     else status = "rendered";
+    const consoleErrors = [...toolDataProblems, ...this.consoleErrors];
 
     // Only a fully-rendered widget stays mounted for Computer Use. Any other
     // outcome is torn down IN THE PAGE too (not just removed from `mounted`),
@@ -1241,9 +1380,7 @@ export class McpAppBrowserHarness {
       status,
       bridgeInitialized: pageResult.bridgeInitialized,
       screenshotBase64,
-      consoleErrors: this.consoleErrors.length
-        ? [...this.consoleErrors]
-        : undefined,
+      consoleErrors: consoleErrors.length ? consoleErrors : undefined,
       blockedRequests: this.blockedRequests.length
         ? [...this.blockedRequests]
         : undefined,
@@ -1326,10 +1463,15 @@ export class McpAppBrowserHarness {
 
   /* ---- interact ---- */
 
-  async executeAction(input: {
+  executeAction(input: {
     toolCallId: string;
     action: BrowserActionSpec;
   }): Promise<BrowserActionResult> {
+    return this.viewTools.runAction(input.toolCallId, () => this.executeActionSerial(input))
+      .then((result) => this.withWorkspaceRecording(result));
+  }
+
+  private async executeActionSerial(input: Parameters<McpAppBrowserHarness["executeAction"]>[0]): Promise<BrowserActionResult> {
     const started = Date.now();
     const widget = this.mounted.get(input.toolCallId);
     if (!widget || !this.page) {
@@ -1437,11 +1579,16 @@ export class McpAppBrowserHarness {
    * `widgetToolCalls` across the run and passes them as `priorWidgetToolCalls`
    * so a `widgetToolCalled` assertion can see a call an earlier step triggered.
    */
-  async runScriptedStep(input: {
+  runScriptedStep(input: {
     toolCallId: string;
     step: ScriptedStep;
     priorWidgetToolCalls?: WidgetToolCall[];
   }): Promise<ScriptedStepResult> {
+    return this.viewTools.runAction(input.toolCallId, () => this.runScriptedStepSerial(input))
+      .then((result) => this.withWorkspaceRecording(result));
+  }
+
+  private async runScriptedStepSerial(input: Parameters<McpAppBrowserHarness["runScriptedStep"]>[0]): Promise<ScriptedStepResult> {
     const started = Date.now();
     const { step } = input;
     const widget = this.mounted.get(input.toolCallId);
@@ -1879,6 +2026,7 @@ export class McpAppBrowserHarness {
   /** Tear the widget down IN THE PAGE (close its host bridge + remove its
    *  iframe) and drop the Node-side mount entry. Best-effort. */
   private async unmount(toolCallId: string): Promise<void> {
+    if (this.opts.enableViewTools && this.mounted.has(toolCallId)) this.viewTools.invalidate();
     if (this.page) {
       await this.page
         .evaluate(
@@ -1890,6 +2038,7 @@ export class McpAppBrowserHarness {
         )
         .catch(() => {});
     }
+    this.workspaceRecorder.close(toolCallId);
     this.mounted.delete(toolCallId);
     // Only drop network allowances once NO widget remains mounted. Clearing
     // them whenever unmount runs — even for a stale tool-call id that was never
@@ -1953,6 +2102,7 @@ export class McpAppBrowserHarness {
   }
 
   dispose(): Promise<void> {
+    this.viewTools.invalidate();
     this.closing = true;
     this.disposePromise ??= this.disposeOnce();
     return this.disposePromise;
@@ -1983,17 +2133,22 @@ export class McpAppBrowserHarness {
   }
 }
 
+/** host-page.ts's `HostPageRenderResult`, restated so Node never imports the
+ *  page module (it pulls in client code). */
+interface HarnessPageRenderResult {
+  mounted: boolean;
+  bridgeInitialized: boolean;
+  blank: boolean;
+  mountError?: string;
+  toolData?: ToolDataDelivery;
+}
+
 // Shape of the in-page harness API (defined in host-page.ts, installed on the
 // page's global after the bundle is injected). Referenced via a `globalThis`
 // cast inside `page.evaluate` callbacks — those run in the browser, where
 // `globalThis === window`, but are typechecked here in the Node context.
 interface HarnessPageApi {
-  renderWidget: (opts: unknown) => Promise<{
-    mounted: boolean;
-    bridgeInitialized: boolean;
-    blank: boolean;
-    mountError?: string;
-  }>;
+  renderWidget: (opts: unknown) => Promise<HarnessPageRenderResult>;
   dismissWidget: (widgetId: string) => boolean;
   isBlank: (widgetId: string) => boolean;
 }

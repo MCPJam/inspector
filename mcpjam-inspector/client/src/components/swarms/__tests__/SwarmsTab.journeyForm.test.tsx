@@ -1,10 +1,6 @@
-/**
- * New-goal form: the goal text is the only field. Where it runs and how hard
- * it pushes follow the same defaults the swarm create flow and Generate use.
- */
+/** Manual goals inherit validated targets or resolve explicit replacements. */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 // The harness × model picker locks read each host's config; these tests mock
 // convex/react without that query, so the reads answer "not known yet".
 vi.mock("@/hooks/use-host-harness-targets", () => ({
@@ -53,6 +49,7 @@ const environments = [
     projectId: "proj-1",
     hostId: "host-1",
     origin: "adhoc" as const,
+    pluginVersionIds: ["plugin-pin"],
     revision: 1,
   },
 ];
@@ -87,7 +84,13 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabledState: () => environmentsEnabled.value,
 }));
 
+const swarmPreflight = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+const attachmentRows = vi.hoisted(() => ({
+  value: [] as Array<{ _id: string; name: string; serverIds: string[] }>,
+}));
+
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: swarmPreflight }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     switch (name) {
@@ -120,7 +123,7 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
-    serverAttachments: [],
+    serverAttachments: attachmentRows.value,
     isLoading: false,
   }),
   useProjectServers: () => ({ servers: [], isLoading: false }),
@@ -141,6 +144,11 @@ vi.mock("@/lib/scenario-session", () => ({
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
   SwarmsSessionsPanel: () => null,
 }));
+vi.mock("@/components/environment-composer/environment-composer", () => ({
+  SWARM_COMPOSER_SLOTS: {},
+  EnvironmentComposer: () => <div>Unexpected target picker</div>,
+}));
+
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -150,9 +158,13 @@ import { openPersonasTab } from "./swarms-tab-test-helpers";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  swarmPreflight.mockResolvedValue({});
   environmentsEnabled.value = false;
   siblingGoals.value = [];
   hostRows.value = [host];
+  attachmentRows.value = [
+    { _id: "att-manual", name: "Servers", serverIds: ["srv-1"] },
+  ];
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
   ensureAdhocMock.mockResolvedValue([{ environment: ADHOC, created: true }]);
 });
@@ -170,7 +182,7 @@ async function createGoal(text: string): Promise<void> {
 }
 
 describe("SwarmsTab — new goal form", () => {
-  it("offers the goal text and nothing else", async () => {
+  it("offers a goal and target without extra run settings", async () => {
     await openGoalForm();
 
     expect(screen.queryByTestId("journey-environments-picker")).toBeNull();
@@ -180,7 +192,7 @@ describe("SwarmsTab — new goal form", () => {
     expect(screen.queryByText(/add check/i)).toBeNull();
   });
 
-  it("gates Create on the goal text alone", async () => {
+  it("requires goal text once the default target is ready", async () => {
     await openGoalForm();
     const create = screen.getByRole("button", { name: /create goal/i });
     expect(create).toBeDisabled();
@@ -197,7 +209,9 @@ describe("SwarmsTab — new goal form", () => {
 
     await waitFor(() => {
       expect(ensureAdhocMock).toHaveBeenCalledWith(
-        expect.objectContaining({ stacks: [{ hostId: "host-1" }] }),
+        expect.objectContaining({
+          stacks: [{ hostId: "host-1", serverAttachmentId: "att-manual" }],
+        }),
       );
     });
     const payload = createJourneyMutation.mock.calls[0]![0] as Record<
@@ -327,6 +341,94 @@ describe("SwarmsTab — new goal form", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("validates a sibling target before copying it into a new goal", async () => {
+    siblingGoals.value = [
+      {
+        _id: "old-goal",
+        goal: "Existing",
+        hostIds: [],
+        environmentIds: ["env-sibling"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    swarmPreflight.mockRejectedValue({
+      data: {
+        code: "ENV_NO_SERVERS",
+        message: "Pick a server or group before running this swarm.",
+      },
+    });
+    await openGoalForm();
+    await createGoal("buy a plan");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /server setup is missing or invalid/i,
+    );
+    expect(createJourneyMutation).not.toHaveBeenCalled();
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps inherited ad-hoc targets distinct without target controls", async () => {
+    siblingGoals.value = [
+      {
+        _id: "old-goal",
+        goal: "Existing",
+        hostIds: [],
+        environmentIds: ["env-sibling", "env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    await openGoalForm();
+    expect(screen.queryByRole("button", { name: "Replace targets" })).toBeNull();
+    expect(screen.queryByText("Unexpected target picker")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Pick a server or group" }),
+    ).toBeNull();
+    await createGoal("keep both targets");
+    await waitFor(() =>
+      expect(createJourneyMutation).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentIds: ["env-sibling", "env-1"] }),
+      ),
+    );
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+    expect(
+      swarmPreflight.mock.calls
+        .filter((call) => call[1].serverSource === "swarm_explicit")
+        .map((call) => call[1].environmentId),
+    ).toEqual(["env-sibling", "env-1"]);
+  });
+
+  it("rejects a missing inherited environment without switching to the default", async () => {
+    siblingGoals.value = [
+      {
+        _id: "old-goal",
+        goal: "Existing",
+        hostIds: [],
+        environmentIds: ["missing-env"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    swarmPreflight.mockRejectedValue({
+      data: { code: "ENV_NOT_FOUND", message: "Environment not found." },
+    });
+    await openGoalForm();
+    await createGoal("keep the selected setup");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This goal’s server setup is missing or invalid. Make sure its servers still exist and are explicitly selected.",
+    );
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+    expect(createJourneyMutation).not.toHaveBeenCalled();
+  });
+
+  it("does not use configured client servers when no group is selected", async () => {
+    attachmentRows.value = [];
+    await openGoalForm();
+    await createGoal("buy a plan");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This goal’s server setup is missing or invalid. Make sure its servers still exist and are explicitly selected.",
+    );
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+    expect(createJourneyMutation).not.toHaveBeenCalled();
+  });
+
   it("creates against the siblings even when the default cannot run", async () => {
     // The branch the whole inheritance path exists for: this client has no
     // servers of its own, so the composed default is blocked — but the goals
@@ -352,4 +454,62 @@ describe("SwarmsTab — new goal form", () => {
         .environmentIds,
     ).toEqual(["env-sibling"]);
   });
+  it("keeps an older goal's clients and group without extra UI", async () => {
+    siblingGoals.value = [
+      {
+        _id: "old",
+        goal: "Existing",
+        hostIds: ["host-2", "host-1"],
+        serverAttachmentId: "att-legacy",
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    await openGoalForm();
+    expect(
+      screen.queryByRole("button", { name: "Replace targets" }),
+    ).toBeNull();
+    await createGoal("same servers");
+    await waitFor(() =>
+      expect(createJourneyMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hostIds: ["host-2", "host-1"],
+          serverAttachmentId: "att-legacy",
+        }),
+      ),
+    );
+    expect(createJourneyMutation.mock.calls[0][0]).not.toHaveProperty(
+      "environmentIds",
+    );
+    expect(swarmPreflight).toHaveBeenCalledWith(expect.anything(), {
+      projectId: "proj-1",
+      hostIds: ["host-2", "host-1"],
+      serverAttachmentId: "att-legacy",
+    });
+    expect(ensureAdhocMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["ENV_NO_SERVERS", "ENV_SERVERS_UNRESOLVED"])(
+    "rejects an invalid older setup (%s) without defaulting",
+    async (code) => {
+      siblingGoals.value = [
+        {
+          _id: "old",
+          goal: "Existing",
+          hostIds: ["host-1"],
+          config: { sessionsPerTarget: 1, maxTurns: 6 },
+        },
+      ];
+      swarmPreflight.mockRejectedValue({
+        data: { code, message: "Invalid selection" },
+      });
+      await openGoalForm();
+      await createGoal("same servers");
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /server setup is missing or invalid/i,
+      );
+      expect(createJourneyMutation).not.toHaveBeenCalled();
+      expect(ensureAdhocMock).not.toHaveBeenCalled();
+    },
+  );
+
 });

@@ -69,4 +69,17 @@ describe("ToolCallDiff", () => {
     render(<ToolCallDiff result={result} />);
     expect(screen.getByText("FAIL")).toBeInTheDocument();
   });
+
+  it("renders a Retried section instead of an Extra for a failed call retried with the same arguments", () => {
+    const result = evaluateToolCalls(
+      [tc("export", { id: 1 })],
+      [{ ...tc("export", { id: 1 }), failed: true }, tc("export", { id: 1 })],
+      { maxExtraToolCalls: 0 },
+    );
+    expect(result.passed).toBe(true);
+    render(<ToolCallDiff result={result} />);
+    expect(screen.getByText("Retried")).toBeInTheDocument();
+    expect(screen.getByText("#1 → #2")).toBeInTheDocument();
+    expect(screen.queryByText("Extra")).not.toBeInTheDocument();
+  });
 });

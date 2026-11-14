@@ -1031,6 +1031,32 @@ describe("SwarmFindingsTab on shared findings", () => {
     expect(screen.getByText(copy)).toBeInTheDocument();
   });
 
+  it.each([
+    [
+      "skipped",
+      "org_model_unavailable",
+      "Not analyzed because this organization requires its own provider keys and has no compatible default AI model. An organization admin needs to choose one in Organization → AI providers.",
+    ],
+    [
+      "failed",
+      "provider_auth_failed",
+      "Not analyzed. The organization's provider rejected its API key. Ask an organization admin to update it.",
+    ],
+  ] as const)(
+    "names a %s job the organization's key policy stopped (%s)",
+    (status, errorCode, copy) => {
+      render(
+        <SwarmFindingsTab
+          wave={wave()}
+          waveSignals={waveSignals}
+          personas={personas}
+          journeyFindingsJob={{ status, errorCode, updatedAt: 0 }}
+        />,
+      );
+      expect(screen.getByText(copy)).toBeInTheDocument();
+    },
+  );
+
   it("says nothing about a completed analysis job", () => {
     render(
       <SwarmFindingsTab

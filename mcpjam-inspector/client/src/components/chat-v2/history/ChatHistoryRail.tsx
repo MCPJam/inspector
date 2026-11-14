@@ -48,6 +48,8 @@ interface ChatHistoryRailProps {
   beforeResetChatAfterArchiveAll?: () => boolean | Promise<boolean>;
   /** After a successful archive-all, use this to clear the main chat if a history thread was active. */
   onArchiveAllComplete?: (hadActiveHistorySelection: boolean) => void;
+  /** After an allowed archive-all ends, whether or not it succeeded. */
+  onArchiveAllSettled?: () => void;
   onSessionAction?: (event: {
     action:
       | "rename"
@@ -209,6 +211,7 @@ export function ChatHistoryRail({
   onNewChat,
   beforeResetChatAfterArchiveAll,
   onArchiveAllComplete,
+  onArchiveAllSettled,
   onSessionAction,
 }: ChatHistoryRailProps) {
   const [archivingScope, setArchivingScope] =
@@ -296,6 +299,7 @@ export function ChatHistoryRail({
       onArchiveAllComplete?.(activeInSection);
     } finally {
       setArchivingScope(null);
+      onArchiveAllSettled?.();
     }
   };
 

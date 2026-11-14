@@ -18,6 +18,7 @@ import {
   readJsonBody,
   parseWithSchema,
   toHttpConfig,
+  callerOAuthTokenUnlessRefused,
 } from "./auth.js";
 import {
   attachHostedRpcLogs,
@@ -274,10 +275,17 @@ export async function runHostedDoctor(
     }
   );
 
+  // The same rule as the connect builder: a reason the backend gave for
+  // withholding the saved token is not something the body's token answers.
   const config = toHttpConfig(
     auth,
     timeoutMs,
-    auth.oauthAccessToken ?? body.oauthAccessToken,
+    auth.oauthAccessToken ??
+      callerOAuthTokenUnlessRefused(
+        auth,
+        resolveEffectiveAuthMethod(auth.serverConfig),
+        body.oauthAccessToken
+      ),
     body.clientCapabilities
   );
 

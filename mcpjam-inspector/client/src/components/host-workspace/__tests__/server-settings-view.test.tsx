@@ -2,12 +2,17 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NativeSettingsController } from "@/shared/plugin-settings-controller";
 import { settingsFixture } from "@/shared/__tests__/plugin-settings-fixture";
-const f = vi.hoisted(() => ({ open: vi.fn() }));
+const f = vi.hoisted(() => ({ open: vi.fn(), track: vi.fn() }));
+vi.mock("@/lib/analytics", () => ({ track: f.track }));
 vi.mock("../server-settings-api", () => ({
   createServerSettingsApi: () => ({ open: f.open }),
 }));
-vi.mock("../SettingsInlineApp", () => ({
-  SettingsInlineApp: () => <div>Inline settings App</div>,
+vi.mock("../SettingsApp", () => ({
+  SettingsApp: ({ onClose }: { onClose(): void }) => (
+    <div>
+      Inline settings App<button onClick={onClose}>Close App</button>
+    </div>
+  ),
 }));
 import { ServerSettingsView } from "../ServerSettingsView";
 const scope = {
@@ -37,12 +42,36 @@ beforeEach(() => {
   f.open.mockResolvedValue({
     controller,
     close,
-    actions: [{ name: "reset", kind: "app" }],
+    actions: [{ name: "reset", title: "Reset", kind: "app" }],
     openApp,
     action: vi.fn(),
   });
 });
 describe("shared server settings view", () => {
+  it("uses the catalog action title instead of a deprecated layout title", async () => {
+    f.open.mockResolvedValue({
+      controller,
+      close,
+      actions: [{ name: "reset", title: "Reset library", kind: "tool" }],
+      openApp,
+      action: vi.fn(),
+    });
+    render(
+      <ServerSettingsView
+        scope={scope}
+        serverId="server"
+        serverName="Bits & Bolts"
+        approve={approve}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Reset library" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Reset", exact: true }),
+    ).not.toBeInTheDocument();
+  });
+
   it("uses the server name and existing controlled editor to save without a dialog", async () => {
     const view = render(
       <ServerSettingsView
@@ -144,7 +173,7 @@ describe("settings rows, replies and described errors", () => {
     f.open.mockResolvedValue({
       controller,
       close,
-      actions: [{ name: "reset", kind: "tool" }],
+      actions: [{ name: "reset", title: "Reset", kind: "tool" }],
       openApp,
       action,
     });
@@ -167,7 +196,7 @@ describe("settings rows, replies and described errors", () => {
     f.open.mockResolvedValue({
       controller,
       close,
-      actions: [{ name: "reset", kind: "tool" }],
+      actions: [{ name: "reset", title: "Reset", kind: "tool" }],
       openApp,
       action: vi.fn(async () => ({
         isError: true,
@@ -219,4 +248,28 @@ describe("settings rows, replies and described errors", () => {
       );
     expect(entry?.serverId).toBe("server");
   });
+});
+
+it("counts native settings only after the editor loads and deduplicates a failed retry", async () => {
+  f.open.mockRejectedValueOnce(new Error("unavailable"));
+  render(<ServerSettingsView scope={scope} serverId="server" serverName="Bits" approve={approve} launchProfile="codex" />);
+  await screen.findByRole("button", { name: "Retry" });
+  expect(f.track).toHaveBeenCalledOnce();
+  expect(f.track.mock.calls[0][1]).toMatchObject({ launch_kind: "settings", host_profile: "codex", outcome: "failure", failure_stage: "execution" });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByLabelText("Count");
+  expect(f.track).toHaveBeenCalledOnce();
+});
+
+it("counts a native settings success and excludes a denied read", async () => {
+  const ui = render(<ServerSettingsView scope={scope} serverId="server" serverName="Bits" approve={approve} />);
+  await screen.findByLabelText("Count");
+  expect(f.track.mock.calls[0][1]).toMatchObject({ launch_kind: "settings", outcome: "success" });
+  ui.unmount();
+  f.track.mockClear();
+  const { PluginSettingsRequestError } = await import("@/shared/plugin-settings");
+  f.open.mockRejectedValueOnce(new PluginSettingsRequestError("APPROVAL_DENIED", false));
+  render(<ServerSettingsView scope={scope} serverId="server" serverName="Bits" approve={approve} />);
+  await screen.findByRole("button", { name: "Retry" });
+  expect(f.track).not.toHaveBeenCalled();
 });

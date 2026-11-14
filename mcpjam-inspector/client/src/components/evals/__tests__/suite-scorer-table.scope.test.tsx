@@ -15,6 +15,11 @@ import {
 } from "../standard-checks-model";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 
+// The judge model picker's logo reads the preferences store.
+vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
+  ProviderLogo: () => <span aria-hidden="true" />,
+}));
+
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => true,
 }));

@@ -397,8 +397,16 @@ export function resolveInitialCompareModelValues(params: {
   modelOptions: Array<{ value: string }>;
   preferredModelValue?: string | null;
   maxModels?: number;
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue?: (entry: CompareCaseModelEntry) => string;
 }) {
-  const { testCase, modelOptions, preferredModelValue, maxModels = 3 } = params;
+  const {
+    testCase,
+    modelOptions,
+    preferredModelValue,
+    maxModels = 3,
+    entryValue = defaultCaseEntryValue,
+  } = params;
   const optionValues = new Set(modelOptions.map((option) => option.value));
   const values: string[] = [];
 
@@ -409,7 +417,7 @@ export function resolveInitialCompareModelValues(params: {
   };
 
   for (const model of testCase?.models ?? []) {
-    pushValue(`${model.provider}/${model.model}`);
+    pushValue(entryValue(model));
   }
 
   pushValue(preferredModelValue);
@@ -432,6 +440,16 @@ export type CompareCaseModelEntry = {
   model: string;
   selection?: RequestedModelSelection | null;
 };
+
+/**
+ * A saved entry's picker value when the caller has no catalog to read it
+ * against: `provider/model`. The editor passes `caseModelEntryValue`, which
+ * also maps an organization row saved under its canonical id back to that
+ * row.
+ */
+export function defaultCaseEntryValue(entry: CompareCaseModelEntry): string {
+  return `${entry.provider}/${entry.model}`;
+}
 
 function sameCaseModelEntry(
   a: CompareCaseModelEntry,
@@ -482,11 +500,17 @@ export function caseModelEntriesForCompareValues<
   modelValues: readonly string[],
   currentModels: readonly Entry[],
   build: (modelValue: string) => Entry,
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue: (entry: Entry) => string = defaultCaseEntryValue,
 ): Entry[] {
   const entries: Entry[] = [];
   for (const modelValue of modelValues) {
+    // A saved entry is the pick's when it reads back as the pick, or when the
+    // pick names it directly (a catalog that has not loaded yet).
     const saved = currentModels.filter(
-      (entry) => `${entry.provider}/${entry.model}` === modelValue,
+      (entry) =>
+        entryValue(entry) === modelValue ||
+        defaultCaseEntryValue(entry) === modelValue,
     );
     if (saved.length > 0) entries.push(...saved);
     else entries.push(build(modelValue));
@@ -497,17 +521,22 @@ export function caseModelEntriesForCompareValues<
 export function resolveIterationModelValue(
   iteration: Pick<EvalIteration, "testCaseSnapshot">,
   testCase?: Pick<EvalCase, "models"> | null,
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue: (entry: CompareCaseModelEntry) => string = defaultCaseEntryValue,
 ) {
-  const provider =
-    iteration.testCaseSnapshot?.provider ?? testCase?.models?.[0]?.provider;
-  const model =
-    iteration.testCaseSnapshot?.model ?? testCase?.models?.[0]?.model;
+  const snapshot = iteration.testCaseSnapshot;
+  const provider = snapshot?.provider ?? testCase?.models?.[0]?.provider;
+  const model = snapshot?.model ?? testCase?.models?.[0]?.model;
 
   if (!provider || !model) {
     return null;
   }
 
-  return `${provider}/${model}`;
+  const selection =
+    snapshot?.model !== undefined
+      ? snapshot.selection
+      : testCase?.models?.[0]?.selection;
+  return entryValue({ provider, model, ...(selection ? { selection } : {}) });
 }
 
 export function buildHistoricalCompareRunRecords(params: {
@@ -517,6 +546,8 @@ export function buildHistoricalCompareRunRecords(params: {
   testCase?: Pick<EvalCase, "models"> | null;
   existingRecords?: Record<string, CompareRunRecord>;
   preferredIteration?: EvalIteration | null;
+  /** The picker value a saved entry reads back as (default `provider/model`). */
+  entryValue?: (entry: CompareCaseModelEntry) => string;
 }) {
   const {
     selectedModelValues,
@@ -525,6 +556,7 @@ export function buildHistoricalCompareRunRecords(params: {
     testCase,
     existingRecords = {},
     preferredIteration = null,
+    entryValue = defaultCaseEntryValue,
   } = params;
 
   if (selectedModelValues.length === 0) {
@@ -591,7 +623,11 @@ export function buildHistoricalCompareRunRecords(params: {
         : sortedIterations;
 
   for (const iteration of sourceIterations) {
-    const modelValue = resolveIterationModelValue(iteration, testCase);
+    const modelValue = resolveIterationModelValue(
+      iteration,
+      testCase,
+      entryValue,
+    );
     if (!modelValue || latestIterationByModel.has(modelValue)) {
       continue;
     }

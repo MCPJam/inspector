@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { Check, ExternalLink, KeyRound, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { CopyableCodeBlock } from "./copyable-code-block";
@@ -187,7 +187,7 @@ function CreateApiKeyStep({
   // `isLoading` matters as much as `user`: before WorkOS resolves, `user` is
   // absent and a signed-in reader would see the guest sign-in CTA flash — and
   // could click it into a pointless redirect. Same guard `ApiKeysRoute` uses.
-  const { user, signIn, isLoading: isAuthLoading } = useAuth();
+  const { user, signIn, isLoading: isAuthLoading } = useInspectorAuth();
   const isSignedIn = Boolean(user);
   const { sortedOrganizations, isLoading: orgsLoading } =
     useOrganizationQueries({ isAuthenticated });

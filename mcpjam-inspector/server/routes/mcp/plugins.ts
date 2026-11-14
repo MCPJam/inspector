@@ -84,7 +84,7 @@ plugins.post("/materialize", async (c) => {
     );
     const materialized = await getPluginBundleCache().materialize(
       { projectId, pluginVersionId, bundleHash },
-      { source }
+      { source, profile: "openai-compatible" }
     );
     return c.json({
       success: true,

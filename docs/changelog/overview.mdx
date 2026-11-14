@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-10-14
+
+#### Added
+
+- **`ui/message` with `send: false` opens an editable draft** — an App that calls `ui/message` with `_meta["openai/message"].send: false` now leaves its content as an editable draft in the composer instead of being refused. Untitled text is appended to whatever the person has already typed, images become file attachments, and titled text, resource links, and embedded resources appear as removable chips above the input. With `target: "new"`, a new chat opens and the draft lands there. The draft is never sent automatically — the person reviews and sends it themselves. A refused draft (composer view-only, a target being restored, or the Messages extension off) shows a Logs row. This follows `@openai/mcp-extensions` 0.2.0.
+
+- **Settings action buttons now use the tool's title** — buttons in a plugin's native settings panel are now labelled by the referenced tool's `title` (or `annotations.title`, falling back to the tool name). Layout-level `title` fields on action items are deprecated and ignored.
+
+- **Unrecognized entrypoint declarations are ignored, not fatal** — if a tool's `_meta["openai/ui"].entrypoints` array contains an item MCPJam doesn't recognize (for example, the retired `type: "settings"`), that item is now silently skipped and the tool's other entrypoints continue to work. A single Logs row names the affected tools.
+
 ### 2026-10-09
 
 #### Added

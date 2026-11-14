@@ -31,6 +31,7 @@ export interface PlaygroundChatHistoryBridge {
   }) => boolean | void | Promise<boolean | void>;
   beforeResetChatAfterArchiveAll?: () => boolean | Promise<boolean>;
   onArchiveAllComplete?: (hadActiveHistorySelection: boolean) => void;
+  onArchiveAllSettled?: () => void;
   onSessionAction?: (event: {
     action:
       | "rename"

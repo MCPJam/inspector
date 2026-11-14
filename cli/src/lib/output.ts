@@ -1,3 +1,14 @@
+import {
+  extractAuthChallenge,
+  isUnauthorized401,
+  type AuthChallengeSignal,
+} from "@mcpjam/sdk";
+import {
+  isMcpjamDeploymentError,
+  type McpjamDeploymentError,
+} from "@mcpjam/sdk/internal/deployment";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
+
 export type OutputFormat = "json" | "human";
 
 const DEFAULT_OUTPUT_FORMAT: OutputFormat = "json";
@@ -38,13 +49,128 @@ export function operationalError(message: string, details?: unknown): CliError {
   return new CliError("OPERATIONAL_ERROR", message, 1, details);
 }
 
+/**
+ * A challenge's `scope` is the server's text, and it lands inside a command a
+ * person may paste into a shell. Quoted as-is it could expand there, so only
+ * plain scope tokens are shown; anything else becomes a placeholder.
+ */
+export function displayableScope(scope: string | undefined): string | undefined {
+  if (scope === undefined) return undefined;
+  return /^[A-Za-z0-9._:/@+-]+(?: [A-Za-z0-9._:/@+-]+)*$/.test(scope)
+    ? scope
+    : "<scopes>";
+}
+
+/** Avoid exposing credentials or executable shell syntax in sign-in hints. */
+export function signInUrlArgument(value?: string): string {
+  if (!value) return "<server-url>";
+  try {
+    const url = new URL(value);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash)
+      return "<server-url>";
+    return "'" + url.toString().replace(/'/g, "'\\''") + "'";
+  } catch {
+    return "<server-url>";
+  }
+}
+
+/**
+ * The command that obtains a token for a server that asked for sign-in.
+ * `--scopes` only when the challenge named them; otherwise the server's
+ * metadata decides.
+ */
+export function authChallengeHint(
+  challenge: Pick<AuthChallengeSignal, "requiredScope">,
+  serverUrl?: string,
+): string {
+  const scope = displayableScope(challenge.requiredScope);
+  const scopes = scope ? ` --scopes "${scope}"` : "";
+  return `Sign in with \`mcpjam oauth login --url ${signInUrlArgument(
+    serverUrl,
+  )}${scopes} --credentials-out <file>\`, then retry with \`--credentials-file <file>\`.`;
+}
+
+/**
+ * Classify a server's sign-in challenge before anything reads the message
+ * text: an `error_description` is the server's prose and may say "connect".
+ */
+function authChallengeCliError(
+  error: unknown,
+  message: string,
+): CliError | undefined {
+  const challenge = extractAuthChallenge(error);
+  if (challenge?.source === "http_403_insufficient_scope") {
+    return cliError("INSUFFICIENT_SCOPE", message, 1, {
+      challenge,
+      hint: authChallengeHint(challenge),
+    });
+  }
+  if (challenge?.source === "http_401") {
+    return cliError("AUTH_REQUIRED", message, 1, {
+      challenge,
+      hint: authChallengeHint(challenge),
+    });
+  }
+  // An MCP client auth failure that kept no challenge (e.g. a connect-time
+  // 401). Narrow on purpose: an MCPJam API 401 is a different problem with a
+  // different fix, and must not be told to run `oauth login`.
+  const name = error instanceof Error ? error.name : undefined;
+  if (
+    (name === "MCPAuthError" || name === "UnauthorizedError") &&
+    isUnauthorized401(error)
+  ) {
+    return cliError("AUTH_REQUIRED", message, 1, {
+      hint: authChallengeHint({}),
+    });
+  }
+  return undefined;
+}
+
+/**
+ * The deployment refusal behind `error`: thrown as itself, or carried as the
+ * cause of the platform client's request error, which is how a refused
+ * redirect arrives. Either way it is a refusal, not a failed request.
+ */
+export function deploymentRefusalOf(
+  error: unknown
+): McpjamDeploymentError | undefined {
+  if (isMcpjamDeploymentError(error)) return error;
+  if (isPlatformApiError(error) && isMcpjamDeploymentError(error.cause)) {
+    return error.cause;
+  }
+  return undefined;
+}
+
+/**
+ * A refusal over where a request would go. A saved login for another server
+ * exits 3, because the fix is signing in again; every other refusal is
+ * configuration and exits 2. An unparsable address keeps the usage code it
+ * has always had.
+ */
+export function deploymentCliError(error: McpjamDeploymentError): CliError {
+  if (error.code === "LOGIN_DEPLOYMENT_MISMATCH") {
+    return new CliError(error.code, error.message, 3);
+  }
+  const code = error.code === "API_URL_INVALID" ? "USAGE_ERROR" : error.code;
+  return new CliError(code, error.message, 2);
+}
+
 export function normalizeCliError(error: unknown): CliError {
   if (error instanceof CliError) {
     return error;
   }
+  if (isMcpjamDeploymentError(error)) {
+    return deploymentCliError(error);
+  }
 
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+
+  const authError = authChallengeCliError(error, message);
+  if (authError) {
+    return authError;
+  }
+
   const lower = message.toLowerCase();
 
   if (lower.includes("timed out") || lower.includes("timeout")) {
@@ -120,6 +246,52 @@ export function writeError(
   const payload = toStructuredError(error);
   process.stderr.write(`${stringify(payload, format)}\n`);
   return payload;
+}
+
+let activeConsoleRoutes = 0;
+let savedConsoleMethods: Pick<Console, "log" | "info" | "debug"> | undefined;
+
+/**
+ * Send `console.log`/`info`/`debug` to STDERR while a command runs.
+ *
+ * STDOUT is the result document: every command writes it with
+ * `process.stdout.write`, and nothing in the CLI prints through `console`.
+ * Dependencies do — the MCP client logs `console.debug("Client.listResources()
+ * called but server does not advertise resources capability …")` — and Node
+ * sends those three methods to STDOUT, so `--format json` printed prose ahead
+ * of the document and no longer parsed. On STDERR they stay visible without
+ * corrupting the result. Returns a function that restores the originals.
+ *
+ * Counted, because in-process callers can overlap `main()` calls: each call
+ * saving "the current methods" would let the second save the first's routing
+ * as its originals, so finishing out of order left stdout unguarded mid-run
+ * and stderr routing installed after both returned. The originals are saved
+ * once and restored when the last active route releases.
+ */
+export function routeConsoleToStderr(): () => void {
+  if (activeConsoleRoutes === 0) {
+    savedConsoleMethods = {
+      log: console.log,
+      info: console.info,
+      debug: console.debug,
+    };
+    const toStderr = (...args: unknown[]) => console.error(...args);
+    console.log = toStderr;
+    console.info = toStderr;
+    console.debug = toStderr;
+  }
+  activeConsoleRoutes += 1;
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeConsoleRoutes -= 1;
+    if (activeConsoleRoutes === 0 && savedConsoleMethods) {
+      Object.assign(console, savedConsoleMethods);
+      savedConsoleMethods = undefined;
+    }
+  };
 }
 
 export function parseOutputFormat(value: string): OutputFormat {

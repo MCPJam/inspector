@@ -28,9 +28,11 @@
  * deployment secret, purpose-isolated by the HKDF `info` string exactly as the
  * token's `purpose` claim isolates it from terminal tokens.
  */
+import { MAX_SEALED_PLAINTEXT_BYTES } from "./harness-proxy-limits.js";
 import {
   createCipheriv,
   createDecipheriv,
+  createHmac,
   hkdfSync,
   randomBytes,
 } from "node:crypto";
@@ -38,6 +40,10 @@ import {
   isToolPolicyDecisionReason,
   type ToolPolicySnapshot,
 } from "@mcpjam/sdk/contract";
+import {
+  harnessConnectionProfileSchema,
+  type HarnessConnectionProfile,
+} from "./harness-connection-profile.js";
 
 /** Versioned prefix: an envelope shape change must be a new prefix, never a
  *  reinterpretation of these bytes. */
@@ -49,27 +55,40 @@ const IV_LENGTH = 12;
 const MIN_SECRET_LENGTH = 16;
 /** Bound the sealed plaintext. Over cap the RUN is refused at launch — never
  *  truncated: truncating a deny list silently permits the calls it dropped. */
-export const MAX_SEALED_PLAINTEXT_BYTES = 8 * 1024;
+export { MAX_SEALED_PLAINTEXT_BYTES } from "./harness-proxy-limits.js";
 /** Bound the denied-name count for the same reason. */
 export const MAX_SEALED_DENIED_TOOL_NAMES = 500;
 
 /** The sealed plaintext. Short keys because it rides an HTTP header. */
+export type HarnessProxyTurn = { laneId: string; leaseId: string };
+
 interface SealedPolicyEnvelope {
-  v: 1;
+  /** 4 is a session envelope: deterministic, no expiry, `t` is a session handle. */
+  v: 1 | 2 | 3 | 4;
+  turn?: HarnessProxyTurn;
+  profile?: HarnessConnectionProfile;
+  /** `profile.versionNegotiation`, kept out of `profile`: an instance that
+   *  predates it validates `profile` strictly and ignores keys here, so a
+   *  mixed fleet keeps opening envelopes. */
+  vn?: "legacy-first";
   /** The Convex-minted proxy token, verbatim. */
   t: string;
   /** The serverId this envelope was sealed for. */
   s: string;
   /** Envelope expiry, unix SECONDS (independent of the inner token's own). */
-  exp: number;
+  exp?: number;
   /** Resolved decision snapshot — a lookup table, not a policy to re-evaluate. */
   p: ToolPolicySnapshot;
 }
 
 export interface SealedHarnessProxyPolicy {
+  turn?: HarnessProxyTurn;
+  /** The inner token is a lane's session handle, not a per-turn token. */
+  session?: true;
   token: string;
   serverId: string;
   policy: ToolPolicySnapshot;
+  profile?: HarnessConnectionProfile;
 }
 
 export class HarnessProxyPolicySealTooLargeError extends Error {
@@ -79,6 +98,13 @@ export class HarnessProxyPolicySealTooLargeError extends Error {
 function deriveKey(secret: string): Buffer {
   return Buffer.from(
     hkdfSync("sha256", secret, HKDF_SALT, HKDF_INFO, KEY_LENGTH)
+  );
+}
+
+/** A key of its own for the session envelope's synthetic IV. */
+function deriveIvKey(secret: string): Buffer {
+  return Buffer.from(
+    hkdfSync("sha256", secret, HKDF_SALT, `${HKDF_INFO}.session-iv`, KEY_LENGTH)
   );
 }
 
@@ -114,7 +140,9 @@ export function isHarnessProxyPolicySealAvailable(): boolean {
 export function isSealedHarnessProxyToken(value: string | undefined): boolean {
   return (
     typeof value === "string" &&
-    value.startsWith(`${HARNESS_PROXY_POLICY_SEAL_PREFIX}.`)
+    (value.startsWith(`${HARNESS_PROXY_POLICY_SEAL_PREFIX}.`) ||
+      value.startsWith("mcpjps2.") || value.startsWith("mcpjps3.") ||
+      value.startsWith("mcpjps4."))
   );
 }
 
@@ -125,40 +153,99 @@ export function isSealedHarnessProxyToken(value: string | undefined): boolean {
  * a bare token.
  */
 export function sealHarnessProxyToken(args: {
+  turn?: HarnessProxyTurn;
   token: string;
   serverId: string;
   policy: ToolPolicySnapshot;
   expiresAtMs: number;
+  profile?: HarnessConnectionProfile;
 }): string {
   const secret = readSecret();
   const deniedCount = Object.keys(args.policy.denied).length;
   if (deniedCount > MAX_SEALED_DENIED_TOOL_NAMES) {
     throw new HarnessProxyPolicySealTooLargeError(
-      `TOOL_POLICY_TOO_LARGE: tool policy resolves to ${deniedCount} denied tools for server ${args.serverId}, above the ${MAX_SEALED_DENIED_TOOL_NAMES} the harness proxy envelope carries`
+      `TOOL_POLICY_TOO_LARGE: tool policy resolves to ${deniedCount} denied tools for server ${args.serverId}, above the ${MAX_SEALED_DENIED_TOOL_NAMES} the harness proxy envelope carries`,
     );
   }
   const envelope: SealedPolicyEnvelope = {
-    v: 1,
+    v: args.turn ? 3 : args.profile ? 2 : 1,
+    ...(args.turn ? { turn: args.turn } : {}),
+    ...sealedProfile(args.profile),
     t: args.token,
     s: args.serverId,
     exp: Math.floor(args.expiresAtMs / 1000),
     p: args.policy,
   };
+  return encryptEnvelope(secret, envelope, randomBytes(IV_LENGTH));
+}
+
+function sealedProfile(
+  input: HarnessConnectionProfile | undefined,
+): Pick<SealedPolicyEnvelope, "profile" | "vn"> {
+  if (!input) return {};
+  const { versionNegotiation, ...profile } =
+    harnessConnectionProfileSchema.parse(input);
+  return { profile, ...(versionNegotiation ? { vn: versionNegotiation } : {}) };
+}
+
+function encryptEnvelope(
+  secret: string,
+  envelope: SealedPolicyEnvelope,
+  ivFor: Buffer | ((plaintext: Buffer) => Buffer),
+): string {
   const plaintext = Buffer.from(JSON.stringify(envelope), "utf8");
   if (plaintext.byteLength > MAX_SEALED_PLAINTEXT_BYTES) {
     throw new HarnessProxyPolicySealTooLargeError(
-      `TOOL_POLICY_TOO_LARGE: sealed harness policy envelope for server ${args.serverId} is ${plaintext.byteLength} bytes, above the ${MAX_SEALED_PLAINTEXT_BYTES}-byte cap`
+      `TOOL_POLICY_TOO_LARGE: sealed harness policy envelope for server ${envelope.s} is ${plaintext.byteLength} bytes, above the ${MAX_SEALED_PLAINTEXT_BYTES}-byte cap`,
     );
   }
-  const iv = randomBytes(IV_LENGTH);
+  const iv = typeof ivFor === "function" ? ivFor(plaintext) : ivFor;
   const cipher = createCipheriv("aes-256-gcm", deriveKey(secret), iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const sealed = Buffer.concat([ciphertext, cipher.getAuthTag()]);
   return [
-    HARNESS_PROXY_POLICY_SEAL_PREFIX,
+    `mcpjps${envelope.v}`,
     iv.toString("base64url"),
     sealed.toString("base64url"),
   ].join(".");
+}
+
+/**
+ * Seal a lane's session handle with the server's policy and profile.
+ *
+ * Deterministic: the IV is derived from the plaintext with a separate key, so
+ * the same handle, policy and profile always give the same envelope. A runtime
+ * that fingerprints its MCP configuration (Cursor's ACP adapter compares header
+ * values on every resume) then sees one value for the whole session. Equal
+ * envelopes reveal only that their plaintexts are equal. No expiry: the route
+ * checks the lane's live turn on every request instead.
+ */
+export function sealHarnessSessionEnvelope(args: {
+  handle: string;
+  serverId: string;
+  policy: ToolPolicySnapshot;
+  profile?: HarnessConnectionProfile;
+}): string {
+  const secret = readSecret();
+  const deniedCount = Object.keys(args.policy.denied).length;
+  if (deniedCount > MAX_SEALED_DENIED_TOOL_NAMES) {
+    throw new HarnessProxyPolicySealTooLargeError(
+      `TOOL_POLICY_TOO_LARGE: tool policy resolves to ${deniedCount} denied tools for server ${args.serverId}, above the ${MAX_SEALED_DENIED_TOOL_NAMES} the harness proxy envelope carries`,
+    );
+  }
+  const envelope: SealedPolicyEnvelope = {
+    v: 4,
+    ...sealedProfile(args.profile),
+    t: args.handle,
+    s: args.serverId,
+    p: args.policy,
+  };
+  return encryptEnvelope(secret, envelope, (plaintext) =>
+    createHmac("sha256", deriveIvKey(secret))
+      .update(plaintext)
+      .digest()
+      .subarray(0, IV_LENGTH),
+  );
 }
 
 /**
@@ -206,13 +293,28 @@ export function unsealHarnessProxyToken(
   } catch {
     return null;
   }
-  if (envelope?.v !== 1) return null;
+  if (!envelope || ![1, 2, 3, 4].includes(envelope.v) || parts[0] !== `mcpjps${envelope.v}`) return null;
+  if (envelope.v === 3 && (
+    typeof envelope.turn?.laneId !== "string" || !envelope.turn.laneId ||
+    typeof envelope.turn?.leaseId !== "string" || !envelope.turn.leaseId
+  )) return null;
+  const profile =
+    envelope.v === 2 ||
+    ((envelope.v === 3 || envelope.v === 4) && envelope.profile !== undefined)
+      ? harnessConnectionProfileSchema.safeParse(envelope.profile)
+      : undefined;
+  if (profile && !profile.success) return null;
   if (typeof envelope.t !== "string" || envelope.t.length === 0) return null;
   if (typeof envelope.s !== "string" || envelope.s !== serverId) return null;
-  if (typeof envelope.exp !== "number") return null;
-  // Same NumericDate semantics as the inner token: expired AT `exp`.
-  if (Math.floor((opts.nowMs ?? Date.now()) / 1000) >= envelope.exp) {
-    return null;
+  if (envelope.v === 4) {
+    // A session envelope never expires: the route checks the live turn.
+    if (envelope.exp !== undefined) return null;
+  } else {
+    if (typeof envelope.exp !== "number") return null;
+    // Same NumericDate semantics as the inner token: expired AT `exp`.
+    if (Math.floor((opts.nowMs ?? Date.now()) / 1000) >= envelope.exp) {
+      return null;
+    }
   }
   const policy = envelope.p;
   if (!policy || typeof policy !== "object") return null;
@@ -238,5 +340,19 @@ export function unsealHarnessProxyToken(
     if (typeof entry.classification !== "string") return null;
   }
 
-  return { token: envelope.t, serverId: envelope.s, policy };
+  return {
+    token: envelope.t,
+    ...(envelope.v === 3 ? { turn: envelope.turn } : {}),
+    ...(envelope.v === 4 ? { session: true as const } : {}),
+    serverId: envelope.s,
+    policy,
+    ...(profile?.success
+      ? {
+          profile:
+            envelope.vn === "legacy-first"
+              ? { ...profile.data, versionNegotiation: envelope.vn }
+              : profile.data,
+        }
+      : {}),
+  };
 }

@@ -1,5 +1,7 @@
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
+import type { LocalHarnessId } from "@/shared/harness-descriptors";
+import { useHostedBrowserAvailable } from "./useHostedBrowserAvailability";
 
 /**
  * PostHog rollout gate for ALL Project Computers UI (the host-editor computer
@@ -82,6 +84,24 @@ export function useLocalHarnessEnabled(): boolean {
 }
 
 /**
+ * Whether each local runtime is rolled out to this member, each on its own
+ * flag. Off while flags load (`=== true`).
+ *
+ * Typed against every local runtime, so a runtime that becomes local does not
+ * compile here until its flag is read. The keys are literals because the
+ * server evaluates only the keys in `shared/client-feature-flags.ts`, which a
+ * ratchet reads from these calls; `localHarnessRolloutFlag` is what each one
+ * must be, and a test holds them to it.
+ */
+export function useLocalHarnessRollouts(): Readonly<Record<LocalHarnessId, boolean>> {
+  return {
+    "claude-code": useFeatureFlagEnabled("local-harness-enabled") === true,
+    codex: useFeatureFlagEnabled("local-codex-enabled") === true,
+    "copilot-cli": useFeatureFlagEnabled("local-copilot-cli-enabled") === true,
+  };
+}
+
+/**
  * The Codex-style browser WORKSPACE — the panel beside chat, the tab strip,
  * automatic takeover, and the responsive viewport.
  *
@@ -122,17 +142,31 @@ export function useLocalBrowserEnabled(): boolean {
 }
 
 export const HOSTED_BROWSER_FEATURE_FLAG = "hosted-browser-enabled";
+
+/**
+ * May this member use a cloud browser at all? In hosted mode the backend
+ * answers (`useHostedBrowserAvailable`): the flag by email plus deployment
+ * readiness, the same decision a launch gets. A local inspector still reads
+ * the flag, because it may run against no backend.
+ */
 export function useHostedBrowserEnabled(): boolean {
-  return useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG) === true;
+  const flag = useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG);
+  const hosted = useHostedBrowserAvailable("inspector");
+  return HOSTED_MODE ? hosted === true : flag === true;
 }
 
-/** Browser has two location rollouts, neither nested under Computers. */
+/**
+ * Browser has two location rollouts, neither nested under Computers. In hosted
+ * mode the browser on offer is the one the model drives, so it follows the
+ * backend's answer for the `browser_*` tools.
+ */
 export function useBrowserEnabledState(): boolean | undefined {
   const local = useFeatureFlagEnabled(LOCAL_BROWSER_FEATURE_FLAG);
-  const hosted = useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG);
-  if (HOSTED_MODE) return hosted;
-  if (local === true || hosted === true) return true;
-  return local === undefined || hosted === undefined ? undefined : false;
+  const hostedFlag = useFeatureFlagEnabled(HOSTED_BROWSER_FEATURE_FLAG);
+  const hostedTools = useHostedBrowserAvailable("tools");
+  if (HOSTED_MODE) return hostedTools;
+  if (local === true || hostedFlag === true) return true;
+  return local === undefined || hostedFlag === undefined ? undefined : false;
 }
 
 export function useBrowserEnabled(): boolean {

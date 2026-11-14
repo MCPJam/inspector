@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef } from "react";
 export function useChatThreadTransition(options: {
   threadId: string;
   ownerScope: string;
-  begin: () => Promise<boolean>;
+  /** `isCurrent` is false once the action that asked for the chat lapsed. */
+  begin: (isCurrent: () => boolean) => Promise<boolean>;
   /** Target bootstrap/restoration can settle after the new thread ID renders. */
   destinationReady?: boolean;
   timeoutMs?: number;
@@ -53,10 +54,7 @@ export function useChatThreadTransition(options: {
         return Promise.resolve(null);
       const start = current.current;
       return new Promise((resolve) => {
-        const timer = setTimeout(
-          () => active.finish(null),
-          start.timeoutMs ?? 10000,
-        );
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const active = {
           source: start.threadId,
           owner: start.ownerScope,
@@ -77,7 +75,7 @@ export function useChatThreadTransition(options: {
             current.current.ownerScope === start.ownerScope &&
             current.current.threadId === start.threadId &&
             isCurrent()
-              ? start.begin()
+              ? start.begin(isCurrent)
               : false,
           )
           .then(
@@ -86,6 +84,14 @@ export function useChatThreadTransition(options: {
               if (!accepted) active.finish(null);
               else {
                 active.accepted = true;
+                // The bound covers publishing the new chat, never the person
+                // deciding in the discard-draft dialog: a timeout there would
+                // let a later "Discard" reset the chat after the action had
+                // already given up its payload.
+                timer = setTimeout(
+                  () => active.finish(null),
+                  start.timeoutMs ?? 10000,
+                );
                 settle();
               }
             },

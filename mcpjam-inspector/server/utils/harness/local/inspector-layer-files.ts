@@ -5,12 +5,11 @@
  * a build will verify against without loading the server.
  */
 import {
-  CLAUDE_CODE_LAYER_BRIDGE_SOURCE,
-  CODEX_LAYER_BRIDGE_SOURCE,
-  CODEX_LAYER_HOST_TOOLS_MCP_SOURCE,
   LOCAL_HARNESS_LAUNCHER_SOURCE,
+  LOCAL_HARNESS_LAYER_FILES,
   LOCAL_HARNESS_LAYER_RECIPES,
 } from "./layer/generated/local-harness-layer.bundled.js";
+import { localRuntimeOf } from "./runtimes/index.js";
 import type { SupportedLocalHarnessId } from "./targets.js";
 import { digestFileSet } from "./tree-digest.js";
 
@@ -25,9 +24,9 @@ export interface InspectorLayerFile {
 }
 
 /**
- * The files of one harness's layer, from the bytes compiled into this build
- * (`null` would be a harness whose bridge still shipped inside its pack —
- * none does).
+ * The files of one runtime's layer, from the bytes compiled into this build:
+ * the files its definition names (`layerFiles`), then the launcher and
+ * `layer.json`. `null` for an id that names no local runtime.
  *
  * `layer.json` names the harness so that two harnesses can never share a
  * layer directory, even if their bridges were ever byte-identical.
@@ -35,26 +34,30 @@ export interface InspectorLayerFile {
 export function inspectorLayerFiles(
   harnessId: SupportedLocalHarnessId,
 ): readonly InspectorLayerFile[] | null {
-  const manifest = (id: string) =>
-    `${JSON.stringify({ schema: INSPECTOR_LAYER_SCHEMA, harnessId: id })}\n`;
-  switch (harnessId) {
-    case "codex":
-      return [
-        { path: "bridge.mjs", content: CODEX_LAYER_BRIDGE_SOURCE },
-        { path: "host-tools-mcp.mjs", content: CODEX_LAYER_HOST_TOOLS_MCP_SOURCE },
-        { path: "launcher.mjs", content: LOCAL_HARNESS_LAUNCHER_SOURCE },
-        { path: "layer.json", content: manifest(harnessId) },
-      ];
-    case "claude-code":
-      return [
-        { path: "bridge.mjs", content: CLAUDE_CODE_LAYER_BRIDGE_SOURCE },
-        { path: "launcher.mjs", content: LOCAL_HARNESS_LAUNCHER_SOURCE },
-        { path: "layer.json", content: manifest(harnessId) },
-      ];
-    default:
-      // An id off the wire that names no harness this build ships a layer for.
-      return null;
-  }
+  const runtime = localRuntimeOf(harnessId);
+  if (runtime === undefined) return null;
+  const built = Object.prototype.hasOwnProperty.call(LOCAL_HARNESS_LAYER_FILES, harnessId)
+    ? LOCAL_HARNESS_LAYER_FILES[harnessId]
+    : undefined;
+  const files = runtime.layerFiles.map((path) => {
+    const content = built?.[path];
+    if (typeof content !== "string") {
+      throw new Error(
+        `the Inspector layer for ${harnessId} has no ${path}: rebuild it with ` +
+          `scripts/bundle-local-harness-layer.mjs, which must build every file ` +
+          `the runtime's definition names`,
+      );
+    }
+    return { path, content };
+  });
+  return [
+    ...files,
+    { path: "launcher.mjs", content: LOCAL_HARNESS_LAUNCHER_SOURCE },
+    {
+      path: "layer.json",
+      content: `${JSON.stringify({ schema: INSPECTOR_LAYER_SCHEMA, harnessId })}\n`,
+    },
+  ];
 }
 
 /**

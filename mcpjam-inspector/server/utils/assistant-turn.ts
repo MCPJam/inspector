@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from './harness/agent-loop-dispatch.js';
 /**
  * Assistant turn engine (Stage 1 of horizontally-safe synthetic scenario
  * sessions — see plan v3 §A "engine extraction").
@@ -31,7 +32,7 @@ import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
   ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import {
   runChatEngineLoop,
   type MCPJamHandlerOptions,
@@ -86,14 +87,11 @@ export interface RunAssistantTurnOptions {
   reasoningEffort?: ModelReasoningEffort;
   /** The saved selection; an org one runs a harness on the org's own key. */
   modelSelection?: ModelSelection;
+  modelSelectionOrigin?: "backfill";
 
   selectedServerIds?: string[];
-  /**
-   * Optional display names for the selected servers. Reserved for the
-   * upcoming synthetic runner adapter so a generated `chatSessions.row`
-   * can resolve `serverIds → serverNames` without re-querying the
-   * manager. Stage 1 does not consume this; persist when present.
-   */
+  unavailableServerIds?: readonly string[];
+  /** Optional display names aligned with selectedServerIds for persistence. */
   selectedServerNames?: string[];
 
   mcpClientManager: MCPClientManager;
@@ -104,8 +102,9 @@ export interface RunAssistantTurnOptions {
    * Source-of-traffic marker forwarded into chat-ingestion. Mirrors
    * the existing `MCPJamHandlerOptions.sourceType` union but kept
    * narrowed to the public values to avoid silent string churn.
+   * `event` is an MCP Events trigger run (unattended, like eval/swarm).
    */
-  sourceType: "direct" | "scenario" | "eval" | "swarm";
+  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly
@@ -163,6 +162,10 @@ export interface RunAssistantTurnOptions {
    * resolved host config's `harness` field.
    */
   harness?: Harness;
+  agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
+  harnessAppTools?: import("@/shared/chat-v2").AppToolSnapshotEntry[];
   harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
 
   streamSink: RunAssistantTurnStreamSink;
@@ -178,6 +181,7 @@ export interface RunAssistantTurnOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
+  remainingTurnMs?: MCPJamHandlerOptions["remainingTurnMs"];
   heartbeatIntervalMs?: number;
   maxSteps?: number;
 
@@ -257,6 +261,7 @@ export interface RunAssistantTurnOptions {
   /** Reports back what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: MCPJamHandlerOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: MCPJamHandlerOptions["onHarnessPolicyBlocks"];
+  onBoxSkillsWritten?: MCPJamHandlerOptions["onBoxSkillsWritten"];
 
   /**
    * Swarm (journey-execution) continuity identity. Forwarded to the harness
@@ -267,11 +272,8 @@ export interface RunAssistantTurnOptions {
   journeyRunId?: MCPJamHandlerOptions["journeyRunId"];
   hostId?: MCPJamHandlerOptions["hostId"];
 
-  /**
-   * Pinned harness skills for env-based swarm targets (Project Environments).
-   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
-   * skips the live skills fetch and delivers exactly these pinned artifacts.
-   */
+  /** Pinned harness skills (eval runs, swarm targets). Pass-through to
+   *  `runHarnessTurn`: when set (even empty) it delivers exactly these. */
   pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
 
   /**
@@ -294,13 +296,12 @@ export interface RunAssistantTurnOptions {
    */
   builtInTools?: MCPJamHandlerOptions["builtInTools"];
 
-  /**
-   * Resolved Project-Environment skills for this turn (Phase 1.4).
-   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
-   * delivers exactly these and skips the live project-wide fetch. Ranks below
-   * `pinnedHarnessSkills` — see `harness/skill-delivery.ts`.
-   */
+  /** The skills this turn's environment resolved to, the set carrying their
+   *  supporting files, and whether the turn is live. Pass-through to
+   *  `runHarnessTurn`; see `harness/skill-delivery.ts`. */
   runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
+  effectiveCapabilities?: MCPJamHandlerOptions["effectiveCapabilities"];
+  liveTurn?: MCPJamHandlerOptions["liveTurn"];
 
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
@@ -492,10 +493,12 @@ function buildHandlerOptions(
     systemPrompt: opts.systemPrompt,
     tools: opts.tools,
     mcpClientManager: opts.mcpClientManager,
+    unavailableServerIds: opts.unavailableServerIds,
     authHeader: opts.authContext.token,
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
       : {}),
+    modelSelectionOrigin: opts.modelSelectionOrigin,
     ...(opts.reasoningEffort !== undefined
       ? { reasoningEffort: opts.reasoningEffort }
       : {}),
@@ -509,11 +512,12 @@ function buildHandlerOptions(
     ...(opts.selectedServerIds
       ? { selectedServers: opts.selectedServerIds }
       : {}),
-    // Carry the harness selector through to the handler — runHarnessTurn reads it
-    // off MCPJamHandlerOptions and now REQUIRES it. Without this, eval/synthetic/
-    // unified harness turns reach runHarnessTurn with harness=undefined (the old
-    // `?? "claude-code"` default silently mis-ran a codex eval as claude-code).
+    // Pass the verified harness selector through to its driver.
     ...(opts.harness ? { harness: opts.harness } : {}),
+    ...(opts.agentLoop ? { agentLoop: opts.agentLoop } : {}),
+    harnessTurnContext: opts.harnessTurnContext,
+    harnessUnavailableAppTools: opts.harnessUnavailableAppTools,
+    harnessAppTools: opts.harnessAppTools,
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
     // eval/synthetic harness turn driven through this facade can (a) reach MCP
@@ -527,13 +531,12 @@ function buildHandlerOptions(
     ...(opts.harnessToolPolicy
       ? { harnessToolPolicy: opts.harnessToolPolicy }
       : {}),
-    ...(opts.onHarnessPolicyBlocks
-      ? { onHarnessPolicyBlocks: opts.onHarnessPolicyBlocks }
-      : {}),
+    onHarnessPolicyBlocks: opts.onHarnessPolicyBlocks,
+    onBoxSkillsWritten: opts.onBoxSkillsWritten,
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
     // Pinned harness skills: presence (even an EMPTY array) is semantic — an
-    // empty authoritative set means "run skill-less", never "fall back live".
+    // empty authoritative set means "run skill-less", never "keep the box's".
     ...(opts.pinnedHarnessSkills !== undefined
       ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
       : {}),
@@ -545,12 +548,15 @@ function buildHandlerOptions(
     // Server-executed built-ins forwarded SEPARATELY so the harness path can
     // hand them to HarnessAgent (mirrors `routes/mcp/chat-v2.ts`).
     ...(opts.builtInTools ? { builtInTools: opts.builtInTools } : {}),
-    // Environment skill override: same presence-is-semantic rule as pinned —
-    // an empty resolved set means "this environment delivers no skills", never
-    // "fall back to the project pool".
+    // Environment skills: presence is semantic, as for pinned. An empty set
+    // means "this environment delivers no skills", never "use the project's".
     ...(opts.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
       : {}),
+    ...(opts.effectiveCapabilities
+      ? { effectiveCapabilities: opts.effectiveCapabilities }
+      : {}),
+    ...(opts.liveTurn ? { liveTurn: true } : {}),
     // The turn's grant boundary for project secrets. Harness-relevant: the
     // external-account credential check asks whether a BROKERED secret is
     // selected into THIS environment, and an absent id means "no grant" rather
@@ -609,6 +615,7 @@ function buildHandlerOptions(
       ? { clientIp: opts.authContext.clientIp }
       : {}),
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(opts.remainingTurnMs ? { remainingTurnMs: opts.remainingTurnMs } : {}),
     ...(opts.heartbeatIntervalMs !== undefined
       ? { heartbeatIntervalMs: opts.heartbeatIntervalMs }
       : {}),
@@ -650,6 +657,8 @@ function buildHandlerOptions(
 export async function runAssistantTurn(
   opts: RunAssistantTurnOptions,
 ): Promise<RunAssistantTurnResult> {
+  const dispatch = resolveAgentLoop({ agentLoop: opts.agentLoop, harness: opts.agentLoop ? undefined : opts.harness });
+  opts = { ...opts, harness: dispatch.harnessId };
   let capturedMessages: ModelMessage[] | undefined;
   let capturedTrace: PersistedTurnTrace | undefined;
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
@@ -663,7 +672,7 @@ export async function runAssistantTurn(
     },
   );
 
-  // A host with a `harness` selected (claude-code | codex | cursor) runs the
+  // A host with a `harness` selected (claude-code | codex | cursor | opencode) runs the
   // real runtime inside its computer; otherwise the emulated engine. Both
   // satisfy the same ChatEngineLoopResult contract, so everything downstream is
   // identical.
@@ -714,19 +723,10 @@ export async function runAssistantTurn(
         : {}),
     });
     if (effortRefusal) {
-      throw new Error(
-        `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${effortRefusal}.`,
-      );
+      throw new Error(effortRefusal);
     }
     if (refusal) {
-      // Wrapped in the SAME sentence the chat routes build around a pre-flight
-      // refusal, so a reader who meets this in a run log and one who meets it in
-      // a 503 are reading the same thing.
-      throw new Error(
-        `This host runs the ${opts.harness} harness, which isn't available: ` +
-          `${refusal.reason}.`,
-      );
+      throw new Error(refusal.reason);
     }
     if (warning) {
       logger.warn("[assistant-turn] running an unverified harness model", {

@@ -42,7 +42,8 @@ export function isSupportField(field: HostConfigFieldDef): boolean {
 
 /**
  * Resolve a field's support level for one host. Returns `null` for
- * non-support-shaped fields (scalars, strings, data objects).
+ * non-support-shaped fields (scalars, strings, data objects) and for a
+ * boolean nobody measured.
  */
 export function getSupportLevel(
   field: HostConfigFieldDef,
@@ -55,6 +56,10 @@ export function getSupportLevel(
   if (value === NOT_SUPPORTED) return "unsupported";
   switch (field.kind.kind) {
     case "boolean":
+      // Undefined means nobody measured it: a probe row not run yet, or a
+      // value a catalog row left out. The matrix shows "—" for it, so it joins
+      // no bucket, filter or coverage count either.
+      if (value === undefined) return null;
       return value === true ? "supported" : "neutral";
     case "tri-state":
       if (value === true) return "supported";
@@ -85,8 +90,8 @@ export function getSupportLevel(
     }
     case "mode-set": {
       // Aggregate a set of modes into one level: all candidates present →
-      // supported, only the minimum (≤1) → neutral, some-but-not-all →
-      // partial. The matrix cell still renders the per-mode chips; this is the
+      // supported, only the baseline every host has (`kind.baseline`, default
+      // 1) → neutral, some-but-not-all → partial. The matrix cell still renders the per-mode chips; this is the
       // single-level summary used by coverage / filters / the list view.
       //
       // Count membership of the declared candidates (matching the cell's
@@ -96,7 +101,7 @@ export function getSupportLevel(
       const set = new Set(Array.isArray(value) ? (value as string[]) : []);
       const present = modes.filter((m) => set.has(m)).length;
       if (present >= modes.length) return "supported";
-      if (present <= 1) return "neutral";
+      if (present <= (field.kind.baseline ?? 1)) return "neutral";
       return "partial";
     }
     default:

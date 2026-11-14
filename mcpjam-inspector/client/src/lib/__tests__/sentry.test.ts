@@ -5,6 +5,9 @@ const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
 const getClient = vi.fn();
 const addIntegration = vi.fn();
+const captureMessage = vi.fn();
+const addEventProcessor = vi.fn();
+const withScope = vi.fn((callback: (scope: unknown) => void) => callback({ addEventProcessor }));
 
 vi.mock("@sentry/react", () => ({
   init,
@@ -12,6 +15,8 @@ vi.mock("@sentry/react", () => ({
   browserTracingIntegration,
   getClient,
   addIntegration,
+  captureMessage,
+  withScope,
 }));
 
 /** Stand in for the Replay integration instance the client hands back. */
@@ -23,6 +28,17 @@ function stubReplay(recording: boolean) {
   };
   getClient.mockReturnValue({ getIntegrationByName: () => replay });
   return replay;
+}
+
+async function allowFullContext() {
+  const telemetry = await import("../telemetry-context");
+  telemetry.setTelemetryActor("user_01K00000000000000000000000");
+  telemetry.setTelemetryCaptureContext({
+    projectIds: ["project_test"],
+    organizationIds: [],
+  });
+  telemetry.setTelemetryContentPolicy("user_01K00000000000000000000000", "full");
+  (await import("../session-privacy")).setSessionPrivacy("full");
 }
 
 describe("client sentry init", () => {
@@ -66,9 +82,6 @@ describe("client sentry init", () => {
     });
   });
   it("reports the build surface as dist so artifacts resolve per build", async () => {
-    // The release alone is the bare app version, which the web, npm and
-    // desktop builds all share. Without `dist` here, Sentry symbolicates this
-    // bundle's events against whichever of those uploaded last.
     const { resolveClientSentryConfig } = await import("../sentry");
 
     expect(resolveClientSentryConfig().dist).toBe("npm");
@@ -88,6 +101,19 @@ describe("client sentry init", () => {
     expect(resolveClientSentryConfig().enabled).toBe(false);
   });
 
+  it("stops reporting when the server says DO_NOT_TRACK, with no rebuild", async () => {
+    window.__MCP_RUNTIME_CONFIG__ = { doNotTrack: true };
+    try {
+      const { initSentry, resolveClientSentryConfig } = await import("../sentry");
+
+      expect(resolveClientSentryConfig().enabled).toBe(false);
+      initSentry();
+      expect(init.mock.calls[0][0].enabled).toBe(false);
+    } finally {
+      delete window.__MCP_RUNTIME_CONFIG__;
+    }
+  });
+
   it("tags hosted when the bundle is built for hosted mode", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.resetModules();
@@ -99,13 +125,17 @@ describe("client sentry init", () => {
   });
 
   it("derives environment from the Vite build mode, not NODE_ENV", async () => {
+    vi.stubEnv("VITE_ENVIRONMENT", undefined);
     const { resolveClientSentryConfig } = await import("../sentry");
-    // Asserted against the literal the dev/test bundle must produce, NOT
-    // against `import.meta.env.PROD ? ... : ...` — mirroring the
-    // implementation expression would make this pass no matter what the
-    // implementation did.
     expect(import.meta.env.PROD).toBe(false);
     expect(resolveClientSentryConfig().environment).toBe("dev");
+  });
+
+  it("reports an optimized preview build as preview, like its rebuilt events", async () => {
+    vi.stubEnv("VITE_ENVIRONMENT", "preview");
+    vi.stubEnv("PROD", true);
+    const { resolveClientSentryConfig } = await import("../sentry");
+    expect(resolveClientSentryConfig().environment).toBe("preview");
   });
 
   it("does not record replays on a self-hosted web build", async () => {
@@ -140,35 +170,6 @@ describe("client sentry init", () => {
     expect(config.integrations).toHaveLength(1);
   });
 
-  it("scrubs the replay event's URL list short of full", async () => {
-    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
-    vi.resetModules();
-    const handlers: Record<string, (event: Record<string, unknown>) => void> =
-      {};
-    getClient.mockReturnValue({
-      on: (hook: string, fn: (event: Record<string, unknown>) => void) => {
-        handlers[hook] = fn;
-      },
-    });
-    const { initSentry } = await import("../sentry");
-    const { setSessionPrivacy } = await import("../session-privacy");
-    initSentry();
-
-    const replayEvent = () => ({
-      type: "replay_event",
-      urls: ["https://app.mcpjam.com/servers/acme"],
-    });
-    setSessionPrivacy("masked");
-    const masked = replayEvent();
-    handlers.preprocessEvent(masked);
-    expect(masked.urls).toEqual(["https://app.mcpjam.com/servers/[name]"]);
-
-    setSessionPrivacy("full");
-    const full = replayEvent();
-    handlers.preprocessEvent(full);
-    expect(full.urls).toEqual(["https://app.mcpjam.com/servers/acme"]);
-  });
 });
 
 describe("syncSentryReplay", () => {
@@ -194,7 +195,8 @@ describe("syncSentryReplay", () => {
     level: import("../session-privacy").SessionPrivacy | null,
   ) {
     const privacy = await import("../session-privacy");
-    if (level) privacy.setSessionPrivacy(level);
+    await allowFullContext();
+    privacy.setSessionPrivacy(level ?? (privacy.recordingSurface() === "off" ? "off" : "pending"));
     return { ...(await import("../sentry")), ...privacy };
   }
 
@@ -225,7 +227,7 @@ describe("syncSentryReplay", () => {
 
     it("not on a hard load onto /results/, only after leaving it", async () => {
       clientWithoutReplay();
-      const { syncSentryReplay } = await loadAt("masked");
+      const { syncSentryReplay } = await loadAt("full");
 
       syncSentryReplay("/results/secret-token");
       expect(addIntegration).not.toHaveBeenCalled();
@@ -301,7 +303,7 @@ describe("syncSentryReplay", () => {
     expect(replay.stop).not.toHaveBeenCalled();
   });
 
-  it("needs no restart between full and masked: it masks at both", async () => {
+  it("stops at masked and starts a new replay only when full returns", async () => {
     const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
     const replay = stubReplay(true);
 
@@ -311,8 +313,36 @@ describe("syncSentryReplay", () => {
     setSessionPrivacy("full");
     syncSentryReplay("/servers");
 
-    expect(replay.stop).not.toHaveBeenCalled();
+    expect(replay.stop).toHaveBeenCalledOnce();
+    expect(replay.start).toHaveBeenCalledOnce();
+  });
+
+  it("resumes a buffering replay as a buffering replay", async () => {
+    const { syncSentryReplay, setSessionPrivacy } = await loadAt("full");
+    const replay = stubReplay(true) as ReturnType<typeof stubReplay> & {
+      getRecordingMode: ReturnType<typeof vi.fn>;
+      startBuffering: ReturnType<typeof vi.fn>;
+    };
+    replay.getRecordingMode = vi.fn(() => "buffer");
+    replay.startBuffering = vi.fn();
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
+
+    syncSentryReplay("/results/secret-token");
+    setSessionPrivacy("full");
+    syncSentryReplay("/servers");
+
+    expect(replay.startBuffering).toHaveBeenCalledTimes(1);
     expect(replay.start).not.toHaveBeenCalled();
+  });
+
+  it("stops on a location whose query carries a secret", async () => {
+    const { syncSentryReplay } = await loadAt("full");
+    const replay = stubReplay(true);
+
+    syncSentryReplay({ pathname: "/servers", search: "?code=abc" });
+    expect(replay.stop).toHaveBeenCalledTimes(1);
   });
 
   it("holds the replay stopped while the level drops back to pending", async () => {
@@ -327,6 +357,9 @@ describe("syncSentryReplay", () => {
     expect(replay.stop).toHaveBeenCalledTimes(1);
 
     setSessionPrivacy("masked");
+    syncSentryReplay("/servers");
+    expect(replay.start).not.toHaveBeenCalled();
+    setSessionPrivacy("full");
     syncSentryReplay("/servers");
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
@@ -368,339 +401,121 @@ describe("syncSentryReplay", () => {
   });
 });
 
-describe("query event processor wiring", () => {
-  it("does not forward events dropped by the browser filter", async () => {
-    vi.resetModules();
-    init.mockClear();
-    const diagnostics = await import("../convex-query-diagnostics");
-    const processor = vi.fn(diagnostics.createConvexQueryEventProcessor());
-    const factory = vi
-      .spyOn(diagnostics, "createConvexQueryEventProcessor")
-      .mockReturnValue(processor);
-    try {
-      const { initSentry } = await import("../sentry");
-      initSentry();
-      const config = init.mock.calls[0][0];
-      const dropped = config.beforeSend(
-        {
-          exception: {
-            values: [
-              {
-                type: "Error",
-                value: "injected script failure",
-                stacktrace: {
-                  frames: [
-                    {
-                      filename: `${window.location.origin}/playground`,
-                      function: "injected",
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        },
-        {},
-      );
-      expect(dropped).toBeNull();
-      expect(processor).not.toHaveBeenCalled();
-    } finally {
-      factory.mockRestore();
-    }
-  });
-
-  it("enriches global errors, deduplicates boundary reports and retains DOM grouping", async () => {
-    vi.resetModules();
-    init.mockClear();
-    const { configureConvexQueryDiagnostics } =
-      await import("../convex-query-diagnostics");
-    configureConvexQueryDiagnostics("https://test.convex.cloud");
-    const { initSentry } = await import("../sentry");
-    initSentry();
-    const config = init.mock.calls[0][0];
-    const makeEvent = () => ({
-      exception: {
-        values: [
-          {
-            type: "Error",
-            value:
-              "[CONVEX Q(scenarios:listScenarios)] [Request ID: ab1234] Server Error",
-          },
-        ],
-      },
-    });
-    expect(config.beforeSend(makeEvent(), {}).tags).toMatchObject({
-      convex_backend: "test.convex.cloud",
-      request_id: "ab1234",
-    });
-    expect(config.beforeSend(makeEvent(), {})).toBeNull();
-    expect(
-      config.beforeSend(
-        {
-          environment: "prod",
-          exception: {
-            values: [
-              {
-                type: "NotFoundError",
-                value: "Failed to execute 'removeChild' on 'Node': not a child",
-              },
-            ],
-          },
-        },
-        {},
-      ).fingerprint,
-    ).toEqual(["dom-mutation-conflict", "prod"]);
-  });
-});
-
-describe("identity at the outbound boundary", () => {
-  type Hook = (event: Record<string, any>, hint?: object) => void;
-
-  async function setup() {
-    vi.resetModules();
-    init.mockClear();
-    const hooks: Record<string, Hook[]> = {};
-    getClient.mockReturnValue({
-      on: (hook: string, fn: Hook) => {
-        (hooks[hook] ??= []).push(fn);
-      },
-    });
-    const { initSentry } = await import("../sentry");
-    const telemetry = await import("../telemetry-context");
-    initSentry();
-    const config = init.mock.calls[0][0];
-    const run = (name: string, event: Record<string, any>, hint: object) => {
-      for (const fn of hooks[name] ?? []) fn(event, hint);
-    };
-    return { config, run, telemetry };
-  }
-
-  const userEvent = () => ({
-    user: {
-      id: "workos-1",
-      email: "zelda.quixote@acme-synthetic.example",
-      username: "zelda.quixote@acme-synthetic.example",
-      name: "Zelda",
-      ip_address: "203.0.113.9",
-    },
-  });
-
+describe("syncSentryReplay, a quick in-and-out", () => {
   afterEach(() => {
-    getClient.mockReset();
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 
-  it("keeps names only when allowed at capture and still allowed at send", async () => {
-    const { config, run, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
-    telemetry.setTelemetryIdentity("workos-1", "full");
-    const hint = {};
-    const event = userEvent();
-    run("preprocessEvent", event, hint);
-    run("postprocessEvent", event, hint);
-    expect(config.beforeSend(event, hint)?.user.email).toBe(
-      "zelda.quixote@acme-synthetic.example",
-    );
-    telemetry.setTelemetryActor(null);
-  });
-
-  it("keeps an event captured while id-only id-only, even once names are allowed", async () => {
-    const { config, run, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
-    const hint = {};
-    const event = userEvent();
-    run("preprocessEvent", event, hint);
-    telemetry.setTelemetryIdentity("workos-1", "full");
-    run("postprocessEvent", event, hint);
-    expect(event.user).toEqual({ id: "workos-1" });
-    expect(config.beforeSend(userEvent(), hint)?.user).toEqual({
-      id: "workos-1",
-    });
-    telemetry.setTelemetryActor(null);
-  });
-
-  it("strips names from an event whose grant went before it was sent", async () => {
-    const { config, run, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
-    telemetry.setTelemetryIdentity("workos-1", "full");
-    const hint = {};
-    run("preprocessEvent", userEvent(), hint);
-    telemetry.setTelemetryActor("workos-2");
-    expect(config.beforeSend(userEvent(), hint)?.user).toEqual({
-      id: "workos-1",
-    });
-    expect(config.beforeSendTransaction(userEvent(), hint).user).toEqual({
-      id: "workos-1",
-    });
-    telemetry.setTelemetryActor(null);
-  });
-
-  it("filters replay events, which never reach beforeSend", async () => {
-    const { run, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
-    const hint = {};
-    const replay = { type: "replay_event", urls: [], ...userEvent() };
-    run("preprocessEvent", replay, hint);
-    run("postprocessEvent", replay, hint);
-    expect(replay.user).toEqual({ id: "workos-1" });
-    telemetry.setTelemetryActor(null);
-  });
-
-  it("treats an event with no capture-time record as id-only", async () => {
-    const { config, telemetry } = await setup();
-    telemetry.setTelemetryActor("workos-1");
-    telemetry.setTelemetryIdentity("workos-1", "full");
-    expect(config.beforeSend(userEvent(), {})?.user).toEqual({
-      id: "workos-1",
-    });
-    telemetry.setTelemetryActor(null);
-  });
-});
-
-describe("content at the outbound boundary", () => {
-  it("wires the breadcrumb filter and scrubs the page URL of a masked event", async () => {
+  it("resumes only after the guard's stop has finished flushing", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     vi.resetModules();
-    init.mockClear();
-    const hooks: Record<string, Array<(e: unknown, h?: object) => void>> = {};
-    getClient.mockReturnValue({
-      on: (hook: string, fn: (e: unknown, h?: object) => void) => {
-        (hooks[hook] ??= []).push(fn);
-      },
-    });
-    const { initSentry } = await import("../sentry");
-    const privacy = await import("../session-privacy");
-    initSentry();
-    const config = init.mock.calls[0][0];
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
+    setSessionPrivacy("full");
+    let finishStop: () => void = () => {};
+    const replay = {
+      start: vi.fn(),
+      stop: vi.fn(() => new Promise<void>((resolve) => (finishStop = resolve))),
+      getReplayId: vi.fn(() => "replay-id"),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
 
-    privacy.setSessionPrivacy("masked");
-    expect(config.beforeBreadcrumb({ category: "console" })).toBeNull();
-    const hint = {};
-    for (const fn of hooks.preprocessEvent ?? []) fn({}, hint);
-    const event = config.beforeSend(
-      { request: { url: "https://app.mcpjam.com/servers/acme" } },
-      hint,
-    );
-    expect(event.request.url).toBe("https://app.mcpjam.com/servers/[name]");
+    syncSentryReplay("/results/tok");
+    syncSentryReplay("/servers");
+    expect(replay.start).not.toHaveBeenCalled();
 
-    // Captured masked, sent after the level went full: still scrubbed.
-    privacy.setSessionPrivacy("full");
-    expect(
-      config.beforeSend(
-        { request: { url: "https://app.mcpjam.com/servers/acme" } },
-        hint,
-      ).request.url,
-    ).toBe("https://app.mcpjam.com/servers/[name]");
-
-    // The raw path in `transaction` (set by browserTracingIntegration on
-    // every navigation) and the Referer header are scrubbed too.
-    const withPath = config.beforeSend(
-      {
-        transaction: "/p/kd7a8f9g0h1j2k3l4m5n6p7q8r/servers/acme-billing",
-        request: {
-          url: "https://app.mcpjam.com/servers/acme",
-          headers: {
-            Referer: "https://app.mcpjam.com/servers/globex",
-            "User-Agent": "test",
-          },
-        },
-      },
-      hint,
-    );
-    expect(withPath.transaction).toBe(
-      "/p/kd7a8f9g0h1j2k3l4m5n6p7q8r/servers/[name]",
-    );
-    expect(withPath.request.headers).toEqual({
-      Referer: "https://app.mcpjam.com/servers/[name]",
-      "User-Agent": "test",
-    });
-
-    // Captured and sent at full: untouched.
-    const fullHint = {};
-    for (const fn of hooks.preprocessEvent ?? []) fn({}, fullHint);
-    expect(
-      config.beforeSend(
-        { request: { url: "https://app.mcpjam.com/servers/acme" } },
-        fullHint,
-      ).request.url,
-    ).toBe("https://app.mcpjam.com/servers/acme");
-    expect(
-      config.beforeSend({ transaction: "/servers/acme" }, fullHint).transaction,
-    ).toBe("/servers/acme");
-    getClient.mockReset();
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).toHaveBeenCalledTimes(1);
   });
-});
 
-describe("performance transactions short of full", () => {
-  it("keep timing but lose URLs, peer hosts and selector attribute values", async () => {
+  it("waits for the first stop when a second stop returns at once", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
     vi.resetModules();
-    init.mockClear();
-    getClient.mockReturnValue({ on: () => {} });
-    const { initSentry } = await import("../sentry");
-    const privacy = await import("../session-privacy");
-    initSentry();
-    const config = init.mock.calls[0][0];
-    privacy.setSessionPrivacy("masked");
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
+    setSessionPrivacy("full");
+    const events: string[] = [];
+    let finishFirstStop: () => void = () => {};
+    let stops = 0;
+    const replay = {
+      start: vi.fn(() => events.push("start")),
+      // Like Sentry's: the first stop flushes for a while; a stop while the
+      // replay is already stopping returns a resolved promise.
+      stop: vi.fn(() => {
+        stops += 1;
+        if (stops > 1) return Promise.resolve();
+        return new Promise<void>((resolve) => {
+          finishFirstStop = () => {
+            events.push("first stop settled");
+            resolve();
+          };
+        });
+      }),
+      getReplayId: vi.fn(() => (stops === 0 ? "replay-id" : undefined)),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
 
-    const event = config.beforeSendTransaction(
-      {
-        transaction: "/results/kd7a8f9g0h1j2k3l4m5n6p7q8r9s",
-        contexts: {
-          trace: {
-            data: {
-              "url.full": "https://app.mcpjam.com/servers/acme-billing",
-              "lcp.element": 'h1.title[title="Zelda\'s dashboard"]',
-              "cls.source.1": 'img.avatar[alt="Zelda"]',
-            },
-          },
-        },
-        spans: [
-          {
-            description: "GET https://cdn.acme.example/avatars/zelda.png",
-            data: {
-              "server.address": "cdn.acme.example",
-              "url.full": "https://cdn.acme.example/avatars/zelda.png",
-              "http.response_transfer_size": 1057,
-            },
-            start_timestamp: 1,
-            timestamp: 2,
-          },
-          {
-            description: "GET /api/web/servers/acme-billing?tab=tools",
-            data: { "http.query": "?q=zelda", "http.fragment": "#acme" },
-            start_timestamp: 2,
-            timestamp: 3,
-          },
-        ],
-      },
-      {},
-    );
+    syncSentryReplay("/results/a");
+    syncSentryReplay("/results/b");
+    expect(replay.stop).toHaveBeenCalledTimes(2);
+    syncSentryReplay("/servers");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).not.toHaveBeenCalled();
 
-    // A request to a relative URL, and its query and fragment kept apart.
-    expect(event.spans[1]).toEqual({
-      description: "GET /api/web/servers/[name]?tab=[name]",
-      data: { "http.query": "?q=[name]", "http.fragment": "" },
-      start_timestamp: 2,
-      timestamp: 3,
-    });
-    expect(event.transaction).toBe("/results/[redacted]");
-    expect(event.contexts.trace.data).toEqual({
-      "url.full": "https://app.mcpjam.com/servers/[name]",
-      "lcp.element": "h1.title",
-      "cls.source.1": "img.avatar",
-    });
-    expect(event.spans[0]).toEqual({
-      description: "GET https://[host]/[name]/[name]",
-      data: {
-        "server.address": "[host]",
-        "url.full": "https://[host]/[name]/[name]",
-        "http.response_transfer_size": 1057,
-      },
-      start_timestamp: 1,
-      timestamp: 2,
-    });
-    getClient.mockReset();
+    finishFirstStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(events).toEqual(["first stop settled", "start"]);
   });
+
+  it("stays stopped when the location is blocked again before the flush ends", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    vi.resetModules();
+    const { syncSentryReplay } = await import("../sentry");
+    const { setSessionPrivacy } = await import("../session-privacy");
+    await allowFullContext();
+    setSessionPrivacy("full");
+    // Every stop issued so far finishes flushing together.
+    const flushing: (() => void)[] = [];
+    const finishStop = () => flushing.splice(0).forEach((resolve) => resolve());
+    const replay = {
+      start: vi.fn(),
+      stop: vi.fn(() => new Promise<void>((resolve) => flushing.push(resolve))),
+      getReplayId: vi.fn(() => "replay-id"),
+    };
+    getClient.mockReturnValue({ getIntegrationByName: () => replay });
+
+    syncSentryReplay("/results/a");
+    syncSentryReplay("/servers");
+    syncSentryReplay("/results/b");
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).not.toHaveBeenCalled();
+
+    // …and still resumes on the way out.
+    syncSentryReplay("/servers");
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+it("removes OAuth callback URLs and breadcrumbs from recovery alerts only", async () => {
+  const { captureSentryMessage } = await import("../sentry");
+  addEventProcessor.mockClear();
+  captureSentryMessage("Chat sign-in recovery failed", { tags: { source: "chat_auth_resume" }, extra: { continuationId: "c1" } });
+  const filter = addEventProcessor.mock.calls[0][0];
+  const cleaned = filter({ request: { url: "https://app.test/oauth/callback?code=SECRET&state=SECRET" }, breadcrumbs: [{ message: "SECRET" }], contexts: { page: { url: "SECRET" } }, extra: { continuationId: "c1" } });
+  expect(JSON.stringify(cleaned)).not.toContain("SECRET");
+  expect(cleaned.extra.continuationId).toBe("c1");
+  addEventProcessor.mockClear();
+  captureSentryMessage("Other issue", { tags: { source: "other" } });
+  expect(addEventProcessor).not.toHaveBeenCalled();
 });

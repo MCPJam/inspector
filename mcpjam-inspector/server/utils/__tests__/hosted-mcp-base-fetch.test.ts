@@ -129,6 +129,33 @@ describe("assertHostedFirstPartyMcpUrls", () => {
     }
   });
 
+  it("does not vet the platform worker's URL when the agent is off, since nothing dials it", async () => {
+    const previous = process.env.MCPJAM_PLATFORM_AGENT;
+    process.env.MCPJAM_PLATFORM_AGENT = "off";
+    try {
+      await withDeployedHostedMode(async () => {
+        process.env.ENVIRONMENT = "dev";
+        delete process.env.MCPJAM_DOCS_MCP_URL;
+        delete process.env.MCPJAM_SPEC_MCP_URL;
+        const { assertHostedFirstPartyMcpUrls } = await import(
+          "../hosted-mcp-base-fetch.js"
+        );
+        expect(() => assertHostedFirstPartyMcpUrls()).not.toThrow();
+        // An override the agent would have dialled is ignored the same way...
+        process.env.MCPJAM_PLATFORM_MCP_URL = "http://127.0.0.1:8787/mcp";
+        expect(() => assertHostedFirstPartyMcpUrls()).not.toThrow();
+        // ...while the docs overrides, which other surfaces read, still count.
+        process.env.MCPJAM_DOCS_MCP_URL = "http://127.0.0.1:8788/mcp";
+        expect(() => assertHostedFirstPartyMcpUrls()).toThrow(
+          /MCPJAM_DOCS_MCP_URL/
+        );
+      });
+    } finally {
+      if (previous === undefined) delete process.env.MCPJAM_PLATFORM_AGENT;
+      else process.env.MCPJAM_PLATFORM_AGENT = previous;
+    }
+  });
+
   it("refuses to start when the environment resolves a loopback platform worker", async () => {
     // The trap this assertion exists for: `HOSTED_MODE` and `ENVIRONMENT` are
     // different variables, so a hosted container whose environment resolves to

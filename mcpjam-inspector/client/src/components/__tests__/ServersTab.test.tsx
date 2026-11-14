@@ -22,6 +22,29 @@ import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { DbUserReadyProvider } from "@/contexts/db-user-ready-context";
+import { describeError } from "@mcpjam/sdk/browser";
+import { toast } from "@/lib/toast";
+
+const { captureException, posthogCaptureException } = vi.hoisted(() => ({
+  captureException: vi.fn(),
+  posthogCaptureException: vi.fn(),
+}));
+vi.mock("@sentry/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sentry/react")>()),
+  captureException,
+}));
+vi.mock("posthog-js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("posthog-js")>();
+  return {
+    ...actual,
+    default: { ...actual.default, captureException: posthogCaptureException },
+  };
+});
+vi.mock("@/lib/PosthogUtils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/PosthogUtils")>()),
+  isErrorCaptureSurface: () => true,
+  isCredentialBearingPath: () => false,
+}));
 
 // The header Auto-connect switch reads the real preferences store, which
 // throws without a provider — wrap every render in one.
@@ -186,6 +209,14 @@ vi.mock("@/lib/billing-gates", async (importOriginal) => {
       mockUseProjectBillingGate(...args),
   };
 });
+
+vi.mock("@/hooks/usePluginServerSignIn", () => ({
+  usePluginServerSignIn: () => ({
+    available: false,
+    pendingKey: null,
+    signIn: vi.fn(),
+  }),
+}));
 
 // Soft reads (`useSoftQuery`, e.g. the active-plugins read) go through
 // `useQueries`; `withUseQueries` answers them from the same `mockUseQuery`.
@@ -1158,6 +1189,46 @@ describe("ServersTab shared detail modal", () => {
     ).toBeDisabled();
   });
 
+  it.each([
+    ["user_server", false],
+    ["mcpjam", true],
+  ] as const)(
+    "handles %s quick-connect errors without losing the toast",
+    async (origin, reported) => {
+      mockIsAuthenticated = true;
+      mockCatalogCards = [createLinearCatalogCard()];
+      const error = Object.assign(new Error("Registry connection failed"), {
+        normalized: {
+          ...describeError(new Error("Registry connection failed")),
+          origin,
+        },
+      });
+      mockConnectRegistry.mockRejectedValueOnce(error);
+      const showError = vi.spyOn(toast, "error").mockReturnValue("error-toast");
+      try {
+        render(<ServersTab {...defaultProps} projectServers={{}} />);
+        fireEvent.click(screen.getByRole("button", { name: "Connect Linear" }));
+        await waitFor(() => expect(showError).toHaveBeenCalledWith(error.message));
+        expect(captureException).toHaveBeenCalledTimes(reported ? 1 : 0);
+        expect(posthogCaptureException).toHaveBeenCalledTimes(reported ? 1 : 0);
+        if (reported) {
+          expect(captureException).toHaveBeenCalledWith(
+            error,
+            expect.objectContaining({
+              tags: expect.objectContaining({ source: "registry_quick_connect" }),
+            })
+          );
+        }
+        expect(localStorage.getItem("mcp-quick-connect-pending")).toBeNull();
+        expect(
+          screen.getByRole("button", { name: "Connect Linear" })
+        ).toBeEnabled();
+      } finally {
+        showError.mockRestore();
+      }
+    }
+  );
+
   it("keeps quick connect visible during oauth-flow after return", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
@@ -1630,7 +1701,7 @@ describe("ServersTab shared detail modal", () => {
         name: "Auto-connect servers on this device",
       });
       expect(toggle).not.toBeDisabled();
-      expect(toggle).toHaveAttribute("data-state", "checked");
+      expect(toggle).toHaveAttribute("data-state", "unchecked");
     });
 
     it("stays hidden when the project has no servers to connect", () => {
@@ -1661,6 +1732,7 @@ describe("ServersTab shared detail modal", () => {
     });
 
     it("does not touch the attempt log when flipped OFF", () => {
+      localStorage.setItem("mcpjam-auto-connect-servers", "true");
       render(<ServersTab {...defaultProps} projects={sharedProject} />);
       fireEvent.click(
         screen.getByRole("switch", {

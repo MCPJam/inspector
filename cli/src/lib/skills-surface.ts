@@ -25,7 +25,7 @@
  *
  * If a third venue appears, or this grows past thin wiring, promote it.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import { z } from "zod";
@@ -49,7 +49,7 @@ export const SKILLS_EXTENSION_CAPABILITY = {
 } as const;
 
 /**
- * NO `ttlMs` for this venue — deliberately, and unlike the worker.
+ * `ttlMs: 0` for this venue, unlike the worker's hour.
  *
  * The worker's hour-long TTL rests on "the catalog changes only on deploy".
  * That same sentence is the HAZARD here: the docs tell users to launch with
@@ -59,11 +59,12 @@ export const SKILLS_EXTENSION_CAPABILITY = {
  * would pair a v5.1.0 manifest with v5.2.0 bytes and refuse our own skill as
  * `digest_mismatch`.
  *
- * Omitting `ttlMs` withholds a licence to cache rather than issuing one we
- * cannot honour. `cacheScope` stays: it costs nothing and remains true of any
- * cache a host keeps under its own policy — the listing does not vary by
- * caller.
+ * The stable spec requires `ttlMs` and `cacheScope` on every `skills/list`
+ * and `skills/get` result. SEP-2549 defines `ttlMs: 0` as "immediately
+ * stale", so sending 0 is the conformant way to withhold a licence to cache.
+ * `cacheScope` is `public`: the catalog does not vary by caller.
  */
+export const SKILLS_LIST_TTL_MS = 0;
 export const SKILLS_LIST_CACHE_SCOPE = "public";
 
 const INVALID_PARAMS = -32602;
@@ -100,6 +101,37 @@ function entryFor(uri: string): SkillsBundleEntry {
   return entry;
 }
 
+/**
+ * Resource metadata for one manifest file.
+ *
+ * The spec says a SKILL.md resource's `name` and `description` SHOULD come
+ * from its frontmatter. A supporting file is named by its path within the
+ * skill, as the spec's directory-listing examples name them.
+ */
+export function resourceMetadataFor(uri: string): {
+  name: string;
+  description: string;
+} {
+  const entry = SKILLS_BUNDLE_ENTRIES.find((skill) =>
+    skill.resources.some((resource) => resource.uri === uri)
+  );
+  if (!entry) {
+    return { name: uri, description: "Agent Skill file served over MCP." };
+  }
+  const skillName = String(entry.frontmatter.name);
+  if (uri === entry.uri) {
+    return {
+      name: skillName,
+      description: String(entry.frontmatter.description),
+    };
+  }
+  const root = entry.uri.slice(0, -"/SKILL.md".length);
+  return {
+    name: uri.slice(root.length + 1),
+    description: `Supporting file of the "${skillName}" skill, served over MCP.`,
+  };
+}
+
 /** Registers `skills/list`, `skills/get`, and one resource per manifest file. */
 export function registerSkillsSurface(server: McpServer): void {
   server.server.setRequestHandler(
@@ -116,6 +148,7 @@ export function registerSkillsSurface(server: McpServer): void {
       }
       return {
         skills: SKILLS_BUNDLE_ENTRIES,
+        ttlMs: SKILLS_LIST_TTL_MS,
         cacheScope: SKILLS_LIST_CACHE_SCOPE,
       };
     }
@@ -124,18 +157,22 @@ export function registerSkillsSurface(server: McpServer): void {
   server.server.setRequestHandler(
     "skills/get",
     { params: getParamsSchema, result: looseResult },
-    async (params) => ({ skill: entryFor(params.uri) })
+    // The SDK fills `ttlMs` / `cacheScope` only on the base protocol's
+    // cacheable methods, so an extension method has to carry its own.
+    async (params) => ({
+      skill: entryFor(params.uri),
+      ttlMs: SKILLS_LIST_TTL_MS,
+      cacheScope: SKILLS_LIST_CACHE_SCOPE,
+    })
   );
 
   for (const [uri, text] of Object.entries(SKILLS_BUNDLE_CONTENTS)) {
     const mimeType = mimeTypeFor(uri);
+    const { name, description } = resourceMetadataFor(uri);
     server.registerResource(
+      name,
       uri,
-      uri,
-      {
-        mimeType,
-        description: "Agent Skill file served over MCP (SEP-2640).",
-      },
+      { mimeType, description },
       // The SAME `mimeType` on the content, not only the registration — a
       // reader takes the type from `contents[0]`, and MCPJam's own loader
       // names it in the refusal for a non-text read.

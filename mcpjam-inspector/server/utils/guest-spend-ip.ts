@@ -3,7 +3,7 @@ import type { webcrypto } from "node:crypto";
 import { getGuestSessionHashPepper } from "./guest-session-pepper.js";
 
 import { edgeAttestationConfigured } from "./client-ip.js";
-import { logger } from "./logger.js";
+import { getSystemLogger } from "./request-logger.js";
 import {
   getServiceCredential,
   INSPECTOR_SERVICE_TOKEN_HEADER,
@@ -122,7 +122,7 @@ export function guestIpForwardHeaders(
 ): Record<string, string> {
   const token = getServiceCredential();
   if (!token || (!ipHash && !edgeAttestationConfigured())) return {};
-  if (!ipHash) logger.warn("Pooling unattested guest IP", { event: "llm_spend_unattested_ip_pooled" });
+  if (!ipHash) getSystemLogger("guest-spend").event("llm_spend_unattested_ip_pooled", {});
   return {
     "x-mcpjam-guest-ip-hash": ipHash ?? "_unattested",
     [INSPECTOR_SERVICE_TOKEN_HEADER]: token,

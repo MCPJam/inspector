@@ -26,6 +26,9 @@ export default defineConfig({
     // included — they compiled, and never ran.
     include: ["tests/**/*.test.ts", "src/**/__tests__/**/*.test.ts"],
     setupFiles: ["./tests/vitest.setup.ts"],
+    // Telemetry catalogs are build outputs: fresh before the run and before
+    // every watch rerun, however Vitest was started.
+    globalSetup: ["../scripts/generate-telemetry-catalogs.mjs"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov", "html"],

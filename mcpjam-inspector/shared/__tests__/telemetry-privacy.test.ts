@@ -8,6 +8,8 @@ import {
   maskReplayAttribute,
   maskReplayText,
   mostRestrictivePolicy,
+  CONSERVATIVE_TELEMETRY_POLICY,
+  isTelemetryPolicy,
   maskReplayStyle,
   scrubHostname,
   scrubNamesFromUrl,
@@ -15,35 +17,64 @@ import {
 } from "../telemetry-privacy";
 import { scrubSensitiveUrl } from "../credential-url";
 
-const FULL = { recording: "full", identity: "full" } as const;
-const MASKED = { recording: "masked", identity: "id_only" } as const;
+const FULL = { recording: "full", identity: "full", content: "full" } as const;
+const MASKED = {
+  recording: "masked",
+  identity: "id_only",
+  content: "strict",
+} as const;
 
 describe("mostRestrictivePolicy", () => {
   it("takes the stricter value of each field", () => {
     expect(
-      mostRestrictivePolicy(FULL, { recording: "masked", identity: "full" }),
-    ).toEqual({ recording: "masked", identity: "full" });
+      mostRestrictivePolicy(FULL, {
+        recording: "masked",
+        identity: "full",
+        content: "strict",
+      }),
+    ).toEqual({ recording: "masked", identity: "full", content: "strict" });
     expect(
-      mostRestrictivePolicy({ recording: "full", identity: "id_only" }, FULL),
-    ).toEqual({ recording: "full", identity: "id_only" });
+      mostRestrictivePolicy(
+        { recording: "full", identity: "id_only", content: "full" },
+        FULL,
+      ),
+    ).toEqual({ recording: "full", identity: "id_only", content: "full" });
     expect(mostRestrictivePolicy(FULL, FULL)).toEqual(FULL);
   });
 
+  it("rejects old policies without a content decision", () => {
+    expect(isTelemetryPolicy({ recording: "full", identity: "full" })).toBe(
+      false,
+    );
+    expect(mostRestrictivePolicy(FULL, { ...FULL, content: "strict" })).toEqual(
+      { ...FULL, content: "strict" },
+    );
+  });
+
   it("ranks off above masked above full, and never loses an off", () => {
-    const OFF = { recording: "off", identity: "id_only" } as const;
+    const OFF = {
+      recording: "off",
+      identity: "id_only",
+      content: "strict",
+    } as const;
     expect(mostRestrictivePolicy(FULL, OFF, MASKED)).toEqual(OFF);
     expect(
-      mostRestrictivePolicy({ recording: "off", identity: "full" }, FULL),
-    ).toEqual({ recording: "off", identity: "full" });
+      mostRestrictivePolicy(
+        { recording: "off", identity: "full", content: "strict" },
+        FULL,
+      ),
+    ).toEqual({ recording: "off", identity: "full", content: "strict" });
     // A malformed policy is conservative, but an off beside it still wins.
     expect(mostRestrictivePolicy(OFF, null)).toEqual(OFF);
   });
 
   it("treats nothing, null and malformed policies as conservative", () => {
-    expect(mostRestrictivePolicy()).toEqual(MASKED);
-    expect(mostRestrictivePolicy(FULL, null)).toEqual(MASKED);
+    expect(mostRestrictivePolicy()).toEqual(CONSERVATIVE_TELEMETRY_POLICY);
+    expect(mostRestrictivePolicy(FULL, null)).toEqual(
+      CONSERVATIVE_TELEMETRY_POLICY,
+    );
     expect(mostRestrictivePolicy(FULL, { recording: "all" } as never)).toEqual(
-      MASKED,
+      CONSERVATIVE_TELEMETRY_POLICY,
     );
   });
 });
@@ -56,11 +87,12 @@ describe("capture-context stamps", () => {
       policy: FULL,
     });
     expect(stamp).toEqual({
-      v: 1,
+      v: 2,
       p: ["p1", "p2"],
       o: ["o1"],
       r: "full",
       i: "full",
+      c: "full",
     });
     expect(decodeCaptureContext(stamp)).toEqual({
       projectIds: ["p1", "p2"],
@@ -71,14 +103,25 @@ describe("capture-context stamps", () => {
 
   it.each([
     ["missing", undefined],
+    ["legacy", { v: 1, p: [], o: [], r: "full", i: "full" }],
+    ["missing content", { v: 2, p: [], o: [], r: "full", i: "full" }],
     ["not an object", "full"],
-    ["an unknown version", { v: 2, p: [], o: [], r: "full", i: "full" }],
-    ["an unknown policy", { v: 1, p: [], o: [], r: "everything", i: "full" }],
-    ["ids that are not strings", { v: 1, p: [1], o: [], r: "full", i: "full" }],
+    [
+      "an unknown version",
+      { v: 3, p: [], o: [], r: "full", i: "full", c: "full" },
+    ],
+    [
+      "an unknown policy",
+      { v: 2, p: [], o: [], r: "everything", i: "full", c: "full" },
+    ],
+    [
+      "ids that are not strings",
+      { v: 2, p: [1], o: [], r: "full", i: "full", c: "full" },
+    ],
     [
       "too many ids",
       {
-        v: 1,
+        v: 2,
         p: Array.from(
           { length: MAX_TELEMETRY_CONTEXT_IDS + 1 },
           (_, i) => `p${i}`,
@@ -86,11 +129,12 @@ describe("capture-context stamps", () => {
         o: [],
         r: "full",
         i: "full",
+        c: "full",
       },
     ],
     [
       "an oversized id",
-      { v: 1, p: ["x".repeat(65)], o: [], r: "full", i: "full" },
+      { v: 2, p: ["x".repeat(65)], o: [], r: "full", i: "full", c: "full" },
     ],
   ])("refuses a stamp that is %s", (_name, value) => {
     expect(decodeCaptureContext(value)).toBeNull();

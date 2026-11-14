@@ -310,6 +310,7 @@ export function useCreateProjectEnvironment(): (args: {
  * a reuse, which only costs a word in a toast.
  */
 export function useEnsureAdhocEnvironment(): (args: {
+  purpose?: "chat";
   projectId: string;
   hostId: string;
   serverAttachmentId?: string | null;

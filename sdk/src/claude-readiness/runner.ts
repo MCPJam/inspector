@@ -27,14 +27,27 @@ import {
 } from "./checks/apps.js";
 import {
   CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
+  CLAUDE_LAZY_AUTH_PROBE_INPUT,
   runClaudeAuthChecks,
   type ClaudeAuthEvidence,
 } from "./checks/auth.js";
+import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy-auth.js";
+import type { DirectoryDecisionScan } from "../directory-readiness/decisions/grade.js";
+import type { DirectoryAnswer } from "../directory-readiness/flows/types.js";
+import { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
+import { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
+import { runClaudeCrossToolScan } from "./checks/cross-tool.js";
+import { runClaudeDecisionChecks } from "./checks/decisions.js";
+import { runClaudeDeclarationChecks } from "./checks/declarations.js";
 import {
   runClaudeEndpointChecks,
   type ClaudeEndpointEvidence,
 } from "./checks/endpoint.js";
 import { runClaudeOptionalFeatureChecks } from "./checks/optional-features.js";
+import {
+  blockOnServerFailure,
+  type ClaudeServerFailure,
+} from "./dependencies.js";
 import {
   CLAUDE_SUBMISSION_PROFILE_INPUT,
   runClaudeSubmissionChecks,
@@ -111,9 +124,23 @@ export interface ClaudeReadinessInput {
   toolListingComplete?: boolean;
   /** Why the tool listing is partial, in plain words. */
   toolListingError?: string;
+  /**
+   * Set when the run could not use the server. The checks that needed it
+   * say so with the failure as their reason; the others keep their verdicts.
+   */
+  serverFailure?: ClaudeServerFailure;
 
-  /** Raw submission profile, validated here so its issues become findings. */
+  /**
+   * Raw submission profile, validated here so its issues become findings.
+   *
+   * @deprecated Pass `submissionAnswers`; a profile is ignored beside them.
+   */
   submissionProfile?: unknown;
+  /**
+   * A `claude-connector` submission's stored answers. Graded with the
+   * portal's rules, and its Authentication answers are the declared auth mode.
+   */
+  submissionAnswers?: readonly DirectoryAnswer[];
   /** Features the submitter claimed, if any. */
   claimedFeatures?: {
     lazyAuthentication?: boolean;
@@ -126,6 +153,16 @@ export interface ClaudeReadinessInput {
   intrusiveObservations?: ClaudeIntrusiveObservations;
 
   /**
+   * The lazy-auth probe's two unauthenticated calls, when a caller armed it.
+   *
+   * Feeds two things: the lazy-authentication badge, graded against Claude's
+   * own trigger (HTTP 401 with `WWW-Authenticate`), and the 401 contract for a
+   * server that serves the anonymous `initialize` — whose challenge lives on
+   * a protected call. Part of the evidence, so a replay regrades identically.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeEvidence;
+
+  /**
    * The model-observation axis, whatever happened on it.
    *
    * PART OF THE EVIDENCE rather than an argument to the grader, so a replayed
@@ -134,6 +171,8 @@ export interface ClaudeReadinessInput {
    * if it wanted to.
    */
   llmObservations?: ClaudeObservationState;
+  /** What the decision scan asked and the answers. Absent, the scan is off. */
+  decisionScan?: DirectoryDecisionScan;
 
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
@@ -207,8 +246,11 @@ export function gradeClaudeReadiness(
   // down the "no input" branch would hide a caller's mistake behind a status
   // that reads like our limitation — the very thing the parse result exists to
   // prevent.
+  const answers =
+    input.submissionAnswers &&
+    claudeSubmissionEvidenceFromAnswers(input.submissionAnswers);
   const parsedProfile =
-    input.submissionProfile === undefined
+    answers || input.submissionProfile === undefined
       ? { profile: undefined as ClaudeSubmissionProfile | undefined, issues: [] }
       : parseClaudeSubmissionProfile(input.submissionProfile);
 
@@ -220,16 +262,34 @@ export function gradeClaudeReadiness(
   // whenever no profile was supplied, which graded a preregistered-client
   // connector as a runtime failure it does not have. Handing the two modules
   // different views of the same field was the second half of the same bug.
+  const lazyAuthProbe = input.lazyAuthProbe ?? input.auth.lazyAuthProbe;
+  // THE STEP-UP PROBE'S CHALLENGE IS ALSO THE ONE WHOSE SHAPE IS GRADED. The
+  // shape check reads `insufficientScopeChallenge`, and the probe is the only
+  // ordinary way one is ever observed — so a 403 it recorded is handed over
+  // here rather than leaving the shape check unevaluated beside it.
+  const stepUp = input.intrusiveObservations?.stepUp;
+  const stepUpChallenge =
+    input.auth.insufficientScopeChallenge === undefined &&
+    stepUp?.attempted === true &&
+    stepUp.status === 403 &&
+    stepUp.wwwAuthenticate
+      ? { header: stepUp.wwwAuthenticate }
+      : undefined;
   const authEvidence = {
     ...input.auth,
     declaredAuthMode:
-      parsedProfile.profile?.declaredAuthMode ?? input.auth.declaredAuthMode,
+      answers?.declaredAuthMode ??
+      parsedProfile.profile?.declaredAuthMode ??
+      input.auth.declaredAuthMode,
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
+    ...(stepUpChallenge ? { insufficientScopeChallenge: stepUpChallenge } : {}),
   };
   const auth = runClaudeAuthChecks(authEvidence, stamp);
   const optional = runClaudeOptionalFeatureChecks(
     {
       auth: authEvidence,
       claimedFeatures: input.claimedFeatures,
+      lazyAuthProbe,
     },
     stamp,
   );
@@ -240,23 +300,33 @@ export function gradeClaudeReadiness(
     hasBorrowedAccessToken: input.authMode === "provided-token",
   });
 
-  const findings: ClaudeReadinessFinding[] = enforceCapabilityGate(
+  const listing = {
+    complete: input.toolListingComplete,
+    error: input.toolListingError,
+  };
+  const graded: ClaudeReadinessFinding[] = enforceCapabilityGate(
     [
     ...runClaudeEndpointChecks(input.endpoint, stamp),
     ...auth.findings,
-    ...runClaudeToolChecks(input.tools, stamp, {
-      complete: input.toolListingComplete,
-      error: input.toolListingError,
-    }),
+    ...runClaudeToolChecks(input.tools, stamp, listing),
+    runClaudeCrossToolScan(input.tools, stamp, listing),
+    ...runClaudeDecisionChecks(input, stamp, listing),
     ...runClaudeAppsChecks(input.apps, stamp),
     ...runClaudeSubmissionChecks(
       {
+        answers,
         profile: parsedProfile.profile,
         profileIssues: parsedProfile.issues,
         observedAuthMode: input.observedAuthMode,
+        auth: authEvidence,
       },
       stamp,
     ),
+    ...runClaudeDeclarationChecks(
+      { answers, tools: input.tools, listing },
+      stamp,
+    ),
+    ...runClaudeAnswerStepChecks(answers, stamp),
     ...optional.findings,
     ...gradeClaudeIntrusiveObservations(
       intrusiveMode,
@@ -268,11 +338,17 @@ export function gradeClaudeReadiness(
     // `experience-insights`, which is not a required lane — so their position
     // in this list cannot change a verdict. They are appended rather than
     // interleaved purely so a reader scanning the findings sees the
-    // deterministic inventory first.
-    ...mapClaudeObservationsToFindings(input.llmObservations?.envelope, stamp),
+    // deterministic inventory first. A model that read a server this run
+    // could not use read nothing, so its observations are not published.
+    ...mapClaudeObservationsToFindings(
+      input.serverFailure ? undefined : input.llmObservations?.envelope,
+      stamp,
+    ),
     ],
     input.capabilities,
   );
+  // After the capability gate: when both apply, the server is the one to fix.
+  const findings = blockOnServerFailure(graded, input.serverFailure);
 
   const badges: ClaudeCapabilityBadge[] = [...auth.badges, ...optional.badges];
 
@@ -295,7 +371,7 @@ export function gradeClaudeReadiness(
 
   return {
     status,
-    summary: buildRunSummary(status, lanes),
+    summary: buildRunSummary(status, lanes, input.serverFailure),
     context: {
       target: input.enteredUrl,
       authMode: input.authMode,
@@ -316,7 +392,14 @@ export function gradeClaudeReadiness(
 function buildRunSummary(
   status: ClaudeReadinessResult["status"],
   lanes: ClaudeReadinessLaneResult[],
+  serverFailure?: ClaudeServerFailure,
 ): string {
+  // An outage is the gap to close first: every input the lanes name is one
+  // the server would have supplied. A refused session is not summarized
+  // here, because a headless run against an OAuth server is refused by design.
+  if (serverFailure?.kind === "unreachable" && status === "incomplete") {
+    return `Readiness is undetermined: the server could not be reached (${serverFailure.detail}). Results that need no server stand. Check that the server is up and reachable, then run again.`;
+  }
   // From the shared constant, not a restated literal: `rollUpLaneStatus`
   // decides the verdict from `CLAUDE_REQUIRED_LANES`, and a second copy here
   // would let the summary name the wrong lanes after a change to that set.
@@ -373,6 +456,7 @@ export const CLAUDE_READINESS_INPUTS = {
   appsResult: CLAUDE_APPS_RESULT_INPUT,
   authorizationRequests: CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
   intrusive: "intrusive",
+  lazyAuthProbe: CLAUDE_LAZY_AUTH_PROBE_INPUT,
 } as const;
 
 /**
@@ -385,4 +469,8 @@ export const CLAUDE_READINESS_INPUTS = {
  */
 export const CLAUDE_GATED_INPUTS: readonly string[] = [
   CLAUDE_READINESS_INPUTS.intrusive,
+  // Not side-effecting — no credentials, read-only tools, two calls — but it
+  // still CALLS TOOLS on the target, so it is the owner's decision to make
+  // and not a line of advice in a summary.
+  CLAUDE_READINESS_INPUTS.lazyAuthProbe,
 ];

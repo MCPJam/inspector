@@ -229,7 +229,7 @@ describe("SuitesOverview", () => {
     expect(screen.getByText("3 minutes ago")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Setup Run Excalidraw Draw Small House",
+        name: "Run Excalidraw Draw Small House",
       }),
     ).toBeInTheDocument();
   });
@@ -316,7 +316,7 @@ describe("SuitesOverview", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Setup Run Excalidraw Draw Small House",
+        name: "Run Excalidraw Draw Small House",
       }),
     );
     expect(onRerun).toHaveBeenCalledWith(suiteWithServers);
@@ -347,7 +347,7 @@ describe("SuitesOverview", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Setup Run Excalidraw Draw Small House",
+        name: "Run Excalidraw Draw Small House",
       }),
     );
     expect(onRerun).toHaveBeenCalledWith(attachmentOnly);

@@ -1,18 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 const state = vi.hoisted(() => ({
   execute: vi.fn(),
   resolve: vi.fn(),
   release: vi.fn(),
 }));
-vi.mock("../receipt-store.js", () => ({
+vi.mock("../receipt-store.js", async (original) => ({
+  ...(await original<typeof import("../receipt-store.js")>()),
   createPluginInvocationReceiptPort: () => undefined,
-  pluginInvocationOwnerHash: () => "hash",
 }));
 vi.mock("../request-runtime.js", () => ({
   createPluginRequestRuntime: () => ({
     resolve: state.resolve,
-    runOwnedLegacy: state.execute,
-    handleLegacyForm: async () => ({ action: "accept" }),
+    runOwnedForm: state.execute,
+    handleOwnedForm: async () => ({ action: "accept" }),
     release: state.release,
   }),
 }));
@@ -21,13 +22,22 @@ import {
   createModelFormExecutor,
 } from "../model-forms.js";
 import { pluginInstances } from "../instances.js";
+import { pluginHostBindingDigest } from "../bindings.js";
+import { modelApps } from "../model-apps.js";
+import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
+const executors = new Set<ReturnType<typeof createModelFormExecutor>>();
+afterEach(() => {
+  for (const executor of executors) executor.dispose();
+  executors.clear();
+  vi.restoreAllMocks();
+});
 const identity = {
   actorId: "actor",
   projectId: "project",
   workspaceId: "workspace",
   subject: "subject",
 };
-function fixture() {
+function fixture(hostRevision = "host-revision") {
   const abort = new AbortController();
   const admission = { ...identity, revalidate: vi.fn(async () => {}) };
   const execute = createModelFormExecutor({
@@ -36,11 +46,12 @@ function fixture() {
     identity,
     bearer: "fixture",
     hostId: "host",
-    hostRevision: "host-revision",
+    hostRevision,
     serverIds: ["server"],
     eligibleServerIds: ["server"],
     dispatch: createModelFormDispatch(["server"]),
   });
+  executors.add(execute);
   const input = {
     serverKey: "server",
     toolName: "review",
@@ -125,6 +136,55 @@ describe("owned model legacy forms", () => {
   });
 });
 
+it("keeps native callback receipts for its turn without reviving a closed App", async () => {
+  const catalog = await state.resolve();
+  state.resolve.mockResolvedValue({ ...catalog, tool: {
+    name: "review", _meta: { ui: { resourceUri: "ui://app" } },
+  } });
+  const token = (result: unknown) => z.object({ _meta: z.object({
+    [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }),
+  }) }).parse(result)._meta[PLUGIN_MODEL_APP_META].instanceToken;
+  const f = fixture();
+  const run = vi.fn(async () => ({ content: [] }));
+  const [first, duplicate] = await Promise.all([
+    f.execute(f.input, run), f.execute(f.input, run),
+  ]);
+  expect(duplicate).toEqual(first);
+  const oldToken = token(first);
+  const signal = new AbortController().signal;
+  await modelApps.close(oldToken, identity, signal);
+  expect(await f.execute(f.input, run)).toEqual(first);
+  expect(run).toHaveBeenCalledOnce();
+  await expect(modelApps.restore(oldToken, identity, signal)).rejects.toThrow(
+    "MODEL_APP_UNAVAILABLE",
+  );
+  f.execute.dispose();
+  await expect(f.execute(f.input, run)).rejects.toMatchObject({ code: "INSTANCE_REQUEST_CLOSED" });
+  const nextTurn = fixture();
+  const next = token(await nextTurn.execute(nextTurn.input, run));
+  expect(next).not.toBe(oldToken);
+  expect(run).toHaveBeenCalledTimes(2);
+  await modelApps.close(next, identity, signal);
+});
+
+it.each(["tool failure", "source revocation"])(
+  "does not publish a model App after %s", async (failure) => {
+    const publication = vi.spyOn(modelApps, "publish");
+    const catalog = await state.resolve();
+    state.resolve.mockResolvedValue({ ...catalog, tool: {
+      name: "review", _meta: { ui: { resourceUri: "ui://app" } },
+    } });
+    const f = fixture();
+    const run = async () => {
+      if (failure === "tool failure") throw new Error("Tool failed");
+      state.resolve.mockResolvedValue({ ...catalog, revision: "revoked" });
+      return { content: [] };
+    };
+    await expect(f.execute(f.input, run)).rejects.toThrow();
+    expect(publication).not.toHaveBeenCalled();
+  },
+);
+
 it("refuses a host revision that changed after the normal model approval gate", async () => {
   state.resolve.mockResolvedValue({
     revision: "revision",
@@ -136,6 +196,32 @@ it("refuses a host revision that changed after the normal model approval gate", 
   const f = fixture();
   await expect(f.execute(f.input, vi.fn())).rejects.toThrow();
   expect(state.execute).not.toHaveBeenCalled();
+});
+
+it("runs a tool when chat and discovery read the same host differently", async () => {
+  // Chat binds the `/web/host/runtime-config` read, which carries the host's
+  // server selection; discovery digests the execution-context read, which does not.
+  const executionContext = {
+    hostId: "host",
+    hostConfigId: "config",
+    modelId: "openai/gpt-5.4-mini",
+    harness: "codex",
+    hostStyle: "chatgpt",
+    executionScope: { kind: "project", projectId: "project" },
+  };
+  state.resolve.mockResolvedValue({
+    ...(await state.resolve()),
+    hostRevision: pluginHostBindingDigest(executionContext),
+  });
+  const f = fixture(
+    pluginHostBindingDigest({
+      ...executionContext,
+      selectedServerIds: ["server", "other"],
+    }),
+  );
+  const original = vi.fn(async () => ({ content: [] }));
+  await expect(f.execute(f.input, original)).resolves.toEqual({ content: [] });
+  expect(original).toHaveBeenCalledTimes(1);
 });
 
 describe("model form request dispatch", () => {

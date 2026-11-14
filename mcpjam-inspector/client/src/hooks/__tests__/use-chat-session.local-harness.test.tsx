@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { LOCAL_HARNESS_GRANT_HEADER } from "@/lib/local-harness-consent";
 import { getDefaultModel } from "@/components/chat-v2/shared/model-helpers";
+import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
 
 /**
  * Local Claude Code execution, as the TRANSPORT sees it.
@@ -56,6 +57,11 @@ const mockState = vi.hoisted(() => ({
   })),
   countTextTokens: vi.fn(async () => null),
   convexAuth: { isAuthenticated: true, isLoading: false },
+  workOsUser: null as { id: string } | null,
+  currentUser: { isAnonymous: true } as
+    | { isAnonymous: boolean }
+    | null
+    | undefined,
   detectOllamaModels: vi.fn(async () => ({
     isRunning: false,
     availableModels: [],
@@ -147,15 +153,24 @@ vi.mock("@/lib/session-token", () => ({
   getAuthHeaders: vi.fn(() => ({})),
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: mockState.getAccessToken }),
+  useAuth: () => ({
+    getAccessToken: mockState.getAccessToken,
+    user: mockState.workOsUser,
+  }),
 }));
 // Soft reads (billing, credits, quota, notifications) go through useQueries;
 // withUseQueries answers them from this mock's useQuery.
 vi.mock("convex/react", async () =>
   (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: () => mockState.convexAuth,
-  useQuery: () => undefined,
+  useQuery: (name: string, args: unknown) =>
+    name === "users:getCurrentUser" && args !== "skip"
+      ? mockState.currentUser
+      : undefined,
   useConvex: () => ({ mutation: mockState.convexMutation }),
+}));
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
 }));
 vi.mock("@ai-sdk/react", () => ({
   useChat: vi.fn((options: {
@@ -222,7 +237,7 @@ async function renderWithHarness(
     useChatSession({
       selectedServers: ["server-1"],
       ...(localHarnessExecution ? { localHarnessExecution } : {}),
-      ...(hostedContext ? { hostedContext } : {}),
+      ...(hostedContext ? { hostedContext: { selectedServerIds: ["server-id-1"], ...hostedContext } } : {}),
       ...(extra ?? {}),
     } as never),
   );
@@ -317,6 +332,41 @@ describe("useChatSession — local Claude Code transmission", () => {
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.messages = [];
+    mockState.workOsUser = null;
+    mockState.currentUser = { isAnonymous: true };
+  });
+
+  it("applies guest model locks even with a valid Convex guest session", async () => {
+    await renderWithHarness(grantedController());
+    expect(composeAvailableModels).toHaveBeenCalledWith(
+      expect.objectContaining({ isAuthenticated: false }),
+    );
+  });
+
+  it.each([
+    ["guest", { isAnonymous: true }],
+    ["unresolved", undefined],
+    ["without a readable user row", null],
+  ] as const)(
+    "keeps frontier locked with a WorkOS user and a %s Convex actor",
+    async (_name, currentUser) => {
+      mockState.workOsUser = { id: "workos-user-1" };
+      mockState.currentUser = currentUser;
+      await renderWithHarness(grantedController());
+      expect(composeAvailableModels).toHaveBeenCalledWith(
+        expect.objectContaining({ isAuthenticated: false }),
+      );
+    },
+  );
+
+  it("allows confirmed member actors through the guest model locks", async () => {
+    mockState.workOsUser = { id: "workos-user-1" };
+    mockState.currentUser = { isAnonymous: false };
+    await renderWithHarness(grantedController());
+    expect(composeAvailableModels).toHaveBeenCalledWith(
+      expect.objectContaining({ isAuthenticated: true }),
+    );
+    mockState.workOsUser = null;
   });
 
   it("carries the ids in the body and the capability in the header", async () => {
@@ -356,7 +406,7 @@ describe("useChatSession — local Claude Code transmission", () => {
     // target and hand the user a cloud sandbox they never asked for.
     await renderWithHarness({ requested: true, resolveSendTarget: () => null });
     expect(() => sendRequest()).toThrow(
-      "Local execution is not authorized for this turn",
+      "Local execution is not authorized. Set up this client on your machine and try again.",
     );
   });
 
@@ -410,14 +460,14 @@ describe("useChatSession — local Claude Code transmission", () => {
     expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBeUndefined();
   });
 
-  it("never sends local on a surface forced onto the web route", async () => {
+  it("keeps an explicitly local harness on local ingress for managed surfaces", async () => {
     await renderWithHarness(grantedController(), {
       projectId: "proj-1",
       requiresWebChatApi: true,
     });
     const { body, headers } = sendRequest();
-    expect(body.harnessTarget).toBeUndefined();
-    expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBeUndefined();
+    expect(body.harnessTarget).toEqual(LOCAL_TARGET);
+    expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBe("grant-token-value");
   });
 });
 
@@ -439,13 +489,11 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
   } as never;
 
-  it("routes an org-runtime model to the web API when nothing asks for local", async () => {
-    // The control. Without this the assertion below would pass whether or not
-    // the carve-out exists.
+  it("keeps an org-runtime model on the local route when nothing asks for local", async () => {
     await renderWithHarness(undefined, { projectId: "proj-1" }, {
       hostedOrgModelConfig: ORG_CONFIG,
     });
-    expect(chatApi()).toBe("/api/web/chat-v2");
+    expect(chatApi()).toBe("/api/mcp/chat-v2");
   });
 
   it("keeps a requested local turn on the route that can run it", async () => {
@@ -473,26 +521,10 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     );
     expect(chatApi()).toBe("/api/mcp/chat-v2");
     const { body, headers } = sendRequest();
-    expect(body.localMcpRuntimeRequired).toBe(true);
     expect(body.browserEngine).toBe("local");
     expect(headers["X-MCPJam-Browser-Consent"]).toBe("browser-capability");
     expect(body.harnessTarget).toBeUndefined();
     expect(body.computerEngine).toBeUndefined();
-  });
-
-  it("tells the local route to resolve MCP servers locally too", async () => {
-    // The agent runs here, so the servers it reaches have to resolve here.
-    await renderWithHarness(grantedController(), { projectId: "proj-1" }, {
-      hostedOrgModelConfig: ORG_CONFIG,
-    });
-    expect(sendRequest().body.localMcpRuntimeRequired).toBe(true);
-  });
-
-  it("does not claim a local MCP runtime for a plain BYOK local turn", async () => {
-    // `localMcpRuntimeRequired` is about an ORG-runtime model's server
-    // resolution. A BYOK model never routed away in the first place.
-    await renderWithHarness(grantedController(), { projectId: "proj-1" });
-    expect(sendRequest().body.localMcpRuntimeRequired).toBeUndefined();
   });
 });
 
@@ -515,16 +547,21 @@ describe("useChatSession — a harness client with no model it can run", () => {
 
   it("does not crash: it shows a disabled stand-in and refuses to send", async () => {
     // The only row is a key on this machine, which a brokered harness never
-    // runs: the picker list is empty.
+    // runs: the picker lists it disabled, and nothing is pickable.
     const { result } = await renderWithHarness(undefined, undefined, {
       harnessModelTarget: { harnessId: "claude-code" },
     });
     const session = result.current;
-    expect(session.availableModels).toEqual([]);
+    expect(session.availableModels).toEqual([
+      expect.objectContaining({
+        disabled: true,
+        disabledReason: expect.stringMatching(/organization's Anthropic key/),
+      }),
+    ]);
     expect(session.selectedModel).toMatchObject({
       disabled: true,
       disabledReason:
-        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models.",
+        "Claude Code runs MCPJam models, your organization's Anthropic key, or a gateway that serves Anthropic Messages. Set one up in Organization models.",
     });
     expect(session.submitBlocked).toBe(true);
   });

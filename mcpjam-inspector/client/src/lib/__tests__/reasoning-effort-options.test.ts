@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reasoningEffortOptions } from "../reasoning-effort-options";
+import { reasoningEffortOptions, reasoningEffortRouteForRow } from "../reasoning-effort-options";
 
 describe("reasoningEffortOptions", () => {
   it("a hosted row offers exactly the catalog's list", () => {
@@ -66,4 +66,20 @@ describe("reasoningEffortOptions", () => {
       [],
     );
   });
+  it("uses the named connection's runtime for effort capabilities", () => {
+    const row = { id: "gpt-5.1", provider: "openai" as const,
+      orgProvider: { id: "connection-a", providerKey: "openai" } };
+    const connection = { id: "connection-a", providerKey: "openai", enabled: true, hasSecret: true };
+    expect(reasoningEffortRouteForRow(row)).toBe("org");
+    expect(reasoningEffortRouteForRow(row, { providers: [
+      { ...connection, runtimeLocation: "cloud" },
+    ] })).toBe("orgCloud");
+    expect(reasoningEffortRouteForRow(row, { providers: [
+      { ...connection, id: "other", runtimeLocation: "cloud" },
+    ] })).toBe("org");
+    expect(reasoningEffortOptions(row, reasoningEffortRouteForRow(row, {
+      providers: [{ ...connection, runtimeLocation: "local" }],
+    }))).toContain("high");
+  });
+
 });

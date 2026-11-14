@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useState } from "react";
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
@@ -51,6 +52,8 @@ import {
   type SuiteRunReviewProps,
 } from "./suite-run-review";
 import { useSuiteRunPreflight } from "./suite-run-preflight";
+import { caseLaunchTarget } from "./case-workspace/case-launch-preview";
+import { resolveCaseLaunchEnvironments } from "./case-workspace/pending-case-launches";
 
 type PlannedCombination = {
   environmentId?: string;
@@ -382,9 +385,18 @@ export function planRunMatrix(
 
 /**
  * What a planned run launches, for the preflight: each cell's environment
- * (or the one a new cell copies) and each cell's client and model.
+ * (or the one a new cell copies) and each cell's client and model, with the
+ * model's saved selection. A new cell carries the pick's own selection; a
+ * cell that reuses an environment carries that environment's, when the
+ * caller passes `environments`.
  */
-export function plannedPreflight(plan: readonly PlannedCombination[]) {
+export function plannedPreflight(
+  plan: readonly PlannedCombination[],
+  environments: readonly Pick<
+    ProjectEnvironmentView,
+    "environmentId" | "modelId" | "modelSelection"
+  >[] = [],
+) {
   const launched = new Set(
     plan.flatMap((item) => (item.environmentId ? [item.environmentId] : [])),
   );
@@ -398,10 +410,23 @@ export function plannedPreflight(plan: readonly PlannedCombination[]) {
   return {
     environmentIds: [...new Set([...launched, ...copied])],
     templateOnlyIds: [...copied].filter((id) => !launched.has(id)),
-    targets: plan.map(({ stack }) => ({
-      hostId: stack.hostId,
-      ...(stack.modelId ? { modelId: stack.modelId } : {}),
-    })),
+    targets: plan.map(({ stack, environmentId }) => {
+      const reused = environmentId
+        ? environments.find((item) => item.environmentId === environmentId)
+        : undefined;
+      const modelSelection =
+        stack.modelSelection ??
+        (reused?.modelSelection &&
+        reused.modelId &&
+        reused.modelId === stack.modelId
+          ? reused.modelSelection
+          : undefined);
+      return {
+        hostId: stack.hostId,
+        ...(stack.modelId ? { modelId: stack.modelId } : {}),
+        ...(stack.modelId && modelSelection ? { modelSelection } : {}),
+      };
+    }),
   };
 }
 
@@ -413,6 +438,7 @@ export function ConfiguredSuiteRunReview(
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { availableModels, modelSelectionsSupported } = useAvailableModels({
     projectId,
+    harnessTargets: hosts.map((host) => ({ harnessId: effectiveHarnessId(host) ?? "" })),
   });
   const { capable, pending } = useEvalComposeCapable(projectId);
   // Until the probe answers, plan as an older backend would: a cell the
@@ -510,7 +536,7 @@ export function ConfiguredSuiteRunReview(
     preflight: useSuiteRunPreflight({
       ...reviewProps,
       ...(!withoutSetups
-        ? { planned: plannedPreflight(plan) }
+        ? { planned: plannedPreflight(plan, environments) }
         : (!capable && !pending) || ownLaunch
           ? {}
           : runInSaved
@@ -527,6 +553,12 @@ export function ConfiguredSuiteRunReview(
                           ...(savedEnvironment.modelId
                             ? { modelId: savedEnvironment.modelId }
                             : {}),
+                          ...(savedEnvironment.modelId &&
+                          savedEnvironment.modelSelection
+                            ? {
+                                modelSelection: savedEnvironment.modelSelection,
+                              }
+                            : {}),
                         },
                       ]
                     : [],
@@ -534,7 +566,7 @@ export function ConfiguredSuiteRunReview(
               }
             : {
                 planned: {
-                  ...plannedPreflight(plan),
+                  ...plannedPreflight(plan, environments),
                   serverRefs: (
                     groups.find((row) => row._id === group)
                       ?.resolvedServerNames ?? []
@@ -611,6 +643,10 @@ export function ConfiguredSuiteRunReview(
       throw new Error(
         "Could not resolve the selected clients and models. Try again.",
       );
+    resolveCaseLaunchEnvironments(
+      options.caseLaunchId,
+      environmentIds.filter((id): id is string => Boolean(id)),
+    );
     await props.onStart(
       {
         ...suite,
@@ -642,6 +678,21 @@ export function ConfiguredSuiteRunReview(
       {...props}
       disabledReason={blocked}
       matrix={{
+        targets: (runInSaved
+          ? savedEnvironment
+            ? [savedEnvironment]
+            : []
+          : plannedPreflight(plan, environments).targets
+        ).map((target, index) => ({
+          ...caseLaunchTarget(
+            target,
+            props.hostNamesById,
+            hosts.find((host) => host.hostId === target.hostId)?.modelId,
+          ),
+          environmentId: runInSaved
+            ? savedEnvironment?.environmentId
+            : plan[index].environmentId,
+        })),
         count: runInSaved ? (savedEnvironment ? 1 : 0) : plan.length,
         signature: JSON.stringify([selections, group, runInSaved, savedId]),
         render: (starting) => (

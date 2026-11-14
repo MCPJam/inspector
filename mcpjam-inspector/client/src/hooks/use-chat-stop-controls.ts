@@ -13,6 +13,7 @@ interface UseChatStopControlsOptions {
    */
   isCompareMode: boolean;
   isStreaming: boolean;
+  canStopApproval?: boolean;
   /**
    * Summary table keyed by `compareId` (modelId in multi-model;
    * hostId in multi-host). Used to detect whether ANY visible card is
@@ -42,9 +43,36 @@ export function getChatComposerInteractivity({
   };
 }
 
+/**
+ * Readiness for an App's editable draft (`ui/message` with `send: false`).
+ * A draft only edits the composer, so it waits on ownership, read-only and
+ * transition state, never on whether a send could run now (credits, a local
+ * harness, sign-in, server readiness): drafting while sending is unavailable
+ * is the point of a draft. A draft in a new chat also waits for a running
+ * turn, because opening the new chat would end it.
+ */
+export function getAppDraftInteractivity({
+  readOnly,
+  transitioning,
+  sendInFlight,
+  isStreamingActive,
+}: {
+  readOnly: boolean;
+  transitioning: boolean;
+  sendInFlight: boolean;
+  isStreamingActive: boolean;
+}) {
+  const draftBlocked = readOnly || transitioning || sendInFlight;
+  return {
+    draftBlocked,
+    newDraftBlocked: draftBlocked || isStreamingActive,
+  };
+}
+
 export function useChatStopControls({
   isCompareMode,
   isStreaming,
+  canStopApproval = false,
   multiModelSummaries,
   setStopBroadcastRequestId,
   stop,
@@ -68,7 +96,7 @@ export function useChatStopControls({
   }, [isCompareMode, setStopBroadcastRequestId, stop]);
 
   useEscapeToStopChat({
-    enabled: isStreamingActive,
+    enabled: isStreamingActive || (!isCompareMode && canStopApproval),
     onStop: stopActiveChat,
   });
 

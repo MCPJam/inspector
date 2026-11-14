@@ -18,6 +18,7 @@ import {
   parseHarnessToolName,
 } from "../mcp-config";
 import { getHarnessAdapter } from "../registry";
+import { buildHostToolCatalog } from "../codex-appserver/bridge/host-tool-catalog";
 
 type FakeTool = {
   description?: string;
@@ -49,6 +50,57 @@ function tool(result: unknown = { ok: true }): FakeTool {
 }
 
 describe("projectSelectedMcpServersAsHostTools", () => {
+  it("labels duplicate CAD tools by trusted source without changing routing or execution", async () => {
+    const consumer = tool({ source: "consumer" });
+    const installed = tool({ source: "installed" });
+    const manager = fakeManager({ consumer: { "cad.library": consumer }, installed: { "cad.library": installed } });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["consumer", "installed"],
+      serverDisplayNames: { consumer: "Bits Upload Consumer QA", installed: "Bits & Bolts" },
+    });
+    expect(Object.keys(projected.tools)).toEqual(["mcp__consumer__cad.library", "mcp__installed__cad.library"]);
+    const catalog = buildHostToolCatalog(Object.entries(projected.tools).map(([name, value]) => ({ name, description: (value as FakeTool).description })));
+    expect(catalog.descriptors.map(({ name, description }) => ({ name, description }))).toEqual([
+      { name: "consumer__cad.library", description: 'MCP server: "Bits Upload Consumer QA".\nd' },
+      { name: "installed__cad.library", description: 'MCP server: "Bits & Bolts".\nd' },
+    ]);
+    expect(catalog.aliasToCanonical.get("consumer__cad.library")).toBe("mcp__consumer__cad.library");
+    await (projected.tools["mcp__consumer__cad.library"] as FakeTool).execute({}, {});
+    expect(consumer.execute).toHaveBeenCalledOnce();
+    expect(installed.execute).not.toHaveBeenCalled();
+    expect(consumer.description).toBe("d");
+  });
+
+  it("normalizes display-only labels", async () => {
+    const original = tool();
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager: fakeManager({ source: { read: original } }),
+      selectedServerIds: ["source"],
+      serverDisplayNames: { source: "  Friendly\nsource  " },
+    });
+    expect((projected.tools["mcp__source__read"] as FakeTool).description).toBe('MCP server: "Friendly source".\nd');
+  });
+
+  it("ignores inherited display-name keys without dropping their tools", async () => {
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager: fakeManager({ constructor: { read: tool() } }),
+      selectedServerIds: ["constructor"], serverDisplayNames: {},
+    });
+    expect(Object.keys(projected.tools)).toEqual(["mcp__constructor__read"]);
+    expect((projected.tools["mcp__constructor__read"] as FakeTool).description).toBe("d");
+  });
+  it("never enumerates a refused server's cached tools", async () => {
+    const manager = fakeManager({ live: { read: tool() }, refused: { write: tool() } });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager, selectedServerIds: ["live", "refused"], unavailableServerIds: ["refused"],
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledTimes(1);
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["live"]);
+    expect(Object.values(projected.keyToServerId)).toEqual(["live"]);
+    expect(Object.keys(projected.tools)).toEqual(["mcp__live__read"]);
+  });
+
   it("names projected tools exactly as Claude Code namespaces its MCP tools", async () => {
     const manager = fakeManager({
       "weather-api": { get_forecast: tool() },

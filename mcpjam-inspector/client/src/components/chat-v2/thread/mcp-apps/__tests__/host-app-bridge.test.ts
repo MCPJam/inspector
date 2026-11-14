@@ -86,14 +86,21 @@ function register(
 }
 
 describe("registerHostBridgeHandlers — capability gating (advertise = enforce)", () => {
-  it("installs no capability-gated handlers when all caps are off", () => {
+  it("refuses resource reads and installs no other gated handlers when all caps are off", async () => {
     const bridge = makeStubBridge();
     register(bridge, { effectiveHostCapabilities: NO_CAPS });
 
     expect(bridge.onmessage).toBeUndefined();
     expect(bridge.onopenlink).toBeUndefined();
     expect(bridge.oncalltool).toBeUndefined();
-    expect(bridge.onreadresource).toBeUndefined();
+    // Resource reads are refused explicitly rather than left unhandled, so a
+    // widget can tell a disabled capability from a broken host.
+    await expect(
+      bridge.onreadresource!({ uri: "x" } as never, {} as never)
+    ).rejects.toMatchObject({
+      code: -32601,
+      message: "This host does not allow resource reads.",
+    });
     expect(bridge.onlistresources).toBeUndefined();
     expect(bridge.onlistresourcetemplates).toBeUndefined();
     expect(bridge.onloggingmessage).toBeUndefined();
@@ -169,7 +176,7 @@ describe("registerHostBridgeHandlers — model-only visibility (SEP-1865)", () =
     await expect(
       (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
         { name: "secret", arguments: {} },
-        {},
+        { signal: new AbortController().signal },
       ),
     ).rejects.toThrow(/not callable by apps/);
     expect(onCallTool).not.toHaveBeenCalled();
@@ -188,8 +195,13 @@ describe("registerHostBridgeHandlers — model-only visibility (SEP-1865)", () =
 
     const out = await (
       bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>
-    )({ name: "search", arguments: { q: 1 } }, {});
-    expect(onCallTool).toHaveBeenCalledWith("search", { q: 1 });
+    )({ name: "search", arguments: { q: 1 } }, {
+      signal: new AbortController().signal,
+    });
+    expect(onCallTool).toHaveBeenCalledWith("search", { q: 1 }, {
+      signal: expect.any(AbortSignal),
+      onInputPending: expect.any(Function),
+    });
     expect(out).toBe(result);
   });
 });
@@ -206,7 +218,7 @@ describe("registerHostBridgeHandlers — sendToolCancelled matrix gating", () =>
     await expect(
       (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
         { name: "x", arguments: {} },
-        {},
+        { signal: new AbortController().signal },
       ),
     ).rejects.toThrow();
     expect(bridge.sendToolCancelled).not.toHaveBeenCalled();
@@ -234,7 +246,7 @@ describe("registerHostBridgeHandlers — sendToolCancelled matrix gating", () =>
     await expect(
       (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
         { name: "go", arguments: {} },
-        {},
+        { signal: new AbortController().signal },
       ),
     ).rejects.toBe(toolError);
 
@@ -258,7 +270,7 @@ describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {
 
     await (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
       { name: "go", arguments: {} },
-      {},
+      { signal: new AbortController().signal },
     );
     expect(updates.map((u) => u.status)).toEqual(["running", "success"]);
     expect((updates[0] as { id: string }).id).toBe("parent-1:app-tool:7");
@@ -292,7 +304,9 @@ describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {
         content: Array<{ type: string }>;
         structuredContent?: unknown;
       }>
-    )({ name: "go", arguments: {} }, {});
+    )({ name: "go", arguments: {} }, {
+      signal: new AbortController().signal,
+    });
 
     // What the widget receives.
     expect("structuredContent" in returned).toBe(false);
@@ -313,7 +327,9 @@ describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {
 
     const returned = await (
       bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>
-    )({ name: "go", arguments: {} }, {});
+    )({ name: "go", arguments: {} }, {
+      signal: new AbortController().signal,
+    });
     expect(returned).toBe(raw);
   });
 
@@ -330,7 +346,7 @@ describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {
     await expect(
       (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
         { name: "go", arguments: {} },
-        {},
+        { signal: new AbortController().signal },
       ),
     ).rejects.toThrow("boom");
     expect(updates.map((u) => u.status)).toEqual(["running", "error"]);
@@ -348,7 +364,7 @@ describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {
     await expect(
       (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
         { name: "go", arguments: {} },
-        {},
+        { signal: new AbortController().signal },
       ),
     ).rejects.toThrow("Tool calls not supported");
     expect(updates.map((u) => u.status)).toEqual(["running", "error"]);

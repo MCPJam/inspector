@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { init, onUncaughtExceptionIntegration } = vi.hoisted(() => ({
+const { init, send, onUncaughtExceptionIntegration } = vi.hoisted(() => ({
   init: vi.fn(),
+  send: vi.fn(async (_envelope: unknown) => ({})),
   onUncaughtExceptionIntegration: vi.fn((options: unknown) => ({
     name: "OnUncaughtException",
     options,
   })),
 }));
-vi.mock("@sentry/node", () => ({ init, onUncaughtExceptionIntegration }));
+vi.mock("@sentry/node", () => ({ init, onUncaughtExceptionIntegration, makeNodeTransport: () => ({ send, flush: async () => true }) }));
 
 import { initServerSentry } from "../sentry.js";
 
@@ -18,6 +19,7 @@ function lastConfig() {
 describe("initServerSentry", () => {
   beforeEach(() => {
     init.mockClear();
+    send.mockClear();
     // resolveEnvironment() reads these; pin them so the assertions don't
     // depend on the ambient CI shell.
     vi.stubEnv("ENVIRONMENT", "prod");
@@ -33,6 +35,14 @@ describe("initServerSentry", () => {
   it("initializes enabled by default", () => {
     initServerSentry();
     expect(lastConfig().enabled).toBe(true);
+  });
+
+  it("drops an envelope when DNT changes after initialization", async () => {
+    initServerSentry();
+    const transport = lastConfig().transport({});
+    vi.stubEnv("DO_NOT_TRACK", "true");
+    await transport.send([{}, [[{ type: "event" }, { message: "PRIVATE_SENTINEL" }]]]);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("honors DO_NOT_TRACK=1", () => {
@@ -97,9 +107,7 @@ describe("initServerSentry", () => {
   it("filters out the default OnUnhandledRejection integration", () => {
     initServerSentry();
     const result = (
-      lastConfig().integrations as (
-        d: { name: string }[],
-      ) => { name: string }[]
+      lastConfig().integrations as (d: { name: string }[]) => { name: string }[]
     )([
       { name: "OnUncaughtException" },
       { name: "OnUnhandledRejection" },
@@ -120,23 +128,36 @@ describe("initServerSentry", () => {
     onUncaughtExceptionIntegration.mockClear();
     initServerSentry();
     const result = (
-      lastConfig().integrations as (
-        d: { name: string }[],
-      ) => { name: string }[]
+      lastConfig().integrations as (d: { name: string }[]) => { name: string }[]
     )([{ name: "OnUncaughtException" }, { name: "Http" }]);
 
     expect(onUncaughtExceptionIntegration).toHaveBeenCalledWith({
       exitEvenIfOtherHandlersAreRegistered: true,
     });
     // Exactly one, so the default is replaced rather than duplicated.
-    expect(
-      result.filter((i) => i.name === "OnUncaughtException"),
-    ).toHaveLength(1);
+    expect(result.filter((i) => i.name === "OnUncaughtException")).toHaveLength(
+      1,
+    );
   });
 
-  it("never opts into default PII", () => {
+  it("reconstructs only at transport send and rejects request content and attachment envelopes", async () => {
     initServerSentry();
-    expect(lastConfig().sendDefaultPii).toBe(false);
+    const config = lastConfig();
+    expect(config.beforeSend).toBeUndefined();
+    expect(config.beforeBreadcrumb).toBeUndefined();
+    expect(config.sendDefaultPii).toBe(false);
+    const transport = config.transport({});
+    const unsafe = { message: "PRIVATE_SENTINEL", request: { data: "PRIVATE_SENTINEL" }, breadcrumbs: [{ category: "http", data: { url: "PRIVATE_SENTINEL" } }] };
+    await transport.send([{ trace: "PRIVATE_SENTINEL" }, [
+      [{ type: "event" }, { ...unsafe, exception: { values: [{ type: "TypeError", value: "PRIVATE_SENTINEL" }] } }],
+      [{ type: "attachment" }, "PRIVATE_SENTINEL"],
+    ]]);
+    expect(send).toHaveBeenCalledOnce();
+    await transport.send([{}, [[{ type: "transaction" }, { ...unsafe, spans: [{ description: "PRIVATE_SENTINEL" }] }]]]);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(send.mock.calls)).not.toContain("PRIVATE_SENTINEL");
+    expect(JSON.stringify(send.mock.calls)).toContain('"TypeError"');
+    expect(JSON.stringify(send.mock.calls)).toContain('"unknown_operation"');
   });
 
   // The baked version is captured at module load (it has to stay a literal

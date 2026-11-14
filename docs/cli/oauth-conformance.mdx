@@ -43,7 +43,7 @@ listTools: PASS (8 tools)
 
 Each conformance run walks through:
 
-1. **Initial request** — sends an unauthenticated request to trigger a 401
+1. **Initial request** — sends an unauthenticated request to trigger a 401 (or, for a server that allows anonymous access, notes the 200 and continues — see [Servers that allow anonymous access](#servers-that-allow-anonymous-access))
 2. **Discovery** — fetches resource metadata and authorization server metadata
 3. **Registration** — registers the client via CIMD, DCR, or pre-registered credentials
 4. **Authorization** — obtains an authorization code (interactive, headless, or client_credentials)
@@ -51,13 +51,31 @@ Each conformance run walks through:
 6. **Authenticated request** — retries the MCP request with the token
 7. **Post-auth verification** (optional) — connects via MCP and lists tools / calls a tool
 
-When `--conformance-checks` is enabled, six additional negative checks run after the flow:
+Once the flow completes without failures, six negative checks run. A check is skipped when it does not apply: the DCR check for pre-registered clients, and both redirect checks for `client_credentials`.
 - **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI and expects rejection under the MCP authorization profile
 - **Invalid client** — confirms the auth server rejects an unknown client ID
 - **Invalid redirect at the authorization endpoint** — sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it
 - **Invalid token** — confirms the MCP server rejects an obviously invalid bearer token with HTTP 401
 - **Invalid redirect** — attempts a token request with a mismatched redirect URI to look for exact-match enforcement; this check may be skipped if the request is rejected for a different reason first
 - **Token format** — validates the token response has the expected fields
+
+Three server checks run at the same point: the unauthenticated challenge, the resource metadata challenge, and stale-session rejection.
+
+## Servers that allow anonymous access
+
+Some servers let a client connect, list tools, and call public tools without signing in, and ask for sign-in only when a protected tool is called. This is often called *lazy authentication* or mid-session sign-in. It is a supported pattern: authorization is optional in every MCP revision, and a server that publishes Protected Resource Metadata has opted in for the tools that need it.
+
+The conformance run tells the two anonymous shapes apart by what the server publishes:
+
+| Unauthenticated `initialize` | Protected Resource Metadata at the well-known path | Result |
+|---|---|---|
+| `401` with `WWW-Authenticate` | — | Full run, starting from the challenge |
+| `200` | Published | Full run, starting from proactive discovery: resource metadata, authorization server metadata, registration, authorization, token exchange, and the authenticated request are all graded |
+| `200` | Not published (`404`) | `not-applicable`: the server does not use OAuth |
+
+For a server that allows anonymous access, the run records the `200` on the first step and continues; nothing about allowing anonymous access counts against the server.
+
+The conformance run grades the OAuth flow itself. It does not call a protected tool to see how the server refuses it. How a host reacts to that refusal differs — Claude starts sign-in on an HTTP `401` with `WWW-Authenticate`, while ChatGPT's tool-level sign-in reads `_meta["mcp/www_authenticate"]` on an `isError` tool result — and the directory readiness checks can drive that call for you with `mcpjam readiness check claude --lazy-auth-tool <name>` (or `readiness check openai`).
 
 ## Scenarios
 
@@ -176,11 +194,10 @@ mcpjam oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration dcr \
-  --conformance-checks \
   --verify-tools
 ```
 
-This adds 6 checks after the main flow: DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation.
+These 6 checks run after the main flow by default, as they do in the Inspector UI: DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation.
 
 ## Registration strategies
 
@@ -256,7 +273,8 @@ supported way to persist live tokens.
 
 | Step that failed | Likely cause | Fix |
 |-----------------|-------------|-----|
-| `request_without_token` returned 200 | Server allows anonymous access or missing `WWW-Authenticate` | Return 401 with `WWW-Authenticate: Bearer resource_metadata="..."` |
+| `request_without_token` returned 200 and the run is `not-applicable` | The server served the unauthenticated request and publishes no Protected Resource Metadata, so it does not use OAuth | Nothing to fix if the server is meant to be public. If some tools need sign-in, publish Protected Resource Metadata at `/.well-known/oauth-protected-resource` with the resource path appended; the run then grades discovery and the full flow |
+| `request_without_token` returned 200 and the run continued | The server allows anonymous access and publishes Protected Resource Metadata (lazy authentication) | Expected. Discovery and the flow are graded from the published metadata |
 | `request_resource_metadata` 404 | `/.well-known/oauth-protected-resource` missing or wrong Content-Type | Ensure the endpoint exists and returns `application/json` |
 | `received_resource_metadata` — resource validation failed | Protected Resource Metadata is missing its required `resource` field, uses a non-HTTPS URL, or advertises a resource on a different origin than the server URL | Ensure your PRM document includes a `resource` field that is an HTTPS URL on the same origin as the MCP server (RFC 9728 §2) |
 | `received_resource_metadata` — AS URL mismatch | `authorization_servers` points to a URL without AS metadata | Verify the AS URL has `/.well-known/oauth-authorization-server` |
@@ -318,7 +336,8 @@ oauth-conformance:
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After OAuth, connect and list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool (implies `--verify-tools`) |
-| `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
+| `--conformance-checks` | No | | Deprecated. The negative OAuth checks now always run; this flag is accepted and ignored |
+| `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
 | `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr instead of launching a browser |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |

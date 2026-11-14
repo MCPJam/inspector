@@ -12,6 +12,7 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
 
 let balanceState:
   | {
+      unlimitedCreditsUntil?: number;
       outstandingDeficitCredits?: number;
       rolloverCreditsRemaining?: number;
       topUpEligible?: boolean;
@@ -791,4 +792,17 @@ it("shows daily credits for a v2 free org with granted credits", () => {
   expect(screen.getByText("Free daily credits")).toBeInTheDocument();
   expect(screen.getByTestId("usage-daily")).toHaveTextContent("150 / 200");
   expect(screen.queryByTestId("usage-monthly")).not.toBeInTheDocument();
+});
+
+
+it("shows contract credits without purchase controls", () => {
+  balanceState = { unlimitedCreditsUntil: Date.now() + 86400000,
+    paidCreditsRemaining: 0, hasPurchaseHistory: false, freeDailyPercentUsed: 0,
+    freeDailyCreditsRemaining: 0, freeDailyCreditsTotal: 0, freeDailyResetAt: 0,
+    walletLocked: false };
+  isLoadingState = false;
+  render(<CreditBalanceCard organizationId="contract-org" canManageCredits />);
+  expect(screen.getByText("Credits: Unlimited")).toBeInTheDocument();
+  expect(screen.queryByText("Buy credits")).not.toBeInTheDocument();
+  expect(screen.getByText("See usage")).toBeInTheDocument();
 });

@@ -1,3 +1,4 @@
+import { completedTurnPersistence } from "../../services/completed-turn-persistence";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
 import {
@@ -427,6 +428,21 @@ describe("chat-ingestion", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each([400, 403, 404, 405, 413, 415, 422])("does not retain a permanently rejected ingest body for HTTP %s", async (status) => {
+    global.fetch = vi.fn(async () => new Response("invalid request", { status }));
+    const register = vi.spyOn(completedTurnPersistence, "register");
+    try {
+      const outcome = await persistChatSessionToConvex({
+        chatSessionId: "oversized", modelId: "model", modelSource: "mcpjam",
+        authHeader: "Bearer credential", origin: "playground", startedAt: 1,
+        retryOwner: { subject: "actor", projectId: "project" },
+        turnTrace: { turnId: "large-turn", promptIndex: 0, startedAt: 1, endedAt: 2, spans: [], modelId: "model" },
+      });
+      expect(outcome).toEqual({ outcome: "failed", failureKind: "http_error", status });
+      expect(register).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledOnce();
+    } finally { register.mockRestore(); }
+  });
   it("does not retry a 4xx that is not a conflict", async () => {
     global.fetch = vi
       .fn()
@@ -542,6 +558,59 @@ describe("chat-ingestion", () => {
       undefined
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  // An unattended MCP Events trigger run persists its transcript like any
+  // other turn; its failures and skips must stay attributable to it.
+  const eventTurn = {
+    modelId: "m",
+    modelSource: "mcpjam" as const,
+    authHeader: "Bearer t",
+    startedAt: 1,
+    sourceType: "event" as const,
+    origin: "event" as const,
+  };
+
+  it("carries an event turn's sourceType and origin on chat.session.persist.failed", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response("Server Error", { status: 503 }));
+
+    await persistChatSessionToConvex(
+      { ...eventTurn, chatSessionId: "evt-run-1" },
+      makeTestContext()
+    );
+
+    expect(mockLogger.event).toHaveBeenCalledWith(
+      "chat.session.persist.failed",
+      expect.any(Object),
+      expect.objectContaining({ sourceType: "event", origin: "event" }),
+      undefined
+    );
+  });
+
+  it("carries an event turn's sourceType and origin on chat.session.persist.skipped", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ skipped: true, version: 3 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const outcome = await persistChatSessionToConvex(
+      { ...eventTurn, chatSessionId: "evt-run-2" },
+      makeTestContext()
+    );
+
+    expect(outcome).toMatchObject({ outcome: "skipped" });
+    const skipped = mockLogger.event.mock.calls.find(
+      ([name]) => name === "chat.session.persist.skipped"
+    );
+    expect(skipped?.[2]).toMatchObject({
+      sourceType: "event",
+      origin: "event",
+      hasTurnId: false,
+    });
   });
 
   it("emits chat.session.persist.failed(timeout) via typed event when c is provided", async () => {
@@ -909,6 +978,48 @@ describe("chat-ingestion", () => {
     expect(body.turnTrace.environmentAtTurn).toEqual(
       turnTrace.environmentAtTurn
     );
+  });
+
+  it("carries the harness route receipt inside the turn trace only", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, version: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    ) as typeof fetch;
+    const harnessMcpAtTurn = {
+      version: 1 as const,
+      upstream: "harness" as const,
+      delivery: "mcp-endpoint" as const,
+      forwarding: { kind: "pass-through" as const },
+      gaps: [],
+      reasons: [],
+      pinnedRuntimeVersion: "2.1.245",
+      plannerVersion: "harness-mcp-plan-v1",
+    };
+    await persistChatSessionToConvex({
+      chatSessionId: "receipt-session",
+      modelId: "anthropic/claude-haiku-4.5",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+      turnTrace: {
+        turnId: "turn-receipt",
+        promptIndex: 0,
+        startedAt: 1,
+        endedAt: 2,
+        spans: [],
+        modelId: "anthropic/claude-haiku-4.5",
+        harnessMcpAtTurn,
+      },
+    });
+    const body = JSON.parse(
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+        .body as string
+    );
+    expect(body.turnTrace.harnessMcpAtTurn).toEqual(harnessMcpAtTurn);
+    expect(body).not.toHaveProperty("harnessMcpAtTurn");
   });
 
   it("omits turnId for a traceless payload so the legacy path is unchanged", async () => {

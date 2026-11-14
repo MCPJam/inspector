@@ -47,11 +47,13 @@ pnpm-lock.yaml
 # …except the codex app-server bootstrap's, which the framework installs with
 # `--frozen-lockfile` and the runtime pack fingerprints.
 !server/utils/harness/codex-appserver/bootstrap/pnpm-lock.yaml
+!server/utils/harness/copilot-cli/bridge/pnpm-lock.yaml
 # …and the Claude Code vendor pack graph's, which the pack build installs
 # frozen and which is that pack's recipe input.
 !scripts/local-harness-pack-recipes/claude-code-vendor/pnpm-lock.yaml
 
 # debug
+build-archive.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -95,3 +97,7 @@ sdk/mcp-client-manager/dist/
 
 # Bridge runtime state written by a local harness session (pid/port/state).
 .harness-bridge/
+
+# Output of `npm run build-storybook`
+storybook-static/
+debug-storybook.log

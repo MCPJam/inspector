@@ -102,7 +102,7 @@ describe("minting", () => {
     expect(
       (calls[0]!.init.headers as Record<string, string>).authorization
     ).toBe("Bearer sk_test_key");
-    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ model: MODEL });
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ model: MODEL, modelSelection: {source: "hosted", modelId: MODEL, fallback: {provider: "none", model: "none"}} });
 
     // 2. The generation — rewritten onto the live proxy, carrying the lease.
     expect(calls[1]!.url).toBe(`${PROXY}/v1/messages`);
@@ -514,8 +514,14 @@ describe("configuration", () => {
     const base = `https://example.test/${slashes}path`;
     expect(resolveMcpjamBaseUrl(`${base}${slashes}`)).toBe(base);
     expect(resolveMcpjamBaseUrl(base)).toBe(base);
-    expect(resolveMcpjamBaseUrl(slashes)).toBe("");
-    expect(resolveMcpjamBaseUrl("")).toBe("");
+  });
+
+  it("refuses a base that is not a URL, and reads an empty one as unset", () => {
+    expect(() => resolveMcpjamBaseUrl("/".repeat(1_000))).toThrow(
+      expect.objectContaining({ code: "API_URL_INVALID" })
+    );
+    vi.stubEnv("MCPJAM_API_URL", "https://env.example.test/api/v1");
+    expect(resolveMcpjamBaseUrl("")).toBe("https://env.example.test");
   });
 
   it("defaults the project to the `default` sentinel", () => {
@@ -1122,6 +1128,60 @@ describe("refusal detail and classification", () => {
         await refusal({ code: "UNAUTHORIZED", message: "Bad key" }, 401)
       )
     ).toBe("auth");
+  });
+
+  it("reads the organization AI-key policy as policy, never as bad credentials", async () => {
+    // The broker refuses a lease start with 403 `org_keys_required`: the key
+    // works, the organization requires its own provider keys.
+    const direct = await refusal(
+      {
+        ok: false,
+        code: "org_keys_required",
+        error:
+          "This organization requires its own provider keys for AI features.",
+        remediation: "choose_org_model",
+      },
+      403
+    );
+    expect(direct.status).toBe(403);
+    expect(classifyMcpjamLeaseError(direct)).toBe("policy");
+    // The v1 envelope files it under FORBIDDEN; the nested code decides.
+    const nested = await refusal(
+      {
+        code: "FORBIDDEN",
+        message: "Refused.",
+        details: { code: "org_model_unconfigured" },
+      },
+      403
+    );
+    expect(classifyMcpjamLeaseError(nested)).toBe("policy");
+    for (const code of [
+      "org_runtime_unsupported",
+      "ai_scope_unresolved",
+      "provider_auth_failed",
+    ]) {
+      expect(
+        classifyMcpjamLeaseError(
+          new McpjamLeaseError("refused", { code, status: 409 })
+        )
+      ).toBe("policy");
+    }
+  });
+
+  it("reads the policy's transient refusals as unavailable", () => {
+    for (const code of ["ai_key_policy_unavailable", "provider_unavailable"]) {
+      expect(
+        classifyMcpjamLeaseError(
+          new McpjamLeaseError("refused", { code, status: 503 })
+        )
+      ).toBe("unavailable");
+      // Even when the proxy answers it on its 409 refusal rail.
+      expect(
+        classifyMcpjamLeaseError(
+          new McpjamLeaseError("refused", { code, status: 409 })
+        )
+      ).toBe("unavailable");
+    }
   });
 
   it("tells a throttle and an outage apart from both", async () => {

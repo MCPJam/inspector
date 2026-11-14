@@ -1,3 +1,24 @@
+import { makeFunctionReference } from "convex/server";
+import type { ConvexReactClient } from "convex/react";
+
+const swarmLaunchQuery = makeFunctionReference<
+  "query",
+  { projectId: string; environmentId: string; serverSource: "swarm_explicit" },
+  unknown
+>("projectEnvironments:resolveEnvironmentForLaunch");
+
+export function resolveSwarmEnvironment(
+  convex: ConvexReactClient,
+  projectId: string,
+  environmentId: string,
+): Promise<unknown> {
+  return convex.query(swarmLaunchQuery, {
+    projectId,
+    environmentId,
+    serverSource: "swarm_explicit",
+  });
+}
+
 /** The preview deliberately checks the full launch contract, not only models.
  * Local readiness is an early hint; this catches stale plugins, servers and
  * configs before generation or goal writes. The launch gate remains final.

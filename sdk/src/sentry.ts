@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { EvalReportingError } from "./errors.js";
+import {
+  sdkDiagnosticBoundary,
+  sdkTelemetryDisabled,
+} from "./internal/sentry-boundary.js";
 
 // Injected at build time by tsup (see sdk/tsup.config.ts). Declared here so
 // TypeScript recognizes the identifier; esbuild replaces it with a string
@@ -9,7 +13,10 @@ declare const __MCPJAM_SDK_VERSION__: string;
 const SDK_SENTRY_DSN =
   "https://490f3f2a8a287f8a9f86eea23c16c01e@o4510109778378752.ingest.us.sentry.io/4511018761125888";
 const SDK_VERSION = __MCPJAM_SDK_VERSION__;
-const SDK_RELEASE = `@mcpjam/sdk@${SDK_VERSION}`;
+// Sentry rejects a release containing "/" (ingest drops it from the event, and
+// sentry-cli refuses to upload under it), so this is not the npm package name.
+// The SDK source map upload in .github/workflows/release.yml uses this name.
+const SDK_RELEASE = `mcpjam-sdk@${SDK_VERSION}`;
 const API_KEY_HASH_LENGTH = 16;
 const CAPTURED_ERROR_SYMBOL = Symbol.for("@mcpjam/sdk/captured-eval-error");
 
@@ -53,13 +60,6 @@ let sentryStatePromise: Promise<LoadedSentry | null> | null = null;
 let sdkSentryDsn = SDK_SENTRY_DSN;
 let sentryModuleLoader: () => Promise<SentryModule | null> = async () =>
   await import("@sentry/node");
-
-function isTelemetryDisabled(): boolean {
-  return (
-    process.env.DO_NOT_TRACK === "1" ||
-    process.env.MCPJAM_TELEMETRY_DISABLED === "1"
-  );
-}
 
 function normalizeError(error: unknown): Error {
   if (error instanceof Error) {
@@ -139,7 +139,7 @@ function findEvalReportingError(error: unknown): EvalReportingError | null {
 }
 
 async function loadSentry(): Promise<LoadedSentry | null> {
-  if (isTelemetryDisabled() || !sdkSentryDsn) {
+  if (sdkTelemetryDisabled() || !sdkSentryDsn) {
     return null;
   }
 
@@ -150,14 +150,15 @@ async function loadSentry(): Promise<LoadedSentry | null> {
           return null;
         }
 
+        const boundary = sdkDiagnosticBoundary(SDK_RELEASE);
         const client = new sentry.NodeClient({
           dsn: sdkSentryDsn,
           integrations: [],
           release: SDK_RELEASE,
           sendDefaultPii: false,
-          sendClientReports: false,
+          sendClientReports: true,
           stackParser: sentry.defaultStackParser,
-          transport: sentry.makeNodeTransport,
+          transport: (options) => boundary(sentry.makeNodeTransport(options), options.recordDroppedEvent),
         });
         client.init();
 

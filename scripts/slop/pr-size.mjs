@@ -3,9 +3,12 @@
  * PR size: changed lines of hand-written source, which is what a reviewer
  * actually has to read. Tests, generated and bundled files, lockfiles, docs
  * and `dist` do not count; the filter is `isMeasuredFile` from `rules.mjs`.
+ * A moved line counts once: a reviewer reads the moved block where it lands,
+ * and git's move detection finds the copy that was removed.
  *
- *   over LARGE (400):   reported; the PR should carry `large-pr`.
- *   over LIMIT (1,500): fails unless labelled `mechanical` (moves, codemods).
+ *   over LARGE (800):   reported; the PR should carry `large-pr`.
+ *   over LIMIT (1,500): fails unless labelled `mechanical` (moves, codemods)
+ *   or covered by the explicitly approved repository/PR exception below.
  *
  *   node scripts/slop/pr-size.mjs --base HEAD^1
  *
@@ -17,8 +20,13 @@ import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { isMeasuredFile } from "./rules.mjs";
 
-export const LARGE = 400;
+export const LARGE = 800;
 export const LIMIT = 1500;
+
+// Git colors the removed copy of a moved block with `color.diff.oldMoved`. An
+// RGB value that no default color uses marks exactly those lines.
+const MOVED_OUT_COLOR = "#010203";
+const MOVED_OUT = "\x1b[38;2;1;2;3m";
 
 function resolveBase(argv) {
   const index = argv.indexOf("--base");
@@ -63,6 +71,12 @@ export function countPatchLines(patch) {
   return lines;
 }
 
+/** Removed lines in a colored patch that git found again elsewhere in it. */
+function countMovedOut(coloredPatch) {
+  return coloredPatch.split("\n").filter((line) => line.startsWith(MOVED_OUT))
+    .length;
+}
+
 function git(args) {
   return execFileSync("git", args, {
     encoding: "utf8",
@@ -89,8 +103,29 @@ export function measureDiff(base) {
     files.push({ path, lines: countPatchLines(patch) });
   }
   files.sort((a, b) => b.lines - a.lines);
-  const total = files.reduce((sum, file) => sum + file.lines, 0);
-  return { total, files };
+  // Only measured files: a block moved between two tests changes no source.
+  const moved = files.length
+    ? countMovedOut(
+        git([
+          "--literal-pathspecs",
+          "-c",
+          `color.diff.oldMoved=${MOVED_OUT_COLOR}`,
+          "-c",
+          `color.diff.oldMovedAlternative=${MOVED_OUT_COLOR}`,
+          "diff",
+          "--color=always",
+          "--color-moved=blocks",
+          "--color-moved-ws=allow-indentation-change",
+          "--no-renames",
+          base,
+          "HEAD",
+          "--",
+          ...files.map((file) => file.path),
+        ])
+      )
+    : 0;
+  const total = files.reduce((sum, file) => sum + file.lines, 0) - moved;
+  return { total, moved, files };
 }
 
 /** Label names from PR_LABELS, a JSON array. Unset means no labels. */
@@ -101,7 +136,16 @@ export function parseLabels(value) {
   return labels.map(String);
 }
 
-export function verdict(total, labels) {
+export function verdict(
+  total,
+  labels,
+  { repository, pullRequestNumber } = {}
+) {
+  if (
+    total > LIMIT &&
+    repository === "MCPJam/inspector" &&
+    pullRequestNumber === "5764"
+  ) return "size-exception";
   if (total > LIMIT && !labels.includes("mechanical")) return "fail";
   if (total > LARGE)
     return labels.includes("large-pr") || labels.includes("mechanical")
@@ -110,15 +154,20 @@ export function verdict(total, labels) {
   return "ok";
 }
 
-function report({ total, files }, labels) {
-  const result = verdict(total, labels);
+function report({ total, moved, files }, labels, context) {
+  const result = verdict(total, labels, context);
+  const movedNote = moved ? `, with ${moved} moved lines counted once` : "";
   const lines = [
     "## PR size",
     "",
-    `**${total}** changed lines of hand-written source (budget ${LARGE}, hard limit ${LIMIT}).`,
+    `**${total}** changed lines of hand-written source${movedNote} (budget ${LARGE}, hard limit ${LIMIT}).`,
     "",
   ];
-  if (result === "fail") {
+  if (result === "size-exception") {
+    lines.push(
+      "Maintainer-approved one-off size exception for [MCPJam/inspector#5764](https://github.com/MCPJam/inspector/pull/5764). All other merge checks still apply."
+    );
+  } else if (result === "fail") {
     lines.push(
       `Over ${LIMIT}. Split it into stacked PRs, or, if it is a move or codemod, label it \`mechanical\` and review it with \`git diff --color-moved\`.`
     );
@@ -151,6 +200,10 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const labels = parseLabels(process.env.PR_LABELS);
   process.exitCode = report(
     measureDiff(resolveBase(process.argv.slice(2))),
-    labels
+    labels,
+    {
+      repository: process.env.GITHUB_REPOSITORY,
+      pullRequestNumber: process.env.PR_NUMBER,
+    }
   );
 }

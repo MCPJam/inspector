@@ -9,6 +9,7 @@
 import type {
   ModelReasoningEffort,
   ModelSelection,
+  RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import type { ModelDefinition } from "@/shared/types";
@@ -17,16 +18,31 @@ import {
   reasoningEffortRouteForRow,
 } from "@/lib/reasoning-effort-options";
 import {
+  isHostedRow,
   modelSelectionFromDefinition,
   selectionBesideLegacyId,
 } from "@/components/chat-v2/shared/model-selection";
 import { modelTarget, sameModelTarget } from "@/lib/model-target";
+import { orgCanonicalTarget } from "@/lib/org-keys-model-target";
 import type { ModelSelectionPurpose } from "@mcpjam/sdk/browser";
 
+/**
+ * The selection an editor may build on. A stored legacy selection (an id
+ * outside the hosted catalog, saved without one) carries no settings and the
+ * backend refuses it with any, so it reads as no selection: the surface
+ * works from the bare id, exactly as for a row saved before selections, and
+ * an effort pick mints a proper selection from the row instead.
+ */
+export function nonLegacySelection(
+  selection: RequestedModelSelection | undefined | null,
+): ModelSelection | undefined {
+  return selection && selection.source !== "legacy" ? selection : undefined;
+}
+
 export function selectionReasoningEffort(
-  selection: ModelSelection | undefined | null,
+  selection: RequestedModelSelection | undefined | null,
 ): ModelReasoningEffort | undefined {
-  return selection?.settings?.reasoningEffort;
+  return nonLegacySelection(selection)?.settings?.reasoningEffort;
 }
 
 /** The selection with its effort set (or cleared); other settings survive. */
@@ -59,8 +75,8 @@ export type EffortCarryResult = {
  * Pick a new model for a saved config. The effort is kept only when the new
  * row lists it AND the row can be saved as a selection (an effort lives on the
  * selection); otherwise it is dropped and reported, never silently carried.
- * With no effort involved the legacy behaviour is unchanged: a selection is
- * stored only beside an unchanged row id.
+ * An explicit organization choice always carries its connection, including
+ * when no effort survives. The key policy only controls which rows are offered.
  */
 export function carryEffortToModel(args: {
   row: ModelDefinition;
@@ -70,7 +86,13 @@ export function carryEffortToModel(args: {
   selectionsSupported: boolean;
   harness?: Harness;
 }): EffortCarryResult {
-  const { row, previousEffort, purpose, selectionsSupported, harness } = args;
+  const {
+    row,
+    previousEffort,
+    purpose,
+    selectionsSupported,
+    harness,
+  } = args;
   const legacyId = String(row.id);
   if (!selectionsSupported) {
     return {
@@ -96,9 +118,10 @@ export function carryEffortToModel(args: {
       };
     }
   }
+  const org = orgCanonicalTarget(row, purpose);
   return {
-    modelId: legacyId,
-    selection: selectionBesideLegacyId(row, purpose),
+    modelId: org?.modelId ?? legacyId,
+    selection: org?.selection ?? selectionBesideLegacyId(row, purpose),
     ...(previousEffort ? { dropped: previousEffort } : {}),
   };
 }
@@ -119,12 +142,21 @@ export function carryEffortToModel(args: {
  */
 export function setEffortForRow(args: {
   row: ModelDefinition;
-  selection: ModelSelection | undefined;
+  selection: RequestedModelSelection | undefined;
   effort: ModelReasoningEffort | undefined;
   purpose: ModelSelectionPurpose;
   bareIds?: "canonicalize" | "keep-id";
 }): { modelId: string; selection: ModelSelection | undefined } | null {
-  const { row, selection, effort, purpose, bareIds = "keep-id" } = args;
+  const { row, effort, purpose, bareIds = "keep-id" } = args;
+  const selection = nonLegacySelection(args.selection);
+  // A stored legacy selection means "own key only": whatever row the caller
+  // resolved, an effort may never mint a hosted selection for it and move the
+  // model onto MCPJam credits.
+  if (args.selection && !selection && isHostedRow(row)) return null;
+  // A stored legacy selection carries no effort, so clearing one is nothing
+  // to write; minting a selection for it here would change its connection
+  // without a pick.
+  if (args.selection && !selection && !effort) return null;
   const base =
     selection ??
     (bareIds === "canonicalize"

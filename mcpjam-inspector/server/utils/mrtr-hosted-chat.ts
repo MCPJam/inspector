@@ -384,7 +384,7 @@ export async function resolveMrtrChatResume(
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    logger.error("[mrtr-chat] resume leg threw", { reason });
+    logger.error("[mrtr-chat] resume leg threw", err);
     return { kind: "halted", outcome: "failed", reason };
   }
 

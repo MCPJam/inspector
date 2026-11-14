@@ -14,6 +14,7 @@
 
 import type {
   CspDomainSet,
+  SystemPromptDefault,
   HostConfigComputer,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
@@ -42,6 +43,7 @@ export type {
   HostStyleId,
   Harness,
   CspDomainSet,
+  SystemPromptDefault,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
   ModelVisibleMcpToolResults,
@@ -124,8 +126,10 @@ export interface HostJson {
   style: HostStyleId;
   model: string;
   systemPrompt: string;
+  systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   progressiveToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
@@ -138,6 +142,8 @@ export interface HostJson {
   /** Which harness runs the turn; absent ⇒ emulated. `"claude-code"` runs the
    * turn in a real Claude Code runtime (requires an attached `computer`). */
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   servers: ServerId[];
   optionalServers: ServerId[];
   /** Skill selection. Absent ⇒ legacy all-visible. Normalized:
@@ -182,10 +188,17 @@ export interface HostInit {
   /** LLM model id (e.g. "anthropic/claude-sonnet-4-6"). Required at `toJSON()`; no SDK default. */
   model?: string;
   systemPrompt?: string;
+  systemPromptDefault?: SystemPromptDefault;
   /** Sampling temperature. Default: 0.7. */
   temperature?: number;
   requireToolApproval?: boolean;
-  /** Opt into progressive MCP tool discovery (search/load meta-tools). */
+  requireNativeToolDiscovery?: boolean;
+  /**
+   * Progressive MCP tool discovery (the search/load meta-tools). `true` on,
+   * `false` off. `HostRunner` reads unset as off; a saved client or host
+   * template means Auto by it, which `runWithClient` and `mcpjam test --host`
+   * apply: on once the tools reach 30 or about 10k tokens of definitions.
+   */
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */
   respectToolVisibility?: boolean;
@@ -207,6 +220,8 @@ export interface HostInit {
    * so a computer is required when this is set.
    */
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   /** Required servers this host connects to. */
   servers?: ServerId[];
   /** Optional (auto-connect-if-available) servers. */

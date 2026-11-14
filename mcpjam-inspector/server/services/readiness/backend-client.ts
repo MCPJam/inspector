@@ -1,8 +1,13 @@
+import {
+  DIRECTORY_OBSERVATION_STATUSES,
+  type DirectoryAnswer,
+} from "@mcpjam/sdk";
 /**
  * The inspector's half of the readiness lease protocol.
  *
- * Four service-token calls against the backend's `/internal/v1/claude-readiness/*`
- * routes: heartbeat, request observations, finalize, fail. The backend already
+ * Six service-token calls against the backend's `/internal/v1/claude-readiness/*`
+ * routes: claim, heartbeat, request observations, read the frozen submission
+ * answers, finalize, fail. The backend already
  * owns the durable side — claim, lease, recovery, retention — and nothing here
  * duplicates it; this is the client a worker holds while it executes.
  *
@@ -24,6 +29,7 @@ import {
   isEntityNotFound,
 } from "../internal-backend.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
+import { isOrgKeyPolicyRefusalCode } from "../../../shared/ai-execution-refusal.js";
 import {
   ReadinessLeaseLostError,
   type ObservationBrokerAnswer,
@@ -42,12 +48,10 @@ const OBSERVATIONS_PATH = "/internal/v1/claude-readiness/observations";
  * A closed check rather than `typeof === "string"`, because the value lands on
  * the run row and a surface branches on it.
  */
-const BROKER_STATUSES: ObservationBrokerAnswer["status"][] = [
-  "completed",
-  "billing-blocked",
-  "provider-failed",
-  "invalid-output",
-];
+const BROKER_STATUSES = DIRECTORY_OBSERVATION_STATUSES.filter(
+  (status): status is ObservationBrokerAnswer["status"] =>
+    status !== "not-requested" && status !== "pending",
+);
 
 /** Per-call budget. Generous for the report, tight for the heartbeat. */
 const HEARTBEAT_TIMEOUT_MS = 10_000;
@@ -96,6 +100,104 @@ export interface ReadinessLease {
   jobId: string;
 }
 
+/** The backend's reasons to refuse a claim. Each one means: do not execute. */
+const CLAIM_REFUSALS = ["already_claimed", "lease_lost", "not_found"] as const;
+export type ReadinessClaimRefusal = (typeof CLAIM_REFUSALS)[number];
+
+export type ReadinessClaim =
+  | { status: "claimed" }
+  | { status: "refused"; reason: ReadinessClaimRefusal }
+  | { status: "unanswered"; detail: string };
+
+const CLAIM_TIMEOUT_MS = 10_000;
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    // Not JSON: a backend without the route answers with its router's text.
+    return null;
+  }
+}
+
+/**
+ * Take the run this node just created, `pending` to `running`, on the lease it
+ * already holds and before anything dials.
+ *
+ * A REFUSAL STOPS THE RUN: it is already running (`already_claimed`), it was
+ * cancelled or re-queued (`lease_lost`), or it does not exist (`not_found`).
+ *
+ * NO ANSWER DOES NOT. An unreachable backend, a 5xx, or a backend that
+ * predates the claim route answers `unanswered`, and the worker executes as it
+ * did before claims existed: the row stays `pending`, and every heartbeat and
+ * write is still checked against the lease. Stopping there would leave a
+ * fresh run waiting for recovery and then for its requester to resume it.
+ */
+export async function claimReadinessRun(
+  lease: ReadinessLease,
+): Promise<ReadinessClaim> {
+  try {
+    const { response, release } = await postInternal(
+      `${READINESS_PATH}/claim`,
+      lease,
+      CLAIM_TIMEOUT_MS,
+    );
+    try {
+      const body = parseJsonObject(await response.text());
+      if (response.ok && body?.claimed === true) return { status: "claimed" };
+      const reason = CLAIM_REFUSALS.find((refusal) => refusal === body?.error);
+      if (!response.ok && reason) return { status: "refused", reason };
+      return { status: "unanswered", detail: `HTTP ${response.status}` };
+    } finally {
+      release();
+    }
+  } catch (error) {
+    return {
+      status: "unanswered",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** What a heartbeat learned: the backend's answer, or that none came. */
+export type ReadinessLeaseAnswer = "owned" | "lost" | "unanswered";
+
+/**
+ * Renew the lease, and report only what the backend confirmed. For a caller
+ * about to start work on the lease: an unanswered heartbeat is not ownership.
+ */
+export async function confirmReadinessLease(
+  lease: ReadinessLease,
+): Promise<ReadinessLeaseAnswer> {
+  try {
+    const { response, release } = await postInternal(
+      `${READINESS_PATH}/heartbeat`,
+      lease,
+      HEARTBEAT_TIMEOUT_MS,
+    );
+    try {
+      if (!response.ok) {
+        // The body is never read on this path, and an unread body holds its
+        // keep-alive connection until GC. Cancelling hands it back now.
+        await response.body?.cancel().catch(() => undefined);
+        return "unanswered";
+      }
+      const body = (await response.json().catch(() => null)) as {
+        alive?: unknown;
+      } | null;
+      if (body?.alive === true) return "owned";
+      return body?.alive === false ? "lost" : "unanswered";
+    } finally {
+      release();
+    }
+  } catch {
+    return "unanswered";
+  }
+}
+
 /**
  * Tell the backend this node is still alive, and learn whether it still owns
  * the run.
@@ -111,29 +213,7 @@ export interface ReadinessLease {
 export async function heartbeatReadinessRun(
   lease: ReadinessLease,
 ): Promise<{ alive: boolean }> {
-  try {
-    const { response, release } = await postInternal(
-      `${READINESS_PATH}/heartbeat`,
-      lease,
-      HEARTBEAT_TIMEOUT_MS,
-    );
-    try {
-      if (!response.ok) {
-        // The body is never read on this path, and an unread body holds its
-        // keep-alive connection until GC. Cancelling hands it back now.
-        await response.body?.cancel().catch(() => undefined);
-        return { alive: true };
-      }
-      const body = (await response.json().catch(() => null)) as {
-        alive?: unknown;
-      } | null;
-      return { alive: body?.alive !== false };
-    } finally {
-      release();
-    }
-  } catch {
-    return { alive: true };
-  }
+  return { alive: (await confirmReadinessLease(lease)) !== "lost" };
 }
 
 /**
@@ -176,6 +256,7 @@ export async function requestManagedObservations(
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as {
         error?: unknown;
+        code?: unknown;
       } | null;
       const detail = backendFailureText({
         source: "readiness-observations",
@@ -183,6 +264,20 @@ export async function requestManagedObservations(
         detail: body?.error,
         fallback: `HTTP ${response.status}`,
       });
+      // The organization requires its own provider keys and cannot serve this
+      // pass: a configuration state ("Not analyzed"), not a provider outage.
+      // Read off the code, never the prose.
+      if (
+        typeof body?.code === "string" &&
+        isOrgKeyPolicyRefusalCode(body.code)
+      ) {
+        return {
+          status: "ai-unavailable",
+          reason: "ai_unavailable",
+          refusalCode: body.code.trim().toLowerCase(),
+          detail: `the organization's AI configuration could not run the observation pass (${body.code.trim().toLowerCase()}): ${detail}`,
+        };
+      }
       return {
         status: "provider-failed",
         reason: "provider_error",
@@ -193,7 +288,7 @@ export async function requestManagedObservations(
     const body = (await response.json().catch(() => null)) as
       | (ObservationBrokerAnswer & { ok?: boolean })
       | null;
-    // CONSTRAINED TO THE FOUR STATUSES THIS BUILD KNOWS, not merely to
+    // Constrained to the statuses this build knows, not merely to
     // "a string". The value is copied onto the run row as
     // `llmObservationStatus`, so a backend deployed ahead of this build could
     // otherwise persist a status the SDK never defined — the exact drift the
@@ -210,11 +305,91 @@ export async function requestManagedObservations(
       status: body.status,
       reason: body.reason,
       detail: body.detail,
+      refusalCode: body.refusalCode,
       envelope: body.envelope,
     };
   } finally {
     release();
   }
+}
+
+/** The answers a run grades, frozen when the run was requested. */
+export interface ReadinessRunSubmission {
+  submissionId: string;
+  submissionRevision: number;
+  flowId: string;
+  flowVersion: string;
+  answers: DirectoryAnswer[];
+}
+
+/** The run names a submission whose frozen answers could not be read. */
+export class ReadinessSubmissionUnreadableError extends Error {
+  readonly code = "readinessSubmissionUnreadable" as const;
+}
+
+const SUBMISSION_TIMEOUT_MS = 10_000;
+
+function isRunSubmission(body: unknown): body is ReadinessRunSubmission {
+  const inputs = body as Partial<ReadinessRunSubmission> | null;
+  return (
+    typeof inputs?.submissionId === "string" &&
+    typeof inputs.submissionRevision === "number" &&
+    typeof inputs.flowId === "string" &&
+    typeof inputs.flowVersion === "string" &&
+    Array.isArray(inputs.answers) &&
+    inputs.answers.every(
+      (answer) =>
+        typeof answer?.key === "string" && typeof answer.origin === "string",
+    )
+  );
+}
+
+/**
+ * Read the copy of the submission's answers made in the same mutation that
+ * created this run, so answers edited while it waited are the next run's.
+ *
+ * Every failure but a lost lease throws `ReadinessSubmissionUnreadableError`:
+ * a run must fail with the reason rather than grade an empty form, which
+ * would report every required field as missing. The message lands on the run
+ * row, so it is written for the person reading the run.
+ */
+export async function getReadinessRunSubmission(
+  lease: ReadinessLease,
+): Promise<ReadinessRunSubmission> {
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
+  const query = new URLSearchParams({ runId: lease.runId, jobId: lease.jobId });
+  let response: Response;
+  let body: unknown;
+  try {
+    // `AbortSignal.timeout` stays armed through the body read as well. Read
+    // on every status, so a refusal's body does not hold its connection.
+    response = await fetch(`${convexUrl}${READINESS_PATH}/submission?${query}`, {
+      headers: { "x-inspector-service-token": serviceToken },
+      signal: AbortSignal.timeout(SUBMISSION_TIMEOUT_MS),
+    });
+    const text = await response.text();
+    body = response.ok ? JSON.parse(text) : undefined;
+  } catch (error) {
+    throw new ReadinessSubmissionUnreadableError(
+      "This run's saved answers could not be read, so it was not graded. Start the run again.",
+      { cause: error },
+    );
+  }
+  if (response.status === 409) throw new ReadinessLeaseLostError();
+  if (response.status === 404) {
+    throw new ReadinessSubmissionUnreadableError(
+      "This run's saved answers were not found, so it was not graded. Start a new run from the submission.",
+    );
+  }
+  if (!response.ok || !isRunSubmission(body)) {
+    throw new ReadinessSubmissionUnreadableError(
+      `This run's saved answers could not be read (HTTP ${response.status}), so it was not graded. Start the run again.`,
+    );
+  }
+  // Picked, so the body's `ok` flag and anything the route gains later stay out of the report.
+  const { submissionId, submissionRevision, flowId, flowVersion, answers } =
+    body;
+  return { submissionId, submissionRevision, flowId, flowVersion, answers };
 }
 
 /** The small, indexed summary the run row carries. The report is opaque. */

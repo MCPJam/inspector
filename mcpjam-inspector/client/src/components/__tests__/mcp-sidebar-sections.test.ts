@@ -49,11 +49,23 @@ describe("sidebar section grouping", () => {
       "Resources",
       "Prompts",
       "Tasks",
+      // MCP Events (draft extension): the server-side primitive, next to its
+      // sibling long-running primitive.
+      "Events",
       // Same primitive as Tools, from the other side of the browser boundary:
       // what a live PAGE registers rather than what a server exposes.
       "WebMCP",
     ]);
     expect(titlesIn("Educate")).toEqual(["Learning"]);
+  });
+
+  it("places Triggers right after Playground in Explore", () => {
+    // Triggers are the unattended version of a Playground turn: a model with
+    // the project's servers, reacting to an event instead of a message.
+    const explore = navigationSections
+      .find((section) => section.label === "Explore")!
+      .items.map((item) => item.title);
+    expect(explore.indexOf("Triggers")).toBe(explore.indexOf("Playground") + 1);
   });
 
   it("keeps flag-gated items in the section that matches what they do", () => {
@@ -96,12 +108,15 @@ describe("sidebar section grouping", () => {
     // new. The pill replaced a LOG IN / UPGRADE marker that described who the
     // reader was rather than what the tab is, which is the distinction this
     // set is guarding.
+    //
+    // Conformance joined in CQT-124, when its run pages took the same header
+    // as Swarms and User Testing.
     const badged = navigationSections
       .flatMap((section) => section.items)
       .filter((item) => item.badge === "New")
       .map((item) => item.title);
 
-    expect(badged).toEqual(["Swarms", "User Testing", "WebMCP"]);
+    expect(badged).toEqual(["Swarms", "User Testing", "Conformance", "WebMCP"]);
   });
 
   it("never lists the same title twice across sections", () => {

@@ -7,7 +7,7 @@
  * ever sees the listing. So a check reading `manager.listTools()` is handed
  * only the survivors and passes against precisely the servers it exists to
  * catch. These tests drive a raw fixture that publishes offenders and prove the
- * check (and its readiness sibling) still find them.
+ * check still finds them.
  *
  * The fixture is a hand-written JSON-RPC responder rather than a real `Server`,
  * because the point is to publish a tool definition the SDK's own server-side
@@ -306,8 +306,8 @@ describe("tools-x-mcp-header-declarations-valid", () => {
   });
 });
 
-describe("readiness-x-mcp-header-declarations", () => {
-  it("explains the impact an operator actually feels", async () => {
+describe("x-mcp-header advice", () => {
+  it("charges a bad declaration once, as the MUST check, never again as advice", async () => {
     const serverUrl = await serveTools([
       {
         name: "execute-sql",
@@ -323,36 +323,11 @@ describe("readiness-x-mcp-header-declarations", () => {
       checkTimeout: 10_000,
     }).run();
 
-    const advice = result.readiness?.find(
-      (entry) => entry.id === "readiness-x-mcp-header-declarations",
+    expect(result.checks.find((entry) => entry.id === CHECK_ID)?.status).toBe(
+      "failed",
     );
-    expect(advice?.specStrength).toBe("SHOULD");
-    expect(advice?.message).toMatch(/invisible rather than merely losing a header/);
-    expect(advice?.details).toMatchObject({
-      invalid: [{ tool: "execute-sql" }],
-    });
-  });
-
-  it("stays silent when every declaration is valid", async () => {
-    const serverUrl = await serveTools([
-      {
-        name: "execute-sql",
-        inputSchema: objectSchema({
-          region: { type: "string", "x-mcp-header": "Region" },
-        }),
-      },
-    ]);
-    const result = await new MCPConformanceTest({
-      serverUrl,
-      protocolVersion: MODERN,
-      checkIds: [CHECK_ID],
-      checkTimeout: 10_000,
-    }).run();
-
     expect(
-      result.readiness?.find(
-        (entry) => entry.id === "readiness-x-mcp-header-declarations",
-      ),
+      result.readiness?.find((entry) => /x-mcp-header/.test(entry.id)),
     ).toBeUndefined();
   });
 });

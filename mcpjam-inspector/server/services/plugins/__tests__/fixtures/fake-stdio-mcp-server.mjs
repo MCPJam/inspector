@@ -92,6 +92,10 @@ function handle(message) {
   }
 
   if (message.method === "initialize") {
+    if (process.env.FAKE_INIT_ERROR === "true") {
+      write({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "Initialization refused" } });
+      return;
+    }
     respond(message.id, {
       protocolVersion: "2025-06-18",
       capabilities: { tools: {} },
@@ -163,7 +167,7 @@ function handle(message) {
       write({
         jsonrpc: "2.0",
         id: requestId,
-        method: "sampling/createMessage",
+        method: args.method ?? "sampling/createMessage",
         params: {},
       });
       return;

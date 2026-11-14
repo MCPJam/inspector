@@ -13,7 +13,10 @@
  * Never throws. Always returns a `NormalizedError`.
  */
 
-import { unwrapEraNegotiationCause } from "../mcp-client-manager/errors.js";
+import {
+  extractAuthChallenge,
+  unwrapEraNegotiationCause,
+} from "../mcp-client-manager/errors.js";
 import { redactForTelemetry } from "../telemetry-redaction.js";
 import {
   MCP_ERROR_CODES,
@@ -25,7 +28,12 @@ import {
   type ErrorOrigin,
 } from "./catalog.js";
 import { extractNodeErrno } from "./node-errno.js";
-import type { BearerChallengeSummary } from "./challenge.js";
+import { isTlsTrustFailure } from "../oauth-proxy-error.js";
+import { orgPolicyRefusal } from "./org-policy.js";
+import {
+  summarizeBearerChallenge,
+  type BearerChallengeSummary,
+} from "./challenge.js";
 
 export type NormalizedError = ErrorCatalogEntry & {
   /**
@@ -236,6 +244,12 @@ function inspectorSentinelSlug(message: string): string | undefined {
   // class doc says to reword both together; a test holds them together.
   if (/which this client is pinned to/i.test(message)) {
     return "sdk/protocol_version_pin_unsupported";
+  }
+  // `tlsTrustFailure`'s sentence, written only by a route that knows the
+  // request went to the server under test. Never the TLS code itself: MCPJam's
+  // own hops fail with the same codes.
+  if (isTlsTrustFailure(message)) {
+    return "transport/tls_untrusted";
   }
   return undefined;
 }
@@ -534,8 +548,14 @@ function resolveSlug(error: unknown): {
       ? (error as { code?: unknown; data?: { code?: unknown } })
       : null;
   const platformCode = record?.data?.code ?? record?.code;
+  if (platformCode === "GENERATION_FAILED") return { slug: "generation/invalid_output", rawCode: platformCode };
   if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
   if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
+  // The organization AI-key policy's refusals, ahead of the status branches:
+  // they arrive as 403/422/503, which read by status alone would become "your
+  // MCP server rejected the token" or an outage.
+  const orgPolicy = orgPolicyRefusal(error, message);
+  if (orgPolicy) return orgPolicy;
 
   // (a) Inspector sentinel sniff first — these are SDK-thrown Errors whose
   // class identity is lost across realm boundaries; match on stable text.
@@ -727,10 +747,11 @@ export type DescribeContext = {
   surface?: "provider" | "mcpServer";
   /**
    * The parsed `WWW-Authenticate` challenge of the response that failed,
-   * when the caller captured one. Only a caller at the fetch boundary can
-   * know it — the transport error carries the status and the body text but
-   * never the header. This records what the response said without assuming
-   * that an absent header makes well-known discovery unavailable.
+   * when the caller captured one. When absent, the challenge is read from the
+   * error itself: the MCP client's HTTP error fetch attaches it to a failed
+   * protected operation (`extractAuthChallenge`). This records what the
+   * response said without assuming that an absent header makes well-known
+   * discovery unavailable.
    */
   challenge?: BearerChallengeSummary;
   /**
@@ -861,14 +882,13 @@ function contextSlug(
   error: unknown,
   context: DescribeContext | undefined
 ): string | undefined {
-  if (!context) return undefined;
-  if (context.refresh?.outcome === "authorization_server_unreachable") {
+  if (context?.refresh?.outcome === "authorization_server_unreachable") {
     return "auth/authorization_server_unreachable";
   }
-  if (context.refresh?.outcome === "token_rejected") {
+  if (context?.refresh?.outcome === "token_rejected") {
     return "auth/oauth_refresh_failed";
   }
-  const challenge = context.challenge;
+  const challenge = context?.challenge ?? challengeSummaryFromError(error);
   if (!challenge) return undefined;
   const status = httpStatusOf(error);
   if (status === 401 && challenge.scheme !== "bearer") {
@@ -891,6 +911,30 @@ function contextSlug(
     return "auth/http_403";
   }
   return undefined;
+}
+
+/**
+ * The challenge an MCP client error carries, as the storable summary.
+ *
+ * An `InsufficientScopeError` keeps its fields but not the header, so it is
+ * rebuilt from the fields; every other signal keeps its raw header.
+ */
+function challengeSummaryFromError(
+  error: unknown
+): BearerChallengeSummary | undefined {
+  const signal = extractAuthChallenge(error);
+  if (!signal) return undefined;
+  if (signal.raw) return summarizeBearerChallenge(signal.raw);
+  if (signal.facets.challengeHeader !== "bearer") {
+    return summarizeBearerChallenge(undefined);
+  }
+  return {
+    ...summarizeBearerChallenge("Bearer"),
+    ...(signal.error ? { error: signal.error } : {}),
+    ...(signal.requiredScope
+      ? { scopes: signal.requiredScope.split(/\s+/).filter(Boolean) }
+      : {}),
+  };
 }
 
 /**
@@ -1014,7 +1058,9 @@ export function describeError(
             : undefined,
         ),
         slug,
-        context
+        context?.challenge
+          ? context
+          : { ...context, challenge: challengeSummaryFromError(error) }
       ),
       slug,
       context,

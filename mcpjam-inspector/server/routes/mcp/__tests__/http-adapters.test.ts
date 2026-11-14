@@ -164,7 +164,7 @@ describe("HTTP Adapters Security", () => {
           expect(res.status).toBe(403);
           const data = await res.json();
           expect(data.error).toBe("Forbidden");
-          expect(data.message).toBe("Request origin not allowed.");
+          expect(data.message).toMatch(/^Request origin not allowed: /);
         });
 
         it("allows requests from localhost origin", async () => {
@@ -675,7 +675,7 @@ describe("HTTP Adapters Security", () => {
       expect(res.status).toBe(403);
       const data = await res.json();
       expect(data.error).toBe("Forbidden");
-      expect(data.message).toBe("Request origin not allowed.");
+      expect(data.message).toMatch(/^Request origin not allowed: /);
     });
 
     it("blocks cross-origin requests even if attacker guesses a valid token", async () => {

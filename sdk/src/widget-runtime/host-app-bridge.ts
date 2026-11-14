@@ -1,3 +1,4 @@
+import { createToolInputProgress } from "./tool-input-progress.js";
 /**
  * host-app-bridge.ts — framework-free MCP Apps host bridge surface (SEP-1865)
  *
@@ -209,6 +210,12 @@ export interface HostBridgeMatrix {
   toolResult?: ToolResultPolicy;
 }
 
+/** Lifecycle of this app request while its owner waits for human input. */
+export interface AppToolRequestContext {
+  signal: AbortSignal;
+  onInputPending(pending: boolean): void;
+}
+
 /**
  * Host-environment effects injected by the consumer. Every callback is
  * optional; an unset callback means the corresponding host behavior is a no-op
@@ -231,7 +238,8 @@ export interface HostBridgeCallbacks {
   /** App-initiated `tools/call` dispatcher. Resolves to a CallToolResult. */
   onCallTool?: (
     name: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    context?: AppToolRequestContext
   ) => Promise<CallToolReturn>;
   /** App-tool invocation lifecycle updates (running/success/error). */
   onAppToolInvocation?: (update: AppToolInvocationUpdate) => void;
@@ -305,6 +313,11 @@ export interface RegisterHostBridgeHandlersOptions {
   ) => void;
 }
 
+/** Error a widget gets for `resources/read` when the host advertises no
+ * `serverResources`. Shared with the eval harness's direct-binding guard. */
+export const RESOURCE_READS_DISABLED_MESSAGE =
+  "This host does not allow resource reads.";
+
 /**
  * Install the SEP-1865 host bridge handlers on `bridge`, gated by
  * `effectiveHostCapabilities` and the capabilities matrix. This is the
@@ -313,7 +326,11 @@ export interface RegisterHostBridgeHandlersOptions {
  * lifted out of the React renderer so the eval harness shares it verbatim.
  */
 export function registerHostBridgeHandlers(
-  bridge: AppBridge,
+  bridge: AppBridge & {
+    // AppBridge declares connect directly; its inherited transport is hidden by
+    // extensionless vendor declarations under NodeNext module resolution.
+    readonly transport?: Pick<Parameters<AppBridge["connect"]>[0], "send">;
+  },
   options: RegisterHostBridgeHandlersOptions
 ): void {
   const {
@@ -348,7 +365,10 @@ export function registerHostBridgeHandlers(
       // bundler resolution (where `content` is the precise `ContentBlock` union
       // and `.text` is absent on non-text members). Runtime behavior unchanged.
       const items = content as ReadonlyArray<{ type?: string; text?: string }>;
-      const textContent = items.find((item) => item.type === "text")?.text;
+      const textContent = items
+        .filter((item) => item.type === "text" && typeof item.text === "string")
+        .map((item) => item.text)
+        .join("\n");
       if (textContent) {
         callbacks.onSendFollowUp?.(textContent);
       }
@@ -418,7 +438,7 @@ export function registerHostBridgeHandlers(
         () => {}
       );
     };
-    bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
+    bridge.oncalltool = async ({ name, arguments: args, _meta }, extra) => {
       // Model-only tools (visibility: ["model"]) are not callable by apps.
       const calledToolMeta = getToolMetadata?.(name);
       if (isVisibleToModelOnly(calledToolMeta)) {
@@ -458,8 +478,36 @@ export function registerHostBridgeHandlers(
         throw error;
       }
 
+      const requestTransport = bridge.transport;
+      const token = _meta?.progressToken;
+      const inputProgress = createToolInputProgress(
+        extra.signal,
+        token === undefined
+          ? undefined
+          : (progress) => {
+              extra.signal.throwIfAborted();
+              // Standard progress is tied to this request's original transport.
+              if (!requestTransport || bridge.transport !== requestTransport)
+                throw new Error("App request transport is no longer connected");
+              return requestTransport.send(
+                {
+                  jsonrpc: "2.0",
+                  method: "notifications/progress",
+                  params: { progressToken: token, progress },
+                },
+                { relatedRequestId: extra.requestId }
+              );
+            },
+        (error) =>
+          onWidgetDebug?.("host-to-ui", "notifications/progress", {
+            error: error instanceof Error ? error.message : String(error),
+          })
+      );
       try {
-        const rawResult = await callbacks.onCallTool(name, invocationInput);
+        const rawResult = await callbacks.onCallTool(name, invocationInput, {
+          signal: extra.signal,
+          onInputPending: inputProgress.setPending,
+        });
         // Shape the result BEFORE recording the invocation, so the
         // inspector's app-tool panel shows what the widget actually
         // received rather than what the server sent. A host that strips
@@ -494,6 +542,8 @@ export function registerHostBridgeHandlers(
         });
         sendToolCancelledIfAllowed(errorText);
         throw error;
+      } finally {
+        inputProgress.dispose();
       }
     };
   }
@@ -521,6 +571,14 @@ export function registerHostBridgeHandlers(
         return { resourceTemplates: [] } as ListResourceTemplatesReturn;
       }
       return callbacks.onListResourceTemplates(params);
+    };
+  } else {
+    // Unhandled, the read would still get -32601 but as "Method not found",
+    // which reads like a broken host. Keep the code and name the cause.
+    bridge.onreadresource = async () => {
+      throw Object.assign(new Error(RESOURCE_READS_DISABLED_MESSAGE), {
+        code: -32601,
+      });
     };
   }
 

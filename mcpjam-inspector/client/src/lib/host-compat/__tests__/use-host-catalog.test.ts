@@ -1,3 +1,4 @@
+import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
@@ -28,7 +29,7 @@ import {
 } from "@mcpjam/sdk/host-compat";
 import { evaluateAllHosts } from "../engine";
 import { getHostProfiles } from "../profiles";
-import { useHostCatalog, resetHostCatalogForTests } from "../use-host-catalog";
+import { HostCatalogProvider, useHostCatalog, resetHostCatalogForTests } from "../use-host-catalog";
 
 const fetchMock = vi.mocked(fetchHostCompatCatalog);
 
@@ -124,6 +125,20 @@ describe("useHostCatalog", () => {
   afterEach(() => {
     resetHostCatalogForTests();
     warnSpy.mockRestore();
+  });
+
+  it("uses an explicit isolated catalog without fetching or changing other consumers", async () => {
+    const supplied = { status: "fallback", source: "bundled", version: 0, catalog: cloneCatalog() } as const;
+    const { result } = renderHook(() => useHostCatalog(), {
+      wrapper: ({ children }: { children: ReactNode }) => createElement(HostCatalogProvider, { value: supplied }, children),
+    });
+    expect(result.current).toBe(supplied);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValue(liveResult(7));
+    const ordinary = renderHook(() => useHostCatalog());
+    await waitFor(() => expect(ordinary.result.current.version).toBe(7));
+    expect(result.current).toBe(supplied);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("starts loading, then exposes the live catalog once the fetch resolves", async () => {

@@ -7,6 +7,8 @@ interface SegmentedControlOption<T extends string> {
   icon?: React.ReactNode;
   /** Native tooltip describing what selecting this option does. */
   title?: string;
+  /** Disables just this option. */
+  disabled?: boolean;
 }
 
 type SegmentedControlSize = "sm" | "default";
@@ -74,7 +76,7 @@ export function SegmentedControl<T extends string>({
         <button
           key={option.value}
           type="button"
-          disabled={disabled}
+          disabled={disabled || option.disabled}
           title={option.title}
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
@@ -86,7 +88,8 @@ export function SegmentedControl<T extends string>({
             value === option.value
               ? "text-foreground"
               : "text-muted-foreground hover:text-foreground/80",
-            disabled && "cursor-not-allowed",
+            (disabled || option.disabled) && "cursor-not-allowed",
+            option.disabled && !disabled && "opacity-50",
           )}
         >
           {option.icon}

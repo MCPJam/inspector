@@ -4,6 +4,7 @@ import {
   hostSelectionForTurn,
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
+  withoutCustomProviderEffort,
 } from "../chat-reasoning-effort";
 
 const HOST_SELECTION = {
@@ -116,5 +117,68 @@ describe("directChatEffort", () => {
     });
     expect(result).toMatchObject({ ok: false });
     if (!result.ok) expect(result.reason).toContain("cannot both be applied");
+  });
+});
+
+
+describe("explicit selection effort authority", () => {
+  const selected = { modelId: "openai/gpt-5", source: "org", connectionRef: { kind: "orgProvider", id: "conn-1" }, fallback: { provider: "none", model: "none" } } as const;
+  it("does not restore host effort after an explicit clear", () => {
+    expect(resolveChatReasoningEffort({ hostSelection: HOST_SELECTION, requestSelection: selected, hostWins: false })).toBeUndefined();
+  });
+  it("uses selected effort, then a top-level override; scenarios retain host authority", () => {
+    const requestSelection = { ...selected, settings: { reasoningEffort: "high" as const } };
+    expect(resolveChatReasoningEffort({ hostSelection: HOST_SELECTION, requestSelection, hostWins: false })).toBe("high");
+    expect(resolveChatReasoningEffort({ hostSelection: HOST_SELECTION, requestSelection, bodyEffort: "low", hostWins: false })).toBe("low");
+    expect(resolveChatReasoningEffort({ hostSelection: HOST_SELECTION, requestSelection, bodyEffort: "low", hostWins: true })).toBe("medium");
+  });
+});
+
+describe("withoutCustomProviderEffort", () => {
+  const customSelection = {
+    modelId: "custom:gateway:gpt-x",
+    source: "org",
+    connectionRef: { kind: "orgProvider", id: "conn-custom" },
+    settings: { reasoningEffort: "high", temperature: 0.3 },
+    fallback: { provider: "none", model: "none" },
+  } as const;
+  const customModel = { provider: "custom" } as const;
+
+  it("drops the request's effort and the selection's saved one, keeping other settings", () => {
+    const result = withoutCustomProviderEffort({
+      modelDefinition: customModel,
+      reasoningEffort: "low",
+      routingSelection: customSelection,
+    });
+    expect(result.omitted).toBe("low");
+    expect(result.prepare.reasoningEffort).toBeUndefined();
+    expect(result.prepare.routingSelection).toEqual({
+      ...customSelection,
+      settings: { temperature: 0.3 },
+    });
+  });
+
+  it("drops an effort that only the saved selection carries", () => {
+    const result = withoutCustomProviderEffort({
+      modelDefinition: customModel,
+      routingSelection: {
+        ...customSelection,
+        settings: { reasoningEffort: "medium" },
+      },
+    });
+    expect(result.omitted).toBe("medium");
+    expect(result.prepare.routingSelection).not.toHaveProperty("settings");
+  });
+
+  it("leaves every other provider, and a custom turn with no effort, as it was", () => {
+    const openai = {
+      modelDefinition: { provider: "openai" } as const,
+      reasoningEffort: "high" as const,
+    };
+    expect(withoutCustomProviderEffort(openai)).toEqual({ prepare: openai });
+    const noEffort = { modelDefinition: customModel };
+    expect(withoutCustomProviderEffort(noEffort)).toEqual({
+      prepare: noEffort,
+    });
   });
 });

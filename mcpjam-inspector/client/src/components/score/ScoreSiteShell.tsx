@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { ScorePreviewCard } from "./ScorePreviewCard";
 import { ScoreWordmark } from "./ScoreWordmark";
+import "@fontsource/instrument-sans/400.css";
+import "@fontsource/instrument-sans/500.css";
+import "@fontsource/instrument-sans/600.css";
+import "@fontsource/montserrat/800.css";
 import "./score-site.css";
-
-const FONT_HREF =
-  "https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Montserrat:wght@800&display=swap";
 
 export function ScoreSiteShell({
   children,
@@ -19,7 +20,6 @@ export function ScoreSiteShell({
 
   return (
     <div className="score-site relative isolate flex min-h-dvh w-full flex-col overflow-x-clip antialiased xl:h-dvh xl:min-h-[700px] xl:overflow-y-auto">
-      <link rel="stylesheet" href={FONT_HREF} />
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 overflow-hidden"

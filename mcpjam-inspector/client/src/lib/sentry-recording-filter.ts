@@ -3,6 +3,8 @@ import {
   maskReplayStyle,
   scrubNamesFromUrl,
 } from "../../../shared/telemetry-privacy";
+import { scrubRrwebCredentials } from "./rrweb-credential-scrub";
+import { scrubClientSentryBreadcrumb, type ScrubbableBreadcrumb } from "../../../shared/sentry-config";
 
 /**
  * Sentry Replay's rrweb events cannot be edited as they are recorded —
@@ -20,6 +22,11 @@ import {
  * data attributes are built from customer data (`prompt-arg-${name}`,
  * `repo-row-${repoFullName}`), and Sentry's own `maskAttributes` is a fixed
  * list that cannot cover them.
+ *
+ * Then every credential comes out of the whole recording, the same pass
+ * PostHog's replay batches get (`scrubRrwebCredentials`): stylesheet text
+ * (`<style>` text, inlined stylesheets, CSSOM rule changes), which no Sentry
+ * option masks, and every URL in meta, custom and plugin events.
  */
 
 const FULL_SNAPSHOT_EVENT = 2;
@@ -76,6 +83,15 @@ function maskNodeTree(root: unknown): void {
 function cleanEvent(event: unknown): void {
   if (!isRecord(event) || !isRecord(event.data)) return;
   const data = event.data;
+  if (event.type === 5 && isRecord(data.payload)) {
+    const origin = typeof window === "undefined" ? undefined : window.location.origin;
+    if (data.tag === "breadcrumb") {
+      data.payload = scrubClientSentryBreadcrumb(data.payload as ScrubbableBreadcrumb, origin) ?? {};
+    } else if (data.tag === "performanceSpan" && typeof data.payload.description === "string") {
+      const crumb = scrubClientSentryBreadcrumb({ category: "fetch", data: { url: data.payload.description } }, origin);
+      data.payload.description = crumb?.data?.url;
+    }
+  }
   if (event.type === META_EVENT && typeof data.href === "string") {
     data.href = scrubNamesFromUrl(data.href);
   } else if (event.type === FULL_SNAPSHOT_EVENT) {
@@ -96,13 +112,15 @@ function cleanEvent(event: unknown): void {
 }
 
 /**
- * rrweb events, cleaned as described above. Edits `events` in place: it is
- * always a recording this module has just parsed.
+ * rrweb events, cleaned as described above. Edits `events` in place (it is
+ * always a recording this module has just parsed), then returns the
+ * credential-scrubbed copy, or `null` when the recording is not in a shape
+ * the credential pass understands.
  */
-export function scrubRecordingEvents(events: unknown): unknown {
-  if (!Array.isArray(events)) return events;
+export function scrubRecordingEvents(events: unknown): unknown[] | null {
+  if (!Array.isArray(events)) return null;
   for (const event of events) cleanEvent(event);
-  return events;
+  return scrubRrwebCredentials(events);
 }
 
 // Sentry compresses a recording as zlib, which is the format the Compression
@@ -130,6 +148,15 @@ async function deflate(text: string): Promise<Uint8Array> {
   );
 }
 
+function recordingHeader(text: string): string {
+  const header: unknown = JSON.parse(text);
+  if (!isRecord(header) || typeof header.segment_id !== "number" ||
+    !Number.isSafeInteger(header.segment_id) || header.segment_id < 0) {
+    throw new Error("Invalid replay segment");
+  }
+  return `${JSON.stringify({ segment_id: header.segment_id })}\n`;
+}
+
 /**
  * One `replay_recording` payload — a JSON header line, then the events,
  * compressed (bytes) or not (text) — with its events scrubbed. `null` when
@@ -142,10 +169,12 @@ export async function filterReplayRecordingPayload(
     if (typeof payload === "string") {
       const newline = payload.indexOf("\n");
       if (newline < 0) return null;
-      const events = JSON.parse(payload.slice(newline + 1));
-      return `${payload.slice(0, newline + 1)}${JSON.stringify(
-        scrubRecordingEvents(events),
-      )}`;
+      const header = recordingHeader(payload.slice(0, newline));
+      const events = scrubRecordingEvents(
+        JSON.parse(payload.slice(newline + 1)),
+      );
+      if (events === null) return null;
+      return `${header}${JSON.stringify(events)}`;
     }
     if (!ArrayBuffer.isView(payload)) return null;
     const bytes = new Uint8Array(
@@ -155,9 +184,12 @@ export async function filterReplayRecordingPayload(
     );
     const newline = bytes.indexOf(0x0a);
     if (newline < 0) return null;
-    const header = bytes.subarray(0, newline + 1);
-    const events = JSON.parse(await inflate(bytes.subarray(newline + 1)));
-    const body = await deflate(JSON.stringify(scrubRecordingEvents(events)));
+    const header = new TextEncoder().encode(recordingHeader(new TextDecoder().decode(bytes.subarray(0, newline))));
+    const events = scrubRecordingEvents(
+      JSON.parse(await inflate(bytes.subarray(newline + 1))),
+    );
+    if (events === null) return null;
+    const body = await deflate(JSON.stringify(events));
     const out = new Uint8Array(header.length + body.length);
     out.set(header);
     out.set(body, header.length);
@@ -170,7 +202,7 @@ export async function filterReplayRecordingPayload(
 type EnvelopeItem = [Record<string, unknown>, unknown];
 type Envelope = [unknown, EnvelopeItem[]];
 
-async function filterEnvelope(envelope: Envelope): Promise<Envelope> {
+export async function filterRecordingEnvelope(envelope: Envelope): Promise<Envelope> {
   const [headers, items] = envelope;
   if (!items.some(([header]) => header?.type === "replay_recording")) {
     return envelope;
@@ -185,7 +217,7 @@ async function filterEnvelope(envelope: Envelope): Promise<Envelope> {
     if (recording === null) continue;
     filtered.push([
       {
-        ...header,
+        type: "replay_recording",
         length:
           typeof recording === "string"
             ? new TextEncoder().encode(recording).length
@@ -195,19 +227,4 @@ async function filterEnvelope(envelope: Envelope): Promise<Envelope> {
     ]);
   }
   return [headers, filtered];
-}
-
-interface TransportLike {
-  send(envelope: never): PromiseLike<unknown>;
-  flush(timeout?: number): PromiseLike<boolean>;
-}
-
-/** A Sentry transport whose replay recordings pass through the filter. */
-export function withRecordingFilter<T extends TransportLike>(transport: T): T {
-  return {
-    ...transport,
-    send: async (envelope: Envelope) =>
-      await transport.send((await filterEnvelope(envelope)) as never),
-    flush: (timeout?: number) => transport.flush(timeout),
-  } as T;
 }

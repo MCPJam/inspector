@@ -42,6 +42,8 @@ const PROXY_TIMEOUT_MS = 60_000;
 const MAX_ARTIFACT_BODY_BYTES = 20 * 1024 * 1024;
 
 const INGEST_SUFFIXES = [
+  "start-run",
+  "pay-iteration",
   "capabilities",
   "runs/evaluations",
   "report",

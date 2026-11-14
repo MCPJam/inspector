@@ -271,7 +271,7 @@ export function JudgeVerdictPanel({
    * `blind` is ASSERTED by this component: it passes `true` only when the
    * judge's band was still hidden at the moment the label was chosen. The
    * backend counts only blind rows toward the agreement rate, so a lie here
-   * would inflate a calibration that gates other people's builds.
+   * would inflate the agreement other people read to judge the judge.
    */
   onReview?: (
     verdict: ReviewerVerdict,

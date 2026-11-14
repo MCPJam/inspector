@@ -15,6 +15,7 @@
  * which is the right place for it: those are decisions, not integrations.
  */
 import { expect, test } from "@playwright/test";
+import { smokeGuestBearer } from "./smoke-guest-setup";
 import { WebSocket } from "ws";
 import sharp from "sharp";
 import os from "node:os";
@@ -31,6 +32,7 @@ import {
 } from "../shared/browserd-frame-stream";
 import { readJpegDimensions } from "../shared/jpeg-dimensions";
 import { startWebMcpFixturePage } from "./fixtures/webmcp-frame-page";
+import { frameStreamNonce } from "./fixtures/frame-stream-auth";
 
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:6274";
 /** The inspector serves its token only to a localhost Origin. */
@@ -100,14 +102,7 @@ function authed(token: string, extra: Record<string, string> = {}) {
  * so a developer with the inspector open re-authorizes it after a local run.
  */
 async function authorizeLocalBrowser(token: string): Promise<void> {
-  const guest = await fetch(`${BASE}/api/web/guest-session`, {
-    method: "POST",
-    headers: { Origin: ORIGIN, "content-type": "application/json" },
-    body: "{}",
-  });
-  guestBearer = guest.ok
-    ? ((await guest.json()) as { token?: string }).token
-    : undefined;
+  guestBearer = await smokeGuestBearer(BASE, ORIGIN);
 
   const granted = await fetch(
     `${BASE}/api/mcp/computers/local-browser/consent/grant`,
@@ -140,19 +135,17 @@ async function command(
 }
 
 /** A frame socket that records what it decodes, with arrival times. */
-function openFrameSocket(token: string, sessionId: string) {
+async function openFrameSocket(token: string, sessionId: string) {
+  const nonce = await frameStreamNonce(token, sessionId, BASE, authed(token));
   const url = `${BASE.replace(
     /^http/,
     "ws",
   )}/api/web/webmcp/sessions/${sessionId}/frames`;
-  const ws = new WebSocket(url, [token], { origin: ORIGIN });
+  const ws = new WebSocket(url, [nonce], { origin: ORIGIN });
   const frames: Array<FrameStreamFrame & { receivedAt: number }> = [];
   const undecodable: number[] = [];
   const controls: Array<Record<string, unknown>> = [];
-  // The same decoder the browser runs. The socket speaks the daemon's record
-  // format directly, so this reads it exactly as `createFrameWireReader` does
-  // — including across message boundaries, which is the property a per-message
-  // adapter could never have checked.
+  // Use the client decoder, including records split across messages.
   const decoder = createFrameStreamDecoder();
   ws.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -396,8 +389,7 @@ test.describe("WebMCP viewport frame stream", () => {
     !LOCAL_TARGET,
     "The WebMCP Inspector is not mounted on a hosted deployment.",
   );
-  // Consent is per machine and the guest lasts a day, so one pass covers the
-  // file. It has to land before the first session start, not inside each test.
+  // Authorize the caller and device before the first session start.
   test.beforeAll(async () => {
     await authorizeLocalBrowser(await sessionToken());
   });
@@ -413,7 +405,7 @@ test.describe("WebMCP viewport frame stream", () => {
     const page = await startWebMcpFixturePage();
     const token = await sessionToken();
     let sessionId: string | undefined;
-    let socket: ReturnType<typeof openFrameSocket> | undefined;
+    let socket: Awaited<ReturnType<typeof openFrameSocket>> | undefined;
 
     try {
       const created = await fetch(`${BASE}/api/mcp/webmcp/sessions`, {
@@ -437,7 +429,7 @@ test.describe("WebMCP viewport frame stream", () => {
       // choice off.
       expect(session.viewportTransport?.kind).toBe("frame-stream");
 
-      socket = openFrameSocket(token, sessionId);
+      socket = await openFrameSocket(token, sessionId);
       await socket.opened;
 
       await command(token, sessionId, {
@@ -525,7 +517,7 @@ test.describe("WebMCP viewport frame stream", () => {
     const fixture = await startWebMcpFixturePage({ variant: "interaction" });
     const token = await sessionToken();
     let sessionId: string | undefined;
-    let socket: ReturnType<typeof openFrameSocket> | undefined;
+    let socket: Awaited<ReturnType<typeof openFrameSocket>> | undefined;
     const samples: Array<{
       transport: string;
       inputToDispatchMs: number;
@@ -536,7 +528,7 @@ test.describe("WebMCP viewport frame stream", () => {
         url: fixture.url,
         display: "in-app",
       }));
-      socket = openFrameSocket(token, sessionId);
+      socket = await openFrameSocket(token, sessionId);
       await socket.opened;
       await expect
         .poll(() => socket!.controls.some((c) => c.type === "capabilities"))
@@ -658,7 +650,7 @@ test.describe("WebMCP viewport frame stream", () => {
     const page = await startWebMcpFixturePage();
     const token = await sessionToken();
     let sessionId: string | undefined;
-    let socket: ReturnType<typeof openFrameSocket> | undefined;
+    let socket: Awaited<ReturnType<typeof openFrameSocket>> | undefined;
 
     try {
       const created = await fetch(`${BASE}/api/mcp/webmcp/sessions`, {
@@ -674,7 +666,7 @@ test.describe("WebMCP viewport frame stream", () => {
       expect(created.status).toBe(201);
       sessionId = session.sessionId!;
 
-      socket = openFrameSocket(token, sessionId);
+      socket = await openFrameSocket(token, sessionId);
       await socket.opened;
       await command(token, sessionId, {
         type: "set_screencast",
@@ -762,7 +754,7 @@ test.describe("WebMCP viewport frame stream", () => {
     const page = await startWebMcpFixturePage({ variant: "static" });
     const token = await sessionToken();
     let sessionId: string | undefined;
-    let socket: ReturnType<typeof openFrameSocket> | undefined;
+    let socket: Awaited<ReturnType<typeof openFrameSocket>> | undefined;
 
     try {
       const session = await openSession(token, {
@@ -770,7 +762,7 @@ test.describe("WebMCP viewport frame stream", () => {
         display: "in-app",
       });
       sessionId = session.sessionId;
-      socket = openFrameSocket(token, sessionId);
+      socket = await openFrameSocket(token, sessionId);
       await socket.opened;
       await command(token, sessionId, {
         type: "set_screencast",
@@ -821,7 +813,7 @@ test.describe("WebMCP viewport frame stream", () => {
     const page = await startWebMcpFixturePage();
     const token = await sessionToken();
     let sessionId: string | undefined;
-    let socket: ReturnType<typeof openFrameSocket> | undefined;
+    let socket: Awaited<ReturnType<typeof openFrameSocket>> | undefined;
 
     try {
       const session = await openSession(token, {
@@ -830,7 +822,7 @@ test.describe("WebMCP viewport frame stream", () => {
         devicePixelRatio: 2,
       });
       sessionId = session.sessionId;
-      socket = openFrameSocket(token, sessionId);
+      socket = await openFrameSocket(token, sessionId);
       await socket.opened;
       await command(token, sessionId, {
         type: "set_screencast",
@@ -908,7 +900,7 @@ test.describe("WebMCP viewport frame stream", () => {
     const page = await startWebMcpFixturePage({ variant: "busy" });
     const token = await sessionToken();
     let sessionId: string | undefined;
-    let socket: ReturnType<typeof openFrameSocket> | undefined;
+    let socket: Awaited<ReturnType<typeof openFrameSocket>> | undefined;
     let paused = false;
 
     try {
@@ -917,7 +909,7 @@ test.describe("WebMCP viewport frame stream", () => {
         display: "in-app",
       });
       sessionId = session.sessionId;
-      socket = openFrameSocket(token, sessionId);
+      socket = await openFrameSocket(token, sessionId);
       await socket.opened;
       await command(token, sessionId, {
         type: "set_screencast",
@@ -996,16 +988,16 @@ test.describe("WebMCP viewport frame stream", () => {
         /^http/,
         "ws",
       )}/api/web/webmcp/sessions/${sessionId}/frames`;
-      // The token IS the auth on this route: it is reachable without the
-      // session-auth middleware, so a wrong token has to be refused here.
+      // A wrong nonce and the ambient local credential cannot open the stream.
       expect(
         await closed(new WebSocket(url, ["not-the-token"], { origin: ORIGIN })),
       ).toBe(4401);
-      // Browsers always send an Origin on a handshake; a client without one has
-      // no business opening this.
-      expect(await closed(new WebSocket(url, [token]))).toBe(4401);
-      // A session that does not exist is 4404, which the client's ladder reads
-      // as terminal rather than retryable.
+      expect(await closed(new WebSocket(url, [token], { origin: ORIGIN }))).toBe(4401);
+      const nonce = await frameStreamNonce(token, sessionId, BASE, authed(token));
+      // A valid nonce still requires the inspector Origin.
+      expect(await closed(new WebSocket(url, [nonce]))).toBe(4401);
+      // A valid fresh nonce aimed at a missing session is terminal.
+      const missingNonce = await frameStreamNonce(token, sessionId, BASE, authed(token));
       expect(
         await closed(
           new WebSocket(
@@ -1013,7 +1005,7 @@ test.describe("WebMCP viewport frame stream", () => {
               /^http/,
               "ws",
             )}/api/web/webmcp/sessions/nope/frames`,
-            [token],
+            [missingNonce],
             { origin: ORIGIN },
           ),
         ),

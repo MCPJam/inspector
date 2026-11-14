@@ -36,25 +36,22 @@ describe("parseInsufficientScopeChallenge (SEP-2350)", () => {
     });
   });
 
-  it("keeps only string fields and drops the rest", () => {
+  it("rejects a challenge with malformed fields", () => {
     expect(
       parseInsufficientScopeChallenge({
         requiredScope: "read",
         resourceMetadataUrl: 42,
         errorDescription: null,
       }),
-    ).toEqual({
-      requiredScope: "read",
-      resourceMetadataUrl: undefined,
-      errorDescription: undefined,
-    });
+    ).toBeUndefined();
   });
 
-  it("returns undefined when no challenge field is a string", () => {
-    expect(parseInsufficientScopeChallenge({ requiredScope: 1 })).toBeUndefined();
+  it("rejects malformed input while preserving a valid bare challenge", () => {
     expect(parseInsufficientScopeChallenge(undefined)).toBeUndefined();
     expect(parseInsufficientScopeChallenge("nope")).toBeUndefined();
-    expect(parseInsufficientScopeChallenge({})).toBeUndefined();
+    // A bare insufficient_scope is still a challenge.
+    expect(parseInsufficientScopeChallenge({})).toEqual({});
+    expect(parseInsufficientScopeChallenge({ requiredScope: 1 })).toBeUndefined();
   });
 });
 
