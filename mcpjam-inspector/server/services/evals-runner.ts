@@ -67,9 +67,14 @@ import { classifyEvalInfraError } from "./evals/infra-error-classification";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import {
   byokEndpointOwnership,
+  httpStatusOrUndefined,
   type InfraFailureEvidence,
   type ModelEndpointOwnership,
 } from "../utils/infra-failure-evidence.js";
+import {
+  HarnessInfraSetupError,
+  harnessFailureEvidenceOf,
+} from "../utils/harness/harness-provider-error.js";
 import {
   buildLocalStepHandlers,
   buildHostedStepHandlers,
@@ -2025,6 +2030,8 @@ async function persistSetupFailedIteration(args: {
   setupSignals?: StageSetupSignals;
   setupSpans?: EvalTraceSpan[];
   setupAudit?: Record<string, unknown>;
+  /** A refused setup step's code, for the run view (`{"code": …}`). */
+  errorDetails?: string;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
 }): Promise<void> {
@@ -2041,6 +2048,7 @@ async function persistSetupFailedIteration(args: {
     status: "setup_failed" as const,
     startedAt: args.runStartedAt,
     error: args.errorMessage,
+    ...(args.errorDetails ? { errorDetails: args.errorDetails } : {}),
     resultSource: "reported" as const,
     metadata: {
       ...args.iterationMetadataBase,
@@ -6935,7 +6943,17 @@ const runHostedIterationWithBrowser = async (
       });
       if (!acquired.ok) {
         const refusal = acquired.refusal;
-        const error = new Error(describeEvalSandboxRefusal(refusal));
+        // Typed, as a harness setup step's failure is everywhere else, so the
+        // backend's code (the native harness trial's) reaches the setup row.
+        const httpStatus = httpStatusOrUndefined(refusal.status);
+        const error = new HarnessInfraSetupError(
+          describeEvalSandboxRefusal(refusal),
+          {
+            source: "sandbox_setup",
+            ...(refusal.code ? { code: refusal.code } : {}),
+            ...(httpStatus !== undefined ? { httpStatus } : {}),
+          },
+        );
         if (refusal.status === 503 && refusal.code === "at_capacity") {
           iterationMetadataBase.timeout = {
             clock: "sandboxCapacity",
@@ -7107,6 +7125,7 @@ const runHostedIterationWithBrowser = async (
       throw abortSignal?.reason ?? error;
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const setupCode = harnessFailureEvidenceOf(error)?.code;
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
     if (toolDescriptionOverride) {
       stampDescriptionExperiment(
@@ -7119,6 +7138,9 @@ const runHostedIterationWithBrowser = async (
       iterationId,
       runStartedAt,
       errorMessage,
+      // The run view reads a refusal's code here, beside a sentence that
+      // carries none (`notifyMCPJamLimitError`).
+      ...(setupCode ? { errorDetails: JSON.stringify({ code: setupCode }) } : {}),
       iterationMetadataBase,
       // Same authored-case inputs the success path builds further down; this
       // runner is never reached by a model-free case.

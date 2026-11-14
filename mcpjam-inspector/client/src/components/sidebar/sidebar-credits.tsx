@@ -21,6 +21,13 @@ import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import {
+  NATIVE_HARNESS_TURNS_TOOLTIP,
+  nativeHarnessTurnsLeftPercent,
+  nativeHarnessTurnsLeftText,
+  useNativeHarnessTrial,
+} from "@/hooks/use-native-harness-trial";
+import { useNativeHarnessEnabled } from "@/hooks/useNativeHarnessEnabled";
+import {
   isPaidPlan,
   useOrganizationBillingStatus,
 } from "@/hooks/useOrganizationBilling";
@@ -67,6 +74,10 @@ export function SidebarCredits({
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({ organizationId });
   const sponsoredAllowance = useSwarmSponsorshipAllowance();
+  const nativeHarnessEnabled = useNativeHarnessEnabled();
+  const nativeTrial = useNativeHarnessTrial(
+    nativeHarnessEnabled ? organizationId : null,
+  );
 
   // Settled with nothing to show. Rendering the row anyway leaves a permanent
   // "See credits" whose card is a blank number over an empty bar, which reads
@@ -273,6 +284,18 @@ export function SidebarCredits({
                   isLoading={false}
                   testId="sidebar-usage-swarm-sponsored"
                   tooltip="Swarm conversations MCPJam pays for before your organization's credits are used. Which ones qualify depends on the model and environment, and sponsored capacity can run out."
+                />
+              ) : null}
+
+              {nativeTrial ? (
+                <SidebarUsageRow
+                  label="Native harness turns"
+                  percentText={nativeHarnessTurnsLeftText(nativeTrial)}
+                  helperText={null}
+                  fillPercent={nativeHarnessTurnsLeftPercent(nativeTrial)}
+                  isLoading={false}
+                  testId="sidebar-usage-native-harness-turns"
+                  tooltip={NATIVE_HARNESS_TURNS_TOOLTIP}
                 />
               ) : null}
             </div>

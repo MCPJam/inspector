@@ -70,6 +70,7 @@ vi.mock("../../../utils/org-model-config.js", async () => {
 });
 
 import { drainAssistantTurn } from "../runner.js";
+import type { RunAssistantTurnOptions } from "../../../utils/assistant-turn.js";
 import {
   harnessReasoningEffortRefusalReason,
   turnReasoningEffortOf,
@@ -802,6 +803,43 @@ describe("drainAssistantTurn — engine error surfacing", () => {
         baseArgs() as Parameters<typeof drainAssistantTurn>[0],
       ),
     ).rejects.toThrow(/spend cap.*spend_cap_exceeded.*HTTP 429/i);
+  });
+
+  it("names a harness turn's code, which it reports as infra evidence", async () => {
+    // `runHarnessTurn` reports the lease's refusal under `infra`, not as a
+    // top-level code; the "(code, HTTP status)" suffix is what the swarm
+    // runner stops the whole run on.
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    runAssistantTurnMock.mockImplementation(
+      async (opts: RunAssistantTurnOptions) => {
+        opts.onEngineError?.({
+          message:
+            "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+          rawText: "{}",
+          promptIndex: 0,
+          phase: "setup",
+          infra: {
+            source: "platform_setup",
+            code: "native_harness_trial_exhausted",
+            httpStatus: 403,
+          },
+        });
+        return {
+          messages: opts.messages,
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+        };
+      },
+    );
+
+    await expect(
+      drainAssistantTurn(
+        baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow(
+      "free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness. (native_harness_trial_exhausted, HTTP 403)",
+    );
   });
 
   it("throws when the hosted engine returns no turnTrace even WITHOUT a captured engine error", async () => {

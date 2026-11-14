@@ -1,4 +1,5 @@
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useNativeHarnessLimitDialogStore } from "@/stores/native-harness-limit-dialog-store";
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -294,6 +295,116 @@ it("opens the credit wall for a live iteration failure once and preserves comple
   iterations = [...iterations];
   rerender();
   expect(store.getState().isOpen).toBe(false);
+});
+
+it("opens the native harness dialog for a run refused by the used-up trial", () => {
+  useNativeHarnessLimitDialogStore.setState({
+    notice: null,
+    notifiedKeys: new Set(),
+  });
+  useMCPJamLimitDialogStore.setState({
+    authStatus: "signedIn",
+    isOpen: false,
+    notifiedKeys: new Set(),
+  });
+  mocks.usePaginatedQuery.mockImplementation(() => ({
+    results: [{ _id: "live-eval", status: "running" }],
+    status: "Exhausted",
+    loadMore: mocks.loadMore,
+  }));
+  mocks.useQuery.mockImplementation((query: string) => {
+    if (query === "testSuites:getAllTestCasesAndIterationsBySuite") {
+      return {
+        testCases: [],
+        iterations: [
+          {
+            _id: "refused",
+            suiteRunId: "live-eval",
+            status: "failed",
+            // The backend's sentence carries no code; the classification does.
+            error:
+              "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+            infraError: {
+              class: "account_limit",
+              layer: "platform",
+              retryable: false,
+              code: "native_harness_trial_exhausted",
+            },
+          },
+        ],
+      };
+    }
+    return [];
+  });
+
+  renderHook(() =>
+    useEvalQueries({
+      isAuthenticated: true,
+      selectedSuiteId: "suite",
+      deletingSuiteId: null,
+      projectId: "project",
+      organizationId: "org",
+    }),
+  );
+
+  expect(useNativeHarnessLimitDialogStore.getState().notice).toEqual({
+    organizationId: "org",
+  });
+  expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+});
+
+// The runner's setup row for a box the trial refused: the sentence is the
+// error, and the code rides in errorDetails.
+it("opens the native harness dialog for a case whose sandbox the trial refused", () => {
+  useNativeHarnessLimitDialogStore.setState({
+    notice: null,
+    notifiedKeys: new Set(),
+  });
+  useMCPJamLimitDialogStore.setState({
+    authStatus: "signedIn",
+    isOpen: false,
+    notifiedKeys: new Set(),
+  });
+  mocks.usePaginatedQuery.mockImplementation(() => ({
+    results: [{ _id: "live-eval", status: "running" }],
+    status: "Exhausted",
+    loadMore: mocks.loadMore,
+  }));
+  mocks.useQuery.mockImplementation((query: string) => {
+    if (query === "testSuites:getAllTestCasesAndIterationsBySuite") {
+      return {
+        testCases: [],
+        iterations: [
+          {
+            _id: "setup-refused",
+            suiteRunId: "live-eval",
+            status: "setup_failed",
+            error:
+              "Could not provision the eval's reproducible sandbox: This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+            errorDetails: JSON.stringify({
+              code: "native_harness_trial_exhausted",
+            }),
+          },
+        ],
+      };
+    }
+    return [];
+  });
+
+  renderHook(() =>
+    useEvalQueries({
+      isAuthenticated: true,
+      selectedSuiteId: "suite",
+      deletingSuiteId: null,
+      projectId: "project",
+      organizationId: "org",
+    }),
+  );
+
+  expect(useNativeHarnessLimitDialogStore.getState().notice).toEqual({
+    organizationId: "org",
+  });
+  expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
 });
 
 it("loads twenty more rows and resets the subscription on suite switching", () => {

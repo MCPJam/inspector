@@ -635,9 +635,13 @@ export function humanizeSwarmAttemptErrorMessage(
  * the same user; and `agent_billing_rejected` means the attestation did not
  * hold, which is a property of the deployment, not of one host. Burning the
  * run's remaining targets against any of them buys nothing.
+ *
+ * `native_harness_trial_exhausted` is the Free organization's native harness
+ * trial, used up: only an upgrade or switching clients to MCPJam Harness lifts
+ * it, and neither happens mid-run.
  */
 const ACCOUNT_LIMIT_CODE =
-  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|account_suspended|guest_model_not_allowed|guest_input_too_large|platform_capacity|agent_turn_limit|agent_billing_rejected)\b/i;
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|free_tier_model_restricted|spend_cap_exceeded|platform_free_budget_exhausted|account_suspended|guest_model_not_allowed|guest_input_too_large|platform_capacity|agent_turn_limit|agent_billing_rejected|native_harness_trial_exhausted)\b/i;
 
 /**
  * True when a rate-limited attempt was stopped by MCPJam's account-wide limit

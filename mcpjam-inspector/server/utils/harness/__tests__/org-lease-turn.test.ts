@@ -130,6 +130,37 @@ describe("OrgLeaseTurn on MCPJam's key", () => {
   });
 });
 
+describe("a reservation refused for the native harness trial", () => {
+  it("keeps the trial's code on MCPJam's key too, so every surface can say what to do", async () => {
+    // Cursor's `/reserve` charges the trial and refuses with 403 once it is
+    // used up; the code is what the Playground, evals and swarms read.
+    broker.reserveHarnessBox.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error:
+        "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+      code: "native_harness_trial_exhausted",
+    });
+    const error = await turn()
+      .reserve({
+        box: BOX,
+        harnessId: "cursor",
+        modelId: "cursor/auto",
+        runId: "r",
+        bearer: "b",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(HarnessInfraSetupError);
+    expect(error).toMatchObject({
+      evidence: {
+        source: "sandbox_setup",
+        code: "native_harness_trial_exhausted",
+        httpStatus: 403,
+      },
+    });
+  });
+});
+
 describe("OrgLeaseTurn on the organization's key", () => {
   it("runs the selection's canonical id and fingerprints the connection", () => {
     const org = turn(ORG_SELECTION);

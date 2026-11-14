@@ -1,4 +1,5 @@
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "@/shared/native-harness-trial";
 import { useEffect, useMemo, useRef } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
@@ -185,6 +186,12 @@ export function useEvalQueries({
         message: iteration.error,
         details: iteration.errorDetails,
         organizationId: organizationId ?? undefined,
+        // A harness turn keeps the backend's sentence as its error and the
+        // trial's code only in its classification. Only that code is passed:
+        // the others have always been read from the error itself.
+        ...(iteration.infraError?.code === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE
+          ? { code: NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE }
+          : {}),
       });
     }
   }, [suiteRuns, limitErrorIterations, organizationId]);

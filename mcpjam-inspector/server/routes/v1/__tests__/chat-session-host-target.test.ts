@@ -161,6 +161,7 @@ vi.mock("../../../services/environments/skills-delivered-event.js", () => ({
 }));
 
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
+import { MCPJAM_HOSTED_ORIGIN } from "../../../config.js";
 import { harnessSurfaceRefusal } from "@/shared/harness-descriptors";
 import { harnessUsesExternalAccount } from "../../../utils/harness/registry.js";
 import chatSessions from "../chat-sessions.js";
@@ -679,6 +680,91 @@ describe("a refused box provision", () => {
     });
     expect(response.headers.get("retry-after")).toBe("3");
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a native turn the organization's trial no longer covers", () => {
+  const SENTENCE =
+    "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.";
+  /** As an API key bound to `org_1` reaches the route. */
+  function turnAsOrganization(body: Record<string, unknown>) {
+    const app = new Hono();
+    app.onError(v1OnError);
+    app.use(async (c, next) => {
+      c.set("mcpjamOrganizationId", "org_1");
+      await next();
+    });
+    app.route("/api/v1", chatSessions);
+    return app.request("/api/v1/chat-sessions/messages", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+    });
+  }
+  const forbiddenWithBillingPage = async (response: Response) => {
+    const body = await response.json();
+    expect(response.status).toBe(403);
+    expect(body).toEqual({
+      code: "FORBIDDEN",
+      message: SENTENCE,
+      details: {
+        reason: "native_harness_trial_exhausted",
+        upgradeUrl: `${MCPJAM_HOSTED_ORIGIN}/organizations/org_1/billing`,
+      },
+    });
+  };
+
+  beforeEach(() => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+  });
+
+  it("refuses before the computer boots with FORBIDDEN and the billing page", async () => {
+    acquirePlaygroundHarnessBoxMock.mockResolvedValue({
+      ok: false,
+      refusal: {
+        status: 409,
+        error: SENTENCE,
+        code: "native_harness_trial_exhausted",
+      },
+    });
+
+    await forbiddenWithBillingPage(
+      await turnAsOrganization(firstTurn({ environmentId: ENVIRONMENT })),
+    );
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("answers a lease the trial refused the same way", async () => {
+    runUnifiedAssistantTurnMock.mockImplementation(
+      async (args: {
+        onEngineError: (event: {
+          message: string;
+          infra?: { source: string; code?: string; httpStatus?: number };
+        }) => void;
+      }) => {
+        args.onEngineError({
+          message: SENTENCE,
+          infra: {
+            source: "platform_setup",
+            code: "native_harness_trial_exhausted",
+            httpStatus: 403,
+          },
+        });
+        return {
+          messages: [],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+          aborted: false,
+        };
+      },
+    );
+
+    await forbiddenWithBillingPage(
+      await turnAsOrganization(firstTurn({ environmentId: ENVIRONMENT })),
+    );
   });
 });
 
