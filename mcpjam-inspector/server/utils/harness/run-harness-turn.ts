@@ -126,10 +126,12 @@ import type { HarnessV1PermissionMode, HarnessV1NetworkSandboxSession } from "@a
 import { destroySuspendedBridge, forceDestroySessionBridge } from "./destroy-suspended-bridge.js";
 import {
   revokeHarnessModelBroker,
-  releaseHarnessBoxReservation,
-  renewHarnessBoxReservation,
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
+import {
+  releaseHarnessBoxReservation,
+  renewHarnessBoxReservation,
+} from "./harness-box-reservation.js";
 import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
@@ -190,6 +192,7 @@ import {
   harnessBootstrapObservation,
   harnessBootstrapOutcome,
   logHarnessBootstrapOnFailure,
+  watchNewBoxForStaleBake,
 } from "./harness-bake-observer.js";
 import { HarnessTurnRecord } from "./harness-turn-event.js";
 import type { PreparedLocalHarnessTurn } from "./local/local-turn.js";
@@ -2615,6 +2618,12 @@ export async function runHarnessTurn(
                 : {}),
             });
       if (localPrepared === null) bakeObservedSandbox = sandbox;
+      // A conversation's first turn (no commit on its lane yet) runs on the
+      // box just provisioned for it, so a bake miss there says the template
+      // new boxes boot is stale. Later turns' boxes may predate that template.
+      if (harnessSandboxBinding && continuity?.stateVersion === 0) {
+        watchNewBoxForStaleBake(sandbox, harnessAdapter.id);
+      }
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own

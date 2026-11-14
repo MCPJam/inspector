@@ -188,6 +188,7 @@ import {
 } from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { authFetch } from "@/lib/session-token";
+import type { HarnessBoxPreparationRequest } from "@/hooks/use-harness-box-preparation";
 import {
   classifyScenarioAccessResponse,
   patchBodyAccessVersion,
@@ -735,6 +736,8 @@ export interface SetSelectedModelOptions {
 
 export interface UseChatSessionReturn {
   harnessStartupPhase: HarnessStartupPhase | null;
+  /** A new hosted Claude Code or Codex chat whose computer can be set up early. */
+  harnessBoxPreparation: HarnessBoxPreparationRequest | null;
   /**
    * Elicitation requests whose tool call is blocked on this user right now.
    * Turn-scoped: they arrive as transient stream parts and are dropped when the
@@ -6931,7 +6934,37 @@ export function useChatSession(
       harnessStartupRequestRef.current = null;
   }, [chatSessionId]);
 
+  // What the Send would run against (`buildHostedBody`), for a hosted chat on
+  // a client or an environment. A plugin chat's hidden environment is left out.
+  const harnessBoxPreparation: HarnessBoxPreparationRequest | null =
+    HOSTED_MODE && isAuthenticated && hostedProjectId && !hostedScenarioId &&
+    (harnessId === "claude-code" || harnessId === "codex") &&
+    messages.length === 0 && !options.comparePane && !hiddenEnvironmentActive &&
+    (hostedExecutionTarget || hostedHostId)
+      ? {
+          chatSessionId,
+          body: {
+            projectId: hostedProjectId,
+            chatSessionId,
+            selectedServerIds: hostedSelectedServerIds,
+            model: selectedModel,
+            ...(requestChoice.kind === "picked"
+              ? { modelSelection: requestChoice.selection }
+              : {}),
+            ...(hostedExecutionTarget
+              ? {
+                  executionTarget: hostedExecutionTarget,
+                  ...(hostedEnvironmentId && hostedEnvironmentOverrides
+                    ? { environmentOverrides: hostedEnvironmentOverrides }
+                    : {}),
+                }
+              : { hostId: hostedHostId }),
+          },
+        }
+      : null;
+
   return {
+    harnessBoxPreparation,
     harnessStartupPhase: status === "submitted" || status === "streaming" ? harnessStartupPhase : null,
     // Chat state
     messages,

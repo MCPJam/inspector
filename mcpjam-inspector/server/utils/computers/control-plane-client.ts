@@ -728,6 +728,12 @@ export interface PlaygroundTerminalSandbox {
   /** Working directory the box starts in (backend-resolved). */
   workdir?: string;
   /**
+   * The Send's provision only: this call took a box prepared before Send
+   * that no turn had used (`prepare-conversation-box.ts`). The backend says
+   * it once, on the call that takes the box; an older one never says it.
+   */
+  prepared?: true;
+  /**
    * How long the box may go unused before the backend pauses it. The backend
    * owns the value and sends it in reserve and touch replies; the Inspector
    * keeps no copy, so changing it needs no Inspector release.
@@ -807,7 +813,14 @@ export async function provisionPlaygroundTerminalSandbox(args: {
       ...(args.signal ? { signal: args.signal } : {}),
     },
   );
-  if (outcome.kind === "settled") return keepSaneIdleWindow(outcome.result);
+  if (outcome.kind === "settled") {
+    const result = keepSaneIdleWindow(outcome.result);
+    // Only `true` says the box was prepared before Send.
+    if (result.ok && result.value && result.value.prepared !== true) {
+      delete result.value.prepared;
+    }
+    return result;
+  }
   if (outcome.reason === "aborted") {
     return { ok: false, status: 499, error: "cancelled" };
   }
@@ -815,6 +828,40 @@ export async function provisionPlaygroundTerminalSandbox(args: {
     return outOfTime({ retryAfterMs: outcome.plannedDelayMs });
   }
   return outOfTime();
+}
+
+/** What a preparation's provision answers: its new box, or why it booted none. */
+export type PreparedPlaygroundTerminal =
+  | ({ outcome: "prepared" } & PlaygroundTerminalSandbox)
+  | { outcome: "skipped"; reason: string };
+
+/**
+ * Boot a new Playground conversation's box before its first message, on the
+ * preparation's own route (a backend without it answers 404). One attempt,
+ * never retried: a preparation that cannot boot a box now is skipped, and the
+ * Send boots one as before.
+ */
+export async function preparePlaygroundTerminalSandbox(args: {
+  bearer: string;
+  projectId: string;
+  chatSessionId: string;
+  projectEnvironmentId?: string;
+  harness: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<PreparedPlaygroundTerminal>> {
+  return postJson<PreparedPlaygroundTerminal>(
+    "/playground/sandbox/terminal/prepare",
+    bearerHeader(args.bearer),
+    {
+      projectId: args.projectId,
+      chatSessionId: args.chatSessionId,
+      ...(args.projectEnvironmentId
+        ? { projectEnvironmentId: args.projectEnvironmentId }
+        : {}),
+      harness: args.harness,
+    },
+    args.signal,
+  );
 }
 
 /**

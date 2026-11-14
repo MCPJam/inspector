@@ -83,10 +83,13 @@ function startSession(args: {
   resetReason?: HarnessResetReason;
   warm?: WarmAttachOutcome;
   kept?: KeptRuntimeOutcome;
+  /** The route's acquisition took a box prepared before Send. */
+  prepared?: boolean;
   surface?: "web" | "api";
   local?: boolean;
 }) {
-  const { sink, turn } = setup(args);
+  const { sink, timing, turn } = setup(args);
+  if (args.prepared) timing.markBoxPrepared();
   turn.mark("start");
   turn.claimed(args.stateVersion ?? 1);
   turn.mark("box");
@@ -312,6 +315,24 @@ describe("harness_turn_completed: closed vocabularies", () => {
 
   it.each<[string, Parameters<typeof startSession>[0], string, string]>([
     ["a first session", {}, "new", "none"],
+    [
+      "a first session on a box prepared before Send",
+      { stateVersion: 0, prepared: true },
+      "prepared",
+      "none",
+    ],
+    [
+      "saved files on a box once prepared",
+      { resumed: true, prepared: true },
+      "disk_resume",
+      "none",
+    ],
+    [
+      "a local session, whatever its recorder holds",
+      { local: true, prepared: true },
+      "new",
+      "none",
+    ],
     ["saved files", { resumed: true }, "disk_resume", "none"],
     ["a warm re-attach", { resumed: true, warm: "attached" }, "warm", "none"],
     [
@@ -480,12 +501,15 @@ describe("harness_turn_completed: closed vocabularies", () => {
       ...HARNESS_TURN_DURATIONS,
     ]);
     const seen = new Map<string, Set<unknown>>();
-    // A hosted turn's warm attach, or a local turn's kept runtime.
+    // A hosted turn's warm attach or prepared box, or a local turn's kept
+    // runtime.
     const reuses: Array<{
       warm?: WarmAttachOutcome;
       kept?: KeptRuntimeOutcome;
+      prepared?: boolean;
     }> = [
       {},
+      { prepared: true },
       ...(
         ["attached", "probe_refused", "attach_failed", "attach_timeout"] as const
       ).map((warm) => ({ warm })),

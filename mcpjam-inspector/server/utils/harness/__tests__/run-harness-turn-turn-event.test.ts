@@ -119,12 +119,27 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
+  })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+}));
+
+// An external-account runtime's turn asks whether the organization's key is
+// ready, then holds its box's reservation for the whole turn.
+vi.mock("../../computers/control-plane-client.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../computers/control-plane-client.js")
+  >()),
+  getHarnessCredentialReadiness: vi.fn(async () => ({
+    ok: true,
+    value: { readiness: "ready", modelAvailable: true },
   })),
 }));
 
@@ -139,6 +154,10 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 });
 
 import { runHarnessTurn } from "../run-harness-turn";
+import {
+  releaseHarnessBoxReservation,
+  reserveHarnessBox,
+} from "../harness-box-reservation.js";
 import { admitWarmChatManager } from "../warm-approval-binding.js";
 import {
   withWarmBridgeRuntime,
@@ -330,6 +349,26 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     });
   });
 
+  it("reports a first message on a box prepared before Send as a prepared start", async () => {
+    harnessState.claim = {
+      stateVersion: 0,
+      fingerprintChanged: false,
+      state: null,
+    };
+    const { sink, options } = turn();
+    const timing = new TurnTiming({
+      harnessTurnEvent: sink as HarnessTurnEventSink,
+    });
+    // The route's acquisition took a box prepared before Send.
+    timing.markBoxPrepared();
+    await runToClose({ ...options, turnTiming: timing });
+    expect(onlyEvent(sink)).toMatchObject({
+      kind: "first",
+      start: "prepared",
+      fallback_reason: "none",
+    });
+  });
+
   it.each([
     [
       "a changed runtime",
@@ -422,6 +461,20 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     // The turn failed: its error reached the caller.
     expect(onEngineError).toHaveBeenCalledTimes(1);
     expect(onlyEvent(sink)).toMatchObject({ outcome: "failed" });
+  });
+
+  it("sends one event for a turn that holds its box's reservation, and hands the box back", async () => {
+    harnessState.adapter = {
+      modelAccess: "external-account",
+      externalAccountCredentialEnv: ["CURSOR_API_KEY"],
+    };
+    vi.mocked(reserveHarnessBox).mockClear();
+    vi.mocked(releaseHarnessBoxReservation).mockClear();
+    const { sink, options } = turn();
+    await runToClose(options);
+    expect(reserveHarnessBox).toHaveBeenCalledTimes(1);
+    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    expect(onlyEvent(sink)).toMatchObject({ outcome: "completed" });
   });
 
   it("sends one event for a stopped turn", async () => {
