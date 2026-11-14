@@ -88,6 +88,8 @@ const answerValue = z.union([z.string(), z.number(), z.boolean(), z.null()])
   .or(z.array(z.string()))
   .or(z.array(z.record(z.string(), z.string())));
 
+const checkIds = z.array(z.string().trim().min(1).max(120)).max(200);
+
 const updateSchema = z.strictObject({
   expectedRevision: z.number().int().min(1),
   /** `null` removes the answer. */
@@ -101,6 +103,11 @@ const updateSchema = z.strictObject({
     .optional(),
   /** Which attempt at the directory this rehearses. `null` clears it. */
   attempt: z.number().int().min(1).nullable().optional(),
+  /** Which checks fail a run. The backend checks the ids; `null` clears it. */
+  checkGate: z
+    .strictObject({ failOn: checkIds.optional(), warnOnly: checkIds.optional() })
+    .nullable()
+    .optional(),
   idempotencyKey,
 });
 
@@ -322,6 +329,7 @@ directorySubmissions.patch(ONE, async (c) => {
       expectedRevision: body.expectedRevision,
       ...change,
       ...subjectChange(body),
+      ...(body.checkGate !== undefined ? { checkGate: body.checkGate } : {}),
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(label ? { actorLabel: label } : {}),
       setVia: writeChannel(c),
@@ -427,6 +435,8 @@ directorySubmissions.get(`${ONE}/results`, async (c) => {
     run: results.run ? toReadinessRunDto(results.run, { projectId, reportUrl }) : null,
     steps,
     counts: sumCounts(steps),
+    // Read with the results, so a caller judges them under the gate as it is.
+    checkGate: row.checkGate ?? null,
   });
 });
 

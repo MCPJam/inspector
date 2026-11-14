@@ -58,6 +58,7 @@ describe("directory submission client methods", () => {
       expectedRevision: 3,
       answers: { "listing.name": "Acme", "listing.retired": null },
       confirm: ["useCases.access"],
+      checkGate: { warnOnly: ["claude.submission.listing-fields"] },
     });
     await client.deleteDirectorySubmission(SCOPE);
     await client.startDirectorySubmissionRun({
@@ -87,6 +88,7 @@ describe("directory submission client methods", () => {
       expectedRevision: 3,
       answers: { "listing.name": "Acme", "listing.retired": null },
       confirm: ["useCases.access"],
+      checkGate: { warnOnly: ["claude.submission.listing-fields"] },
     });
     expect(requests[7]!.body).toEqual({ includeLlmObservations: true });
     expect(requests[8]!.query).toEqual({ runId: "run-1" });

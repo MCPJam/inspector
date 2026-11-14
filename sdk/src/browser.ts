@@ -96,6 +96,15 @@ export type {
  * lists its exports by name and is pure data and functions by contract.
  */
 export * from "./directory-readiness/flows/index.js";
+/** The decision scan, for the same reason: its barrel is pure by contract. */
+export * from "./directory-readiness/decisions/index.js";
+
+/**
+ * Directory test plans, so a page can draft, edit and check a plan and show
+ * per-tool outcomes as the API does. A wildcard: the barrel is pure by
+ * contract and its modules export only public names.
+ */
+export * from "./directory-readiness/test-plan/index.js";
 
 export {
   CLAUDE_OBSERVATION_IDS,

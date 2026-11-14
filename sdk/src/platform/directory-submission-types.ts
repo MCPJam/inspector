@@ -10,6 +10,7 @@ import type {
   DirectoryFieldIssue,
   PlacedStep,
 } from "../directory-readiness/flows/types.js";
+import type { DirectoryCheckGate } from "../directory-readiness/flows/verdict.js";
 import type { PlatformReadinessRun } from "./types.js";
 
 export interface PlatformDirectoryFlowSummary {
@@ -43,6 +44,8 @@ export interface PlatformDirectorySubmission {
   pluginVersionId?: string;
   /** Which attempt at the directory this rehearses: 1, then one per resubmission. */
   attempt?: number;
+  /** Which checks fail a run. Absent: the directory's blocking checks. */
+  checkGate?: DirectoryCheckGate;
   createdAt: number;
   updatedAt: number;
 }
@@ -78,6 +81,8 @@ export interface PlatformDirectorySubmissionResults {
   run: PlatformReadinessRun | null;
   steps: PlacedStep[];
   counts: PlatformDirectorySubmissionCounts;
+  /** The submission's gate now, to judge the run by. Older servers omit it. */
+  checkGate?: DirectoryCheckGate | null;
 }
 
 export interface PlatformDirectorySubmissionCreateBody {
@@ -99,6 +104,8 @@ export interface PlatformDirectorySubmissionUpdateBody {
   plugin?: PlatformDirectorySubmissionPlugin | null;
   /** `null` clears it. */
   attempt?: number | null;
+  /** Replaces the gate, guarded like an answer. `null` restores the default. */
+  checkGate?: DirectoryCheckGate | null;
   idempotencyKey?: string;
 }
 

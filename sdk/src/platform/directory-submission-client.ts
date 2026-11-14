@@ -83,7 +83,7 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
     options?: RequestOptions
   ): View {
     const { projectId, submissionId, expectedRevision } = params;
-    const { answers, confirm, title, plugin, attempt, idempotencyKey } = params;
+    const { answers, confirm, title, plugin, attempt, checkGate, idempotencyKey } = params;
     // `null` is kept, since it clears; `undefined` drops out of the JSON.
     const body = {
       expectedRevision,
@@ -92,6 +92,7 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
       title,
       plugin,
       attempt,
+      checkGate,
       idempotencyKey,
     };
     const target = path(projectId, submissionId);

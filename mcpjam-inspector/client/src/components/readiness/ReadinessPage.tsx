@@ -270,6 +270,7 @@ export function ReadinessPage({
         view={view}
         session={session}
         serverUrl={serverUrl}
+        serverName={chosen.server.name}
         onClose={() => setOpen(null)}
       />
     );

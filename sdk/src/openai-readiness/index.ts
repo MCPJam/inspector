@@ -240,6 +240,7 @@ export {
 export type { OpenAIToolEvidence } from "./checks/annotations.js";
 export { runOpenAIAuthChecks } from "./checks/auth.js";
 export type { OpenAIAuthCheckContext } from "./checks/auth.js";
+export { runOpenAIDecisionChecks } from "./checks/decisions.js";
 export { runOpenAIEndpointChecks } from "./checks/endpoint.js";
 export { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
 export type { OpenAIDomainVerificationInput } from "./checks/domain-verification.js";
