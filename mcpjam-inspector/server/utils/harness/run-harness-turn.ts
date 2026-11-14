@@ -265,6 +265,10 @@ import {
 } from "./harness-session-state.js";
 import { sessionSnapshotSaver } from "./session-snapshot/save-session-snapshot.js";
 import {
+  SESSION_RESTORED_NOTE,
+  startSessionSnapshotRestore,
+} from "./session-snapshot/restore-session-snapshot.js";
+import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
   harnessPlanFromRaw,
@@ -2478,6 +2482,18 @@ export async function runHarnessTurn(
       const uploadQuotaComputerId =
         box !== null && box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
+      // A replaced box: fetch the saved session files now, alongside the cold
+      // start, so they can be written before the CLI starts.
+      const snapshotRestore = startSessionSnapshotRestore({
+        hosted: localPrepared === null && !warmAgentPilot && !isApprovalResume,
+        owner: continuity?.owner,
+        state: continuity?.state,
+        stateVersion: continuity?.stateVersion,
+        computerId,
+        sandboxId,
+        getBearer: currentAuthorization,
+        ...(abortSignal ? { abortSignal } : {}),
+      });
 
       // Brokered turns acquire their exclusive box lease before any sandbox
       // bootstrap. External-account runtimes have no broker lease, so their
@@ -2978,6 +2994,7 @@ export async function runHarnessTurn(
           // the box is detached/destroyed, which happens AFTER adoption.
           sandboxFileSession = session;
           sandboxWorkDir = sessionWorkDir;
+          await snapshotRestore?.apply(session, sessionWorkDir);
           cleanupSandbox = session;
           const networkSession = session as Partial<HarnessV1NetworkSandboxSession>;
           if (typeof networkSession.getPortEndpoint === "function")
@@ -3142,7 +3159,9 @@ export async function runHarnessTurn(
           "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
         );
       }
-      const resumable = eligibility.resume && !localStateMissing
+      // A replaced box resumes too once its saved session files are back.
+      const restoring = !eligibility.resume && (await snapshotRestore?.ready()) === true;
+      const resumable = (eligibility.resume && !localStateMissing) || restoring
         ? continuity?.state ?? undefined
         : undefined;
       // Categorical reason to surface to the client (never a raw sandbox id).
@@ -3150,7 +3169,7 @@ export async function runHarnessTurn(
       let resetReason: HarnessResetReason | undefined = localStateMissing
         ? "resume-failed"
         : eligibility.reason === "sandbox-replaced"
-          ? "sandbox-replaced"
+          ? restoring ? "sandbox-restored" : "sandbox-replaced"
           : continuity?.runtimeChanged
             ? "runtime-changed"
             : undefined;
@@ -3230,7 +3249,8 @@ export async function runHarnessTurn(
           });
           // Reattach threw — fall back fresh, but make it VISIBLE (the adapter
           // swallows its own reattach failures; this catch is our last signal).
-          resetReason = "resume-failed";
+          // A refused restore is still a replaced computer to the user.
+          resetReason = restoring ? "sandbox-replaced" : "resume-failed";
           session = await agent.createSession();
         }
       } else {
@@ -3295,7 +3315,9 @@ export async function runHarnessTurn(
               messages: withHarnessTurnContext(withHarnessAttachmentNote(
                 withHarnessPromptImages(promptAttachments.messages, images),
                 buildHarnessAttachmentNote(attachmentOutcomes, images),
-              ), options.harnessTurnContext),
+              ), resetReason === "sandbox-restored"
+                ? [options.harnessTurnContext, SESSION_RESTORED_NOTE].filter(Boolean).join("\n\n")
+                : options.harnessTurnContext),
               // Hand the harness the combined abort signal so a user cancel OR a
               // lost-lease liveness abort propagates into the in-sandbox run.
               abortSignal: effectiveAbortSignal,
