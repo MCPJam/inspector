@@ -42,6 +42,8 @@ const harnessState = vi.hoisted(() => ({
   park: vi.fn((_args: unknown): object | null => parkRegistry.park),
   parkTurn: vi.fn(async (_args: unknown): Promise<object | null> => parkRegistry.park),
   keptRuntime: false,
+  /** What the preparation tells the turn's event about a kept runtime. */
+  keptOutcome: undefined as string | undefined,
   unpark: vi.fn(() => {}),
   session: {
     sessionId: "session-1",
@@ -195,23 +197,26 @@ import { claimLocalTurnPark, describeParkedLocalSession, parkLocalTurn, resetApp
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
 
 vi.mock("../local/local-turn.js", () => ({
-  prepareLocalHarnessTurn: vi.fn(async () => ({
-    ok: true,
-    prepared: {
-      plan: { runtime: { runtimeId: "runtime-1" } },
-      timings: { localRuntimeVerifyMs: 0, localGatewayReadyMs: 0 },
-      sandbox: {}, auth: {}, sandboxWorkDir: "project",
-      homeDir: "/private/local/home",
-      permissionMode: "allow-reads",
-      sessionStateExists: harnessState.stateExists,
-      teardown: harnessState.teardown,
-      discardState: harnessState.discardState,
-      park: harnessState.park,
-      parkTurn: harnessState.parkTurn,
-      ...(harnessState.keptRuntime ? { keptRuntime: true } : {}),
-      unpark: harnessState.unpark,
-    },
-  })),
+  prepareLocalHarnessTurn: vi.fn(async (args: { onKeptRuntime?: (outcome: string) => void }) => {
+    if (harnessState.keptOutcome) args.onKeptRuntime?.(harnessState.keptOutcome);
+    return {
+      ok: true,
+      prepared: {
+        plan: { runtime: { runtimeId: "runtime-1" } },
+        timings: { localRuntimeVerifyMs: 0, localGatewayReadyMs: 0 },
+        sandbox: {}, auth: {}, sandboxWorkDir: "project",
+        homeDir: "/private/local/home",
+        permissionMode: "allow-reads",
+        sessionStateExists: harnessState.stateExists,
+        teardown: harnessState.teardown,
+        discardState: harnessState.discardState,
+        park: harnessState.park,
+        parkTurn: harnessState.parkTurn,
+        ...(harnessState.keptRuntime ? { keptRuntime: true } : {}),
+        unpark: harnessState.unpark,
+      },
+    };
+  }),
 }));
 
 vi.mock("../local/evidence.js", () => ({
@@ -312,6 +317,7 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.park.mockReset().mockReturnValue(parkRegistry.park);
     harnessState.parkTurn.mockReset().mockResolvedValue(parkRegistry.park);
     harnessState.keptRuntime = false;
+    harnessState.keptOutcome = undefined;
     harnessState.unpark.mockReset();
     harnessState.session.suspendTurn.mockImplementation(async () => ({ type: "continue-turn" }));
     harnessState.discardState.mockImplementation(async () => {
@@ -1466,6 +1472,36 @@ describe("runHarnessTurn local continuity", () => {
       await runHarnessTurn(codexTurn() as never, "none");
       expect(harnessState.teardown).toHaveBeenCalledOnce();
       expect(parkRegistry.endIfWaiting).not.toHaveBeenCalled();
+    });
+
+    it("reports an adopted runtime to the turn's event as a warm start on this machine", async () => {
+      committed(4);
+      harnessState.keptRuntime = true;
+      harnessState.keptOutcome = "adopted";
+      const sink = { surface: "web" as const, capture: vi.fn() };
+      await runHarnessTurn(codexTurn({
+        turnTiming: new TurnTiming({ harnessTurnEvent: sink }),
+      }) as never, "none");
+      expect(sink.capture).toHaveBeenCalledOnce();
+      expect(sink.capture.mock.calls[0]![0]).toMatchObject({
+        surface: "local", harness_id: "codex", kind: "follow_up", outcome: "completed",
+        start: "warm", fallback_reason: "none",
+      });
+    });
+
+    it.each([
+      "configuration_changed", "superseded", "lifetime", "process_died",
+      "runtime_update", "authorization_revoked", "renewal_failed",
+    ])("reports a runtime it did not adopt (%s) as a resume from saved files that says why", async (reason) => {
+      committed(4);
+      harnessState.keptOutcome = reason;
+      const sink = { surface: "web" as const, capture: vi.fn() };
+      await runHarnessTurn(codexTurn({
+        turnTiming: new TurnTiming({ harnessTurnEvent: sink }),
+      }) as never, "none");
+      expect(sink.capture.mock.calls[0]![0]).toMatchObject({
+        surface: "local", start: "disk_resume", fallback_reason: reason,
+      });
     });
 
     it("asks for nothing and keeps nothing with the switch off, or for Claude Code", async () => {

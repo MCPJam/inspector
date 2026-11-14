@@ -2378,6 +2378,7 @@ export async function runHarnessTurn(
           requireToolApproval,
           ...(approvalContinuation ? { approvalContinuation } : {}),
           ...(keptRuntime ? { keptRuntime } : {}),
+          onKeptRuntime: turnEvent.keptRuntime,
           scopedEnv: sessionSecretEnv,
           onSecretEnvDelivered,
           ...(turnReasoningEffort !== undefined

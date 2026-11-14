@@ -8,6 +8,9 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { HarnessTurnEventProperties } from "@/shared/harness-turn-event";
+import { HarnessTurnRecord } from "../../harness-turn-event.js";
+import { TurnTiming } from "../../../turn-timing.js";
 
 // Everything a local turn reaches for, stubbed at the module boundary. The
 // subject here is the ORDER these are torn down in when one of them fails —
@@ -155,9 +158,12 @@ vi.mock("../supervisor.js", () => ({
 
 const { prepareLocalHarnessTurn } = await import("../local-turn.js");
 const { noteTurnRuntimeStatus } = await import("../turn-runtime-status.js");
-const { resetApprovalParkForTests, describeParkedLocalSession, endParkIfWaiting } = await import(
-  "../approval-park.js"
-);
+const {
+  resetApprovalParkForTests,
+  describeParkedLocalSession,
+  endParkIfWaiting,
+  TURN_PARK_LIFETIME_MS,
+} = await import("../approval-park.js");
 // Real, not mocked: whether a reservation is still held is the subject here.
 const { runtimeUseState } = await import("../runtime-lifecycle.js");
 const { localPackTarget } = await import("../targets.js");
@@ -1100,6 +1106,96 @@ describe("a local Codex runtime kept between turns", () => {
     expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "superseded" });
     expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
     expect(gatewayRebind).not.toHaveBeenCalled();
+  });
+
+  describe("tells the turn's event", () => {
+    /**
+     * The next turn, through the event record a real turn hands it, and
+     * started from the committed state as `runHarnessTurn` starts it.
+     */
+    async function reported(overrides: Record<string, unknown> = {}) {
+      const sink = { surface: "web" as const, capture: vi.fn() };
+      const record = new HarnessTurnRecord(
+        new TurnTiming({ harnessTurnEvent: sink }),
+        "codex",
+        true,
+      );
+      const next = await prepareLocalHarnessTurn(
+        nextTurn({ onKeptRuntime: record.keptRuntime, ...overrides }),
+      );
+      if (!next.ok) throw new Error(next.message);
+      record.sessionStarted({ approval: false, resumed: true, resetReason: undefined });
+      record.close({ aborted: false, completed: true, bootstrap: undefined });
+      await next.prepared.teardown();
+      return {
+        next: next.prepared,
+        event: sink.capture.mock.calls[0]![0] as HarnessTurnEventProperties,
+      };
+    }
+
+    it("that it adopted the kept runtime: a warm start on this machine", async () => {
+      await keptSession();
+      startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2"));
+      const { next, event } = await reported();
+      expect(next.keptRuntime).toBe(true);
+      expect(event).toMatchObject({ surface: "local", start: "warm", fallback_reason: "none" });
+    });
+
+    it.each<[string, () => void, Record<string, unknown>, string]>([
+      ["it runs another configuration", () => {}, {
+        keptRuntime: { fingerprint: "config-b", committed: { generation: "gen-1", stateVersion: 2 } },
+      }, "configuration_changed"],
+      ["the lane moved past it", () => {}, {
+        keptRuntime: { ...CONFIG, committed: { generation: "gen-1", stateVersion: 3 } },
+      }, "superseded"],
+      ["its process died", () => {
+        supervisorFixture.live = 0;
+      }, {}, "process_died"],
+      ["an update replaced its pack", () => {
+        readRuntimeInstallStatus.mockResolvedValueOnce({
+          ...READY, packVersion: "test-pack-2", digest: `sha256:${"b".repeat(64)}`,
+        } as never);
+      }, {}, "runtime_update"],
+      ["its pack changed on disk", () => {
+        revalidateRuntime.mockResolvedValueOnce({ ok: false, message: "the codex runtime bundle changed" });
+      }, {}, "authorization_revoked"],
+      ["no new lease could be had for it", () => {
+        startLoopbackModelBroker.mockResolvedValueOnce({ ok: false, error: "lease refused" } as never);
+      }, {}, "renewal_failed"],
+    ])("why it started from saved files when %s", async (_label, arrange, overrides, reason) => {
+      await keptSession();
+      arrange();
+      const { next, event } = await reported(overrides);
+      expect(next.keptRuntime).toBeUndefined();
+      expect(event).toMatchObject({ surface: "local", start: "disk_resume", fallback_reason: reason });
+    });
+
+    it("that the kept runtime reached its lifetime", async () => {
+      let now = Date.now();
+      resetApprovalParkForTests({ now: () => now });
+      await keptSession();
+      now += TURN_PARK_LIFETIME_MS;
+      const { event } = await reported();
+      expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "lifetime" });
+      expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "lifetime" });
+    });
+
+    it("why it ended the kept runtime, when the turn itself is then refused", async () => {
+      await keptSession();
+      const refused = { available: false, status: "server-disabled", message: "Local execution is off." };
+      resolveLocalHarnessAvailability.mockResolvedValueOnce(refused as never).mockResolvedValueOnce(refused as never);
+      const onKeptRuntime = vi.fn();
+      const next = await prepareLocalHarnessTurn(nextTurn({ onKeptRuntime }));
+      expect(next).toMatchObject({ ok: false, status: "server-disabled" });
+      expect(onKeptRuntime.mock.calls).toEqual([["authorization_revoked"]]);
+    });
+
+    it("nothing about a runtime that was already gone", async () => {
+      await keptSession();
+      await endLocalHarnessSession("s_local_1");
+      const { event } = await reported();
+      expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "none" });
+    });
   });
 
   it("stops being adoptable the moment Stop ends it", async () => {

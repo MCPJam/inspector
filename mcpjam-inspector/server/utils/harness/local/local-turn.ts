@@ -75,6 +75,7 @@ import {
   type LiveLocalRuntime,
 } from "./parked-runtime.js";
 import { bridgeGenerationOf, type KeptRuntimeTurn } from "./kept-runtime.js";
+import type { KeptRuntimeOutcome } from "../harness-turn-event.js";
 import { localRuntime } from "./runtimes/index.js";
 import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
 import {
@@ -270,6 +271,8 @@ export interface PrepareLocalHarnessTurnArgs {
   };
   /** Set when this turn may adopt the runtime its lane's last turn kept. */
   keptRuntime?: KeptRuntimeTurn;
+  /** Hears whether a runtime the lane's last turn kept was adopted, or why not. */
+  onKeptRuntime?: (outcome: KeptRuntimeOutcome) => void;
   scope?: "attended" | "unattended";
   /** Materialized project secrets; runtime-owned credential names are refused. */
   scopedEnv?: Readonly<Record<string, string>>;
