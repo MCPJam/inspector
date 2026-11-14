@@ -15,6 +15,7 @@ import {
   getDirectoryFlowOperation,
   getDirectorySubmissionOperation,
   getDirectorySubmissionResultsOperation,
+  isPlatformApiError,
   listDirectoryFlowsOperation,
   listDirectorySubmissionsOperation,
   startDirectorySubmissionRunOperation,
@@ -116,9 +117,25 @@ function parseSetInput(options: SetOptions, submission: string): UpdateDirectory
 type RunScope = { projectId: string; runId: string };
 type ClientContext = { client: PlatformApiClient; signal: AbortSignal };
 
+/** Transient resume failures tried again for one re-queue, before the wait gives up on it. */
+const RESUME_TRIES = 3;
+
+/** How a resume ended: done or refused for good, or worth another try. */
+type ResumeOutcome = "settled" | "transient";
+
+/** A 4xx other than a timeout or rate limit: asking again gets the same answer. */
+function isDefiniteRefusal(error: unknown): boolean {
+  return (
+    isPlatformApiError(error) &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    ![408, 425, 429].includes(error.status)
+  );
+}
+
 /**
  * Resume a run that stopped on the server. This caller started it, so its
- * credentials can grade the server again. A refusal is reported and the wait
+ * credentials can grade the server again. A failure is reported and the wait
  * goes on: the run's own status says how it ends.
  */
 async function resumeRun(
@@ -126,23 +143,35 @@ async function resumeRun(
   timeoutMs: number,
   run: RunScope,
   extras: RunPlatformOperationExtras
-): Promise<void> {
-  const resume = (context: ClientContext) =>
-    context.client.resumeReadinessRun(run, { signal: context.signal });
+): Promise<ResumeOutcome> {
+  const resume = async (context: ClientContext) => {
+    try {
+      await context.client.resumeReadinessRun(run, { signal: context.signal });
+      return undefined;
+    } catch (error) {
+      if (!isDefiniteRefusal(error)) throw error;
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+  let outcome: ResumeOutcome = "settled";
   let note = `Run ${run.runId} stopped on the server and was resumed.`;
   try {
-    await runPlatformOperation(options, timeoutMs, resume, extras);
+    const refusal = await runPlatformOperation(options, timeoutMs, resume, extras);
+    if (refusal) note = `Run ${run.runId} stopped on the server and could not be resumed: ${refusal}`;
   } catch (error) {
+    outcome = "transient";
     const reason = error instanceof Error ? error.message : String(error);
-    note = `Run ${run.runId} stopped on the server and could not be resumed: ${reason}`;
+    note = `Run ${run.runId} stopped on the server and could not be resumed yet, so the resume will be tried again: ${reason}`;
   }
   if (!extras.quiet) process.stderr.write(`${note}\n`);
+  return outcome;
 }
 
 /**
  * Poll a started run until it ends. Each read gets the command's own
  * deadline, so `--timeout` keeps bounding one request rather than the wait.
- * A run re-queued after its node stopped is resumed once per re-queue.
+ * A run re-queued after its node stopped is resumed once per re-queue, or
+ * up to `RESUME_TRIES` times while the resume fails for a transient reason.
  */
 async function waitForRun(
   options: PlatformOptions,
@@ -152,17 +181,22 @@ async function waitForRun(
 ): Promise<PlatformReadinessRun> {
   const giveUpAt = Date.now() + RUN_WAIT_MS;
   // Recovery counts each re-queue as an attempt, so the attempt names it.
-  const resumedAttempts = new Set<number>();
+  const settled = new Set<number>();
+  const transientTries = new Map<number, number>();
   for (;;) {
     const read = (context: ClientContext) =>
       context.client.getReadinessRun(run, { signal: context.signal });
     const current = await runPlatformOperation(options, timeoutMs, read, extras);
     if (RUN_ENDED.has(current.status)) return current;
-    if (current.resumable && !resumedAttempts.has(current.attemptCount)) {
-      resumedAttempts.add(current.attemptCount);
-      await resumeRun(options, timeoutMs, run, extras);
-      // Read what the resume did before waiting out a poll interval.
-      continue;
+    const attempt = current.attemptCount;
+    const tries = transientTries.get(attempt) ?? 0;
+    if (current.resumable && !settled.has(attempt) && tries < RESUME_TRIES) {
+      if ((await resumeRun(options, timeoutMs, run, extras)) === "settled") {
+        settled.add(attempt);
+        // Read what the resume did before waiting out a poll interval.
+        continue;
+      }
+      transientTries.set(attempt, tries + 1);
     }
     if (Date.now() + RUN_POLL_MS > giveUpAt) {
       const later = `mcpjam readiness status --run ${run.runId} --project ${run.projectId}`;

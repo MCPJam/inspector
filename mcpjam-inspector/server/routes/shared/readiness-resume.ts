@@ -27,6 +27,7 @@ import { logger } from "../../utils/logger.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import {
   failReadinessRun,
+  heartbeatReadinessRun,
   type ReadinessLease,
 } from "../../services/readiness/backend-client.js";
 import {
@@ -65,6 +66,40 @@ const NOT_AUTHORIZED =
   "Access to this run's server could not be confirmed, so it was not resumed. Check that you can still open the server, then start a new run.";
 const SERVER_CHANGED =
   "The server's saved address changed after this run started, so it was not resumed. Start a new run to grade the server as it is saved now.";
+const LEASE_MOVED =
+  "This run was cancelled or picked up elsewhere while its server was being checked, so it was not resumed here. Check the run's status.";
+const AUTHORIZE_TIMED_OUT =
+  "Checking access to this run's server took too long, so it was not resumed. It can be resumed again in about 10 minutes.";
+
+/**
+ * How long authorize may take. Far inside the backend's ten-minute lease, so
+ * the lease this node holds is still its own when the answer arrives.
+ */
+const AUTHORIZE_TIMEOUT_MS = 30_000;
+
+/**
+ * Only these answers from authorize say the caller may not grade the server:
+ * signed out, refused, or the server is gone. Anything else (an outage, a
+ * timeout) says nothing about access.
+ */
+function isAccessRefusal(error: unknown): boolean {
+  return (
+    error instanceof WebRouteError &&
+    (error.status === 401 || error.status === 403 || error.status === 404)
+  );
+}
+
+function authorizeWithin<T>(pending: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(new WebRouteError(504, ErrorCode.TIMEOUT, AUTHORIZE_TIMED_OUT)),
+      ms,
+    );
+  });
+  return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
+}
 
 export interface ResumeHostedReadinessRunInput {
   convex: ConvexHttpClient;
@@ -103,8 +138,9 @@ async function failResumedRun(
 
 /**
  * Authorize the server the run grades. Past the resume this node holds the
- * run `running`, so every refusal fails the run with its reason rather than
- * leaving it to wait out the lease.
+ * run `running`, so a definite refusal fails the run with its reason. A
+ * failure that says nothing about access leaves the run alone: recovery
+ * re-queues it when the lease lapses, and it can be resumed again.
  */
 async function authorizeResumedServer(
   input: ResumeHostedReadinessRunInput,
@@ -118,10 +154,25 @@ async function authorizeResumedServer(
   }
   let authorized: AuthorizedReadinessServer;
   try {
-    authorized = await input.authorize(resumed.projectId, serverId);
+    authorized = await authorizeWithin(
+      input.authorize(resumed.projectId, serverId),
+      AUTHORIZE_TIMEOUT_MS,
+    );
   } catch (error) {
-    await failResumedRun(lease, "server_unauthorized", NOT_AUTHORIZED);
+    if (isAccessRefusal(error)) {
+      await failResumedRun(lease, "server_unauthorized", NOT_AUTHORIZED);
+    } else {
+      logger.warn("[readiness] authorize failed; the run waits for recovery", {
+        runId: lease.runId,
+        status: error instanceof WebRouteError ? error.status : undefined,
+      });
+    }
     throw error;
+  }
+  // Whoever moved the lease while authorize ran (a cancel, recovery) owns
+  // the run now. The heartbeat both checks and renews the lease.
+  if (!(await heartbeatReadinessRun(lease)).alive) {
+    throw new WebRouteError(409, ErrorCode.CONFLICT, LEASE_MOVED);
   }
   // The credential belongs to the server as saved now, so it must not go to
   // the address the run recorded if the two differ; grading the new address

@@ -8,7 +8,7 @@
  * readiness codes, never 1 for a run that graded nothing.
  */
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { afterEach, mock, test } from "node:test";
 import { Command } from "commander";
 import { registerReadinessCommands } from "../src/commands/readiness.js";
 import { CliError } from "../src/lib/output.js";
@@ -369,6 +369,43 @@ test("run --wait goes on waiting when the resume is refused", async () => {
   const waited = await run(["submission", "run", "sub-1", "--wait"]);
   assert.match(waited.stderr, /could not be resumed: No readiness run you can resume/);
   // The run graded nothing, so the wait ends incomplete, never not ready.
+  assert.equal(process.exitCode, 3);
+});
+
+test("run --wait tries a transiently failed resume again, at most three times", async () => {
+  const unavailable = {
+    status: 502,
+    body: { code: "SERVER_UNREACHABLE", message: "Failed to reach authorization service." },
+  };
+  const requests = stubFetch({
+    [`POST ${BASE}/sub-1/runs`]: [{ status: 202, body: RECEIPT }],
+    [`GET ${RUN_PATH}`]: [
+      { body: REQUEUED },
+      { body: REQUEUED },
+      { body: REQUEUED },
+      { body: REQUEUED },
+      { body: runRow("failed", null) },
+    ],
+    [`POST ${RUN_PATH}/resume`]: [unavailable, unavailable, unavailable],
+  });
+  // The wait sleeps between polls: let each sleep pass at once.
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let done = false;
+    const waiting = run(["submission", "run", "sub-1", "--wait"]).finally(() => {
+      done = true;
+    });
+    while (!done) {
+      await new Promise((resolve) => setImmediate(resolve));
+      mock.timers.tick(5_000);
+    }
+    const waited = await waiting;
+    assert.match(waited.stderr, /could not be resumed yet, so the resume will be tried again/);
+  } finally {
+    mock.timers.reset();
+  }
+  const resumes = requests.filter((r) => r.key === `POST ${RUN_PATH}/resume`);
+  assert.equal(resumes.length, 3);
   assert.equal(process.exitCode, 3);
 });
 

@@ -27,6 +27,7 @@ import {
   isOpenAIReadinessResult,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk/browser";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import {
   cancelHostedReadinessRun,
   canRunHostedReadiness,
@@ -98,6 +99,28 @@ function pollIntervalFor(tick: number): number {
     POLL_LADDER_MS.length - 1,
   );
   return withJitter(POLL_LADDER_MS[rung]!);
+}
+
+/** Transient resume failures tried again for one re-queue. */
+const RESUME_TRIES = 3;
+
+/** A 4xx other than a timeout or rate limit: asking again gets the same answer. */
+function isDefiniteRefusal(error: unknown): boolean {
+  return (
+    isPlatformApiError(error) &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    ![408, 425, 429].includes(error.status)
+  );
+}
+
+interface ResumeAttempt {
+  /** `runId:attemptCount`: recovery counts each re-queue as an attempt. */
+  requeue: string;
+  /** Resumed, or refused for good. */
+  settled: boolean;
+  inFlight: boolean;
+  transientFailures: number;
 }
 
 export interface UseDirectoryReadinessRunOptions {
@@ -194,25 +217,44 @@ export function useDirectoryReadinessRun({
     return token === runTokenRef.current;
   }, []);
 
-  /** `runId:attemptCount` of the last re-queue this hook resumed. */
-  const resumedRef = useRef<string | null>(null);
+  /** The latest re-queue this hook tried to resume. */
+  const resumeRef = useRef<ResumeAttempt | null>(null);
 
   /**
    * A run whose node stopped is re-queued, and only the person who started
    * it can run it again, with their credentials. Resume once per re-queue,
    * then keep polling: a refusal (another person's run, or one resumed
-   * elsewhere first) leaves nothing to do that the poll will not show.
+   * elsewhere first) leaves nothing to do that the poll will not show. A
+   * failure that is not a refusal, such as an outage, is tried again on later
+   * polls, up to `RESUME_TRIES` times.
    */
   const resumeOnce = useCallback(async (run: ReadinessRun) => {
+    if (!run.resumable) return;
     const requeue = `${run.id}:${run.attemptCount}`;
-    if (!run.resumable || resumedRef.current === requeue) return;
-    resumedRef.current = requeue;
+    const attempt: ResumeAttempt =
+      resumeRef.current?.requeue === requeue
+        ? resumeRef.current
+        : { requeue, settled: false, inFlight: false, transientFailures: 0 };
+    resumeRef.current = attempt;
+    if (
+      attempt.settled ||
+      attempt.inFlight ||
+      attempt.transientFailures >= RESUME_TRIES
+    ) {
+      return;
+    }
+    attempt.inFlight = true;
     try {
       await resumeHostedReadinessRun(run.id);
+      attempt.settled = true;
     } catch (error) {
+      if (isDefiniteRefusal(error)) attempt.settled = true;
+      else attempt.transientFailures += 1;
       if (import.meta.env?.DEV) {
-        console.warn("[readiness] resume refused", error);
+        console.warn("[readiness] resume failed", error);
       }
+    } finally {
+      attempt.inFlight = false;
     }
   }, []);
 

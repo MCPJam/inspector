@@ -22,6 +22,7 @@ const {
   authorizeServerMock,
   executeHostedReadinessRunMock,
   failReadinessRunMock,
+  heartbeatReadinessRunMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
   convexQueryMock: vi.fn(),
@@ -29,6 +30,7 @@ const {
   authorizeServerMock: vi.fn(),
   executeHostedReadinessRunMock: vi.fn(),
   failReadinessRunMock: vi.fn(),
+  heartbeatReadinessRunMock: vi.fn(),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
@@ -51,6 +53,7 @@ vi.mock("../../../services/readiness/backend-client.js", async () => ({
     "../../../services/readiness/backend-client.js",
   )),
   failReadinessRun: failReadinessRunMock,
+  heartbeatReadinessRun: heartbeatReadinessRunMock,
 }));
 vi.mock("../../web/auth.js", async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
@@ -156,9 +159,11 @@ describe("v1 readiness resume", () => {
     authorizeServerMock.mockResolvedValue(AUTHORIZED);
     executeHostedReadinessRunMock.mockResolvedValue(undefined);
     failReadinessRunMock.mockResolvedValue({ applied: true });
+    heartbeatReadinessRunMock.mockResolvedValue({ alive: true });
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value) process.env[key] = value;
       else delete process.env[key];
@@ -282,6 +287,45 @@ describe("v1 readiness resume", () => {
       "server_unauthorized",
       expect.any(String),
     );
+  });
+
+  it("leaves the run to recovery when authorize fails for a reason other than access", async () => {
+    authorizeServerMock.mockRejectedValue(
+      new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Failed to reach authorization service: connect ECONNREFUSED",
+      ),
+    );
+    const res = await request("POST", RESUME);
+    expect(res.status).toBe(502);
+    expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    // Not failed: recovery re-queues it, and it can be resumed again.
+    expect(failReadinessRunMock).not.toHaveBeenCalled();
+  });
+
+  it("stops waiting for authorize well inside the lease, and leaves the run to recovery", async () => {
+    vi.useFakeTimers();
+    authorizeServerMock.mockReturnValue(new Promise(() => undefined));
+    const pending = request("POST", RESUME);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const res = await pending;
+    expect(res.status).toBe(504);
+    expect(((await res.json()) as { message: string }).message).toMatch(
+      /took too long/,
+    );
+    expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    expect(failReadinessRunMock).not.toHaveBeenCalled();
+  });
+
+  it("runs nothing when the lease moved while authorize ran", async () => {
+    heartbeatReadinessRunMock.mockResolvedValue({ alive: false });
+    const res = await request("POST", RESUME);
+    expect(res.status).toBe(409);
+    expect(heartbeatReadinessRunMock).toHaveBeenCalledWith(RESUMED_LEASE);
+    expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    // Whoever moved the lease decided the run, so nothing is written.
+    expect(failReadinessRunMock).not.toHaveBeenCalled();
   });
 
   it("fails the run when it has no saved server", async () => {
