@@ -27,7 +27,7 @@
     },
     {
       "name": "Environments",
-      "description": "Project environments: named, live-editable execution bundles (one host, an optional standalone server group, optionally pinned skills and plugin versions) that eval suites and goals run against. Distinct from Sandbox images, which are Computer base images. Reads require project membership; every write requires project admin."
+      "description": "Project environments: named, live-editable execution bundles (one host and an optional standalone server group) that eval suites and goals run against. Reads require project membership; archiving requires project admin."
     },
     {
       "name": "Server diagnostics",
@@ -5246,7 +5246,7 @@
         "operationId": "resolveEnvironment",
         "tags": ["Environments"],
         "summary": "Preview what an environment resolves to",
-        "description": "Resolve an environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. Returns 409 when the environment cannot currently produce a runnable configuration — for example a pinned plugin was disabled or deleted; `details.code` carries the specific reason (`ENV_PLUGIN_UNAVAILABLE`, `ENV_NO_SERVERS`, `ENV_HOST_MISSING`, …).",
+        "description": "Resolve an environment to the exact execution inputs a run would use right now: the host's current config and the closed server set. Returns 409 when the environment cannot currently produce a runnable configuration; `details.code` carries the specific reason (`ENV_NO_SERVERS`, `ENV_HOST_MISSING`, …).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -5295,7 +5295,7 @@
         "operationId": "ensureAdhocEnvironment",
         "tags": ["Environments"],
         "summary": "Get or create an unnamed environment for a composed stack",
-        "description": "GET-OR-CREATE an UNNAMED, content-addressed environment for a composed stack — a host plus an optional server group, model override, computer image and pinned skills.\n\nDistinct from `POST /environments`, which mints a NAMED row that lands in the project's environment list forever. A composed stack is a throwaway: the caller wants to run this exact combination, not to add a permanent entry someone else has to reason about.\n\nDeduplicated by a server-side fingerprint of the stack, so the same stack always returns the same environment. `created` says which happened — the status is `200` either way, because get-or-create cannot honestly answer `201` on the dedupe path.\n\nA deployment that predates ad-hoc environments answers `400` with `details.reason: \"ADHOC_UNAVAILABLE\"`.\n\nRequires project membership (admin only when the stack pins plugin versions). Promote one to a named environment with `POST /environments/{environmentId}/name`.",
+        "description": "GET-OR-CREATE an UNNAMED, content-addressed environment for a composed stack: a host plus an optional server group and model override. The environment does not appear in the project's list of named environments.\n\nDeduplicated by a server-side fingerprint of the stack, so the same stack always returns the same environment. `created` says which happened — the status is `200` either way, because get-or-create cannot honestly answer `201` on the dedupe path.\n\nA deployment that predates ad-hoc environments answers `400` with `details.reason: \"ADHOC_UNAVAILABLE\"`.\n\nRequires project membership.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -5309,8 +5309,7 @@
                 "$ref": "#/components/schemas/AdhocEnvironmentRequest"
               },
               "example": {
-                "hostId": "host_abc123",
-                "sandboxImageId": "img_def456"
+                "hostId": "host_abc123"
               }
             }
           }
@@ -14694,17 +14693,6 @@
                 "items": {
                   "type": "string"
                 }
-              },
-              "computerEnvironment": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/EvalSuiteComputerEnvironment"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "The custom sandbox image this suite's eval runs boot a fresh computer from. `null` means the provider's default base image. PATCH it by name or id (see `GET /projects/{projectId}/images`); PATCH `null` to clear the pin."
               }
             }
           },
@@ -17336,7 +17324,7 @@
                 "properties": {
                   "minEligibleTrials": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 1
                   },
                   "minCompletionRate": {
                     "type": "number",
@@ -17832,17 +17820,6 @@
                 "items": {
                   "type": "string"
                 }
-              },
-              "computerEnvironment": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/EvalSuiteComputerEnvironment"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "The custom sandbox image this suite's eval runs boot a fresh computer from. `null` means the provider's default base image. PATCH it by name or id (see `GET /projects/{projectId}/images`); PATCH `null` to clear the pin."
               }
             }
           },
@@ -18100,7 +18077,7 @@
           "skillsOverride": {
             "type": "string",
             "enum": ["exclude"],
-            "description": "The \"without skills\" arm of an A/B comparison: the run pins NO skills from any channel and is marked `skillsExcluded`, so the arm is labelled rather than merely empty. Scoped to skill DELIVERY — a pinned plugin's MCP servers stay connected, because which servers an arm connects is the one variable a skills A/B has to hold fixed."
+            "description": "The \"without skills\" arm of an A/B comparison: the run pins NO skills from any channel and is marked `skillsExcluded`, so the arm is labelled rather than merely empty. The run's MCP servers stay connected, so both arms connect the same servers."
           },
           "refreshSnapshot": {
             "type": "boolean",
@@ -21999,20 +21976,6 @@
           }
         }
       },
-      "EvalSuiteComputerEnvironment": {
-        "type": "object",
-        "description": "The sandbox image a suite's eval runs boot from.",
-        "required": ["id", "name"],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": ["string", "null"],
-            "description": "The image's name, resolved for you so a caller can echo back what it set. `null` when the pinned image could not be resolved (deleted, or not visible to this caller)."
-          }
-        }
-      },
       "EvalSuiteSchedule": {
         "type": "object",
         "required": ["enabled"],
@@ -23367,7 +23330,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Project-shared skill IDs. Plugin-component skills cannot be selected — they reach a run by pinning their plugin version."
+            "description": "Project-shared skill IDs."
           },
           "versionPins": {
             "type": "array",
@@ -23466,19 +23429,6 @@
           "secretSelection": {
             "$ref": "#/components/schemas/EnvironmentSecretSelection"
           },
-          "pluginVersionIds": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Pinned plugin VERSION IDs. Narrow by design: the plugin must be installed and enabled, the version must be `ready`, at most one version per plugin may be pinned, and none of its skills may carry supporting files. Not a general-purpose plugin list."
-          },
-          "sandboxImageId": {
-            "type": "string",
-            "description": "Sandbox-image pin: a project-shared image (see the images endpoints) that eval runs in this environment boot a fresh sandbox from. Absent when unpinned.",
-            "minLength": 1,
-            "pattern": ".*\\S.*"
-          },
           "revision": {
             "type": "integer",
             "description": "Optimistic-concurrency counter. Pass this back as `expectedRevision` on the next write; if it no longer matches, the write is rejected with 409 instead of overwriting a concurrent edit."
@@ -23576,15 +23526,6 @@
           "secretSelection": {
             "$ref": "#/components/schemas/EnvironmentSecretSelection"
           },
-          "pluginVersionIds": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "sandboxImageId": {
-            "type": "string"
-          },
           "revision": {
             "type": "integer",
             "description": "Pass back as `expectedRevision` when promoting it with a name."
@@ -23647,18 +23588,6 @@
           },
           "secretSelection": {
             "$ref": "#/components/schemas/EnvironmentSecretSelection"
-          },
-          "pluginVersionIds": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "string"
-            },
-            "description": "Pinning plugin versions requires project ADMIN; the rest of a stack needs only membership."
-          },
-          "sandboxImageId": {
-            "type": "string",
-            "description": "Project-shared sandbox image to pin, so runs boot a fresh computer from it."
           }
         }
       },
@@ -23685,7 +23614,6 @@
           "hostConfigId",
           "selectedServerIds",
           "effectiveServerIds",
-          "pluginVersions",
           "servers"
         ],
         "properties": {
@@ -23731,12 +23659,6 @@
           "serverAttachmentId": {
             "type": "string"
           },
-          "sandboxImageId": {
-            "type": "string",
-            "description": "The environment's sandbox-image pin, when set.",
-            "minLength": 1,
-            "pattern": ".*\\S.*"
-          },
           "selectedServerIds": {
             "type": "array",
             "items": {
@@ -23749,29 +23671,7 @@
             "items": {
               "type": "string"
             },
-            "description": "`selectedServerIds` plus the servers contributed by pinned plugin versions — the set a run actually connects. Identical to `selectedServerIds` when no plugins are pinned."
-          },
-          "pluginVersions": {
-            "type": "array",
-            "description": "The resolved plugin version pins, in pin order.",
-            "items": {
-              "type": "object",
-              "required": ["pluginId", "pluginVersionId", "name", "bundleHash"],
-              "properties": {
-                "pluginId": {
-                  "type": "string"
-                },
-                "pluginVersionId": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "bundleHash": {
-                  "type": "string"
-                }
-              }
-            }
+            "description": "The servers a run actually connects."
           },
           "servers": {
             "type": "array",
