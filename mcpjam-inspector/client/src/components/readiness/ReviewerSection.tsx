@@ -6,7 +6,8 @@
  *
  * - the reviewer's credentials, written straight to project secrets and never
  *   shown again, as the portal keeps its own secret;
- * - answers the flow keeps on this step outside the portal's layout;
+ * - answers the flow keeps on this step outside the portal's own layout, so
+ *   none of them goes unasked;
  * - each stage of the latest sign-in rehearsal with its frame of the run's
  *   recording, and who the identity check found;
  * - the rehearsal's state in words and, when it waits for a person, the
