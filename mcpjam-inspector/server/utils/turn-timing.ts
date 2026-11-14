@@ -1,3 +1,5 @@
+import type { HarnessTurnEventSink } from "./harness/harness-turn-event.js";
+
 /**
  * Where one chat turn's time goes before the model's first text reaches the
  * browser, on a monotonic clock from the moment the route starts the turn.
@@ -5,7 +7,8 @@
  * The route closes each stage as it finishes. The stages that end before the
  * response headers also go out as `Server-Timing`, so the browser's own trace
  * shows them; the harness adds them, with the time to the first text it
- * forwards, to its per-turn `[harness][timing]` line.
+ * forwards, to its per-turn `[harness][timing]` line, and sends its closing
+ * event to the route's `harnessTurnEvent` sink.
  */
 export const TURN_TIMING_STAGES = [
   "setup",
@@ -15,17 +18,28 @@ export const TURN_TIMING_STAGES = [
   "streamPreparation",
 ] as const;
 
-/** Each stage's `<stage>Ms` field is declared on `harness.timing` (`log-events.ts`). */
+/** Each stage's `<stage>Ms` field is declared on `harness.timing` (`log-events/harness-timing.ts`). */
 export type TurnTimingStage = (typeof TURN_TIMING_STAGES)[number];
 
 export class TurnTiming {
+  /** Where a harness turn on this request sends `harness_turn_completed`. */
+  readonly harnessTurnEvent: HarnessTurnEventSink | undefined;
+  private readonly now: () => number;
   private readonly startedAt: number;
   private previous: number;
   private readonly stages: Array<[TurnTimingStage, number]> = [];
   private firstTextAfter: number | undefined;
+  private boxAcquiredIn: number | undefined;
 
-  constructor(private readonly now: () => number = () => performance.now()) {
-    this.startedAt = now();
+  constructor(
+    options: {
+      harnessTurnEvent?: HarnessTurnEventSink;
+      now?: () => number;
+    } = {},
+  ) {
+    this.harnessTurnEvent = options.harnessTurnEvent;
+    this.now = options.now ?? (() => performance.now());
+    this.startedAt = this.now();
     this.previous = this.startedAt;
   }
 
@@ -41,6 +55,29 @@ export class TurnTiming {
     this.firstTextAfter ??= this.now() - this.startedAt;
   }
 
+  /**
+   * Run `acquire`, the route's acquisition of the box a harness turn runs on
+   * (creating or waking it), and keep how long it took. The box is held
+   * before the turn starts, so the turn adds this to the wake it measures
+   * itself (`box_wake_ms`). It is not a stage: the stage it ran in keeps it,
+   * and `fields()` reports it apart, as `boxAcquisitionMs`.
+   */
+  async timeBoxAcquisition<T>(acquire: () => Promise<T>): Promise<T> {
+    const startedAt = this.now();
+    try {
+      return await acquire();
+    } finally {
+      this.boxAcquiredIn = this.now() - startedAt;
+    }
+  }
+
+  /** Whole milliseconds the route spent acquiring the turn's box, if it did. */
+  boxAcquisitionMs(): number | undefined {
+    return this.boxAcquiredIn === undefined
+      ? undefined
+      : Math.round(this.boxAcquiredIn);
+  }
+
   /** The `Server-Timing` header value for the stages closed so far. */
   serverTiming(): string {
     return this.stages
@@ -48,7 +85,10 @@ export class TurnTiming {
       .join(", ");
   }
 
-  /** Whole milliseconds per stage, and `firstTextMs` once text has gone out. */
+  /**
+   * Whole milliseconds per stage, `firstTextMs` once text has gone out, and
+   * `boxAcquisitionMs` once the route acquired the turn's box.
+   */
   fields(): Record<string, number> {
     const fields: Record<string, number> = {};
     for (const [stage, ms] of this.stages) {
@@ -57,6 +97,8 @@ export class TurnTiming {
     if (this.firstTextAfter !== undefined) {
       fields.firstTextMs = Math.round(this.firstTextAfter);
     }
+    const boxAcquisitionMs = this.boxAcquisitionMs();
+    if (boxAcquisitionMs !== undefined) fields.boxAcquisitionMs = boxAcquisitionMs;
     return fields;
   }
 
