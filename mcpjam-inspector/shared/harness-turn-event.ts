@@ -87,8 +87,9 @@ export const HARNESS_TURN_OUTCOMES = [
  * Whole milliseconds. `first_text_ms` counts from the start of the request,
  * and the stages are the `[harness][timing]` line's, except that
  * `box_wake_ms` also counts the route creating or waking the conversation's
- * box before the turn began. A stage the turn never finished is absent. A
- * local turn has no box or broker, so it reports that window as
+ * box before the turn began: it is the line's `boxWake` plus its
+ * `boxAcquisitionMs`. A stage the turn never finished is absent. A local
+ * turn has no box or broker, so it reports that window as
  * `local_prepare_ms` instead of `box_wake_ms` and `broker_start_ms`.
  */
 export const HARNESS_TURN_DURATIONS = [
@@ -111,7 +112,11 @@ export type HarnessTurnBootstrap = (typeof HARNESS_TURN_BOOTSTRAPS)[number];
 export type HarnessTurnOutcome = (typeof HARNESS_TURN_OUTCOMES)[number];
 export type HarnessTurnDuration = (typeof HARNESS_TURN_DURATIONS)[number];
 
-/** `kind` once the lane is claimed; `start` and `fallback_reason` once a session starts. */
+/**
+ * `kind` once the lane is claimed; `start` and `fallback_reason` once a
+ * session starts. A turn that fails before its session still sends the
+ * `fallback_reason` of a reuse it refused.
+ */
 export type HarnessTurnEventProperties = {
   surface: HarnessTurnSurface;
   harness_id: Harness;

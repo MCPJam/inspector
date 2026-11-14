@@ -181,7 +181,11 @@ export class HarnessTurnRecord {
           : "failed",
       bootstrap: turn.bootstrap ? BOOTSTRAP[turn.bootstrap] : "unknown",
       ...this.lane,
-      ...this.session,
+      // A turn that failed before its session still says why a reuse was refused.
+      ...(this.session ??
+        (this.reuse && this.reuse !== "reused"
+          ? { fallback_reason: this.reuse }
+          : {})),
     };
     for (const [field, ms] of this.durations()) {
       if (ms !== undefined) event[field] = ms;

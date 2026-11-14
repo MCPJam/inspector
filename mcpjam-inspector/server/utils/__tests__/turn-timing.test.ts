@@ -32,12 +32,15 @@ describe("TurnTiming", () => {
     expect(timing.text()).toBe(" setupMs=50 firstTextMs=3200");
   });
 
-  it("keeps every field in the production log row", () => {
-    const timing = new TurnTiming({ now: clock(0, 10, 20, 30, 40, 50, 60) });
+  it("keeps every field in the production log row", async () => {
+    const timing = new TurnTiming({
+      now: clock(0, 10, 20, 30, 40, 50, 60, 70, 80),
+    });
+    await timing.timeBoxAcquisition(async () => {});
     for (const stage of TURN_TIMING_STAGES) timing.mark(stage);
     timing.markFirstText();
     const fields = timing.fields();
-    expect(Object.keys(fields)).toHaveLength(TURN_TIMING_STAGES.length + 1);
+    expect(Object.keys(fields)).toHaveLength(TURN_TIMING_STAGES.length + 2);
     expect(
       buildLegacyLogRow("[harness][timing] claim=1ms", fields),
     ).toMatchObject({ event: "harness.timing", ...fields });
@@ -50,7 +53,7 @@ describe("TurnTiming", () => {
     expect(timing.text()).toBe("");
   });
 
-  it("keeps how long the route took to acquire the turn's box, outside its stages", async () => {
+  it("reports how long the route took to acquire the turn's box beside its stages, not as one", async () => {
     let now = 0;
     const timing = new TurnTiming({ now: () => now });
     expect(timing.boxAcquisitionMs()).toBeUndefined();
@@ -63,8 +66,10 @@ describe("TurnTiming", () => {
     expect(timing.boxAcquisitionMs()).toBe(1_500);
     now = 1_600;
     timing.mark("tools");
-    // The stage it ran in keeps it; the stage marks and their fields are as before.
-    expect(timing.fields()).toEqual({ toolsMs: 1_600 });
+    // The stage it ran in keeps it: the stage marks are as before, and
+    // `Server-Timing` lists stages only.
+    expect(timing.fields()).toEqual({ toolsMs: 1_600, boxAcquisitionMs: 1_500 });
+    expect(timing.text()).toBe(" toolsMs=1600 boxAcquisitionMs=1500");
     expect(timing.serverTiming()).toBe("tools;dur=1600.0");
   });
 
