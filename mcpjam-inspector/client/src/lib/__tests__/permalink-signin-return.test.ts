@@ -66,7 +66,9 @@ describe("what it refuses", () => {
     expect(
       rememberPermalinkSignInReturn("https://evil.example/x", ORIGIN),
     ).toBeNull();
-    expect(rememberPermalinkSignInReturn("//evil.example/x", ORIGIN)).toBeNull();
+    expect(
+      rememberPermalinkSignInReturn("//evil.example/x", ORIGIN),
+    ).toBeNull();
   });
 
   it("refuses an absent or empty path rather than storing a marker", () => {
@@ -119,6 +121,22 @@ describe("permalinkSignInOptions", () => {
     expect(takePermalinkSignInReturn(nonce, window.location.origin)).toBe(
       `/servers/s1?project=${PROJECT}`,
     );
+  });
+
+  it("uses an explicit creation destination instead of the current preview", () => {
+    window.history.replaceState({}, "", "/swarms");
+    const options = permalinkSignInOptions("/swarms/new");
+    expect(
+      takePermalinkSignInReturn(
+        options.state?.[PERMALINK_SIGN_IN_STATE_KEY],
+        window.location.origin,
+      ),
+    ).toBe("/swarms/new");
+  });
+
+  it("refuses an unsafe explicit destination", () => {
+    window.history.replaceState({}, "", "/swarms");
+    expect(permalinkSignInOptions("//evil.example/path")).toEqual({});
   });
 
   it("is an empty object at the root, so a call site never has to branch", () => {
