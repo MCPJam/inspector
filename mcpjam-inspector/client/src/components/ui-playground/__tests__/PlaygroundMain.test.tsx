@@ -2562,6 +2562,44 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("sends a starter prompt once when it is clicked again before the send is dispatched", async () => {
+      mockUseChatSession.messages = [];
+      // The hosted preflight inside sendMessage: the send is not dispatched
+      // yet, so the chips are still on screen.
+      let dispatch!: (sent: boolean) => void;
+      sendMessage.mockImplementation(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      render(<PlaygroundMain {...defaultProps} />);
+
+      const chip = screen.getByRole("button", { name: "Starter chip" });
+      await act(async () => {
+        fireEvent.click(chip);
+      });
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        fireEvent.click(chip);
+      });
+      await act(async () => dispatch(true));
+      await act(async () => {});
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("puts a refused starter prompt back in the composer", async () => {
+      mockUseChatSession.messages = [];
+      sendMessage.mockResolvedValue(false);
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      });
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "Starter chip prompt",
+      );
+    });
+
     it("resends once when the error banner's Retry is clicked twice during the pre-send sync", async () => {
       mockUseChatSession.error = Object.assign(
         new Error("The organization's AI provider is unavailable."),
@@ -3772,6 +3810,8 @@ describe("PlaygroundMain", () => {
     });
 
     it("clears staged skill results after a starter chip send", async () => {
+      // `undefined` reads as a refused send, which keeps the staged results.
+      vi.mocked(mockUseChatSession.sendMessage).mockResolvedValueOnce(true);
       render(<PlaygroundMain {...defaultProps} />);
 
       fireEvent.click(screen.getByTestId("chat-input-attach-skill"));

@@ -5883,11 +5883,17 @@ export function PlaygroundMain({
           })) { composer.setInput(prompt); return; }
         } else {
           trackSendMessage({ single_model_send: true });
-          sendMessage({
+          // Held until dispatch: the chips stay on screen through the hosted
+          // preflight inside sendMessage, and a second click there would send.
+          const sent = await sendMessage({
             text: prompt,
             metadata: outgoingSenderMetadata,
             widgetModelContext: modelContextQueue,
           });
+          if (!sent) {
+            composer.setInput(prompt);
+            return;
+          }
         }
         setModelContextQueue([]);
         composer.setInput("");

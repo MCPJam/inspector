@@ -453,6 +453,59 @@ describe("ChatTabV2 trace views", () => {
         expect.objectContaining({ text: "draft with a file" }),
       );
     });
+    it("sends the chip's prompt once when it is clicked again before the send is dispatched", async () => {
+      // The hosted preflight inside sendMessage: nothing is dispatched yet,
+      // so the chips are still on screen.
+      let dispatch!: (sent: boolean) => void;
+      vi.mocked(mockUseChatSession.sendMessage).mockImplementationOnce(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      render(<ChatTabV2 {...defaultProps} />);
+
+      const chip = screen.getByRole("button", { name: "Starter chip" });
+      await act(async () => {
+        fireEvent.click(chip);
+      });
+      await waitFor(() =>
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+      );
+      await act(async () => {
+        fireEvent.click(chip);
+      });
+      await act(async () => dispatch(true));
+      await act(async () => {});
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores the chip until a typed message is dispatched", async () => {
+      let dispatch!: (sent: boolean) => void;
+      vi.mocked(mockUseChatSession.sendMessage).mockImplementationOnce(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      render(<ChatTabV2 {...defaultProps} />);
+      const composer = () =>
+        mockChatInput.mock.calls.at(-1)?.[0] as {
+          onChange: (value: string) => void;
+          onSubmit: (event: { preventDefault: () => void }) => Promise<void>;
+        };
+      act(() => composer().onChange("typed first"));
+
+      await act(async () => {
+        void composer().onSubmit({ preventDefault: () => {} });
+      });
+      await waitFor(() =>
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      });
+      await act(async () => dispatch(true));
+      await act(async () => {});
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "typed first" }),
+      );
+    });
   });
 
   it("sends a handoff's pendingUserMessage after the seeded conversation is applied", async () => {

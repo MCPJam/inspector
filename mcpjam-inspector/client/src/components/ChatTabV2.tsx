@@ -2353,7 +2353,8 @@ export function ChatTabV2({
           single_model_send: true,
         });
         lastSentUserMessageRef.current = input;
-        sendMessage({
+        // Held until dispatch, so the lock covers the hosted preflight too.
+        await sendMessage({
           text: input,
           files,
           metadata: outgoingSenderMetadata,
@@ -2401,11 +2402,14 @@ export function ChatTabV2({
         single_model_send: true,
       });
       lastSentUserMessageRef.current = prompt;
-      sendMessage({
+      // Held until dispatch: the chips stay on screen through the hosted
+      // preflight inside sendMessage, and a second click there would send.
+      const sent = await sendMessage({
         text: prompt,
         metadata: outgoingSenderMetadata,
         widgetModelContext: modelContextQueue,
       });
+      if (!sent) return;
       setModelContextQueue([]);
     }
     setInput("");
