@@ -67,6 +67,17 @@ describe("Claude Code effort mapping", () => {
     });
   });
 
+  it("starts without non-essential traffic only when the turn asks for a quiet start", () => {
+    adapter().createHarness({ modelId: "anthropic/claude-sonnet-4-6", auth: {}, mcpJson, quietStartup: true });
+    expect(vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!.env).toMatchObject({
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    });
+    adapter().createHarness({ modelId: "anthropic/claude-sonnet-4-6", auth: {}, mcpJson });
+    expect(vi.mocked(createClaudeCodeHarness).mock.calls.at(-1)![0]!.env).not.toHaveProperty(
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    );
+  });
+
   describe("the models Claude Code picks for itself", () => {
     // Plan mode switches to the `sonnet` alias, background work and the
     // Explore subagent use `haiku`; the lease admits only the turn's model.

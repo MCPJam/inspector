@@ -507,6 +507,12 @@ export type HarnessCreateArgs = {
   /** Only set after exact-route discovery admission. */
   requireNativeToolDiscovery?: boolean;
   /**
+   * Start the runtime without its non-essential network traffic. Set only for
+   * a hosted box, where the CLI holds a placeholder credential; a local run
+   * keeps the person's own settings. Adapters without such traffic ignore it.
+   */
+  quietStartup?: boolean;
+  /**
    * The reasoning effort this turn asked for. An adapter that lists efforts in
    * `supportedReasoningEfforts` MUST apply it through its own runtime option;
    * one that lists none never receives it (the refusal helper stops the turn
@@ -912,8 +918,12 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     elicitationHandler,
     forwardingMcpJson,
     requireNativeToolDiscovery,
+    quietStartup,
   }) {
     const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
+    // Telemetry, error reports, auto-update, feature flags and availability
+    // checks (https://code.claude.com/docs/en/network-config).
+    if (quietStartup) env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     // This pin disables discovery behind a gateway unless explicitly enabled.
     // Preserve the existing eager route; small forwarded catalogs stay eager.
     if (

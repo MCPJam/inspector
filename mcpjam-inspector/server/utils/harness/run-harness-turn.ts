@@ -135,7 +135,11 @@ import {
 import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
-import { harnessBrokerDeliveryEnabled, nativeForwardingEnabled } from "./harness-flags.js";
+import {
+  harnessBrokerDeliveryEnabled,
+  harnessQuietClaudeStartup,
+  nativeForwardingEnabled,
+} from "./harness-flags.js";
 import {
   emitError,
   emitFinish,
@@ -2812,6 +2816,8 @@ export async function runHarnessTurn(
             })
           : [],
       );
+      // Hosted boxes only: a local run keeps the person's own CLI settings.
+      const quietStartup = localPrepared === null && harnessQuietClaudeStartup();
       const buildRuntime = (startupTimeoutMs?: number, sandboxHomeDir?: string) =>
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
@@ -2826,6 +2832,7 @@ export async function runHarnessTurn(
               ...(options.requireNativeToolDiscovery ? { requireNativeToolDiscovery: true } : {}),
               ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
               elicitationHandler: elicitationServerIds.size > 0,
+              ...(quietStartup ? { quietStartup: true } : {}),
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2840,6 +2847,7 @@ export async function runHarnessTurn(
               permissionMode,
               ...(options.requireNativeToolDiscovery ? { requireNativeToolDiscovery: true } : {}),
               ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
+              ...(quietStartup ? { quietStartup: true } : {}),
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
