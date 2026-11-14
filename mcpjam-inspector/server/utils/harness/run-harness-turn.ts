@@ -4949,7 +4949,10 @@ export async function runHarnessTurn(
   // that only ended a background drain kept the answer, so is not `aborted`.
   const closeTurnEvent = () =>
     turnEvent.close({
-      aborted,
+      // A lost lease sets `aborted` because the stream saw the liveness abort,
+      // then `turnErrored` when that abort is reported. Failed takes
+      // precedence: that is not a user Stop.
+      aborted: aborted && !turnErrored,
       completed:
         !turnErrored &&
         (runSucceeded || pausedForApproval || pausedForScopeStepUp),

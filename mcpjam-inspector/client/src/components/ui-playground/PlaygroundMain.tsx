@@ -2939,7 +2939,11 @@ export function PlaygroundMain({
   });
   composerOnResetRef.current = composer.onSessionReset;
   // A new hosted harness chat's computer is set up while its first message is typed.
-  useHarnessBoxPreparation(harnessBoxPreparation, composer.input);
+  // Compare sends on the cards' conversations, not the hidden root session.
+  useHarnessBoxPreparation(
+    isCompareMode ? null : harnessBoxPreparation,
+    composer.input,
+  );
   // Project Environments (Phase 2). Selecting an environment activates the new
   // `executionTarget` synchronously, but the things that must agree with it do
   // not land in the same tick: the chat scope re-keys on the new target, and
