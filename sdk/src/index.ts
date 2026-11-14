@@ -781,7 +781,7 @@ export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.j
 export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
 // Directory submission forms as data: flows, answer validation, placement.
 export * from "./directory-readiness/flows/index.js";
-// Directory test plans: drafting and validation.
+// Directory test plans: drafting, validation, call outcomes per tool.
 export * from "./directory-readiness/test-plan/index.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner

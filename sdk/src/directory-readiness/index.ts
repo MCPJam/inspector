@@ -81,7 +81,7 @@ export type {
 
 // Submission forms as data. The flows barrel names its own exports, all pure.
 export * from "./flows/index.js";
-// Test plans, all pure like the flows.
+// Test plans and their outcomes, all pure like the flows.
 export * from "./test-plan/index.js";
 
 /**

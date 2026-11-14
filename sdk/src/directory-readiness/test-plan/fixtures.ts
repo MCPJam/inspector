@@ -27,6 +27,33 @@ export function directoryFixtureReferences(
   return found;
 }
 
+/**
+ * The arguments with every reference replaced, or the `fixture.value` names
+ * nothing could fill: a call is never sent with a placeholder in it.
+ */
+export function resolveDirectoryTestArguments(
+  args: Record<string, unknown>,
+  values: Readonly<Record<string, Readonly<Record<string, string | number>>>>
+): { arguments: Record<string, unknown> } | { missing: string[] } {
+  const missing: string[] = [];
+  const resolved = replaceReferences(args, ({ fixture, value }) => {
+    const filled = own(own(values, fixture), value);
+    if (filled === undefined) missing.push(`${fixture}.${value}`);
+    return filled;
+  });
+  return missing.length > 0
+    ? { missing }
+    : { arguments: resolved as Record<string, unknown> };
+}
+
+/** Own keys only: a fixture named `constructor` must not find Object's. */
+function own<T>(
+  record: Readonly<Record<string, T>> | undefined,
+  key: string
+): T | undefined {
+  return record && Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
 function referenceIn(value: unknown): DirectoryFixtureReference | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined;

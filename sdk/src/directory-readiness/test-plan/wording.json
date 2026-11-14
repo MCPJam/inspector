@@ -34,5 +34,36 @@
     "cleanup.missing": "{fixture} is created by the plan and never removed. Add a cleanup step for it.",
     "cleanup.existing": "{fixture} was in the reviewer's account before the sweep, so cleanup must not remove it. Remove the step.",
     "cleanup.tool": "Cleanup calls {tool}, which the plan does not run. Use a tool the plan includes."
+  },
+  "cases": {
+    "ambiguous": "The call started and did not finish, so it may have changed data. Check what it changed, then record what happened or rerun it.",
+    "staleAccount": "It ran as another reviewer account. Run it again.",
+    "staleInputs": "The case, a fixture it uses or the tool's schema changed after it ran. Run it again.",
+    "running": "The call has not finished. A read that stopped runs again when the sweep resumes.",
+    "refused": "The server refused the call before the tool ran. Check the reviewer's sign-in and permissions, then run it again.",
+    "unreachable": "The server did not answer. Check that it is reachable, then run it again.",
+    "validFailed": "Valid input got {got}.",
+    "acceptedInvalid": "The tool accepted input it should refuse.",
+    "wrongRefusal": "It expected {expected} and got {got}.",
+    "notDrafted": "Its arguments are not drafted yet. Draft or enter them.",
+    "fixtureMissing": "{fixture} was not found in the reviewer's account. Add it there, or update the fixture.",
+    "fixtureNotCreated": "{fixture} was not created: case {creator} is {status}.",
+    "notRun": "It has not run yet.",
+    "budget": "The sweep used its call budget before this case. Raise the budget and run again.",
+    "deadline": "The run reached its time limit before this case. Run again to continue.",
+    "cancelled": "The run was cancelled before this case.",
+    "setup": "The run stopped on a setup problem before this case. Fix it and run again.",
+    "noValidCase": "It has no valid-input case.",
+    "noNegativeCase": "It has no negative case."
+  },
+  "answers": {
+    "any": "a refusal",
+    "result": "a result",
+    "tool-error": "an error from the tool",
+    "invalid-arguments": "an invalid-arguments refusal",
+    "rpc-error": "a protocol error",
+    "server-error": "a server error",
+    "refused": "a refusal before the tool ran",
+    "unreachable": "no answer"
   }
 }

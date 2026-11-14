@@ -205,5 +205,7 @@ describe("exports", () => {
   it("reaches the browser entry", () => {
     expect(typeof browser.draftDirectoryTestPlan).toBe("function");
     expect(typeof browser.validateDirectoryTestPlan).toBe("function");
+    expect(typeof browser.summarizeDirectoryToolTests).toBe("function");
+    expect(browser.DIRECTORY_TOOL_TEST_STATUSES).toContain("expected-refusal");
   });
 });
