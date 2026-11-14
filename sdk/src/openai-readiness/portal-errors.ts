@@ -26,6 +26,7 @@
  */
 
 import { openaiPolicySource, type OpenAIPolicySourceRef } from "./manifest.js";
+import { OPENAI_PARSER_PORTAL_ERRORS } from "./parser-portal-errors.js";
 import {
   OPENAI_ARCHIVE_LIMITS,
   OPENAI_FIELD_LIMITS,
@@ -207,6 +208,10 @@ export const OPENAI_PORTAL_ERRORS: readonly OpenAIPortalErrorDefinition[] = [
   },
 
   // --------------------------------------------------------------- manifest
+  //
+  // The reader raises the portal's codes (at the end) in place of
+  // `manifest-missing` and the two `manifest-name-*` ids, which stay listed so
+  // a caller holding one can still look it up.
   {
     id: "manifest-missing",
     category: "package-manifest",
@@ -792,6 +797,9 @@ export const OPENAI_PORTAL_ERRORS: readonly OpenAIPortalErrorDefinition[] = [
       "The package contains a surface the plugin directory does not support.",
     source: errorsPage("§Shared package checks → Excluded content"),
   },
+
+  // The portal's codes and wording for the rules the package parser enforces.
+  ...OPENAI_PARSER_PORTAL_ERRORS,
 ] as const;
 
 /** The catalog keyed by id, for a check that already knows which code it means. */
