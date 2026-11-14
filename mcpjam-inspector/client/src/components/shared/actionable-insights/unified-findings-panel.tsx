@@ -417,7 +417,7 @@ export function UnifiedFindingsPanel({
             </div>
           ))}
         </div>
-      ) : !snapshot ? (
+      ) : !snapshot && !(problems && problems.length > 0) ? (
         fallback !== undefined && !analyze.pending && !build?.pending ? (
           fallback
         ) : (

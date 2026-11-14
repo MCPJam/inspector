@@ -258,7 +258,7 @@ export function ProblemDetailsContent({
               <FindingText text={option.rationale} />
             </p>
           </div>
-          {option.hypothesis ? (
+          {option.hypothesis || option.supportsIf || option.weakensIf ? (
             <dl className="space-y-2">
               {[
                 ["Hypothesis", option.hypothesis],
