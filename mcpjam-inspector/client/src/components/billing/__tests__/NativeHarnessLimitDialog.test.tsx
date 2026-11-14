@@ -87,6 +87,7 @@ beforeEach(() => {
   };
   useNativeHarnessLimitDialogStore.setState({
     notice: null,
+    noticeKeys: [],
     notifiedKeys: new Set(),
     afterSwitch: null,
   });
@@ -159,6 +160,35 @@ describe("NativeHarnessLimitDialog", () => {
     await waitFor(() =>
       expect(useNativeHarnessLimitDialogStore.getState().notice).toBeNull(),
     );
+  });
+
+  it("leaves a newer notice open when an earlier checkout finishes", async () => {
+    let finishCheckout!: (result: {
+      redirected: boolean;
+      shouldDismiss: boolean;
+    }) => void;
+    upgradeState.start.mockReturnValue(
+      new Promise((resolve) => {
+        finishCheckout = resolve;
+      }),
+    );
+    useNativeHarnessLimitDialogStore.getState().open({}, ["run:run_a"]);
+    render(<NativeHarnessLimitDialog />);
+    await userEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+
+    act(() => {
+      useNativeHarnessLimitDialogStore.getState().close();
+      useNativeHarnessLimitDialogStore
+        .getState()
+        .open({ organizationId: "org_b" }, ["run:run_b"]);
+    });
+    await act(async () =>
+      finishCheckout({ redirected: false, shouldDismiss: true }),
+    );
+
+    expect(useNativeHarnessLimitDialogStore.getState().notice).toEqual({
+      organizationId: "org_b",
+    });
   });
 
   it("gives a member the request to the owners", () => {

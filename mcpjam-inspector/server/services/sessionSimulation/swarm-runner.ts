@@ -1417,6 +1417,9 @@ async function runJourneyFanOut(
                   targetId,
                   sessionIdx,
                 });
+                // A stop scoped to credit-funded conversations still lets this
+                // target's sponsored ones run; `canStart` skips the rest.
+                if (creditStop.signal.aborted && !stopScheduling()) continue;
                 return;
               }
               // Otherwise the target asked for a REPRODUCIBLE shell and we
