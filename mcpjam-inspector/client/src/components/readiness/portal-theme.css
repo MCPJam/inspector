@@ -1,0 +1,48 @@
+/* The Claude portal's colours for the Readiness page's copy of it, a
+   documented exception to the role tokens (DESIGN.md, Colors). Inside the
+   scope the role tokens take the portal's values, so components keep using
+   role tokens. Dark values are sampled from captures of the portal; light
+   values are an approximation, since no capture is light. MCPJam's own
+   additions use the status tokens, which keep MCPJam's values here. */
+.portal-claude {
+  --background: #faf9f5;
+  --foreground: #1f1e1d;
+  --card: #ffffff;
+  --card-foreground: #1f1e1d;
+  --popover: #ffffff;
+  --popover-foreground: #1f1e1d;
+  --muted: #f0eee6;
+  --muted-foreground: #6b6a63;
+  --border: #dedcd1;
+  --input: #cbc8bc;
+  --accent: #eceae0;
+  --accent-foreground: #1f1e1d;
+  --primary: #1f1e1d;
+  --primary-foreground: #faf9f5;
+  --secondary: #e6e4d9;
+  --secondary-foreground: #1f1e1d;
+  --destructive: #b3373a;
+  --ring: #5b8bd6;
+  --radius: 0.625rem;
+}
+
+.dark .portal-claude {
+  --background: #1a1a19;
+  --foreground: #ecebe6;
+  --card: #1f1f1e;
+  --card-foreground: #ecebe6;
+  --popover: #262625;
+  --popover-foreground: #ecebe6;
+  --muted: #232322;
+  --muted-foreground: #9b9a93;
+  --border: #32322f;
+  --input: #3b3a37;
+  --accent: #2a2a28;
+  --accent-foreground: #f4f3ee;
+  --primary: #efeee9;
+  --primary-foreground: #1a1a19;
+  --secondary: #3a3a38;
+  --secondary-foreground: #ecebe6;
+  --destructive: #e5787b;
+  --ring: #5b8bd6;
+}
