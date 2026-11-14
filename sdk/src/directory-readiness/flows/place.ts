@@ -117,9 +117,18 @@ export function placeDirectoryResults(
     on: input.on,
     savedSecrets: input.savedSecrets,
   });
+  const declared = new Set(
+    flow.steps.flatMap((step) => step.fields.map((field) => field.key))
+  );
   return flow.steps.map((step) => {
     const keys = new Set(step.fields.map((field) => field.key));
-    const fieldIssues = issues.filter((issue) => keys.has(issue.key));
+    // An issue for a key no step declares, such as an answer to a field the
+    // flow has since dropped, goes where an unplaced finding goes.
+    const fieldIssues = issues.filter(
+      (issue) =>
+        keys.has(issue.key) ||
+        (step.id === fallback && !declared.has(issue.key))
+    );
     const stepFindings = placed.filter((entry) => entry.step === step.id);
     return {
       step: step.id,

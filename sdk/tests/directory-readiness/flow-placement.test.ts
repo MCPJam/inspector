@@ -415,6 +415,24 @@ describe("step counts", () => {
     });
   });
 
+  it("count an issue for a field the flow does not have where an unplaced check goes", () => {
+    // An answer stored before the flow dropped its field.
+    const answers = completeAnswers([
+      answer("listing.tagline", "Track orders"),
+    ]);
+    const unplaced = finding("claude.other.check", {
+      lane: "a-lane-nobody-knows",
+    });
+    const steps = place([unplaced], answers);
+    const fallback = placed(steps, unplaced.id).step;
+    expect(
+      steps.flatMap((step) =>
+        step.fieldIssues.map((issue) => [step.step, issue.key, issue.code])
+      )
+    ).toEqual([[fallback, "listing.tagline", "unknownField"]]);
+    expect(steps.find((step) => step.step === fallback)?.counts.toFix).toBe(1);
+  });
+
   it("report the review page's issues when asked", () => {
     const answers = completeAnswers([
       answer("company.website", "http://acme.example"),
