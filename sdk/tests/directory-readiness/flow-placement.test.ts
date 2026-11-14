@@ -283,6 +283,22 @@ describe("staleness", () => {
     });
   });
 
+  it("marks an unsure flag stale when an answer it read changed", () => {
+    const unsure = finding("claude.experience.tool-overlap", {
+      details: { confidence: "low" },
+    });
+    const now = completeAnswers([
+      answer("connection.serverUrl", "https://other.example.com/mcp"),
+    ]);
+    const [entry] = place([unsure], now, graded).flatMap(
+      (step) => step.findings
+    );
+    expect(entry).toMatchObject({
+      evidenceStatus: "stale",
+      staleBecause: ["connection.serverUrl"],
+    });
+  });
+
   it("counts a confirmation under new wording as a change", () => {
     const confirm = (wordingRevision: string): DirectoryAnswer => ({
       ...answer("compliance.acknowledgments", ACKNOWLEDGMENT_VALUES),

@@ -866,6 +866,32 @@
         "compliance.acknowledgments"
       ],
       "checks": ["claude.submission.declarations-confirmed"]
+    },
+    {
+      "step": "review",
+      "needs": [],
+      "reads": [
+        "connection.serverUrl",
+        "connection.differentUrls",
+        "useCases.pairs",
+        "useCases.prerequisites",
+        "useCases.access",
+        "company.name",
+        "company.website",
+        "company.contactName",
+        "company.contactEmail",
+        "company.role",
+        "company.anthropicContact",
+        "authentication.requirement",
+        "authentication.oauthClient",
+        "dataHandling.apiOwnership",
+        "dataHandling.healthData",
+        "dataHandling.sponsored",
+        "testLaunch.instructions",
+        "testLaunch.selfTested",
+        "compliance.additionalNotes"
+      ],
+      "checks": ["claude.submission.other-answers"]
     }
   ],
   "laneSteps": {

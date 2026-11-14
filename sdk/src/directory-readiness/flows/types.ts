@@ -244,7 +244,8 @@ export interface DirectoryFieldIssue {
  *
  *   - `established` — the run reached a settled result.
  *   - `inconclusive` — a model flagged something and said it was unsure.
- *   - `stale` — established, but an answer it read has changed since.
+ *   - `stale` — established or inconclusive, but an answer it read has
+ *     changed since.
  *   - `not-tested` — the run did not evaluate it, with a stated reason.
  *   - `blocked` — the run lacked something the check depends on.
  */

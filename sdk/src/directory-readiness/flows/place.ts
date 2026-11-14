@@ -101,7 +101,9 @@ export function placeDirectoryResults(
     const staleBecause = (placement?.reads ?? []).filter((key) =>
       changed.has(key)
     );
-    if (evidenceStatus === "established" && staleBecause.length > 0) {
+    const current =
+      evidenceStatus === "established" || evidenceStatus === "inconclusive";
+    if (current && staleBecause.length > 0) {
       evidenceStatus = "stale";
     }
     return {

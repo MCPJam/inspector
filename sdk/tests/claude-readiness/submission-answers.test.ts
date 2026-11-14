@@ -155,6 +155,40 @@ describe("the listing checks graded from answers", () => {
     expect(finding.details).toMatchObject({ acknowledged: 6 });
   });
 
+  it("report every other answer the review page would refuse", () => {
+    const passing = byId(
+      grade(completeAnswers()),
+      "claude.submission.other-answers"
+    );
+    expect(passing.status).toBe("satisfied");
+
+    const findings = grade(
+      completeAnswers([
+        answer("useCases.pairs", []),
+        answer("dataHandling.sponsored", ""),
+      ])
+    );
+    const finding = byId(findings, "claude.submission.other-answers");
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toBe(
+      "Fix these answers before you submit. Use cases: Add at least one use case with an example prompt. Sponsored content: This field is required."
+    );
+    expect(finding.details).toMatchObject({
+      issues: [
+        { key: "useCases.pairs", code: "required" },
+        { key: "dataHandling.sponsored", code: "required" },
+      ],
+    });
+    // Each issue is reported by one check.
+    for (const id of [
+      "claude.submission.listing-fields",
+      "claude.submission.urls",
+      "claude.submission.attestations",
+    ]) {
+      expect(byId(findings, id).status, id).toBe("satisfied");
+    }
+  });
+
   it("find no screenshots to check on a connector submission", () => {
     const findings = grade(completeAnswers());
     for (const id of [

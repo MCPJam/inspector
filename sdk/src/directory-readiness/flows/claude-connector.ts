@@ -47,7 +47,7 @@ function opt(control: FieldRules["control"], rest: Partial<FieldRules> = {}) {
 const RULES: Record<FieldKey, FieldRules> = {
   "connection.serverUrl": req("server", { format: "url" }),
   "connection.differentUrls": opt("checkbox"),
-  "listing.name": req("text"),
+  "listing.name": req("text", { maxLength: LIMITS.nameMaxLength }),
   "listing.slug": req("text", { format: "slug" }),
   "listing.oneLiner": req("text", { maxLength: LIMITS.oneLinerMaxLength }),
   "listing.description": req("textarea", {

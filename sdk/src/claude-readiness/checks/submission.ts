@@ -125,12 +125,23 @@ const DECLARED_AUTH_MATCHES: ClaudeCheckDefinition = {
   intrusiveness: "passive",
 };
 
+const OTHER_ANSWERS: ClaudeCheckDefinition = {
+  id: "claude.submission.other-answers",
+  title: "Every other answer the review page asks for is complete and valid",
+  lane: "submission-artifacts",
+  class: "required",
+  source: claudePolicySource("submission", "§Submission form"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
 const DEFINITIONS = [
   LISTING_FIELDS,
   LISTING_URLS,
   SCREENSHOTS,
   SCREENSHOT_PROMPTS,
   ATTESTATIONS,
+  OTHER_ANSWERS,
   DECLARED_AUTH_MATCHES,
   ARTIFACT_QUALITY,
 ];
@@ -325,6 +336,14 @@ export function runClaudeSubmissionChecks(
   );
 
   findings.push(
+    notApplicable(
+      OTHER_ANSWERS,
+      stamp,
+      "a submission profile has none of the connector form's other answers"
+    )
+  );
+
+  findings.push(
     declaredAuthFinding(
       profile.declaredAuthMode,
       evidence.observedAuthMode,
@@ -376,6 +395,7 @@ const LINK_KEYS = [
   "listing.enterpriseAuthDocsUrl",
 ];
 const ACKNOWLEDGMENTS_KEY = "compliance.acknowledgments";
+const OWNED_KEYS = new Set([...COPY_KEYS, ...LINK_KEYS, ACKNOWLEDGMENTS_KEY]);
 
 function gradeAnswers(
   evidence: ClaudeSubmissionEvidence,
@@ -400,6 +420,10 @@ function gradeAnswers(
       : 0;
   };
   const noScreenshots = "an MCP connector submission has no screenshots";
+  // Every other issue, so an incomplete submission never grades as passing.
+  const otherKeys = answers.issues
+    .map((issue) => issue.key)
+    .filter((key) => !OWNED_KEYS.has(key));
 
   return [
     fields(LISTING_FIELDS, COPY_KEYS, {
@@ -430,6 +454,7 @@ function gradeAnswers(
       },
       unconfirmedProblems(answers, [ACKNOWLEDGMENTS_KEY])
     ),
+    fields(OTHER_ANSWERS, otherKeys, {}),
     // A caller's own observation keeps its old meaning; otherwise the
     // answers are held against what the run saw of the server's sign-in.
     evidence.observedAuthMode === undefined
