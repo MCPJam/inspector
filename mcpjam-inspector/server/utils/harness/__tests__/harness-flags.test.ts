@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   harnessPrepareBoxEnabled,
   harnessPrepareBoxSwitchedOn,
+  harnessQuietClaudeStartup,
   hostedWarmAgentEnabled,
 } from "../harness-flags.js";
 
@@ -56,4 +57,14 @@ it("limits box preparation to the listed organizations", () => {
   vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", " organization-a, ,organization-b ");
   expect(harnessPrepareBoxEnabled("organization-a")).toBe(true);
   expect(harnessPrepareBoxEnabled("organization-c")).toBe(false);
+});
+
+it.each([undefined, "", "1", "TRUE", "false"])("keeps Claude Code's start-up traffic unless switched on (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", value);
+  expect(harnessQuietClaudeStartup()).toBe(false);
+});
+
+it("quiets Claude Code's start-up only when the switch reads exactly true", () => {
+  vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", "true");
+  expect(harnessQuietClaudeStartup()).toBe(true);
 });
