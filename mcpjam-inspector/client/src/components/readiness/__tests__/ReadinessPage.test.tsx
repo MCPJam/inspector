@@ -92,8 +92,12 @@ const plans = vi.hoisted(() => ({
   getToolTests: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-test-plan-api", () => plans);
-vi.mock("@/hooks/use-task-owner-id", () => ({
-  useTaskOwnerId: () => "user_1",
+// P5b's reviewer path shares Test & launch with the test plan. It reads
+// Convex and the attempts API, and ReviewerSection.test.tsx covers it, so
+// the page draws none here; ChatGPT's drawer keeps the real section.
+vi.mock("../ReviewerSection", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ReviewerSection")>()),
+  ReviewerPath: () => null,
 }));
 
 const TITLES: Record<string, string> = {

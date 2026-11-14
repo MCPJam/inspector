@@ -134,10 +134,12 @@ describe("useDirectorySubmission with a ChatGPT plugin", () => {
     );
     await openSubmission();
     await runner.start?.("key_1");
+    // A run started with no test plan revision names none.
     expect(api.startDirectorySubmissionRun).toHaveBeenCalledWith(
       SCOPE,
       "key_1",
       "ver_2",
+      undefined,
     );
   });
 

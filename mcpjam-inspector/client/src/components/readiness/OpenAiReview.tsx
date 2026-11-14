@@ -195,6 +195,7 @@ export function OpenAiReview({
             submissionId={view.id}
             values={session.values}
             onAnswer={session.setAnswer}
+            steps={view.steps}
           />
           <IssueLine issue={issue} />
           <McpjamChecks findings={under} />

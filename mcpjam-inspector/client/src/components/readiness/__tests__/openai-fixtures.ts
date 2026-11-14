@@ -178,6 +178,7 @@ export function session(
   return {
     flow,
     view: submission,
+    answers: submission.answers,
     values,
     // As the hook reports them: a package field nobody imported is not missing.
     issues: validateDirectoryAnswers(flow, submission.answers).filter(
@@ -198,10 +199,12 @@ export function session(
       : { status: "idle" },
     startRun: vi.fn(),
     setAnswer: vi.fn(),
+    confirm: vi.fn(),
     saveNow: vi.fn(),
     reapply: vi.fn(),
     keepSaved: vi.fn(),
     setPlugin: vi.fn(),
+    adopt: vi.fn(),
     ...overrides,
   };
 }
