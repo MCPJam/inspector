@@ -2698,6 +2698,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "429": {
             "$ref": "#/components/responses/RateLimited"
           },
@@ -4868,6 +4871,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "500": {
             "$ref": "#/components/responses/InternalError"
           },
@@ -5714,6 +5720,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
