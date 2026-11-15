@@ -1,4 +1,13 @@
-import { isToolUIPart, type UIMessage } from "ai";
+import {
+  getToolName,
+  isToolUIPart,
+  type DynamicToolUIPart,
+  type ToolUIPart,
+  type UIMessage,
+} from "ai";
+import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
+import { readToolResultServerId } from "@/lib/tool-result-utils";
+import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
 import { currentTelemetryActor } from "@/lib/telemetry-context";
@@ -58,8 +67,29 @@ function outputIsError(output: unknown): boolean {
   );
 }
 
-/** One event per finished tool call in a streamed assistant message. */
-export function trackChatToolCallsCompleted(message: UIMessage): void {
+/**
+ * Whether a chat tool call went to a connected MCP server, the same evidence
+ * the tool card uses to pick its server. Harness built-ins such as `bash`
+ * carry none of it, and the event measures calls to the user's server.
+ */
+function isMcpServerToolCall(
+  part: ToolUIPart | DynamicToolUIPart,
+  toolServerMap: ToolServerMap,
+): boolean {
+  return Boolean(
+    readMcpToolOriginServerId(part.callProviderMetadata) ??
+    toolServerMap[getToolName(part)] ??
+    (part.state === "output-available"
+      ? readToolResultServerId(part.output)
+      : undefined),
+  );
+}
+
+/** One event per finished MCP server tool call in a streamed assistant message. */
+export function trackChatToolCallsCompleted(
+  message: UIMessage,
+  toolServerMap: ToolServerMap,
+): void {
   // Runs inside the stream's finish handler; a malformed message must not
   // break the turn for the sake of analytics.
   if (!Array.isArray(message?.parts)) return;
@@ -68,6 +98,7 @@ export function trackChatToolCallsCompleted(message: UIMessage): void {
     if (part.state !== "output-available" && part.state !== "output-error") {
       continue;
     }
+    if (!isMcpServerToolCall(part, toolServerMap)) continue;
     trackToolCallCompleted({
       source: "chat",
       toolCallId: part.toolCallId,

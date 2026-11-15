@@ -40,7 +40,7 @@ describe("tool_call_completed", () => {
     });
   });
 
-  it("fires once per chat tool call id across repeated finishes", () => {
+  it("fires once per MCP server tool call id across repeated finishes", () => {
     const message = assistant([
       { type: "text", text: "Calling tools" },
       {
@@ -56,6 +56,7 @@ describe("tool_call_completed", () => {
         toolCallId: "call-b",
         state: "output-available",
         input: {},
+        callProviderMetadata: { mcpjam: { serverId: "linear" } },
         output: { content: [], isError: true },
       },
       {
@@ -73,8 +74,9 @@ describe("tool_call_completed", () => {
       },
     ]);
 
-    trackChatToolCallsCompleted(message);
-    trackChatToolCallsCompleted(message);
+    const toolServerMap = { search: "linear", wipe: "linear", pending: "x" };
+    trackChatToolCallsCompleted(message, toolServerMap);
+    trackChatToolCallsCompleted(message, toolServerMap);
 
     expect(track).toHaveBeenCalledTimes(3);
     expect(track.mock.calls.map(([, props]) => props.is_error)).toEqual([
@@ -85,5 +87,21 @@ describe("tool_call_completed", () => {
     expect(track.mock.calls.every(([, props]) => props.source === "chat")).toBe(
       true,
     );
+  });
+
+  it("fires nothing for a harness built-in such as bash", () => {
+    trackChatToolCallsCompleted(
+      assistant([
+        {
+          type: "tool-bash",
+          toolCallId: "call-bash",
+          state: "output-available",
+          input: { command: "npm test" },
+          output: { stdout: "ok" },
+        },
+      ]),
+      { search: "linear" },
+    );
+    expect(track).not.toHaveBeenCalled();
   });
 });

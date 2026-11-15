@@ -2416,6 +2416,9 @@ export function useChatSession(
     Record<string, Record<string, unknown>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  // Read by the stream's finish handler, which can outlive this render.
+  const toolServerMapRef = useRef(toolServerMap);
+  toolServerMapRef.current = toolServerMap;
   const [serializedTools, setSerializedTools] = useState<
     Record<string, SerializedModelRequestTool>
   >({});
@@ -4471,7 +4474,7 @@ export function useChatSession(
     onFinish: ({ isAbort, message, finishReason }) => {
       turnAuthorizationRenewal.stop();
       turnAbortedRef.current = isAbort;
-      trackChatToolCallsCompleted(message);
+      trackChatToolCallsCompleted(message, toolServerMapRef.current);
       lastFinishRef.current = {
         chatSessionId: chatSessionIdRef.current,
         finishReason,
