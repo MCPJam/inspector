@@ -7,7 +7,6 @@ import {
   FeatureSpotlightContent,
   FeatureSpotlightDescription,
   FeatureSpotlightEyebrow,
-  FeatureSpotlightTags,
   FeatureSpotlightTitle,
 } from "@mcpjam/design-system/feature-spotlight";
 import { SUITE_COPY } from "@/components/conformance/conformance-ui";
@@ -23,6 +22,7 @@ export const CONFORMANCE_SPOTLIGHT_STORAGE_KEY =
 export const CONFORMANCE_SPOTLIGHT_DELAY_MS = 1200;
 
 const SUITE_TITLES = Object.values(SUITE_COPY).map((suite) => suite.title);
+const SUITE_LIST = `${SUITE_TITLES.slice(0, -1).join(", ")} and ${SUITE_TITLES.at(-1)}`;
 
 type CloseReason = "primary" | "dismiss" | "visited";
 
@@ -150,14 +150,10 @@ export function ConformanceSpotlight({
           Check your server against the MCP spec
         </FeatureSpotlightTitle>
         <FeatureSpotlightDescription>
-          Conformance runs the spec's checks on your server and explains every
-          failure in plain language. Fix them before Claude or ChatGPT users run
-          into them.
+          Conformance runs the spec's {SUITE_LIST} checks on your server and
+          explains every failure in plain language. Fix them before Claude or
+          ChatGPT users run into them.
         </FeatureSpotlightDescription>
-        <FeatureSpotlightTags
-          aria-label="What Conformance checks"
-          items={SUITE_TITLES}
-        />
         <FeatureSpotlightActions>
           <Button
             size="sm"

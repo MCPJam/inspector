@@ -85,9 +85,9 @@ describe("ConformanceSpotlight", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitForOpen();
     expect(screen.getByRole("dialog", { name: TITLE })).toBeVisible();
-    for (const suite of ["Protocol", "Apps", "Tasks", "OAuth"]) {
-      expect(screen.getByText(suite)).toBeVisible();
-    }
+    expect(
+      screen.getByText(/the spec's Protocol, Apps, Tasks and OAuth checks/),
+    ).toBeVisible();
     expect(document.activeElement).toBe(document.body);
     expect(track).toHaveBeenCalledWith(
       "feature_spotlight_engagement",

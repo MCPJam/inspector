@@ -10,21 +10,13 @@ import {
   FeatureSpotlightContent,
   FeatureSpotlightDescription,
   FeatureSpotlightEyebrow,
-  FeatureSpotlightTags,
   FeatureSpotlightTitle,
 } from "@mcpjam/design-system/feature-spotlight";
 
 /**
- * FeatureSpotlight: a one-time callout pinned to the UI it introduces.
- *
- * Use it for a feature the user can act on right now, from where they are.
- * Show it once, after the page settles, and treat any close as final. It never
- * moves focus, so a keyboard user is not pulled out of their work; Escape and
- * an outside click close it. The product decides when it opens; this
- * component only draws it.
- *
- * The Conformance intro in the sidebar is the first user. Its CTA options are
- * laid out below.
+ * FeatureSpotlight stories. When to use it is on the Overview page
+ * (FeatureSpotlight.mdx). The Conformance intro in the sidebar is the first
+ * user; its CTA options are laid out below.
  */
 const meta = {
   title: "Components/Feature Spotlight",
@@ -34,8 +26,6 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
-
-const SUITES = ["Protocol", "Apps", "Tasks", "OAuth"];
 
 function SidebarRow() {
   return (
@@ -74,14 +64,10 @@ function ConformanceCopy() {
         Check your server against the MCP spec
       </FeatureSpotlightTitle>
       <FeatureSpotlightDescription>
-        Conformance runs the spec's checks on your server and explains every
-        failure in plain language. Fix them before Claude or ChatGPT users run
-        into them.
+        Conformance runs the spec's Protocol, Apps, Tasks and OAuth checks on
+        your server and explains every failure in plain language. Fix them
+        before Claude or ChatGPT users run into them.
       </FeatureSpotlightDescription>
-      <FeatureSpotlightTags
-        aria-label="What Conformance checks"
-        items={SUITES}
-      />
     </>
   );
 }

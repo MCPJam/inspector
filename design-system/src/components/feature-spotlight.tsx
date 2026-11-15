@@ -133,32 +133,6 @@ function FeatureSpotlightDescription({
   );
 }
 
-/** A row of short labels: what the feature covers. */
-function FeatureSpotlightTags({
-  items,
-  className,
-  ...props
-}: Omit<React.ComponentProps<"ul">, "children"> & {
-  items: readonly React.ReactNode[];
-}) {
-  return (
-    <ul
-      data-slot="feature-spotlight-tags"
-      className={cn("flex flex-wrap gap-1", className)}
-      {...props}
-    >
-      {items.map((item, index) => (
-        <li
-          key={index}
-          className="rounded-md border border-border px-1.5 py-0.5 text-[11px] font-medium"
-        >
-          {item}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function FeatureSpotlightActions({
   className,
   ...props
@@ -199,7 +173,6 @@ export {
   FeatureSpotlightEyebrow,
   FeatureSpotlightTitle,
   FeatureSpotlightDescription,
-  FeatureSpotlightTags,
   FeatureSpotlightActions,
   FeatureSpotlightClose,
 };
