@@ -75,7 +75,7 @@ describe("EvaluateTour", () => {
     );
   });
 
-  it("walks all four stops and hands off to the create-suite form", async () => {
+  it("walks every stop and hands off to the create-suite form", async () => {
     const onComplete = vi.fn();
     render(<Harness onComplete={onComplete} />);
 
@@ -105,6 +105,35 @@ describe("EvaluateTour", () => {
         .mocked(track)
         .mock.calls.filter(([event]) => event === "evaluate_tour_step_viewed"),
     ).toHaveLength(TOUR_STOPS.length);
+  });
+
+  it("scrolls each stop's spotlight into view", async () => {
+    const scrolled: (string | null)[] = [];
+    const scrollIntoView = vi.fn(function (this: HTMLElement) {
+      scrolled.push(this.getAttribute("data-tour-anchor"));
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      render(<Harness />);
+      fireEvent.click(screen.getByTestId("evaluate-tour-start"));
+      await waitFor(() =>
+        expect(screen.getByText(TOUR_STOPS[0].title)).toBeInTheDocument(),
+      );
+      fireEvent.click(screen.getByTestId("evaluate-tour-next"));
+      await waitFor(() =>
+        expect(screen.getByText(TOUR_STOPS[1].title)).toBeInTheDocument(),
+      );
+      expect(scrolled).toEqual([
+        TOUR_STOPS[0].anchors[0],
+        TOUR_STOPS[1].anchors[0],
+      ]);
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
   });
 
   it("closes on Skip tour and reports where", async () => {
