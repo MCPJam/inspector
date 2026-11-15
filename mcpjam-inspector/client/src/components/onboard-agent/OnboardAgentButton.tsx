@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -41,6 +41,8 @@ const CLI_LINKS = [
   },
 ] as const;
 
+// Matches the trigger's `lg:inline-flex`; below it the trigger is hidden.
+const TRIGGER_VISIBLE_QUERY = "(min-width: 1024px)";
 const COPIED_RESET_MS = 1500;
 
 function CommandRow({ id, command }: { id: string; command: string }) {
@@ -80,6 +82,16 @@ function CommandRow({ id, command }: { id: string; command: string }) {
 
 export function OnboardAgentButton() {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const mql = window.matchMedia(TRIGGER_VISIBLE_QUERY);
+    const onChange = () => {
+      if (!mql.matches) setOpen(false);
+    };
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, [open]);
 
   const onOpenChange = (next: boolean) => {
     setOpen(next);

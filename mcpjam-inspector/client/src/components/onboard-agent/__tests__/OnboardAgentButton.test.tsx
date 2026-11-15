@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const trackMock = vi.fn();
@@ -88,7 +88,9 @@ describe("OnboardAgentButton", () => {
     await user.click(
       screen.getByRole("button", { name: /Onboard your agent to MCPJam/ }),
     );
-    const copy = screen.getByRole("button", { name: "Copy mcpjam cloud login" });
+    const copy = screen.getByRole("button", {
+      name: "Copy mcpjam cloud login",
+    });
     await user.click(copy);
 
     await waitFor(() =>
@@ -99,5 +101,33 @@ describe("OnboardAgentButton", () => {
       }),
     );
     expect(copy).toHaveTextContent("Copy");
+  });
+
+  it("closes when the viewport drops below the trigger's breakpoint", async () => {
+    let onChange: (() => void) | undefined;
+    const mql = {
+      matches: true,
+      addEventListener: (_: string, cb: () => void) => {
+        onChange = cb;
+      },
+      removeEventListener: vi.fn(),
+    };
+    const matchMediaSpy = vi
+      .spyOn(window, "matchMedia")
+      .mockReturnValue(mql as unknown as MediaQueryList);
+    const user = userEvent.setup();
+    render(<OnboardAgentButton />);
+    await user.click(
+      screen.getByRole("button", { name: /Onboard your agent to MCPJam/ }),
+    );
+    expect(screen.getByRole("tab", { name: "MCPJam CLI" })).toBeInTheDocument();
+
+    mql.matches = false;
+    act(() => onChange?.());
+
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: "MCPJam CLI" })).toBeNull(),
+    );
+    matchMediaSpy.mockRestore();
   });
 });
