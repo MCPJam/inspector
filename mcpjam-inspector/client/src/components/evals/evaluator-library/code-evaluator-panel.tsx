@@ -59,6 +59,7 @@ export function CodeEvaluatorPanel({
         ) : null}
       </div>
       <pre
+        role="region"
         aria-label={`${fileName} source`}
         className="overflow-x-auto py-2.5 font-mono text-xs leading-relaxed text-[var(--code-text)]"
       >

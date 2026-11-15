@@ -62,7 +62,9 @@ describe("CodeEvaluatorPanel", () => {
         consoleOutput="TypeError at line 3"
       />,
     );
-    const source = screen.getByLabelText("quoted-cart-total.ts source");
+    const source = screen.getByRole("region", {
+      name: "quoted-cart-total.ts source",
+    });
     const marked = source.querySelector("[data-error-line]");
     expect(marked).toHaveTextContent('return { kind: "scored", score: 1 };');
     expect(screen.getByRole("log", { name: "Console" })).toHaveTextContent(
