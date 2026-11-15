@@ -1,0 +1,62 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.control.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.control.json",
+    "sha256": "dd368d1a61417e9f8b7ff0b8eef0f1cb47b2563614dc99a09cdb6145fd48c477"
+  },
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "ec70fcd024df355e37ffe611e9c7451100e8962f56b74fa7e3ad037f97dbafc8"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run1.txt",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run1.txt",
+    "sha256": "b2ac3747528329cc2a775ac2416788997f889d4952a4193692c5ba38fc985d2b"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run2.txt",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run2.txt",
+    "sha256": "8f1cc1194197638b883aa2f77afe2d6d86c53ecd65003ab6eb410d4b21f3a8c8"
+  },
+  {
+    "source": "steps/resume/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/fixture/state.json",
+    "sha256": "d5fec2baa611342639941f163361aa6c9257840632916b8a258ec497d5cc574c"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/result.txt",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/result.txt",
+    "sha256": "4d625ad48576b8f41f02b04f3b0ca5971f489157e6fe33d5ac4b6a8e4303b6b2"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run1.txt",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run1.txt",
+    "sha256": "b2ac3747528329cc2a775ac2416788997f889d4952a4193692c5ba38fc985d2b"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run3.txt",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run3.txt",
+    "sha256": "e3ccceaf37f4fa5a00d2b235be8fb118e5c16524348036bf04518f515e2a1a68"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run2.txt",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run2.txt",
+    "sha256": "8f1cc1194197638b883aa2f77afe2d6d86c53ecd65003ab6eb410d4b21f3a8c8"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/status.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/status.json",
+    "sha256": "ea17c2f5659604290065dd03f5e17d2eb6116e856ec5430dfb705d5eb521e08f"
+  }
+]

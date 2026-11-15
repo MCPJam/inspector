@@ -1,0 +1,19 @@
+{
+  "id": "bootstrap:slop-size-committed",
+  "path": "bootstrap--slop-size-committed",
+  "argv": [
+    "npm",
+    "run",
+    "slop:size"
+  ],
+  "start": "2026-11-15T01:58:11.610953+00:00",
+  "end": "2026-11-15T01:58:12.067892+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

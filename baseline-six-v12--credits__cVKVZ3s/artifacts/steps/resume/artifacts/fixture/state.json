@@ -1,0 +1,795 @@
+{
+  "schema_version": 1,
+  "simulation": true,
+  "scenario": "credits",
+  "seed": 42,
+  "role": "owner",
+  "plan": "team",
+  "started_at": 1794706938.0288339,
+  "credits": 19,
+  "initial_credits": 0,
+  "account_resolved_at": 1794706982.3919408,
+  "requests": [
+    {
+      "time": 1794706939.032789,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706940.062586,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706941.0901022,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706942.1143262,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706943.1393788,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706944.1597269,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706944.328259,
+      "method": "GET",
+      "path": "/api/v1",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706944.3328254,
+      "method": "GET",
+      "path": "/api/v1/usage",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706944.3366563,
+      "method": "GET",
+      "path": "/api/v1/credits",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706944.340893,
+      "method": "GET",
+      "path": "/api/v1/billing",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706944.3447642,
+      "method": "GET",
+      "path": "/api/v1/v1/usage",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706944.348314,
+      "method": "GET",
+      "path": "/api/v1/v1/credits",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706945.1848714,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706946.207356,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706947.2283852,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706948.2530994,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706949.276875,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706950.298903,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706951.3265405,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706952.3539653,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706953.381071,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706954.410666,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706955.4372594,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706955.8064725,
+      "method": "GET",
+      "path": "/api/v1/organizations",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706955.8114483,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706955.8159328,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706956.462405,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706957.4844484,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706958.3201165,
+      "method": "GET",
+      "path": "/api/v1/organizations/org_fixture/spend-budget",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706958.3243496,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_fixture/launch-plan",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706958.328923,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_fixture/disclosure",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706958.5109572,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706959.5484703,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706960.5769086,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706961.6029024,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706962.6323843,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706963.6590009,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706963.940977,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_fixture/run-disclosure",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706963.9469328,
+      "method": "GET",
+      "path": "/api/v1/organizations/org_fixture/spend-budget",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706964.68559,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706965.7149632,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706966.7520027,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706967.8042204,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706968.6495473,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-runs",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706968.8389688,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706969.9032881,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706970.9849396,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706972.0185938,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706973.0483165,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706974.0801773,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706975.1193602,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706976.161264,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706977.2074506,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706978.2452934,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706979.2832408,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706980.3133066,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706981.3475666,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706982.3920152,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706983.4238229,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706984.4788153,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706985.5209813,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706986.5609186,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706987.5891964,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706988.6272857,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706989.6599271,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706990.69754,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706991.729009,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706992.7636666,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706993.805656,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706994.8377004,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706995.8738823,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706996.9101443,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706997.939049,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794706998.9727414,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707000.007281,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707001.0364406,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707001.2122421,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-runs",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707001.2364752,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_1",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707002.0667527,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707003.1005619,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707004.135252,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707005.167684,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707006.199782,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707007.229832,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707008.2594683,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707009.290625,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707010.3236027,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707011.3532736,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707012.3809435,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707013.4113421,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707014.4406314,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707015.4719226,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707016.5043774,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    }
+  ],
+  "tool_calls": [
+    {
+      "time": 1794707001.214291,
+      "name": "add",
+      "arguments": {
+        "a": 2,
+        "b": 3
+      },
+      "sum": 5,
+      "success": true,
+      "source": "simulated_eval",
+      "run_id": "run_fixture_1"
+    }
+  ],
+  "runs": {
+    "run_fixture_1": {
+      "id": "run_fixture_1",
+      "suiteId": "suite_fixture",
+      "runNumber": 1,
+      "status": "completed",
+      "result": "passed",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "passRate": 1.0
+      },
+      "source": "api",
+      "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+      "createdAt": 1794707001214,
+      "completedAt": 1794707001214
+    }
+  },
+  "run_outcomes": {
+    "run_fixture_1": [
+      {
+        "case_id": "case_add",
+        "iteration_number": 1,
+        "title": "add 2 and 3 returns 5",
+        "passed": true,
+        "calls": [
+          {
+            "toolName": "add",
+            "arguments": {
+              "a": 2,
+              "b": 3
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"sum\": 5}"
+                }
+              ],
+              "structuredContent": {
+                "sum": 5
+              },
+              "isError": false
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "idempotency": {},
+  "charges": [
+    {
+      "time": 1794707001.2142904,
+      "run_id": "run_fixture_1",
+      "synthetic_units": 1,
+      "idempotency_digest": null
+    }
+  ],
+  "refusals": [
+    {
+      "time": 1794706968.6514342,
+      "reason": "PLATFORM_FEE_REQUIRED"
+    }
+  ],
+  "servers": [
+    {
+      "id": "server_fixture",
+      "name": "Arithmetic",
+      "projectId": "project_fixture",
+      "transportType": "http",
+      "url": "http://fixture:8765/mcp",
+      "enabled": true,
+      "useOAuth": false,
+      "hasClientSecret": false
+    }
+  ],
+  "suites": {
+    "suite_fixture": {
+      "id": "suite_fixture",
+      "name": "Arithmetic smoke",
+      "projectId": "project_fixture",
+      "description": "Synthetic fixture: add 2 and 3 and assert 5.",
+      "environment": {
+        "servers": []
+      },
+      "executionConfig": null,
+      "hosts": [],
+      "environmentIds": [],
+      "settings": {
+        "policy": "legacy",
+        "minimumIterations": 1
+      },
+      "schedule": {},
+      "createdAt": 1,
+      "updatedAt": 2,
+      "cases": [
+        {
+          "id": "case_add",
+          "title": "add 2 and 3 returns 5",
+          "steps": [
+            {
+              "id": "add",
+              "kind": "toolCall",
+              "toolName": "add",
+              "arguments": {
+                "a": 2,
+                "b": 3
+              }
+            }
+          ],
+          "expectedOutput": "5"
+        }
+      ]
+    }
+  }
+}

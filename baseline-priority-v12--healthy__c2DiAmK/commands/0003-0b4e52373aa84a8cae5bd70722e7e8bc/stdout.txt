@@ -1,0 +1,117 @@
+/projects/{projectId}/eval-suites {
+  "required": true,
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/EvalSuiteCreateRequest"
+      },
+      "example": {
+        "name": "smoke",
+        "serverIds": [
+          "srv_abc123"
+        ],
+        "model": "anthropic/claude-haiku-4.5",
+        "tests": [
+          {
+            "title": "lists files",
+            "steps": [
+              {
+                "id": "s1",
+                "kind": "prompt",
+                "prompt": "List the files in the project root."
+              },
+              {
+                "id": "s2",
+                "kind": "assert",
+                "assertion": {
+                  "type": "toolCalledWith",
+                  "toolName": "list_files",
+                  "args": {
+                    "args": {}
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+/projects/{projectId}/eval-runs {
+  "required": true,
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/EvalRunCreateRequest"
+      },
+      "example": {
+        "suiteName": "smoke",
+        "serverIds": [
+          "srv_abc123"
+        ],
+        "tests": [
+          {
+            "title": "echo works",
+            "runs": 1,
+            "model": "anthropic/claude-haiku-4.5",
+            "provider": "anthropic",
+            "steps": [
+              {
+                "id": "s1",
+                "kind": "prompt",
+                "prompt": "Use the echo tool to say hi"
+              },
+              {
+                "id": "s2",
+                "kind": "assert",
+                "assertion": {
+                  "type": "toolCalledWith",
+                  "toolName": "echo",
+                  "args": {
+                    "args": {
+                      "text": "hi"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+/projects/{projectId}/servers/{serverId}/validate {
+  "$ref": "#/components/requestBodies/emptyBody"
+}
+/projects/{projectId}/servers/{serverId}/tools/call {
+  "required": true,
+  "content": {
+    "application/json": {
+      "schema": {
+        "type": "object",
+        "required": [
+          "toolName"
+        ],
+        "properties": {
+          "toolName": {
+            "type": "string",
+            "description": "Tool name, exactly as returned by the tools list."
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Tool arguments matching the tool's `inputSchema`. Defaults to `{}`.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "example": {
+        "toolName": "create_issue",
+        "parameters": {
+          "title": "Bug: login fails"
+        }
+      }
+    }
+  }
+}

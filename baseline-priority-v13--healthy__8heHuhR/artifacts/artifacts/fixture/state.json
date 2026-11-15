@@ -1,0 +1,2371 @@
+{
+  "schema_version": 1,
+  "simulation": true,
+  "scenario": "healthy",
+  "seed": 42,
+  "role": "owner",
+  "plan": "team",
+  "started_at": 1794707849.85814,
+  "credits": 18,
+  "initial_credits": 20,
+  "account_resolved_at": null,
+  "requests": [
+    {
+      "time": 1794707850.8486757,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707851.8722749,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707852.9125717,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707853.9390807,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707854.9635792,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707855.98942,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707857.0094578,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707858.0327623,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707859.0586798,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707860.0819619,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707861.1066651,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707862.1284356,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707863.1580637,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707864.184828,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707865.2050319,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707866.229298,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707867.2572951,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707868.2809925,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707869.3054075,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707870.323329,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707871.3455744,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707872.3666868,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707872.898586,
+      "method": "GET",
+      "path": "/registry/@mcpjam%2fcli",
+      "rpc_method": null,
+      "user_agent": "npm/11.19.1 node/v24.22.1 linux arm64 workspaces/false"
+    },
+    {
+      "time": 1794707873.0477638,
+      "method": "GET",
+      "path": "/registry/@mcpjam%2fsdk",
+      "rpc_method": null,
+      "user_agent": "npm/11.19.1 node/v24.22.1 linux arm64 workspaces/false"
+    },
+    {
+      "time": 1794707873.3891923,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707874.4133284,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707875.4460852,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707875.6288157,
+      "method": "GET",
+      "path": "/registry/@mcpjam%2fevaluators",
+      "rpc_method": null,
+      "user_agent": "npm/11.19.1 node/v24.22.1 linux arm64 workspaces/false"
+    },
+    {
+      "time": 1794707876.4675024,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707877.49116,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707878.5129797,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707879.5384498,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707880.5637672,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707881.5978947,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707881.9420412,
+      "method": "GET",
+      "path": "/packages/mcpjam-evaluators-0.6.0.tgz",
+      "rpc_method": null,
+      "user_agent": "npm/11.19.1 node/v24.22.1 linux arm64 workspaces/false"
+    },
+    {
+      "time": 1794707881.9500237,
+      "method": "GET",
+      "path": "/packages/mcpjam-cli-6.2.2.tgz",
+      "rpc_method": null,
+      "user_agent": "npm/11.19.1 node/v24.22.1 linux arm64 workspaces/false"
+    },
+    {
+      "time": 1794707881.951553,
+      "method": "GET",
+      "path": "/packages/mcpjam-sdk-10.7.0.tgz",
+      "rpc_method": null,
+      "user_agent": "npm/11.19.1 node/v24.22.1 linux arm64 workspaces/false"
+    },
+    {
+      "time": 1794707882.6304722,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707883.7102706,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707884.733282,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707885.7598994,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707886.7911623,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707887.8175194,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707888.842209,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707889.8656042,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707890.3562653,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "initialize",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707890.374077,
+      "method": "GET",
+      "path": "/.well-known/oauth-protected-resource/mcp",
+      "rpc_method": null,
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707890.3756702,
+      "method": "GET",
+      "path": "/.well-known/oauth-protected-resource",
+      "rpc_method": null,
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707890.422226,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "server/discover",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707890.4279864,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "initialize",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707890.4713314,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "notifications/initialized",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707890.4741304,
+      "method": "GET",
+      "path": "/mcp",
+      "rpc_method": null,
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707890.4748862,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "tools/list",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707890.8920367,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707891.0825198,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "server/discover",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707891.0958467,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "initialize",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707891.1019068,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "notifications/initialized",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707891.107568,
+      "method": "GET",
+      "path": "/mcp",
+      "rpc_method": null,
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707891.1094675,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "tools/list",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707891.924094,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707892.9494796,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707893.9766939,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707894.998838,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707896.0194788,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707897.0416148,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707898.0739565,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707899.1047907,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707900.1277008,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707901.14953,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707902.1887481,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707903.2204602,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707904.2428038,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707905.2711127,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707906.2893653,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707906.4791007,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "server/discover",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707906.4947205,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "initialize",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707906.497531,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "notifications/initialized",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707906.5001402,
+      "method": "GET",
+      "path": "/mcp",
+      "rpc_method": null,
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707906.5010712,
+      "method": "POST",
+      "path": "/mcp",
+      "rpc_method": "tools/call",
+      "user_agent": "node"
+    },
+    {
+      "time": 1794707907.312142,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707908.3462787,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707909.3716097,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707910.397836,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707911.4295592,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707912.4561083,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707913.4757552,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707913.495497,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707914.5009856,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707915.5247948,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707916.5509999,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707917.5803502,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707918.6004045,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707919.6211777,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707920.3918593,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707920.4085896,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707920.6452565,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707921.6747963,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707922.6996093,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707923.7296534,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707924.7510684,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707925.7782807,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707926.8007324,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707927.8182428,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707928.8506262,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707929.8804355,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707930.901906,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707931.925582,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707932.2102108,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.6511405,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.6565528,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/capabilities",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.668538,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-suites/from-file",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.711391,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.7141507,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases/batch",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.757373,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.758958,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.8020222,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.8049006,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.8482444,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/run-disclosure",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.850562,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-runs",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707932.9521918,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707933.9769897,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707935.01422,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707936.0456748,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707937.0784218,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707938.0960412,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707939.1308722,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707940.165416,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707941.1987224,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707942.2236083,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707943.2565353,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707944.2871003,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707945.3186822,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707946.3494277,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707947.371584,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707948.3925903,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707949.4151993,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707950.436478,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707951.46489,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707952.4918725,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707953.345925,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707953.354226,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707953.3570635,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707953.4005382,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707953.403632,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/servers/server_fixture/tools",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707953.5101898,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707954.540127,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707955.5668929,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707956.590276,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707956.7711735,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.7801857,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/capabilities",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.791313,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.8369393,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.8388867,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.8867779,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/servers/server_fixture/tools",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.890121,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-suites/from-file",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.9333606,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.93682,
+      "method": "PATCH",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases/suite_authored_1_case_0",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.9857795,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707956.9877145,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707957.0361068,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707957.0391932,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707957.0882099,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/run-disclosure",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707957.0914223,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-runs",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707957.1401877,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_1",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707957.1556864,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_1/decision-summary",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707957.2074645,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_1/iterations",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707957.6257365,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707958.6453726,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707959.6766024,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707960.6983597,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707961.7190113,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707962.7435882,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707963.764252,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707964.7883732,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707965.8166077,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707966.8425367,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707967.8652391,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707968.8847406,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707969.8322918,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707969.8381577,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_1/iterations",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707969.906195,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707970.927239,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707971.950719,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707972.9754603,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707974.0067787,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707975.0420203,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707976.067994,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707977.103601,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707978.1296396,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707979.1756039,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707980.1993747,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707981.2203243,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707982.2456608,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707982.629015,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707982.6378703,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707982.6472473,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707982.6948173,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707982.6984205,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/servers/server_fixture/tools",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.0784426,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.0915618,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/capabilities",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.1150024,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.1596324,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.1617548,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.206436,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/servers/server_fixture/tools",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.2100651,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-suites/from-file",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.2540905,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.259549,
+      "method": "PATCH",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases/suite_authored_1_case_0",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.2701497,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707983.3071873,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.3093867,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.3553474,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/servers",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.3583705,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/cases",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.4033244,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-suites/suite_authored_1/run-disclosure",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.4072964,
+      "method": "POST",
+      "path": "/api/v1/projects/project_fixture/eval-runs",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.4538567,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_2",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.457244,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_2/decision-summary",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707983.5023065,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_2/iterations",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707984.297029,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707985.3183908,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707986.338172,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707987.362312,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707988.3696432,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707988.3794973,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_1/iterations/run_fixture_1_0/steps",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794707988.3877752,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707989.4271357,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707990.4605308,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707991.4899387,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707992.5325773,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707993.5735452,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707994.603139,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707995.643177,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707996.6777244,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707997.7095726,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707998.7320645,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794707999.7605944,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708000.797042,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708001.8239858,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708002.8554304,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708003.8764894,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708004.9144006,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708005.95262,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708006.985736,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708008.013581,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708009.046319,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708010.0741916,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708011.0955076,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708012.1226423,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708013.1495583,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708014.175888,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708015.2118678,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708016.2427442,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708017.2822518,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708018.3116026,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708019.340541,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708020.3673873,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708021.3990197,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708022.4419818,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708023.4778454,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708024.5084362,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708025.5366924,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708026.5691736,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708027.610969,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708028.648811,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708029.6831152,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708030.7101343,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708031.745913,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708032.782012,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708033.665228,
+      "method": "GET",
+      "path": "/api/v1/projects",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794708033.6752558,
+      "method": "GET",
+      "path": "/api/v1/projects/project_fixture/eval-runs/run_fixture_2/iterations",
+      "rpc_method": null,
+      "user_agent": "mcpjam-cli/6.2.2 mcpjam-sdk/10.7.0"
+    },
+    {
+      "time": 1794708033.8051353,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708034.8354409,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708035.8714418,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708036.9097884,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708037.9476779,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708038.9764276,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708040.0083575,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708041.0299416,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708042.0534897,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708043.5086784,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708044.5604815,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708045.5813174,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708046.5992136,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708047.6354406,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708048.6650474,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708049.6990001,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708050.7326086,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708051.7769616,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708052.8162708,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708053.852457,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708054.8879507,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708055.9192822,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708056.9598181,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    }
+  ],
+  "tool_calls": [
+    {
+      "time": 1794707906.5014107,
+      "name": "add",
+      "arguments": {
+        "a": 2,
+        "b": 3
+      },
+      "success": true,
+      "sum": 5,
+      "source": "tester",
+      "authenticated": false
+    },
+    {
+      "time": 1794707957.0940392,
+      "name": "add",
+      "arguments": {
+        "a": 2,
+        "b": 3
+      },
+      "sum": 5,
+      "success": true,
+      "source": "simulated_eval",
+      "run_id": "run_fixture_1"
+    },
+    {
+      "time": 1794707983.410071,
+      "name": "add",
+      "arguments": {
+        "a": 2,
+        "b": 3
+      },
+      "sum": 5,
+      "success": true,
+      "source": "simulated_eval",
+      "run_id": "run_fixture_2"
+    }
+  ],
+  "runs": {
+    "run_fixture_1": {
+      "id": "run_fixture_1",
+      "suiteId": "suite_authored_1",
+      "runNumber": 1,
+      "status": "completed",
+      "result": "passed",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "passRate": 1.0
+      },
+      "source": "api",
+      "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+      "createdAt": 1794707957094,
+      "completedAt": 1794707957094
+    },
+    "run_fixture_2": {
+      "id": "run_fixture_2",
+      "suiteId": "suite_authored_1",
+      "runNumber": 2,
+      "status": "completed",
+      "result": "passed",
+      "summary": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "passRate": 1.0
+      },
+      "source": "api",
+      "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+      "createdAt": 1794707983410,
+      "completedAt": 1794707983410
+    }
+  },
+  "run_outcomes": {
+    "run_fixture_1": [
+      {
+        "case_id": "suite_authored_1_case_0",
+        "iteration_number": 1,
+        "title": "Add 2 and 3 and return 5",
+        "passed": true,
+        "calls": [
+          {
+            "toolName": "add",
+            "arguments": {
+              "a": 2,
+              "b": 3
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"sum\": 5}"
+                }
+              ],
+              "structuredContent": {
+                "sum": 5
+              },
+              "isError": false
+            }
+          }
+        ]
+      }
+    ],
+    "run_fixture_2": [
+      {
+        "case_id": "suite_authored_1_case_0",
+        "iteration_number": 1,
+        "title": "Add 2 and 3 and return 5",
+        "passed": true,
+        "calls": [
+          {
+            "toolName": "add",
+            "arguments": {
+              "a": 2,
+              "b": 3
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"sum\": 5}"
+                }
+              ],
+              "structuredContent": {
+                "sum": 5
+              },
+              "isError": false
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "idempotency": {
+    "bb7d5b9a006cb9a0aaff19fa6f93c85317409445f6f9509a1cc205d9e9d56461": {
+      "runId": "run_fixture_1",
+      "suiteId": "suite_authored_1",
+      "status": "running",
+      "servers": [
+        {
+          "id": "server_fixture",
+          "name": "Arithmetic"
+        }
+      ],
+      "environment": null
+    },
+    "3b6e38dcac1daf79c92e693e0ea8887a5b69c8a188a238c596cf9a4156fa7a78": {
+      "runId": "run_fixture_2",
+      "suiteId": "suite_authored_1",
+      "status": "running",
+      "servers": [
+        {
+          "id": "server_fixture",
+          "name": "Arithmetic"
+        }
+      ],
+      "environment": null
+    }
+  },
+  "charges": [
+    {
+      "time": 1794707957.0940385,
+      "run_id": "run_fixture_1",
+      "synthetic_units": 1,
+      "idempotency_digest": "bb7d5b9a006cb9a0aaff19fa6f93c85317409445f6f9509a1cc205d9e9d56461"
+    },
+    {
+      "time": 1794707983.4100702,
+      "run_id": "run_fixture_2",
+      "synthetic_units": 1,
+      "idempotency_digest": "3b6e38dcac1daf79c92e693e0ea8887a5b69c8a188a238c596cf9a4156fa7a78"
+    }
+  ],
+  "refusals": [],
+  "servers": [
+    {
+      "id": "server_fixture",
+      "name": "Arithmetic",
+      "projectId": "project_fixture",
+      "transportType": "http",
+      "url": "http://fixture:8765/mcp",
+      "enabled": true,
+      "useOAuth": false,
+      "hasClientSecret": false
+    }
+  ],
+  "suites": {
+    "suite_fixture": {
+      "id": "suite_fixture",
+      "name": "Arithmetic smoke",
+      "projectId": "project_fixture",
+      "description": "Synthetic fixture: add 2 and 3 and assert 5.",
+      "environment": {
+        "servers": []
+      },
+      "executionConfig": null,
+      "hosts": [],
+      "environmentIds": [],
+      "settings": {
+        "policy": "legacy",
+        "minimumIterations": 1
+      },
+      "schedule": {},
+      "createdAt": 1,
+      "updatedAt": 2,
+      "cases": [
+        {
+          "id": "case_add",
+          "title": "add 2 and 3 returns 5",
+          "steps": [
+            {
+              "id": "add",
+              "kind": "toolCall",
+              "toolName": "add",
+              "arguments": {
+                "a": 2,
+                "b": 3
+              }
+            }
+          ],
+          "expectedOutput": "5"
+        }
+      ]
+    },
+    "suite_authored_1": {
+      "id": "suite_authored_1",
+      "name": "Arithmetic smoke",
+      "projectId": "project_fixture",
+      "description": "Synthetic fixture: add 2 and 3 and assert 5.",
+      "environment": {
+        "servers": []
+      },
+      "executionConfig": null,
+      "hosts": [],
+      "environmentIds": [],
+      "settings": {
+        "policy": "legacy",
+        "minimumIterations": 1
+      },
+      "schedule": {},
+      "createdAt": 1,
+      "updatedAt": 2,
+      "cases": [
+        {
+          "id": "suite_authored_1_case_0",
+          "title": "Add 2 and 3 and return 5",
+          "steps": [
+            {
+              "id": "ask",
+              "kind": "toolCall",
+              "serverName": "Arithmetic",
+              "toolName": "add",
+              "arguments": {
+                "a": 2,
+                "b": 3
+              }
+            },
+            {
+              "id": "args",
+              "kind": "assert",
+              "assertion": {
+                "type": "toolCalledWith",
+                "toolName": "add",
+                "args": {
+                  "args": {
+                    "a": 2,
+                    "b": 3
+                  },
+                  "argumentMatching": "exact"
+                }
+              }
+            },
+            {
+              "id": "result",
+              "kind": "assert",
+              "assertion": {
+                "type": "toolResultContains",
+                "needle": "5",
+                "toolName": "add"
+              }
+            },
+            {
+              "id": "errors",
+              "kind": "assert",
+              "assertion": {
+                "type": "noToolErrors"
+              }
+            }
+          ],
+          "iterations": 1,
+          "repetitions": 1,
+          "passThreshold": 1,
+          "models": [
+            {
+              "model": "anthropic/claude-haiku-4.5"
+            }
+          ],
+          "declaredId": "c_add_two_three",
+          "suiteId": "suite_authored_1",
+          "judge": null,
+          "intent": null,
+          "kind": null,
+          "checks": null,
+          "expectedOutput": "",
+          "isNegative": false,
+          "import": null,
+          "scenario": null
+        }
+      ],
+      "declaredId": "s_arithmetic_smoke"
+    }
+  }
+}

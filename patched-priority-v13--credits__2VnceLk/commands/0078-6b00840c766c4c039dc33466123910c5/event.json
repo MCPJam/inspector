@@ -1,0 +1,22 @@
+{
+  "event_id": "6b00840c766c4c039dc33466123910c5",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "tar czf /tmp/.hb-transfer-95024256-c87d-44fa-9551-0d0edd23bec6.tar.gz --exclude=node_modules --exclude=.npm --exclude=.cache -C /workspace ."
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:15:08.932426+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.02188706398010254,
+  "end": "2026-11-15T02:15:08.954254+00:00"
+}

@@ -1,0 +1,5 @@
+{"seconds": 0.6515588760375977, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":14}\n"}
+{"seconds": 0.6516027450561523, "stream": "stdout", "data": "\n"}
+{"seconds": 1.2445414066314697, "stream": "stdout", "data": "{\"valid\":true,\"file\":\".mcpjam/evals/arith.yaml\",\"suite\":{\"id\":\"s_arith\",\"name\":\"Arithmetic fixture\",\"cases\":1,\"enabledCases\":1},\"findings\":[]}\n"}
+{"seconds": 1.2457318305969238, "stream": "stdout", "data": "2\n"}
+{"seconds": 1.8657433986663818, "stream": "stdout", "data": "{\"error\":{\"code\":\"OPTIONS_INVALID\",\"message\":\"The MCPJam connection is unusable: baseUrl must be https:// — the platform credential is sent to it (a loopback http:// origin is allowed for local development).\",\"details\":{\"phase\":\"setup\",\"category\":\"usage\"}}}\n"}

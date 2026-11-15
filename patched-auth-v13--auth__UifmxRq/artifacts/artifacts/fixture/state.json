@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "simulation": true,
+  "scenario": "auth",
+  "seed": 42,
+  "role": "owner",
+  "plan": "team",
+  "started_at": 1794708967.0012782,
+  "credits": 20,
+  "initial_credits": 20,
+  "account_resolved_at": null,
+  "requests": [
+    {
+      "time": 1794708968.0119393,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708969.0365963,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708970.0677025,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708971.0931165,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708972.1110985,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708973.1398823,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708974.157965,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708975.185405,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708976.2069414,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708977.2320154,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708978.2634976,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708979.2957697,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708980.326618,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708981.3582582,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    },
+    {
+      "time": 1794708982.3970108,
+      "method": "GET",
+      "path": "/health",
+      "rpc_method": null,
+      "user_agent": "curl/7.88.1"
+    }
+  ],
+  "tool_calls": [],
+  "runs": {},
+  "run_outcomes": {},
+  "idempotency": {},
+  "charges": [],
+  "refusals": []
+}

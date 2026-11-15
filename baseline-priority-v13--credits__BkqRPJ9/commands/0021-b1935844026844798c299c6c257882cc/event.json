@@ -1,0 +1,22 @@
+{
+  "event_id": "b1935844026844798c299c6c257882cc",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708087652-h26mvy.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; H=\"Authorization: Bearer $MCPJAM_API_KEY\"; B=$MCPJAM_API_URL; curl -s https://docs.mcpjam.com/api-reference/catalog/read-the-organizations-spend-budget.md | grep -E \"^(  /|    get|.*/organizations)\" | head -5; for p in organizations projects \"projects/project_fixture\" \"projects/project_fixture/eval-suites\"; do echo \"== $p\"; curl -s -m 15 -H \"$H\" \"$B/$p\" | head -c 700; echo; done' < /dev/null && pwd -P >| /tmp/claude-bcc2-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:01:41.683760+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.1441023349761963,
+  "end": "2026-11-15T02:01:41.827797+00:00"
+}

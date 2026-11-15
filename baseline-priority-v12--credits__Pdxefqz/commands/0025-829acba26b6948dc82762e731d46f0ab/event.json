@@ -1,0 +1,22 @@
+{
+  "event_id": "829acba26b6948dc82762e731d46f0ab",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcpjam-eval/protocol-smoke.py <<'PY'\nimport json,urllib.request\nfrom pathlib import Path\nurl='http://fixture:8765/mcp'\nevidence=[]\ndef rpc(method,params,i):\n req=urllib.request.Request(url,data=json.dumps({'jsonrpc':'2.0','id':i,'method':method,'params':params}).encode(),headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'})\n with urllib.request.urlopen(req,timeout=10) as r:result=json.load(r)\n evidence.append({'method':method,'params':params,'response':result})\n return result\nrpc('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'repeatable-arithmetic-eval','version':'1.0'}},1)\ntools=rpc('tools/list',{},2)\nresult=rpc('tools/call',{'name':'add','arguments':{'a':2,'b':3}},3)\nPath(__file__).with_name('protocol-evidence.json').write_text(json.dumps(evidence,indent=2))\nassert 'error' not in result,result\nassert not result['result'].get('isError'),result\nassert any(c.get('text')=='5' for c in result['result'].get('content',[])),result\nprint('PASS: direct MCP add(2,3) returned 5. This does not establish hosted eval completion.')\nPY\npython3 /workspace/mcpjam-eval/protocol-smoke.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:50:01.978449+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.051427602767944336,
+  "end": "2026-11-15T01:50:02.029725+00:00"
+}

@@ -1,0 +1,70 @@
+post /projects/{projectId}/eval-runs/{runId}/judge/backtest Preview draft judge grading on one recorded iteration
+post /projects/{projectId}/servers/{serverId}/validate Validate a server
+post /projects/{projectId}/servers/{serverId}/doctor Run the doctor
+post /projects/{projectId}/servers/{serverId}/check-oauth Check OAuth requirement
+post /projects/{projectId}/servers/{serverId}/tools List tools
+post /projects/{projectId}/servers/{serverId}/prompts List prompts
+post /projects/{projectId}/servers/{serverId}/resources List resources
+post /projects/{projectId}/servers/{serverId}/resources/read Read a resource
+post /projects/{projectId}/servers/{serverId}/export Export a server snapshot
+post /projects/{projectId}/servers/{serverId}/tools/call Call a tool
+post /projects/{projectId}/servers/{serverId}/prompts/get Render a prompt
+post /projects/{projectId}/eval-runs Create an eval run (async)
+get /projects/{projectId}/eval-runs/{runId} Get run status
+get /projects/{projectId}/eval-runs/{runId}/decision-summary Get a run's decision summary
+get /projects/{projectId}/eval-runs/{runId}/compare Compare a run against a baseline
+get /projects/{projectId}/eval-runs/{runId}/iterations List run iterations
+get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace Get an iteration trace
+get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps Get an iteration's step results
+post /projects/{projectId}/eval-runs/{runId}/cancel Cancel a run
+get /projects/{projectId}/eval-runs/{runId}/rerun-preview Preview a failed-cases rerun
+post /projects/{projectId}/eval-runs/{runId}/rerun Rerun a run's failed cases
+get /projects/{projectId}/eval-suites/{suiteId}/runs List a suite's runs
+get /projects/{projectId}/eval-suites/{suiteId}/revisions List a suite's settings history
+get /projects/{projectId}/eval-suites/{suiteId}/stage-analytics List a suite's per-run stage analytics
+get /projects/{projectId}/eval-runs/{runId}/stage-analytics Get one run's stage analytics
+get /projects/{projectId}/eval-runs/{runId}/gate Get one run's suite quality-gate report
+get /projects/{projectId}/servers/{serverId}/accounts List a server's accounts
+get /projects/{projectId}/servers/{serverId}/accounts/{account} Get a server account
+post /projects/{projectId}/servers/{serverId}/oauth/import-tokens Import OAuth tokens
+get /projects/{projectId}/servers List a project's servers
+post /projects/{projectId}/servers Save a server into a project
+post /projects/{projectId}/eval-suites/{suiteId}/environments Attach one environment to a suite (atomic append)
+get /projects/{projectId}/eval-suites List a project's eval suites
+post /projects/{projectId}/eval-suites Create an eval suite (author-only, does not run)
+post /projects/{projectId}/eval-suites/from-file Resolve or create a file-owned eval suite
+get /projects/{projectId}/eval-suites/{suiteId} Get one eval suite's configuration
+get /projects/{projectId}/eval-suites/{suiteId}/run-disclosure Get the pre-run disclosure for a suite launch plan
+get /projects/{projectId}/eval-suites/{suiteId}/cases List a suite's eval cases
+post /projects/{projectId}/eval-suites/{suiteId}/cases Create an eval case
+post /projects/{projectId}/eval-suites/{suiteId}/cases/batch Create several eval cases
+post /projects/{projectId}/eval-suites/{suiteId}/cases/generate Generate eval cases from the suite's tools
+post /projects/{projectId}/eval-suites/{suiteId}/cases/import Author eval cases from a document
+get /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId} Read an eval authoring job
+post /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit Write a finished authoring job's cases into the suite
+get /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId} Get one eval case
+get /projects/{projectId}/servers/{serverId}/revisions List a server's revisions
+get /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber} Get one server revision
+get /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff Diff two server revisions
+get /projects/{projectId}/servers/{serverId} Get one saved server
+post /projects/{projectId}/clients/{client}/servers Replace a client's servers
+get /models The MCPJam-provided model catalog
+get /projects/{projectId}/studies/{studyId}/usage Usage breakdown
+post /projects/{projectId}/eval-runs/{runId}/insights Request insights for an eval run
+post /projects/{projectId}/eval-runs/{runId}/judge Grade an eval run with LLM as Judge
+post /projects/{projectId}/servers/{serverId}/readiness-runs/claude Start a Claude directory-readiness run
+post /projects/{projectId}/servers/{serverId}/readiness-runs/openai Start an OpenAI plugin-directory readiness run
+post /projects/{projectId}/servers/{serverId}/readiness-runs/muse Start a Muse connector readiness run
+post /projects/{projectId}/servers/{serverId}/conformance-runs Start a persisted conformance run
+get /projects/{projectId}/registry/servers List curated and org registry cards
+post /projects/{projectId}/servers/{serverId}/widgets/render Render an MCP App widget headlessly
+post /projects/{projectId}/servers/{serverId}/widget-sessions Create a retained widget session
+get /projects/{projectId}/servers/{serverId}/widget-sessions/{id}/snapshot Read a retained widget snapshot
+post /projects/{projectId}/servers/{serverId}/widget-sessions/{id}/action Act on a retained widget
+post /projects/{projectId}/servers/{serverId}/widget-sessions/{id}/scripted-step Run a retained widget step
+post /projects/{projectId}/eval-runs/{runId}/gate-waivers Waive a run gate
+get /projects/{projectId}/eval-runs/{runId}/gate-waivers Get a run's gate waiver
+post /projects/{projectId}/servers/{serverId}/skills List server skills
+post /projects/{projectId}/servers/{serverId}/skills/get Get a server skill
+post /projects/{projectId}/servers/{serverId}/skills/read-file Read a server skill's supporting file
+post /projects/{projectId}/eval-runs/{runId}/backtest Preview deterministic draft evaluators against stored evidence

@@ -1,0 +1,2 @@
+{"seconds": 0.014654159545898438, "stream": "stdout", "data": "total 24\n-rw-r--r-- 1 root root  114 Nov 15 02:09 add.json\n-rw-r--r-- 1 root root  347 Nov 15 02:09 capabilities.json\n-rw-r--r-- 1 root root 4226 Nov 15 02:08 doctor.json\n-rw-r--r-- 1 root root    0 Nov 15 02:09 run.json\n-rw-r--r-- 1 root root  299 Nov 15 02:09 servers.json\n-rw-r--r-- 1 root root  310 Nov 15 02:09 validation.json\n"}
+{"seconds": 0.014970541000366211, "stream": "stderr", "data": "cat: artifacts/eval-report.json: No such file or directory\n"}

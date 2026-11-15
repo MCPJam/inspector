@@ -1,0 +1,38 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "e247260f9ca1f5c94644558db9619fa3c60938a90dfaee919999867ac025f7a6"
+  },
+  {
+    "source": "artifacts/workspace/fwd.js",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/fwd.js",
+    "sha256": "edb1db817ae5bd9cb9641fed24d6d47fd5161c39495a19868a7e5750777cadb2"
+  },
+  {
+    "source": "artifacts/workspace/.mcp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcp.json",
+    "sha256": "d1ab4f85f6933ba6bbfd59292b6babc00101bd6fc27136ba3207da5f0ca4bac4"
+  },
+  {
+    "source": "artifacts/workspace/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/doctor.json",
+    "sha256": "dae05f5b7530049b0a897c558860b49bca9759217bebbdc4c9707465c5feff77"
+  },
+  {
+    "source": "artifacts/workspace/reports/add.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/reports/add.json",
+    "sha256": "6f22a0a4089e5996c71dc6f2e7074d7fbaf2a4ab9d6f423c52f801cff4e42a13"
+  },
+  {
+    "source": "artifacts/workspace/.mcpjam/evals/add.yaml",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcpjam/evals/add.yaml",
+    "sha256": "f89393e23d4f904db230e63d3917ee2ad9bc5d983fd24634a2542168bb15ccbb"
+  }
+]

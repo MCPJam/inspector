@@ -1,0 +1,4 @@
+{"seconds": 0.7716779708862305, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":5}\n"}
+{"seconds": 0.7718253135681152, "stream": "stdout", "data": "\n"}
+{"seconds": 1.4361662864685059, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"a and b must be finite numbers\"}],\"isError\":true,\"_durationMs\":4}\n"}
+{"seconds": 2.074341297149658, "stream": "stdout", "data": "{\"success\":true,\"status\":\"connected\",\"target\":\"http://fixture:8765/mcp\",\"initInfo\":{\"protocolVersion\":\"2025-11-25\",\"transport\":\"streamable-http\",\"serverCapabilities\":{\"tools\":{\"listChanged\":false}},\"serverVersion\":{\"name\":\"arithmetic-fixture\",\"version\":\"1.0.0\"},\"clientCapabilities\":{\"extensions\":{\"io.modelcontextprotocol/ui\":{\"mimeTypes\":[\"text/html;profile=mcp-app\"]}}}}}\n"}

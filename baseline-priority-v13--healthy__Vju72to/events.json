@@ -1,0 +1,586 @@
+[
+  {
+    "id": "0d381997bb554e8aa2080a2e7b6556e1",
+    "path": "commands/0001-0d381997bb554e8aa2080a2e7b6556e1",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; curl -s https://docs.mcpjam.com | head -c 1500; echo; curl -s https://docs.mcpjam.com/llms.txt | head -c 3000; which mcpjam npx' < /dev/null && pwd -P >| /tmp/claude-0107-cwd"
+    ],
+    "start": "2026-11-15T02:03:47.281672+00:00",
+    "end": "2026-11-15T02:03:47.543722+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "1a074b6966b248abb0769afd40587d6f",
+    "path": "commands/0002-1a074b6966b248abb0769afd40587d6f",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; M=\"npx -y @mcpjam/cli@latest\"; $M cloud eval run --help 2>&1 | head -50; $M cloud eval create --help 2>&1 | head -40' < /dev/null && pwd -P >| /tmp/claude-cd43-cwd"
+    ],
+    "start": "2026-11-15T02:04:15.720856+00:00",
+    "end": "2026-11-15T02:04:16.902040+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "1acd91867d41489cb601bc3e04ec2bf6",
+    "path": "commands/0003-1acd91867d41489cb601bc3e04ec2bf6",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; M=\"npx -y @mcpjam/cli@latest\"; python3 - <<'\"'\"'E'\"'\"'\np='\"'\"'.mcpjam/evals/arith.yaml'\"'\"'\ns=open(p).read()\ni=s.index('\"'\"'    steps:'\"'\"')\ns=s[:i]+'\"'\"''\"'\"''\"'\"'    steps:\n      - id: s1\n        kind: toolCall\n        serverName: Arithmetic\n        toolName: add\n        arguments:\n          a: 17\n          b: 25\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\n'\"'\"''\"'\"''\"'\"'\nopen(p,'\"'\"'w'\"'\"').write(s)\nE\n$M cloud eval validate --file .mcpjam/evals/arith.yaml --project project_fixture 2>&1 | tail -c 1200' && pwd -P >| /tmp/claude-8651-cwd"
+    ],
+    "start": "2026-11-15T02:04:34.041813+00:00",
+    "end": "2026-11-15T02:04:34.797438+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "1f2aa8d19cd84832aa0b2e58e8a0339b",
+    "path": "commands/0004-1f2aa8d19cd84832aa0b2e58e8a0339b",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; curl -s https://docs.mcpjam.com/llms.txt | grep -i -E \"cli|eval\" | head -30; curl -s https://docs.mcpjam.com/getting-started.md | head -60' < /dev/null && pwd -P >| /tmp/claude-043b-cwd"
+    ],
+    "start": "2026-11-15T02:03:49.288519+00:00",
+    "end": "2026-11-15T02:03:49.604993+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "240e4fdd3f7e49dfa3d4ad9e6244818c",
+    "path": "commands/0005-240e4fdd3f7e49dfa3d4ad9e6244818c",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; M=\"npx -y @mcpjam/cli@latest\"; $M cloud whoami 2>&1 | head -c 500; echo; $M cloud servers list --project project_fixture 2>&1 | head -c 800; echo; $M cloud eval run --file .mcpjam/evals/arith.yaml --project project_fixture --server arith --wait --reporter json-summary --out reports/arith.json 2>&1 | tail -c 1800' < /dev/null && pwd -P >| /tmp/claude-df28-cwd"
+    ],
+    "start": "2026-11-15T02:04:19.047064+00:00",
+    "end": "2026-11-15T02:04:21.220583+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [
+      "INTERNAL_ERROR",
+      "USAGE_ERROR"
+    ]
+  },
+  {
+    "id": "49cb806831984392ae25e74c7c450190",
+    "path": "commands/0006-49cb806831984392ae25e74c7c450190",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "mkdir -p /logs/verifier /logs/agent /logs/artifacts && chmod 777 /logs/verifier /logs/agent /logs/artifacts"
+    ],
+    "start": "2026-11-15T02:03:44.729468+00:00",
+    "end": "2026-11-15T02:03:44.730648+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "59caad4ced1a4941b790a0ab2c76b7fe",
+    "path": "commands/0007-59caad4ced1a4941b790a0ab2c76b7fe",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "test -d /workspace"
+    ],
+    "start": "2026-11-15T02:04:45.663412+00:00",
+    "end": "2026-11-15T02:04:45.664085+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "5f6ef9b413e3477da7bcadf128f82d76",
+    "path": "commands/0008-5f6ef9b413e3477da7bcadf128f82d76",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "tar czf /tmp/.hb-transfer-1c508f24-d0ab-4a53-afeb-0da15f14f8c1.tar.gz --exclude=node_modules --exclude=.npm --exclude=.cache -C /workspace ."
+    ],
+    "start": "2026-11-15T02:04:45.741134+00:00",
+    "end": "2026-11-15T02:04:45.742601+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "6285507014194851bf4d561dff1f3952",
+    "path": "commands/0009-6285507014194851bf4d561dff1f3952",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "env"
+    ],
+    "start": "2026-11-15T02:03:47.259900+00:00",
+    "end": "2026-11-15T02:03:47.260665+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "69c13012fef64b228615ae42eadf3f11",
+    "path": "commands/0010-69c13012fef64b228615ae42eadf3f11",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "[ -d /installed-agent ] || mkdir -p /installed-agent"
+    ],
+    "start": "2026-11-15T02:03:44.804756+00:00",
+    "end": "2026-11-15T02:03:44.805645+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "77804bef13764102add276f2a88e40eb",
+    "path": "commands/0011-77804bef13764102add276f2a88e40eb",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; M=\"npx -y @mcpjam/cli@latest\"; sed -i '\"'\"'s/- name: arith/- name: Arithmetic/'\"'\"' .mcpjam/evals/arith.yaml; $M cloud eval run --file .mcpjam/evals/arith.yaml --project project_fixture --server Arithmetic --wait --reporter json-summary --out reports/arith.json 2>&1 | tail -c 1800; ls reports; head -c 1500 reports/arith.json' < /dev/null && pwd -P >| /tmp/claude-a352-cwd"
+    ],
+    "start": "2026-11-15T02:04:23.586375+00:00",
+    "end": "2026-11-15T02:04:24.447664+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "INTERNAL_ERROR"
+    ]
+  },
+  {
+    "id": "7ea4e4d7270b420089c135a56b5e7716",
+    "path": "commands/0012-7ea4e4d7270b420089c135a56b5e7716",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "test -d /capture"
+    ],
+    "start": "2026-11-15T02:04:45.945243+00:00",
+    "end": "2026-11-15T02:04:45.945879+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "8579dc4f83004bd4b0400c63fbdaf556",
+    "path": "commands/0013-8579dc4f83004bd4b0400c63fbdaf556",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "-l",
+      "SNAPSHOT_FILE=/logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh\n      source \"/root/.bashrc\" < /dev/null\n      \n\n      # First, create/clear the snapshot file\n      echo \"# Snapshot file\" >| \"$SNAPSHOT_FILE\"\n\n      # When this file is sourced, we first unalias to avoid conflicts\n      # This is necessary because aliases get \"frozen\" inside function definitions at definition time,\n      # which can cause unexpected behavior when functions use commands that conflict with aliases\n      echo \"# Unset all aliases to avoid conflicts with functions\" >> \"$SNAPSHOT_FILE\"\n      echo \"unalias -a 2>/dev/null || true\" >> \"$SNAPSHOT_FILE\"\n\n      \n      # shopt before functions: a body using extglob/globstar syntax only\n      # re-parses with the option on.\n      echo \"# Shopt\" >> \"$SNAPSHOT_FILE\"\n      shopt -p >> \"$SNAPSHOT_FILE\"\n\n      echo \"# Functions\" >> \"$SNAPSHOT_FILE\"\n\n      # Force autoload all functions first\n      declare -f > /dev/null 2>&1\n\n      # Now get user function names - filter completion functions (single underscore prefix)\n      # but keep double-underscore helpers (e.g. __zsh_like_cd from mise, __pyenv_init)\n      # One eval per function so a body that no longer parses (rc=2, not fatal\n      # in non-POSIX bash) drops only itself. The %q literal needs no fork\n      # at source time, unlike a base64 command substitution.\n      declare -F | while read func; do\n        func=${func##* } # the name: the last word of each declare -F line\n        # declare reads a name starting with - or + as an option, and eval one starting with -; other names need no \"--\"\n        if [[ \"$func\" == [-+]* ]]; then\n          printf 'eval -- %q > /dev/null 2>&1\\n' \"$(declare -f -- \"$func\")\" >> \"$SNAPSHOT_FILE\"\n        else\n          [[ \"$func\" == _[!_]* ]] ||\n            printf 'eval %q > /dev/null 2>&1\\n' \"$(declare -f \"$func\")\" >> \"$SNAPSHOT_FILE\"\n        fi\n      done\n    \n      echo \"# Shell Options\" >> \"$SNAPSHOT_FILE\"\n      set -o | awk '$2 == \"on\" || $1 == \"monitor\" {print \"set -o \" $1}' >> \"$SNAPSHOT_FILE\"\n      echo \"shopt -s expand_aliases\" >> \"$SNAPSHOT_FILE\"\n    \n      echo \"# Aliases\" >> \"$SNAPSHOT_FILE\"\n      # Filter out winpty aliases on Windows to avoid \"stdin is not a tty\" errors\n      # Git Bash automatically creates aliases like \"alias node='winpty node.exe'\" for\n      # programs that need Win32 Console in mintty, but winpty fails when there's no TTY\n      if [[ \"$OSTYPE\" == \"msys\" ]] || [[ \"$OSTYPE\" == \"cygwin\" ]]; then\n        # sed, not grep -v, whose exit 1 when no alias is left ends this script under errexit and pipefail.\n        # Every line gets \"alias -- \" here: the filter works by line, so it can leave part of a multi-line alias behind.\n        alias | sed -e \"/='winpty /d\" | sed -e '1001,$d' -e 's/^alias //g' -e 's/^/alias -- /' >> \"$SNAPSHOT_FILE\"\n      else\n        \\alias -p | sed -e '1001,$d' -e 's/^alias -- /alias /' -e 's/^alias /alias -- /' >> \"$SNAPSHOT_FILE\"\n      fi\n  \n\n      \n      cat >> \"$SNAPSHOT_FILE\" << 'CLAUDE_CODE_END_4utnhb4k0w'\n# Check for rg availability\nif ! hash rg 2>/dev/null && ! typeset -f rg >/dev/null 2>&1; then\n  function rg {\n  local _cc_bin=\"${CLAUDE_CODE_EXECPATH:-}\"\n  [[ -x $_cc_bin ]] || _cc_bin=/root/.local/bin/claude\n  if [[ ! -x $_cc_bin ]]; then command rg ${1+\"$@\"}; return; fi\n  if [[ -n ${ZSH_VERSION:-} ]]; then\n    ARGV0=rg \"$_cc_bin\" ${1+\"$@\"}\n  elif [[ \"$OSTYPE\" == \"msys\" ]] || [[ \"$OSTYPE\" == \"cygwin\" ]] || [[ \"$OSTYPE\" == \"win32\" ]]; then\n    ARGV0=rg \"$_cc_bin\" ${1+\"$@\"}\n  else\n    (exec -a rg \"$_cc_bin\" ${1+\"$@\"})\n  fi\n}\nfi\n# Shadow find/grep with embedded bfs/ugrep\nunalias find 2>/dev/null || true\nunalias grep 2>/dev/null || true\nfunction find {\n  local _cc_bin=\"${CLAUDE_CODE_EXECPATH:-}\"\n  [[ -x $_cc_bin ]] || _cc_bin=/root/.local/bin/claude\n  if [[ ! -x $_cc_bin ]]; then command find ${1+\"$@\"}; return; fi\n  if [[ -n ${ZSH_VERSION:-} ]]; then\n    ARGV0=bfs \"$_cc_bin\" -S dfs -regextype findutils-default ${1+\"$@\"}\n  elif [[ \"$OSTYPE\" == \"msys\" ]] || [[ \"$OSTYPE\" == \"cygwin\" ]] || [[ \"$OSTYPE\" == \"win32\" ]]; then\n    ARGV0=bfs \"$_cc_bin\" -S dfs -regextype findutils-default ${1+\"$@\"}\n  else\n    (exec -a bfs \"$_cc_bin\" -S dfs -regextype findutils-default ${1+\"$@\"})\n  fi\n}\nfunction grep {\n  local _cc_a\n  for _cc_a in ${1+\"$@\"}; do\n    case \"$_cc_a\" in -*-filter*|-*-pager*|-*-view*|-*-format-open*|-*-config*|---*|-@*|-*-save-config*|-[Zz]*|-[!-]*[Zz]*|--null|--null-data) command grep ${1+\"$@\"}; return ;; esac\n  done\n  local _cc_bin=\"${CLAUDE_CODE_EXECPATH:-}\"\n  [[ -x $_cc_bin ]] || _cc_bin=/root/.local/bin/claude\n  if [[ ! -x $_cc_bin ]]; then command grep ${1+\"$@\"}; return; fi\n  if [[ -n ${ZSH_VERSION:-} ]]; then\n    ARGV0=ugrep \"$_cc_bin\" -G --ignore-files --hidden -I --exclude-dir=.git --exclude-dir=.svn --exclude-dir=.hg --exclude-dir=.bzr --exclude-dir=.jj --exclude-dir=.sl ${1+\"$@\"}\n  elif [[ \"$OSTYPE\" == \"msys\" ]] || [[ \"$OSTYPE\" == \"cygwin\" ]] || [[ \"$OSTYPE\" == \"win32\" ]]; then\n    ARGV0=ugrep \"$_cc_bin\" -G --ignore-files --hidden -I --exclude-dir=.git --exclude-dir=.svn --exclude-dir=.hg --exclude-dir=.bzr --exclude-dir=.jj --exclude-dir=.sl ${1+\"$@\"}\n  else\n    (exec -a ugrep \"$_cc_bin\" -G --ignore-files --hidden -I --exclude-dir=.git --exclude-dir=.svn --exclude-dir=.hg --exclude-dir=.bzr --exclude-dir=.jj --exclude-dir=.sl ${1+\"$@\"})\n  fi\n}\n# Shadow pkill to refuse patterns matching the CLI process\nunalias pkill 2>/dev/null || true\nfunction pkill {\n  if [ -n \"${CLAUDE_PID:-}\" ] && [ -r \"/proc/${CLAUDE_PID}/comm\" ]; then\n    local _cc_skip=\"\" _cc_a\n    local -a _cc_probe=()\n    for _cc_a in ${1+\"$@\"}; do\n      if [ -n \"$_cc_skip\" ]; then _cc_skip=\"\"; continue; fi\n      case \"$_cc_a\" in\n        --signal) _cc_skip=1 ;;\n        --signal=*|-e|--echo) ;;\n        -[0-9]*) ;;\n        -[PUGOF]?*) _cc_probe+=(\"$_cc_a\") ;;\n        -[ABCDEFGHIJKLMNOPQRSTUVWXYZ][ABCDEFGHIJKLMNOPQRSTUVWXYZ0-9]*) ;;\n        *) _cc_probe+=(\"$_cc_a\") ;;\n      esac\n    done\n    if command pgrep ${_cc_probe[@]+\"${_cc_probe[@]}\"} 2>/dev/null | command grep -qx \"${CLAUDE_PID}\"; then\n      printf 'pkill: refusing to run \u2014 this pattern matches the Claude CLI process (PID %s). Narrow the pattern, or target your own children with `pkill -P $$ ...`.\\n' \"${CLAUDE_PID}\" >&2\n      return 1\n    fi\n  fi\n  command pkill ${1+\"$@\"}\n}\nexport PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nCLAUDE_CODE_END_4utnhb4k0w\n  \n\n      # Exit silently on success, only report errors\n      if [ ! -f \"$SNAPSHOT_FILE\" ]; then\n        echo \"Error: Snapshot file was not created at $SNAPSHOT_FILE\" >&2\n        exit 1\n      fi\n    "
+    ],
+    "start": "2026-11-15T02:03:47.262667+00:00",
+    "end": "2026-11-15T02:03:47.265999+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "924910c9c1b745f0a18ceaaddeadf950",
+    "path": "commands/0014-924910c9c1b745f0a18ceaaddeadf950",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; echo $MCPJAM_API_URL; env | grep -i -E \"^(ANTHROPIC|MCPJAM)\" | sed '\"'\"'s/=.*key.*/=<redacted>/I'\"'\"' | cut -c1-60; npx -y @mcpjam/cli@latest cloud eval --help 2>&1 | head -30; curl -s https://docs.mcpjam.com/cli/self-hosted.md | grep -i -n -E \"http://|insecure|allow\" | head' < /dev/null && pwd -P >| /tmp/claude-7547-cwd"
+    ],
+    "start": "2026-11-15T02:04:12.738359+00:00",
+    "end": "2026-11-15T02:04:13.462635+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "99cb89c2e2ef4f8ead2f6439d8185918",
+    "path": "commands/0015-99cb89c2e2ef4f8ead2f6439d8185918",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "rm -f /tmp/.hb-transfer-1c508f24-d0ab-4a53-afeb-0da15f14f8c1.tar.gz"
+    ],
+    "start": "2026-11-15T02:04:45.874919+00:00",
+    "end": "2026-11-15T02:04:45.875726+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "a50061454d454d4fa897c841785660f8",
+    "path": "commands/0016-a50061454d454d4fa897c841785660f8",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; curl -s https://docs.mcpjam.com/cli/reference.md | sed -n 1800,1830p; curl -s https://docs.mcpjam.com/cli/reference.md | sed -n 2440,2500p' < /dev/null && pwd -P >| /tmp/claude-db1c-cwd"
+    ],
+    "start": "2026-11-15T02:04:31.052836+00:00",
+    "end": "2026-11-15T02:04:31.387062+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [
+      "TOOL_REFERENCE_UNRESOLVED"
+    ]
+  },
+  {
+    "id": "aa543a3a8a2d4149b66d0f7b8d853b78",
+    "path": "commands/0017-aa543a3a8a2d4149b66d0f7b8d853b78",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; curl -s https://docs.mcpjam.com/cli/overview.md | head -80; curl -s https://docs.mcpjam.com/cli/local-evals.md | head -120' < /dev/null && pwd -P >| /tmp/claude-69d6-cwd"
+    ],
+    "start": "2026-11-15T02:03:51.335935+00:00",
+    "end": "2026-11-15T02:03:51.679345+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-002-001.svg",
+      "intermediate-002-002.svg",
+      "intermediate-002-003.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "b3e3ae89a2064a8e9ce6305952982cfc",
+    "path": "commands/0018-b3e3ae89a2064a8e9ce6305952982cfc",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; curl -s https://docs.mcpjam.com/inspector/evals.md | grep -n -i -B2 -A12 \"toolCall\" | head -90' < /dev/null && pwd -P >| /tmp/claude-ec11-cwd"
+    ],
+    "start": "2026-11-15T02:04:26.255194+00:00",
+    "end": "2026-11-15T02:04:26.400517+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "b5c985cac35f4bcab55a05b5820fd190",
+    "path": "commands/0019-b5c985cac35f4bcab55a05b5820fd190",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; for p in cli/reference sdk/concepts/running-evals cli/ci; do curl -s https://docs.mcpjam.com/$p.md | grep -n -i -E \"kind: *toolCall|kind: tool|toolCall\" | head -8; done; curl -s https://docs.mcpjam.com/llms.txt | grep -i -E \"suite|schema|format\" | head' < /dev/null && pwd -P >| /tmp/claude-4e77-cwd"
+    ],
+    "start": "2026-11-15T02:04:28.685347+00:00",
+    "end": "2026-11-15T02:04:29.404552+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "c36cddfb95144b729178e44cd92428f3",
+    "path": "commands/0020-c36cddfb95144b729178e44cd92428f3",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "export PATH=\"$HOME/.local/bin:$PATH\"; claude --version"
+    ],
+    "start": "2026-11-15T02:03:44.879661+00:00",
+    "end": "2026-11-15T02:03:44.884347+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "d5fae794052b4b2e89e1ea0f18470304",
+    "path": "commands/0021-d5fae794052b4b2e89e1ea0f18470304",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; mkdir -p $CLAUDE_CONFIG_DIR/debug $CLAUDE_CONFIG_DIR/projects/-app $CLAUDE_CONFIG_DIR/shell-snapshots $CLAUDE_CONFIG_DIR/statsig $CLAUDE_CONFIG_DIR/todos $CLAUDE_CONFIG_DIR/skills && if [ -d ~/.claude/skills ]; then cp -r ~/.claude/skills/. $CLAUDE_CONFIG_DIR/skills/ 2>/dev/null || true; fi"
+    ],
+    "start": "2026-11-15T02:03:44.960034+00:00",
+    "end": "2026-11-15T02:03:44.961356+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "db12de3ad69f468b9b26f77f902b0911",
+    "path": "commands/0022-db12de3ad69f468b9b26f77f902b0911",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; npx -y @mcpjam/cli@latest server probe --url http://fixture:8765/mcp 2>&1 | tail -30; npx -y @mcpjam/cli@latest tools list --url http://fixture:8765/mcp 2>&1 | head -60' < /dev/null && pwd -P >| /tmp/claude-2c27-cwd"
+    ],
+    "start": "2026-11-15T02:03:53.659929+00:00",
+    "end": "2026-11-15T02:04:04.044726+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "NOT_FOUND"
+    ]
+  },
+  {
+    "id": "e41d1d8d07374c24ac6b573369dd89e8",
+    "path": "commands/0023-e41d1d8d07374c24ac6b573369dd89e8",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; export PATH=\"$HOME/.local/bin:$PATH\"; claude_code_instruction_7beb351663284e34904bfbc8b1a1e539=\"$CLAUDE_CODE_INSTRUCTION_7BEB351663284E34904BFBC8B1A1E539\"; unset CLAUDE_CODE_INSTRUCTION_7BEB351663284E34904BFBC8B1A1E539; printf \"%s\" \"$claude_code_instruction_7beb351663284e34904bfbc8b1a1e539\" | claude --verbose --output-format=stream-json --max-turns 30 --thinking-display omitted --max-budget-usd 2 --permission-mode=bypassPermissions --print 2>&1 | tee /logs/agent/claude-code.txt"
+    ],
+    "start": "2026-11-15T02:03:45.034604+00:00",
+    "end": "2026-11-15T02:04:45.323443+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg",
+      "outcome-011.svg",
+      "outcome-012.svg",
+      "outcome-013.svg",
+      "outcome-014.svg",
+      "outcome-015.svg",
+      "outcome-016.svg",
+      "outcome-017.svg",
+      "outcome-018.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-002-002.svg",
+      "intermediate-003-001.svg",
+      "intermediate-003-002.svg",
+      "intermediate-004-001.svg",
+      "intermediate-004-002.svg",
+      "intermediate-004-003.svg",
+      "intermediate-005-001.svg",
+      "intermediate-006-001.svg",
+      "intermediate-007-001.svg",
+      "intermediate-008-001.svg",
+      "intermediate-009-001.svg",
+      "intermediate-009-002.svg",
+      "intermediate-010-001.svg",
+      "intermediate-011-001.svg",
+      "intermediate-012-001.svg",
+      "intermediate-013-001.svg",
+      "intermediate-014-001.svg",
+      "intermediate-014-002.svg",
+      "intermediate-015-001.svg",
+      "intermediate-016-001.svg",
+      "intermediate-017-001.svg",
+      "intermediate-018-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "e7ef7eb9326e48fdb896a61a04c19623",
+    "path": "commands/0024-e7ef7eb9326e48fdb896a61a04c19623",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; M=\"npx -y @mcpjam/cli@latest\"; mkdir -p reports; $M cloud eval run --file .mcpjam/evals/arith.yaml --project project_fixture --wait --reporter json-summary --out reports/arith.json 2>&1 | tail -c 1500; head -c 1200 reports/arith.json' < /dev/null && pwd -P >| /tmp/claude-4d68-cwd"
+    ],
+    "start": "2026-11-15T02:04:36.749842+00:00",
+    "end": "2026-11-15T02:04:37.790250+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "e916396b023d4384969207ff2037f9d1",
+    "path": "commands/0025-e916396b023d4384969207ff2037f9d1",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "test -d /logs/artifacts"
+    ],
+    "start": "2026-11-15T02:04:45.537680+00:00",
+    "end": "2026-11-15T02:04:45.538659+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "f7c9c4762c174c638f8e1ea24c3c6f08",
+    "path": "commands/0026-f7c9c4762c174c638f8e1ea24c3c6f08",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; M=\"npx -y @mcpjam/cli@latest\"; $M tools call --url http://fixture:8765/mcp --tool-name add --tool-args '\"'\"'{\"a\":2,\"b\":3}'\"'\"' 2>&1 | head -c 600; echo; mkdir -p .mcpjam/evals\ncat > .mcpjam/evals/arith.yaml <<'\"'\"'E'\"'\"'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arith\n  name: Arithmetic fixture\ntarget:\n  servers:\n    - name: arith\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_adds\n    title: uses add for a sum\n    steps:\n      - id: s1\n        kind: prompt\n        prompt: What is 17 plus 25? Use the tool.\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\nE\necho '\"'\"'{\"mcpServers\":{\"arith\":{\"url\":\"http://fixture:8765/mcp\"}}}'\"'\"' > .mcp.json\n$M cloud eval validate --file .mcpjam/evals/arith.yaml 2>&1 | tail -5\nenv | grep -c ANTHROPIC; $M test .mcpjam/evals/arith.yaml --reporter junit-xml --out reports/arith.xml 2>&1 | tail -25' && pwd -P >| /tmp/claude-8005-cwd"
+    ],
+    "start": "2026-11-15T02:04:08.240693+00:00",
+    "end": "2026-11-15T02:04:10.106581+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [
+      "OPTIONS_INVALID"
+    ]
+  }
+]

@@ -1,0 +1,10 @@
+  --tool-name <tool>            Tool name
+  --name <tool>                 Alias for --tool-name
+  --interactive                 Drive the modern input_required
+  --yes                         With --interactive, run non-interactively:
+  --tool-args <json>            Tool parameter object as JSON, @path, or - for
+  --params <json>               Alias for --tool-args
+  --tool-args-stdin             Read tool parameter JSON from stdin
+  --no-param-headers            Do NOT mirror x-mcp-header tool arguments into
+                                Mcp-Param-* request headers (SEP-2243). Calls
+  --mcp-header <Name=Value>     Send a raw MCP request header on the tools/call.

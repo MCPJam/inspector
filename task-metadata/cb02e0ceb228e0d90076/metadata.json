@@ -1,0 +1,43 @@
+{
+  "files": [
+    {
+      "path": "instruction.md",
+      "original_sha256": "997066be91bf68d940d1dc9a9a3680e9928a9760144afa7731db677560692d31",
+      "sanitized_sha256": "997066be91bf68d940d1dc9a9a3680e9928a9760144afa7731db677560692d31",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "task.toml",
+      "original_sha256": "3c13b4a685464f2de5a0d5ff005949b7024b2eadbbcd6c841c65c16600605781",
+      "sanitized_sha256": "3c13b4a685464f2de5a0d5ff005949b7024b2eadbbcd6c841c65c16600605781",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "manifest.json",
+      "original_sha256": "1bd7b220327eff56ad07855bac68838c137244193b3e5e8fa12978863e99da59",
+      "sanitized_sha256": "1bd7b220327eff56ad07855bac68838c137244193b3e5e8fa12978863e99da59",
+      "matches_recorded_manifest": null
+    },
+    {
+      "path": "environment/Dockerfile",
+      "original_sha256": "b4048ce465e21863a5936b59025dd7a2044fb7fea81eb29eb99c166950f36618",
+      "sanitized_sha256": "b4048ce465e21863a5936b59025dd7a2044fb7fea81eb29eb99c166950f36618",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "environment/docker-compose.yaml",
+      "original_sha256": "2a85faf029f37bf796be8543c277106ac3ee02fce1a3e2690f42b7738da6f279",
+      "sanitized_sha256": "a65a3f91049d164c11395bdd49c85fb3fa8bac9cce7f23b79ec0da088fb7d84b",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "tests/prompt.txt",
+      "original_sha256": "12f37a8a84034d3e623d726fe10e5031f4df997ac13f4d5571b5a90c41fb84fe",
+      "sanitized_sha256": "12f37a8a84034d3e623d726fe10e5031f4df997ac13f4d5571b5a90c41fb84fe",
+      "matches_recorded_manifest": true
+    }
+  ],
+  "source_files_verified_against_recorded_manifest": true,
+  "scope": "Allowlisted task instructions, task config, environment definitions, verifier-image packaging and recorded file-hash manifest. Published after tester completion; excludes native agent/auth/config stores and package archives.",
+  "redaction_note": "Published configuration contains redactions, including synthetic credentials and host identity. Original and sanitized hashes are separate. Original hashes authenticate local task bytes, not sanitized bytes."
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "b62adcbdd95948eba1c948adaac1f96b",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json,os,urllib.request\nbase=os.environ['MCPJAM_API_URL']+'/projects/project_fixture';h={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'}\ndef api(path,body=None):\n return json.load(urllib.request.urlopen(urllib.request.Request(base+path,data=None if body is None else json.dumps(body).encode(),headers=h)))\nb=json.load(open('suite.json'));b['name']='Arithmetic assertion negative control';b['tests'][0]['title']='intentional incorrect sum must fail';b['tests'][0]['steps'][-1]['assertion']['needle']='999'\nsuite=api('/eval-suites',b);run=api('/eval-runs',{'suiteId':suite['suiteId']});status=api('/eval-runs/'+run['runId']);json.dump({'suite':suite,'run':run,'status':status},open('negative-control.json','w'),indent=2);print(status)\nassert status['status']=='completed' and status['result']=='failed', 'Negative control did not fail as expected'\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:48:08.635096+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.04065704345703125,
+  "end": "2026-11-15T01:48:08.675693+00:00"
+}

@@ -1,0 +1,28 @@
+{
+  "id": "product-fixes:cycle2-regression-red",
+  "path": "product-fixes--cycle2-regression-red",
+  "argv": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--root",
+    "sdk",
+    "--config",
+    "sdk/vitest.config.ts",
+    "tests/mcp-conformance/http-rejection-wire.test.ts"
+  ],
+  "start": "2026-11-15T02:23:09.415961+00:00",
+  "end": "2026-11-15T02:23:09.587259+00:00",
+  "exit_status": 1,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg",
+    "intermediate-003-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

@@ -1,0 +1,28 @@
+{
+  "id": "product-fixes:cycle2-regression-red-valid",
+  "path": "product-fixes--cycle2-regression-red-valid",
+  "argv": [
+    "npm",
+    "exec",
+    "-w",
+    "@mcpjam/sdk",
+    "--",
+    "vitest",
+    "run",
+    "tests/mcp-conformance/http-rejection-wire.test.ts"
+  ],
+  "start": "2026-11-15T02:23:14.639321+00:00",
+  "end": "2026-11-15T02:23:15.918894+00:00",
+  "exit_status": 1,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg",
+    "intermediate-003-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

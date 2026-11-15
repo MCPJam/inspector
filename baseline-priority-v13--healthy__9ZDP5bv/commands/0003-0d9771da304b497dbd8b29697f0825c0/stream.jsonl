@@ -1,0 +1,3 @@
+{"seconds": 0.7860219478607178, "stream": "stdout", "data": "{\"error\":{\"code\":\"FEATURE_NOT_SUPPORTED\",\"message\":\"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\",\"details\":{\"reason\":\"fixture_unsupported_execution\"}}}\n"}
+{"seconds": 0.7862465381622314, "stream": "stdout", "data": "\n"}
+{"seconds": 0.7867519855499268, "stream": "stderr", "data": "head: cannot open 'report.json' for reading: No such file or directory\n"}

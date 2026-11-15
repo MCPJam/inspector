@@ -1,0 +1,42 @@
+{
+  "id": "bootstrap:claude-harbor-auth-check",
+  "path": "bootstrap--claude-harbor-auth-check",
+  "argv": [
+    "env",
+    "DOCKER_CONFIG=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/docker-config",
+    "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+    "work/venv/bin/harbor",
+    "run",
+    "--path",
+    "work/tasks/smoke-healthy-v1",
+    "--agent",
+    "claude-code",
+    "--model",
+    "anthropic/claude-sonnet-4-6",
+    "--ak",
+    "version=2.1.323",
+    "--ak",
+    "max_turns=30",
+    "--ak",
+    "max_budget_usd=2",
+    "--n-concurrent",
+    "1",
+    "--n-attempts",
+    "1",
+    "--max-retries",
+    "0",
+    "--jobs-dir",
+    "work/jobs",
+    "--dry-run"
+  ],
+  "start": "2026-11-15T01:22:16.336578+00:00",
+  "end": "2026-11-15T01:22:23.438469+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

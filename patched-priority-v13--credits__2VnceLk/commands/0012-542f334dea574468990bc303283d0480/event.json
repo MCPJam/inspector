@@ -1,0 +1,22 @@
+{
+  "event_id": "542f334dea574468990bc303283d0480",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "(set -o pipefail) 2>/dev/null && set -o pipefail; mkdir -p /logs/agent\nif [ -d \"$CODEX_HOME/sessions\" ]; then\n  rm -rf /logs/agent/sessions\n  cp -R \"$CODEX_HOME/sessions\" /logs/agent/sessions\nfi"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:14:18.049906+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0022819042205810547,
+  "end": "2026-11-15T02:14:18.052124+00:00"
+}

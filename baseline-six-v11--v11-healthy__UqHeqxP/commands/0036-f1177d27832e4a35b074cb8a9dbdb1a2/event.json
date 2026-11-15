@@ -1,0 +1,22 @@
+{
+  "event_id": "f1177d27832e4a35b074cb8a9dbdb1a2",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794706093281-lqxnat.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'curl -s https://docs.mcpjam.com/cli/reference.md | grep -nE \"cloud eval (run|create|suite)|--api-url\" | cut -c1-250 | head -20' < /dev/null && pwd -P >| /tmp/claude-c0f0-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:28:48.393030+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.1611924171447754,
+  "end": "2026-11-15T01:28:48.553996+00:00"
+}

@@ -1,0 +1,28 @@
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_add_eval
+  name: Add server
+target:
+  servers:
+    - name: fixture
+defaults:
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5
+  iterations: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_uses_add
+    title: uses add tool for sums
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: What is 17 plus 25? Use the tool.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: add

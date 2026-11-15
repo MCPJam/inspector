@@ -1,0 +1,6 @@
+{"valid":true,"file":".mcpjam/evals/arith-hosted.yaml","suite":{"id":"s_arith_fixture","name":"Arithmetic fixture","cases":1,"enabledCases":1},"findings":[]}
+
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"NOT_FOUND","message":"Synthetic fixture does not implement this route."}}
+6:  name: Arithmetic fixture
+9:    - name: Arithmetic

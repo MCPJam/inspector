@@ -1,0 +1,7 @@
+/projects/{projectId}/eval-runs [('post', 'Create an eval run (async)')]
+/projects/{projectId}/servers [('get', "List a project's servers"), ('post', 'Save a server into a project')]
+/projects/{projectId}/clients/{client}/servers [('post', "Replace a client's servers")]
+/models [('get', 'The MCPJam-provided model catalog')]
+/projects/{projectId}/studies/{studyId}/usage [('get', 'Usage breakdown')]
+/projects/{projectId}/registry/servers [('get', 'List curated and org registry cards')]
+SECURITY [{'bearerAuth': []}] {'bearerAuth': {'type': 'http', 'scheme': 'bearer', 'description': 'MCPJam API key (`sk_…`). Create one at [Settings → API keys](https://app.mcpjam.com/settings/api-keys). Guest sessions cannot use the API, and API keys cannot manage other API keys.'}}

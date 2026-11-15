@@ -1,0 +1,85 @@
+{"seconds": 0.17874598503112793, "stream": "stdout", "data": "\n> @mcpjam/sdk@10.7.0 pretypecheck\n> npm run build -w @mcpjam/evaluators && npm run bundle:runtimes\n\n"}
+{"seconds": 0.26250386238098145, "stream": "stdout", "data": "\n> @mcpjam/evaluators@0.6.0 build\n> tsup\n\n"}
+{"seconds": 0.4391489028930664, "stream": "stdout", "data": "CLI Building entry: src/eval-reporting-types.ts, src/eval-tool-execution.ts, src/index.ts, src/matchers.ts, src/types.ts, src/contract/adapters.ts, src/contract/canonical.ts, src/contract/derive.ts, src/contract/evaluator-derive.ts, src/contract/evaluator-types.ts, src/contract/policy-spelling.ts, src/contract/types.ts, src/evaluators/assertion.ts, src/evaluators/outcome.ts, src/evaluators/run.ts, src/evaluators/types.ts, src/predicates/argMatcher.ts, src/predicates/evaluate.ts, src/predicates/index.ts, src/predicates/policy.ts, src/predicates/schema-validation.ts, src/predicates/transcript.ts, src/predicates/types.ts, src/tool-expectations/compile.ts, src/tool-expectations/evaluate.ts, src/tool-expectations/index.ts, src/tool-expectations/skill-tools.ts, src/tool-expectations/types.ts, src/scorers/concurrency.ts, src/scorers/predicate-scorer.ts, src/scorers/run.ts, src/scorers/types.ts\n"}
+{"seconds": 0.4393022060394287, "stream": "stdout", "data": "CLI Using tsconfig: tsconfig.json\n"}
+{"seconds": 0.4393441677093506, "stream": "stdout", "data": "CLI tsup v8.5.1\nCLI Using tsup config: $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/evaluators/tsup.config.ts\n"}
+{"seconds": 0.44098782539367676, "stream": "stdout", "data": "CLI Target: es2022\n"}
+{"seconds": 0.4527580738067627, "stream": "stdout", "data": "CLI Cleaning output folder\n"}
+{"seconds": 0.45320796966552734, "stream": "stdout", "data": "ESM Build start\n"}
+{"seconds": 0.47383594512939453, "stream": "stdout", "data": "ESM dist/tool-expectations/types.js       0 B\n"}
+{"seconds": 0.473844051361084, "stream": "stdout", "data": "ESM dist/eval-reporting-types.js          0 B\n"}
+{"seconds": 0.4738738536834717, "stream": "stdout", "data": "ESM dist/chunk-XTHLBMYZ.js                0 B\nESM dist/chunk-PF6RTX3X.js                0 B\n"}
+{"seconds": 0.4738810062408447, "stream": "stdout", "data": "ESM dist/types.js                         0 B\nESM dist/scorers/concurrency.js           76.00 B\nESM dist/tool-expectations/skill-tools.js 128.00 B\n"}
+{"seconds": 0.4738919734954834, "stream": "stdout", "data": "ESM dist/tool-expectations/index.js       526.00 B\nESM dist/scorers/run.js                   296.00 B\n"}
+{"seconds": 0.4738941192626953, "stream": "stdout", "data": "ESM dist/scorers/types.js                 168.00 B\n"}
+{"seconds": 0.4739041328430176, "stream": "stdout", "data": "ESM dist/tool-expectations/evaluate.js    286.00 B\nESM dist/predicates/index.js              2.56 KB\n"}
+{"seconds": 0.4739069938659668, "stream": "stdout", "data": "ESM dist/scorers/predicate-scorer.js      460.00 B\n"}
+{"seconds": 0.47391700744628906, "stream": "stdout", "data": "ESM dist/predicates/argMatcher.js         105.00 B\n"}
+{"seconds": 0.4739220142364502, "stream": "stdout", "data": "ESM dist/tool-expectations/compile.js     166.00 B\n"}
+{"seconds": 0.47392797470092773, "stream": "stdout", "data": "ESM dist/predicates/evaluate.js           507.00 B\n"}
+{"seconds": 0.47393298149108887, "stream": "stdout", "data": "ESM dist/predicates/types.js              902.00 B\n"}
+{"seconds": 0.4739360809326172, "stream": "stdout", "data": "ESM dist/predicates/transcript.js         444.00 B\n"}
+{"seconds": 0.4739398956298828, "stream": "stdout", "data": "ESM dist/predicates/schema-validation.js  100.00 B\n"}
+{"seconds": 0.4739408493041992, "stream": "stdout", "data": "ESM dist/contract/evaluator-derive.js     725.00 B\n"}
+{"seconds": 0.47394609451293945, "stream": "stdout", "data": "ESM dist/contract/evaluator-types.js      196.00 B\n"}
+{"seconds": 0.47394776344299316, "stream": "stdout", "data": "ESM dist/contract/policy-spelling.js      310.00 B\n"}
+{"seconds": 0.4739508628845215, "stream": "stdout", "data": "ESM dist/evaluators/assertion.js          510.00 B\n"}
+{"seconds": 0.4739530086517334, "stream": "stdout", "data": "ESM dist/evaluators/run.js                455.00 B\n"}
+{"seconds": 0.47395896911621094, "stream": "stdout", "data": "ESM dist/evaluators/outcome.js            100.00 B\n"}
+{"seconds": 0.47395992279052734, "stream": "stdout", "data": "ESM dist/evaluators/types.js              211.00 B\nESM dist/predicates/policy.js             330.00 B\n"}
+{"seconds": 0.47396397590637207, "stream": "stdout", "data": "ESM dist/eval-tool-execution.js           431.00 B\n"}
+{"seconds": 0.4739718437194824, "stream": "stdout", "data": "ESM dist/contract/types.js                336.00 B\n"}
+{"seconds": 0.47397398948669434, "stream": "stdout", "data": "ESM dist/chunk-ILLARFJD.js                2.90 KB\n"}
+{"seconds": 0.47397804260253906, "stream": "stdout", "data": "ESM dist/chunk-KAXUQNDG.js                7.72 KB\n"}
+{"seconds": 0.4739840030670166, "stream": "stdout", "data": "ESM dist/index.js                         12.82 KB\nESM dist/chunk-JRM6LM5A.js                316.00 B\n"}
+{"seconds": 0.4739859104156494, "stream": "stdout", "data": "ESM dist/chunk-CVM5YXXU.js                1.73 KB\nESM dist/chunk-YQEGVQXJ.js                2.47 KB\n"}
+{"seconds": 0.47399091720581055, "stream": "stdout", "data": "ESM dist/chunk-XGPIJHH6.js                468.00 B\n"}
+{"seconds": 0.47399187088012695, "stream": "stdout", "data": "ESM dist/chunk-54U6UTRS.js                55.39 KB\n"}
+{"seconds": 0.4739959239959717, "stream": "stdout", "data": "ESM dist/chunk-JZFHSOM3.js                774.00 B\n"}
+{"seconds": 0.4739971160888672, "stream": "stdout", "data": "ESM dist/chunk-HCLNEORA.js                10.92 KB\n"}
+{"seconds": 0.4740011692047119, "stream": "stdout", "data": "ESM dist/chunk-QVKDBSXS.js                5.09 KB\n"}
+{"seconds": 0.47400403022766113, "stream": "stdout", "data": "ESM dist/chunk-ZQI2XLYE.js                1.22 KB\n"}
+{"seconds": 0.47400808334350586, "stream": "stdout", "data": "ESM dist/chunk-QGXTZUGY.js                625.00 B\nESM dist/chunk-T4RQYAM2.js                168.00 B\nESM dist/chunk-UYCSGDBV.js                3.93 KB\n"}
+{"seconds": 0.4740118980407715, "stream": "stdout", "data": "ESM dist/chunk-DHLSKN3I.js                307.00 B\n"}
+{"seconds": 0.4740128517150879, "stream": "stdout", "data": "ESM dist/chunk-NRZVABEW.js                3.83 KB\n"}
+{"seconds": 0.4740169048309326, "stream": "stdout", "data": "ESM dist/chunk-GSN2L4XW.js                5.95 KB\n"}
+{"seconds": 0.4740180969238281, "stream": "stdout", "data": "ESM dist/chunk-PBPUQ6MC.js                328.00 B\n"}
+{"seconds": 0.47402119636535645, "stream": "stdout", "data": "ESM dist/contract/adapters.js             916.00 B\n"}
+{"seconds": 0.47402501106262207, "stream": "stdout", "data": "ESM dist/chunk-O37HIDVN.js                10.31 KB\n"}
+{"seconds": 0.4740259647369385, "stream": "stdout", "data": "ESM dist/chunk-5E4WULER.js                5.50 KB\n"}
+{"seconds": 0.4740281105041504, "stream": "stdout", "data": "ESM dist/matchers.js                      415.00 B\n"}
+{"seconds": 0.4740309715270996, "stream": "stdout", "data": "ESM dist/chunk-FJMB7JNJ.js                993.00 B\n"}
+{"seconds": 0.4740321636199951, "stream": "stdout", "data": "ESM dist/chunk-KAI5M4KO.js                7.45 KB\n"}
+{"seconds": 0.47403597831726074, "stream": "stdout", "data": "ESM dist/contract/derive.js               711.00 B\n"}
+{"seconds": 0.47403907775878906, "stream": "stdout", "data": "ESM dist/chunk-2QQ2KLES.js                370.00 B\nESM dist/chunk-PYTZA5U2.js                2.33 KB\n"}
+{"seconds": 0.4740438461303711, "stream": "stdout", "data": "ESM dist/chunk-WVWKONJP.js                1008.00 B\n"}
+{"seconds": 0.474045991897583, "stream": "stdout", "data": "ESM dist/contract/canonical.js            240.00 B\n"}
+{"seconds": 0.47405004501342773, "stream": "stdout", "data": "ESM dist/chunk-3KMKYC6O.js                5.54 KB\n"}
+{"seconds": 0.47405195236206055, "stream": "stdout", "data": "ESM dist/chunk-YDCS7DHF.js                14.82 KB\n"}
+{"seconds": 0.4740631580352783, "stream": "stdout", "data": "ESM ⚡️ Build success in 21ms\n"}
+{"seconds": 0.5944430828094482, "stream": "stdout", "data": "DTS Build start\n"}
+{"seconds": 3.3237879276275635, "stream": "stdout", "data": "DTS ⚡️ Build success in 2730ms\n"}
+{"seconds": 3.323922872543335, "stream": "stdout", "data": "DTS dist/predicates/index.d.ts              2.26 KB\n"}
+{"seconds": 3.323930025100708, "stream": "stdout", "data": "DTS dist/tool-expectations/index.d.ts       609.00 B\n"}
+{"seconds": 3.3239870071411133, "stream": "stdout", "data": "DTS dist/contract/adapters.d.ts             6.90 KB\nDTS dist/contract/canonical.d.ts            4.57 KB\nDTS dist/contract/evaluator-derive.d.ts     4.25 KB\nDTS dist/contract/derive.d.ts               9.93 KB\nDTS dist/contract/policy-spelling.d.ts      3.54 KB\nDTS dist/evaluators/assertion.d.ts          2.49 KB\n"}
+{"seconds": 3.324022054672241, "stream": "stdout", "data": "DTS dist/evaluators/outcome.d.ts            802.00 B\nDTS dist/evaluators/run.d.ts                2.08 KB\n"}
+{"seconds": 3.3240270614624023, "stream": "stdout", "data": "DTS dist/evaluators/types.d.ts              1.70 KB\n"}
+{"seconds": 3.324044942855835, "stream": "stdout", "data": "DTS dist/contract/evaluator-types.d.ts      5.92 KB\nDTS dist/eval-tool-execution.d.ts           3.11 KB\n"}
+{"seconds": 3.324049949645996, "stream": "stdout", "data": "DTS dist/predicates/argMatcher.d.ts         738.00 B\n"}
+{"seconds": 3.324051856994629, "stream": "stdout", "data": "DTS dist/predicates/evaluate.d.ts           2.91 KB\n"}
+{"seconds": 3.324057102203369, "stream": "stdout", "data": "DTS dist/predicates/schema-validation.d.ts  2.81 KB\n"}
+{"seconds": 3.324061870574951, "stream": "stdout", "data": "DTS dist/predicates/transcript.d.ts         4.77 KB\n"}
+{"seconds": 3.3240718841552734, "stream": "stdout", "data": "DTS dist/tool-expectations/compile.d.ts     987.00 B\nDTS dist/tool-expectations/evaluate.d.ts    5.83 KB\n"}
+{"seconds": 3.3240790367126465, "stream": "stdout", "data": "DTS dist/tool-expectations/skill-tools.d.ts 802.00 B\n"}
+{"seconds": 3.3240809440612793, "stream": "stdout", "data": "DTS dist/tool-expectations/types.d.ts       3.83 KB\nDTS dist/scorers/concurrency.d.ts           486.00 B\n"}
+{"seconds": 3.3240981101989746, "stream": "stdout", "data": "DTS dist/scorers/predicate-scorer.d.ts      1.52 KB\nDTS dist/scorers/run.d.ts                   2.49 KB\nDTS dist/scorers/types.d.ts                 2.40 KB\n"}
+{"seconds": 3.3241050243377686, "stream": "stdout", "data": "DTS dist/contract/types.d.ts                12.01 KB\nDTS dist/eval-reporting-types.d.ts          1.50 KB\n"}
+{"seconds": 3.3241069316864014, "stream": "stdout", "data": "DTS dist/predicates/policy.d.ts             3.90 KB\n"}
+{"seconds": 3.3241138458251953, "stream": "stdout", "data": "DTS dist/matchers.d.ts                      10.44 KB\nDTS dist/types.d.ts                         105.00 B\n"}
+{"seconds": 3.3241260051727295, "stream": "stdout", "data": "DTS dist/index.d.ts                         6.58 KB\nDTS dist/predicates/types.d.ts              1.16 KB\nDTS dist/types-zPrzDmOA.d.ts                83.70 KB\n"}
+{"seconds": 3.4975578784942627, "stream": "stdout", "data": "\n> @mcpjam/sdk@10.7.0 bundle:runtimes\n> node ../scripts/generate-telemetry-catalogs.mjs && npm run bundle:chatgpt-runtime && npm run bundle:mcp-apps-runtime\n\n"}
+{"seconds": 3.7678990364074707, "stream": "stdout", "data": "\n> @mcpjam/sdk@10.7.0 bundle:chatgpt-runtime\n> node scripts/bundle-chatgpt-apps-runtime.mjs\n\n"}
+{"seconds": 4.094920873641968, "stream": "stdout", "data": "✅ Successfully bundled ChatGPT Apps runtime script\n"}
+{"seconds": 4.17192006111145, "stream": "stdout", "data": "\n> @mcpjam/sdk@10.7.0 bundle:mcp-apps-runtime\n> node scripts/bundle-mcp-apps-openai-compatible-runtime.mjs\n\n"}
+{"seconds": 4.215634822845459, "stream": "stdout", "data": "✅ Successfully bundled MCP Apps OpenAI compatible runtime script\n"}
+{"seconds": 4.224261999130249, "stream": "stdout", "data": "\n> @mcpjam/sdk@10.7.0 typecheck\n> tsc --noEmit\n\n"}

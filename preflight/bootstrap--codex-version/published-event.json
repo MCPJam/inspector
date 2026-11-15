@@ -1,0 +1,21 @@
+{
+  "id": "bootstrap:codex-version",
+  "path": "bootstrap--codex-version",
+  "argv": [
+    "codex",
+    "--version"
+  ],
+  "start": "2026-11-15T01:12:48.267793+00:00",
+  "end": "2026-11-15T01:12:48.358153+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

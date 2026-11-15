@@ -1,0 +1,20 @@
+{"seconds": 1.8329658508300781, "stream": "stdout", "data": "✔ main keeps a dependency's console output off stdout (13.657125ms)\n✔ usage errors link to the failing command without echoing argument values (6.454542ms)\n✔ Eval help distinguishes missing credit data from run and step limits (1.978708ms)\n"}
+{"seconds": 1.8630058765411377, "stream": "stdout", "data": "✔ resolveCliDeployment prefers the flag over env over the default (1.377958ms)\n✔ an invalid --api-url hard-errors instead of falling back to prod (0.344542ms)\n✔ an invalid MCPJAM_API_URL hard-errors too (0.071958ms)\n"}
+{"seconds": 1.8630321025848389, "stream": "stdout", "data": "✔ MCPJAM_API_URL and MCPJAM_BASE_URL naming two servers exit 2 (0.285916ms)\n✔ buildPlatformClient defaults to the API URL stored with the login (8.239584ms)\n✔ a saved login is never sent to another --api-url (2.286625ms)\n"}
+{"seconds": 1.8630561828613281, "stream": "stdout", "data": "✔ a redirect from the API is refused and exits 2 (0.994542ms)\n"}
+{"seconds": 1.8630719184875488, "stream": "stdout", "data": "✔ an sk_ API key does not inherit the stored login's URL (1.378042ms)\n✔ a stored login without apiUrl still defaults to prod (1.184583ms)\n✔ a usage-limit refusal keeps its code and exit, and carries when to retry (0.289291ms)\n"}
+{"seconds": 1.8630788326263428, "stream": "stdout", "data": "✔ a failing request's id rides in details, beside the server's own (0.118417ms)\n"}
+{"seconds": 1.863084077835083, "stream": "stdout", "data": "✔ a request id with no server details still lands in details (0.048292ms)\n"}
+{"seconds": 1.8630988597869873, "stream": "stdout", "data": "✔ a refusal carries its request id next to the retry guidance (0.039084ms)\n✔ an error without a request id keeps its details untouched (0.02825ms)\n"}
+{"seconds": 1.863102912902832, "stream": "stdout", "data": "✔ a platform fault with a request id says how to report it (0.029916ms)\n"}
+{"seconds": 1.8631138801574707, "stream": "stdout", "data": "✔ a missing capability suggests the missing_capability kind (0.028583ms)\n"}
+{"seconds": 1.863123893737793, "stream": "stdout", "data": "✔ no report hint on a gateway failure, a client error, or without a request id (0.140917ms)\n"}
+{"seconds": 1.8631339073181152, "stream": "stdout", "data": "✔ no report hint on the command that files reports (0.04925ms)\n"}
+{"seconds": 1.863157033920288, "stream": "stdout", "data": "✔ platform-fee recovery preserves the wire error and does not assume a role or plan (0.063542ms)\n"}
+{"seconds": 1.8631610870361328, "stream": "stdout", "data": "✔ other forbidden errors never inherit platform-credit recovery (0.058084ms)\n"}
+{"seconds": 1.8633010387420654, "stream": "stdout", "data": "ℹ tests 23\nℹ suites 0\n"}
+{"seconds": 1.8633079528808594, "stream": "stdout", "data": "ℹ pass 23\n"}
+{"seconds": 1.863313913345337, "stream": "stdout", "data": "ℹ fail 0\nℹ cancelled 0\n"}
+{"seconds": 1.8633191585540771, "stream": "stdout", "data": "ℹ skipped 0\n"}
+{"seconds": 1.8633232116699219, "stream": "stdout", "data": "ℹ todo 0\n"}
+{"seconds": 1.8633239269256592, "stream": "stdout", "data": "ℹ duration_ms 1816.933833\n"}

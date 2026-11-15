@@ -1,0 +1,22 @@
+{
+  "event_id": "ee6398fed5d74858b93ece05bcf96a95",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mkdir -p .mcpjam/evals reports && cat > .mcpjam/evals/arithmetic.json <<'EOF'\n{\n  \"schemaVersion\": \"2\",\n  \"mode\": \"agentWorkflow\",\n  \"reportingMode\": \"standard\",\n  \"suite\": {\"id\": \"s_arithmetic_smoke\", \"name\": \"Arithmetic smoke\"},\n  \"target\": {\"servers\": [{\"name\": \"Arithmetic\"}]},\n  \"defaults\": {\n    \"judge\": {\"enabled\": false},\n    \"model\": \"anthropic/claude-haiku-4.5\",\n    \"iterations\": 3,\n    \"passThreshold\": 1,\n    \"validity\": {}\n  },\n  \"cases\": [{\n    \"id\": \"c_add_2_3\",\n    \"title\": \"Add two numbers and return five\",\n    \"steps\": [\n      {\"id\": \"s1\", \"kind\": \"prompt\", \"prompt\": \"Use the add tool to add 2 and 3. Report the sum.\"},\n      {\"id\": \"a1\", \"kind\": \"assert\", \"assertion\": {\"type\": \"toolCalledWith\", \"toolName\": \"add\", \"args\": {\"args\": {\"a\": 2, \"b\": 3}, \"argumentMatching\": \"exact\"}}},\n      {\"id\": \"a2\", \"kind\": \"assert\", \"assertion\": {\"type\": \"toolResultContains\", \"toolName\": \"add\", \"needle\": \"5\"}}\n    ]\n  }]\n}\nEOF\nnpx mcpjam cloud eval validate --file .mcpjam/evals/arithmetic.json --project project_fixture --format json > reports/validation.json && cat reports/validation.json && npx mcpjam cloud eval run --file .mcpjam/evals/arithmetic.json --project project_fixture --wait --wait-timeout 60000 --out reports/eval.json --format json > reports/launch.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:29:28.759613+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 4,
+  "signal": null,
+  "duration_seconds": 2.022756338119507,
+  "end": "2026-11-15T01:29:30.782262+00:00"
+}

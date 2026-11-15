@@ -1,0 +1,22 @@
+{
+  "event_id": "14cc398846314d869fff6a819487cb78",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "npx mcpjam --version && npx mcpjam cloud projects servers --help && sed -n '1197,1237p' cli-reference.md && rg -n 'toolResultContains|toolCall|assertion|schemaVersion|Create an eval suite' public-api.md | head -50 && rg -n 'suite|assertion' docs-index.txt | head -25"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:28:53.968733+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.6092524528503418,
+  "end": "2026-11-15T01:28:55.577905+00:00"
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "9a6d0aa2e8b047a588156e2ca0708e1b",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708277207-3pi315.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; echo $MCPJAM_API_URL; curl -s https://docs.mcpjam.com/cli/self-hosted.md | grep -iE -B2 -A4 \"http://|insecure|allow\" | head -50' < /dev/null && pwd -P >| /tmp/claude-3b15-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:05:03.144875+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.13575530052185059,
+  "end": "2026-11-15T02:05:03.280561+00:00"
+}

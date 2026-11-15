@@ -1,0 +1,1 @@
+{"seconds": 0.020296573638916016, "stream": "stdout", "data": "{\"runId\": \"run_fixture_1\", \"suiteId\": \"suite_authored_3\", \"status\": \"running\", \"servers\": [{\"id\": \"server_fixture\", \"name\": \"Arithmetic\"}], \"environment\": null}"}

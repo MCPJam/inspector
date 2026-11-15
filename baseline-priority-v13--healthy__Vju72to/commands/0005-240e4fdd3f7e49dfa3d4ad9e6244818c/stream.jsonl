@@ -1,0 +1,5 @@
+{"seconds": 0.6783335208892822, "stream": "stdout", "data": "{\"id\":\"user_fixture\",\"email\":\"[EMAIL REDACTED]\",\"name\":\"Fixture user\",\"plan\":\"team\",\"credential\":\"api-key\"}\n"}
+{"seconds": 0.6783804893493652, "stream": "stdout", "data": "\n"}
+{"seconds": 1.356649398803711, "stream": "stdout", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"error: unknown command 'servers'\\n(Did you mean secrets?)\"}}\n"}
+{"seconds": 1.356691598892212, "stream": "stdout", "data": "\n"}
+{"seconds": 2.1733734607696533, "stream": "stdout", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\nEval idempotency key: 45ca0bcc-b0d0-428c-b0c6-aaa60af5dc70\n{\"error\":{\"code\":\"INTERNAL_ERROR\",\"message\":\"Server \\\"arith\\\" was not found in project \\\"Fixture\\\". Available: Arithmetic (id: server_fixture).\\nRetry this launch with --idempotency-key 45ca0bcc-b0d0-428c-b0c6-aaa60af5dc70.\",\"details\":{\"idempotencyKey\":\"45ca0bcc-b0d0-428c-b0c6-aaa60af5dc70\"}}}\n"}

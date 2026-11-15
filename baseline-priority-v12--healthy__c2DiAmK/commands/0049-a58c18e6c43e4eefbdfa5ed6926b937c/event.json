@@ -1,0 +1,22 @@
+{
+  "event_id": "a58c18e6c43e4eefbdfa5ed6926b937c",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > check-result.py <<'PY'\n\"\"\"Grade MCPJam's public iteration evidence independently of its run verdict.\"\"\"\nimport json\nimport sys\nfrom pathlib import Path\nexpected = float(sys.argv[1]) if len(sys.argv) > 1 else 5\nsource = Path(sys.argv[2]) if len(sys.argv) > 2 else Path('iterations.json')\nreport_path = Path(sys.argv[3]) if len(sys.argv) > 3 else Path('evaluation.json')\nevidence = json.loads(source.read_text())\niterations = evidence.get('items', [])\nchecks = []\nfor iteration in iterations:\n    calls = iteration.get('actualToolCalls', [])\n    passed = len(calls) == 1 and calls[0].get('toolName') == 'add' and calls[0].get('arguments') == {'a': 2, 'b': 3} and calls[0].get('result', {}).get('structuredContent') == {'sum': expected} and calls[0].get('result', {}).get('isError') is False\n    checks.append({'iterationId': iteration.get('id'), 'passed': passed})\npassed = bool(checks) and all(c['passed'] for c in checks)\nreport = {'passed': passed, 'expectedSum': expected, 'iterations': checks, 'evidence': str(source), 'grading': 'exact local check of public MCPJam iteration evidence'}\nreport_path.write_text(json.dumps(report, indent=2) + '\\n')\nprint(json.dumps(report))\nsys.exit(0 if passed else 1)\nPY\npython3 - <<'PY'\np='run-eval.py';s=open(p).read();start=s.index(\"evidence = json.loads(Path('iterations.json').read_text())\");end=s.index(\"if status.get('status') != 'completed'\",start)\ns=s[:start]+\"import subprocess, sys\\nsubprocess.run([sys.executable, 'check-result.py'], check=True)\\n\"+s[end:];open(p,'w').write(s)\nPY\npython3 run-eval.py\npython3 check-result.py 999 iterations.json local-negative-control.json\nrc=$?\ntest \"$rc\" -eq 1"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:48:25.096167+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.06557440757751465,
+  "end": "2026-11-15T01:48:25.161679+00:00"
+}

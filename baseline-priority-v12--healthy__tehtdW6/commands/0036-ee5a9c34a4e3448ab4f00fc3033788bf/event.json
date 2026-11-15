@@ -1,0 +1,22 @@
+{
+  "event_id": "ee5a9c34a4e3448ab4f00fc3033788bf",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mcpjam tools call --url http://fixture:8765/mcp --tool-name add --tool-args '{\"a\":2,\"b\":3}' > /workspace/first-result.json; cat /workspace/first-result.json; mcpjam cloud eval run --help; mcpjam cloud projects --help; rg 'toolCall|toolResultContains' /workspace/docs-index.txt"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:52:02.799136+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 1.3381845951080322,
+  "end": "2026-11-15T01:52:04.137246+00:00"
+}

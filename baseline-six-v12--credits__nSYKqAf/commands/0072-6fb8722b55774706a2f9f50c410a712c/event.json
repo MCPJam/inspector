@@ -1,0 +1,22 @@
+{
+  "event_id": "6fb8722b55774706a2f9f50c410a712c",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "(set -o pipefail) 2>/dev/null && set -o pipefail; chown 0:0 /tmp/codex-secrets/auth.json && chmod 600 /tmp/codex-secrets/auth.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:41:58.915955+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0032224655151367188,
+  "end": "2026-11-15T01:41:58.919068+00:00"
+}

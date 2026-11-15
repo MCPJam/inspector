@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "2",
+  "mode": "agentWorkflow",
+  "reportingMode": "standard",
+  "suite": {
+    "id": "s_arithmetic_negative_control",
+    "name": "Arithmetic wrong-answer control"
+  },
+  "target": {
+    "servers": [
+      {
+        "name": "Arithmetic"
+      }
+    ]
+  },
+  "defaults": {
+    "judge": {
+      "enabled": false
+    },
+    "iterations": 1,
+    "passThreshold": 1,
+    "validity": {},
+    "model": "anthropic/claude-haiku-4.5"
+  },
+  "cases": [
+    {
+      "id": "c_add_2_3",
+      "title": "2 plus 3 returns sum 5",
+      "steps": [
+        {
+          "id": "call_add",
+          "kind": "toolCall",
+          "serverName": "Arithmetic",
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        {
+          "id": "assert_sum",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultContains",
+            "toolName": "add",
+            "needle": "{\"sum\": 999}"
+          }
+        }
+      ]
+    }
+  ]
+}

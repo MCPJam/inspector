@@ -1,0 +1,1100 @@
+{
+  "healthy__9ZDP5bv": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Tool and CLI Eval both verified; reward0 solely because reproducible_artifacts excludes a valid saved suite.json/report.json without embedded command text.",
+    "product_observations": [
+      "Schema fields steps[].id/serverName discovered through real validation errors; corrected and completed.",
+      "Extra list argument on projects servers caused repeated usage error; eventually listed servers with canonical command."
+    ],
+    "fixture_observations": [
+      "Prompt model execution unsupported",
+      "Server connect route unimplemented"
+    ],
+    "credits_cost_actor": "Not a credits task; no numerical billing claim.",
+    "syntax_remedy_outcome": {
+      "kind": "baseline",
+      "completed": true,
+      "evidence_event_ids": [
+        "194137f3be1a449e9c2ef94f9c731d79",
+        "a18b026d84ef481ba662d11221424530",
+        "db8fac1b5c6d41fcba506073ede2112b"
+      ],
+      "interpretation": "Recovered to usable server list and Eval without patched help; multiple schema/usage detours remain.",
+      "published_event_links": [
+        "../baseline-priority-v13--healthy__9ZDP5bv/commands/0005-194137f3be1a449e9c2ef94f9c731d79/event.json",
+        "../baseline-priority-v13--healthy__9ZDP5bv/commands/0015-a18b026d84ef481ba662d11221424530/event.json",
+        "../baseline-priority-v13--healthy__9ZDP5bv/commands/0025-db8fac1b5c6d41fcba506073ede2112b/event.json"
+      ]
+    },
+    "same_work_preserved": "Suite definition suite.json and report.json saved; persisted suite runnable.",
+    "human_action": "None required.",
+    "duplicate_charge_interpretation": "One accepted synthetic run; no repeated charge observed.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Read-only scan of captured command invocations and ATIF tool-call arguments; no package-source/private-path access observed."
+    }
+  },
+  "healthy__FC2asax": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Eval-as-first-value completed; no direct tester tools call, so narrow B rule fails.",
+    "product_observations": [
+      "Patched usage error directed user to cloud eval status --help; same command group help then corrected --run invocation retrieved passed report.",
+      "Missing deterministic schema fields repaired from validation details; final assertion tests tool occurrence only, not result sum."
+    ],
+    "fixture_observations": [
+      "Plain-http nonloopback fixture URL blocked local hosted-inference route by product security contract",
+      "Prompt model execution unsupported"
+    ],
+    "credits_cost_actor": "No credit/cost task; explicitly recognized simulated execution.",
+    "syntax_remedy_outcome": {
+      "kind": "patched",
+      "completed": true,
+      "evidence_event_ids": [
+        "3252021f9e8040aab3b3830609deb1a9",
+        "9b13d768595441c4bed4bda215c1f6eb"
+      ],
+      "interpretation": "Actual help remedy exposed, requested --help in same shell, corrected --run and obtained status next. Observed sequence, not causal proof.",
+      "published_event_links": [
+        "../patched-priority-v13--healthy__FC2asax/commands/0008-3252021f9e8040aab3b3830609deb1a9/event.json",
+        "../patched-priority-v13--healthy__FC2asax/commands/0016-9b13d768595441c4bed4bda215c1f6eb/event.json"
+      ]
+    },
+    "same_work_preserved": "Suite YAML and reports retained across edits and successful run.",
+    "human_action": "None required.",
+    "duplicate_charge_interpretation": "One accepted synthetic run; refused prompts did not charge.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Read-only scan of captured command invocations and ATIF tool-call arguments; no package-source/private-path access observed."
+    }
+  },
+  "healthy__8heHuhR": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Baseline cloud link --project failed. Tester sought command help, used positional project_fixture, and linked successfully."
+    ],
+    "fixture_observations": [
+      "Prompt execution unsupported",
+      "Per-step evidence endpoint unimplemented"
+    ],
+    "credits_cost_actor": "Not credits task; recognized simulation and no broad conformance claim.",
+    "syntax_remedy_outcome": {
+      "kind": "baseline",
+      "completed": true,
+      "evidence_event_ids": [
+        "07a1219a8aba4d9ab37d8704b5b4cf08",
+        "74d8983d7f1847a58c506c10833cf219",
+        "61389d893d624de29f6fe83292f86b8d"
+      ],
+      "interpretation": "User independently requested help and corrected positional syntax; establishes baseline recovery without injected remedy.",
+      "published_event_links": [
+        "../baseline-priority-v13--healthy__8heHuhR/commands/0003-07a1219a8aba4d9ab37d8704b5b4cf08/event.json",
+        "../baseline-priority-v13--healthy__8heHuhR/commands/0040-74d8983d7f1847a58c506c10833cf219/event.json",
+        "../baseline-priority-v13--healthy__8heHuhR/commands/0031-61389d893d624de29f6fe83292f86b8d/event.json"
+      ]
+    },
+    "same_work_preserved": "Saved YAML exact steps match private persisted suite and both runs; npm test reproduction reran same suite.",
+    "human_action": "None needed.",
+    "duplicate_charge_interpretation": "Two intentional executions to test repeatability, two unique charges; no retry duplication observed.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Read-only scan of captured command invocations and ATIF tool-call arguments; no package-source/private-path access observed."
+    }
+  },
+  "healthy__v7cNkex": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Public API Evals and direct CLI tool succeeded; strict CLI Eval launch absent.",
+    "product_observations": [
+      "No exposure to patched help/fee guidance detected; cannot attribute completion to fixes."
+    ],
+    "fixture_observations": [
+      "Prompt execution unsupported",
+      "toolResultMatches unsupported",
+      "Decision-summary endpoint missing",
+      "Tester attributed rejection to model field, but simultaneously removed unsupported toolResultMatches; model-specific diagnosis not established."
+    ],
+    "credits_cost_actor": "Recognized deterministic simulation/no live billing; no invented numerical cost.",
+    "syntax_remedy_outcome": {
+      "kind": "patched",
+      "completed": null,
+      "evidence_event_ids": [],
+      "interpretation": "No patched command remedy exposure observed.",
+      "published_event_links": []
+    },
+    "same_work_preserved": "suite.json exact steps match private suite_authored_4 and two successful runs; run-eval.mjs preserved.",
+    "human_action": "None needed.",
+    "duplicate_charge_interpretation": "Three unique accepted runs, including revised assertion and intentional repeat; no duplicate charge IDs.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Read-only scan of captured command invocations and ATIF tool-call arguments; no package-source/private-path access observed."
+    }
+  },
+  "credits__xT9JB9X": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Correct public-API recovery and saved repeat script; CLI-only launch criterion unmet.",
+    "product_observations": [
+      "Correct platform-credit diagnosis; stayed explicit that balance/cost remained unknown; no patched guidance exposure."
+    ],
+    "fixture_observations": [
+      "Model/budget/disclosure/decision-summary endpoints unavailable"
+    ],
+    "credits_cost_actor": {
+      "balance": "unknown_acknowledged",
+      "cost": "unknown_acknowledged",
+      "cause": "platform credits, distinct from direct MCP ability",
+      "actor": "team owner/orchestrator synthetic account resolution",
+      "handoff_correct": true
+    },
+    "syntax_remedy_outcome": {
+      "completed": null,
+      "evidence_event_ids": [],
+      "published_event_links": []
+    },
+    "same_work_preserved": "replay.py unchanged hash across phases; original suite_fixture resumed.",
+    "human_action": "Waited for explicit resolution notice; no purchase.",
+    "duplicate_charge_interpretation": "One refusal, one accepted run, one unique synthetic charge.",
+    "key_evidence_event_ids": [
+      "7b91f29bc7c7403c90d18fa53bcf4488",
+      "831b279cea1c4026816f355c8e3c2d6b"
+    ],
+    "conformance": "Custom direct protocol-smoke.py checks are not MCPJam conformance; no verified official conformance result.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Read-only scan of captured command invocations and ATIF tool-call arguments; no package-source/private-path access observed."
+    }
+  },
+  "credits__BkqRPJ9": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "API recovery confirmed, but no CLI Eval or recognized reproduction artifact.",
+    "product_observations": [
+      "Repeated same platform-credit request once before resolution despite no account-change signal (2 refusals).",
+      "Correct owner/human boundary and unknown-cost statement."
+    ],
+    "fixture_observations": [
+      "Usage/budget endpoints unavailable",
+      "Initial unscoped polling path corrected to project-scoped public API path"
+    ],
+    "credits_cost_actor": {
+      "balance": "unknown_acknowledged",
+      "cost": "unknown_acknowledged",
+      "cause": "platform credits",
+      "actor": "paid-plan team owner, synthetic environment resolution",
+      "handoff_correct": true
+    },
+    "syntax_remedy_outcome": {
+      "completed": null,
+      "evidence_event_ids": [],
+      "published_event_links": []
+    },
+    "same_work_preserved": "Captured identical suiteId launch request before/after; persisted suite and raw response files. No runnable script saved.",
+    "human_action": "Stopped after two refusals, resumed on explicit notice.",
+    "duplicate_charge_interpretation": "Two refusals charged nothing; one accepted run/one unique charge after resolution.",
+    "key_evidence_event_ids": [
+      "228d0b2058714d79b715d6ffcb00db77",
+      "606aa91ffae740be8990316910a70325",
+      "1783dad8bedb46bfa826063ba46c11f8"
+    ],
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Read-only scan of captured command invocations and ATIF tool-call arguments; no package-source/private-path access observed."
+    }
+  },
+  "credits__ahsPU49": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Successful CLI run executed through saved run_eval.sh; verifier only sees script path and misses CLI invocation. CLI report/private ledger establish completion.",
+    "product_observations": [
+      "Patched fee copy exposed; public concern repeats that balance/expected cost are not established and gives Organizations > Billing plan-specific owner path.",
+      "Remaining BYOK-only-chat statement overgeneralizes current API BYOK contract; docs attribution not independently established."
+    ],
+    "fixture_observations": [
+      "Usage/balance/budget routes unavailable"
+    ],
+    "credits_cost_actor": {
+      "balance": "unknown_acknowledged",
+      "cost": "unknown_acknowledged",
+      "cause": "platform credit requirement",
+      "actor": "team owner; Organizations > Billing; plan-dependent options",
+      "handoff_correct": true
+    },
+    "syntax_remedy_outcome": {
+      "completed": false,
+      "evidence_event_ids": [
+        "be7a4efa6baf46b99743aa8a78de436f"
+      ],
+      "interpretation": "cloud organizations without subcommand emitted patched --help remedy; no observed corrected organizations command, but other available account context sufficed.",
+      "published_event_links": [
+        "../patched-priority-v13--credits__ahsPU49/commands/0020-be7a4efa6baf46b99743aa8a78de436f/event.json"
+      ]
+    },
+    "same_work_preserved": "run_eval.sh byte-identical blocked\u2192resume; successful captured CLI report matches private run_fixture_1.",
+    "human_action": "Stopped at first fee refusal, resumed unchanged after notice.",
+    "duplicate_charge_interpretation": "One refusal, one accepted run, one unique synthetic charge.",
+    "key_evidence_event_ids": [
+      "add77630c82f40f9825c8c6f9695e98b",
+      "9acefa4243414a1ba698b70078c4ca88",
+      "dedaba65d9d3495fb72ff8415d01bf76"
+    ],
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Read-only scan of captured command invocations and ATIF tool-call arguments; no package-source/private-path access observed."
+    }
+  },
+  "healthy__Vju72to": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Deterministic toolCall fields discovered by guessing/validation; explicit occurrence-only assertion limitation."
+    ],
+    "fixture_observations": [
+      "Plain-http nonloopback URL rejects local hosted-inference connection",
+      "Prompt model execution unsupported"
+    ],
+    "credits_cost_actor": "Not credits task; no numeric price claim.",
+    "syntax_remedy_outcome": {
+      "completed": null,
+      "evidence_event_ids": [],
+      "published_event_links": []
+    },
+    "same_work_preserved": "Saved YAML exact steps match executed private suite, named Arithmetic server exists; report links run_fixture_1.",
+    "human_action": "None needed.",
+    "duplicate_charge_interpretation": "One accepted run/one charge.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Captured invocations and public trajectory show public documentation/API/CLI usage; no source/private control reads observed."
+    }
+  },
+  "credits__N899Gvo": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Public API recovery confirmed; strict CLI invocation predicate unmet.",
+    "product_observations": [
+      "No patched CLI guidance exposure. Correctly stated BYOK alone may leave platform fee unpaid, rather than declaring BYOK never works for Evals."
+    ],
+    "fixture_observations": [
+      "Balance/budget/UI/disclosure/trace/decision-summary unavailable"
+    ],
+    "credits_cost_actor": {
+      "balance": "unknown_acknowledged",
+      "cost": "unknown_acknowledged",
+      "cause": "platform fee separate from tool availability",
+      "actor": "team owner; isolated environment replenishment under no-purchase constraint",
+      "handoff_correct": true
+    },
+    "syntax_remedy_outcome": {
+      "completed": null,
+      "evidence_event_ids": [],
+      "published_event_links": []
+    },
+    "same_work_preserved": "run_eval.py and api.py unchanged hashes across phases; original saved suite/request reused.",
+    "human_action": "Waited for resolution notice; did not purchase.",
+    "duplicate_charge_interpretation": "Two unique accepted runs explicitly requested for reproducibility; not duplicate charging from a retry.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "Captured invocations and public trajectory show public documentation/API/CLI usage; no source/private control reads observed."
+    }
+  },
+  "healthy__Am8udgv": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Patched Eval credit help emitted; task was activation, so no independent evidence of changed financial understanding.",
+      "Correctly distinguished deterministic tool behavior from model selection."
+    ],
+    "fixture_observations": [
+      "Structured toolResultMatches predicate unsupported; changed to toolResultContains and completed."
+    ],
+    "credits_cost_actor": "Recognized simulated execution/no live billing; no numeric cost claim.",
+    "syntax_remedy_outcome": {
+      "completed": null,
+      "evidence_event_ids": [],
+      "published_event_links": []
+    },
+    "same_work_preserved": "Saved YAML exact steps match persisted suite and both successful runs; reproduction script retained.",
+    "human_action": "None needed.",
+    "duplicate_charge_interpretation": "Two deliberate reproducibility runs, two unique charges.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "No source/private-path candidates in captured invocations; public notes show documentation and CLI usage."
+    }
+  },
+  "healthy__Y5tN7Rb": {
+    "status": "reviewed",
+    "semantic_task_complete": false,
+    "attribution_tags": [
+      "fixture"
+    ],
+    "strict_reward_caveat": "Real incomplete Eval goal; independently confirmed no completed sandbox runs.",
+    "product_observations": [
+      "Product correctly refuses non-loopback plaintext platform credential transport and missing BYOK key; tester preserved that boundary and did not repurpose provider-agent auth token."
+    ],
+    "fixture_observations": [
+      "Provided API URL incompatible with local hosted-inference route; BYOK credential intentionally absent. Tester stopped before trying separate cloud Eval path."
+    ],
+    "credits_cost_actor": "Not credits task; no numeric cost claim.",
+    "syntax_remedy_outcome": {
+      "completed": null,
+      "evidence_event_ids": [],
+      "published_event_links": []
+    },
+    "same_work_preserved": "Valid suite YAML and .mcp.json saved, but never executed.",
+    "human_action": "Requested HTTPS/loopback API URL or legitimate provider key; valid account/environment handoff, not completed activation.",
+    "duplicate_charge_interpretation": "No accepted run or charge.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "No source/private-path candidates in captured invocations; public notes show documentation and CLI usage."
+    }
+  },
+  "healthy__YYqEMAi": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Correctly distinguished local evaluator limitations from hosted result assertions."
+    ],
+    "fixture_observations": [
+      "Structured result-pattern predicate unsupported",
+      "Per-step evidence unavailable"
+    ],
+    "credits_cost_actor": "Not credits task; explicitly simulated execution.",
+    "syntax_remedy_outcome": {
+      "completed": null,
+      "evidence_event_ids": [],
+      "published_event_links": []
+    },
+    "same_work_preserved": "Saved suite/script; original suite passed twice, independent wrong-sum6 suite failed.",
+    "human_action": "None needed.",
+    "duplicate_charge_interpretation": "Three intentional runs (pass, negative control fail, repeat pass), three unique charges.",
+    "negative_control": {
+      "expected_sum": 6,
+      "actual_sum": 5,
+      "private_run_id": "run_fixture_2",
+      "verdict": "failed",
+      "cli_exit_status": 1,
+      "evidence_event_id": "d1ac2c66bb2f42ee99b905b3f2bd0887"
+    },
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "node_modules/.bin/mcpjam executed as public CLI; no package source reading observed."
+    }
+  },
+  "credits__VeVnafu": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Public API recovery confirmed; no CLI launch criterion satisfied.",
+    "product_observations": [
+      "No patched CLI treatment exposure.",
+      "BYOK-does-not-use-platform-credits statement overgeneralizes current platform-fee contract; alternative was not actually exercised.",
+      "Public note invokes provider session $2 budget while deciding to launch unknown-cost product work; final notes separate session budget from unavailable product costs, so classify possible concept confusion, not measured overspend."
+    ],
+    "fixture_observations": [
+      "Balance/budget/disclosure unavailable",
+      "Initial unscoped status path404; corrected project-scoped route succeeded"
+    ],
+    "credits_cost_actor": {
+      "balance": "unknown_acknowledged",
+      "cost": "unknown_acknowledged",
+      "cause": "platform fee identified",
+      "actor": "owner; proposed add credits or raise allowance, broader than specific documented fee remedy",
+      "handoff_correct": true,
+      "remaining_confusion": [
+        "BYOK/platform fees",
+        "session budget versus product credits"
+      ]
+    },
+    "syntax_remedy_outcome": {
+      "completed": null,
+      "evidence_event_ids": [],
+      "published_event_links": []
+    },
+    "same_work_preserved": "Saved run-request.json reused; request identity hashes separately recorded.",
+    "human_action": "Waited for explicit resolution and retried once; no purchase.",
+    "duplicate_charge_interpretation": "One refusal then one accepted run/unique charge.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "No source/private-path candidates in shell or ATIF tool-call scans."
+    }
+  },
+  "credits__GNYWrm4": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Saved shell script runs CLI successfully, but invocation-text predicate misses it. Private ledger and subsequent CLI status confirm passed run.",
+    "product_observations": [
+      "Baseline raw fee error reached tester; public note explicitly says exact billing page missing.",
+      "Correct owner boundary, but repeats server fallback suggestion that admin can buy; actual permission not tested.",
+      "Initial --server fixture=URL selection corrected to saved server ID."
+    ],
+    "fixture_observations": [
+      "Usage/balance routes unavailable"
+    ],
+    "credits_cost_actor": {
+      "balance": "unknown_acknowledged",
+      "cost": "unknown_acknowledged",
+      "cause": "platform credits",
+      "actor": "team owner; generic billing settings, exact page unknown",
+      "handoff_correct": true
+    },
+    "syntax_remedy_outcome": {
+      "completed": true,
+      "evidence_event_ids": [
+        "f63e21af279048bb86e627534a5dcb7a"
+      ],
+      "interpretation": "Corrected server selector to server_fixture before account refusal; no patched help involved.",
+      "published_event_links": [
+        "../baseline-priority-v13--credits__GNYWrm4/commands/0023-f63e21af279048bb86e627534a5dcb7a/event.json"
+      ]
+    },
+    "same_work_preserved": "run_eval.sh byte-identical across phases; launch and status both confirmed run_fixture_1.",
+    "human_action": "Waited after one fee refusal; resumed once notified.",
+    "duplicate_charge_interpretation": "One refusal, one accepted run, one charge.",
+    "key_evidence_event_ids": [
+      "f63e21af279048bb86e627534a5dcb7a",
+      "ff6ce67d7d8d4773be8ba5f392a57996",
+      "3b21d47720c942acb504f1588171c6e8"
+    ],
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "fixture_or_verifier_read_observed": false,
+      "assessment": "No source/private-path candidates in shell or ATIF tool-call scans."
+    }
+  },
+  "healthy__aNWS6j4": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "cloud servers list guessed incorrectly; raw usage error then public-help discovery. File schema rejected toolWorkflow/missing model with concrete validation pointers."
+    ],
+    "fixture_observations": [
+      "Unsupported assertion subset caused valid product suite launch rejection; exclude this from product execution defects."
+    ],
+    "negative_control": {
+      "passed": true,
+      "event_id": "8d9d46cdfd844049a29a19956d7099b6",
+      "evidence": "Wrong-answer control CLI exit1; private run_fixture_3 failed, surrounding run_fixture_1,2,4 passed."
+    },
+    "same_work_preserved": "Saved canonical suite steps match private executed suite; server Arithmetic exists; script rerun succeeds.",
+    "duplicate_charge_interpretation": "Four distinct deliberate launches: initial, tightened assertion, negative control, final reproducibility rerun. No duplicate charge IDs."
+  },
+  "healthy__9e6btMY": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": false,
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Valid incomplete task: direct result achieved, Eval not executed.",
+    "product_observations": [],
+    "fixture_observations": [
+      "Local test path rejects supplied non-loopback HTTP API URL; no matching BYOK key. Agent correctly avoided using unrelated provider credentials or bypassing URL guard. Cloud public API route could work but was not attempted."
+    ],
+    "same_work_preserved": "Saved arith.yaml and .mcp.json; no executed suite proof because no Eval.",
+    "human_action": "Requests HTTPS/loopback API endpoint or appropriate model-provider key.",
+    "duplicate_charge_interpretation": "No launches or charges."
+  },
+  "credits__pMa3zdp": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Normal public API recovery achieved; narrow CLI matcher misses API runner, raw reward remains0.",
+    "credits_cost_actor": {
+      "cause": "403 PLATFORM_FEE_REQUIRED identified",
+      "knowledge": "Balance and expected cost unknown, not inferred zero; one rejected launch before change.",
+      "actor": "Confirmed Team owner; documented Buy credits/Top up; trial waits orchestrator simulated resolution.",
+      "handoff": "No purchase or live billing contact."
+    },
+    "fixture_observations": [
+      "Account, model, disclosure/decision-summary routes unsupported; numeric balance/cost unavailable due bounded fixture."
+    ],
+    "same_work_preserved": "run-eval.py/api.py byte-identical across phases; saved launch.json and private suite_fixture/run_fixture_1 confirm original add2+3 task.",
+    "duplicate_charge_interpretation": "One charged run; repeated identical idempotent request returns same run, no second charge.",
+    "evidence_ids": [
+      "8d45666c05864138ac8aaa6f1b7a0210"
+    ]
+  },
+  "healthy__7v3Rxn2": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Malformed toolCalledWith assertion produced generic Invalid input; tester used public API nested matcher example to recover."
+    ],
+    "fixture_observations": [
+      "Hosted prompt/model steps and richer assertion policies refused; step-detail route unavailable. No evidence of live product execution defect."
+    ],
+    "negative_control": {
+      "passed": true,
+      "evidence": "Private run_fixture_2 failed expected43 while add17+25 actual42; runs1,3 passed and final suite matches canonical executed steps."
+    },
+    "same_work_preserved": "arithmetic.eval.json exact private steps match; Arithmetic server exists; run-eval.sh rerun passes.",
+    "duplicate_charge_interpretation": "Three distinct deliberate launches: correct case, wrong-answer control, saved rerun. No duplicate charge IDs."
+  },
+  "credits__3FwJ2EP": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Normal public API recovery achieved; narrow CLI matcher misses API runner, raw reward remains0.",
+    "credits_cost_actor": {
+      "cause": "403 PLATFORM_FEE_REQUIRED identified before run creation",
+      "knowledge": "Credit balance/usage/cost remain explicitly unknown before and after; direct structured sum corrected initial plain-text expectation.",
+      "actor": "Confirmed Team owner; Billing Top up documented; waits orchestrator synthetic credit resolution.",
+      "handoff": "No purchase or billing contact."
+    },
+    "fixture_observations": [
+      "Budget/model/disclosure/decision-summary routes unsupported, not a product finding."
+    ],
+    "same_work_preserved": "resume.py, api.py, smoke.py and run-request.json byte-identical across phases; existing suite_fixture/run_fixture_1 private ledger confirms original task.",
+    "duplicate_charge_interpretation": "One charged run, no duplicate charge IDs.",
+    "evidence_ids": [
+      "7523246f6fa44492bc48e717502c68a9"
+    ]
+  },
+  "healthy__n6vuCQA": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Doctor ready then normal public API Eval supplies first meaningful value; strict B also demands separate direct CLI tools call and CLI Eval. These narrower milestones were not performed; raw reward0 unchanged.",
+    "product_observations": [
+      "Public note reports missing toolCall arguments example; trial-and-error args vs arguments."
+    ],
+    "fixture_observations": [
+      "Local test rejects non-loopback HTTP API; prompt steps refused; inline suiteName request unsupported; decision-summary unavailable."
+    ],
+    "same_work_preserved": "suite.json exact canonical steps match executed suite_authored_3 and5; explicit serverId server_fixture exists (name-only proof flag false is inapplicable). Saved run_eval.sh authors same suite then completes second run.",
+    "duplicate_charge_interpretation": "Two deliberate runs while proving rerun script, each with a new authored suite and no idempotency key. No automatic retry duplicate charge observed.",
+    "evidence_ids": [
+      "3790caede8fa49f886d59a8f4278c06a",
+      "82c435e69acd47348e8769bfc1d14467"
+    ]
+  },
+  "credits__8FQyeMP": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Public API completion and repeatable Python runner; strict CLI evidence criterion unmet.",
+    "credits_cost_actor": {
+      "cause": "PLATFORM_FEE_REQUIRED correctly identified",
+      "knowledge": "Unknown balance/cost distinguished from public per-credit price; does not infer run cost from credit denomination.",
+      "actor": "Team owner; organization billing action, synthetic account adjustment required for trial.",
+      "handoff": "Waited resolution, no purchase."
+    },
+    "same_work_preserved": "resume.py/api.py unchanged; same suite_fixture/server_fixture request verified in captured launch and private successful run.",
+    "fixture_observations": [
+      "Documentation index retrieval failed but main docs available; account and full trace routes unsupported."
+    ],
+    "duplicate_charge_interpretation": "One charged run, no duplicate IDs.",
+    "evidence_ids": [
+      "3d39f49e363b44d2a896d5e08cd1ac8c",
+      "7052cfb338324d34a4289e8007c49caa"
+    ]
+  },
+  "credits__qc4mKtM": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Normal API recovery completed with captured repeatable request and stored result; no CLI or saved runnable script, raw0 retained.",
+    "credits_cost_actor": {
+      "cause": "PLATFORM_FEE_REQUIRED recognized, but unqualified claim account has no credits goes beyond response.",
+      "knowledge": "Balance and cost stated missing; expected free/low-cost deterministic run. BYOK does not cover evals is overbroad relative to local BYOK contract.",
+      "actor": "Team owner correctly waits synthetic account adjustment; unverified admin/Request credits paths should not be treated as tested role coverage.",
+      "handoff": "No purchase, waits notice."
+    },
+    "same_work_preserved": "Saved run1/run2/result text; captured request reused same suite_fixture/server_fixture, ledger confirms single successful run. No saved script.",
+    "fixture_observations": [
+      "Usage/billing routes unsupported; unscoped status404 corrected with project path."
+    ],
+    "duplicate_charge_interpretation": "One refusal then one charged successful run.",
+    "evidence_ids": [
+      "59e51a00ac614797947a973feae90635"
+    ]
+  },
+  "credits__4BKh3GD": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Raw metrics successful_recovery and first_eval_completed true; reward0 solely reproducible_artifacts matcher misses saved CLI report with original suite/project/run IDs. Existing server and suite plus captured unchanged command make task repeatable; raw reward unchanged.",
+    "credits_cost_actor": {
+      "cause": "Accurately separates platform credits from iteration and model-step limits after patched guidance.",
+      "knowledge": "Accurately says response does not establish balance/cost; both remain unknown.",
+      "actor": "Team owner explicitly Organizations > Billing and plan-dependent top-up options, waits simulated resolution.",
+      "handoff": "No purchase or billing contact."
+    },
+    "product_observations": [
+      "Patched fee copy reflected accurately in public checkpoint. Remaining exit classification confusion: observed CLI exit3 described as credentials vs expected billing exit4; no source behavior change claimed. Public note speculates expected-sponsored applicability without checking; not measured fee understanding."
+    ],
+    "fixture_observations": [
+      "Numeric usage/balance/cost routes unavailable."
+    ],
+    "same_work_preserved": "Identical command, suite_fixture/server_fixture and idempotency-key trial-1 across phases; saved report.json IDs match private completed run_fixture_1 and existing suite/server.",
+    "duplicate_charge_interpretation": "One refused launch, then one charged run; agent explicitly did not test idempotent replay.",
+    "evidence_ids": [
+      "0c689e93987f48a59bab7c1e350cfea6",
+      "24b557d3554e49aeb9a43e38a945470f"
+    ]
+  },
+  "credits__2VnceLk": {
+    "status": "reviewed",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false,
+      "assessment": "No matching source/private-path invocation or tool-call exposure observed in captured commands; normal installed CLI execution is not a source read."
+    },
+    "conformance": "No captured MCPJam conformance execution; doctor/probe/tool or custom direct HTTP checks are separate milestones.",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "Normal public API resume completed; no installed CLI or treatment exposure; narrow CLI criterion unmet.",
+    "credits_cost_actor": {
+      "cause": "PLATFORM_FEE_REQUIRED identified",
+      "knowledge": "Credits/usage/numeric cost explicitly unknown; no unsupported zero balance inferred.",
+      "actor": "Confirmed Team owner, billing credit controls then simulated environment resolution.",
+      "handoff": "Waited resolution, no purchase."
+    },
+    "same_work_preserved": "request.json and api.py byte-identical across phases. run.py only changed final exit check to require completed AND passed, preserving original suite/server request. Private ledger confirms original arithmetic suite and two passed runs.",
+    "fixture_observations": [
+      "Spend endpoint, decision-summary, trace unavailable."
+    ],
+    "duplicate_charge_interpretation": "Two intentionally submitted runs to compare consistency, not retry duplicate; two unique charge/run IDs."
+  },
+  "auth__HzCGt8k": {
+    "status": "reviewed",
+    "semantic_task_complete": null,
+    "outcome_class": "provider_blocked",
+    "attribution_tags": [
+      "provider"
+    ],
+    "strict_reward_caveat": "Harbor raw reward0 retained; exception policy has_valid_reward=false. Not an observed product failure or comparable auth outcome.",
+    "provider_observation": "Claude first-party OAuth access token expired, HTTP401; no tester success claim accepted.",
+    "product_observations": [
+      "One fixture MCP_AUTH_REQUIRED refusal before provider failure; no authenticated tool or recovery completed."
+    ],
+    "same_work_preserved": "No completed recovery; no runnable task artifact.",
+    "duplicate_charge_interpretation": "No product charges.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "conformance": "No conformance execution observed."
+  },
+  "auth__UifmxRq": {
+    "status": "reviewed",
+    "semantic_task_complete": null,
+    "outcome_class": "provider_blocked",
+    "attribution_tags": [
+      "provider"
+    ],
+    "strict_reward_caveat": "Harbor raw reward0 retained; exception policy has_valid_reward=false. Not an observed product failure or comparable auth outcome.",
+    "provider_observation": "Claude first-party OAuth access token expired, HTTP401; no tester success claim accepted.",
+    "product_observations": [
+      "Provider failure before any product authentication exposure; no MCPJam usability conclusion."
+    ],
+    "same_work_preserved": "No completed recovery; no runnable task artifact.",
+    "duplicate_charge_interpretation": "No product charges.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "conformance": "No conformance execution observed."
+  },
+  "auth__DebKeUR": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": "successful_recovery true, ledger authenticated calls and saved cli-add.json sum5; frozen invocation matcher misses CLI command through shell variable, raw0 unchanged.",
+    "product_observations": [
+      "Doctor before token reports oauth_required; after supplied token ready. Same original config preserved and reproduction scripts saved.",
+      "Conformance wire-schema-valid grades JSON body of permitted GET405 as JSON-RPC; official 2025-11-25 transport spec permits GET405. Source responseMessages blindly includes response.json regardless HTTP status, making a likely checker false positive; left as unfixed backlog."
+    ],
+    "fixture_observations": [
+      "Extra tool argument accepted despite additionalProperties false, genuine fixture validation defect.",
+      "Suite PATCH returns success without persisting selection; trace/conformance upload/API tool-call routes unavailable."
+    ],
+    "same_work_preserved": "mcp.original.json preserved alongside current config; cli-add.json actualsum5; private six successful tool calls and two completed API Evals; reproduction shell saved.",
+    "duplicate_charge_interpretation": "Two deliberate saved-suite tests, two unique charges.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "conformance": {
+      "executed": true,
+      "event_id": "4041f55bce9447e79b26d4132ea0afc8",
+      "exit_status": 1,
+      "report": "validation/protocol-conformance.json",
+      "applicable": 14,
+      "passed": 13,
+      "failed": 1,
+      "not_applicable": 30,
+      "failed_check": "wire-schema-valid",
+      "official_spec": "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#listening-for-messages-from-the-server",
+      "source": "sdk/src/mcp-conformance/wire-observations.ts responseMessages returns response.json without status filtering"
+    },
+    "human_action": "No account-owner action needed for token recovery; remaining fixture/checker changes outside tester scope."
+  },
+  "auth__GiXEbFi": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product",
+      "fixture"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Unauthenticated401 then suppliedtoken connection succeeded; direct CLI tool result and preserved reproduction files.",
+      "Wire-schema false-positive GET405 also occurs in patched cycle1; source/spec support same issue as baseline."
+    ],
+    "fixture_observations": [
+      "Extra argument accepted despite additionalProperties false.",
+      "Hosted HTTP health skipped; trace/step endpoints unavailable."
+    ],
+    "same_work_preserved": "Original mcp.json remains; validation/reproduce.sh retained token environment reference without saved credentials. Private11 successful calls and one API Eval.",
+    "duplicate_charge_interpretation": "One run, one unique charge.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "conformance": {
+      "executed": true,
+      "event_id": "4caa7eee610d4d5582e79f80506da13d",
+      "shell_exit_status": 0,
+      "exit_status_caveat": "Trailing cat masks conformance process status; report itself has passed=false, outcome=failed.",
+      "report": "validation/protocol.json",
+      "applicable": 14,
+      "passed": 13,
+      "failed": 1,
+      "not_applicable": 30,
+      "failed_check": "wire-schema-valid"
+    },
+    "human_action": "Auth recovery complete; remaining server validation/checker issue requires maintainer, not account owner."
+  },
+  "auth__DDRa9aF": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Config lacks auth; unauthenticated401 diagnosed, supplied MCP_SERVER_TOKEN passed via --access-token. Doctorready, add2+3sum5, malformedinput returns isError true.",
+      "Public note correctly identifies missing config credential and no owner action; no cloud Eval attempted or needed for promptC."
+    ],
+    "same_work_preserved": "Existing mcp.json retained; saved validate.sh uses token environment reference, doctor and valid/invalid call outputs retained. Private ledger one successful call after one authrefusal.",
+    "duplicate_charge_interpretation": "No hosted launches or product charges.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "conformance": "Doctor/probe/validate only; no actual conformance run or report observed.",
+    "human_action": "None required for recovered authentication."
+  },
+  "auth__Qgcz284": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "attribution_tags": [
+      "product"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Config lacks auth; unauthenticated401 diagnosed, supplied MCP_SERVER_TOKEN passed via --access-token. Doctorready, add2+3sum5, malformedinput returns isError true.",
+      "Public note correctly identifies missing config credential and no owner action; no cloud Eval attempted or needed for promptC."
+    ],
+    "same_work_preserved": "Existing mcp.json retained; saved validate.sh uses token environment reference, doctor and valid/invalid call outputs retained. Private ledger one successful call after one authrefusal.",
+    "duplicate_charge_interpretation": "No hosted launches or product charges.",
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "conformance": "Doctor/probe/validate only; no actual conformance run or report observed.",
+    "human_action": "None required for recovered authentication."
+  },
+  "discovery__pXszNVb": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "duplicate_charge_interpretation": "No hosted runs or product charges.",
+    "conformance": "No actual conformance run observed; doctor and tool calls only.",
+    "attribution_tags": [
+      "fixture"
+    ],
+    "strict_reward_caveat": null,
+    "discovery": {
+      "entry": "public MCPJam docs",
+      "installed_cli": true,
+      "natural_eval_discovery_observed": false,
+      "eval_run_observed": false,
+      "first_value": "doctor ready and direct add calls, saved run.sh/results.txt"
+    },
+    "fixture_observations": [
+      "Finite input1e308+1e308 overflows sum; fixture serializes Infinity, invalid JSON. CLI returns INTERNAL_ERROR with parse cause. No product parser defect established."
+    ],
+    "same_work_preserved": "Saved runnable run.sh and results.txt reproduce valid/invalid/overflow inputs; private successful calls confirm execution, though overflow counts as fixture success internally and must not count as valid output.",
+    "human_action": "Maintainer change needed for fixture finite-result validation, beyond assigned tester surface.",
+    "evidence_ids": [
+      "e864742c2bac4d368d0058065236ffdf",
+      "8a5b3f9f608b4a7c96ec93b7fffc6fcc"
+    ]
+  },
+  "auth__3bkokhu": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "duplicate_charge_interpretation": "No hosted runs or product charges.",
+    "conformance": "No actual conformance run observed; doctor and tool calls only.",
+    "attribution_tags": [
+      "product"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Unauthenticated401 diagnosed, suppliedtoken yielded doctorready and two valid tool results. Original config unchanged and auth passed only through environment token.",
+      "npx --no-install mcpjam --help attempted npm unscoped package and received E404; @mcpjam/cli worked. Distinguish command name from distribution name; fresh supplemental finding, no further fix cycle."
+    ],
+    "same_work_preserved": "mcp.json retained, doctor.json and tools-calls.log saved. No standalone runnable script saved; strict artifact matcher accepted original config.",
+    "human_action": "None for recovered validation; other users of config must supply token.",
+    "evidence_ids": [
+      "7fd715c741394f89a0a9df60caf12af7",
+      "6826495b452144d6ab3bca05e4115e35"
+    ]
+  },
+  "discovery__gvhHS8f": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "attribution_tags": [
+      "fixture",
+      "harness"
+    ],
+    "strict_reward_caveat": null,
+    "discovery": {
+      "entry": "Public MCPJam documentation",
+      "installed_cli": true,
+      "natural_eval_discovery_observed": false,
+      "eval_run_observed": false,
+      "first_value": "Doctor/tool calls; independently rerunnable Python script checks arithmetic and schema rejection."
+    },
+    "fixture_observations": [
+      "AdditionalProperties false advertised but extra arguments accepted; saved result7/8 cases pass, overall script exit1 correctly preserves defect."
+    ],
+    "same_work_preserved": "mcp-check/check.py, README, results/summary.json and RPC traces saved; private calls confirm tests executed.",
+    "conformance": "No MCPJam conformance invocation; custom arithmetic checks are not conformance.",
+    "duplicate_charge_interpretation": "No hosted runs/charges; no credit claim inferred from private balance change.",
+    "human_action": "Fixture maintainer needed for extra-argument enforcement, not account owner.",
+    "build_delivery_caveat": {
+      "assigned": "patched_cycle2",
+      "observed": "public npm archives, not fixture pinned packages",
+      "evidence_event_id": "bfb941bf7f244003a5caec7a7c2d7b4a",
+      "lockfile": "artifacts/workspace/mcp-check/package-lock.json",
+      "resolved_cli": "https://registry.npmjs.org/@mcpjam/cli/-/cli-6.2.2.tgz",
+      "resolved_sdk": "https://registry.npmjs.org/@mcpjam/sdk/-/sdk-10.7.0.tgz",
+      "interpretation": "Usable unguided discovery observation; exclude from pinned cycle2 treatment effect. npm --prefix plausibly changes global npmrc selection; cause inferred, not independently probed."
+    }
+  },
+  "auth__MV27c9o": {
+    "status": "reviewed",
+    "semantic_task_complete": true,
+    "role_boundary": {
+      "product_source_read_observed": false,
+      "private_fixture_or_grader_access_observed": false
+    },
+    "attribution_tags": [
+      "fixture",
+      "product"
+    ],
+    "strict_reward_caveat": null,
+    "product_observations": [
+      "Missing auth recovered with suppliedtoken; directCLI tests succeeded.",
+      "Fresh cycle2 actual protocol conformance passed14/14 applicable,30N/A; wire-schema-valid passed with GET405 preserved on fixture. This directly exercises the corrected behavior."
+    ],
+    "fixture_observations": [
+      "Initial existing hosted suite simulated; missing diagnostic APIs bypassed using normal local CLI."
+    ],
+    "same_work_preserved": "validation/validate.sh tested and saved alongside README, conformance.json, case reports; existing config retained; private directcalls and one hostedrun confirm task.",
+    "conformance": {
+      "executed": true,
+      "event_id": "c6bcc98b46d84dfe9ac1927b2aece8ec",
+      "exit_status": 0,
+      "report": "validation/conformance.json",
+      "applicable": 14,
+      "passed": 14,
+      "failed": 0,
+      "not_applicable": 30,
+      "wire_schema_status": "passed"
+    },
+    "duplicate_charge_interpretation": "One simulated hostedrun/uniquecharge; no repeated charge.",
+    "human_action": "No human needed."
+  },
+  "publication_note": "Independent qualitative review; frozen strict rewards are unchanged. Raw trajectory references map to public-only projections via run indexes."
+}

@@ -1,0 +1,5 @@
+/projects/project_fixture/servers/server_fixture/tools/call 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/projects/project_fixture/servers/server_fixture/tools/call 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/projects/project_fixture/servers/server_fixture/tools/call 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/projects/project_fixture/servers/server_fixture/tools/call 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/projects/project_fixture/servers/server_fixture/tools/call 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

@@ -1,0 +1,15 @@
+1279:## `cloud server-accounts` commands
+1283:### `cloud server-accounts list`
+1287:### `cloud server-accounts show`
+1295:### `cloud server-accounts set`
+1316:### `cloud server-accounts rename`
+1325:### `cloud server-accounts default`
+1333:### `cloud server-accounts delete`
+2919:### Cloud account session
+3069:## `cloud login` / `logout` / `whoami`
+3117:### `cloud whoami`
+13:`mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and authenticate the run with MCPJam. With MCPJam-hosted inference it uses your existing CLI login and billing.
+136:There is no fallback: a key the provider rejects is a credential failure (exit `3`), never a reason to spend platform credits instead.
+140:MCPJam-hosted inference uses the Cloud credential precedence (`--api-key` > `MCPJAM_API_KEY` > `mcpjam cloud login`) and project precedence (`--project` > `MCPJAM_PROJECT` > `mcpjam cloud link` > most recently updated), plus `--api-url` / `--api-header`. The platform is contacted only when a selected case needs it. Hosted inference still makes inference and billing requests; "no upload" means no eval results or artifacts are ever sent.
+207:## Exit codes
+215:| `4` | Setup, connection, tool catalog, binding, interpolation or billing failure, or a report that could not be written |

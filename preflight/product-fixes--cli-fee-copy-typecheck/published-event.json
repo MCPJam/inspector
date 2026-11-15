@@ -1,0 +1,21 @@
+{
+  "id": "product-fixes:cli-fee-copy-typecheck",
+  "path": "product-fixes--cli-fee-copy-typecheck",
+  "argv": [
+    "npm",
+    "run",
+    "typecheck",
+    "-w",
+    "@mcpjam/cli"
+  ],
+  "start": "2026-11-15T01:46:01.998868+00:00",
+  "end": "2026-11-15T01:46:06.708428+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

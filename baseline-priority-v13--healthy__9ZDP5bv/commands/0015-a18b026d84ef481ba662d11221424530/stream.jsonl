@@ -1,0 +1,4 @@
+{"seconds": 0.8754212856292725, "stream": "stdout", "data": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Synthetic fixture does not implement this route.\"}}\n"}
+{"seconds": 0.8755462169647217, "stream": "stdout", "data": "\n"}
+{"seconds": 1.644991159439087, "stream": "stdout", "data": "{\"project\":{\"id\":\"project_fixture\",\"name\":\"Fixture\",\"sensitive_value\": \"[REDACTED]\"},\"items\":[{\"id\":\"server_fixture\",\"name\":\"Arithmetic\",\"projectId\":\"project_fixture\",\"transportType\":\"http\",\"url\":\"http://fixture:8765/mcp\",\"enabled\":true,\"useOAuth\":false,\"hasClientSecret\":false}],\"otherProjects\":[]}\n"}
+{"seconds": 2.389510154724121, "stream": "stdout", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"error: too many arguments for 'servers'. Expected 0 arguments but got 1.\"}}\n"}

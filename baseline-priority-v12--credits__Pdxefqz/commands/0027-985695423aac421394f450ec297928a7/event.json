@@ -1,0 +1,22 @@
+{
+  "event_id": "985695423aac421394f450ec297928a7",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "(set -o pipefail) 2>/dev/null && set -o pipefail; if [ -s ~/.nvm/nvm.sh ]; then . ~/.nvm/nvm.sh; fi; CODEX_API_KEY= OPENAI_API_KEY= codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --model gpt-6.1-sol --json --enable unified_exec -c model_reasoning_effort=medium -c model_reasoning_summary=none -- 'Run a repeatable evaluation for this MCP server. Before running it, find what you can about usage, available credits, and expected cost. If blocked, identify the reason and the next action available to your account. After the environment reports that the account issue has been resolved, try to resume your original task.\n\nAt meaningful checkpoints or when confused, write a brief user-facing concern note: what you expected, what you observed, what information was missing, and what you will try next. Report no concern when none exists. Do not provide private chain-of-thought or extended internal reasoning.\n\nTrial context: public documentation entry point https://docs.mcpjam.com; MCP server http://fixture:8765/mcp. MCPJam account API is configured in MCPJAM_API_URL and MCPJAM_API_KEY. Project: project_fixture. Account: team owner. This isolated account uses synthetic credits; do not contact production billing or buy anything. Save reproducible work under /workspace. Budget: 240 seconds, at most 40 shell commands. Use only public documentation and normal product interfaces; do not read product source, test fixtures, or verifier internals.\n' 2>&1 </dev/null | tee /logs/agent/codex.txt"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:47:51.097076+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 154.57932782173157,
+  "end": "2026-11-15T01:50:25.676311+00:00"
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "b92725739eaa4af8826529a442a87a94",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "export PATH=\"$HOME/.local/bin:$PATH\"; claude --version"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:06:32.623851+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.004221916198730469,
+  "end": "2026-11-15T02:06:32.628016+00:00"
+}

@@ -1,0 +1,29 @@
+                     codex agent auth resolution (dry run)                      
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Setting             ┃ Value                                                  ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Parsed provider     │ openai                                                 │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ Resolved model      │ gpt-6.1-sol                                            │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ Endpoint            │ Agent/SDK default (unknown)                            │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ API format          │ openai_responses                                       │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ API key precedence  │ 1. --api-key-name — not set                            │
+│                     │ 2. --ae OPENAI_API_KEY — not set                       │
+│                     │ 3. --ae CODEX_API_KEY — not set                        │
+│                     │ 4. ambient OPENAI_API_KEY — not set                    │
+│                     │ 5. ambient CODEX_API_KEY — not set                     │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ Base URL precedence │ 1. --base-url — not set                                │
+│                     │ 2. --ae OPENAI_BASE_URL — not set                      │
+│                     │ 3. --ae OPENAI_API_BASE — not set                      │
+│                     │ 4. ambient OPENAI_BASE_URL — not set                   │
+│                     │ 5. ambient OPENAI_API_BASE — not set                   │
+│                     │ 6. Default base URL — selected (Agent/SDK default (not │
+│                     │ resolved))                                             │
+└─────────────────────┴────────────────────────────────────────────────────────┘
+No API key selected. Set OPENAI_API_KEY or use --api-key-name.
+Keys and model availability were not verified. Native login or other 
+authentication may apply when no API key is found.

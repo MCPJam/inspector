@@ -1,0 +1,66 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# CLI Overview
+
+> Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal
+
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths; see [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md).
+
+## Recommended: Use with Agent Skills
+
+The easiest way to use the CLI is through the [MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector), which gives your agent full context on every command and workflow.
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill mcp-inspector
+```
+
+To convert existing promptfoo, pytest, Jest, or CSV tests, use the [MCP eval import skill](https://github.com/MCPJam/inspector/tree/main/skills/mcpjam-eval-import).
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill mcpjam-eval-import
+```
+
+To drive MCPJam's hosted eval tools (launch a run, poll it to a verdict, and triage a failure down to the step) use the [run MCPJam evals skill](https://github.com/MCPJam/inspector/tree/main/skills/run-mcpjam-evals). This one is about running suites that already exist, not writing them.
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill run-mcpjam-evals
+```
+
+Once installed, your agent will know how and when to invoke `mcpjam` commands automatically.
+
+## Install
+
+```bash theme={"theme":"css-variables"}
+# Global (gives you the mcpjam command)
+npm i -g @mcpjam/cli
+
+# Or run without installing
+npx -y @mcpjam/cli@latest --help
+```
+
+> [!NOTE]
+>
+> All examples in these docs use `mcpjam` directly. If you installed via `npx`,
+> replace `mcpjam` with `npx -y @mcpjam/cli@latest`.
+
+## Command groups
+
+### Local MCP testing
+
+These stay at the program root. They reject `--api-key` / `--api-url` / `--project`, except `test`, which accepts them only to reach MCPJam-hosted inference.
+
+| Group | Purpose | Key commands |
+| - | - | - |
+| [`test`](https://docs.mcpjam.com/cli/local-evals) | Run an eval suite file locally (BYOK or MCPJam-hosted inference); never uploads | `test <file>` |
+| [`server`](https://docs.mcpjam.com/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
+| [`tools`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
+| [`resources`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
+| [`prompts`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
+| [`subscriptions`](https://docs.mcpjam.com/cli/reference) | Open a long-lived MCP subscription and stream notifications | `listen` |
+| [`tasks`](https://docs.mcpjam.com/cli/tasks) | Drive MCP Tasks and validate the tasks wire | `list`, `get`, `cancel`, `conformance` |
+| [`events`](https://docs.mcpjam.com/cli/events) | List, poll, watch and subscribe to MCP Events (triggers), and check their conformance | `list`, `poll`, `watch`, `subscribe`, `unsubscribe`, `conformance` |
+| [`apps`](https://docs.mcpjam.com/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
+| [`oauth`](https://docs.mcpjam.com/cli/oauth-conformance) | Test OAuth flows and conformance against an MCP server | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
+| [`protocol{ mcpjam: 'dist/index.js' }

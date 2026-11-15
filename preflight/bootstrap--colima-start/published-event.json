@@ -1,0 +1,30 @@
+{
+  "id": "bootstrap:colima-start",
+  "path": "bootstrap--colima-start",
+  "argv": [
+    "colima",
+    "start",
+    "--cpu",
+    "4",
+    "--memory",
+    "6",
+    "--disk",
+    "30",
+    "--activate=false",
+    "--ssh-config=false"
+  ],
+  "start": "2026-11-15T01:12:46.772604+00:00",
+  "end": "2026-11-15T01:13:01.689295+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

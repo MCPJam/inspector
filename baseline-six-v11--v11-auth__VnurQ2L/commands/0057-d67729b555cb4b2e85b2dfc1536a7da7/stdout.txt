@@ -1,0 +1,39 @@
+{
+  "id": "wire-schema-valid",
+  "title": "Wire Schema Valid",
+  "category": "protocol",
+  "status": "failed",
+  "durationMs": 27,
+  "description": "Every JSON-RPC message the run observed validates against the protocol revision's published JSON Schema, with responses graded against their method's result definition.",
+  "error": "1 observed message(s) do not match the 2025-11-25 schema: GET http://fixture:8765/mcp [JSONRPCMessage] (root) must have required property 'id' {\"missingProperty\":\"id\"}; (root) must have required property 'jsonrpc' {\"missingProperty\":\"jsonrpc\"}; (root) must have required property 'method' {\"missingProperty\":\"method\"}; (root) must have required property 'jsonrpc' {\"missingProperty\":\"jsonrpc\"}; (root) must have required property 'method' {\"missingProperty\":\"method\"}; (root) must have required property 'id' {\"missingProperty\":\"id\"}; (root) must have required property 'jsonrpc' {\"missingProperty\":\"jsonrpc\"}; (root) must have required property 'result' {\"missingProperty\":\"result\"}; (root) must have required property 'jsonrpc' {\"missingProperty\":\"jsonrpc\"}; /error must be object {\"type\":\"object\"}; (root) must match a schema in anyOf",
+  "details": {
+    "details": {
+      "protocolVersion": "2025-11-25",
+      "extensionIds": [],
+      "schemaDigest": "adf2e3de0182a3eeecd34b5bd0faf305cb2af4b6ba1765a0917b04dbce5df961",
+      "messagesValidated": 14,
+      "methodCorrelated": 11,
+      "violationCount": 1,
+      "promptFixturesDriven": 0,
+      "violations": [
+        {
+          "origin": "GET http://fixture:8765/mcp",
+          "definition": "JSONRPCMessage",
+          "errors": [
+            "(root) must have required property 'id' {\"missingProperty\":\"id\"}",
+            "(root) must have required property 'jsonrpc' {\"missingProperty\":\"jsonrpc\"}",
+            "(root) must have required property 'method' {\"missingProperty\":\"method\"}",
+            "(root) must have required property 'jsonrpc' {\"missingProperty\":\"jsonrpc\"}",
+            "(root) must have required property 'method' {\"missingProperty\":\"method\"}",
+            "(root) must have required property 'id' {\"missingProperty\":\"id\"}",
+            "(root) must have required property 'jsonrpc' {\"missingProperty\":\"jsonrpc\"}",
+            "(root) must have required property 'result' {\"missingProperty\":\"result\"}",
+            "(root) must have required property 'jsonrpc' {\"missingProperty\":\"jsonrpc\"}",
+            "/error must be object {\"type\":\"object\"}",
+            "(root) must match a schema in anyOf"
+          ]
+        }
+      ]
+    }
+  }
+}

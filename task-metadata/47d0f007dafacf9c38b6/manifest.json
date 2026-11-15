@@ -1,0 +1,10 @@
+{
+  "instruction.md": "7fd6fb28a8c9ba0cbf72a2741b5aa3ad7499b5c4688a80477032cb9ed6003583",
+  "task.toml": "871ea77ef5893612c2da54ca7a8a5653df8f06c0bde46126b96b3ad21fa902b6",
+  "tests/prompt.txt": "c0cde77fa8fef97d476c10aad3d2d54fcc2f336140d073651c2dcccf1e379fd6",
+  "tests/verify.py": "37a219c2fef4db29bed9869130c306faf4d1d22cead340f5945c909039c0940d",
+  "tests/test.sh": "ef2f9cbcaa50be6e85d4a5c3c29fef373f5e63c9f5850cd39f166bde26385366",
+  "environment/docker-compose.yaml": "0846f17108ec5af26061d60bfb0be56f96e9a557b8fd2476449210612dd9a7d1",
+  "environment/Dockerfile": "e46da6827b1109afa1056498a90c138e401c8acc359d3b076dc72a36b3f5a349",
+  "tests/__pycache__/verify.cpython-314.pyc": "a1d9c280f40c81d00fcd5b35b726500b22e7f807a1f9dc33a25b17218fad16ae"
+}

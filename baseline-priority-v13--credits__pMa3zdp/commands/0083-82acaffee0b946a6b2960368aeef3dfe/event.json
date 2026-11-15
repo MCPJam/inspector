@@ -1,0 +1,22 @@
+{
+  "event_id": "82acaffee0b946a6b2960368aeef3dfe",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 /workspace/mcp-eval/api.py GET /projects/project_fixture/eval-runs/run_fixture_1/iterations/run_fixture_1_0/trace - trace\npython3 /workspace/mcp-eval/api.py GET /projects/project_fixture/eval-runs/run_fixture_1/iterations/run_fixture_1_0/steps - steps\npython3 /workspace/mcp-eval/api.py GET /organizations/org_fixture/spend-budget - budget-after\npython3 /workspace/mcp-eval/api.py POST /projects/project_fixture/eval-runs /workspace/mcp-eval/launch.json idempotency-replay"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:08:55.660939+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.09607958793640137,
+  "end": "2026-11-15T02:08:55.756960+00:00"
+}

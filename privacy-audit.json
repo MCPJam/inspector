@@ -1,0 +1,14 @@
+{
+  "scanned_files": 34960,
+  "matches_by_category": {
+    "private_identifiers": 0,
+    "jwt": 0,
+    "provider_token": 0,
+    "email": 0,
+    "native_reasoning_block": 0,
+    "secret_assignments": 0
+  },
+  "findings": [],
+  "passed": true,
+  "scope": "publication allowlist only; pattern audit, not a proof of absence of all sensitive data"
+}

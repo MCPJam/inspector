@@ -1,0 +1,1 @@
+{"seconds": 0.1945786476135254, "stream": "stdout", "data": "{\n  \"runId\": \"run_fixture_2\",\n  \"passed\": true,\n  \"checks\": {\n    \"completed\": true,\n    \"platformPassed\": true,\n    \"evidencePresent\": true,\n    \"allTrialsCorrect\": true\n  },\n  \"trials\": 1\n}\n"}

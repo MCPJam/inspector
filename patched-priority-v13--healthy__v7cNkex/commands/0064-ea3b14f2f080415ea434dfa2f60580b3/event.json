@@ -1,0 +1,22 @@
+{
+  "event_id": "ea3b14f2f080415ea434dfa2f60580b3",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "node - <<'JS'\nconst fs=require('fs'),s=require('./suite-model-free.json');s.tests[0].steps.find(x=>x.id==='sum').assertion.needle='{\"sum\": 5}';fs.writeFileSync('suite.json',JSON.stringify(s,null,2)+'\\n');\nJS\ncurl -fsS -X POST -H \"Authorization: Bearer $MCPJAM_API_KEY\" -H 'Content-Type: application/json' \"$MCPJAM_API_URL/projects/project_fixture/eval-suites\" --data-binary @suite.json -o suite-created.json && cat suite-created.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:59:44.010153+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.019902944564819336,
+  "end": "2026-11-15T01:59:44.029974+00:00"
+}

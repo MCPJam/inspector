@@ -1,0 +1,3 @@
+{"seconds": 1.2309489250183105, "stream": "stdout", "data": "Usage: mcpjam cloud projects servers delete|remove [options]\n\nDelete one saved MCP server\n\nOptions:\n  --project <id-or-name>  Project name or ID\n  --server <id>           Server ID\n  -h, --help              display help for command\n"}
+{"seconds": 2.5340704917907715, "stream": "stdout", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Synthetic fixture does not implement this route.\"}}\n"}
+{"seconds": 4.044122219085693, "stream": "stdout", "data": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Synthetic fixture does not implement this route.\"}}\n"}

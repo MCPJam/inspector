@@ -1,0 +1,13 @@
+{
+  "attempts": 34,
+  "reviewed": 34,
+  "sha256": {
+    "final-observations.json": "8478fba20bbf5029e96b07c01275f875a07e1b1ae14fe5efabdd7ddc0d04f582",
+    "final-observations.md": "7dfe4cac0aae2805890a597c46b5d2bc7b26190940a062e7545bce6a34ba9c65",
+    "comparison-reviews.json": "2e220843cd380d08ad551847eac53efc6ba8bb000726d321baea66e51880e404",
+    "priority-patterns.md": "879a02ab16dcf2413679b399cf0f2a4b03f15de9c49f33929ac6b087b6e2aee3",
+    "auth-observations.md": "f5da911e4d6b35a9c1dd02b20bdd200a1922b9478ce0d183b167896bbacb1f49",
+    "final-supplement.md": "83fb1b08adba4a6a8456904c1dd4bafacc91200f0593bdec618b8a94c80f0aaf"
+  },
+  "publication_note": "Independent qualitative review; frozen strict rewards are unchanged. Raw trajectory references map to public-only projections via run indexes."
+}

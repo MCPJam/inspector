@@ -1,0 +1,187 @@
+Usage: mcpjam cloud projects [options] [command]
+
+Operate the MCP servers saved in your hosted MCPJam projects
+
+Options:
+  -h, --help              display help for command
+
+Commands:
+  list [options]          List the projects you can access
+  create [options]        Create a hosted MCPJam project
+  update [options]        Update project metadata
+  delete [options]        Delete a project and its project-owned resources
+  capabilities [options]  Show what you may do in a project: your role, which
+                          betas the organization has, your plan's limits, and a
+                          can-block of booleans. Ask this before scripting
+                          anything that authors, launches or publishes.
+  servers [options]       List and manage the servers saved in a project
+  status [options]        Health-check every server in a project (hosted doctor
+                          per server)
+  help [command]          display help for command
+### `cloud eval validate`
+
+Validate a local eval **suite file**: the versioned declarative document that
+describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
+canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
+
+Offline by default: without `--project` this command builds no API client, reads
+no API key and never touches the network. Passing `--project` is the only thing
+that changes that, and it is keyed off the FLAG; a linked directory or an
+`MCPJAM_PROJECT` in the environment never turns the offline command into a
+networked one.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--file <path>` | Yes | Suite file to validate, `.yaml` or `.json` (or `-` for stdin) |
+| `--project <id-or-name>` | No | Also resolve the file's deterministic tool references against this project's live servers. Opt-in; authenticates and makes network calls |
+
+| Exit code | Meaning |
+| - | - |
+| `0` | Valid |
+| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first. `eval run --file` on the same bytes exits **2**: 1 is reserved there for a real verdict |
+| `2` | Nothing was validated: unreadable path, input over the 1 MiB limit, or malformed YAML |
+
+Input is capped at **1,048,576 bytes (1 MiB) of UTF-8** and is never truncated:
+a file over the cap is rejected outright.
+
+Under `--format json`, stdout carries this envelope whether the file is valid or
+not:
+
+```jsonc theme={"theme":"css-variables"}
+// exit 0
+{
+  "valid": true,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+  "findings": []
+}
+
+// exit 1 or 2
+{
+  "valid": false,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "stage": "contract",           // "contract" is exit 1; "input" and "parse" are exit 2
+  "findings": [
+    {
+      "code": "SUITE_FILE_INVALID",   // or SUITE_FILE_TOO_LARGE / _EMPTY / _YAML_INVALID / _MULTIPLE_DOCUMENTS
+      "path": ["cases", 1, "id"],      // field path as segments
+      "pointer": "cases[1].id",        // the same path, rendered
+      "message": "duplicate case id \"c_refund\""
+      // `location` accompanies SUITE_FILE_YAML_INVALID findings only, where the
+      // YAML parser reported a position: { "line": 24, "column": 9 }
+    }
+  ]
+}
+```
+
+Findings are deterministically ordered and carry no timestamps, so two runs over
+the same bytes produce byte-identical output.
+
+An unreadable or missing path is a usage error and goes to stderr in the CLI's
+standard error envelope rather than as findings; nothing was read, so there is
+nothing to report about.
+
+**What "valid" does not mean, without `--project`.** The offline check judges
+the file against the suite-file contract. It does **not** re-resolve tool names,
+server references or fixtures against a project's live discovery, so a file that
+validates here can still fail to run.
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Create an eval case
+
+> Adds one case to the suite. Both `title` and a non-empty `steps` array are required: `steps` is optional on the shared case shape so PATCH can be partial, but a case persisted without executable steps could never run. When `models` is omitted the suite's configured model is used.
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json post /projects/{projectId}/eval-suites/{suiteId}/cases
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects: live
+    diagnostics (validate, inspect, export) and operations: call tools, render
+    prompts, run eval suites asynchronously and poll their results, and import
+    OAuth tokens.
+
+
+    **The API is in preview**: the surface may change while we finish the
+    design. Error `code` values are stable; error `message` strings are not.
+    Write clients that ignore unknown response fields.
+  contact:
+    name: MCPJam
+    url: https://github.com/MCPJam/inspector/issues
+servers:
+  - url: https://app.mcpjam.com/api/v1
+    description: Hosted MCPJam
+security:
+  - bearerAuth: []
+tags:
+  - name: Clients
+    description: >-
+      Clients: the named, reusable configurations that define how MCPJam
+      connects to and talks to your MCP servers. The original `/hosts` paths
+      remain as deprecated, ID-only compatibility aliases with their original
+      DTOs and their original (tokenless) write contracts; every alias response
+      carries `Deprecation: true`. New integrations should use `/clients`.
+  - name: Environments
+    description: >-
+      Project environments: named, live-editable execution bundles (one host and
+      an optional standalone server group) that eval suites and goals run
+      against. Reads require project membership; archiving requires project
+      admin.
+  - name: Server diagnostics
+    description: Connect-level health checks against a saved MCP server.
+  - name: Primitives
+    description: 'The server''s MCP primitives: tools, prompts, and resources.'
+  - name: Export
+    description: Full-server snapshots for diffing and CI.
+  - name: Execution
+    description: 'Run the server''s primitives: call tools, render prompts.'
+  - name: Eval runs
+    description: >-
+      Asynchronous eval suite runs: create with 202, poll status, iterations,
+      and traces.
+  - name: Conformance runs
+    description: >-
+      Ingest MCP spec-conformance results from the SDK/CLI into project-owned
+      history. Distinct from Eval runs (authored LLM cases) and from directory
+      readiness.
+  - name: Server connections
+    description: >-
+      Connect an MCP server URL to a project, authorizing in a browser when the
+      server requires it.
+  - name: Server accounts
+    description: >-
+      The accounts a saved server signs in with, addressed by id or by name.
+      Tokens are write-only: an upload takes them and no route returns one.
+  - name: OAuth
+    description: 'Bring-your-own OAuth: import externally obtained tokens for a server.'
+  - name: Studies
+    description: >-
+      Publish a project environment as a **study** for people outside the
+      project to talk to, read what they did, and control who can reach it.
+      Several of these NARROW access and take effect immediately.
+
+
+      The pre-rename paths (`/projects/{projectId}/scenarios`,
+      `/projects/{projectId}/scenarios/{scenarioId}`,
+      `/projects/{projectId}/environments/{environmentId}/scenario` and
+      `/projects/{projectId}/user-testing/scenarios/{scenarioId}/…`) keep
+      working and are deliberately not documented here. They return their
+      original bodies, which spell the owning id `scenarioId` and whose detail
+      read carries no execution settings, and every response answers with
+      `Deprecation: true` and a `Link` header naming its successor. They are
+      removed at general availability; a new integration should use the paths on
+      this page.
+  - name: Catalog
+    description: >-
+      Discover the resources the other routes operate on: your account,
+      projects, servers, eval suites, and chat sessions.
+  - name: Tunnels
+    description: >-
+      Relay tunnels that expose local MCP servers through a public URL,

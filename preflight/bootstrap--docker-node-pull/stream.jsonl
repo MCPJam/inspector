@@ -1,0 +1,15 @@
+{"seconds": 1.7136459350585938, "stream": "stdout", "data": "24.22.1-bookworm-slim: Pulling from library/node\n"}
+{"seconds": 2.1042721271514893, "stream": "stdout", "data": "baff30000c36: Pulling fs layer\n99ad8657158d: Pulling fs layer\n92c5f1f753d3: Pulling fs layer\nf791e47cf52a: Pulling fs layer\n1df5cdf85ecf: Pulling fs layer\n"}
+{"seconds": 2.2857677936553955, "stream": "stdout", "data": "1df5cdf85ecf: Download complete\n"}
+{"seconds": 2.3847861289978027, "stream": "stdout", "data": "baff30000c36: Download complete\n"}
+{"seconds": 3.3854780197143555, "stream": "stdout", "data": "92c5f1f753d3: Download complete\n"}
+{"seconds": 3.48518705368042, "stream": "stdout", "data": "426abf44da26: Download complete\n"}
+{"seconds": 5.485882043838501, "stream": "stdout", "data": "2312c157a52d: Download complete\n"}
+{"seconds": 8.28564715385437, "stream": "stdout", "data": "99ad8657158d: Download complete\n"}
+{"seconds": 9.985204935073853, "stream": "stdout", "data": "f791e47cf52a: Download complete\n"}
+{"seconds": 10.484806060791016, "stream": "stdout", "data": "1df5cdf85ecf: Pull complete\n"}
+{"seconds": 10.490829944610596, "stream": "stdout", "data": "f791e47cf52a: Pull complete\n"}
+{"seconds": 11.072067975997925, "stream": "stdout", "data": "baff30000c36: Pull complete\n"}
+{"seconds": 11.07269287109375, "stream": "stdout", "data": "92c5f1f753d3: Pull complete\n"}
+{"seconds": 11.073609828948975, "stream": "stdout", "data": "99ad8657158d: Pull complete\nDigest: sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c\nStatus: Downloaded newer image for node:24.22.1-bookworm-slim\n"}
+{"seconds": 11.077579021453857, "stream": "stdout", "data": "docker.io/library/node:24.22.1-bookworm-slim\n"}

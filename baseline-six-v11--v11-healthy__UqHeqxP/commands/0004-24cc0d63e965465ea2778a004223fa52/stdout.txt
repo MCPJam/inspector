@@ -1,0 +1,11 @@
+{"valid":true,"file":".mcpjam/evals/arith.yaml","suite":{"id":"s_arith_fixture","name":"Arithmetic fixture","cases":1,"enabledCases":1},"findings":[]}
+{
+  "error": {
+    "code": "OPTIONS_INVALID",
+    "message": "The MCPJam connection is unusable: baseUrl must be https:// — the platform credential is sent to it (a loopback http:// origin is allowed for local development).",
+    "details": {
+      "phase": "setup",
+      "category": "usage"
+    }
+  }
+}

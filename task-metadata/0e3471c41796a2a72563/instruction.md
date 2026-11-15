@@ -1,0 +1,6 @@
+Continue validating this MCP server using MCPJam. If something fails, use the information available to identify the problem and recover. Preserve your work. Stop if you need an action only the account owner or a human can perform, and state precisely what is needed.
+
+At meaningful checkpoints or when confused, write a brief user-facing concern note: what you expected, what you observed, what information was missing, and what you will try next. Report no concern when none exists. Do not provide private chain-of-thought or extended internal reasoning.
+
+Trial context: public documentation entry point https://docs.mcpjam.com; MCP server http://fixture:8765/mcp. MCPJam account API is configured in MCPJAM_API_URL and MCPJAM_API_KEY. Project: project_fixture. Account: team owner. This isolated account uses synthetic credits; do not contact production billing or buy anything. Save reproducible work under /workspace. Budget: 240 seconds, at most 40 shell commands. Use only public documentation and normal product interfaces; do not read product source, test fixtures, or verifier internals.
+The server credential is available in MCP_SERVER_TOKEN. Your existing configuration is /workspace/mcp.json.

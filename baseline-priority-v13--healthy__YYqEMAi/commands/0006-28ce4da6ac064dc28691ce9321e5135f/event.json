@@ -1,0 +1,21 @@
+{
+  "event_id": "28ce4da6ac064dc28691ce9321e5135f",
+  "argv": [
+    "/bin/bash",
+    "./run-eval.sh"
+  ],
+  "cwd": "/workspace/mcpjam-validation",
+  "start": "2026-11-15T02:05:25.555222+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.0816452503204346,
+  "end": "2026-11-15T02:05:26.636812+00:00"
+}

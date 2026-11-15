@@ -1,0 +1,5 @@
+{"seconds": 0.01533365249633789, "stream": "stderr", "data": "/bin/bash.real: line 1: python: command not found\n"}
+{"seconds": 0.4296541213989258, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 0.9591464996337891, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 1.1897201538085938, "stream": "stderr", "data": "Eval idempotency key: 54711a2a-285d-4624-8c7e-900c17eac10c\n"}
+{"seconds": 1.3387084007263184, "stream": "stderr", "data": "{\"error\":{\"code\":\"INTERNAL_ERROR\",\"message\":\"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\\nRetry this launch with --idempotency-key 54711a2a-285d-4624-8c7e-900c17eac10c.\",\"details\":{\"idempotencyKey\":\"54711a2a-285d-4624-8c7e-900c17eac10c\"}}}\n"}

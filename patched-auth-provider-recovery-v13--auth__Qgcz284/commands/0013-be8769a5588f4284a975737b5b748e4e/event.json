@@ -1,0 +1,22 @@
+{
+  "event_id": "be8769a5588f4284a975737b5b748e4e",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794709170798-qq29op.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; curl -s -m 10 https://docs.mcpjam.com/llms.txt | head -40; curl -s -m 10 -i -X POST http://fixture:8765/mcp -H '\"'\"'content-type: application/json'\"'\"' -H '\"'\"'accept: application/json, text/event-stream'\"'\"' -d '\"'\"'{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}'\"'\"' | head -20' < /dev/null && pwd -P >| /tmp/claude-2e1a-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:19:34.109079+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.16777610778808594,
+  "end": "2026-11-15T02:19:34.276784+00:00"
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "99e9abb649a44e96b9f7e6959807185f",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794706093281-lqxnat.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; N=\"npx -y @mcpjam/cli@latest\"\npython3 - <<'\"'\"'E'\"'\"'\ns=open('\"'\"'.mcpjam/evals/arith.yaml'\"'\"').read()\ni=s.index('\"'\"'cases:'\"'\"')\ns=s[:i]+'\"'\"''\"'\"''\"'\"'cases:\n  - id: c_adds\n    title: add returns 5 for 2+3\n    steps:\n      - id: s1\n        kind: toolCall\n        serverName: arith\n        toolName: add\n        arguments: {a: 2, b: 3}\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\n'\"'\"''\"'\"''\"'\"'\nopen('\"'\"'.mcpjam/evals/arith-hosted.yaml'\"'\"','\"'\"'w'\"'\"').write(s)\nE\n$N cloud eval validate --file .mcpjam/evals/arith-hosted.yaml --project project_fixture 2>&1 | head -30\n$N cloud servers --help 2>&1 | head -20' && pwd -P >| /tmp/claude-a48a-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:29:03.842599+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 2.2441375255584717,
+  "end": "2026-11-15T01:29:06.086635+00:00"
+}

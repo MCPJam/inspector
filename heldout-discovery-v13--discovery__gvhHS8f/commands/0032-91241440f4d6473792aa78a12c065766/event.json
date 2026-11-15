@@ -1,0 +1,22 @@
+{
+  "event_id": "91241440f4d6473792aa78a12c065766",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json\ns=json.load(open('/workspace/mcp-check/docs/openapi.json'))\nfor p in ['/projects/{projectId}/servers/{serverId}/doctor','/projects/{projectId}/servers/{serverId}/tools/call','/projects/{projectId}/servers/{serverId}/conformance-runs']:\n print(p,json.dumps(s['paths'][p]['post'],indent=2)[:17000])\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:27:31.587013+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.013532638549804688,
+  "end": "2026-11-15T02:27:31.600487+00:00"
+}

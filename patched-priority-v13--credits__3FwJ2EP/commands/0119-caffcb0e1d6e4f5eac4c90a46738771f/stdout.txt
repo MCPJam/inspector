@@ -1,0 +1,4 @@
+trace {"status": 404, "body": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+steps {"status": 404, "body": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+budget-resolved {"status": 404, "body": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+me-resolved {"status": 200, "body": {"id": "user_fixture", "name": "Fixture user", "email": "[EMAIL REDACTED]", "plan": "team"}}

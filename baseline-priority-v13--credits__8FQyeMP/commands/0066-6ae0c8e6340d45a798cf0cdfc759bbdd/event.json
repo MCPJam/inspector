@@ -1,0 +1,22 @@
+{
+  "event_id": "6ae0c8e6340d45a798cf0cdfc759bbdd",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport os,urllib.request,urllib.error\nbase=os.environ['MCPJAM_API_URL']\nfor p in ['/usage','/credits','/billing','/projects','/account']:\n req=urllib.request.Request(base+p,headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY']})\n try:\n  r=urllib.request.urlopen(req,timeout=5);print(p,r.status,r.read().decode())\n except urllib.error.HTTPError as e:print(p,e.code,e.read().decode())\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:11:48.380602+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.030735015869140625,
+  "end": "2026-11-15T02:11:48.411293+00:00"
+}

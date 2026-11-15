@@ -1,0 +1,72 @@
+Usage: mcpjam cloud eval [options] [command]
+
+Author and run eval suites in your hosted MCPJam projects
+
+Options:
+  -h, --help                 display help for command
+
+Commands:
+  create [options]           Create a runnable eval suite from authored test
+                             cases (does not run it)
+  list [options]             List the eval suites saved in a project
+  runs [options]             List a suite's run history, newest first
+  revisions [options]        List a suite's settings history, newest first
+  run [options]              Start an eval run of an existing suite, or upload a
+                             versioned suite file and run it. The
+                             upload-and-launch has a 120s deadline overall, not
+                             per request (raise it with the global --timeout
+                             <ms>); --wait-timeout bounds the RUN instead.
+  status [options]           Get the status and summary of an eval run
+  stage-analytics [options]  Read the user-value chain funnel for one run
+                             (--run) or a suite's runs as a trend series
+                             (--suite)
+  route-facts [options]      Read the tool routes a run's trials took — which
+                             paths were used, and which expected tools were
+                             missing or substituted
+  server-facts [options]     Read the server a run was taken against — tool
+                             surface, catalog size, annotation coverage,
+                             tool-metadata signals, and what connect and
+                             discovery observed
+  description-experiment     Propose, start, or read a two-arm tool-description
+Usage: mcpjam cloud eval create [options]
+
+Create a runnable eval suite from authored test cases (does not run it)
+
+Options:
+  --project <id-or-name>    Project name or ID (defaults to the most recently
+                            updated project)
+  --file <path>             Path to a create-API JSON body (or - for stdin). A
+                            versioned suite file belongs on `eval run --file`
+  --json <json>             Inline suite definition JSON (or @file, or - for
+                            stdin)
+  --name <name>             Suite name (overrides the file)
+  --model <model>           Suite-level default model (overrides the file)
+  --provider <provider>     Suite-level default provider (overrides the file;
+                            needed for bare/custom model ids)
+  --server <id-or-name...>  Project HTTP server names or IDs (overrides the
+                            file)
+  --client <id-or-name...>  Clients to attach the suite to, by name or ID
+                            (overrides the file). Without one the suite lists no
+                            client and `eval run --client` has nothing to select
+  --host <id-or-name...>    Deprecated alias for --client
+  -h, --help                display help for command
+Usage: mcpjam cloud projects [options] [command]
+
+Operate the MCP servers saved in your hosted MCPJam projects
+
+Options:
+  -h, --help              display help for command
+
+Commands:
+  list [options]          List the projects you can access
+  create [options]        Create a hosted MCPJam project
+  update [options]        Update project metadata
+  delete [options]        Delete a project and its project-owned resources
+  capabilities [options]  Show what you may do in a project: your role, which
+                          betas the organization has, your plan's limits, and a
+                          can-block of booleans. Ask this before scripting
+                          anything that authors, launches or publishes.
+  servers [options]       List and manage the servers saved in a project
+  status [options]        Health-check every server in a project (hosted doctor
+                          per server)
+  help [command]          display help for command

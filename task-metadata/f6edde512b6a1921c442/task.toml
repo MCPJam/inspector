@@ -1,0 +1,37 @@
+schema_version = "1.4"
+multi_step_reward_strategy = "final"
+[task]
+name = "mcpjam/credits"
+[metadata]
+benchmark_version = "1.2.0"
+fixture_seed = 42
+simulation = true
+[agent]
+timeout_sec = 240
+[environment]
+build_timeout_sec = 180
+cpus = 2
+memory_mb = 2048
+workdir = "/workspace"
+[verifier]
+timeout_sec = 60
+environment_mode = "separate"
+[[artifacts]]
+source = "/private"
+destination = "fixture"
+service = "fixture"
+[[artifacts]]
+source = "/workspace"
+destination = "workspace"
+exclude = ["node_modules", ".npm", ".cache"]
+[[artifacts]]
+source = "/capture"
+destination = "capture"
+
+[[steps]]
+name = "blocked"
+[[steps.verifier.collect]]
+service = "fixture"
+command = "python3 /fixture/control.py resolve --state /private/state.json"
+[[steps]]
+name = "resume"

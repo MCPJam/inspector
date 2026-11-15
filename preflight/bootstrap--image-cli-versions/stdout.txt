@@ -1,0 +1,3 @@
+codex-cli 0.160.0
+2.1.323 (Claude Code)
+v24.22.1

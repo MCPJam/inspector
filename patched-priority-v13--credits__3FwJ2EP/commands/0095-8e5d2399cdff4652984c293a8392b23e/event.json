@@ -1,0 +1,22 @@
+{
+  "event_id": "8e5d2399cdff4652984c293a8392b23e",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cd /workspace/mcp-eval && python3 - <<'PY'\nfrom api import call\nimport json\nprint(json.dumps(call('GET','/projects/project_fixture/capabilities',label='capabilities'),indent=2))\nPY\nsed -n '106,130p' /workspace/mcp-eval/hosted.md\nsed -n '488,510p' /workspace/mcp-eval/evals.md"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:07:12.001210+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.024048566818237305,
+  "end": "2026-11-15T02:07:12.025199+00:00"
+}

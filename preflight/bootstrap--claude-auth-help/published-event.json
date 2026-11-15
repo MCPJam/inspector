@@ -1,0 +1,19 @@
+{
+  "id": "bootstrap:claude-auth-help",
+  "path": "bootstrap--claude-auth-help",
+  "argv": [
+    "claude",
+    "auth",
+    "--help"
+  ],
+  "start": "2026-11-15T01:13:02.265613+00:00",
+  "end": "2026-11-15T01:13:02.615485+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

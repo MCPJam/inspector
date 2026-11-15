@@ -1,0 +1,16 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "Reproducible MCPJam validation of the arithmetic MCP server",
+  "main": "index.js",
+  "scripts": {
+    "test": "bash run-eval.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@mcpjam/cli": "6.2.2"
+  }
+}

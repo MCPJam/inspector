@@ -1,0 +1,7 @@
+{"seconds": 0.0009922981262207031, "stream": "stdout", "data": "== /organizations/org_fixture/spend-budget\n"}
+{"seconds": 0.0049343109130859375, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\nHTTP 404\n"}
+{"seconds": 0.005005598068237305, "stream": "stdout", "data": "== /projects/project_fixture/eval-suites/suite_fixture\n"}
+{"seconds": 0.008871316909790039, "stream": "stdout", "data": "{\"id\": \"suite_fixture\", \"name\": \"Arithmetic smoke\", \"projectId\": \"project_fixture\", \"description\": \"Synthetic fixture: add 2 and 3 and assert 5.\", \"environment\": {\"servers\": []}, \"executionConfig\": null, \"hosts\": [], \"environmentIds\": [], \"settings\": {\"policy\": \"legacy\", \"minimumIterations\": 1}, \"schedule\": {}, \"createdAt\": 1, \"updatedAt\": 2}\nHTTP 200\n"}
+{"seconds": 0.008935213088989258, "stream": "stdout", "data": "== /projects/project_fixture/eval-suites/suite_fixture/launch-disclosure\n"}
+{"seconds": 0.012720346450805664, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\nHTTP 404\n"}
+{"seconds": 0.3314075469970703, "stream": "stdout", "data": "  /projects/{projectId}/eval-suites/{suiteId}/run-disclosure:\n"}

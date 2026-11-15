@@ -1,0 +1,3 @@
+Using MCPJam Cloud as sk_…etic · project: automatic (most recently updated) · http://fixture:8765/api/v1
+{"error":{"code":"FORBIDDEN","message":"This work requires platform credits. Add credits or contact your organization administrator.","details":{"reason":"PLATFORM_FEE_REQUIRED"}}}
+exit 1

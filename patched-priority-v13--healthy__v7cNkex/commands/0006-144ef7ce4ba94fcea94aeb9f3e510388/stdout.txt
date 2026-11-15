@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "description": "One authored test step (the unified test model). `kind` discriminates: `prompt` is a user message (model turn); `toolCall` is a deterministic, model-free tool call; `interact` is one pure widget action; `assert` is an assertion (a `Predicate` like `toolCalledWith` / `widgetRendered`, or a DOM `WidgetAssertion`).",
+  "required": [
+    "id",
+    "kind"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "prompt",
+        "toolCall",
+        "interact",
+        "assert"
+      ]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "User message (`kind: prompt`)."
+    },
+    "serverName": {
+      "type": "string",
+      "description": "Server that owns the tool (`kind: toolCall`)."
+    },
+    "toolName": {
+      "type": "string",
+      "description": "Tool name (`kind: toolCall` / `interact`)."
+    },
+    "arguments": {
+      "type": "object",
+      "description": "Tool-call arguments (`kind: toolCall`).",
+      "additionalProperties": true
+    },
+    "action": {
+      "type": "object",
+      "description": "Widget action (`kind: interact`).",
+      "additionalProperties": true
+    },
+    "assertion": {
+      "type": "object",
+      "description": "The rule an `assert` step checks (`kind: assert`). NOT a narrower spelling of a case's `checks`: this is `WidgetAssertion | Predicate`, and that union is why the field is called an assertion rather than a check. A `Predicate` is evaluated against the PERSISTED transcript, so a stored run can be re-graded against it months later; a `WidgetAssertion` is evaluated against a LIVE DOM and can never be replayed. Calling this a check would promise the replayability only one half of it has.",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

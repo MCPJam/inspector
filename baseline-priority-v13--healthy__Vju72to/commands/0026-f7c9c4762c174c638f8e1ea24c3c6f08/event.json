@@ -1,0 +1,22 @@
+{
+  "event_id": "f7c9c4762c174c638f8e1ea24c3c6f08",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708227251-ykn780.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; M=\"npx -y @mcpjam/cli@latest\"; $M tools call --url http://fixture:8765/mcp --tool-name add --tool-args '\"'\"'{\"a\":2,\"b\":3}'\"'\"' 2>&1 | head -c 600; echo; mkdir -p .mcpjam/evals\ncat > .mcpjam/evals/arith.yaml <<'\"'\"'E'\"'\"'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arith\n  name: Arithmetic fixture\ntarget:\n  servers:\n    - name: arith\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_adds\n    title: uses add for a sum\n    steps:\n      - id: s1\n        kind: prompt\n        prompt: What is 17 plus 25? Use the tool.\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\nE\necho '\"'\"'{\"mcpServers\":{\"arith\":{\"url\":\"http://fixture:8765/mcp\"}}}'\"'\"' > .mcp.json\n$M cloud eval validate --file .mcpjam/evals/arith.yaml 2>&1 | tail -5\nenv | grep -c ANTHROPIC; $M test .mcpjam/evals/arith.yaml --reporter junit-xml --out reports/arith.xml 2>&1 | tail -25' && pwd -P >| /tmp/claude-8005-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:04:08.240693+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.8659460544586182,
+  "end": "2026-11-15T02:04:10.106581+00:00"
+}

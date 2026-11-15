@@ -1,0 +1,16 @@
+
+> slop:size
+> node scripts/slop/pr-size.mjs
+
+## PR size
+
+**60** changed lines of hand-written source (budget 800, hard limit 1500).
+
+Within budget.
+
+| File | Lines |
+|---|---|
+| `cli/src/lib/activation-guidance.ts` | 41 |
+| `cli/src/lib/platform-client.ts` | 12 |
+| `cli/src/index.ts` | 5 |
+| `cli/src/commands/eval.ts` | 2 |

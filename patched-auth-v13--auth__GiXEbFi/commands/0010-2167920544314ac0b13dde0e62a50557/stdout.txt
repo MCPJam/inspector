@@ -1,0 +1,11 @@
+{
+  "status": 405,
+  "headers": {
+    "Server": "HarborSyntheticFixture/1 Python/3.11.2",
+    "Date": "Sun, 15 Nov 2026 02:18:02 GMT",
+    "Content-Type": "application/json",
+    "Content-Length": "21",
+    "Allow": "POST, DELETE"
+  },
+  "body": "{\"error\": \"Use POST\"}"
+}

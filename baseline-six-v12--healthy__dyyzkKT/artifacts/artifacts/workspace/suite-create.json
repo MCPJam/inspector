@@ -1,0 +1,36 @@
+{
+  "name": "Arithmetic repeatable validation",
+  "serverIds": [
+    "server_fixture"
+  ],
+  "model": "anthropic/claude-haiku-4.5",
+  "passCriteria": {
+    "minimumPassRatePercent": 100
+  },
+  "tests": [
+    {
+      "title": "add 19 and 23 returns 42",
+      "steps": [
+        {
+          "id": "call_add",
+          "kind": "toolCall",
+          "serverName": "Arithmetic",
+          "toolName": "add",
+          "arguments": {
+            "a": 19,
+            "b": 23
+          }
+        },
+        {
+          "id": "check_sum",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultContains",
+            "toolName": "add",
+            "needle": "42"
+          }
+        }
+      ]
+    }
+  ]
+}

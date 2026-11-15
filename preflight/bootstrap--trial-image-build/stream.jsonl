@@ -1,0 +1,290 @@
+{"seconds": 0.08303594589233398, "stream": "stderr", "data": "DEPRECATED: The legacy builder is deprecated and will be removed in a future release.\n            Install the buildx component to build images with BuildKit:\n            https://docs.docker.com/go/buildx/\n\n"}
+{"seconds": 0.08616280555725098, "stream": "stdout", "data": "Sending build context to Docker daemon   7.68kB\r\r\n"}
+{"seconds": 0.09845185279846191, "stream": "stdout", "data": "Step 1/8 : FROM node:24.22.1-bookworm-slim\n"}
+{"seconds": 0.1555778980255127, "stream": "stdout", "data": " ---> be8204d4bd32\n"}
+{"seconds": 0.155595064163208, "stream": "stdout", "data": "Step 2/8 : RUN apt-get update && apt-get install -y --no-install-recommends python3 curl git ca-certificates procps util-linux && rm -rf /var/lib/apt/lists/*\n"}
+{"seconds": 0.2519197463989258, "stream": "stdout", "data": " ---> Running in 18a9022587e6\n"}
+{"seconds": 0.5523331165313721, "stream": "stdout", "data": "Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]\n"}
+{"seconds": 0.6160140037536621, "stream": "stdout", "data": "Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]\n"}
+{"seconds": 0.649738073348999, "stream": "stdout", "data": "Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]\n"}
+{"seconds": 0.6787929534912109, "stream": "stdout", "data": "Get:4 http://deb.debian.org/debian bookworm/main arm64 Packages [8689 kB]\n"}
+{"seconds": 1.7283010482788086, "stream": "stdout", "data": "Get:5 http://deb.debian.org/debian bookworm-updates/main arm64 Packages [6936 B]\n"}
+{"seconds": 1.7668538093566895, "stream": "stdout", "data": "Get:6 http://deb.debian.org/debian-security bookworm-security/main arm64 Packages [369 kB]\n"}
+{"seconds": 2.446017026901245, "stream": "stdout", "data": "Fetched 9306 kB in 2s (4701 kB/s)\nReading package lists..."}
+{"seconds": 2.820035934448242, "stream": "stdout", "data": "\n"}
+{"seconds": 2.8356218338012695, "stream": "stdout", "data": "Reading package lists..."}
+{"seconds": 3.226923942565918, "stream": "stdout", "data": "\n"}
+{"seconds": 3.2364280223846436, "stream": "stdout", "data": "Building dependency tree..."}
+{"seconds": 3.3735480308532715, "stream": "stdout", "data": "\nReading state information...\n"}
+{"seconds": 3.5133109092712402, "stream": "stdout", "data": "util-linux is already the newest version (2.38.1-5+deb12u3).\nutil-linux set to manually installed.\nThe following additional packages will be installed:\n  git-man libbrotli1 libcurl3-gnutls libcurl4 liberror-perl libexpat1\n  libgdbm-compat4 libgdbm6 libgssapi-krb5-2 libk5crypto3 libkeyutils1\n  libkrb5-3 libkrb5support0 libldap-2.5-0 libncursesw6 libnghttp2-14 libnsl2\n  libperl5.36 libproc2-0 libpsl5 libpython3-stdlib libpython3.11-minimal\n  libpython3.11-stdlib libreadline8 librtmp1 libsasl2-2 libsasl2-modules-db\n"}
+{"seconds": 3.5139589309692383, "stream": "stdout", "data": "  libsqlite3-0 libssh2-1 libssl3 libtirpc-common libtirpc3 media-types openssl\n  perl perl-modules-5.36 python3-minimal python3.11 python3.11-minimal\n  readline-common\nSuggested packages:\n  gettext-base git-daemon-run | git-daemon-sysvinit git-doc git-email git-gui\n  gitk gitweb git-cvs git-mediawiki git-svn gdbm-l10n krb5-doc krb5-user\n  sensible-utils perl-doc libterm-readline-gnu-perl\n  | libterm-readline-perl-perl make libtap-harness-archive-perl python3-doc\n  python3-tk python3-venv python3.11-venv python3.11-doc binutils\n  binfmt-support readline-doc\nRecommended packages:\n  patch less ssh-client krb5-locales libldap-common libgpm2 publicsuffix\n  libsasl2-modules netbase psmisc\n"}
+{"seconds": 3.6620969772338867, "stream": "stdout", "data": "The following NEW packages will be installed:\n  ca-certificates curl git git-man libbrotli1 libcurl3-gnutls libcurl4\n  liberror-perl libexpat1 libgdbm-compat4 libgdbm6 libgssapi-krb5-2\n  libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libldap-2.5-0\n  libncursesw6 libnghttp2-14 libnsl2 libperl5.36 libproc2-0 libpsl5\n  libpython3-stdlib libpython3.11-minimal libpython3.11-stdlib libreadline8\n  librtmp1 libsasl2-2 libsasl2-modules-db libsqlite3-0 libssh2-1 libssl3\n"}
+{"seconds": 3.66233491897583, "stream": "stdout", "data": "  libtirpc-common libtirpc3 media-types openssl perl perl-modules-5.36 procps\n"}
+{"seconds": 3.6623849868774414, "stream": "stdout", "data": "  python3 python3-minimal python3.11 python3.11-minimal readline-common\n"}
+{"seconds": 3.7231669425964355, "stream": "stdout", "data": "0 upgraded, 45 newly installed, 0 to remove and 3 not upgraded.\nNeed to get 29.5 MB of archives.\nAfter this operation, 146 MB of additional disk space will be used.\nGet:1 http://deb.debian.org/debian-security bookworm-security/main arm64 perl-modules-5.36 all 5.36.0-7+deb12u4 [2817 kB]\n"}
+{"seconds": 4.252347946166992, "stream": "stdout", "data": "Get:2 http://deb.debian.org/debian bookworm/main arm64 libgdbm6 arm64 1.23-3 [70.9 kB]\n"}
+{"seconds": 4.271823883056641, "stream": "stdout", "data": "Get:3 http://deb.debian.org/debian bookworm/main arm64 libgdbm-compat4 arm64 1.23-3 [48.0 kB]\n"}
+{"seconds": 4.28701114654541, "stream": "stdout", "data": "Get:4 http://deb.debian.org/debian-security bookworm-security/main arm64 libperl5.36 arm64 5.36.0-7+deb12u4 [4002 kB]\n"}
+{"seconds": 4.780946969985962, "stream": "stdout", "data": "Get:5 http://deb.debian.org/debian-security bookworm-security/main arm64 perl arm64 5.36.0-7+deb12u4 [239 kB]\n"}
+{"seconds": 4.798843860626221, "stream": "stdout", "data": "Get:6 http://deb.debian.org/debian-security bookworm-security/main arm64 libssl3 arm64 3.0.22-1~deb12u2 [1829 kB]\n"}
+{"seconds": 4.927872896194458, "stream": "stdout", "data": "Get:7 http://deb.debian.org/debian-security bookworm-security/main arm64 libpython3.11-minimal arm64 3.11.2-6+deb12u9 [814 kB]\n"}
+{"seconds": 4.977902173995972, "stream": "stdout", "data": "Get:8 http://deb.debian.org/debian-security bookworm-security/main arm64 libexpat1 arm64 2.5.0-1+deb12u5 [91.7 kB]\n"}
+{"seconds": 5.0055248737335205, "stream": "stdout", "data": "Get:9 http://deb.debian.org/debian-security bookworm-security/main arm64 python3.11-minimal arm64 3.11.2-6+deb12u9 [1862 kB]\n"}
+{"seconds": 5.266617774963379, "stream": "stdout", "data": "Get:10 http://deb.debian.org/debian bookworm/main arm64 python3-minimal arm64 3.11.2-1+b1 [26.3 kB]\nGet:11 http://deb.debian.org/debian bookworm/main arm64 media-types all 10.0.0 [26.1 kB]\n"}
+{"seconds": 5.266659736633301, "stream": "stdout", "data": "Get:12 http://deb.debian.org/debian bookworm/main arm64 libncursesw6 arm64 6.4-4 [122 kB]\n"}
+{"seconds": 5.267669916152954, "stream": "stdout", "data": "Get:13 http://deb.debian.org/debian bookworm/main arm64 libkrb5support0 arm64 1.20.1-2+deb12u5 [32.6 kB]\n"}
+{"seconds": 5.267910957336426, "stream": "stdout", "data": "Get:14 http://deb.debian.org/debian bookworm/main arm64 libk5crypto3 arm64 1.20.1-2+deb12u5 [79.9 kB]\n"}
+{"seconds": 5.2686309814453125, "stream": "stdout", "data": "Get:15 http://deb.debian.org/debian bookworm/main arm64 libkeyutils1 arm64 1.6.3-2 [8844 B]\n"}
+{"seconds": 5.286935091018677, "stream": "stdout", "data": "Get:16 http://deb.debian.org/debian bookworm/main arm64 libkrb5-3 arm64 1.20.1-2+deb12u5 [316 kB]\n"}
+{"seconds": 5.376633882522583, "stream": "stdout", "data": "Get:17 http://deb.debian.org/debian bookworm/main arm64 libgssapi-krb5-2 arm64 1.20.1-2+deb12u5 [124 kB]\nGet:18 http://deb.debian.org/debian bookworm/main arm64 libtirpc-common all 1.3.3+ds-1 [14.0 kB]\n"}
+{"seconds": 5.3773088455200195, "stream": "stdout", "data": "Get:19 http://deb.debian.org/debian bookworm/main arm64 libtirpc3 arm64 1.3.3+ds-1 [80.9 kB]\n"}
+{"seconds": 5.377630949020386, "stream": "stdout", "data": "Get:20 http://deb.debian.org/debian bookworm/main arm64 libnsl2 arm64 1.3.0-2 [36.9 kB]\n"}
+{"seconds": 5.377657175064087, "stream": "stdout", "data": "Get:21 http://deb.debian.org/debian bookworm/main arm64 readline-common all 8.2-1.3 [69.0 kB]\n"}
+{"seconds": 5.388534069061279, "stream": "stdout", "data": "Get:22 http://deb.debian.org/debian bookworm/main arm64 libreadline8 arm64 8.2-1.3 [155 kB]\n"}
+{"seconds": 5.464181900024414, "stream": "stdout", "data": "Get:23 http://deb.debian.org/debian bookworm/main arm64 libsqlite3-0 arm64 3.40.1-2+deb12u2 [786 kB]\n"}
+{"seconds": 5.640996932983398, "stream": "stdout", "data": "Get:24 http://deb.debian.org/debian-security bookworm-security/main arm64 libpython3.11-stdlib arm64 3.11.2-6+deb12u9 [1750 kB]\n"}
+{"seconds": 6.013778924942017, "stream": "stdout", "data": "Get:25 http://deb.debian.org/debian-security bookworm-security/main arm64 python3.11 arm64 3.11.2-6+deb12u9 [575 kB]\n"}
+{"seconds": 6.1020448207855225, "stream": "stdout", "data": "Get:26 http://deb.debian.org/debian bookworm/main arm64 libpython3-stdlib arm64 3.11.2-1+b1 [9296 B]\n"}
+{"seconds": 6.131259918212891, "stream": "stdout", "data": "Get:27 http://deb.debian.org/debian bookworm/main arm64 python3 arm64 3.11.2-1+b1 [26.3 kB]\n"}
+{"seconds": 6.166938781738281, "stream": "stdout", "data": "Get:28 http://deb.debian.org/debian bookworm/main arm64 libproc2-0 arm64 2:4.0.2-3 [60.1 kB]\n"}
+{"seconds": 6.20508074760437, "stream": "stdout", "data": "Get:29 http://deb.debian.org/debian bookworm/main arm64 procps arm64 2:4.0.2-3 [698 kB]\n"}
+{"seconds": 6.386565923690796, "stream": "stdout", "data": "Get:30 http://deb.debian.org/debian-security bookworm-security/main arm64 openssl arm64 3.0.22-1~deb12u2 [1410 kB]\n"}
+{"seconds": 6.6423890590667725, "stream": "stdout", "data": "Get:31 http://deb.debian.org/debian-security bookworm-security/main arm64 ca-certificates all 20250419~deb12u2 [161 kB]\n"}
+{"seconds": 6.693610906600952, "stream": "stdout", "data": "Get:32 http://deb.debian.org/debian-security bookworm-security/main arm64 libbrotli1 arm64 1.0.9-2+deb12u1 [267 kB]\n"}
+{"seconds": 6.749874830245972, "stream": "stdout", "data": "Get:33 http://deb.debian.org/debian-security bookworm-security/main arm64 libsasl2-modules-db arm64 2.1.28+dfsg-10+deb12u1 [21.0 kB]\n"}
+{"seconds": 6.786247968673706, "stream": "stdout", "data": "Get:34 http://deb.debian.org/debian-security bookworm-security/main arm64 libsasl2-2 arm64 2.1.28+dfsg-10+deb12u1 [58.3 kB]\n"}
+{"seconds": 6.8538618087768555, "stream": "stdout", "data": "Get:35 http://deb.debian.org/debian bookworm/main arm64 libldap-2.5-0 arm64 2.5.13+dfsg-5 [171 kB]\n"}
+{"seconds": 6.907193183898926, "stream": "stdout", "data": "Get:36 http://deb.debian.org/debian bookworm/main arm64 libnghttp2-14 arm64 1.52.0-1+deb12u3 [69.0 kB]\n"}
+{"seconds": 6.945084810256958, "stream": "stdout", "data": "Get:37 http://deb.debian.org/debian bookworm/main arm64 libpsl5 arm64 0.21.2-1 [58.6 kB]\n"}
+{"seconds": 6.981683015823364, "stream": "stdout", "data": "Get:38 http://deb.debian.org/debian bookworm/main arm64 librtmp1 arm64 2.4+20151223.gitfa8646d.1-2+b2 [59.4 kB]\n"}
+{"seconds": 7.023921966552734, "stream": "stdout", "data": "Get:39 http://deb.debian.org/debian-security bookworm-security/main arm64 libssh2-1 arm64 1.10.0-3+deb12u1 [169 kB]\n"}
+{"seconds": 7.093150854110718, "stream": "stdout", "data": "Get:40 http://deb.debian.org/debian bookworm/main arm64 libcurl4 arm64 7.88.1-10+deb12u15 [367 kB]\n"}
+{"seconds": 7.188974857330322, "stream": "stdout", "data": "Get:41 http://deb.debian.org/debian bookworm/main arm64 curl arm64 7.88.1-10+deb12u15 [310 kB]\n"}
+{"seconds": 7.259454965591431, "stream": "stdout", "data": "Get:42 http://deb.debian.org/debian bookworm/main arm64 libcurl3-gnutls arm64 7.88.1-10+deb12u15 [362 kB]\n"}
+{"seconds": 7.326272010803223, "stream": "stdout", "data": "Get:43 http://deb.debian.org/debian bookworm/main arm64 liberror-perl all 0.17029-2 [29.0 kB]\n"}
+{"seconds": 7.363261938095093, "stream": "stdout", "data": "Get:44 http://deb.debian.org/debian bookworm/main arm64 git-man all 1:2.39.5-0+deb12u3 [2053 kB]\n"}
+{"seconds": 7.69215989112854, "stream": "stdout", "data": "Get:45 http://deb.debian.org/debian bookworm/main arm64 git arm64 1:2.39.5-0+deb12u3 [7153 kB]\n"}
+{"seconds": 8.3507080078125, "stream": "stdout", "data": "\u001b[91mdebconf: delaying package configuration, since apt-utils is not installed\n\u001b[0m"}
+{"seconds": 8.3798668384552, "stream": "stdout", "data": "Fetched 29.5 MB in 5s (6431 kB/s)\n"}
+{"seconds": 8.394877910614014, "stream": "stdout", "data": "Selecting previously unselected package perl-modules-5.36.\r\n(Reading database ... \r"}
+{"seconds": 8.395643949508667, "stream": "stdout", "data": "(Reading database ... 5%\r(Reading database ... 10%\r(Reading database ... 15%\r(Reading database ... 20%\r(Reading database ... 25%\r(Reading database ... 30%\r(Reading database ... 35%\r(Reading database ... 40%\r(Reading database ... 45%\r(Reading database ... 50%\r(Reading database ... 55%\r(Reading database ... 60%\r(Reading database ... 65%\r(Reading database ... 70%\r(Reading database ... 75%\r"}
+{"seconds": 8.398534774780273, "stream": "stdout", "data": "(Reading database ... 80%\r"}
+{"seconds": 8.398623943328857, "stream": "stdout", "data": "(Reading database ... 85%\r"}
+{"seconds": 8.398689031600952, "stream": "stdout", "data": "(Reading database ... 90%\r"}
+{"seconds": 8.399006843566895, "stream": "stdout", "data": "(Reading database ... 95%\r"}
+{"seconds": 8.39996075630188, "stream": "stdout", "data": "(Reading database ... 100%\r(Reading database ... 6090 files and directories currently installed.)\r\n"}
+{"seconds": 8.400500059127808, "stream": "stdout", "data": "Preparing to unpack .../0-perl-modules-5.36_5.36.0-7+deb12u4_all.deb ...\r\n"}
+{"seconds": 8.402264833450317, "stream": "stdout", "data": "Unpacking perl-modules-5.36 (5.36.0-7+deb12u4) ...\r\n"}
+{"seconds": 8.578418016433716, "stream": "stdout", "data": "Selecting previously unselected package libgdbm6:arm64.\r\n"}
+{"seconds": 8.578991889953613, "stream": "stdout", "data": "Preparing to unpack .../1-libgdbm6_1.23-3_arm64.deb ...\r\n"}
+{"seconds": 8.581643104553223, "stream": "stdout", "data": "Unpacking libgdbm6:arm64 (1.23-3) ...\r\n"}
+{"seconds": 8.594475030899048, "stream": "stdout", "data": "Selecting previously unselected package libgdbm-compat4:arm64.\r\n"}
+{"seconds": 8.594861030578613, "stream": "stdout", "data": "Preparing to unpack .../2-libgdbm-compat4_1.23-3_arm64.deb ...\r\n"}
+{"seconds": 8.595800161361694, "stream": "stdout", "data": "Unpacking libgdbm-compat4:arm64 (1.23-3) ...\r\n"}
+{"seconds": 8.6093430519104, "stream": "stdout", "data": "Selecting previously unselected package libperl5.36:arm64.\r\n"}
+{"seconds": 8.609718084335327, "stream": "stdout", "data": "Preparing to unpack .../3-libperl5.36_5.36.0-7+deb12u4_arm64.deb ...\r\n"}
+{"seconds": 8.610576868057251, "stream": "stdout", "data": "Unpacking libperl5.36:arm64 (5.36.0-7+deb12u4) ...\r\n"}
+{"seconds": 8.801398038864136, "stream": "stdout", "data": "Selecting previously unselected package perl.\r\n"}
+{"seconds": 8.801995992660522, "stream": "stdout", "data": "Preparing to unpack .../4-perl_5.36.0-7+deb12u4_arm64.deb ...\r\n"}
+{"seconds": 8.804834127426147, "stream": "stdout", "data": "Unpacking perl (5.36.0-7+deb12u4) ...\r\n"}
+{"seconds": 8.827938079833984, "stream": "stdout", "data": "Selecting previously unselected package libssl3:arm64.\r\n"}
+{"seconds": 8.828701972961426, "stream": "stdout", "data": "Preparing to unpack .../5-libssl3_3.0.22-1~deb12u2_arm64.deb ...\r\n"}
+{"seconds": 8.8331458568573, "stream": "stdout", "data": "Unpacking libssl3:arm64 (3.0.22-1~deb12u2) ...\r\n"}
+{"seconds": 8.905427932739258, "stream": "stdout", "data": "Selecting previously unselected package libpython3.11-minimal:arm64.\r\n"}
+{"seconds": 8.90575885772705, "stream": "stdout", "data": "Preparing to unpack .../6-libpython3.11-minimal_3.11.2-6+deb12u9_arm64.deb ...\r\n"}
+{"seconds": 8.906645059585571, "stream": "stdout", "data": "Unpacking libpython3.11-minimal:arm64 (3.11.2-6+deb12u9) ...\r\n"}
+{"seconds": 8.950106859207153, "stream": "stdout", "data": "Selecting previously unselected package libexpat1:arm64.\r\n"}
+{"seconds": 8.95061182975769, "stream": "stdout", "data": "Preparing to unpack .../7-libexpat1_2.5.0-1+deb12u5_arm64.deb ...\r\n"}
+{"seconds": 8.951483964920044, "stream": "stdout", "data": "Unpacking libexpat1:arm64 (2.5.0-1+deb12u5) ...\r\n"}
+{"seconds": 8.965187072753906, "stream": "stdout", "data": "Selecting previously unselected package python3.11-minimal.\r\n"}
+{"seconds": 8.965574979782104, "stream": "stdout", "data": "Preparing to unpack .../8-python3.11-minimal_3.11.2-6+deb12u9_arm64.deb ...\r\n"}
+{"seconds": 8.967609167098999, "stream": "stdout", "data": "Unpacking python3.11-minimal (3.11.2-6+deb12u9) ...\r\n"}
+{"seconds": 9.054147005081177, "stream": "stdout", "data": "Setting up libssl3:arm64 (3.0.22-1~deb12u2) ...\r\n"}
+{"seconds": 9.056264877319336, "stream": "stdout", "data": "Setting up libpython3.11-minimal:arm64 (3.11.2-6+deb12u9) ...\r\n"}
+{"seconds": 9.063624858856201, "stream": "stdout", "data": "Setting up libexpat1:arm64 (2.5.0-1+deb12u5) ...\r\n"}
+{"seconds": 9.075520992279053, "stream": "stdout", "data": "Setting up python3.11-minimal (3.11.2-6+deb12u9) ...\r\n"}
+{"seconds": 9.503100872039795, "stream": "stdout", "data": "Selecting previously unselected package python3-minimal.\r\n(Reading database ... \r(Reading database ... 5%\r(Reading database ... 10%\r(Reading database ... 15%\r(Reading database ... 20%\r(Reading database ... 25%\r(Reading database ... 30%\r(Reading database ... 35%\r(Reading database ... 40%\r(Reading database ... 45%\r(Reading database ... 50%\r(Reading database ... 55%\r(Reading database ... 60%\r(Reading database ... 65%\r(Reading database ... 70%\r(Reading database ... 75%\r"}
+{"seconds": 9.50370192527771, "stream": "stdout", "data": "(Reading database ... 80%\r"}
+{"seconds": 9.50380802154541, "stream": "stdout", "data": "(Reading database ... 85%\r"}
+{"seconds": 9.503868818283081, "stream": "stdout", "data": "(Reading database ... 90%\r"}
+{"seconds": 9.503880977630615, "stream": "stdout", "data": "(Reading database ... 95%\r"}
+{"seconds": 9.50427794456482, "stream": "stdout", "data": "(Reading database ... 100%\r(Reading database ... 8429 files and directories currently installed.)\r\n"}
+{"seconds": 9.50446891784668, "stream": "stdout", "data": "Preparing to unpack .../00-python3-minimal_3.11.2-1+b1_arm64.deb ...\r\n"}
+{"seconds": 9.50897479057312, "stream": "stdout", "data": "Unpacking python3-minimal (3.11.2-1+b1) ...\r\n"}
+{"seconds": 9.518966913223267, "stream": "stdout", "data": "Selecting previously unselected package media-types.\r\n"}
+{"seconds": 9.519414901733398, "stream": "stdout", "data": "Preparing to unpack .../01-media-types_10.0.0_all.deb ...\r\n"}
+{"seconds": 9.520354986190796, "stream": "stdout", "data": "Unpacking media-types (10.0.0) ...\r\n"}
+{"seconds": 9.532419919967651, "stream": "stdout", "data": "Selecting previously unselected package libncursesw6:arm64.\r\n"}
+{"seconds": 9.533518075942993, "stream": "stdout", "data": "Preparing to unpack .../02-libncursesw6_6.4-4_arm64.deb ...\r\n"}
+{"seconds": 9.535101890563965, "stream": "stdout", "data": "Unpacking libncursesw6:arm64 (6.4-4) ...\r\n"}
+{"seconds": 9.551185846328735, "stream": "stdout", "data": "Selecting previously unselected package libkrb5support0:arm64.\r\n"}
+{"seconds": 9.551629066467285, "stream": "stdout", "data": "Preparing to unpack .../03-libkrb5support0_1.20.1-2+deb12u5_arm64.deb ...\r\n"}
+{"seconds": 9.552904844284058, "stream": "stdout", "data": "Unpacking libkrb5support0:arm64 (1.20.1-2+deb12u5) ...\r\n"}
+{"seconds": 9.56394076347351, "stream": "stdout", "data": "Selecting previously unselected package libk5crypto3:arm64.\r\n"}
+{"seconds": 9.564202070236206, "stream": "stdout", "data": "Preparing to unpack .../04-libk5crypto3_1.20.1-2+deb12u5_arm64.deb ...\r\n"}
+{"seconds": 9.565162897109985, "stream": "stdout", "data": "Unpacking libk5crypto3:arm64 (1.20.1-2+deb12u5) ...\r\n"}
+{"seconds": 9.579225778579712, "stream": "stdout", "data": "Selecting previously unselected package libkeyutils1:arm64.\r\n"}
+{"seconds": 9.579446077346802, "stream": "stdout", "data": "Preparing to unpack .../05-libkeyutils1_1.6.3-2_arm64.deb ...\r\n"}
+{"seconds": 9.580279111862183, "stream": "stdout", "data": "Unpacking libkeyutils1:arm64 (1.6.3-2) ...\r\n"}
+{"seconds": 9.589830875396729, "stream": "stdout", "data": "Selecting previously unselected package libkrb5-3:arm64.\r\n"}
+{"seconds": 9.590220928192139, "stream": "stdout", "data": "Preparing to unpack .../06-libkrb5-3_1.20.1-2+deb12u5_arm64.deb ...\r\n"}
+{"seconds": 9.59158706665039, "stream": "stdout", "data": "Unpacking libkrb5-3:arm64 (1.20.1-2+deb12u5) ...\r\n"}
+{"seconds": 9.614876985549927, "stream": "stdout", "data": "Selecting previously unselected package libgssapi-krb5-2:arm64.\r\n"}
+{"seconds": 9.615558862686157, "stream": "stdout", "data": "Preparing to unpack .../07-libgssapi-krb5-2_1.20.1-2+deb12u5_arm64.deb ...\r\n"}
+{"seconds": 9.617564916610718, "stream": "stdout", "data": "Unpacking libgssapi-krb5-2:arm64 (1.20.1-2+deb12u5) ...\r\n"}
+{"seconds": 9.629795789718628, "stream": "stdout", "data": "Selecting previously unselected package libtirpc-common.\r\n"}
+{"seconds": 9.630013942718506, "stream": "stdout", "data": "Preparing to unpack .../08-libtirpc-common_1.3.3+ds-1_all.deb ...\r\n"}
+{"seconds": 9.63093876838684, "stream": "stdout", "data": "Unpacking libtirpc-common (1.3.3+ds-1) ...\r\n"}
+{"seconds": 9.641160011291504, "stream": "stdout", "data": "Selecting previously unselected package libtirpc3:arm64.\r\n"}
+{"seconds": 9.641662836074829, "stream": "stdout", "data": "Preparing to unpack .../09-libtirpc3_1.3.3+ds-1_arm64.deb ...\r\n"}
+{"seconds": 9.642765998840332, "stream": "stdout", "data": "Unpacking libtirpc3:arm64 (1.3.3+ds-1) ...\r\n"}
+{"seconds": 9.658533811569214, "stream": "stdout", "data": "Selecting previously unselected package libnsl2:arm64.\r\n"}
+{"seconds": 9.658789873123169, "stream": "stdout", "data": "Preparing to unpack .../10-libnsl2_1.3.0-2_arm64.deb ...\r\n"}
+{"seconds": 9.659745931625366, "stream": "stdout", "data": "Unpacking libnsl2:arm64 (1.3.0-2) ...\r\n"}
+{"seconds": 9.670050144195557, "stream": "stdout", "data": "Selecting previously unselected package readline-common.\r\n"}
+{"seconds": 9.670509099960327, "stream": "stdout", "data": "Preparing to unpack .../11-readline-common_8.2-1.3_all.deb ...\r\n"}
+{"seconds": 9.673240900039673, "stream": "stdout", "data": "Unpacking readline-common (8.2-1.3) ...\r\n"}
+{"seconds": 9.686823844909668, "stream": "stdout", "data": "Selecting previously unselected package libreadline8:arm64.\r\n"}
+{"seconds": 9.687143802642822, "stream": "stdout", "data": "Preparing to unpack .../12-libreadline8_8.2-1.3_arm64.deb ...\r\n"}
+{"seconds": 9.689048767089844, "stream": "stdout", "data": "Unpacking libreadline8:arm64 (8.2-1.3) ...\r\n"}
+{"seconds": 9.706277847290039, "stream": "stdout", "data": "Selecting previously unselected package libsqlite3-0:arm64.\r\n"}
+{"seconds": 9.706714868545532, "stream": "stdout", "data": "Preparing to unpack .../13-libsqlite3-0_3.40.1-2+deb12u2_arm64.deb ...\r\n"}
+{"seconds": 9.707679033279419, "stream": "stdout", "data": "Unpacking libsqlite3-0:arm64 (3.40.1-2+deb12u2) ...\r\n"}
+{"seconds": 9.746798038482666, "stream": "stdout", "data": "Selecting previously unselected package libpython3.11-stdlib:arm64.\r\n"}
+{"seconds": 9.74721884727478, "stream": "stdout", "data": "Preparing to unpack .../14-libpython3.11-stdlib_3.11.2-6+deb12u9_arm64.deb ...\r\n"}
+{"seconds": 9.74899673461914, "stream": "stdout", "data": "Unpacking libpython3.11-stdlib:arm64 (3.11.2-6+deb12u9) ...\r\n"}
+{"seconds": 9.849327802658081, "stream": "stdout", "data": "Selecting previously unselected package python3.11.\r\n"}
+{"seconds": 9.849767923355103, "stream": "stdout", "data": "Preparing to unpack .../15-python3.11_3.11.2-6+deb12u9_arm64.deb ...\r\n"}
+{"seconds": 9.851327896118164, "stream": "stdout", "data": "Unpacking python3.11 (3.11.2-6+deb12u9) ...\r\n"}
+{"seconds": 9.866987943649292, "stream": "stdout", "data": "Selecting previously unselected package libpython3-stdlib:arm64.\r\n"}
+{"seconds": 9.867387771606445, "stream": "stdout", "data": "Preparing to unpack .../16-libpython3-stdlib_3.11.2-1+b1_arm64.deb ...\r\n"}
+{"seconds": 9.868343114852905, "stream": "stdout", "data": "Unpacking libpython3-stdlib:arm64 (3.11.2-1+b1) ...\r\n"}
+{"seconds": 9.879467964172363, "stream": "stdout", "data": "Setting up python3-minimal (3.11.2-1+b1) ...\r\n"}
+{"seconds": 9.938438892364502, "stream": "stdout", "data": "Selecting previously unselected package python3.\r\n(Reading database ... \r"}
+{"seconds": 9.938482999801636, "stream": "stdout", "data": "(Reading database ... 5%\r(Reading database ... 10%\r(Reading database ... 15%\r(Reading database ... 20%\r(Reading database ... 25%\r(Reading database ... 30%\r(Reading database ... 35%\r(Reading database ... 40%\r(Reading database ... 45%\r(Reading database ... 50%\r(Reading database ... 55%\r(Reading database ... 60%\r(Reading database ... 65%\r(Reading database ... 70%\r"}
+{"seconds": 9.938825845718384, "stream": "stdout", "data": "(Reading database ... 75%\r"}
+{"seconds": 9.9393630027771, "stream": "stdout", "data": "(Reading database ... 80%\r"}
+{"seconds": 9.939546823501587, "stream": "stdout", "data": "(Reading database ... 85%\r"}
+{"seconds": 9.93967890739441, "stream": "stdout", "data": "(Reading database ... 90%\r"}
+{"seconds": 9.93974781036377, "stream": "stdout", "data": "(Reading database ... 95%\r"}
+{"seconds": 9.94015383720398, "stream": "stdout", "data": "(Reading database ... 100%\r(Reading database ... 8937 files and directories currently installed.)\r\n"}
+{"seconds": 9.94033694267273, "stream": "stdout", "data": "Preparing to unpack .../00-python3_3.11.2-1+b1_arm64.deb ...\r\n"}
+{"seconds": 9.942286014556885, "stream": "stdout", "data": "Unpacking python3 (3.11.2-1+b1) ...\r\n"}
+{"seconds": 9.951217889785767, "stream": "stdout", "data": "Selecting previously unselected package libproc2-0:arm64.\r\n"}
+{"seconds": 9.95150113105774, "stream": "stdout", "data": "Preparing to unpack .../01-libproc2-0_2%3a4.0.2-3_arm64.deb ...\r\n"}
+{"seconds": 9.953466892242432, "stream": "stdout", "data": "Unpacking libproc2-0:arm64 (2:4.0.2-3) ...\r\n"}
+{"seconds": 9.966372728347778, "stream": "stdout", "data": "Selecting previously unselected package procps.\r\n"}
+{"seconds": 9.966600894927979, "stream": "stdout", "data": "Preparing to unpack .../02-procps_2%3a4.0.2-3_arm64.deb ...\r\n"}
+{"seconds": 9.970516920089722, "stream": "stdout", "data": "Unpacking procps (2:4.0.2-3) ...\r\n"}
+{"seconds": 10.008847951889038, "stream": "stdout", "data": "Selecting previously unselected package openssl.\r\nPreparing to unpack .../03-openssl_3.0.22-1~deb12u2_arm64.deb ...\r\n"}
+{"seconds": 10.009634971618652, "stream": "stdout", "data": "Unpacking openssl (3.0.22-1~deb12u2) ...\r\n"}
+{"seconds": 10.070969104766846, "stream": "stdout", "data": "Selecting previously unselected package ca-certificates.\r\n"}
+{"seconds": 10.07143497467041, "stream": "stdout", "data": "Preparing to unpack .../04-ca-certificates_20250419~deb12u2_all.deb ...\r\n"}
+{"seconds": 10.072180032730103, "stream": "stdout", "data": "Unpacking ca-certificates (20250419~deb12u2) ...\r\n"}
+{"seconds": 10.089688777923584, "stream": "stdout", "data": "Selecting previously unselected package libbrotli1:arm64.\r\n"}
+{"seconds": 10.09010100364685, "stream": "stdout", "data": "Preparing to unpack .../05-libbrotli1_1.0.9-2+deb12u1_arm64.deb ...\r\n"}
+{"seconds": 10.090937852859497, "stream": "stdout", "data": "Unpacking libbrotli1:arm64 (1.0.9-2+deb12u1) ...\r\n"}
+{"seconds": 10.120378971099854, "stream": "stdout", "data": "Selecting previously unselected package libsasl2-modules-db:arm64.\r\n"}
+{"seconds": 10.121254920959473, "stream": "stdout", "data": "Preparing to unpack .../06-libsasl2-modules-db_2.1.28+dfsg-10+deb12u1_arm64.deb ...\r\n"}
+{"seconds": 10.123331069946289, "stream": "stdout", "data": "Unpacking libsasl2-modules-db:arm64 (2.1.28+dfsg-10+deb12u1) ...\r\n"}
+{"seconds": 10.147816896438599, "stream": "stdout", "data": "Selecting previously unselected package libsasl2-2:arm64.\r\n"}
+{"seconds": 10.14879298210144, "stream": "stdout", "data": "Preparing to unpack .../07-libsasl2-2_2.1.28+dfsg-10+deb12u1_arm64.deb ...\r\n"}
+{"seconds": 10.150458812713623, "stream": "stdout", "data": "Unpacking libsasl2-2:arm64 (2.1.28+dfsg-10+deb12u1) ...\r\n"}
+{"seconds": 10.176910877227783, "stream": "stdout", "data": "Selecting previously unselected package libldap-2.5-0:arm64.\r\n"}
+{"seconds": 10.178035020828247, "stream": "stdout", "data": "Preparing to unpack .../08-libldap-2.5-0_2.5.13+dfsg-5_arm64.deb ...\r\n"}
+{"seconds": 10.181031942367554, "stream": "stdout", "data": "Unpacking libldap-2.5-0:arm64 (2.5.13+dfsg-5) ...\r\n"}
+{"seconds": 10.206284046173096, "stream": "stdout", "data": "Selecting previously unselected package libnghttp2-14:arm64.\r\n"}
+{"seconds": 10.206601858139038, "stream": "stdout", "data": "Preparing to unpack .../09-libnghttp2-14_1.52.0-1+deb12u3_arm64.deb ...\r\n"}
+{"seconds": 10.207673788070679, "stream": "stdout", "data": "Unpacking libnghttp2-14:arm64 (1.52.0-1+deb12u3) ...\r\n"}
+{"seconds": 10.220257043838501, "stream": "stdout", "data": "Selecting previously unselected package libpsl5:arm64.\r\n"}
+{"seconds": 10.220907926559448, "stream": "stdout", "data": "Preparing to unpack .../10-libpsl5_0.21.2-1_arm64.deb ...\r\n"}
+{"seconds": 10.22176480293274, "stream": "stdout", "data": "Unpacking libpsl5:arm64 (0.21.2-1) ...\r\n"}
+{"seconds": 10.234435081481934, "stream": "stdout", "data": "Selecting previously unselected package librtmp1:arm64.\r\n"}
+{"seconds": 10.235246896743774, "stream": "stdout", "data": "Preparing to unpack .../11-librtmp1_2.4+20151223.gitfa8646d.1-2+b2_arm64.deb ...\r\n"}
+{"seconds": 10.236324787139893, "stream": "stdout", "data": "Unpacking librtmp1:arm64 (2.4+20151223.gitfa8646d.1-2+b2) ...\r\n"}
+{"seconds": 10.249252796173096, "stream": "stdout", "data": "Selecting previously unselected package libssh2-1:arm64.\r\n"}
+{"seconds": 10.249605894088745, "stream": "stdout", "data": "Preparing to unpack .../12-libssh2-1_1.10.0-3+deb12u1_arm64.deb ...\r\n"}
+{"seconds": 10.25057578086853, "stream": "stdout", "data": "Unpacking libssh2-1:arm64 (1.10.0-3+deb12u1) ...\r\n"}
+{"seconds": 10.267719984054565, "stream": "stdout", "data": "Selecting previously unselected package libcurl4:arm64.\r\n"}
+{"seconds": 10.26819896697998, "stream": "stdout", "data": "Preparing to unpack .../13-libcurl4_7.88.1-10+deb12u15_arm64.deb ...\r\n"}
+{"seconds": 10.269475936889648, "stream": "stdout", "data": "Unpacking libcurl4:arm64 (7.88.1-10+deb12u15) ...\r\n"}
+{"seconds": 10.296135902404785, "stream": "stdout", "data": "Selecting previously unselected package curl.\r\n"}
+{"seconds": 10.29669189453125, "stream": "stdout", "data": "Preparing to unpack .../14-curl_7.88.1-10+deb12u15_arm64.deb ...\r\n"}
+{"seconds": 10.298640966415405, "stream": "stdout", "data": "Unpacking curl (7.88.1-10+deb12u15) ...\r\n"}
+{"seconds": 10.3228018283844, "stream": "stdout", "data": "Selecting previously unselected package libcurl3-gnutls:arm64.\r\n"}
+{"seconds": 10.323657035827637, "stream": "stdout", "data": "Preparing to unpack .../15-libcurl3-gnutls_7.88.1-10+deb12u15_arm64.deb ...\r\n"}
+{"seconds": 10.324782848358154, "stream": "stdout", "data": "Unpacking libcurl3-gnutls:arm64 (7.88.1-10+deb12u15) ...\r\n"}
+{"seconds": 10.347421884536743, "stream": "stdout", "data": "Selecting previously unselected package liberror-perl.\r\n"}
+{"seconds": 10.347959041595459, "stream": "stdout", "data": "Preparing to unpack .../16-liberror-perl_0.17029-2_all.deb ...\r\n"}
+{"seconds": 10.349891901016235, "stream": "stdout", "data": "Unpacking liberror-perl (0.17029-2) ...\r\n"}
+{"seconds": 10.360158920288086, "stream": "stdout", "data": "Selecting previously unselected package git-man.\r\n"}
+{"seconds": 10.360578060150146, "stream": "stdout", "data": "Preparing to unpack .../17-git-man_1%3a2.39.5-0+deb12u3_all.deb ...\r\n"}
+{"seconds": 10.36142110824585, "stream": "stdout", "data": "Unpacking git-man (1:2.39.5-0+deb12u3) ...\r\n"}
+{"seconds": 10.41673493385315, "stream": "stdout", "data": "Selecting previously unselected package git.\r\n"}
+{"seconds": 10.416949033737183, "stream": "stdout", "data": "Preparing to unpack .../18-git_1%3a2.39.5-0+deb12u3_arm64.deb ...\r\n"}
+{"seconds": 10.419407844543457, "stream": "stdout", "data": "Unpacking git (1:2.39.5-0+deb12u3) ...\r\n"}
+{"seconds": 10.626538038253784, "stream": "stdout", "data": "Setting up media-types (10.0.0) ...\r\n"}
+{"seconds": 10.630611896514893, "stream": "stdout", "data": "Setting up libkeyutils1:arm64 (1.6.3-2) ...\r\n"}
+{"seconds": 10.634422063827515, "stream": "stdout", "data": "Setting up libpsl5:arm64 (0.21.2-1) ...\r\n"}
+{"seconds": 10.638150930404663, "stream": "stdout", "data": "Setting up libtirpc-common (1.3.3+ds-1) ...\r\n"}
+{"seconds": 10.641475915908813, "stream": "stdout", "data": "Setting up libbrotli1:arm64 (1.0.9-2+deb12u1) ...\r\n"}
+{"seconds": 10.644229888916016, "stream": "stdout", "data": "Setting up libsqlite3-0:arm64 (3.40.1-2+deb12u2) ...\r\n"}
+{"seconds": 10.647960901260376, "stream": "stdout", "data": "Setting up libnghttp2-14:arm64 (1.52.0-1+deb12u3) ...\r\n"}
+{"seconds": 10.653031826019287, "stream": "stdout", "data": "Setting up libkrb5support0:arm64 (1.20.1-2+deb12u5) ...\r\n"}
+{"seconds": 10.65615200996399, "stream": "stdout", "data": "Setting up libsasl2-modules-db:arm64 (2.1.28+dfsg-10+deb12u1) ...\r\n"}
+{"seconds": 10.658470869064331, "stream": "stdout", "data": "Setting up perl-modules-5.36 (5.36.0-7+deb12u4) ...\r\n"}
+{"seconds": 10.662883758544922, "stream": "stdout", "data": "Setting up librtmp1:arm64 (2.4+20151223.gitfa8646d.1-2+b2) ...\r\n"}
+{"seconds": 10.666285037994385, "stream": "stdout", "data": "Setting up libproc2-0:arm64 (2:4.0.2-3) ...\r\n"}
+{"seconds": 10.669145822525024, "stream": "stdout", "data": "Setting up libncursesw6:arm64 (6.4-4) ...\r\n"}
+{"seconds": 10.671558856964111, "stream": "stdout", "data": "Setting up libk5crypto3:arm64 (1.20.1-2+deb12u5) ...\r\n"}
+{"seconds": 10.675112962722778, "stream": "stdout", "data": "Setting up libsasl2-2:arm64 (2.1.28+dfsg-10+deb12u1) ...\r\n"}
+{"seconds": 10.677242755889893, "stream": "stdout", "data": "Setting up procps (2:4.0.2-3) ...\r\n"}
+{"seconds": 10.690328121185303, "stream": "stdout", "data": "Setting up git-man (1:2.39.5-0+deb12u3) ...\r\n"}
+{"seconds": 10.693717002868652, "stream": "stdout", "data": "Setting up libssh2-1:arm64 (1.10.0-3+deb12u1) ...\r\n"}
+{"seconds": 10.696026802062988, "stream": "stdout", "data": "Setting up libkrb5-3:arm64 (1.20.1-2+deb12u5) ...\r\n"}
+{"seconds": 10.699984788894653, "stream": "stdout", "data": "Setting up openssl (3.0.22-1~deb12u2) ...\r\n"}
+{"seconds": 10.703688859939575, "stream": "stdout", "data": "Setting up readline-common (8.2-1.3) ...\r\n"}
+{"seconds": 10.707243919372559, "stream": "stdout", "data": "Setting up libgdbm6:arm64 (1.23-3) ...\r\n"}
+{"seconds": 10.709275960922241, "stream": "stdout", "data": "Setting up libreadline8:arm64 (8.2-1.3) ...\r\n"}
+{"seconds": 10.711437940597534, "stream": "stdout", "data": "Setting up libldap-2.5-0:arm64 (2.5.13+dfsg-5) ...\r\n"}
+{"seconds": 10.714797019958496, "stream": "stdout", "data": "Setting up ca-certificates (20250419~deb12u2) ...\r\n"}
+{"seconds": 10.74017596244812, "stream": "stdout", "data": "debconf: unable to initialize frontend: Dialog\r\ndebconf: (TERM is not set, so the dialog frontend is not usable.)\r\ndebconf: falling back to frontend: Readline\r\n"}
+{"seconds": 10.741868019104004, "stream": "stdout", "data": "debconf: unable to initialize frontend: Readline\r\ndebconf: (This frontend requires a controlling tty.)\r\ndebconf: falling back to frontend: Teletype\r\n"}
+{"seconds": 10.873024940490723, "stream": "stdout", "data": "Updating certificates in /etc/ssl/certs...\r\n"}
+{"seconds": 11.060991048812866, "stream": "stdout", "data": "148 added, 0 removed; done.\r\n"}
+{"seconds": 11.069823980331421, "stream": "stdout", "data": "Setting up libgssapi-krb5-2:arm64 (1.20.1-2+deb12u5) ...\r\n"}
+{"seconds": 11.074701070785522, "stream": "stdout", "data": "Setting up libgdbm-compat4:arm64 (1.23-3) ...\r\n"}
+{"seconds": 11.081526041030884, "stream": "stdout", "data": "Setting up libcurl4:arm64 (7.88.1-10+deb12u15) ...\r\n"}
+{"seconds": 11.083657026290894, "stream": "stdout", "data": "Setting up curl (7.88.1-10+deb12u15) ...\r\n"}
+{"seconds": 11.085773944854736, "stream": "stdout", "data": "Setting up libperl5.36:arm64 (5.36.0-7+deb12u4) ...\r\n"}
+{"seconds": 11.09040904045105, "stream": "stdout", "data": "Setting up libtirpc3:arm64 (1.3.3+ds-1) ...\r\n"}
+{"seconds": 11.094361782073975, "stream": "stdout", "data": "Setting up libcurl3-gnutls:arm64 (7.88.1-10+deb12u15) ...\r\n"}
+{"seconds": 11.09937596321106, "stream": "stdout", "data": "Setting up perl (5.36.0-7+deb12u4) ...\r\n"}
+{"seconds": 11.109945058822632, "stream": "stdout", "data": "Setting up libnsl2:arm64 (1.3.0-2) ...\r\n"}
+{"seconds": 11.11556601524353, "stream": "stdout", "data": "Setting up libpython3.11-stdlib:arm64 (3.11.2-6+deb12u9) ...\r\n"}
+{"seconds": 11.121609926223755, "stream": "stdout", "data": "Setting up liberror-perl (0.17029-2) ...\r\n"}
+{"seconds": 11.126996994018555, "stream": "stdout", "data": "Setting up git (1:2.39.5-0+deb12u3) ...\r\n"}
+{"seconds": 11.141223907470703, "stream": "stdout", "data": "Setting up libpython3-stdlib:arm64 (3.11.2-1+b1) ...\r\n"}
+{"seconds": 11.147908926010132, "stream": "stdout", "data": "Setting up python3.11 (3.11.2-6+deb12u9) ...\r\n"}
+{"seconds": 11.540523052215576, "stream": "stdout", "data": "Setting up python3 (3.11.2-1+b1) ...\r\n"}
+{"seconds": 11.548805952072144, "stream": "stdout", "data": "running python rtupdate hooks for python3.11...\r\nrunning python post-rtupdate hooks for python3.11...\r\n"}
+{"seconds": 11.620115995407104, "stream": "stdout", "data": "Processing triggers for libc-bin (2.36-9+deb12u14) ...\r\n"}
+{"seconds": 11.646782875061035, "stream": "stdout", "data": "Processing triggers for ca-certificates (20250419~deb12u2) ...\r\n"}
+{"seconds": 11.64889907836914, "stream": "stdout", "data": "Updating certificates in /etc/ssl/certs...\r\n"}
+{"seconds": 11.80257797241211, "stream": "stdout", "data": "0 added, 0 removed; done.\r\nRunning hooks in /etc/ca-certificates/update.d...\r\n"}
+{"seconds": 11.802969932556152, "stream": "stdout", "data": "done.\r\n"}
+{"seconds": 15.886991739273071, "stream": "stdout", "data": " ---> Removed intermediate container 18a9022587e6\n ---> aa14a3c27922\nStep 3/8 : RUN npm install -g @openai/codex@0.160.0 @anthropic-ai/claude-code@2.1.323\n"}
+{"seconds": 15.972072839736938, "stream": "stdout", "data": " ---> Running in d60a6c072dc0\n"}
+{"seconds": 42.774269819259644, "stream": "stdout", "data": "\nadded 4 packages in 27s\n\u001b[91mnpm warn install-scripts 1 package has install scripts not yet covered by allowScripts:\nnpm warn install-scripts   @anthropic-ai/claude-code@2.1.323 (postinstall: node install.cjs)\nnpm warn install-scripts\nnpm warn install-scripts Run `npm install -g --allow-scripts=@anthropic-ai/claude-code` to allow these scripts once, or `npm config set allow-scripts=@anthropic-ai/claude-code --location=user` to allow them for all global installs.\n\u001b[0m\u001b[91mnpm notice\nnpm notice New major version of npm available! 11.19.1 -> 12.2.2\nnpm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2\nnpm notice To update run: npm install -g npm@12.2.2\nnpm notice\n\u001b[0m"}
+{"seconds": 74.30472993850708, "stream": "stdout", "data": " ---> Removed intermediate container d60a6c072dc0\n ---> f960d996fe34\nStep 4/8 : RUN mkdir -p /workspace /capture && chmod 1777 /capture\n"}
+{"seconds": 74.5498149394989, "stream": "stdout", "data": " ---> Running in 6257fe8e2a81\n"}
+{"seconds": 75.75395107269287, "stream": "stdout", "data": " ---> Removed intermediate container 6257fe8e2a81\n ---> 4b74e44ea943\nStep 5/8 : WORKDIR /workspace\n"}
+{"seconds": 75.77620100975037, "stream": "stdout", "data": " ---> Running in 445dd8aa5db2\n"}
+{"seconds": 76.41756176948547, "stream": "stdout", "data": " ---> Removed intermediate container 445dd8aa5db2\n ---> 52e7c7fe8210\nStep 6/8 : ENV DO_NOT_TRACK=1 MCPJAM_TELEMETRY_DISABLED=1 DISABLE_AUTOUPDATER=1\n"}
+{"seconds": 76.51495814323425, "stream": "stdout", "data": " ---> Running in a14720cbea7e\n"}
+{"seconds": 77.2137930393219, "stream": "stdout", "data": " ---> Removed intermediate container a14720cbea7e\n ---> 8b10c8c6d8fd\nStep 7/8 : COPY shell_capture.py /usr/local/lib/shell_capture.py\n"}
+{"seconds": 77.81591081619263, "stream": "stdout", "data": " ---> 2d189985c316\nStep 8/8 : RUN mv /bin/bash /bin/bash.real && ln -s /usr/local/lib/shell_capture.py /bin/bash && chmod 755 /usr/local/lib/shell_capture.py\n"}
+{"seconds": 77.83338809013367, "stream": "stdout", "data": " ---> Running in fbc2af4c2661\n"}
+{"seconds": 78.48967504501343, "stream": "stdout", "data": " ---> Removed intermediate container fbc2af4c2661\n ---> c9656fab9ce3\n"}
+{"seconds": 78.49147391319275, "stream": "stdout", "data": "Successfully built c9656fab9ce3\n"}
+{"seconds": 78.49622774124146, "stream": "stdout", "data": "Successfully tagged mcpjam-harbor-agent:v1\n"}

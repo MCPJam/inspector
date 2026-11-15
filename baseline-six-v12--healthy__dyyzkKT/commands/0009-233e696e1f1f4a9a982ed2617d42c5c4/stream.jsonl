@@ -1,0 +1,2 @@
+{"seconds": 0.5512721538543701, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 0.6856014728546143, "stream": "stderr", "data": "{\"error\":{\"code\":\"FEATURE_NOT_SUPPORTED\",\"message\":\"Synthetic fixture executes deterministic toolCall steps and simple assertions only; hosted prompt/model execution is not implemented.\",\"details\":{\"reason\":\"fixture_unsupported_execution\"}}}\n"}

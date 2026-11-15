@@ -1,0 +1,3 @@
+{"seconds": 0.42534470558166504, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 0.6444370746612549, "stream": "stderr", "data": "Eval idempotency key: eca8aa36-b6d7-47da-b173-db653290922e\n"}
+{"seconds": 0.7813930511474609, "stream": "stderr", "data": "{\"error\":{\"code\":\"INTERNAL_ERROR\",\"message\":\"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\\nRetry this launch with --idempotency-key eca8aa36-b6d7-47da-b173-db653290922e.\",\"details\":{\"idempotencyKey\":\"eca8aa36-b6d7-47da-b173-db653290922e\"}}}\n"}

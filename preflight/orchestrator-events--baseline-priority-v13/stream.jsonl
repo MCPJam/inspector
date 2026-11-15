@@ -1,0 +1,18 @@
+{"seconds": 1017.336015701294, "stream": "stdout", "data": "  12/12 Mean: 0.500 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:16:54 0:00:00"}
+{"seconds": 1017.3365969657898, "stream": "stdout", "data": "\n"}
+{"seconds": 1017.33935379982, "stream": "stdout", "data": "adhoc • codex • gpt-6.1-sol\n"}
+{"seconds": 1017.3397796154022, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃ Pass@2 ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩\n│      6 │          0 │ 0.500 │  0.500 │\n└────────┴────────────┴───────┴────────┘\n"}
+{"seconds": 1017.3398118019104, "stream": "stdout", "data": "\n"}
+{"seconds": 1017.3401257991791, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 1.0    │     3 │\n│ 0.0    │     3 │\n└────────┴───────┘\n"}
+{"seconds": 1017.3401758670807, "stream": "stdout", "data": "\n"}
+{"seconds": 1017.3403127193451, "stream": "stdout", "data": "adhoc • claude-code • claude-sonnet-5-5\n"}
+{"seconds": 1017.340616941452, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃ Pass@2 ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩\n│      6 │          0 │ 0.167 │  0.333 │\n└────────┴────────────┴───────┴────────┘\n"}
+{"seconds": 1017.3406808376312, "stream": "stdout", "data": "\n"}
+{"seconds": 1017.3408808708191, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 0.0    │     5 │\n│ 1.0    │     1 │\n└────────┴───────┘\n"}
+{"seconds": 1017.3409647941589, "stream": "stdout", "data": "\n"}
+{"seconds": 1017.3410339355469, "stream": "stdout", "data": "Job Info\n"}
+{"seconds": 1017.3410906791687, "stream": "stdout", "data": "Total runtime: 16m 54s\n"}
+{"seconds": 1017.341276884079, "stream": "stdout", "data": "Results written to \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/baseline-priority-v13/result.json\n"}
+{"seconds": 1017.3413796424866, "stream": "stdout", "data": "Inspect results by running `harbor view \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs`\n"}
+{"seconds": 1017.3414857387543, "stream": "stdout", "data": "Share results by running `harbor upload \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/baseline-priority-v13`\n"}
+{"seconds": 1017.3415048122406, "stream": "stdout", "data": "\n"}

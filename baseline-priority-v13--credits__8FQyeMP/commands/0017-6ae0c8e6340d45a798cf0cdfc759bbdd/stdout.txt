@@ -1,0 +1,5 @@
+/usage 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/credits 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/billing 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/projects 200 {"items": [{"id": "project_fixture", "name": "Fixture", "sensitive_value": "[REDACTED]", "createdAt": 1, "updatedAt": 2}]}
+/account 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

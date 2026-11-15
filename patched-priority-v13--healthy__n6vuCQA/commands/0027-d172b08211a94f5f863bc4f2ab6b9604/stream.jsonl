@@ -1,0 +1,10 @@
+{"seconds": 0.006494045257568359, "stream": "stdout", "data": "{\"code\": \"FEATURE_NOT_SUPPORTED\", \"message\": \"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\", \"details\": {\"reason\": \"fixture_unsupported_execution\"}}"}
+{"seconds": 0.006917476654052734, "stream": "stdout", "data": "\n"}
+{"seconds": 0.014053821563720703, "stream": "stderr", "data": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nKeyError: 'runId'\n"}
+{"seconds": 4.0260984897613525, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\n"}
+{"seconds": 8.043117761611938, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\n"}
+{"seconds": 12.0548574924469, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\n"}
+{"seconds": 16.072821378707886, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\n"}
+{"seconds": 20.083842039108276, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\n"}
+{"seconds": 24.091038703918457, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\n"}
+{"seconds": 24.096579551696777, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\n"}

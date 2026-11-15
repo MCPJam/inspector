@@ -1,0 +1,3 @@
+Using CPython 3.12.13
+Creating virtual environment at: work/venv
+Activate with: source work/venv/bin/activate

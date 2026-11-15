@@ -1,0 +1,327 @@
+ProjectServerCreateRequest {
+  "type": "object",
+  "description": "Creates a saved server in the project. Server names are unique per workspace \u2014 a clash responds `409`. Scope comes from the path: `projectId`, `serverId` and `workspaceId` are rejected in the body.",
+  "required": [
+    "name",
+    "enabled",
+    "transportType"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "transportType": {
+      "type": "string",
+      "enum": [
+        "stdio",
+        "http"
+      ]
+    },
+    "command": {
+      "type": "string",
+      "description": "stdio transport only."
+    },
+    "args": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Stored encrypted; never returned by any read."
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "http transport only."
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Stored encrypted; never returned by any read."
+    },
+    "hasBearerToken": {
+      "type": "boolean"
+    },
+    "timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "clientCapabilities": {
+      "description": "Opaque MCP client capabilities bag."
+    },
+    "useOAuth": {
+      "type": "boolean"
+    },
+    "oauthScopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "clientId": {
+      "type": "string"
+    },
+    "oauthResourceUrl": {
+      "type": "string"
+    },
+    "oauthProtocolMode": {
+      "type": "string"
+    },
+    "oauthProtocolVersion": {
+      "type": "string"
+    },
+    "oauthRegistrationStrategy": {
+      "type": "string"
+    },
+    "xaaAuthzIssuer": {
+      "type": "string"
+    },
+    "xaaAllowPathScopedIssuer": {
+      "type": "boolean"
+    },
+    "oauthAllowPathScopedIssuer": {
+      "type": "boolean"
+    },
+    "useXaa": {
+      "type": "boolean"
+    },
+    "authServerMode": {
+      "type": "string",
+      "enum": [
+        "mcpjam",
+        "own"
+      ]
+    },
+    "xaaSubject": {
+      "type": "string"
+    },
+    "xaaEmail": {
+      "type": "string"
+    },
+    "xaaIdentityAssertionFormat": {
+      "type": "string"
+    },
+    "xaaClientAuth": {
+      "type": "string"
+    },
+    "authMethod": {
+      "type": "string"
+    },
+    "registrationMode": {
+      "type": "string"
+    },
+    "clientSecret": {
+      "type": "string",
+      "description": "Stored encrypted; never returned. Reads expose only `hasClientSecret`."
+    }
+  }
+}
+EvalSuiteFromFileRequest {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "declaredSuiteId",
+    "name",
+    "sourceHash"
+  ],
+  "description": "Declared identity and hosted settings for a file-owned suite. The inspector parses the suite file; this is not the raw file.",
+  "properties": {
+    "declaredSuiteId": {
+      "type": "string",
+      "description": "The file's `suite.id`. Lookup is by this id within the project, never by name."
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "sourceHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hex of the suite-file bytes. Lowercase, 64 characters."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceHash",
+        "sourceFormat",
+        "reportHash"
+      ],
+      "properties": {
+        "sourceHash": {
+          "type": "string"
+        },
+        "sourceFormat": {
+          "type": "string"
+        },
+        "sourceFormatVersion": {
+          "type": "string"
+        },
+        "converter": {
+          "type": "string"
+        },
+        "converterVersion": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "discoverySnapshotHash": {
+          "type": "string"
+        },
+        "reportHash": {
+          "type": "string"
+        },
+        "importedAt": {
+          "type": "string"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "servers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "serverBindings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "serverName"
+            ],
+            "properties": {
+              "serverName": {
+                "type": "string"
+              },
+              "projectServerId": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "defaultConfig": {
+      "type": "object",
+      "required": [
+        "modelId",
+        "systemPrompt",
+        "temperature"
+      ],
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "systemPrompt": {
+          "type": "string"
+        },
+        "temperature": {
+          "type": "number"
+        }
+      }
+    },
+    "verdictPolicyVersion": {
+      "const": 2,
+      "description": "Verdict policy version used by the suite file. Must be supplied with verdictPolicyDefaults."
+    },
+    "verdictPolicyDefaults": {
+      "type": "object",
+      "required": [
+        "repetitions",
+        "passThreshold"
+      ],
+      "properties": {
+        "repetitions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "passThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "validity": {
+          "type": "object",
+          "properties": {
+            "minEligibleTrials": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minCompletionRate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maxEvaluatorErrorRate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "minIterations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "defaultPassCriteria": {
+      "type": "object",
+      "description": "The floor a run must clear, as a PERCENT in [0, 100] \u2014 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
+      "properties": {
+        "minimumPassRatePercent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included \u2014 the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+        },
+        "minimumPassRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "deprecated": true,
+          "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here \u2014 it reads as a fraction sent by mistake \u2014 which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+          "not": {
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 1
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "minimumPassRatePercent"
+          ]
+        },
+        {
+          "required": [
+            "minimumPassRate"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

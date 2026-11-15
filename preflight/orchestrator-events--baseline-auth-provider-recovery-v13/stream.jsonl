@@ -1,0 +1,13 @@
+{"seconds": 76.11107206344604, "stream": "stdout", "data": "  1/1 Mean: 1.000 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:01:13 0:00:00"}
+{"seconds": 76.11153507232666, "stream": "stdout", "data": "\n"}
+{"seconds": 76.11281418800354, "stream": "stdout", "data": "adhoc • claude-code • claude-sonnet-5-5\n"}
+{"seconds": 76.11310529708862, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩\n│      1 │          0 │ 1.000 │\n└────────┴────────────┴───────┘\n"}
+{"seconds": 76.11313509941101, "stream": "stdout", "data": "\n"}
+{"seconds": 76.11339521408081, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 1.0    │     1 │\n└────────┴───────┘\n"}
+{"seconds": 76.11341905593872, "stream": "stdout", "data": "\n"}
+{"seconds": 76.11355710029602, "stream": "stdout", "data": "Job Info\n"}
+{"seconds": 76.11364030838013, "stream": "stdout", "data": "Total runtime: 1m 13s\n"}
+{"seconds": 76.11377930641174, "stream": "stdout", "data": "Results written to \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/baseline-auth-provider-recovery-v13/result.json\n"}
+{"seconds": 76.11388325691223, "stream": "stdout", "data": "Inspect results by running `harbor view \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs`\n"}
+{"seconds": 76.11398816108704, "stream": "stdout", "data": "Share results by running `harbor upload \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/baseline-auth-provider-recovery-v13`\n"}
+{"seconds": 76.11401438713074, "stream": "stdout", "data": "\n"}

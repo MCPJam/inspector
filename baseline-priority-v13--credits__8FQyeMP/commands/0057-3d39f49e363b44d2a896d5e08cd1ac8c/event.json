@@ -1,0 +1,22 @@
+{
+  "event_id": "3d39f49e363b44d2a896d5e08cd1ac8c",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 /workspace/mcp-evaluation/api.py POST /projects/project_fixture/eval-runs '{\"suiteId\":\"suite_fixture\",\"serverIds\":[\"server_fixture\"]}'"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:12:34.615302+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.025244712829589844,
+  "end": "2026-11-15T02:12:34.640499+00:00"
+}

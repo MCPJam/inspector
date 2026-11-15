@@ -1,0 +1,95 @@
+Usage: mcpjam cloud [options] [command]
+
+MCPJam Cloud account commands (login, projects, evals, tunnels). Local MCP
+testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam
+cloud login` is your MCPJam account.
+
+Options:
+  --api-key <key>               MCPJam sk_ API key (overrides MCPJAM_API_KEY)
+  --api-url <url>               MCPJam API base URL (defaults to your
+                                organization's server or
+                                https://app.mcpjam.com/api/v1)
+  --api-header <header...>      Extra request header for a deployment behind an
+                                edge authenticator, as "Name: value"
+                                (repeatable; also MCPJAM_API_HEADERS,
+                                newline-separated)
+  -h, --help                    display help for command
+
+Account:
+  login [options]               Log in to MCPJam Cloud. Opens your browser for
+                                OAuth and stores the session locally.
+  logout                        Remove the stored MCPJam Cloud login.
+  whoami                        Show the MCPJam Cloud account behind the current
+                                credentials.
+  status                        Show how this CLI would authenticate and which
+                                Cloud project it would use, without calling the
+                                network.
+  link [options] [project]      Pin this directory to a Cloud project by writing
+                                .mcpjam/project.json. The file contains no
+                                secrets and is committed by default;
+                                per-developer setups may gitignore it.
+
+Workspace:
+  organizations|orgs            Inspect the MCPJam organizations you belong to
+  projects                      Operate the MCP servers saved in your hosted
+                                MCPJam projects
+  sessions                      List Playground chat sessions, or search
+                                conversations across Playground, user testing,
+                                evals and swarms.
+  tunnel [options] [target...]  Expose a local MCP server through an MCPJam
+                                tunnel and register it as a server in your
+                                project
+
+Eval and environments:
+  eval                          Author and run eval suites in your hosted MCPJam
+                                projects
+  clients|hosts                 List, create, and manage the clients in your
+                                hosted MCPJam projects
+  environments                  List, create, and manage the project
+                                environments (host + servers + pinned
+                                skills/plugins) in your hosted MCPJam projects
+  secrets                       Store and manage the project credentials a
+                                workflow needs (stripe, gh, psql). Write-only:
+                                no command prints a value.
+  server-accounts               Manage the accounts a saved server signs in with
+                                for hosted runs. Write-only: no command prints a
+                                token.
+  images                        List, build, and manage custom Computer sandbox
+                                images (blueprints) in your hosted MCPJam
+                                projects
+  skills                        List and read the Cloud Skills in your hosted
+                                MCPJam projects (read-only; authoring lives in
+                                the app)
+
+Conformance:
+  conformance                   Hosted conformance runs on saved servers: start,
+                                poll, read failures
+
+Observability:
+  trace-destinations|traces     Stream an organization's traces to an OTLP/HTTP
+                                endpoint (Coralogix, Honeycomb, Grafana, a
+                                collector). Header values are write-only: no
+                                command prints one.
+
+Swarms and user testing:
+  goals|journeys                List goals and inspect their runs (the Swarms
+                                product) in your hosted MCPJam projects
+  personas                      The reusable synthetic characters Swarms goals
+                                run as. A persona carries a name, a role and
+                                behavioural notes; the task lives on each goal.
+  swarms                        Swarm containers group goals authored together
+                                and hold their shared execution config. A goal
+                                does not need one, but a project authored
+                                through the app will have them.
+  studies|scenarios             Publish project environments as studies, read
+                                what testers did, and control who can reach them
+
+Support:
+  feedback [options]            Send feedback about MCPJam itself (a bug, a
+                                missing capability, something confusing) to the
+                                MCPJam team. Your text is sent to the MCPJam
+                                team, outside your organization, and stored for
+                                180 days. Requires a signed-in account.
+
+Commands:
+  help [command]                display help for command

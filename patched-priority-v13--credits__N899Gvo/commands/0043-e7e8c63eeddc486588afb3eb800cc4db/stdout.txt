@@ -1,0 +1,164 @@
+/workspace/mcpjam-eval/pay-iteration.md-4-
+/workspace/mcpjam-eval/pay-iteration.md-5-# Pay for one local eval iteration
+/workspace/mcpjam-eval/pay-iteration.md-6-
+/workspace/mcpjam-eval/pay-iteration.md:7:> Collect the declared prompt fee and reserve one iteration atomically before execution. Retries with the same identity reuse the receipt; changed requests conflict. Uploads claim the payment without charging again.
+/workspace/mcpjam-eval/pay-iteration.md-8-
+/workspace/mcpjam-eval/pay-iteration.md-9-
+/workspace/mcpjam-eval/pay-iteration.md-10-
+--
+/workspace/mcpjam-eval/pay-iteration.md-144-      Anthropic's connector directory or OpenAI's plugin directory. Reported as
+/workspace/mcpjam-eval/pay-iteration.md-145-      lane status and coverage, never as a numeric score, and excluded from
+/workspace/mcpjam-eval/pay-iteration.md-146-      `pooledConformanceScore`. Deterministic grading is free; model-backed
+/workspace/mcpjam-eval/pay-iteration.md:147:      experience observations are an explicit opt-in whose model cost is on
+/workspace/mcpjam-eval/pay-iteration.md:148:      MCPJam — no credits are consumed — and they can never decide a verdict.
+/workspace/mcpjam-eval/pay-iteration.md-149-  - name: Registry
+/workspace/mcpjam-eval/pay-iteration.md-150-    description: >-
+/workspace/mcpjam-eval/pay-iteration.md-151-      Search the scraped MCP directories (Claude, ChatGPT, and any future
+--
+/workspace/mcpjam-eval/pay-iteration.md-155-      instead. Directory reads require a bearer (including minted guest tokens)
+/workspace/mcpjam-eval/pay-iteration.md-156-      but do not materialize a user. Card/connection reads and all writes are
+/workspace/mcpjam-eval/pay-iteration.md-157-      authed-non-guest.
+/workspace/mcpjam-eval/pay-iteration.md:158:  - name: Feedback
+/workspace/mcpjam-eval/pay-iteration.md-159-    description: >-
+/workspace/mcpjam-eval/pay-iteration.md:160:      Feedback about MCPJam itself (bugs, missing capabilities, confusing
+/workspace/mcpjam-eval/pay-iteration.md-161-      behavior), sent to the MCPJam team and kept for 180 days. The
+/workspace/mcpjam-eval/pay-iteration.md:162:      `send_feedback` MCP tool calls the same endpoint.
+/workspace/mcpjam-eval/pay-iteration.md-163-paths:
+/workspace/mcpjam-eval/pay-iteration.md-164-  /projects/{projectId}/eval-ingest/pay-iteration:
+/workspace/mcpjam-eval/pay-iteration.md-165-    post:
+--
+/workspace/mcpjam-eval/pay-iteration.md-167-        - Eval runs
+/workspace/mcpjam-eval/pay-iteration.md-168-      summary: Pay for one local eval iteration
+/workspace/mcpjam-eval/pay-iteration.md-169-      description: >-
+/workspace/mcpjam-eval/pay-iteration.md:170:        Collect the declared prompt fee and reserve one iteration atomically
+/workspace/mcpjam-eval/pay-iteration.md-171-        before execution. Retries with the same identity reuse the receipt;
+/workspace/mcpjam-eval/pay-iteration.md-172-        changed requests conflict. Uploads claim the payment without charging
+/workspace/mcpjam-eval/pay-iteration.md-173-        again.
+--
+/workspace/mcpjam-eval/pay-iteration.md-227-        '429':
+/workspace/mcpjam-eval/pay-iteration.md-228-          description: Organization limit reached.
+/workspace/mcpjam-eval/pay-iteration.md-229-        '503':
+/workspace/mcpjam-eval/pay-iteration.md:230:          description: Billing unavailable.
+/workspace/mcpjam-eval/pay-iteration.md-231-components:
+/workspace/mcpjam-eval/pay-iteration.md-232-  securitySchemes:
+/workspace/mcpjam-eval/pay-iteration.md-233-    bearerAuth:
+--
+/workspace/mcpjam-eval/evals.md-186-forty-minute run is never mistaken for the run itself. Long runs that routinely
+/workspace/mcpjam-eval/evals.md-187-cap are the signal to shorten the case rather than to distrust the video.
+/workspace/mcpjam-eval/evals.md-188-
+/workspace/mcpjam-eval/evals.md:189:A run that never uses a browser tool records nothing, and costs nothing.
+/workspace/mcpjam-eval/evals.md-190-
+/workspace/mcpjam-eval/evals.md-191-Assertions are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
+/workspace/mcpjam-eval/evals.md-192-
+--
+/workspace/mcpjam-eval/evals.md-205-| **Widget rendered** | The named widget was rendered during the turn. | Turn or case |
+/workspace/mcpjam-eval/evals.md-206-| **Widget render latency under N** | The widget rendered within the specified milliseconds. | Turn or case |
+/workspace/mcpjam-eval/evals.md-207-| **Widget no console errors** | The widget rendered without console errors. | Turn or case |
+/workspace/mcpjam-eval/evals.md:208:| **Token budget under N** | Total token usage stayed below the cap. | Case only |
+/workspace/mcpjam-eval/evals.md-209-
+/workspace/mcpjam-eval/evals.md:210:When an assertion is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other assertions are turn-scopable.
+/workspace/mcpjam-eval/evals.md-211-
+/workspace/mcpjam-eval/evals.md-212-> [!NOTE]
+/workspace/mcpjam-eval/evals.md-213->
+--
+/workspace/mcpjam-eval/evals.md-215-> what the suite normally uses, it is in a unit that is not comparable across
+/workspace/mcpjam-eval/evals.md-216-> models, and it goes stale on every prompt or model change. `Token budget under
+/workspace/mcpjam-eval/evals.md-217->   N` remains a valid assertion and keeps working wherever it is already authored,
+/workspace/mcpjam-eval/evals.md:218:> but for spend, two things replace it: [cost on every run](#cost), which shows
+/workspace/mcpjam-eval/evals.md:219:> what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
+/workspace/mcpjam-eval/evals.md-220-> when a change makes the suite more expensive relative to its own baseline. For
+/workspace/mcpjam-eval/evals.md-221-> a ceiling on what the whole organization may spend, see the [spend
+/workspace/mcpjam-eval/evals.md-222-> budget](https://docs.mcpjam.com/hosted/overview.md#spend-budget).
+--
+/workspace/mcpjam-eval/evals.md-300-
+/workspace/mcpjam-eval/evals.md-301-> [!TIP]
+/workspace/mcpjam-eval/evals.md-302->
+/workspace/mcpjam-eval/evals.md:303:> If **Run all** is disabled, no models are selected or a run for that suite is already in progress. For non-environment suites, a missing connected server also disables it. When every model the suite would run is out of MCPJam credits, **Run all** and each case's **Run** button are disabled with an "Out of MCPJam credits · resets in …" tooltip — switching any case to a model from your own providers re-enables those buttons. The header pickers will tell you which condition applies.
+/workspace/mcpjam-eval/evals.md-304-
+/workspace/mcpjam-eval/evals.md-305-### Run review
+/workspace/mcpjam-eval/evals.md-306-
+/workspace/mcpjam-eval/evals.md-307-When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
+/workspace/mcpjam-eval/evals.md-308-
+/workspace/mcpjam-eval/evals.md:309:### Pre-run credit estimate
+/workspace/mcpjam-eval/evals.md-310-
+/workspace/mcpjam-eval/evals.md:311:When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
+/workspace/mcpjam-eval/evals.md-312-
+/workspace/mcpjam-eval/evals.md-313-The estimate appears on:
+/workspace/mcpjam-eval/evals.md-314-
+--
+/workspace/mcpjam-eval/evals.md-321-
+/workspace/mcpjam-eval/evals.md-322-| Copy | Meaning |
+/workspace/mcpjam-eval/evals.md-323-| - | - |
+/workspace/mcpjam-eval/evals.md:324:| Estimated: \~N credits — based on your recent runs | Full coverage, grounded in your own run history |
+/workspace/mcpjam-eval/evals.md:325:| Estimated: \~N credits — partly based on recent runs | Full coverage, partially grounded in history |
+/workspace/mcpjam-eval/evals.md:326:| Rough estimate: \~N credits — improves after first run | Full coverage, heuristic only (no history yet) |
+/workspace/mcpjam-eval/evals.md:327:| At least \~N credits — part of this run is unpriced | Some models or run slices could not be priced |
+/workspace/mcpjam-eval/evals.md-328-| Estimate unavailable for these models | No pricing data available |
+/workspace/mcpjam-eval/evals.md-329-
+/workspace/mcpjam-eval/evals.md:330:1 credit = \$0.01. Your free daily allowance and any BYOK keys change what is actually deducted. The estimate is informational only — it never blocks or gates a run.
+/workspace/mcpjam-eval/evals.md-331-
+/workspace/mcpjam-eval/evals.md-332-### Frozen execution snapshots
+/workspace/mcpjam-eval/evals.md-333-
+--
+/workspace/mcpjam-eval/evals.md-554-### Suite view
+/workspace/mcpjam-eval/evals.md-555-
+/workspace/mcpjam-eval/evals.md-556-* **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
+/workspace/mcpjam-eval/evals.md:557:* **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole. The model pass is **included with MCPJam and consumes no credits**; it counts against a daily insight quota shared with swarm wave and user-testing insights. Guests browsing without a signed-in account will see a **Sign in** prompt in the insights band — signing in unlocks the feature without losing your place.
+/workspace/mcpjam-eval/evals.md-558-* **Overview tab** — every run with its summary metrics, plus a Suite Health chart whose bars link to individual run rows. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**, with separate **Client**, **Model**, **Platform**, **Commit**, **Rate**, **Latency**, **Tokens**, and **Calls** columns. The Client column counts unique clients; when there are more than two, a **+N** badge appears — hover it to see all clients in a tooltip.
+/workspace/mcpjam-eval/evals.md-559-* **Cases tab** — every case with its latest verdict and a quick replay button. To delete a case, hover its row and click the trash icon; a confirmation dialog appears before the case is removed. The trash icon is hidden for CI-managed suites and read-only configurations. You can also delete the open case from the case editor header using the same trash icon — it is hidden for unsaved drafts.
+/workspace/mcpjam-eval/evals.md-560-* **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
+--
+/workspace/mcpjam-eval/evals.md-592-
+/workspace/mcpjam-eval/evals.md-593-#### Cross-host matrix
+/workspace/mcpjam-eval/evals.md-594-
+/workspace/mcpjam-eval/evals.md:595:When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
+/workspace/mcpjam-eval/evals.md-596-
+/workspace/mcpjam-eval/evals.md:597:### Cost
+/workspace/mcpjam-eval/evals.md-598-
+/workspace/mcpjam-eval/evals.md:599:Every iteration carries the MCPJam-billed cost of the model work it did,
+/workspace/mcpjam-eval/evals.md-600-priced when the trial finished and stamped with the rates used — so a run's
+/workspace/mcpjam-eval/evals.md:601:cost does not move later when prices change. It rolls up onto cases, runs and
+/workspace/mcpjam-eval/evals.md-602-the metric strip.
+/workspace/mcpjam-eval/evals.md-603-
+/workspace/mcpjam-eval/evals.md:604:A dash (`—`) means **no cost was observed**, never that the trial was free:
+/workspace/mcpjam-eval/evals.md-605-
+/workspace/mcpjam-eval/evals.md-606-| Why | What you see |
+/workspace/mcpjam-eval/evals.md-607-| - | - |
+/workspace/mcpjam-eval/evals.md:608:| Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
+/workspace/mcpjam-eval/evals.md:609:| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
+/workspace/mcpjam-eval/evals.md:610:| No token usage reported | Nothing to price. |
+/workspace/mcpjam-eval/evals.md-611-
+/workspace/mcpjam-eval/evals.md:612:A cost your own SDK runner reported is shown but labelled **runner** — it is
+/workspace/mcpjam-eval/evals.md-613-real, but MCPJam neither computed nor verified it.
+/workspace/mcpjam-eval/evals.md-614-
+/workspace/mcpjam-eval/evals.md-615-When only some of a run's trials were priced, the total says so. That
+/workspace/mcpjam-eval/evals.md-616-distinction matters most in CI: a run that looks cheaper may simply be a run
+/workspace/mcpjam-eval/evals.md-617-we priced less of, which is why the compare API reports coverage counts
+/workspace/mcpjam-eval/evals.md:618:alongside the cost and a cost gate treats partial coverage as non-gateable
+/workspace/mcpjam-eval/evals.md-619-rather than as a pass.
+/workspace/mcpjam-eval/evals.md-620-
+/workspace/mcpjam-eval/evals.md-621-### Run view
+--
+/workspace/mcpjam-eval/evals.md-639-
+/workspace/mcpjam-eval/evals.md-640-For CI-managed (SDK) suites, clicking a test name still opens the definition in read-only mode — configuration edits remain locked, but you can inspect the prompt and checks.
+/workspace/mcpjam-eval/evals.md-641-
+/workspace/mcpjam-eval/evals.md:642:* **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
+/workspace/mcpjam-eval/evals.md-643-* **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
+/workspace/mcpjam-eval/evals.md-644-  * **Missing** — expected tool calls that were never made
+/workspace/mcpjam-eval/evals.md-645-  * **Extra** — actual calls that weren't expected (reported but non-fatal by default)
+--
+/workspace/mcpjam-eval/evals.md-653-
+/workspace/mcpjam-eval/evals.md-654-#### Comparing two runs
+/workspace/mcpjam-eval/evals.md-655-
+/workspace/mcpjam-eval/evals.md:656:Select any two completed runs and click **Compare**. The diff view shows per-case status changes: **Passed**, **Still failing**, **Regressed** (pass→fail), **Fixed** (fail→pass), **New**, **Removed**, and **Changed** (config differed). Summary metrics show deltas for tokens, cost, and duration. In the per-run comparison table, metric deltas (pass rate, P50, P95, tokens) appear inline beside their value rather than in separate Δ columns. Pass-rate movement is shown as a percentage delta (for example, `+10%`).
+/workspace/mcpjam-eval/evals.md-657-
+/workspace/mcpjam-eval/evals.md-658-### Case view
+/workspace/mcpjam-eval/evals.md-659-
+--
+/workspace/mcpjam-eval/evals.md-742-
+/workspace/mcpjam-eval/evals.md-743-1. Attach the server you're shipping.
+/workspace/mcpjam-eval/evals.md-744-2. **Generate** a starting set of cases.
+/workspace/mcpjam-eval/evals.md:745:3. Delete the ones that don't match real usage; tighten assertions on the rest.
+/workspace/mcpjam-eval/evals.md-746-4. Add the two or three models your users will hit.
+/workspace/mcpjam-eval/evals.md-747-5. **Run all**, open the failures, and decide whether the bug is in your server, your prompt, or the model.
+/workspace/mcpjam-eval/evals.md-748-

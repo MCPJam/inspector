@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@mcpjam/cli": "^6.2.2",
+    "@mcpjam/sdk": "^10.7.0"
+  }
+}

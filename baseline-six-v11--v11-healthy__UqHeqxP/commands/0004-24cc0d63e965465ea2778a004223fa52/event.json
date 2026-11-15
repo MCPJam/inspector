@@ -1,0 +1,22 @@
+{
+  "event_id": "24cc0d63e965465ea2778a004223fa52",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794706093281-lqxnat.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; mkdir -p .mcpjam/evals reports\ncat > .mcpjam/evals/arith.yaml <<'\"'\"'E'\"'\"'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arith_fixture\n  name: Arithmetic fixture\ntarget:\n  servers:\n    - name: arith\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_adds\n    title: uses add for 2+3\n    steps:\n      - id: s1\n        kind: prompt\n        prompt: What is 2 plus 3? Use the add tool.\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\nE\ncat > .mcp.json <<'\"'\"'E'\"'\"'\n{\"mcpServers\":{\"arith\":{\"url\":\"http://fixture:8765/mcp\"}}}\nE\nN=\"npx -y @mcpjam/cli@latest\"\n$N cloud eval validate --file .mcpjam/evals/arith.yaml 2>&1 | head -20\n$N test .mcpjam/evals/arith.yaml --inference mcpjam --format human --out reports/local.json 2>&1 | tail -30' && pwd -P >| /tmp/claude-46dc-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:28:43.364051+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.8473427295684814,
+  "end": "2026-11-15T01:28:45.211250+00:00"
+}

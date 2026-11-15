@@ -1,0 +1,30 @@
+{
+  "id": "bootstrap:baseline-link-usage",
+  "path": "bootstrap--baseline-link-usage",
+  "argv": [
+    "env",
+    "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/node-v24.22.1-darwin-arm64/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/.local/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+    "DO_NOT_TRACK=1",
+    "node",
+    "work/inspector/cli/dist/index.js",
+    "cloud",
+    "project",
+    "link",
+    "--project",
+    "project_fixture"
+  ],
+  "start": "2026-11-15T01:34:54.300181+00:00",
+  "end": "2026-11-15T01:34:55.117174+00:00",
+  "exit_status": 2,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg"
+  ],
+  "output_classes": [
+    "USAGE_ERROR"
+  ],
+  "source_group": "bootstrap"
+}

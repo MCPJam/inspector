@@ -1,0 +1,36 @@
+{
+  "http_status": 404,
+  "body": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}
+{
+  "http_status": 404,
+  "body": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}
+{
+  "http_status": 404,
+  "body": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}
+{
+  "http_status": 202,
+  "body": {
+    "runId": "run_fixture_1",
+    "suiteId": "suite_fixture",
+    "status": "running",
+    "servers": [
+      {
+        "id": "server_fixture",
+        "name": "Arithmetic"
+      }
+    ],
+    "environment": null
+  }
+}

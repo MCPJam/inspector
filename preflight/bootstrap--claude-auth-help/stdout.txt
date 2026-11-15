@@ -1,0 +1,12 @@
+Usage: claude auth [options] [command]
+
+Manage authentication
+
+Options:
+  -h, --help        Display help for command
+
+Commands:
+  help [command]    display help for command
+  login [options]   Sign in to your Anthropic account
+  logout            Log out from your Anthropic account
+  status [options]  Show authentication status

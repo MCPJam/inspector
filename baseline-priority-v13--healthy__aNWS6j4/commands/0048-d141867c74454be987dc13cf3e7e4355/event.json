@@ -1,0 +1,22 @@
+{
+  "event_id": "d141867c74454be987dc13cf3e7e4355",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "sed -n '580,640p' docs/create-case.md && sed -n '1093,1168p' docs/create-case.md && sed -n '750,802p' docs/create-case.md && rg -n 'mode:|agentWorkflow|toolUnit|toolWorkflow|deterministic' docs/create-case.md | head -30 && npx mcpjam cloud eval --help"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:09:33.568423+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.429776668548584,
+  "end": "2026-11-15T02:09:33.998130+00:00"
+}

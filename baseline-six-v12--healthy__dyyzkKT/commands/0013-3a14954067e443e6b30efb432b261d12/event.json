@@ -1,0 +1,22 @@
+{
+  "event_id": "3a14954067e443e6b30efb432b261d12",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python - <<'PY'\nimport json\ns=json.load(open('openapi.json'))['components']['schemas']\nfor k in ['EvalSuiteCreateRequest','EvalCaseCreate','EvalStep','EvalRunCreateRequest']:\n print(k,json.dumps(s.get(k),indent=2))\nprint('step schemas',[k for k in s if 'Step' in k or 'Case' in k or 'Assert' in k])\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:38:19.241599+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 127,
+  "signal": null,
+  "duration_seconds": 0.001619100570678711,
+  "end": "2026-11-15T01:38:19.243135+00:00"
+}

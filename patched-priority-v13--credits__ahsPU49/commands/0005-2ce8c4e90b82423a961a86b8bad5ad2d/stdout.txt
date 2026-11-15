@@ -1,0 +1,5 @@
+# Read the organization's spend budget
+Runs that use your own provider keys are never counted against the budget and never blocked by it. Neither is the free daily allowance — it is not credits.
+````yaml /reference/openapi.json get /organizations/{organizationId}/spend-budget
+  - url: https://app.mcpjam.com/api/v1
+  /organizations/{organizationId}/spend-budget:

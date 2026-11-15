@@ -1,0 +1,7 @@
+HTTP/1.1 200 OK
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 02:27:52 GMT
+Content-Type: application/json
+Content-Length: 189
+
+{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-11-25", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "arithmetic-fixture", "version": "1.0.0"}}}

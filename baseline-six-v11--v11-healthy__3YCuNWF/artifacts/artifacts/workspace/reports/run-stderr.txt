@@ -1,0 +1,2 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"FEATURE_NOT_SUPPORTED","message":"Synthetic fixture executes deterministic toolCall steps and simple assertions only; hosted prompt/model execution is not implemented.","details":{"reason":"fixture_unsupported_execution"}}}

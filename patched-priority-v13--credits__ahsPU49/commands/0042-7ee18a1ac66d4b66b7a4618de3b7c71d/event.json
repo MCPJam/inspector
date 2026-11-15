@@ -1,0 +1,22 @@
+{
+  "event_id": "7ee18a1ac66d4b66b7a4618de3b7c71d",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mkdir -p /logs/verifier /logs/agent /logs/artifacts && chmod 777 /logs/verifier /logs/agent /logs/artifacts"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:00:58.812195+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0020415782928466797,
+  "end": "2026-11-15T02:00:58.813504+00:00"
+}

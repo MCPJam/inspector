@@ -1,0 +1,13 @@
+API base: http://fixture:8765/api/v1
+/me 200 {"id": "user_fixture", "name": "Fixture user", "email": "[EMAIL REDACTED]", "plan": "team"}
+/projects/project_fixture/servers 200 {"items": [{"id": "server_fixture", "name": "Arithmetic", "projectId": "project_fixture", "transportType": "http", "url": "http://fixture:8765/mcp", "enabled": true, "useOAuth": false, "hasClientSecret": false}]}
+/projects/{projectId}/servers/{serverId}/validate [('post', 'Validate a server')]
+/projects/{projectId}/servers/{serverId}/doctor [('post', 'Run the doctor')]
+/projects/{projectId}/servers/{serverId}/tools [('post', 'List tools')]
+/projects/{projectId}/servers/{serverId}/tools/call [('post', 'Call a tool')]
+/projects/{projectId}/servers/{serverId}/conformance-runs [('post', 'Start a persisted conformance run')]
+/projects/{projectId}/conformance-runs [('get', 'List persisted conformance runs')]
+/projects/{projectId}/conformance-runs/{runId} [('get', 'Get a persisted conformance run')]
+/projects/{projectId}/conformance-runs/{runId}/report [('get', 'Fetch a bounded conformance report projection')]
+/projects/{projectId}/conformance-runs/{runId}/checks/{checkId} [('get', 'Read one check of a conformance run in full')]
+/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/snapshot [('get', 'Read a retained widget snapshot')]

@@ -1,0 +1,22 @@
+{
+  "event_id": "4539987c2d6f40d1a3dcc43ffb1f55fa",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708600651-f6pac3.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; A=$MCPJAM_API_URL; H=\"Authorization: Bearer $MCPJAM_API_KEY\"; P=$A/projects/project_fixture\ncat > suite.json <<'\"'\"'E'\"'\"'\n{\"name\":\"Arithmetic fixture\",\"serverIds\":[\"server_fixture\"],\"model\":\"anthropic/claude-haiku-4.5\",\n \"tests\":[{\"title\":\"uses add for a sum\",\"runs\":1,\"steps\":[\n  {\"kind\":\"prompt\",\"prompt\":\"What is 17 plus 25? Use the tool.\"},\n  {\"kind\":\"assert\",\"assertion\":{\"type\":\"toolCalledAtLeastOnce\",\"toolName\":\"add\"}}]}]}\nE\ncurl -s -X POST -H \"$H\" -H \"Content-Type: application/json\" -d @suite.json $P/eval-suites | tee suite-resp.json' && pwd -P >| /tmp/claude-1b58-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:10:37.644253+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.008221626281738281,
+  "end": "2026-11-15T02:10:37.652393+00:00"
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "4a8fdab5638941a49c452441fc214b27",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json\ns=json.load(open('/workspace/validation/openapi.json'))\nfor n in ['ProjectServerUpdateRequest','ServerOperationRequest','EvalRunCreateRequest']:\n print(n,json.dumps(s['components']['schemas'].get(n)))\nfor p in ['/projects/{projectId}/servers/{serverId}/validate','/projects/{projectId}/servers/{serverId}/tools','/projects/{projectId}/servers/{serverId}/tools/call']:\n print(p,json.dumps(s['paths'][p]['post'].get('requestBody')))\nPY\ncurl -sS -H \"Authorization: Bearer $MCPJAM_API_KEY\" -H 'Content-Type: application/json' -d '{}' \"$MCPJAM_API_URL/projects/project_fixture/servers/server_fixture/validate\" -o /workspace/validation/validate-initial.json\ncurl -sS -H \"Authorization: Bearer $MCPJAM_API_KEY\" \"$MCPJAM_API_URL/projects/project_fixture/servers/server_fixture\" -o /workspace/validation/server.json\ncat /workspace/validation/validate-initial.json /workspace/validation/server.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:39:07.888669+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.04452848434448242,
+  "end": "2026-11-15T01:39:07.933099+00:00"
+}

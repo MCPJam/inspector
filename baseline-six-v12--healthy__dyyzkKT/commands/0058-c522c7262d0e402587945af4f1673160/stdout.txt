@@ -1,0 +1,1 @@
+run_fixture_2: passed

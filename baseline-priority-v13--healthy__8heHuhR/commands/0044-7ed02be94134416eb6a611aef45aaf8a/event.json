@@ -1,0 +1,22 @@
+{
+  "event_id": "7ed02be94134416eb6a611aef45aaf8a",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mkdir -p .mcpjam/evals reports && cat > .mcpjam/evals/arithmetic.yaml <<'EOF'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arithmetic_smoke\n  name: Arithmetic smoke\ntarget:\n  servers:\n    - name: Arithmetic\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_add_two_three\n    title: Add 2 and 3 and return 5\n    steps:\n      - id: ask\n        kind: prompt\n        prompt: Use the add tool to add 2 and 3. Report the returned sum.\n      - id: args\n        kind: assert\n        assertion:\n          type: toolCalledWith\n          toolName: add\n          args:\n            args: {a: 2, b: 3}\n            argumentMatching: exact\n      - id: result\n        kind: assert\n        assertion:\n          type: toolResultContains\n          toolName: add\n          needle: '5'\n      - id: errors\n        kind: assert\n        assertion:\n          type: noToolErrors\nEOF\nnpx mcpjam cloud eval validate --file .mcpjam/evals/arithmetic.yaml --project project_fixture --format json > reports/validation.json && cat reports/validation.json && npx mcpjam cloud eval run --file .mcpjam/evals/arithmetic.yaml --project project_fixture --server server_fixture --wait --format json > reports/run.json 2>reports/run.stderr"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:58:51.776098+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 4,
+  "signal": null,
+  "duration_seconds": 1.131579875946045,
+  "end": "2026-11-15T01:58:52.907602+00:00"
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "0d9771da304b497dbd8b29697f0825c0",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707855395-v34qhk.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; M=\"npx -y @mcpjam/cli@latest --quiet\"; $M cloud eval run --project project_fixture --suite suite_authored_1 --wait --reporter json-summary --out report.json 2>&1 | head -c 2000; echo; head -c 1500 report.json' < /dev/null && pwd -P >| /tmp/claude-debb-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:58:29.810923+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.7868709564208984,
+  "end": "2026-11-15T01:58:30.597703+00:00"
+}

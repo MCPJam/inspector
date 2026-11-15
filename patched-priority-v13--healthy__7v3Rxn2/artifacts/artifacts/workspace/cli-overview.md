@@ -1,0 +1,298 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# CLI Overview
+
+> Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal
+
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths; see [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md).
+
+## Recommended: Use with Agent Skills
+
+The easiest way to use the CLI is through the [MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector), which gives your agent full context on every command and workflow.
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill mcp-inspector
+```
+
+To convert existing promptfoo, pytest, Jest, or CSV tests, use the [MCP eval import skill](https://github.com/MCPJam/inspector/tree/main/skills/mcpjam-eval-import).
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill mcpjam-eval-import
+```
+
+To drive MCPJam's hosted eval tools (launch a run, poll it to a verdict, and triage a failure down to the step) use the [run MCPJam evals skill](https://github.com/MCPJam/inspector/tree/main/skills/run-mcpjam-evals). This one is about running suites that already exist, not writing them.
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill run-mcpjam-evals
+```
+
+Once installed, your agent will know how and when to invoke `mcpjam` commands automatically.
+
+## Install
+
+```bash theme={"theme":"css-variables"}
+# Global (gives you the mcpjam command)
+npm i -g @mcpjam/cli
+
+# Or run without installing
+npx -y @mcpjam/cli@latest --help
+```
+
+> [!NOTE]
+>
+> All examples in these docs use `mcpjam` directly. If you installed via `npx`,
+> replace `mcpjam` with `npx -y @mcpjam/cli@latest`.
+
+## Command groups
+
+### Local MCP testing
+
+These stay at the program root. They reject `--api-key` / `--api-url` / `--project`, except `test`, which accepts them only to reach MCPJam-hosted inference.
+
+| Group | Purpose | Key commands |
+| - | - | - |
+| [`test`](https://docs.mcpjam.com/cli/local-evals) | Run an eval suite file locally (BYOK or MCPJam-hosted inference); never uploads | `test <file>` |
+| [`server`](https://docs.mcpjam.com/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
+| [`tools`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
+| [`resources`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
+| [`prompts`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
+| [`subscriptions`](https://docs.mcpjam.com/cli/reference) | Open a long-lived MCP subscription and stream notifications | `listen` |
+| [`tasks`](https://docs.mcpjam.com/cli/tasks) | Drive MCP Tasks and validate the tasks wire | `list`, `get`, `cancel`, `conformance` |
+| [`events`](https://docs.mcpjam.com/cli/events) | List, poll, watch and subscribe to MCP Events (triggers), and check their conformance | `list`, `poll`, `watch`, `subscribe`, `unsubscribe`, `conformance` |
+| [`apps`](https://docs.mcpjam.com/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
+| [`oauth`](https://docs.mcpjam.com/cli/oauth-conformance) | Test OAuth flows and conformance against an MCP server | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
+| [`protocol`](https://docs.mcpjam.com/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
+| [`readiness`](https://docs.mcpjam.com/cli/reference#readiness-hosted-commands) | Grade a server against a publisher's directory. Hosted `start` / `status` / `list` / `cancel` / `report` stay here (leaf `--api-key`; no Cloud project link) | `check`, `start claude`, `start openai`, `start muse`, `status`, `list`, `cancel`, `report` |
+| [`xaa`](https://docs.mcpjam.com/cli/xaa) | Run the Cross-App Access (ID-JAG) debugger against an MCP server | `run` |
+| [`compat`](https://docs.mcpjam.com/cli/reference#compat-command) | Check whether a server's tools and widgets work on each AI host | `compat` |
+| [`inspector`](https://docs.mcpjam.com/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
+| [`mcp`](https://docs.mcpjam.com/cli/mcp-server) | Run MCPJam as a stdio MCP server for agents (Claude Desktop, Claude Code, Cursor, ...) | `mcp` |
+| [`telemetry`](https://docs.mcpjam.com/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
+
+### MCPJam Cloud
+
+Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (before or after descendants). `mcpjam oauth login` is MCP-server OAuth; `mcpjam cloud login` is your MCPJam account.
+
+| Group | Purpose | Key commands |
+| - | - | - |
+| [`cloud`](https://docs.mcpjam.com/cli/reference#cloud-workspace) | Account, project link, and workspace | `login`, `logout`, `whoami`, `link`, `status`, `organizations`, `projects`, `sessions` |
+| [`cloud eval`](https://docs.mcpjam.com/cli/reference#cloud-eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
+| [`cloud tunnel`](https://docs.mcpjam.com/cli/reference#cloud-tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel --server <name> <url>`, `tunnel --server <name> -- <command>` |
+| [`cloud clients`](https://docs.mcpjam.com/cli/reference#cloud-clients-commands) | Manage clients in your hosted MCPJam projects (`cloud hosts` is a deprecated alias) | `list`, `get`, `create`, `update`, `servers`, `duplicate`, `delete`, `templates` |
+| [`cloud environments`](https://docs.mcpjam.com/cli/reference#cloud-environments-commands) | Manage project environments, the host and server bundles eval suites and goals run against | `list`, `get`, `resolve`, `archive`, `ensure-adhoc` |
+| [`cloud projects servers`](https://docs.mcpjam.com/cli/reference#cloud-projects-servers-commands) | Connect MCP servers to a project and manage pending connection requests | `connect`, `connect-status`, `connect-cancel` |
+
+Also under `mcpjam cloud`: `goals` (`journeys` is a deprecated alias), `personas`, `swarms`, and `studies` (which publishes an environment for outside testers and reads what they did; `scenarios` and `user-testing` are deprecated aliases for it). Full flag tables are in the [command reference](https://docs.mcpjam.com/cli/reference.md).
+
+## Cloud credentials and API URL
+
+`--api-key` and `--api-url` are declared on `mcpjam cloud` and work before or after descendants (`mcpjam cloud --api-key sk_… eval list` and `mcpjam cloud eval list --api-key sk_…` are the same). Local commands, including hosted `readiness`, reject those flags at the program root. Hosted `readiness` still takes leaf `--api-key`.
+
+Credential precedence for Cloud commands:
+
+1. `--api-key`: must be an `sk_` key. A `mcpjam_…` legacy key is a usage error.
+2. `MCPJAM_API_KEY`: same `sk_` rule. A legacy value in this env var is ignored (with a warning) so SDK eval reporting can still use it.
+3. Stored OAuth from `mcpjam cloud login`
+4. Missing: Cloud commands fail with login guidance before they hit the network (`mcpjam cloud status` reports `missing` instead)
+
+API URL precedence:
+
+1. `--api-url`
+2. `MCPJAM_API_URL`, or `MCPJAM_BASE_URL` (the same server without `/api/v1`)
+3. The server saved with the OAuth login (only when that login is the credential; a login saved before logins recorded their server counts as MCPJam Cloud, and one whose recorded server is not a usable address is refused with exit `3`)
+4. `https://app.mcpjam.com/api/v1`
+
+Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) decides its server when it starts, before it contacts anything. An explicit `--api-url`, `MCPJAM_API_URL` or `MCPJAM_BASE_URL` that is not an `http(s)` URL, or that carries credentials, a query or a fragment, is a usage error (exit `2`), and so are the two variables naming different servers. The error masks credentials, a query and a fragment, and does not repeat a value that is not a URL. A saved login is only sent to its own server: when it is the credential and the order picks another server, the command exits `3` before any request. `mcpjam cloud status` uses the same checks but stays network-free: it still emits the complete JSON report, sets `ok: false`, includes `credential.valid` / `deployment.valid` plus an `error` string, and exits `1`. Missing credentials are informational (`credential.valid: null`) and successful.
+
+Successful Cloud commands print an audience line to stderr (`Using MCPJam Cloud as … · project: … · <apiUrl>`). `--quiet` suppresses it. Machine-readable JSON stays on stdout. `cloud status` redacts API keys.
+
+## Cloud project scope
+
+Most Cloud commands pick one project:
+
+1. `--project <id-or-name>`
+2. An explicit `project` field in `--file` / `--json`
+3. `MCPJAM_PROJECT`
+4. The nearest valid `.mcpjam/project.json`
+5. Automatic; the most recently updated project you can see
+
+Empty `--project` or `MCPJAM_PROJECT` is a usage error. `MCPJAM_PROJECT_ID` does **not** select a Cloud CLI project (it is SDK eval reporting only).
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud login
+mcpjam cloud link                  # writes .mcpjam/project.json (no secrets)
+mcpjam cloud status                # zero-network: credential, deployment, selector
+mcpjam cloud eval list             # uses the link
+mcpjam cloud link --remove
+```
+
+`mcpjam cloud eval` run-inspection commands (`status`, `cancel`, `judge`, `iterations`, `gate`, `compare`, `trace`, `steps`, `screenshot`, `video`) follow the same rule; `--project` is optional. `mcpjam cloud sessions list` does too; `--all-projects` restores a cross-project listing and cannot be combined with `--project`. Hosted `readiness` never reads the project link.
+
+## What `--host` means
+
+`--host` is not one flag. The meaning depends on the command:
+
+| Where | What it selects |
+| - | - |
+| `server`, `tools`, `resources`, `prompts` | An **AI client** (`claude`, `chatgpt`, `cursor`, …). The CLI sends that host's `clientInfo`, capabilities, and protocol version in `initialize`. |
+| `test --host` | One host **template** to emulate for a local suite run: its handshake, tool visibility and model settings. Never the real client. |
+| `compat --host` | Which AI clients to report. Repeatable; default is all. |
+| `cloud eval --host`, `cloud goals`, `cloud studies` | A **saved project Host** (`<id-or-name>`), the client config an eval or goal run is stamped with. |
+
+`--host` on a local command is mutually exclusive with `--client-capabilities`. A Cloud `--host` is mutually exclusive with `--server` / `--environment` when those already supply a closed server set.
+
+## Global flags
+
+These flags apply to every command. Cloud credentials `--api-key` / `--api-url` are declared on `mcpjam cloud`, not the program root.
+
+| Flag | Default | Description |
+| - | - | - |
+| `--timeout <ms>` | `30000` | Request timeout in milliseconds |
+| `--rpc` | off | Include raw JSON-RPC request/response logs in JSON output under `_rpcLogs` |
+| `--quiet` | off | Suppress non-result progress output on stderr |
+| `--no-telemetry` | off | Disable anonymous telemetry for this invocation |
+| `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
+| `-v, --version` | | Print the CLI version |
+
+## Output formats
+
+The CLI auto-detects whether stdout is a terminal:
+
+* **Interactive terminal**: defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
+* **Piped or redirected** (CI, `| jq`, agent invocation): defaults to `--format json`, the full structured result.
+* **Conformance in CI**: `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` support `--reporter junit-xml` and `--reporter json-summary`.
+* **Explicit `--format`** always wins over the auto-detected default.
+
+**For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, pass `--quiet --format json`.
+
+JSON-valued flags accept inline JSON, `@path`, or `-` for stdin. `tools call` also accepts `--tool-args-stdin` as a shorthand for `--tool-args -`. Use files or stdin for large payloads to avoid shell escaping issues:
+
+```bash theme={"theme":"css-variables"}
+echo '{"key":"value"}' | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name my_tool --tool-args - --quiet --format json
+```
+
+## Connecting to servers
+
+The CLI supports two transport modes, selected by which flags you pass:
+
+* `--url ...` selects HTTP.
+* `--command ...` selects stdio.
+* `--transport http|stdio` is optional and acts as an explicit override/validator when you want the CLI to reject mismatched flags early.
+
+### HTTP (Streamable HTTP / SSE)
+
+```bash theme={"theme":"css-variables"}
+mcpjam server doctor --url https://your-server.com/mcp
+```
+
+Add auth when needed:
+
+```bash theme={"theme":"css-variables"}
+# Static bearer token
+mcpjam server doctor --url https://your-server.com/mcp --access-token $TOKEN
+
+# OAuth tokens from a prior login
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token $TOKEN
+
+# Custom headers
+mcpjam server doctor --url https://your-server.com/mcp --header "X-API-Key: $KEY"
+```
+
+### Stdio (local subprocess)
+
+```bash theme={"theme":"css-variables"}
+mcpjam server doctor --command node --args server.js --cwd /path/to/project -e API_KEY=[REDACTED]
+```
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones for the spawned server.
+Structured debug artifacts only record the explicit env keys you pass through
+`-e/--env`; inherited shell variables are not enumerated.
+
+> [!NOTE]
+>
+> `oauth ...` and `protocol ...` are HTTP-only command groups. They do
+> not accept stdio targets.
+
+## Update notifications
+
+After a successful command, the CLI checks whether a newer version of `@mcpjam/cli` is available and prints a notice to stderr when one is found:
+
+```
+Update available: @mcpjam/cli 1.2.0 -> 1.3.0
+Run npm install -g @mcpjam/cli to update
+```
+
+The check is non-blocking: version data is fetched in a detached background process and cached locally for 24 hours, so it never slows down your commands. The notice is written to stderr only and never touches stdout or JSON output, so it is safe for both interactive terminals and AI agents (Claude Code, Cursor, etc.) that capture stderr. It is suppressed automatically in CI.
+
+To opt out, set one of these environment variables before running any command:
+
+| Variable | Effect |
+| - | - |
+| `MCPJAM_NO_UPDATE_CHECK=1` | Disable update checks for `@mcpjam/cli` |
+| `NO_UPDATE_NOTIFIER=1` | Disable update checks (conventional npm opt-out) |
+| `CI=true` | Automatically suppressed in CI environments |
+
+## Exit codes
+
+| Code | Meaning |
+| - | - |
+| `0` | Success / all checks passed |
+| `1` | Command ran but reported a failure (e.g., server unhealthy, conformance failed) |
+| `2` | Invalid arguments or configuration |
+
+## Quick triage workflow
+
+The fastest path from "I have a server URL" to "I know what's wrong":
+
+```bash theme={"theme":"css-variables"}
+# 1. One-shot health check (probe + connect + sweep)
+mcpjam server doctor --url https://your-server.com/mcp
+
+# 2. If oauth_required: get a token
+mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 --registration dcr
+
+# 3. Re-run doctor with the token
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token $TOKEN
+
+# 4. Exercise tools directly
+mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name my_tool --tool-args @params.json --quiet --format json
+
+# 5. If the server exposes MCP Apps, validate the ui:// surface
+mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
+
+# 6. Render one UI-capable tool result in Inspector's App Builder.
+# --ui opens Inspector by default in a TTY; add --no-open if browser automation already opened it.
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name my_app_tool --tool-args @params.json --ui --quiet --format json
+```
+
+## Use from an MCP client instead of a shell
+
+If your agent speaks MCP but can't run shell commands (Claude Desktop, chat clients), run the same testing engine as a stdio MCP server:
+
+```bash theme={"theme":"css-variables"}
+npx -y @mcpjam/cli@latest mcp
+```
+
+Connections to servers under test stay open between tool calls, so agents can also observe notifications and session behavior that one-shot CLI commands can't. See [MCPJam as an MCP server](https://docs.mcpjam.com/cli/mcp-server.md).
+
+## What's next
+
+* [MCPJam as an MCP server](https://docs.mcpjam.com/cli/mcp-server.md): give MCP clients the testing engine over stdio
+* [Server inspection](https://docs.mcpjam.com/cli/server-inspection.md): probe, doctor, and diagnostics
+* [OAuth conformance](https://docs.mcpjam.com/cli/oauth-conformance.md): test your OAuth implementation
+* [OAuth login](https://docs.mcpjam.com/cli/oauth-login.md): authenticate and debug OAuth flows
+* [MCP Apps conformance](https://docs.mcpjam.com/cli/apps-conformance.md): validate `_meta.ui.resourceUri` and `ui://` resource wiring
+* [Tools, resources & prompts](https://docs.mcpjam.com/cli/tools-resources-prompts.md): exercise the connected surface
+* [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md): command-path and flag changes under `mcpjam cloud`
+* [Full command reference](https://docs.mcpjam.com/cli/reference.md): every flag for every command
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

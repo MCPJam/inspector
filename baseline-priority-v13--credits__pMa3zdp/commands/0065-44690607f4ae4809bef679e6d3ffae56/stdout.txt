@@ -1,0 +1,114 @@
+/workspace/mcp-eval/public-api.md:419:* **Always send `Idempotency-Key` on a launch.** It spends model credits, so a
+/workspace/mcp-eval/public-api.md:439:**Swarms — insights** — what a run revealed. Read these in order of cost: the
+/workspace/mcp-eval/public-api.md:470:> Requesting swarm run insights consumes **no credits** — the model cost is on
+/workspace/mcp-eval/public-api.md:493:| `PUT .../studies/{studyId}/guest-execution` | The spend dial for anonymous visitors: daily credits, computer starts, concurrency |
+/workspace/mcp-eval/public-api.md:517:over them. Read these in cost order: metrics, usage and signals are
+/workspace/mcp-eval/public-api.md:523:| `GET .../studies/{studyId}/usage` | Which models, tools and servers the sessions used. **Check `scan.truncated`** before quoting a rate |
+/workspace/mcp-eval/public-api.md:527:| `POST .../studies/{studyId}/insights` | **No credits; counts against `insightsPerDay`.** `202` with the `windowId` to poll. `409` if the window has not been mined yet |
+/workspace/mcp-eval/public-api.md:532:The `usage` response includes an `analysis` summary: `total`, `analyzed`,
+/workspace/mcp-eval/public-api.md:558:> Requesting insights consumes **no credits** — the model cost is on MCPJam.
+/workspace/mcp-eval/public-api.md:587:> independently, so a `true` here that races a flag flip costs you a clean
+/workspace/mcp-eval/public-api.md:763:# 4. Or go straight to per-iteration tool calls, token usage, latency
+/workspace/mcp-eval/public-api.md:795:`anthropic/claude-haiku-4.5` — and runs on your organization's credits.
+/workspace/mcp-eval/docs-index.txt:7:- [Slack](https://docs.mcpjam.com/hosted/slack.md): Run MCPJam from Slack — mention the bot to ask about your projects, and approve the actions that spend credits
+/workspace/mcp-eval/docs-index.txt:82:- [host-compat](https://docs.mcpjam.com/sdk/reference/host-compat.md): API reference for @mcpjam/sdk/host-compat — derive server requirements, evaluate host compatibility, and scan widget bridge usage.
+/workspace/mcp-eval/docs-index.txt:92:- [List run iterations](https://docs.mcpjam.com/api-reference/eval-runs/list-run-iterations.md): Per-iteration results: actual tool calls, structured token usage, and latency. Cursor-paginated.
+/workspace/mcp-eval/docs-index.txt:125:- [Mint a model lease for MCPJam-hosted inference](https://docs.mcpjam.com/api-reference/eval-runs/mint-a-model-lease-for-mcpjam-hosted-inference.md): How an SDK eval running OUTSIDE the platform (local dev, CI) uses MCPJam-hosted inference on the organization's credits, with no provider key of its own. Authenticate like any other `/api/v1` route (typically an `sk_` key).
+/workspace/mcp-eval/docs-index.txt:129:- [Authenticate and record an eval start](https://docs.mcpjam.com/api-reference/eval-runs/authenticate-and-record-an-eval-start.md): Called by official SDK, CLI and Vitest runners before executing an eval. Requires an organization API key or saved-login bearer. Records only start metadata, creates no dashboard run, and applies no debit or quota draw. Planned iterations are intent, not completed usage. Reuse the runStartId for ret…
+/workspace/mcp-eval/docs-index.txt:144:- [Read the organization's spend budget](https://docs.mcpjam.com/api-reference/catalog/read-the-organizations-spend-budget.md): The ceiling on what this organization may spend on MCPJam-billed work — chat, evals, judges and computer time — in the current billing window, and how much of it has been spent.
+/workspace/mcp-eval/docs-index.txt:147:- [List organizations](https://docs.mcpjam.com/api-reference/catalog/list-organizations.md): The organizations the caller belongs to — the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.
+/workspace/mcp-eval/docs-index.txt:203:- [Request insights for an eval run](https://docs.mcpjam.com/api-reference/evals/request-insights-for-an-eval-run.md): **No credits are consumed** — the model cost is on MCPJam. Runs a model over the finished run and draws on the same shared `insightsPerDay` request ledger as swarm and user-testing insights.
+/workspace/mcp-eval/docs-index.txt:241:- [Usage breakdown](https://docs.mcpjam.com/api-reference/studies/usage-breakdown.md): Which models, tools and servers the study's sessions used.
+/workspace/mcp-eval/docs-index.txt:245:- [Request insights for the current window](https://docs.mcpjam.com/api-reference/studies/request-insights-for-the-current-window.md): **No credits are consumed** — the model cost is on MCPJam. Runs a model over the study's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm run insights, so a request here takes one from there.
+/workspace/mcp-eval/docs-index.txt:295:- [Start a Claude directory-readiness run](https://docs.mcpjam.com/api-reference/directory-readiness/start-a-claude-directory-readiness-run.md): Grades the saved server against Anthropic's connector-directory requirements and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL, an actor, an organization, a model or a cost. Poll the run detail for the verdict. Deterministic grading is…
+/workspace/mcp-eval/docs-index.txt:321:- [Send one agent Playground message](https://docs.mcpjam.com/api-reference/chat-sessions/send-one-agent-playground-message.md): Send one message to a project's MCP servers and get the model's reply plus the telemetry a participant in the conversation could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage.
+/workspace/mcp-eval/docs-index.txt:323:- [Read a chat session's execution trace](https://docs.mcpjam.com/api-reference/chat-sessions/read-a-chat-sessions-execution-trace.md): Per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript. Same span shape as the eval iteration trace.
+/projects/{projectId}/servers/{serverId}/accounts
+/projects/{projectId}/servers/{serverId}/accounts/{account}
+/organizations/{organizationId}/spend-budget
+/organizations
+/organizations/{organizationId}/eval-check-repos
+/projects/{projectId}/eval-runs {
+  "required": true,
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/EvalRunCreateRequest"
+      },
+      "example": {
+        "suiteName": "smoke",
+        "serverIds": [
+          "srv_abc123"
+        ],
+        "tests": [
+          {
+            "title": "echo works",
+            "runs": 1,
+            "model": "anthropic/claude-haiku-4.5",
+            "provider": "anthropic",
+            "steps": [
+              {
+                "id": "s1",
+                "kind": "prompt",
+                "prompt": "Use the echo tool to say hi"
+              },
+              {
+                "id": "s2",
+                "kind": "assert",
+                "assertion": {
+                  "type": "toolCalledWith",
+                  "toolName": "echo",
+                  "args": {
+                    "args": {
+                      "text": "hi"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+/projects/{projectId}/eval-suites {
+  "required": true,
+  "content": {
+    "application/json": {
+      "schema": {
+        "$ref": "#/components/schemas/EvalSuiteCreateRequest"
+      },
+      "example": {
+        "name": "smoke",
+        "serverIds": [
+          "srv_abc123"
+        ],
+        "model": "anthropic/claude-haiku-4.5",
+        "tests": [
+          {
+            "title": "lists files",
+            "steps": [
+              {
+                "id": "s1",
+                "kind": "prompt",
+                "prompt": "List the files in the project root."
+              },
+              {
+                "id": "s2",
+                "kind": "assert",
+                "assertion": {
+                  "type": "toolCalledWith",
+                  "toolName": "list_files",
+                  "args": {
+                    "args": {}
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

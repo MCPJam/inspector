@@ -1,0 +1,34 @@
+  6/6 Running trials... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:09:10 0:00:00
+adhoc • codex • gpt-6.1-sol
+┏━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Trials ┃ Exceptions ┃
+┡━━━━━━━━╇━━━━━━━━━━━━┩
+│      0 │          3 │
+└────────┴────────────┘
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Exception               ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ AgentTimeoutError       │     1 │
+│ RewardFileNotFoundError │     2 │
+└─────────────────────────┴───────┘
+
+adhoc • claude-code • sonnet
+┏━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Trials ┃ Exceptions ┃
+┡━━━━━━━━╇━━━━━━━━━━━━┩
+│      0 │          3 │
+└────────┴────────────┘
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Exception               ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ RewardFileNotFoundError │     3 │
+└─────────────────────────┴───────┘
+
+Job Info
+Total runtime: 9m 10s
+Results written to work/jobs/baseline-six-v11/result.json
+Inspect results by running `harbor view work/jobs`
+Share results by running `harbor upload work/jobs/baseline-six-v11`
+

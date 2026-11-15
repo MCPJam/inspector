@@ -1,0 +1,14 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "1e762a2979e2b9c2279b6adadf5aa51cf2e2a86acaecad22868701c0ec09bd9e"
+  },
+  {
+    "source": "artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/run_eval.sh",
+    "sha256": "76b64f74acd879751170689cf25ed2cb1720abbc1d37594f8005a2c830deddac"
+  }
+]

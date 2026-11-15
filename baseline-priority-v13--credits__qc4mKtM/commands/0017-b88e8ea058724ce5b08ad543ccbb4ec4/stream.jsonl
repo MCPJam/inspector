@@ -1,0 +1,10 @@
+{"seconds": 0.0010418891906738281, "stream": "stdout", "data": "API=http://fixture:8765/api/v1\n--- /\n"}
+{"seconds": 0.005376338958740234, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}"}
+{"seconds": 0.0054438114166259766, "stream": "stdout", "data": "\n--- /usage\n"}
+{"seconds": 0.009389162063598633, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}"}
+{"seconds": 0.009449481964111328, "stream": "stdout", "data": "\n--- /credits\n"}
+{"seconds": 0.013199806213378906, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}"}
+{"seconds": 0.013246297836303711, "stream": "stdout", "data": "\n--- /billing\n"}
+{"seconds": 0.017066001892089844, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}"}
+{"seconds": 0.017143964767456055, "stream": "stdout", "data": "\n---docs\n"}
+{"seconds": 0.20318055152893066, "stream": "stdout", "data": "<!doctype html>\n<html\n  lang=\"en\"\n  class=\"dark\"\n  data-banner-state=\"visible\"\n  data-assistant-state=\"closed\"\n  data-page-mode=\"none\"\n  data-current-path=\"/\"\n>\n  <head>\n    <!-- AI agents: this page is available as Markdown at /index.md. Request it directly or send \"Accept: text/markdown\". The site index is at /llms.txt. -->\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\" />\n    <title>MCPJam Docs - MCPJam Inspector</title>\n    <script>(function(c){var P=c.primary,F=c.fallbacks,found,probes={},checks={},down,reported;window.__mintAssets=P;function owned(el){return !el.closest('#root')&&!el.hasAttribute('data-precedence')}function type(r){return (r.headers.get('content-type')||'').toLowerCase()}function fits(r,rest){v"}

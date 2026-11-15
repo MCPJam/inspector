@@ -1,0 +1,22 @@
+{
+  "event_id": "e11da6e015834b8484848ac455732d73",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcpjam-eval/api.py <<'PY'\nimport os,json,urllib.request,urllib.error,pathlib,sys\nROOT=pathlib.Path(__file__).parent\nBASE=os.environ['MCPJAM_API_URL'].rstrip('/')\ndef call(path,method='GET',body=None,label=None):\n req=urllib.request.Request(BASE+path,data=json.dumps(body).encode() if body is not None else None,method=method,headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'})\n try:\n  with urllib.request.urlopen(req,timeout=20) as r: status=r.status; data=r.read().decode()\n except urllib.error.HTTPError as e: status=e.code; data=e.read().decode()\n try: result=json.loads(data)\n except ValueError: result={'body':data}\n record={'status':status,'response':result}\n if label:(ROOT/(label+'.json')).write_text(json.dumps(record,indent=2))\n print(path,json.dumps(record))\n return status,result\nif __name__=='__main__': call(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else 'GET',json.loads(sys.argv[3]) if len(sys.argv)>3 else None,sys.argv[4] if len(sys.argv)>4 else 'last-response')\nPY\npython3 /workspace/mcpjam-eval/api.py /organizations/org_fixture/spend-budget GET null spend-budget-before\npython3 /workspace/mcpjam-eval/api.py /projects/project_fixture/eval-suites/suite_fixture GET null suite\npython3 /workspace/mcpjam-eval/api.py /projects/project_fixture/eval-suites/suite_fixture/cases GET null cases\ncurl -fsSL https://docs.mcpjam.com/hosted/overview.md -o /workspace/mcpjam-eval/hosted.md\nrg -n -i 'credit|billing|usage|cost|pricing' /workspace/mcpjam-eval/hosted.md"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:00:35.971930+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.21877193450927734,
+  "end": "2026-11-15T02:00:36.190630+00:00"
+}

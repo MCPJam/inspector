@@ -1,0 +1,1 @@
+PASS: add(2, 3) returned 5 on 3 of 3 direct MCP calls.

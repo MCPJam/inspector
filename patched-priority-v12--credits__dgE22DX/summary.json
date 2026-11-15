@@ -1,0 +1,50 @@
+{
+  "run_id": "patched-priority-v12--credits__dgE22DX",
+  "job": "patched-priority-v12",
+  "scenario": "mcpjam/credits",
+  "agent": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "outcome": "harness-invalid",
+  "rewards": null,
+  "usage": null,
+  "exception": {
+    "exception_type": "CancelledError",
+    "exception_message": "",
+    "exception_traceback": "Traceback (most recent call last):\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 613, in run\n    await self._prepare()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 652, in _prepare\n    await self._setup_agent_environment()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1875, in _setup_agent_environment\n    await self._start_agent_environment()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1881, in _start_agent_environment\n    await asyncio.wait_for(\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 1134, in start\n    await self._run_docker_compose_command([\"up\", *runtime.up_args])\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 801, in _run_docker_compose_command\n    result = await self._collect_buffered_output(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 831, in _collect_buffered_output\n    stdout_bytes, stderr_bytes = await process.communicate(input=stdin_data)\n                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/subprocess.py\", line 201, in communicate\n    stdin, stdout, stderr = await tasks.gather(stdin, stdout, stderr)\n                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/subprocess.py\", line 181, in _read_stream\n    output = await stream.read()\n             ^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/streams.py\", line 706, in read\n    block = await self.read(self._limit)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/streams.py\", line 713, in read\n    await self._wait_for_data('read')\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/streams.py\", line 545, in _wait_for_data\n    await self._waiter\nasyncio.exceptions.CancelledError\n",
+    "occurred_at": "2026-11-15T01:52:25.820609Z",
+    "policy": {
+      "should_retry": false,
+      "should_grade": false,
+      "has_valid_reward": false
+    }
+  },
+  "capture_event_count": 0,
+  "unique_capture_event_count": 0,
+  "agent_tool_invocation_count": 0,
+  "agent_shell_invocation_count": 0,
+  "incomplete_events": 0,
+  "concern_count": 0,
+  "metrics": [],
+  "assessment_flags": [],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T01:52:36.376521Z",
+    "explicitly_harness_invalid": true,
+    "comparison_eligible": false,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": false,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": null,
+    "reason": "No unique native shell output with successful structuredContent.sum exactly matched a verifier-confirmed capture."
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once.",
+  "collection_timing_note": "Step artifacts are collected after the orchestrator account-resolution hook. A blocked-step snapshot may already contain account resolution applied after the agent stopped. Use refusal/request timestamps and captured output for temporal attribution, not snapshot presence alone."
+}

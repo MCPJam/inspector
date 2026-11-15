@@ -1,0 +1,18 @@
+{
+  "doctor": "ready",
+  "protocol": {
+    "score": 100,
+    "outcome": "passed",
+    "applicable": 14,
+    "passed": 14,
+    "failed": 0,
+    "couldNotRun": 0,
+    "notApplicable": 30,
+    "pending": 0,
+    "advisories": [],
+    "advicePointsLost": 0,
+    "protocolVersion": "2025-11-25"
+  },
+  "arithmeticPassed": 6,
+  "arithmeticTotal": 6
+}

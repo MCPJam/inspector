@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "expectedSum": 5,
+  "iterations": [
+    {
+      "iterationId": "run_fixture_5_0",
+      "passed": true
+    }
+  ],
+  "evidence": "iterations.json",
+  "grading": "exact local check of public MCPJam iteration evidence"
+}
+{
+  "passed": false,
+  "expectedSum": 999.0,
+  "iterations": [
+    {
+      "iterationId": "run_fixture_5_0",
+      "passed": false
+    }
+  ],
+  "evidence": "iterations.json",
+  "grading": "exact local check of public MCPJam iteration evidence"
+}
+-rw-r--r-- 1 root root 3.0K Nov 15 01:48 README.md
+-rw-r--r-- 1 root root 1.2K Nov 15 01:48 check-result.py
+-rw-r--r-- 1 root root  70K Nov 15 01:46 package-lock.json
+-rw-r--r-- 1 root root 1.8K Nov 15 01:48 run-eval.py
+-rw-r--r-- 1 root root  732 Nov 15 01:47 suite.json

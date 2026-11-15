@@ -1,0 +1,23 @@
+{
+  "event_id": "patched-priority-v12",
+  "role": "orchestrator",
+  "argv": [
+    "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+    "run",
+    "--config",
+    "work/patched-priority-v12.json"
+  ],
+  "cwd": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor",
+  "start": "2026-11-15T01:50:56.357353+00:00",
+  "environment": {
+    "PATH": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/.local/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+    "HOME": "$USER_HOME",
+    "DOCKER_HOST": "unix://$USER_HOME/.colima/default/docker.sock"
+  },
+  "capture": "separate pipes; chunks ordered by recorder observation, not kernel total order",
+  "timeout_seconds": 5400.0,
+  "exit_status": 130,
+  "timed_out": false,
+  "end": "2026-11-15T01:52:48.336510+00:00",
+  "duration_seconds": 111.97926020622253
+}

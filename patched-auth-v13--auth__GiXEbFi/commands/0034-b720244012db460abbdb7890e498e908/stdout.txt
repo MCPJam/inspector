@@ -1,0 +1,72 @@
+[
+  {
+    "name": "positive",
+    "arguments": {
+      "a": 2,
+      "b": 3
+    },
+    "expected": 5,
+    "passed": true,
+    "exitCode": 0
+  },
+  {
+    "name": "negative",
+    "arguments": {
+      "a": -7,
+      "b": 2
+    },
+    "expected": -5,
+    "passed": true,
+    "exitCode": 0
+  },
+  {
+    "name": "decimal",
+    "arguments": {
+      "a": 1.25,
+      "b": 2.5
+    },
+    "expected": 3.75,
+    "passed": true,
+    "exitCode": 0
+  },
+  {
+    "name": "zero",
+    "arguments": {
+      "a": 0,
+      "b": 0
+    },
+    "expected": 0,
+    "passed": true,
+    "exitCode": 0
+  },
+  {
+    "name": "missing",
+    "arguments": {
+      "a": 2
+    },
+    "expected": "reject invalid input",
+    "passed": true,
+    "exitCode": 1
+  },
+  {
+    "name": "wrong-type",
+    "arguments": {
+      "a": "2",
+      "b": 3
+    },
+    "expected": "reject invalid input",
+    "passed": true,
+    "exitCode": 1
+  },
+  {
+    "name": "extra-property",
+    "arguments": {
+      "a": 2,
+      "b": 3,
+      "c": 4
+    },
+    "expected": "reject invalid input",
+    "passed": false,
+    "exitCode": 0
+  }
+]

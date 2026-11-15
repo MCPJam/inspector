@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/workspace/run-eval.py", line 17, in <module>
+    run = api('/eval-runs', {'suiteId': suite_id})
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/run-eval.py", line 11, in api
+    raise RuntimeError(f'{error.code}: {error.read().decode()}') from None
+RuntimeError: 422: {"code": "FEATURE_NOT_SUPPORTED", "message": "Synthetic fixture executes deterministic toolCall steps and simple assertions only; hosted prompt/model execution is not implemented.", "details": {"reason": "fixture_unsupported_execution"}}

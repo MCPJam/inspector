@@ -1,0 +1,20 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "d3f7a429660f78f371a31684e2b5a723353d9e1efd0d7f1cf2741089604b2c7a"
+  },
+  {
+    "source": "artifacts/workspace/.mcp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcp.json",
+    "sha256": "c43df7c0876e22c7c63176accfe32b9d7c53ae4cc0591c38632026e280204826"
+  },
+  {
+    "source": "artifacts/workspace/.mcpjam/evals/arith.yaml",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcpjam/evals/arith.yaml",
+    "sha256": "bd068f90ff87bcaf1cec1c0d3698499a1bb3c903bc2ee8a174bc131ec3688d74"
+  }
+]

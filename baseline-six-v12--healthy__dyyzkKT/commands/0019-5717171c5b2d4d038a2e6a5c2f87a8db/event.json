@@ -1,0 +1,22 @@
+{
+  "event_id": "5717171c5b2d4d038a2e6a5c2f87a8db",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > reproduce.py <<'PY'\n#!/usr/bin/env python3\n\"\"\"Create and run the documented MCPJam deterministic evaluation.\"\"\"\nimport json, os, pathlib, time, urllib.request\nROOT = pathlib.Path(__file__).resolve().parent\nBASE = os.environ['MCPJAM_API_URL'].rstrip('/')\nKEY = os.environ['MCPJAM_API_KEY']\nPROJECT = 'project_fixture'\ndef request(method, path, body=None):\n    req = urllib.request.Request(BASE + path, method=method,\n        data=None if body is None else json.dumps(body).encode(),\n        headers={'Authorization': 'Bearer ' + KEY, 'Content-Type': 'application/json'})\n    with urllib.request.urlopen(req, timeout=20) as response:\n        return json.load(response)\ndef save(name, value):\n    (ROOT / name).write_text(json.dumps(value, indent=2) + '\\n')\n# Reuse the saved suite on subsequent invocations; create it on a fresh checkout.\nreceipt_path = ROOT / 'suite-created.json'\nif receipt_path.exists():\n    suite = json.loads(receipt_path.read_text())\nelse:\n    suite = request('POST', f'/projects/{PROJECT}/eval-suites',\n                    json.loads((ROOT / 'suite-create.json').read_text()))\n    save('suite-created.json', suite)\nlaunch = request('POST', f'/projects/{PROJECT}/eval-runs',\n                 {'suiteId': suite['suiteId'], 'serverIds': ['server_fixture']})\nsave('repeat-receipt.json', launch)\nrun_id = launch['runId']\nfor attempt in range(30):\n    report = request('GET', f'/projects/{PROJECT}/eval-runs/{run_id}')\n    save('repeat-report.json', report)\n    run = report.get('run', report)\n    if run.get('status') in ('completed', 'failed', 'cancelled', 'timed_out'):\n        break\n    time.sleep(1)\nelse:\n    raise SystemExit('No terminal verdict within 30 polls')\nevidence = request('GET', f'/projects/{PROJECT}/eval-runs/{run_id}/iterations')\nsave('repeat-iterations.json', evidence)\nverdict = report.get('decisionSummary', {}).get('verdict', run.get('result'))\nprint(f'{run_id}: {verdict}')\nraise SystemExit(0 if run.get('status') == 'completed' and verdict == 'passed' else 1)\nPY\npython3 reproduce.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:39:35.267210+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.03895688056945801,
+  "end": "2026-11-15T01:39:35.306105+00:00"
+}

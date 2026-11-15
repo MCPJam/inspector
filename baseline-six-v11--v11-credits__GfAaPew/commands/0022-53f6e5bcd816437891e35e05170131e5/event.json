@@ -1,0 +1,22 @@
+{
+  "event_id": "53f6e5bcd816437891e35e05170131e5",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mkdir -p /workspace/mcpjam-eval/docs\ncurl -sS https://docs.mcpjam.com/llms.txt -o /workspace/mcpjam-eval/docs/index.txt\ncurl -sS https://docs.mcpjam.com/cli/reference.md -o /workspace/mcpjam-eval/docs/cli.md\ncurl -sS https://docs.mcpjam.com/cli/local-evals.md -o /workspace/mcpjam-eval/docs/local-evals.md\ncurl -sS https://docs.mcpjam.com/cli/overview.md -o /workspace/mcpjam-eval/docs/overview.md\nrg -n -i 'credit|usage|billing|cost|api|cloud|eval|balance' /workspace/mcpjam-eval/docs/overview.md /workspace/mcpjam-eval/docs/index.txt | tail -65\ncommand -v mcpjam; node --version; npm --version"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:34:28.122533+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.6706428527832031,
+  "end": "2026-11-15T01:34:28.793085+00:00"
+}

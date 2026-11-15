@@ -1,0 +1,22 @@
+{
+  "event_id": "a5dd3a80b7ad4c679a4d85bba8a1d27e",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708087652-h26mvy.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; curl -s https://docs.mcpjam.com/troubleshooting/error-codes.md | grep -iE -B2 -A8 \"PLATFORM_FEE|credits\" | head -50' < /dev/null && pwd -P >| /tmp/claude-b05f-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:01:46.332208+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.13028812408447266,
+  "end": "2026-11-15T02:01:46.462339+00:00"
+}

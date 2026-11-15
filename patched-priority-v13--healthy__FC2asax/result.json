@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "id": "ce1e0469-a702-4d81-a76a-f124287cbfa8",
+  "task_name": "mcpjam/healthy",
+  "trial_name": "healthy__FC2asax",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/patched-priority-v13/healthy__FC2asax",
+  "task_id": {
+    "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/patched-priority-v13/healthy"
+  },
+  "source": null,
+  "task_checksum": "611b508d63a6b7b014b07f7034971bc5d3a9edc922491df6ac8ead1e14c28285",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/patched-priority-v13/healthy",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "healthy__FC2asax",
+    "trials_dir": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/patched-priority-v13",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "claude-code",
+      "import_path": null,
+      "model_name": "anthropic/claude-sonnet-5-5",
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": true,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {
+        "version": "2.1.323",
+        "max_turns": 30,
+        "max_budget_usd": "2",
+        "thinking_display": "omitted"
+      },
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "dcca7448-9592-44b3-882d-5c20519c62c3",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "claude-code",
+    "version": "2.1.323",
+    "model_info": {
+      "name": "claude-sonnet-5-5",
+      "provider": "anthropic"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 403266,
+    "n_cache_tokens": 391243,
+    "n_output_tokens": 3990,
+    "cost_usd": 0.135569,
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "n_input_tokens": 403266,
+        "n_cache_tokens": 391243,
+        "n_output_tokens": 3990,
+        "cost_usd": 0.10906480000000005
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 0.0
+    }
+  },
+  "verifier_environment_mode": "separate",
+  "exception_info": null,
+  "started_at": "2026-11-15T01:57:31.563215Z",
+  "finished_at": "2026-11-15T01:59:41.239793Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T01:57:31.621757Z",
+    "finished_at": "2026-11-15T01:57:35.294339Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-15T01:57:35.294383Z",
+    "finished_at": "2026-11-15T01:57:35.468548Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-15T01:57:35.468864Z",
+    "finished_at": "2026-11-15T01:59:07.118009Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-15T01:59:28.550426Z",
+    "finished_at": "2026-11-15T01:59:41.239737Z"
+  },
+  "step_results": null,
+  "reward_valid": true
+}

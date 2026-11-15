@@ -1,0 +1,22 @@
+{
+  "event_id": "9dff466b0df449e2bc70103b215200a2",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -fsSL --max-time 15 https://docs.mcpjam.com/reference/openapi.json -o /workspace/mcpjam-eval/openapi.json; rg -i 'credit|usage|cost|billing|estimate|eval suite|start.*eval' /workspace/mcpjam-eval/docs-index.txt"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:59:39.877752+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.5992715358734131,
+  "end": "2026-11-15T01:59:40.476913+00:00"
+}

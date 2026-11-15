@@ -1,0 +1,22 @@
+{
+  "event_id": "6826495b452144d6ab3bca05e4115e35",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794709615798-n7dvr4.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; for args in '\"'\"'{\"a\":2,\"b\":3}'\"'\"' '\"'\"'{\"a\":1.5,\"b\":-4}'\"'\"' '\"'\"'{\"a\":\"x\",\"b\":1}'\"'\"'; do echo \"== $args\"; npx -y @mcpjam/cli tools call --url http://fixture:8765/mcp --access-token \"$MCP_SERVER_TOKEN\" --tool-name add --tool-args \"$args\" 2>&1 | cut -c1-500; done | tee tools-calls.log' < /dev/null && pwd -P >| /tmp/claude-9197-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:27:18.291403+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 2.0744874477386475,
+  "end": "2026-11-15T02:27:20.365823+00:00"
+}

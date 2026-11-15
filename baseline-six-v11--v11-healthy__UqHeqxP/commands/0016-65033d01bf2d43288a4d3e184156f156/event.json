@@ -1,0 +1,22 @@
+{
+  "event_id": "65033d01bf2d43288a4d3e184156f156",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794706093281-lqxnat.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; cat > README.md <<'\"'\"'E'\"'\"'\n# MCPJam validation of http://fixture:8765/mcp\nexport MCPJAM_TELEMETRY_DISABLED=1; N=\"npx -y @mcpjam/cli@latest\"\n$N server probe --url http://fixture:8765/mcp          # ready, arithmetic-fixture, tool: add\n$N tools call --url http://fixture:8765/mcp --tool-name add --tool-args '\"'\"'{\"a\":2,\"b\":3}'\"'\"'   # {\"sum\":5}\n$N cloud eval run --suite suite_fixture --project project_fixture --wait --out reports/hosted.json   # repeatable eval; passed\nSuite files: .mcpjam/evals/ (local `mcpjam test` needs https API URL + model; hosted fixture only runs toolCall steps)\nE' && pwd -P >| /tmp/claude-15d0-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:30:07.950278+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0024230480194091797,
+  "end": "2026-11-15T01:30:07.952531+00:00"
+}

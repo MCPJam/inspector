@@ -1,0 +1,444 @@
+                                                                                
+ Usage: harbor run [OPTIONS]                                                    
+                                                                                
+ Start a job. Alias for `harbor job start`.                                     
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --help  -h      <bool>  Show this message and exit.                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Config ─────────────────────────────────────────────────────────────────────╮
+│ --config        -c      <list[str]>  YAML/JSON JobConfig file or GitHub URL. │
+│                                      Repeatable; later configs override      │
+│                                      earlier ones. Additive lists append; [] │
+│                                      clears them. Schema: harbor job schema. │
+│ --diff                  <list[str]>  Source job directory or Harbor Hub job  │
+│                                      UUID to compare against. Can be used    │
+│                                      multiple times. Prints a                │
+│                                      reuse/regrade/rerun preview before      │
+│                                      running a job.                          │
+│ --print-config          <bool>       Print the resolved JobConfig JSON and   │
+│                                      exit.                                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Job Settings ───────────────────────────────────────────────────────────────╮
+│ --job-name                       <str>               Name of the job         │
+│                                                      (default: timestamp)    │
+│ --jobs-dir               -o      <path>              Directory to store job  │
+│                                                      results (default: jobs) │
+│ --n-attempts             -k      <int>               Number of attempts per  │
+│                                                      trial (default: 1)      │
+│ --timeout-multiplier             <float>             Multiplier for task     │
+│                                                      timeouts (default: 1.0) │
+│ --agent-timeout-multip…          <float>             Multiplier for agent    │
+│                                                      execution timeout       │
+│                                                      (overrides              │
+│                                                      --timeout-multiplier)   │
+│ --verifier-timeout-mul…          <float>             Multiplier for verifier │
+│                                                      timeout (overrides      │
+│                                                      --timeout-multiplier)   │
+│ --agent-setup-timeout-…          <float>             Multiplier for agent    │
+│                                                      setup timeout           │
+│                                                      (overrides              │
+│                                                      --timeout-multiplier)   │
+│ --environment-build-ti…          <float>             Multiplier for          │
+│                                                      environment build       │
+│                                                      timeout (overrides      │
+│                                                      --timeout-multiplier)   │
+│ --quiet,--silent         -q      <bool>              Suppress individual     │
+│                                                      trial progress displays │
+│ --debug                          <bool>              Enable debug logging    │
+│ --n-concurrent           -n      <int>               Number of concurrent    │
+│                                                      trials to run (default: │
+│                                                      4)                      │
+│ --n-concurrent-agents            <int range> [x>=1]  Per-agent execution     │
+│                                                      concurrency cap, at     │
+│                                                      most --n-concurrent.    │
+│                                                      Local only;             │
+│                                                      incompatible with       │
+│                                                      --launch. Default:      │
+│                                                      unset.                  │
+│ --max-retries            -r      <int>               Maximum number of retry │
+│                                                      attempts (default: 0)   │
+│ --retry-include                  <list[str]>         Exception types to      │
+│                                                      retry on. If not        │
+│                                                      specified, all          │
+│                                                      exceptions except those │
+│                                                      in --retry-exclude are  │
+│                                                      retried (can be used    │
+│                                                      multiple times)         │
+│ --retry-exclude                  <list[str]>         Exception types to NOT  │
+│                                                      retry on (can be used   │
+│                                                      multiple times)         │
+│ --yes                    -y      <bool>              Auto-confirm prompts,   │
+│                                                      including diff          │
+│                                                      execution, host         │
+│                                                      environment access, and │
+│                                                      sharing with            │
+│                                                      organizations you are   │
+│                                                      not a member of.        │
+│ --env-file                       <path>              Path to a .env file to  │
+│                                                      load into environment.  │
+│ --install-only                   <bool>              Install the agent, then │
+│                                                      exit without running or │
+│                                                      verifying.              │
+│ --artifact                       <list[str]>         Environment path to     │
+│                                                      download after the      │
+│                                                      trial. Repeatable.      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Agent ──────────────────────────────────────────────────────────────────────╮
+│ --agent                 -a      [aider|antigravity-cl  Agent to run, or a    │
+│                                 i|antigravity-sdk|cla  custom agent import   │
+│                                 ude-code|cline-cli|co  path                  │
+│                                 de-puppy|codex|comput  (module.path:ClassNa… │
+│                                 er-1|copilot-cli|cort  Also accepts an ACP   │
+│                                 ex-code|cursor-cli|de  registry shorthand    │
+│                                 erflow|devin|dspy-rlm  (e.g.                 │
+│                                 |eve|fabric|fx|fx-dev  acp:opencode@1.3.9).  │
+│                                 |gemini-cli|goose|gro  Options: harbor agent │
+│                                 k-build|hermes|junie|  schema <name>.        │
+│                                 kimi-cli|kimi-code|la                        │
+│                                 nggraph|mcode|mimo|mi                        │
+│                                 ni-swe-agent|muse-cod                        │
+│                                 e|nemo-agent|nop|open                        │
+│                                 claw|opencode|opencod                        │
+│                                 e-v2|openhands|openha                        │
+│                                 nds-sdk|oracle|pi|qwe                        │
+│                                 n-coder|rovodev-cli|s                        │
+│                                 trands|swe-agent|term                        │
+│                                 inus|terminus-1|termi                        │
+│                                 nus-2|trae-agent|vibe                        │
+│                                 |acp:<agent>]                                │
+│ --model                 -m      <list[str]>            Model name for the    │
+│                                                        agent (can be used    │
+│                                                        multiple times)       │
+│ --ak,--agent-kwarg              <list[str]>            Agent key=[REDACTED]       │
+│                                                        option. Repeatable.   │
+│                                                        See harbor agent      │
+│                                                        schema <name>.        │
+│ --effort                        <str>                  Reasoning effort for  │
+│                                                        the agent.            │
+│ --allow-agent-host              <list[str]>            Allow hostname or     │
+│                                                        IP/CIDR during agent  │
+│                                                        execution only.       │
+│                                                        Extends the agent     │
+│                                                        allowlist.            │
+│                                                        Repeatable.           │
+│ --resume-trajectory             <bool>                 Resume the previous   │
+│                                                        step's native session │
+│                                                        in multi-step tasks.  │
+│                                                        Requires agent resume │
+│                                                        support.              │
+│ --load-trajectory               <str>                  Load a session for    │
+│                                                        the first step:       │
+│                                                        native .jsonl (same   │
+│                                                        agent) or ATIF .json  │
+│                                                        (supported agents).   │
+│                                                        Later steps start     │
+│                                                        fresh unless          │
+│                                                        --resume-trajectory   │
+│                                                        is set.               │
+│ --ae,--agent-env                <list[str]>            Agent environment     │
+│                                                        variable as           │
+│                                                        KEY=[REDACTED]            │
+│                                                        Repeatable.           │
+│ --mcp-config                    <list[Path]>           Claude-style          │
+│                                                        .mcp.json or Harbor   │
+│                                                        MCP config file.      │
+│                                                        Repeatable.           │
+│ --skill,--skills                <list[str]>            Skill directory or    │
+│                                                        git source: org/name  │
+│                                                        or URL. Repeatable.   │
+│ --skip-credential-che…          <bool>                 Defer agent           │
+│                                                        credential checks to  │
+│                                                        runtime. Other        │
+│                                                        preflight checks      │
+│                                                        still run.            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Model Auth Override ────────────────────────────────────────────────────────╮
+│ --base-url            <str>                       Override the inference API │
+│                                                   base URL.                  │
+│ --api-key-name        <str>                       Name of the environment    │
+│                                                   variable containing the    │
+│                                                   inference API key.         │
+│ --api-format          <openai_chat_completions|o  Inference API format. See  │
+│                       penai_responses|anthropic_  harbor agent auth <agent>. │
+│                       messages|google_generate_c                             │
+│                       ontent|bedrock_converse>                               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Simulated User ─────────────────────────────────────────────────────────────╮
+│ --user-agent                  [aider|antigravity-cli  Agent that plays the   │
+│                               |antigravity-sdk|claud  simulated user in a    │
+│                               e-code|cline-cli|code-  multi-turn trial. The  │
+│                               puppy|codex|computer-1  --agent becomes the    │
+│                               |copilot-cli|cortex-co  ACP target it          │
+│                               de|cursor-cli|deerflow  converses with.        │
+│                               |devin|dspy-rlm|eve|fa                         │
+│                               bric|fx|fx-dev|gemini-                         │
+│                               cli|goose|grok-build|h                         │
+│                               ermes|junie|kimi-cli|k                         │
+│                               imi-code|langgraph|mco                         │
+│                               de|mimo|mini-swe-agent                         │
+│                               |muse-code|nemo-agent|                         │
+│                               nop|openclaw|opencode|                         │
+│                               opencode-v2|openhands|                         │
+│                               openhands-sdk|oracle|p                         │
+│                               i|qwen-coder|rovodev-c                         │
+│                               li|strands|swe-agent|t                         │
+│                               erminus|terminus-1|ter                         │
+│                               minus-2|trae-agent|vib                         │
+│                               e|acp:<agent>]                                 │
+│ --user-model                  <str>                   Model name for the     │
+│                                                       simulated-user agent.  │
+│ --uk,--user-agent-kwa…        <list[str]>             Additional             │
+│                                                       simulated-user agent   │
+│                                                       kwarg in key=[REDACTED]     │
+│                                                       format.                │
+│ --user-persona-path           <path>                  Persona text file for  │
+│                                                       {{ persona }}.         │
+│                                                       Default: built-in      │
+│                                                       persona.               │
+│ --user-prompt-templat…        <path>                  Jinja2 prompt file.    │
+│                                                       Requires {{            │
+│                                                       instruction }} and {{  │
+│                                                       bridge_instructions    │
+│                                                       }}; {{ persona }} is   │
+│                                                       optional. Default:     │
+│                                                       built-in template.     │
+│ --bridge                      <acp>                   Protocol bridge        │
+│                                                       connecting the         │
+│                                                       simulated user to the  │
+│                                                       target.                │
+│ --bridge-prompt-path          <path>                  Plain-text             │
+│                                                       instructions teaching  │
+│                                                       the user agent how to  │
+│                                                       use the bridge.        │
+│ --bk,--bridge-kwarg           <list[str]>             Additional bridge      │
+│                                                       kwarg in key=[REDACTED]     │
+│                                                       format.                │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Environment ────────────────────────────────────────────────────────────────╮
+│ --env              -e                     [aca-sandbox|ack  Environment type │
+│                                           |apple-container  (default:        │
+│                                           |beam|blaxel|box  docker) or a     │
+│                                           d|cua-cloud|cwsa  custom           │
+│                                           ndbox|daytona|do  environment      │
+│                                           cker|e2b|ec2|gke  import path      │
+│                                           |hf-sandbox|hype  (module.path:Cl… │
+│                                           rbrowser|islo|ka                   │
+│                                           ta|kernel|langsm                   │
+│                                           ith|modal|mosaic                   │
+│                                           |novita|opensand                   │
+│                                           box|openshift|po                   │
+│                                           dman|prime|runlo                   │
+│                                           op|runta|sail|sb                   │
+│                                           x|singularity|sk                   │
+│                                           ypilot|smol|snow                   │
+│                                           flake|superserve                   │
+│                                           |tensorlake|use-                   │
+│                                           computer|vercel]                   │
+│ --allow-environm…                         <list[str]>       Add hostname or  │
+│                                                             IP/CIDR to the   │
+│                                                             environment      │
+│                                                             network baseline │
+│                                                             at startup.      │
+│                                                             Repeatable.      │
+│ --force-build          --no-force-bui…    <bool>            Whether to force │
+│                                                             rebuild the      │
+│                                                             environment      │
+│                                                             (default:        │
+│                                                             --no-force-buil… │
+│ --delete               --no-delete        <bool>            Whether to       │
+│                                                             delete the       │
+│                                                             environment      │
+│                                                             after completion │
+│                                                             (default:        │
+│                                                             --delete)        │
+│ --stream               --no-stream        <bool>            Sync the         │
+│                                                             trajectory and   │
+│                                                             enable browser   │
+│                                                             VS Code over     │
+│                                                             SSH.             │
+│ --cpus                                    <auto|limit|requ  Task CPU         │
+│                                           est|guarantee|ig  enforcement      │
+│                                           nore>             policy.          │
+│ --memory                                  <auto|limit|requ  Task memory      │
+│                                           est|guarantee|ig  enforcement      │
+│                                           nore>             policy.          │
+│ --override-cpus                           <float>           Override the     │
+│                                                             number of CPUs   │
+│                                                             for the          │
+│                                                             environment      │
+│ --override-memor…                         <int>             Override the     │
+│                                                             memory (in MB)   │
+│                                                             for the          │
+│                                                             environment      │
+│ --override-stora…                         <int>             Override the     │
+│                                                             storage (in MB)  │
+│                                                             for the          │
+│                                                             environment      │
+│ --override-gpus                           <int>             Override the     │
+│                                                             number of GPUs   │
+│                                                             for the          │
+│                                                             environment      │
+│ --mounts,--mount…                         <str>             JSON array of    │
+│                                                             volume mounts    │
+│                                                             for the          │
+│                                                             environment      │
+│                                                             container        │
+│                                                             (Docker Compose  │
+│                                                             service volume   │
+│                                                             format).         │
+│                                                             --mounts-json is │
+│                                                             a deprecated     │
+│                                                             alias.           │
+│ --extra-docker-c…                         <list[Path]>      Additional       │
+│                                                             Docker Compose   │
+│                                                             overlay file.    │
+│                                                             Can be used      │
+│                                                             multiple times.  │
+│ --ek,--environme…                         <list[str]>       Environment      │
+│                                                             kwarg in         │
+│                                                             key=[REDACTED] format │
+│                                                             (can be used     │
+│                                                             multiple times)  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Verifier ───────────────────────────────────────────────────────────────────╮
+│ --ve,--verifier-env                         <list[str]>  Verifier            │
+│                                                          environment         │
+│                                                          variable as         │
+│                                                          KEY=[REDACTED]          │
+│                                                          Repeatable.         │
+│ --allow-verifier-h…                         <list[str]>  Allow hostname or   │
+│                                                          IP/CIDR for the     │
+│                                                          verifier: during    │
+│                                                          verification, and   │
+│                                                          from startup in a   │
+│                                                          separate verifier   │
+│                                                          environment.        │
+│                                                          Repeatable.         │
+│ --verifier                                  <str>        Custom verifier     │
+│                                                          import path         │
+│                                                          (module.path:Class… │
+│ --verifier-kwarg                            <list[str]>  Additional verifier │
+│                                                          kwarg in the format │
+│                                                          'key=[REDACTED]'.        │
+│ --disable-verifica…    --enable-verific…    <bool>       Disable task        │
+│                                                          verification (skip  │
+│                                                          running tests)      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Dataset ────────────────────────────────────────────────────────────────────╮
+│ --path                    -p      <path>        Path to a local task or      │
+│                                                 dataset directory            │
+│ --extra-instruction-path          <list[Path]>  Append instruction file      │
+│                                                 before --extra-instruction   │
+│                                                 text. Repeatable.            │
+│ --extra-instruction               <list[str]>   Append instruction text      │
+│                                                 after                        │
+│                                                 --extra-instruction-path     │
+│                                                 files. Repeatable.           │
+│ --dataset                 -d      <str>         Dataset name@version (e.g.,  │
+│                                                 'dataset@1.0')               │
+│ --registry-path                   <path>        Path to a registry.json file │
+│                                                 or its parent directory.     │
+│                                                 With --repo, this is a       │
+│                                                 repo-relative path.          │
+│ --repo                            <str>         Git registry to resolve      │
+│                                                 datasets from (e.g.          │
+│                                                 'org/name', a GitHub/Hugging │
+│                                                 Face/GitLab URL, optionally  │
+│                                                 pinned with '@ref').         │
+│ --task                    -t      <str>         Run a single task from the   │
+│                                                 registry (org/name)          │
+│ --include-task-name       -i      <list[str]>   Task name to include from    │
+│                                                 dataset (supports glob       │
+│                                                 patterns)                    │
+│ --exclude-task-name       -x      <list[str]>   Task name to exclude from    │
+│                                                 dataset (supports glob       │
+│                                                 patterns)                    │
+│ --n-tasks                 -l      <int>         Maximum number of tasks to   │
+│                                                 run (applied after other     │
+│                                                 filters)                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Integrations ───────────────────────────────────────────────────────────────╮
+│ --plugin                   <list[str]>  Import path for a job plugin class   │
+│                                         (module:ClassName). Repeatable.      │
+│ --pk,--plugin-kwarg        <list[str]>  key=[REDACTED] for one plugin, or         │
+│                                         PLUGIN.key=[REDACTED] to target a         │
+│                                         --plugin import path. Repeatable.    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Harbor Hub ─────────────────────────────────────────────────────────────────╮
+│ --upload                          <bool>            Upload the finished job  │
+│                                                     to Harbor Hub for        │
+│                                                     sharing.                 │
+│ --launch                          <bool>            Run on Harbor Hub.       │
+│ --dry-run                         <bool>            Validate config,         │
+│                                                     preflight, and task      │
+│                                                     metadata without         │
+│                                                     downloading tasks,       │
+│                                                     cloning repositories, or │
+│                                                     running trials. With     │
+│                                                     --server, resolves       │
+│                                                     inputs on the server     │
+│                                                     without submitting a job │
+│                                                     (may download tasks).    │
+│                                                     With --launch, validates │
+│                                                     on Hub without queuing   │
+│                                                     or charging quota. With  │
+│                                                     --diff, resolves tasks   │
+│                                                     and downloads source     │
+│                                                     jobs as needed, then     │
+│                                                     shows the comparison     │
+│                                                     without prompting or     │
+│                                                     running trials.          │
+│ --use-static-ip                   <bool>            Use a static outbound    │
+│                                                     IP. Requires --launch.   │
+│ --credential-mode                 <gateway|direct>  Model credentials via    │
+│                                                     Hub proxy (gateway) or   │
+│                                                     native provider endpoint │
+│                                                     (direct). Default:       │
+│                                                     gateway. Requires        │
+│                                                     --launch.                │
+│ --one-off-secret                  NAME[=VALUE]      Job-only secret; bare    │
+│                                                     NAME reads your          │
+│                                                     environment. Overrides   │
+│                                                     account-wide secrets;    │
+│                                                     encrypted and revoked at │
+│                                                     job end. Requires        │
+│                                                     --launch. Repeatable.    │
+│ --stored-secret                   NAME[@TAG][=AS]   Grant an owning-org      │
+│                                                     secret to all agents,    │
+│                                                     adding to config         │
+│                                                     selections. Requires     │
+│                                                     --launch. Repeatable.    │
+│                                                     Select credentials or    │
+│                                                     use --no-secrets         │
+│                                                     (oracle/nop exempt).     │
+│ --no-secrets                      <bool>            Launch without           │
+│                                                     credentials. Conflicts   │
+│                                                     with secret selections   │
+│                                                     in flags or config.      │
+│                                                     Requires --launch.       │
+│ --registry-secret                 HOST=NAME_OR_ID   Select a stored          │
+│                                                     image-pull secret when   │
+│                                                     multiple credentials     │
+│                                                     match a host. Requires   │
+│                                                     --launch. Repeatable.    │
+│ --public             --private    <bool>            Uploaded job visibility  │
+│                                                     (default: private).      │
+│                                                     Requires --upload.       │
+│ --share                           <list[str]>       Share the job with an    │
+│                                                     organization. Requires   │
+│                                                     --upload or --launch.    │
+│                                                     Repeatable.              │
+│ --org                             <str>             Owning organization      │
+│                                                     (default: personal org). │
+│                                                     Requires --upload or     │
+│                                                     --launch.                │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Rollout Server ─────────────────────────────────────────────────────────────╮
+│ --server        <str>   Submit to a harbor rollout server. Paths in the job  │
+│                         config refer to the server filesystem; files are not │
+│                         uploaded.                                            │
+│ --watch         <bool>  Watch a server job until it finishes. Disconnecting  │
+│                         leaves it running.                                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

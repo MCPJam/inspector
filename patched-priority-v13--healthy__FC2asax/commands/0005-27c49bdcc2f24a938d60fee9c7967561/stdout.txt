@@ -1,0 +1,19 @@
+                                organization's server or
+                                https://app.mcpjam.com/api/v1)
+--
+  projects                      Operate the MCP servers saved in your hosted
+                                MCPJam projects
+--
+  tunnel [options] [target...]  Expose a local MCP server through an MCPJam
+                                tunnel and register it as a server in your
+                                project
+--
+                                environments (host + servers + pinned
+                                skills/plugins) in your hosted MCPJam projects
+--
+  server-accounts               Manage the accounts a saved server signs in with
+                                for hosted runs. Write-only: no command prints a
+--
+  conformance                   Hosted conformance runs on saved servers: start,
+                                poll, read failures
+{"error":{"code":"USAGE_ERROR","message":"error: unknown command 'servers'\n(Did you mean secrets?) Run `mcpjam cloud --help` for this command's arguments and options."}}

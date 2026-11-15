@@ -1,0 +1,8 @@
+{"seconds": 0.47906947135925293, "stream": "stdout", "data": "== {\"a\":2,\"b\":3}\n"}
+{"seconds": 0.8704044818878174, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":5}\n\n== {\"a\":-1.5,\"b\":0.25}\n"}
+{"seconds": 1.2807326316833496, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": -1.25}\"}],\"structuredContent\":{\"sum\":-1.25},\"isError\":false,\"_durationMs\":4}\n"}
+{"seconds": 1.2807936668395996, "stream": "stdout", "data": "\n== {\"a\":1e308,\"b\":1e308}\n"}
+{"seconds": 1.6693623065948486, "stream": "stdout", "data": "{\"error\":{\"code\":\"INTERNAL_ERROR\",\"message\":\"Unexpected token 'I', ...\\\": {\\\"sum\\\": Infinity},\\\"... is not valid JSON\"}}\n\n== {\"a\":\"x\",\"b\":1}\n"}
+{"seconds": 2.047109365463257, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"a and b must be finite numbers\"}],\"isError\":true,\"_durationMs\":4}\n"}
+{"seconds": 2.0471556186676025, "stream": "stdout", "data": "\n== {\"a\":1}\n"}
+{"seconds": 2.4181911945343018, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"a and b must be finite numbers\"}],\"isError\":true,\"_durationMs\":4}\n\n"}

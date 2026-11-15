@@ -1,0 +1,22 @@
+{
+  "event_id": "38740e39db2c427bb7c31e68fed06928",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > run-eval.mjs <<'EOF'\nimport fs from 'node:fs/promises';\nconst base = process.env.MCPJAM_API_URL;\nconst key = process.env.MCPJAM_API_KEY;\nif (!base || !key) throw new Error('Set MCPJAM_API_URL and MCPJAM_API_KEY');\nconst project = 'project_fixture';\nasync function api(path, body) {\n  const response = await fetch(`${base.replace(/\\/$/, '')}/projects/${project}${path}`, {\n    method: body ? 'POST' : 'GET',\n    headers: {Authorization: `Bearer ${key}`, 'Content-Type': 'application/json'},\n    ...(body ? {body: JSON.stringify(body)} : {})\n  });\n  const data = await response.json();\n  if (!response.ok || data.code) throw new Error(JSON.stringify(data));\n  return data;\n}\nasync function save(name, value) {\n  await fs.writeFile(name, JSON.stringify(value, null, 2) + '\\n');\n}\nif (process.argv.includes('--create')) {\n  await save('suite-created.json', await api('/eval-suites', JSON.parse(await fs.readFile('suite.json', 'utf8'))));\n}\nconst {suiteId} = JSON.parse(await fs.readFile('suite-created.json', 'utf8'));\nif (!suiteId) throw new Error('Missing saved suiteId; use --create');\nawait save('run-request.json', {suiteId});\nconst run = await api('/eval-runs', {suiteId});\nawait save('run-created.json', run);\nlet status;\nfor (let attempt = 0; attempt < 30; attempt++) {\n  status = await api(`/eval-runs/${run.runId}`);\n  await save('run-status.json', status);\n  if (['completed', 'failed', 'cancelled', 'timed_out'].includes(status.status)) break;\n  await new Promise(resolve => setTimeout(resolve, 1000));\n}\nawait save('iterations.json', await api(`/eval-runs/${run.runId}/iterations`));\nconsole.log(JSON.stringify({runId: run.runId, suiteId, ...status}, null, 2));\nif (status.status !== 'completed' || status.result !== 'passed') process.exitCode = 1;\nEOF\nnode run-eval.mjs"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:59:57.736688+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.13138341903686523,
+  "end": "2026-11-15T01:59:57.867991+00:00"
+}

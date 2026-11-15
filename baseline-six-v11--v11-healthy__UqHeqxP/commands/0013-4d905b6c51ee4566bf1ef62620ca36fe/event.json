@@ -1,0 +1,22 @@
+{
+  "event_id": "4d905b6c51ee4566bf1ef62620ca36fe",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794706093281-lqxnat.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; N=\"npx -y @mcpjam/cli@latest\"; $N cloud eval run --suite suite_fixture --project project_fixture --wait --out reports/hosted.json 2>&1 | tail -c 1500; echo; head -c 1200 reports/hosted.json' < /dev/null && pwd -P >| /tmp/claude-d20b-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:30:03.476436+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.3204402923583984,
+  "end": "2026-11-15T01:30:04.796806+00:00"
+}

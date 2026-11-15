@@ -1,0 +1,2 @@
+{"seconds": 3.0187127590179443, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5.5}\"}],\"structuredContent\":{\"sum\":5.5},\"isError\":false,\"_durationMs\":8}\n"}
+{"seconds": 4.175514459609985, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"a and b must be finite numbers\"}],\"isError\":true,\"_durationMs\":9}\n"}

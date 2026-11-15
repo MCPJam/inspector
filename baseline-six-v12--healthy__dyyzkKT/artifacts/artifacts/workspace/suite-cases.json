@@ -1,0 +1,35 @@
+{
+  "items": [
+    {
+      "title": "add 19 and 23 returns 42",
+      "steps": [
+        {
+          "id": "call_add",
+          "kind": "toolCall",
+          "serverName": "Arithmetic",
+          "toolName": "add",
+          "arguments": {
+            "a": 19,
+            "b": 23
+          }
+        },
+        {
+          "id": "check_sum",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultMatches",
+            "toolName": "add",
+            "path": "/sum",
+            "patterns": [
+              "^42$"
+            ],
+            "min": 1,
+            "max": 1
+          }
+        }
+      ],
+      "id": "suite_authored_1_case_0",
+      "suiteId": "suite_authored_1"
+    }
+  ]
+}

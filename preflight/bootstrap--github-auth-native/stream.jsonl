@@ -1,0 +1,1 @@
+{"seconds": 0.244459867477417, "stream": "stdout", "data": "github.com\n  ✓ Logged in to github.com account [PRIVATE IDENTIFIER REDACTED] (keyring)\n  - Active account: true\n  - Git operations protocol: ssh\n  - Token: gho_************************************\n  - Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo'\n"}

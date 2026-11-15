@@ -1,0 +1,22 @@
+{
+  "event_id": "8d9d46cdfd844049a29a19956d7099b6",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "node <<'JS'\nconst fs=require('fs');\nconst p='.mcpjam/evals/arithmetic.json';\nconst d=JSON.parse(fs.readFileSync(p));\nd.cases[0].steps[1].assertion.needle='{\"sum\": 5}';\nfs.writeFileSync(p,JSON.stringify(d,null,2)+'\\n');\nconst negative=structuredClone(d);negative.suite={id:'s_arithmetic_negative_control',name:'Arithmetic wrong-answer control'};negative.cases[0].steps[1].assertion.needle='{\"sum\": 999}';\nfs.writeFileSync('.mcpjam/evals/negative-control.json',JSON.stringify(negative,null,2)+'\\n');\nJS\nnpx mcpjam cloud eval run --file .mcpjam/evals/arithmetic.json --project project_fixture --wait --wait-timeout 30000 --out artifacts/eval-report.json --no-telemetry --format json > artifacts/run.json 2> artifacts/run.stderr\nnpx mcpjam cloud eval run --file .mcpjam/evals/negative-control.json --project project_fixture --wait --wait-timeout 30000 --out artifacts/negative-report.json --no-telemetry --format json > artifacts/negative-run.json 2> artifacts/negative-run.stderr\nnegative_exit=$?\nprintf 'Wrong-answer control exit: %s\\n' \"$negative_exit\"\ncat artifacts/run.json\ncat artifacts/negative-run.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:10:32.981980+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.7251648902893066,
+  "end": "2026-11-15T02:10:34.707072+00:00"
+}

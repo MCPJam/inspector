@@ -1,0 +1,41 @@
+http://fixture:8765/api/v1
+MCPJAM_API_URL=http://fixture:8765/api/v1
+MCPJAM_TELEMETRY_DISABLED=1
+ANTHROPIC_MODEL=claude-sonnet-5-5
+ANTHROPIC_AUTH_TOKEN=
+MCPJAM_API_KEY=[REDACTED]
+Usage: mcpjam cloud eval [options] [command]
+
+Author and run eval suites in your hosted MCPJam projects
+
+Options:
+  -h, --help                 display help for command
+
+Commands:
+  create [options]           Create a runnable eval suite from authored test
+                             cases (does not run it)
+  list [options]             List the eval suites saved in a project
+  runs [options]             List a suite's run history, newest first
+  revisions [options]        List a suite's settings history, newest first
+  run [options]              Start an eval run of an existing suite, or upload a
+                             versioned suite file and run it. The
+                             upload-and-launch has a 120s deadline overall, not
+                             per request (raise it with the global --timeout
+                             <ms>); --wait-timeout bounds the RUN instead.
+  status [options]           Get the status and summary of an eval run
+  stage-analytics [options]  Read the user-value chain funnel for one run
+                             (--run) or a suite's runs as a trend series
+                             (--suite)
+  route-facts [options]      Read the tool routes a run's trials took — which
+                             paths were used, and which expected tools were
+                             missing or substituted
+  server-facts [options]     Read the server a run was taken against — tool
+                             surface, catalog size, annotation coverage,
+                             tool-metadata signals, and what connect and
+                             discovery observed
+  description-experiment     Propose, start, or read a two-arm tool-description
+53:The file is invalid when it is not JSON, when `version`, `apiUrl` or `lock` is missing or has the wrong type, when `version` is not `1`, when it has any other key, when it cannot be read, when `apiUrl` has credentials, a query or a fragment, or when `apiUrl` uses plain `http://` to a host other than a loopback address.
+70:| The locked MCPJam server (API, CLI login settings) | Allowed |
+73:| URLs the locked server returns (model leases, artifact downloads, tunnel relay) | Allowed: your server chose them |
+74:| The sign-in provider your server's login settings name | Allowed |
+82:When `HTTPS_PROXY` or `HTTP_PROXY` is set (either case), the CLI process sends its `fetch` requests through the proxy and honors `NO_PROXY`: MCPJam's API, model providers and MCP servers over HTTP. `HTTPS_PROXY` covers `https` destinations and `HTTP_PROXY` covers `http` ones; with only `HTTP_PROXY` set, `https` requests use it too. `localhost`, `127.0.0.1` and `[::1]` always connect directly, so local MCP servers and the local Inspector keep working. A value without a scheme, such as `proxy.corp.com:8080`, means `http://`; a value that is not an http(s) URL is ignored with a warning. Two connections do not use the proxy yet: the relay connection of `mcpjam cloud tunnel` and the `mcpjam oauth` debugging proxy.

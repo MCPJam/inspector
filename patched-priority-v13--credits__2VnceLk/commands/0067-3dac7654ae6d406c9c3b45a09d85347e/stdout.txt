@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Launch once, then resume polling using the saved receipt. No credit purchases."""
+import argparse,json,pathlib,time
+from api import call
+p=argparse.ArgumentParser()
+p.add_argument('--label',default='evaluation')
+p.add_argument('--run-id',help='Resume an accepted run without launching again')
+p.add_argument('--timeout',type=int,default=90)
+a=p.parse_args()
+root=pathlib.Path(__file__).resolve().parent
+base='/projects/project_fixture/eval-runs'
+request=json.loads((root/'request.json').read_text())
+request['idempotencyKey']='repeatable-arithmetic-'+a.label
+runid=a.run_id
+if not runid:
+ receipt=call(base,request,name=a.label+'-launch')
+ runid=receipt.get('runId')
+ if not runid: raise SystemExit('Launch blocked; inspect saved receipt before retrying.')
+end=time.monotonic()+a.timeout
+while time.monotonic()<end:
+ status=call(base+'/'+runid,name=a.label+'-status')
+ if status.get('status') in ['completed','failed','cancelled','timed_out']:
+  call(base+'/'+runid+'/iterations',name=a.label+'-iterations')
+  call(base+'/'+runid+'/decision-summary',name=a.label+'-decision')
+  raise SystemExit(0 if status.get('status')=='completed' else 1)
+ time.sleep(2)
+raise SystemExit('Polling timed out; resume with --run-id '+runid)
+import os,json,urllib.request,urllib.error,pathlib
+BASE=os.environ['MCPJAM_API_URL'].rstrip('/')
+OUT=pathlib.Path('/workspace/mcp-eval')
+def call(path,body=None,method=None,name=None):
+ req=urllib.request.Request(BASE+path,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'},method=method or ('GET' if body is None else 'POST'))
+ try:
+  with urllib.request.urlopen(req,timeout=20) as r: status=r.status; data=json.load(r)
+ except urllib.error.HTTPError as e: status=e.code; data=json.load(e)
+ if name: (OUT/(name+'.json')).write_text(json.dumps({'http_status':status,'body':data},indent=2))
+ print(path,status,json.dumps(data))
+ return data
+if __name__=='__main__':
+ import sys
+ call(sys.argv[1],json.loads(sys.argv[2]) if len(sys.argv)>2 else None,name=sys.argv[3] if len(sys.argv)>3 else None)
+/projects/project_fixture/eval-runs 202 {"runId": "run_fixture_1", "suiteId": "suite_fixture", "status": "running", "servers": [{"id": "server_fixture", "name": "Arithmetic"}], "environment": null}
+/projects/project_fixture/eval-runs/run_fixture_1 200 {"id": "run_fixture_1", "suiteId": "suite_fixture", "runNumber": 1, "status": "completed", "result": "passed", "summary": {"total": 1, "passed": 1, "failed": 0, "passRate": 1.0}, "source": "api", "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.", "createdAt": 1794708878969, "completedAt": 1794708878969}
+/projects/project_fixture/eval-runs/run_fixture_1/iterations 200 {"items": [{"id": "run_fixture_1_0", "testCaseId": "case_add", "title": "add 2 and 3 returns 5", "iterationNumber": 1, "status": "completed", "result": "passed", "actualToolCalls": [{"toolName": "add", "arguments": {"a": 2, "b": 3}, "result": {"content": [{"type": "text", "text": "{\"sum\": 5}"}], "structuredContent": {"sum": 5}, "isError": false}}], "expectedToolCalls": [], "durationMs": 1, "error": null}]}
+/projects/project_fixture/eval-runs/run_fixture_1/decision-summary 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

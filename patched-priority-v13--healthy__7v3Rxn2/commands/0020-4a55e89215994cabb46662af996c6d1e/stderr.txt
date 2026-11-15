@@ -1,0 +1,2 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Eval idempotency key: 85fc91a1-dd46-4990-a578-4fc9a20ac6df

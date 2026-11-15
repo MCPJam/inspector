@@ -1,0 +1,26 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "96e0056708d29d1c8c665db48ac9e19c4e4b0cbc52f211f3873459d8bf8a1b07"
+  },
+  {
+    "source": "artifacts/workspace/reports/run.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/reports/run.json",
+    "sha256": "f8180859701a6ba5cb285a1a5790a27242ba5852221f7a19dcf6b8b452b0ed53"
+  },
+  {
+    "source": "artifacts/workspace/reports/status.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/reports/status.json",
+    "sha256": "7311377cdd90c929df2acb3be40b58e56ec3e298a7f5c4f3fdf33d307259f9c6"
+  },
+  {
+    "source": "artifacts/workspace/.mcpjam/evals/add.yaml",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcpjam/evals/add.yaml",
+    "sha256": "d6c02689a95dd6c308414151db28929ae2cd58ac8942f3c90ea0c7c92297d609"
+  }
+]

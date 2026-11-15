@@ -1,0 +1,25 @@
+{
+  "id": "bootstrap:prepare-regression-final",
+  "path": "bootstrap--prepare-regression-final",
+  "argv": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "work/inspector/scripts/harbor-activation",
+    "-p",
+    "test_prepare.py",
+    "-v"
+  ],
+  "start": "2026-11-15T01:46:54.939720+00:00",
+  "end": "2026-11-15T01:46:55.014734+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

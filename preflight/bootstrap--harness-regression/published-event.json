@@ -1,0 +1,23 @@
+{
+  "id": "bootstrap:harness-regression",
+  "path": "bootstrap--harness-regression",
+  "argv": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "work/inspector/scripts/harbor-activation/tests",
+    "-v"
+  ],
+  "start": "2026-11-15T01:44:31.498892+00:00",
+  "end": "2026-11-15T01:44:31.613146+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

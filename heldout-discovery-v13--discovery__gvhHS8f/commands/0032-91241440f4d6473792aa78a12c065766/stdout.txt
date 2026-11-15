@@ -1,0 +1,306 @@
+/projects/{projectId}/servers/{serverId}/doctor {
+  "operationId": "runDoctor",
+  "tags": [
+    "Server diagnostics"
+  ],
+  "summary": "Run the doctor",
+  "description": "Runs the full doctor workflow (probe \u2192 connect \u2192 initialize \u2192 capabilities \u2192 primitives) and returns a step-by-step report. The richest signal for \"is this server healthy, and why not.\"",
+  "parameters": [
+    {
+      "$ref": "#/components/parameters/projectId"
+    },
+    {
+      "$ref": "#/components/parameters/serverId"
+    }
+  ],
+  "requestBody": {
+    "$ref": "#/components/requestBodies/emptyBody"
+  },
+  "responses": {
+    "200": {
+      "description": "Doctor report. `status` summarizes the outcome; per-step detail is in `checks`.",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/DoctorReport"
+          }
+        }
+      }
+    },
+    "400": {
+      "$ref": "#/components/responses/ValidationError"
+    },
+    "401": {
+      "$ref": "#/components/responses/Unauthorized"
+    },
+    "403": {
+      "$ref": "#/components/responses/Forbidden"
+    },
+    "404": {
+      "$ref": "#/components/responses/NotFound"
+    },
+    "429": {
+      "$ref": "#/components/responses/RateLimited"
+    },
+    "500": {
+      "$ref": "#/components/responses/InternalError"
+    },
+    "502": {
+      "$ref": "#/components/responses/ServerUnreachable"
+    },
+    "504": {
+      "$ref": "#/components/responses/Timeout"
+    }
+  }
+}
+/projects/{projectId}/servers/{serverId}/tools/call {
+  "operationId": "callTool",
+  "tags": [
+    "Execution"
+  ],
+  "summary": "Call a tool",
+  "description": "Executes a tool on the server and returns the MCP `CallToolResult` plus an additive `durationMs` (wall-clock time of `executeTool`). Tool-level failures (`isError: true` in the result) are **successful calls**: the server answered; only transport/auth errors use the error envelope.",
+  "parameters": [
+    {
+      "$ref": "#/components/parameters/projectId"
+    },
+    {
+      "$ref": "#/components/parameters/serverId"
+    }
+  ],
+  "requestBody": {
+    "required": true,
+    "content": {
+      "application/json": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "toolName"
+          ],
+          "properties": {
+            "toolName": {
+              "type": "string",
+              "description": "Tool name, exactly as returned by the tools list."
+            },
+            "parameters": {
+              "type": "object",
+              "description": "Tool arguments matching the tool's `inputSchema`. Defaults to `{}`.",
+              "additionalProperties": true
+            }
+          }
+        },
+        "example": {
+          "toolName": "create_issue",
+          "parameters": {
+            "title": "Bug: login fails"
+          }
+        }
+      }
+    }
+  },
+  "responses": {
+    "200": {
+      "description": "The MCP `CallToolResult` plus additive `durationMs`. Check `isError` for tool-level failures. When the result is an `isError` sign-in challenge carrying `_meta[\"mcp/www_authenticate\"]`, an additive `authChallenge` holds the parsed challenge. An HTTP 401 from the MCP server is answered with `403 AUTH_REQUIRED` instead, with the challenge in `details.authChallenge`.",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/CallToolResult"
+          },
+          "example": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Issue created: #42"
+              }
+            ],
+            "durationMs": 42
+          }
+        }
+      }
+    },
+    "400": {
+      "$ref": "#/components/responses/ValidationError"
+    },
+    "401": {
+      "$ref": "#/components/responses/Unauthorized"
+    },
+    "403": {
+      "$ref": "#/components/responses/Forbidden"
+    },
+    "404": {
+      "$ref": "#/components/responses/NotFound"
+    },
+    "422": {
+      "$ref": "#/components/responses/FeatureNotSupported"
+    },
+    "429": {
+      "$ref": "#/components/responses/RateLimited"
+    },
+    "500": {
+      "$ref": "#/components/responses/InternalError"
+    },
+    "502": {
+      "$ref": "#/components/responses/ServerUnreachable"
+    },
+    "504": {
+      "$ref": "#/components/responses/Timeout"
+    }
+  }
+}
+/projects/{projectId}/servers/{serverId}/conformance-runs {
+  "operationId": "startConformanceRun",
+  "tags": [
+    "Conformance runs"
+  ],
+  "summary": "Start a persisted conformance run",
+  "description": "Grades the saved server against the protocol, apps, and tasks suites and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL. OAuth is not startable here. Poll the run detail for the verdict. Status, outcome, and score are three different answers.\n\nBy default the run uses the server's saved conformance settings: the checks they select, their tool inputs and their run time budget. The receipt's `settingsSource` says what applied: `saved`, or `defaults` when the server has nothing saved. `settings: \"none\"` runs every check with no tool inputs. With saved settings, the start first checks which MCP protocol version the server speaks and leaves out any suite with no saved checks for that version, as the app does. A retry with the same idempotency key returns the run that key started, with its original suites and settings. A run still going at its budget ends with its unfinished suites incomplete.\n\nOn hosted MCPJam, a user's starts past 30 in 10 minutes can be refused with `429` and `Retry-After`. A server that is restarting also answers `429` with `Retry-After`, with `details.reason` `SERVER_DRAINING`.",
+  "parameters": [
+    {
+      "$ref": "#/components/parameters/projectId"
+    },
+    {
+      "$ref": "#/components/parameters/serverId"
+    },
+    {
+      "$ref": "#/components/parameters/launcherHeader"
+    },
+    {
+      "name": "Idempotency-Key",
+      "in": "header",
+      "required": false,
+      "description": "The body's `idempotencyKey` sent as a header. It wins over the body field.",
+      "schema": {
+        "type": "string",
+        "maxLength": 256
+      }
+    }
+  ],
+  "requestBody": {
+    "required": false,
+    "content": {
+      "application/json": {
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "suites": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "protocol",
+                  "apps",
+                  "tasks"
+                ]
+              },
+              "description": "Suites to run. Defaults to protocol, apps, and tasks. OAuth is not available on this surface."
+            },
+            "idempotencyKey": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "Deduplicates a retried POST for the same saved server. Mapped to a namespaced externalRunId (`api:<projectId>:<serverId>:<key>`); a keyless start always inserts and spends quota."
+            },
+            "protocolVersion": {
+              "type": "string",
+              "enum": [
+                "2025-03-26",
+                "2025-06-18",
+                "2025-11-25",
+                "2026-07-28"
+              ],
+              "description": "Pin one MCP protocol version. Without it the run uses the version the server negotiates."
+            },
+            "engineVersion": {
+              "type": "string"
+            },
+            "settings": {
+              "type": "string",
+              "enum": [
+                "saved",
+                "none"
+              ],
+              "description": "`saved` (the default) runs the server's saved conformance settings. `none` runs every check with no tool inputs."
+            }
+          }
+        }
+      }
+    }
+  },
+  "responses": {
+    "202": {
+      "description": "The run was accepted and is executing.",
+      "content": {
+        "application/json": {
+          "schema": {
+            "type": "object",
+            "required": [
+              "runId",
+              "projectId",
+              "serverId",
+              "status",
+              "deduped",
+              "requestedSuites"
+            ],
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "projectId": {
+                "type": "string"
+              },
+              "serverId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "deduped": {
+                "type": "boolean"
+              },
+              "requestedSuites": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "settingsSource": {
+                "type": "string",
+                "enum": [
+                  "saved",
+                  "defaults",
+                  "none"
+                ],
+                "description": "The settings the run used. `defaults` means the server has no saved settings, so every check runs."
+              }
+            }
+          }
+        }
+      }
+    },
+    "400": {
+      "description": "The body carried an unknown key or an unknown `protocolVersion`, named OAuth, asked only for suites the saved settings leave out, or the server uses a transport conformance cannot grade."
+    },
+    "401": {
+      "$ref": "#/components/responses/Unauthorized"
+    },
+    "403": {
+      "$ref": "#/components/responses/Forbidden"
+    },
+    "404": {
+      "$ref": "#/components/responses/NotFound"
+    },
+    "409": {
+      "description": "The server's saved tool inputs could not be read. Save them again on the Conformance page, or start with `settings: \"none\"`."
+    },
+    "429": {
+      "$ref": "#/components/responses/RateLimited"
+    },
+    "500": {
+      "$ref": "#/components/responses/InternalError"
+    },
+    "502": {
+      "description": "The saved server's address could not be resolved."
+    }
+  }
+}

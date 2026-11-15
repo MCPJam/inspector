@@ -1,0 +1,68 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "ede6320596e55ed3f93928f124898bd3c2ab123e69a8112e93e31be5898b546f"
+  },
+  {
+    "source": "artifacts/workspace/tools-doc.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/tools-doc.md",
+    "sha256": "e16ad12b824bc8bbf6e90f77b6918ab3d3f649a08e227f374b7d9df9215f4df6"
+  },
+  {
+    "source": "artifacts/workspace/reference.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/reference.md",
+    "sha256": "a28de1090411ef1cad67b701ad9e4906a13be470376157de11ed8ee8918dcc2b"
+  },
+  {
+    "source": "artifacts/workspace/cli-overview.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/cli-overview.md",
+    "sha256": "3540d07971a09946c1ece0fe0a2448fe8414add8ca6c2be95e4ff431d5531baf"
+  },
+  {
+    "source": "artifacts/workspace/local-evals.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/local-evals.md",
+    "sha256": "d1cf3b193596d5feca31ec63bc9649a729127428225c1ae21969ba84138986ab"
+  },
+  {
+    "source": "artifacts/workspace/tools.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/tools.json",
+    "sha256": "a1ada4ec42d7cd887feb1a6a3f1cb5fbfa2053b077728f0ff89db8481499ba36"
+  },
+  {
+    "source": "artifacts/workspace/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/doctor.json",
+    "sha256": "a5d21944fed14dd62584c3e09cca242344600744d52bb0dad9de48f839be0966"
+  },
+  {
+    "source": "artifacts/workspace/first-result.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/first-result.json",
+    "sha256": "cd417e8ff1e9f9f294ff10e0e07b791c98547c702f3ca8d9fb1925cc68a19c27"
+  },
+  {
+    "source": "artifacts/workspace/docs-index.txt",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs-index.txt",
+    "sha256": "9654f2d4d237e5a10221f10d205a8569deaa3224f7e12bc1b89bba608168058e"
+  },
+  {
+    "source": "artifacts/workspace/evals-doc.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/evals-doc.md",
+    "sha256": "2e5d2a91f21a776b35c1e4829c96f169da0e069055e632af2662d43af767cc90"
+  },
+  {
+    "source": "artifacts/workspace/openapi.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/openapi.json",
+    "sha256": "53d45b9b1bf44189b5c9eded3d5600221298c49c9375f8d34fb76944235f7d28"
+  }
+]

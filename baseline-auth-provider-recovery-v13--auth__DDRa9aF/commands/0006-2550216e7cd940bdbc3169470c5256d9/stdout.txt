@@ -1,0 +1,4 @@
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":5}
+
+{"content":[{"type":"text","text":"a and b must be finite numbers"}],"isError":true,"_durationMs":4}
+{"success":true,"status":"connected","target":"http://fixture:8765/mcp","initInfo":{"protocolVersion":"2025-11-25","transport":"streamable-http","serverCapabilities":{"tools":{"listChanged":false}},"serverVersion":{"name":"arithmetic-fixture","version":"1.0.0"},"clientCapabilities":{"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}}}

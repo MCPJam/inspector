@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "dc4a8eb3-d884-4236-a3b0-874687e7f05d",
+  "task_name": "mcpjam/healthy",
+  "trial_name": "v11-healthy__UqHeqxP",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/baseline-six-v11/v11-healthy__UqHeqxP",
+  "task_id": {
+    "path": "work/tasks/v11-healthy"
+  },
+  "source": null,
+  "task_checksum": "68418c697080f3f6bda5f6d83b201def99ae13de833a8f6b5b2de375759ff6e5",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "work/tasks/v11-healthy",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "v11-healthy__UqHeqxP",
+    "trials_dir": "work/jobs/baseline-six-v11",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "claude-code",
+      "import_path": null,
+      "model_name": "anthropic/sonnet",
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": true,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {
+        "version": "2.1.323",
+        "max_turns": 30,
+        "max_budget_usd": "2",
+        "thinking_display": "omitted"
+      },
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "428cb9f5-355e-40ba-a2e0-1ecd4a1bb3f8",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "claude-code",
+    "version": "2.1.323",
+    "model_info": {
+      "name": "sonnet",
+      "provider": "anthropic"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 1112724,
+    "n_cache_tokens": 1068864,
+    "n_output_tokens": 6941,
+    "cost_usd": 0.3516364,
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "n_input_tokens": 1112724,
+        "n_cache_tokens": 1068864,
+        "n_output_tokens": 6941,
+        "cost_usd": 0.2859214
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": null,
+  "verifier_environment_mode": "separate",
+  "exception_info": {
+    "exception_type": "RewardFileNotFoundError",
+    "exception_message": "No reward file found at work/jobs/baseline-six-v11/v11-healthy__UqHeqxP/verifier/reward.txt or work/jobs/baseline-six-v11/v11-healthy__UqHeqxP/verifier/reward.json",
+    "exception_traceback": "Traceback (most recent call last):\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 616, in run\n    await self._run()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/single_step.py\", line 52, in _run\n    await self._run_verifier()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/single_step.py\", line 102, in _run_verifier\n    self.result.verifier_result = await self._run_separate_verifier(\n                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1097, in _run_separate_verifier\n    return await self._verify_with_timeout(verifier, timeout_sec)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 990, in _verify_with_timeout\n    return await asyncio.wait_for(verifier.verify(), timeout=timeout_sec)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/verifier/verifier.py\", line 304, in verify\n    raise RewardFileNotFoundError(\nharbor.verifier.verifier.RewardFileNotFoundError: No reward file found at work/jobs/baseline-six-v11/v11-healthy__UqHeqxP/verifier/reward.txt or work/jobs/baseline-six-v11/v11-healthy__UqHeqxP/verifier/reward.json\n",
+    "occurred_at": "2026-11-15T01:30:49.144581Z",
+    "policy": {
+      "should_retry": false,
+      "should_grade": true,
+      "has_valid_reward": false
+    }
+  },
+  "started_at": "2026-11-15T01:28:03.500864Z",
+  "finished_at": "2026-11-15T01:30:49.145411Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T01:28:03.791338Z",
+    "finished_at": "2026-11-15T01:28:09.352198Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-15T01:28:09.352272Z",
+    "finished_at": "2026-11-15T01:28:09.681133Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-15T01:28:09.681605Z",
+    "finished_at": "2026-11-15T01:30:14.200390Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-15T01:30:36.101076Z",
+    "finished_at": "2026-11-15T01:30:49.139292Z"
+  },
+  "step_results": null,
+  "reward_valid": false
+}

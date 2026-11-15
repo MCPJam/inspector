@@ -1,0 +1,15 @@
+{"content":[{"type":"text","text":"{\"sum\": 42}"}],"structuredContent":{"sum":42},"isError":false,"_durationMs":8}
+Usage: mcpjam cloud projects servers connect [options]
+
+Connect an MCP server URL to a project, authorizing in a browser if needed
+
+Options:
+  --url <url>             MCP server URL to connect
+  --project <id-or-name>  Project name or ID
+  --server <id>           Existing server ID, when the project has several on
+                          this URL
+  --name <name>           Name for the server, if one is created
+  --reauthorize           Force a fresh authorization
+  --no-browser            Print the authorization link instead of opening it
+  --no-wait               Return as soon as the request is created
+  -h, --help              display help for command

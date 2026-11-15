@@ -1,0 +1,23 @@
+104:- [Create an eval suite (author-only, does not run)](https://docs.mcpjam.com/api-reference/eval-runs/create-an-eval-suite-author-only-does-not-run.md): Creates a runnable eval suite — the suite record plus its test cases — and responds `201` **synchronously**, WITHOUT executing anything. Use this to author a suite, then run it later with `POST /eval-runs` (passing the returned `suiteId`).
+Usage: mcpjam cloud eval create [options]
+
+Create a runnable eval suite from authored test cases (does not run it)
+
+Options:
+  --project <id-or-name>    Project name or ID (defaults to the most recently
+                            updated project)
+  --file <path>             Path to a create-API JSON body (or - for stdin). A
+                            versioned suite file belongs on `eval run --file`
+  --json <json>             Inline suite definition JSON (or @file, or - for
+                            stdin)
+  --name <name>             Suite name (overrides the file)
+  --model <model>           Suite-level default model (overrides the file)
+  --provider <provider>     Suite-level default provider (overrides the file;
+                            needed for bare/custom model ids)
+  --server <id-or-name...>  Project HTTP server names or IDs (overrides the
+                            file)
+  --client <id-or-name...>  Clients to attach the suite to, by name or ID
+                            (overrides the file). Without one the suite lists no
+                            client and `eval run --client` has nothing to select
+  --host <id-or-name...>    Deprecated alias for --client
+  -h, --help                display help for command

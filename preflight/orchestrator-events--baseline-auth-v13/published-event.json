@@ -1,0 +1,22 @@
+{
+  "id": "orchestrator-events:baseline-auth-v13",
+  "path": "orchestrator-events--baseline-auth-v13",
+  "argv": [
+    "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+    "run",
+    "--config",
+    "work/baseline-auth-v13.json"
+  ],
+  "start": "2026-11-15T02:15:16.643189+00:00",
+  "end": "2026-11-15T02:19:08.120132+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "orchestrator-events"
+}

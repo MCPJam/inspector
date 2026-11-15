@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/models",
+  "status": 404,
+  "response": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

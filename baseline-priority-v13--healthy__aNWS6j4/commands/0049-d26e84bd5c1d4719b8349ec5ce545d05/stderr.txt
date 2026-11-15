@@ -1,0 +1,4 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Eval idempotency key: a51c332d-6ad2-4daf-b2a8-02b96de6d04c
+{"error":{"code":"INTERNAL_ERROR","message":"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\nRetry this launch with --idempotency-key a51c332d-6ad2-4daf-b2a8-02b96de6d04c.","details":{"idempotencyKey":"a51c332d-6ad2-4daf-b2a8-02b96de6d04c"}}}

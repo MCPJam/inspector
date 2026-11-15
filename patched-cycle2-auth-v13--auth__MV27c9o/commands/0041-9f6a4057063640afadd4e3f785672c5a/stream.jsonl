@@ -1,0 +1,5 @@
+{"seconds": 0.5355191230773926, "stream": "stdout", "data": "Usage: mcpjam protocol [options] [command]\n\nMCP protocol inspection and conformance checks\n\nOptions:\n  -h, --help                   display help for command\n\nCommands:\n  conformance [options]        Run MCP protocol conformance checks against an\n                               HTTP server\n  conformance-suite [options]  Run a matrix of MCP protocol conformance checks\n                               from a JSON config file\n  help [command]               display help for command\n"}
+{"seconds": 1.098694086074829, "stream": "stdout", "data": "6.2.2\n"}
+{"seconds": 1.7935125827789307, "stream": "stderr", "data": "Client.listResources() called but server does not advertise resources capability - returning empty list\n"}
+{"seconds": 1.7935597896575928, "stream": "stderr", "data": "Client.listResourceTemplates() called but server does not advertise resources capability - returning empty list\n"}
+{"seconds": 1.8150172233581543, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":16}\n"}

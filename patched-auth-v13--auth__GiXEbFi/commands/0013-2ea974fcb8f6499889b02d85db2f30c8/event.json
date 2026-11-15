@@ -1,0 +1,22 @@
+{
+  "event_id": "2ea974fcb8f6499889b02d85db2f30c8",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport os,json,urllib.request\nc=json.load(open('/workspace/mcp.json'));print(json.dumps(c,indent=2))\nprint('API_URL',os.environ.get('MCPJAM_API_URL'));print('credential presence', {k:bool(os.environ.get(k)) for k in ['MCPJAM_API_KEY','MCP_SERVER_TOKEN']})\nprint(urllib.request.urlopen('https://docs.mcpjam.com/llms.txt').read().decode())\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:16:27.319089+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.10814881324768066,
+  "end": "2026-11-15T02:16:27.427177+00:00"
+}

@@ -1,0 +1,45 @@
+{"seconds": 0.9113321304321289, "stream": "stderr", "data": "time=\"2026-11-14T17:12:47-08:00\" level=info msg=\"starting colima\"\ntime=\"2026-11-14T17:12:47-08:00\" level=info msg=\"runtime: docker\"\n"}
+{"seconds": 0.9414670467376709, "stream": "stderr", "data": "time=\"2026-11-14T17:12:47-08:00\" level=warning msg=\"disk size cannot be reduced, ignoring...\" context=vm\n"}
+{"seconds": 1.14947509765625, "stream": "stderr", "data": "time=\"2026-11-14T17:12:47-08:00\" level=info msg=\"starting ...\" context=vm\n"}
+{"seconds": 1.1964571475982666, "stream": "stdout", "data": "time=\"2026-11-14T17:12:47-08:00\" level=info msg=\"Using the existing instance `colima`\"\n"}
+{"seconds": 1.7251451015472412, "stream": "stdout", "data": "time=\"2026-11-14T17:12:48-08:00\" level=info msg=\"Starting the instance `colima` with internal VM driver `vz`\"\n"}
+{"seconds": 2.49633526802063, "stream": "stdout", "data": "time=\"2026-11-14T17:12:49-08:00\" level=info msg=\"[hostagent] hostagent socket created at $USER_HOME/.colima/_lima/colima/ha.sock\"\n"}
+{"seconds": 2.5027358531951904, "stream": "stdout", "data": "time=\"2026-11-14T17:12:49-08:00\" level=info msg=\"[hostagent] Starting VZ (hint: to watch the boot progress, see `$USER_HOME/.colima/_lima/colima/serial*.log`)\"\n"}
+{"seconds": 2.5428359508514404, "stream": "stdout", "data": "time=\"2026-11-14T17:12:49-08:00\" level=info msg=\"[hostagent] Mounting disk `colima` on `/mnt/lima-colima`\"\n"}
+{"seconds": 2.5525362491607666, "stream": "stdout", "data": "time=\"2026-11-14T17:12:49-08:00\" level=info msg=\"[hostagent] Converting `$USER_HOME/.colima/_lima/_disks/colima/datadisk` (raw) to a raw disk `$USER_HOME/.colima/_lima/_disks/colima/datadisk`\"\n"}
+{"seconds": 2.5694239139556885, "stream": "stdout", "data": "time=\"2026-11-14T17:12:49-08:00\" level=info msg=\"[hostagent] Setting up Rosetta share\"\n"}
+{"seconds": 2.939211130142212, "stream": "stdout", "data": "time=\"2026-11-14T17:12:49-08:00\" level=info msg=\"[hostagent] [VZ] - vm state change: running\"\n"}
+{"seconds": 7.464790105819702, "stream": "stdout", "data": "time=\"2026-11-14T17:12:54-08:00\" level=info msg=\"[hostagent] SSH server does not seem to be running on vsock port, using usernet forwarder\"\n"}
+{"seconds": 7.975016117095947, "stream": "stdout", "data": "time=\"2026-11-14T17:12:54-08:00\" level=info msg=\"SSH Local Port: 61186\"\n"}
+{"seconds": 7.9839560985565186, "stream": "stdout", "data": "time=\"2026-11-14T17:12:54-08:00\" level=info msg=\"[hostagent] Waiting for the essential requirement 1 of 3: `ssh`\"\n"}
+{"seconds": 8.16098690032959, "stream": "stdout", "data": "time=\"2026-11-14T17:12:54-08:00\" level=info msg=\"[hostagent] The essential requirement 1 of 3 is satisfied\"\n"}
+{"seconds": 8.16775107383728, "stream": "stdout", "data": "time=\"2026-11-14T17:12:54-08:00\" level=info msg=\"[hostagent] Waiting for the essential requirement 2 of 3: `user session is ready for ssh`\"\n"}
+{"seconds": 8.287501096725464, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] The essential requirement 2 of 3 is satisfied\"\n"}
+{"seconds": 8.293309926986694, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Waiting for the essential requirement 3 of 3: `Explicitly start ssh ControlMaster`\"\n"}
+{"seconds": 8.390394926071167, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] The essential requirement 3 of 3 is satisfied\"\n"}
+{"seconds": 8.4308922290802, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Waiting for the guest agent to be running\"\n"}
+{"seconds": 8.439797163009644, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Forwarding `/var/run/docker.sock` (guest) to `$USER_HOME/.colima/default/docker.sock` (host)\"\n"}
+{"seconds": 8.455313920974731, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Forwarding `/var/run/containerd/containerd.sock` (guest) to `$USER_HOME/.colima/default/containerd.sock` (host)\"\n"}
+{"seconds": 8.472496271133423, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Forwarding `/var/run/docker.sock` (guest) to `$USER_HOME/.colima/docker.sock` (host)\"\n"}
+{"seconds": 8.508465051651001, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Guest agent is running\"\n"}
+{"seconds": 8.513751029968262, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Waiting for the final requirement 1 of 1: `boot scripts must have finished`\"\n"}
+{"seconds": 8.533045053482056, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Time sync: guest agent is alive, starting time synchronization\"\n"}
+{"seconds": 8.544688940048218, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Not forwarding TCP 192.168.5.1:53\"\n"}
+{"seconds": 8.558495044708252, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Not forwarding TCP 0.0.0.0:22\"\n"}
+{"seconds": 8.566374063491821, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Forwarding TCP from 127.0.0.1:53 to 127.0.0.1:53\"\n"}
+{"seconds": 8.590877056121826, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Forwarding `127.0.0.1:53` (guest) to `/tmp/lima-psl-127.0.0.1-53-1854500832/sock` (host)\"\n"}
+{"seconds": 8.626651048660278, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Forwarding TCP from [::1]:53 to 127.0.0.1:53\"\n"}
+{"seconds": 8.64638900756836, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Forwarding `[::1]:53` (guest) to `/tmp/lima-psl-127.0.0.1-53-751765264/sock` (host)\"\n"}
+{"seconds": 8.666565895080566, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Stopping forwarding `[::1]:53` (guest) to `/tmp/lima-psl-127.0.0.1-53-751765264/sock` (host)\"\n"}
+{"seconds": 8.684375047683716, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=warning msg=\"[hostagent] failed to set up forwarding tcp port 53 (negligible if already forwarded)\" error=\"listen tcp 0.0.0.0:53: bind: address already in use\"\n"}
+{"seconds": 8.688382148742676, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Not forwarding TCP [::]:22\"\n"}
+{"seconds": 8.697566032409668, "stream": "stdout", "data": "time=\"2026-11-14T17:12:55-08:00\" level=info msg=\"[hostagent] Not forwarding TCP [fe80::5055:55ff:fea2:5965]:53\"\n"}
+{"seconds": 11.621270179748535, "stream": "stdout", "data": "time=\"2026-11-14T17:12:58-08:00\" level=info msg=\"[hostagent] The final requirement 1 of 1 is satisfied\"\n"}
+{"seconds": 11.626255989074707, "stream": "stdout", "data": "time=\"2026-11-14T17:12:58-08:00\" level=info msg=\"READY. Run `limactl shell colima` to open the shell.\"\n"}
+{"seconds": 12.56617021560669, "stream": "stdout", "data": "installing: 386 OK\ninstalling: amd64 OK\n"}
+{"seconds": 12.582328081130981, "stream": "stdout", "data": "{\n  \"supported\": [\n    \"linux/arm64\",\n    \"linux/amd64\",\n    \"linux/386\"\n  ],\n  \"emulators\": [\n    \"python3.12\",\n    \"qemu-i386\",\n    \"qemu-x86_64\",\n    \"rosetta\"\n  ]\n}\n"}
+{"seconds": 12.652501106262207, "stream": "stdout", "data": "  File: /proc/sys/fs/binfmt_misc/rosetta\n  Size: 0         \tBlocks: 0          IO Block: 4096   regular empty file\nDevice: 0,40\tInode: 4450        Links: 1\nAccess: (0644/-rw-r--r--)  Uid: (    0/    root)   Gid: (    0/    root)\nAccess: 2026-11-14 17:12:52.702000000 -0800\nModify: 2026-11-14 17:12:52.702000000 -0800\nChange: 2026-11-14 17:12:52.702000000 -0800\n Birth: -\n"}
+{"seconds": 12.818835020065308, "stream": "stderr", "data": "time=\"2026-11-14T17:12:59-08:00\" level=info msg=\"provisioning ...\" context=docker\n"}
+{"seconds": 13.983991146087646, "stream": "stdout", "data": "colima\nSuccessfully created context \"colima\"\n"}
+{"seconds": 13.984984159469604, "stream": "stderr", "data": "time=\"2026-11-14T17:13:00-08:00\" level=info msg=\"starting ...\" context=docker\n"}
+{"seconds": 14.879312992095947, "stream": "stderr", "data": "time=\"2026-11-14T17:13:01-08:00\" level=info msg=done\n"}

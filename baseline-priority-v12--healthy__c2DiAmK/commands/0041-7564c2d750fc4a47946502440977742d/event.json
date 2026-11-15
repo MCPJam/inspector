@@ -1,0 +1,22 @@
+{
+  "event_id": "7564c2d750fc4a47946502440977742d",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json,os,urllib.request\nbase=os.environ['MCPJAM_API_URL']+'/projects/project_fixture/servers/server_fixture/'\nfor op in ['validate','tools']:\n r=urllib.request.urlopen(urllib.request.Request(base+op,data=b'{}',headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'}));d=r.read().decode();open(op+'.json','w').write(d);print(op,d)\ns=json.load(open('openapi.json'))\nfor n in ['EvalSuiteCreateRequest','EvalRunCreateRequest']:\n print(n,json.dumps(s['components']['schemas'][n]))\nfor n,v in s['components']['schemas'].items():\n if any(t in n.lower() for t in ['step','assertion']):print(n,json.dumps(v))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:46:22.879469+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.024097681045532227,
+  "end": "2026-11-15T01:46:22.903503+00:00"
+}

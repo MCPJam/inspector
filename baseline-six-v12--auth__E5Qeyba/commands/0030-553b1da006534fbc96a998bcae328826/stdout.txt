@@ -1,0 +1,24 @@
+Usage: mcpjam conformance [options] [command]
+
+Run MCPJam conformance suites and optionally upload results
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  run [options]   Run Protocol, Apps, and Tasks (default). OAuth is opt-in via
+                  --suite oauth.
+  help [command]  display help for command
+Usage: mcpjam protocol [options] [command]
+
+MCP protocol inspection and conformance checks
+
+Options:
+  -h, --help                   display help for command
+
+Commands:
+  conformance [options]        Run MCP protocol conformance checks against an
+                               HTTP server
+  conformance-suite [options]  Run a matrix of MCP protocol conformance checks
+                               from a JSON config file
+  help [command]               display help for command

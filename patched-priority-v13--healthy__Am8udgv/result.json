@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "id": "fc49ed15-691b-4d03-a031-2424ba331cbf",
+  "task_name": "mcpjam/healthy",
+  "trial_name": "healthy__Am8udgv",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/patched-priority-v13/healthy__Am8udgv",
+  "task_id": {
+    "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/patched-priority-v13/healthy"
+  },
+  "source": null,
+  "task_checksum": "611b508d63a6b7b014b07f7034971bc5d3a9edc922491df6ac8ead1e14c28285",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/patched-priority-v13/healthy",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "healthy__Am8udgv",
+    "trials_dir": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/patched-priority-v13",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "codex",
+      "import_path": null,
+      "model_name": "openai/gpt-6.1-sol",
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": true,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {
+        "version": "0.160.0",
+        "reasoning_effort": "medium",
+        "reasoning_summary": "none"
+      },
+      "env": {
+        "CODEX_FORCE_AUTH_JSON": "****"
+      },
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "dcca7448-9592-44b3-882d-5c20519c62c3",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 868161,
+    "n_cache_tokens": 805760,
+    "n_output_tokens": 4105,
+    "cost_usd": 0.24642799999999998,
+    "model_usage": {
+      "gpt-6.1-sol": {
+        "n_input_tokens": 868161,
+        "n_cache_tokens": 805760,
+        "n_output_tokens": 4105,
+        "cost_usd": 0.24642799999999998
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  },
+  "verifier_environment_mode": "separate",
+  "exception_info": null,
+  "started_at": "2026-11-15T02:02:43.086916Z",
+  "finished_at": "2026-11-15T02:05:45.285490Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T02:02:43.091919Z",
+    "finished_at": "2026-11-15T02:02:46.075659Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-15T02:02:46.075714Z",
+    "finished_at": "2026-11-15T02:02:46.236674Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-15T02:02:46.236998Z",
+    "finished_at": "2026-11-15T02:05:11.122689Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-15T02:05:32.483262Z",
+    "finished_at": "2026-11-15T02:05:45.285465Z"
+  },
+  "step_results": null,
+  "reward_valid": true
+}

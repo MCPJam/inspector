@@ -1,0 +1,22 @@
+{
+  "event_id": "465633d7c6c44c769efea931f7c14fe5",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json\ns=json.load(open('openapi.json'))['components']['schemas']\nprint(json.dumps(s['EvalTestCase'],indent=2))\nfor i in s['EvalAssertion'].get('oneOf',[]):\n t=i.get('properties',{}).get('type',{}).get('const');print(t)\n if t in ['toolResultContains','outputContains']:print(json.dumps(i,indent=2))\nPY\ncat > run-request.json <<'EOF'\n{\"suiteId\":\"suite_authored_1\",\"serverIds\":[\"server_fixture\"]}\nEOF\npython3 api.py /projects/project_fixture/eval-runs POST run-receipt.json run-request.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:38:59.737421+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.1766376495361328,
+  "end": "2026-11-15T01:38:59.913666+00:00"
+}

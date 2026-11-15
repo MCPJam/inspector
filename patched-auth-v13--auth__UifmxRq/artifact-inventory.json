@@ -1,0 +1,14 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "c842e78dc756c29b4910824229686bcdb07851c9c17de7c94789be503889c86f"
+  },
+  {
+    "source": "artifacts/workspace/mcp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp.json",
+    "sha256": "456d6b3be6247453de792129da311cb725e22bd18a67fdcff4fa856a73e50f93"
+  }
+]

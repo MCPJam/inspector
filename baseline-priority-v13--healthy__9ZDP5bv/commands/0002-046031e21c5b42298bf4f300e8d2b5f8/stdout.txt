@@ -1,0 +1,4 @@
+{"error":{"code":"USAGE_ERROR","message":"Invalid suite definition: cases.0.steps.0.serverName: Invalid input: expected string, received undefined"}}
+
+{"error":{"code":"NOT_FOUND","message":"Eval suite \"Arithmetic add deterministic\" was not found in project \"Fixture\". Available: Arithmetic smoke (id: suite_fixture), Arithmetic add (id: suite_authored_1)."}}
+

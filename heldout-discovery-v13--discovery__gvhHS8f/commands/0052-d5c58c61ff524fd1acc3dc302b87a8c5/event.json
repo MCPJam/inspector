@@ -1,0 +1,22 @@
+{
+  "event_id": "d5c58c61ff524fd1acc3dc302b87a8c5",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcp-check/README.md <<'MD'\n# MCP server check\n\nTarget: http://fixture:8765/mcp\nTested with @mcpjam/cli 6.2.2, Node 24.22.1, Python 3.11 on 2026-11-15 UTC.\n\nResult: MCPJam doctor reports `ready`, Streamable HTTP, negotiated MCP 2025-11-25, server arithmetic-fixture 1.0.0, one tool (`add`). Five arithmetic cases passed; missing and incorrectly typed arguments were rejected. One schema check failed: `add` accepts an extra property despite advertising `additionalProperties: false`. Total: 7/8 checks passed. This is a focused smoke test, not full protocol certification.\n\nReproduce from this directory:\n\n```bash\nnpm ci --no-audit --no-fund\n./node_modules/.bin/mcpjam server doctor --url http://fixture:8765/mcp --rpc --out cli-doctor.json\npython3 check.py\n```\n\n`check.py` exits 1 while the schema mismatch remains. Override the target with `MCP_SERVER_URL` if needed. The exact package and dependency versions are locked in package-lock.json. No account credentials or model credits are required for these local CLI checks.\n\nEvidence:\n- cli-doctor.json: discovery, initialization, capability snapshot, RPC logs.\n- results/summary.json: arguments, expectations, observed results, pass/fail.\n- results/*-trace.json: per-case CLI request/response traces.\n- results/*.stdout and *.stderr: unmodified command output.\n\nMinimal failing call:\n\n```bash\n./node_modules/.bin/mcpjam tools call --url http://fixture:8765/mcp --tool-name add --tool-args '{\"a\":2,\"b\":3,\"c\":4}' --quiet --format json\n```\n\nExpected: reject arguments outside the advertised input schema. Observed: successful result with structuredContent.sum = 5 and isError = false. See results/extra_property-trace.json, which includes both the advertised schema and actual call.\n\nThe hosted project's saved server was discovered through the documented API. The documented doctor, conformance-runs, and tools/call routes returned 404 in this environment; their responses are saved separately in doctor.json, conformance-start.json and call-*.json. These are platform route failures, not evidence of an MCP transport failure. The supported local CLI provided the useful test path.\n\nPublic documentation used (copies in docs/):\n- https://docs.mcpjam.com\n- https://docs.mcpjam.com/reference/public-api\n- https://docs.mcpjam.com/reference/openapi.json\n- https://docs.mcpjam.com/cli/server-inspection\n- https://docs.mcpjam.com/cli/tools-resources-prompts\n\nNo product source, test fixtures, or verifier internals were inspected.\nMD\npython3 - <<'PY'\nimport json\ns=json.load(open('/workspace/mcp-check/results/summary.json'))\nprint('Final:',s['passed'],'/',s['total'])\nfor c in s['cases']:\n if not c['passed']: print('Failure:',c['name'],c['result'])\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:29:22.920919+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.008997678756713867,
+  "end": "2026-11-15T02:29:22.929840+00:00"
+}

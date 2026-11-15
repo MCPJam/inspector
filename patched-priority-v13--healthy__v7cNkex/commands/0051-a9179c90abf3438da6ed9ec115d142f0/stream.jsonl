@@ -1,0 +1,1 @@
+{"seconds": 0.03956437110900879, "stream": "stdout", "data": "{\"items\": [{\"id\": \"server_fixture\", \"name\": \"Arithmetic\", \"projectId\": \"project_fixture\", \"transportType\": \"http\", \"url\": \"http://fixture:8765/mcp\", \"enabled\": true, \"useOAuth\": false, \"hasClientSecret\": false}]}"}

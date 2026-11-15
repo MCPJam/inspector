@@ -1,0 +1,4 @@
+{"seconds": 1.3555526733398438, "stream": "stdout", "data": "{\"valid\":true,\"file\":\".mcpjam/evals/arith-hosted.yaml\",\"suite\":{\"id\":\"s_arith_fixture\",\"name\":\"Arithmetic fixture\",\"cases\":1,\"enabledCases\":1},\"findings\":[]}\n"}
+{"seconds": 1.3557312488555908, "stream": "stdout", "data": "\n"}
+{"seconds": 2.9909229278564453, "stream": "stdout", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Synthetic fixture does not implement this route.\"}}\n"}
+{"seconds": 2.9956893920898438, "stream": "stdout", "data": "6:  name: Arithmetic fixture\n9:    - name: Arithmetic\n"}

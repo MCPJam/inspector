@@ -1,0 +1,1 @@
+{"seconds": 0.7615630626678467, "stream": "stderr", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"Invalid suite definition: servers: Invalid input: expected array, received undefined; cases: Invalid input: expected array, received undefined; (root): Unrecognized keys: \\\"serverIds\\\", \\\"passCriteria\\\", \\\"tests\\\"\"}}\n"}

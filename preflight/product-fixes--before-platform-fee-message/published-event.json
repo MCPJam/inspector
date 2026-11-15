@@ -1,0 +1,23 @@
+{
+  "id": "product-fixes:before-platform-fee-message",
+  "path": "product-fixes--before-platform-fee-message",
+  "argv": [
+    "../node-v24.22.1-darwin-arm64/bin/node",
+    "--import",
+    "tsx",
+    "../fee-repro.mts"
+  ],
+  "start": "2026-11-15T01:37:54.733713+00:00",
+  "end": "2026-11-15T01:37:55.715177+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [
+    "FORBIDDEN",
+    "PLATFORM_FEE_REQUIRED"
+  ],
+  "source_group": "product-fixes"
+}

@@ -1,0 +1,267 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "e9e58b6413bcee632ddee6dcbae6ddb58ee53d64afc652551a585f6eb25ec3b6"
+  },
+  {
+    "source": "artifacts/workspace/docs-overview.html",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp.json",
+    "sha256": "456d6b3be6247453de792129da311cb725e22bd18a67fdcff4fa856a73e50f93"
+  },
+  {
+    "source": "artifacts/workspace/validation/run-status-1.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/run-status-1.json",
+    "sha256": "6b2bf43137c216f0f015776b8762b944b208b39470dcb8130d75d88bee92f9b3"
+  },
+  {
+    "source": "artifacts/workspace/validation/add-smoke.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/add-smoke.json",
+    "sha256": "2654c56c2ea1dd139ea06bcd86aa5628694dbf0ce2200692cda0c865113b3cde"
+  },
+  {
+    "source": "artifacts/workspace/validation/trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/trace.json",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "artifacts/workspace/validation/project-status.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/project-status.json",
+    "sha256": "1429c71fc0d26b27988a198a08dfea0d0d819e4e00b44a9b961a249a9bf4e27b"
+  },
+  {
+    "source": "artifacts/workspace/validation/positive.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/positive.json",
+    "sha256": "638ac8442e02c6b9a26c095573a089b069304ec4ea48f9f8c4f4eb6f357589ac"
+  },
+  {
+    "source": "artifacts/workspace/validation/safe-calls.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/safe-calls.json",
+    "sha256": "98c5eef633c882985b7254f799aa0c9056f0a50f799a95b14c162ad6a271da22"
+  },
+  {
+    "source": "artifacts/workspace/validation/tool-checks.stdout.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/tool-checks.stdout.json",
+    "sha256": "39bd25ec1c20ba96e31550e7a0465c7a71e4a1f22e83d6e58eadb5858f7ff4fc"
+  },
+  {
+    "source": "artifacts/workspace/validation/negative.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/negative.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/negative.json",
+    "sha256": "073a58a85fafea1226b1d9721b5be3e3f4c2c3d05a1f1acf3eecf1bf0d5d70d1"
+  },
+  {
+    "source": "artifacts/workspace/validation/positive.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/project-capabilities.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/project-capabilities.json",
+    "sha256": "feabe7cfe4f739fe76e25b46a0d74b186a004c7a2f5ffa55d7ac2a329b69bb74"
+  },
+  {
+    "source": "artifacts/workspace/validation/extra-property.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/doctor-initial.stdout.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/doctor-initial.stdout.json",
+    "sha256": "3a5c6e065e46e548bc93a0144e57a60e6a9b031ded42409343b052b203fd5af7"
+  },
+  {
+    "source": "artifacts/workspace/validation/run-initial.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/run-initial.json",
+    "sha256": "e20e8244fda17ef90664caa34fbc7e3a58a8bb72a2bc51746fdf553399ee6d25"
+  },
+  {
+    "source": "artifacts/workspace/validation/REPORT.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/REPORT.md",
+    "sha256": "f48ec43e7b53980707655cfd097fe03a5bbeb30006e88126f83e2231cb3c55a9"
+  },
+  {
+    "source": "artifacts/workspace/validation/wrong-type.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/zero.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/zero.json",
+    "sha256": "42520bffe3eb03d11440020c0dfa83606040719a7f488c50a2b3931b99b234bd"
+  },
+  {
+    "source": "artifacts/workspace/validation/evals.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/evals.json",
+    "sha256": "10838fe696e396434ae9223a333c053f8cd54c0b568faa3d41c651c0afff7b18"
+  },
+  {
+    "source": "artifacts/workspace/validation/tool-checks.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/tool-checks.json",
+    "sha256": "39bd25ec1c20ba96e31550e7a0465c7a71e4a1f22e83d6e58eadb5858f7ff4fc"
+  },
+  {
+    "source": "artifacts/workspace/validation/run-status-1.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/get-response.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/get-response.json",
+    "sha256": "0b1584152822d102a55617b3e784ccf7826a86d8caba54d3b464daf9d75d3b6b"
+  },
+  {
+    "source": "artifacts/workspace/validation/steps.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/steps.json",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "artifacts/workspace/validation/validate.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/protocol.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/missing.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/missing.json",
+    "sha256": "6024d4df854e86d78b1c17181c65a6f1384ba4e5a94f29ca65dfe0b2c1b67364"
+  },
+  {
+    "source": "artifacts/workspace/validation/missing.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/doctor-initial.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/extra-property.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/extra-property.json",
+    "sha256": "2654c56c2ea1dd139ea06bcd86aa5628694dbf0ce2200692cda0c865113b3cde"
+  },
+  {
+    "source": "artifacts/workspace/validation/decimal.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/decimal.json",
+    "sha256": "79bc254d1095fb0214f3708c117cf2961177f210e020014b66f47e119b54f8c4"
+  },
+  {
+    "source": "artifacts/workspace/validation/reproduce.sh",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/reproduce.sh",
+    "sha256": "358716c187260d64074ccf36f67599d425d1255765dcb835434aea04a5ec559b"
+  },
+  {
+    "source": "artifacts/workspace/validation/trace.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/doctor-authenticated.stdout.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/doctor-authenticated.stdout.json",
+    "sha256": "c12a50af9a160a6697e90a91a72cdfabcd02c45c70291637c8a1d256e4196338"
+  },
+  {
+    "source": "artifacts/workspace/validation/zero.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/protocol.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/protocol.json",
+    "sha256": "4c53bcf4d9c42466ad156b24a0b6f7fdb212b8007ebf1fbee221bf4d54cdfc76"
+  },
+  {
+    "source": "artifacts/workspace/validation/wrong-type.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/wrong-type.json",
+    "sha256": "fd41617e36235c0c173e3abf9182bb8d66a673064821b7bc6d2942a7132926cd"
+  },
+  {
+    "source": "artifacts/workspace/validation/doctor-initial.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/doctor-initial.json",
+    "sha256": "82a14498c3583353cf782f02f5d4d8604b5366b89ad1f7e07dd355a9a63152d1"
+  },
+  {
+    "source": "artifacts/workspace/validation/steps.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/decimal.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/cli-version.txt",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/cli-version.txt",
+    "sha256": "a704c93aab386cdf2e2b1a296d2b544f5ada3dc015dcb0d9dfadc6f550e70143"
+  },
+  {
+    "source": "artifacts/workspace/validation/doctor-authenticated.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/doctor-authenticated.json",
+    "sha256": "68b399e42ed75ebbe6e4573f032fc0281e4d11cf24e78b3fda151bab895b7d92"
+  },
+  {
+    "source": "artifacts/workspace/validation/evals.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/doctor-authenticated.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/validation/iterations.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validation/iterations.json",
+    "sha256": "d006d511bba426f0de8a0bbc11d639ee95d8a78ee0fec14d68cc3e4bc19c6fdb"
+  },
+  {
+    "source": "artifacts/workspace/validation/run-initial.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  }
+]

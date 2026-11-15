@@ -1,0 +1,33 @@
+{"seconds": 0.07373499870300293, "stream": "stderr", "data": "test_resume_metrics_selected_once_and_missing_final_stays_unknown (test_compare.ComparisonTests.test_resume_metrics_selected_once_and_missing_final_stays_unknown) ... ok\ntest_strict_failure_and_public_surface_success_remain_separate (test_compare.ComparisonTests.test_strict_failure_and_public_surface_success_remain_separate) ... "}
+{"seconds": 0.07829833030700684, "stream": "stderr", "data": "ok\ntest_unknown_is_separate_from_failure (test_compare.ComparisonTests.test_unknown_is_separate_from_failure) ... "}
+{"seconds": 0.07830810546875, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.07832121849060059, "stream": "stderr", "data": "test_actual_root_errors_and_nonzero_failures_are_preserved (test_gallery.ErrorGalleryTests.test_actual_root_errors_and_nonzero_failures_are_preserved) ... "}
+{"seconds": 0.07859420776367188, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.0785982608795166, "stream": "stderr", "data": "test_docs_examples_do_not_become_observed_error_classes (test_gallery.ErrorGalleryTests.test_docs_examples_do_not_become_observed_error_classes) ... "}
+{"seconds": 0.07860994338989258, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.07862305641174316, "stream": "stderr", "data": "test_account_and_email_are_redacted (test_report.EvidencePublicationTests.test_account_and_email_are_redacted) ... "}
+{"seconds": 0.07865405082702637, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.07866311073303223, "stream": "stderr", "data": "test_actual_tool_ids_count_once_per_phase (test_report.EvidencePublicationTests.test_actual_tool_ids_count_once_per_phase) ... "}
+{"seconds": 0.07868313789367676, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.0786890983581543, "stream": "stderr", "data": "test_additive_capture_roots_keep_colliding_event_ids_separate (test_report.EvidencePublicationTests.test_additive_capture_roots_keep_colliding_event_ids_separate) ... "}
+{"seconds": 0.09125924110412598, "stream": "stderr", "data": "ok\ntest_analysis_links_use_published_runs_and_events (test_report.EvidencePublicationTests.test_analysis_links_use_published_runs_and_events) ... "}
+{"seconds": 0.09471011161804199, "stream": "stderr", "data": "ok\ntest_arbitrary_local_messaging_token_is_redacted (test_report.EvidencePublicationTests.test_arbitrary_local_messaging_token_is_redacted) ... "}
+{"seconds": 0.09479928016662598, "stream": "stderr", "data": "ok\ntest_assessment_flags_do_not_rewrite_strict_reward (test_report.EvidencePublicationTests.test_assessment_flags_do_not_rewrite_strict_reward) ... "}
+{"seconds": 0.09480714797973633, "stream": "stderr", "data": "ok\ntest_assignment_secret_masks_unlabelled_copies_in_memory (test_report.EvidencePublicationTests.test_assignment_secret_masks_unlabelled_copies_in_memory) ... "}
+{"seconds": 0.09849810600280762, "stream": "stderr", "data": "ok\ntest_audit_decodes_json_escaped_newlines (test_report.EvidencePublicationTests.test_audit_decodes_json_escaped_newlines) ... "}
+{"seconds": 0.0997011661529541, "stream": "stderr", "data": "ok\ntest_cancelled_missing_result_retains_observed_output (test_report.EvidencePublicationTests.test_cancelled_missing_result_retains_observed_output) ... "}
+{"seconds": 0.10610222816467285, "stream": "stderr", "data": "ok\ntest_commands_to_first_result_requires_verified_exact_output (test_report.EvidencePublicationTests.test_commands_to_first_result_requires_verified_exact_output) ... "}
+{"seconds": 0.10774016380310059, "stream": "stderr", "data": "ok\ntest_finalized_run_is_immutable (test_report.EvidencePublicationTests.test_finalized_run_is_immutable) ... "}
+{"seconds": 0.10998106002807617, "stream": "stderr", "data": "ok\ntest_harbor_exception_overrides_process_exit (test_report.EvidencePublicationTests.test_harbor_exception_overrides_process_exit) ... "}
+{"seconds": 0.11002016067504883, "stream": "stderr", "data": "ok\ntest_initial_blocked_reward_does_not_override_final_recovery (test_report.EvidencePublicationTests.test_initial_blocked_reward_does_not_override_final_recovery) ... ok\ntest_mixed_claude_message_keeps_public_text_only (test_report.EvidencePublicationTests.test_mixed_claude_message_keeps_public_text_only) ... "}
+{"seconds": 0.11009526252746582, "stream": "stderr", "data": "ok\ntest_multiline_opaque_token_fields_are_redacted (test_report.EvidencePublicationTests.test_multiline_opaque_token_fields_are_redacted) ... "}
+{"seconds": 0.1101372241973877, "stream": "stderr", "data": "ok\ntest_nested_verifier_exception_is_harness_invalid (test_report.EvidencePublicationTests.test_nested_verifier_exception_is_harness_invalid) ... "}
+{"seconds": 0.11015200614929199, "stream": "stderr", "data": "ok\ntest_nop_diagnostics_do_not_create_agent_summary (test_report.EvidencePublicationTests.test_nop_diagnostics_do_not_create_agent_summary) ... "}
+{"seconds": 0.1147770881652832, "stream": "stderr", "data": "ok\ntest_phase_snapshot_wins_over_live_duplicate (test_report.EvidencePublicationTests.test_phase_snapshot_wins_over_live_duplicate) ... "}
+{"seconds": 0.12197518348693848, "stream": "stderr", "data": "ok\ntest_private_identifier_list_covers_split_recordings (test_report.EvidencePublicationTests.test_private_identifier_list_covers_split_recordings) ... "}
+{"seconds": 0.12207531929016113, "stream": "stderr", "data": "ok\ntest_private_reasoning_is_never_a_concern_quote (test_report.EvidencePublicationTests.test_private_reasoning_is_never_a_concern_quote) ... "}
+{"seconds": 0.1229860782623291, "stream": "stderr", "data": "ok\ntest_secret_split_across_chunks_is_fully_removed (test_report.EvidencePublicationTests.test_secret_split_across_chunks_is_fully_removed) ... "}
+{"seconds": 0.12304425239562988, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.12305903434753418, "stream": "stderr", "data": "\n----------------------------------------------------------------------\n"}
+{"seconds": 0.1230621337890625, "stream": "stderr", "data": "Ran 26 tests in 0.049s\n\n"}
+{"seconds": 0.12307906150817871, "stream": "stderr", "data": "OK\n"}

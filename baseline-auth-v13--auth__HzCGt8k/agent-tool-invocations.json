@@ -1,0 +1,38 @@
+[
+  {
+    "phase": "trial",
+    "id": "toolu_01TKjqEgE8hASWDxpRd7nKAC",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 2,
+    "command": "cd /workspace; ls; cat mcp.json | sed 's/\\(Bearer \\)[^\"]*/\\1***/'; which mcpjam; npx --no-install mcpjam --help 2>&1 | head -30",
+    "observed_output_sha256": "b3a6cd1ca6e69556a2b0cf9d121b18c50ca199614e8d84dcbcaa84f490258806",
+    "successful_sum_output": false,
+    "result_public_line": 4,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01RhpxMjDaVzwbjTLqvKvQA4",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 6,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/llms.txt | head -50; curl -s -i -X POST http://fixture:8765/mcp -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}' | head -20",
+    "observed_output_sha256": "9b5b8bd8560dee31d3adb14830ca732696a24f29863531105e00871d8346020c",
+    "successful_sum_output": false,
+    "result_public_line": 7,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_012n5Mf181zJLjvnvpebJt6n",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 9,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/cli/server-inspection.md | head -80; npx -y @mcpjam/cli --version 2>&1 | tail -3",
+    "observed_output_sha256": "72a3f6f600f6f22f41f89e38529554a65bf6fee1d3dc8b2f1dd922598a719f9b",
+    "successful_sum_output": false,
+    "result_public_line": 12,
+    "source": "public-agent-claude-code.txt.jsonl"
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "event_id": "6010ecdb744347b1a653e5e20d4c31b0",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "npx mcpjam cloud eval run --file .mcpjam/evals/arithmetic.yaml --project project_fixture --server server_fixture --wait --format json > reports/run.json 2>reports/run.stderr"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:59:16.344817+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.8827247619628906,
+  "end": "2026-11-15T01:59:17.227483+00:00"
+}

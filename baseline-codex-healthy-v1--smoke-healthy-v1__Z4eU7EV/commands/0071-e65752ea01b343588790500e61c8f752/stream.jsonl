@@ -1,0 +1,3 @@
+{"seconds": 0.005388736724853516, "stream": "stdout", "data": "{\"error\":{\"code\":\"CREDENTIALS_REJECTED\",\"message\":\"The MCPJam project was not found. Check your project selection and try again.\",\"details\":{\"phase\":\"setup\",\"category\":\"credentials\"}}}\n"}
+{"seconds": 0.006374359130859375, "stream": "stdout", "data": "01:23:38\n"}
+{"seconds": 0.007174253463745117, "stream": "stdout", "data": "{\n  \"dependencies\": {\n    \"@mcpjam/cli\": \"6.2.2\"\n  }\n}\n"}

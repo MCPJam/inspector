@@ -1,0 +1,3 @@
+/usage 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/billing 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/projects/project_fixture/eval-runs 403 {"code": "FORBIDDEN", "message": "This work requires platform credits. Add credits or contact your organization administrator.", "details": {"reason": "PLATFORM_FEE_REQUIRED"}}

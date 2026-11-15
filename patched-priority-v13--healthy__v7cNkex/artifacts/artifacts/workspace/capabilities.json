@@ -1,0 +1,1 @@
+{"projectId": "project_fixture", "organizationId": "[REDACTED]", "role": "owner", "projectRole": "owner", "surface": "cli", "features": {"sandboxes": {"enabled": false, "mode": "off", "enforced": false}}, "plan": {"name": "team", "limits": {}, "features": {}}, "can": {}}

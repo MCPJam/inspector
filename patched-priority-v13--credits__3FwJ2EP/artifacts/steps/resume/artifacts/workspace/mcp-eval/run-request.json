@@ -1,0 +1,7 @@
+{
+  "suiteId": "suite_fixture",
+  "serverIds": [
+    "server_fixture"
+  ],
+  "idempotencyKey": "arithmetic-smoke-20261115-01"
+}

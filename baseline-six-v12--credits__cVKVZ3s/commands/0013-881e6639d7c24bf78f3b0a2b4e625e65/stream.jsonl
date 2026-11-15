@@ -1,0 +1,14 @@
+{"seconds": 0.0012433528900146484, "stream": "stdout", "data": "API=http://fixture:8765/api/v1\n== \n"}
+{"seconds": 0.005846738815307617, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Not found\"}\nHTTP 404\n"}
+{"seconds": 0.005913496017456055, "stream": "stdout", "data": "== /usage\n"}
+{"seconds": 0.010483026504516602, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\nHTTP 404\n"}
+{"seconds": 0.010546207427978516, "stream": "stdout", "data": "== /credits\n"}
+{"seconds": 0.014235973358154297, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\nHTTP 404\n"}
+{"seconds": 0.014307975769042969, "stream": "stdout", "data": "== /billing\n"}
+{"seconds": 0.018578290939331055, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\nHTTP 404\n"}
+{"seconds": 0.01863861083984375, "stream": "stdout", "data": "== /v1/usage\n"}
+{"seconds": 0.02235579490661621, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\nHTTP 404\n"}
+{"seconds": 0.02241802215576172, "stream": "stdout", "data": "== /v1/credits\n"}
+{"seconds": 0.02616715431213379, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}\nHTTP 404\n"}
+{"seconds": 0.026224851608276367, "stream": "stdout", "data": "== docs\n"}
+{"seconds": 0.1716156005859375, "stream": "stdout", "data": "<!doctype html>\n<html\n  lang=\"en\"\n  class=\"dark\"\n  data-banner-state=\"visible\"\n  data-assistant-state=\"closed\"\n  data-page-mode=\"none\"\n  data-current-path=\"/\"\n>\n  <head>\n    <!-- AI agents: this page is available as Markdown at /index.md. Request it directly or send \"Accept: text/markdown\". The site index is at /llms.txt. -->\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\" />\n    <title>MCPJam Docs - MCPJam Inspector</title>\n    <script>(function(c){var P=c.primary,F=c.fallbacks,found,probes={},checks={},down,reported;window.__mintAssets=P;function owned(el){return !el.closest('#root')&&!el.hasAttribute('data-precedence')}function type(r){return (r.headers.get('content-type')||'').toLowerCase()}function fits(r,rest){v"}

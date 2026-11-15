@@ -1,0 +1,26 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "e4c0d6f82400f40455c75dae9d28a335d3790c7cab1ce8a49baf6d3108247300"
+  },
+  {
+    "source": "artifacts/workspace/tools-calls.log",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/tools-calls.log",
+    "sha256": "18286fd667a26628d71730ab0c78778a802bad2740234c55d48ae91cd6195b03"
+  },
+  {
+    "source": "artifacts/workspace/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/doctor.json",
+    "sha256": "bf900d430480b2275a552417426546ad0697226ef67ed6da9bb6999b3bd12d04"
+  },
+  {
+    "source": "artifacts/workspace/mcp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp.json",
+    "sha256": "456d6b3be6247453de792129da311cb725e22bd18a67fdcff4fa856a73e50f93"
+  }
+]

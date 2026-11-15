@@ -1,0 +1,11 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"items":[{"id":"server_fixture","name":"Arithmetic","projectId":"project_fixture","transportType":"http","url":"http://fixture:8765/mcp","enabled":true,"useOAuth":false,"hasClientSecret":false}],"otherProjects":[]}
+{"error":{"code":"USAGE_ERROR","message":"error: too many arguments for 'servers'. Expected 0 arguments but got 1. Run `mcpjam cloud projects servers --help` for this command's arguments and options."}}
+Usage: mcpjam cloud projects servers create|add [options]
+
+Create a saved MCP server
+
+Options:
+  --project <id-or-name>  Project name or ID
+  --body <json>           Server JSON body
+  -h, --help              display help for command

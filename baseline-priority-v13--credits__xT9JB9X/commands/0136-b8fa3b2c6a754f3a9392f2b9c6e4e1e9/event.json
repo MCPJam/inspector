@@ -1,0 +1,22 @@
+{
+  "event_id": "b8fa3b2c6a754f3a9392f2b9c6e4e1e9",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -sS --max-time 15 -H \"Authorization: Bearer $MCPJAM_API_KEY\" \"$MCPJAM_API_URL/organizations/org_fixture/spend-budget\" -o /workspace/mcpjam-eval/budget-before.json; cat /workspace/mcpjam-eval/budget-before.json; rg -n -i 'credit|usage|cost|billing|estimate' /workspace/mcpjam-eval/public-api.md"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:00:07.380492+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.006131410598754883,
+  "end": "2026-11-15T02:00:07.386547+00:00"
+}

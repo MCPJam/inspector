@@ -1,0 +1,15 @@
+
+> workspace@1.0.0 eval
+> node evaluate.cjs
+
+{
+  "runId": "run_fixture_3",
+  "passed": true,
+  "checks": {
+    "completed": true,
+    "platformPassed": true,
+    "evidencePresent": true,
+    "allTrialsCorrect": true
+  },
+  "trials": 1
+}

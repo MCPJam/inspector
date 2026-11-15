@@ -1,0 +1,22 @@
+{
+  "event_id": "bdee2fb84a8647c7b9a1066f487902ba",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json,urllib.request,os\nb=json.load(open('suite.json'));b['name']='Arithmetic direct result smoke';b['tests'][0]['steps']=[b['tests'][0]['steps'][0],{'id':'result','kind':'assert','assertion':{'type':'toolResultContains','toolName':'add','needle':'5'}},{'id':'errors','kind':'assert','assertion':{'type':'noToolErrors'}}]\njson.dump(b,open('suite.json','w'),indent=2)\nr=urllib.request.urlopen(urllib.request.Request(os.environ['MCPJAM_API_URL']+'/projects/project_fixture/eval-suites',data=json.dumps(b).encode(),headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'}));d=r.read().decode();print(d);open('suite-created.json','w').write(d)\nPY\npython3 run-eval.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:47:16.422957+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.05285239219665527,
+  "end": "2026-11-15T01:47:16.475734+00:00"
+}

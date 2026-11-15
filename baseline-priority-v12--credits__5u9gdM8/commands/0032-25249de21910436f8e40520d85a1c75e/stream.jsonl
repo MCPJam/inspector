@@ -1,0 +1,2 @@
+{"seconds": 0.742713451385498, "stream": "stdout", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Server \\\"http://fixture:8765/mcp\\\" was not found in project \\\"Fixture\\\". Available: Arithmetic (id: server_fixture).\"}}\n"}
+{"seconds": 0.7427945137023926, "stream": "stdout", "data": "exit=2\n"}

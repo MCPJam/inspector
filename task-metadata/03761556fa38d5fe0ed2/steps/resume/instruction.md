@@ -1,0 +1,3 @@
+The environment reports that the account issue has been resolved. Resume your original task using the work you preserved.
+
+At meaningful checkpoints or when confused, write a brief user-facing concern note: what you expected, what you observed, what information was missing, and what you will try next. Report no concern when none exists. Do not provide private chain-of-thought or extended internal reasoning.

@@ -1,0 +1,22 @@
+{
+  "event_id": "367298d425604414ba149300c37817e4",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707466786-taxptc.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; cat > run_eval.sh <<'\"'\"'E'\"'\"'\n#!/bin/bash\n# Repeatable eval: needs MCPJAM_API_URL and MCPJAM_API_KEY. Exit 0 = passed, 1 = failed verdict.\nnpx -y @mcpjam/cli@latest cloud eval run --project project_fixture --suite suite_fixture --server server_fixture --wait\nE\nchmod +x run_eval.sh' && pwd -P >| /tmp/claude-29c7-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:51:42.435508+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.01114654541015625,
+  "end": "2026-11-15T01:51:42.446567+00:00"
+}

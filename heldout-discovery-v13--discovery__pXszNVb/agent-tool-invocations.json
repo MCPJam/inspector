@@ -1,0 +1,50 @@
+[
+  {
+    "phase": "trial",
+    "id": "toolu_013nRpsM4fHbPjh6b8B2WgFn",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 2,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/llms.txt | head -60; curl -s -m5 -X POST http://fixture:8765/mcp -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"t\",\"version\":\"1\"}}}'",
+    "observed_output_sha256": "26bec6a0a62219acbeca7927ec3e6ea25bc2c00caf8c2ee24a39d7bb5ff7c9ec",
+    "successful_sum_output": false,
+    "result_public_line": 4,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_0187n8JhW3WVX2buF5Aw9Rsn",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 6,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/cli/server-inspection.md | head -80; npm i -g @mcpjam/cli >/dev/null 2>&1; which mcpjam",
+    "observed_output_sha256": "5bb290757b1879cb7b607cf008520108e61d964eb6623e4b2d5747d4ee3e1693",
+    "successful_sum_output": false,
+    "result_public_line": 9,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01PLW2rUgM4nVR6JrUoXGWAE",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 10,
+    "command": "cd /workspace; U=http://fixture:8765/mcp; mcpjam server doctor --url $U --rpc --out doctor.json | head -40; mcpjam tools list --url $U | head -50",
+    "observed_output_sha256": "d5be8f997b76310dd92969976e86e99fdf50cfaa7c85e1e52eba3ad3060ba1d0",
+    "successful_sum_output": false,
+    "result_public_line": 11,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01FV2qwBy3YDyChD4RmxwfBm",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 13,
+    "command": "cd /workspace; U=http://fixture:8765/mcp; cat > run.sh <<'E'\nU=http://fixture:8765/mcp\nmcpjam server doctor --url $U --out doctor.json >/dev/null 2>&1\nfor p in '{\"a\":2,\"b\":3}' '{\"a\":-1.5,\"b\":0.25}' '{\"a\":1e308,\"b\":1e308}' '{\"a\":\"x\",\"b\":1}' '{\"a\":1}'; do echo \"== $p\"; mcpjam tools call --url $U --tool-name add --tool-args \"$p\" 2>&1 | head -c 600; echo; done\nE\nbash run.sh | tee results.txt",
+    "observed_output_sha256": "6a285e60120259a95a4250066fd2c7a6917ecf9c13a73a67e1b167f550f01fb5",
+    "successful_sum_output": true,
+    "result_public_line": 14,
+    "source": "public-agent-claude-code.txt.jsonl"
+  }
+]

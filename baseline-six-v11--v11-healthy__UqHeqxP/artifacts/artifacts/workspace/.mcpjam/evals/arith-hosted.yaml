@@ -1,0 +1,30 @@
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_arith_fixture
+  name: Arithmetic fixture
+target:
+  servers:
+    - name: arith
+defaults:
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5
+  iterations: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_adds
+    title: add returns 5 for 2+3
+    steps:
+      - id: s1
+        kind: toolCall
+        serverName: arith
+        toolName: add
+        arguments: {a: 2, b: 3}
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: add

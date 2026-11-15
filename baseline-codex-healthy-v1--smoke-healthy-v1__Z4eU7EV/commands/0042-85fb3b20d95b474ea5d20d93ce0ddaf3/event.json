@@ -1,0 +1,18 @@
+{
+  "event_id": "85fb3b20d95b474ea5d20d93ce0ddaf3",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > api-proxy.cjs <<'EOF'\n// Local forwarding adapter for SDK loopback HTTP development support.\nconst http = require('node:http');\nconst upstream = new URL(process.env.MCPJAM_API_URL);\nhttp.createServer((req, res) => {\n  const target = new URL(req.url, upstream.origin);\n  const out = http.request(target, {method: req.method, headers: {...req.headers, host: target.host}}, reply => {\n    res.writeHead(reply.statusCode, reply.headers);\n    reply.pipe(res);\n  });\n  out.on('error', () => { res.writeHead(502); res.end('Upstream unavailable'); });\n  req.pipe(out);\n}).listen(8766, '127.0.0.1', () => console.log('Local API adapter listening on 127.0.0.1:8766'));\nEOF\nnode api-proxy.cjs"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:23:22.319448+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive"
+}

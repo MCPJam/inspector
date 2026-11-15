@@ -1,0 +1,19 @@
+{
+  "suiteId": "suite_authored_5",
+  "name": "Arithmetic deterministic",
+  "servers": [
+    {
+      "id": "server_fixture"
+    }
+  ],
+  "hosts": [],
+  "caseUpsert": {
+    "committed": [
+      {
+        "id": "suite_authored_5_case_0",
+        "name": "Add two numbers and return five"
+      }
+    ],
+    "failed": []
+  }
+}

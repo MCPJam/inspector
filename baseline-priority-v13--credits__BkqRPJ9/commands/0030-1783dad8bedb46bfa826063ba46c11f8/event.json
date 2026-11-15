@@ -1,0 +1,22 @@
+{
+  "event_id": "1783dad8bedb46bfa826063ba46c11f8",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708132384-0zzme4.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; H=\"Authorization: Bearer $MCPJAM_API_KEY\"; B=$MCPJAM_API_URL; for p in projects/project_fixture/eval-runs/run_fixture_1 projects/project_fixture/eval-runs/run_fixture_1/iterations; do echo \"== $p\"; curl -s -H \"$H\" $B/$p | head -c 1200; echo; done | tee result.txt' < /dev/null && pwd -P >| /tmp/claude-e735-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:02:47.502482+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.016318082809448242,
+  "end": "2026-11-15T02:02:47.518725+00:00"
+}

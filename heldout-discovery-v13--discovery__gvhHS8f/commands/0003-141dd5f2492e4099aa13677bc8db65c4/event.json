@@ -1,0 +1,22 @@
+{
+  "event_id": "141dd5f2492e4099aa13677bc8db65c4",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cd /workspace/mcp-check && python3 - <<'PY'\nfrom api import api\np='/projects/project_fixture/servers/server_fixture/tools/call'\nfor name,args in [('positive',{'a':2,'b':3}),('negative',{'a':-7,'b':2}),('decimal',{'a':1.25,'b':2.5}),('missing',{'a':2}),('wrong_type',{'a':'2','b':3})]:\n api(p,{'toolName':'add','parameters':args},'call-'+name+'.json')\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:27:46.690561+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.030442237854003906,
+  "end": "2026-11-15T02:27:46.720947+00:00"
+}

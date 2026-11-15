@@ -1,0 +1,404 @@
+{
+  "scope": "Direct MCP protocol/tool smoke; separate from blocked hosted eval",
+  "passed": 8,
+  "total": 8,
+  "cases": [
+    {
+      "repeat": 1,
+      "a": 2,
+      "b": 3,
+      "expected": 5,
+      "actual": 5,
+      "passed": true
+    },
+    {
+      "repeat": 1,
+      "a": 0,
+      "b": 0,
+      "expected": 0,
+      "actual": 0,
+      "passed": true
+    },
+    {
+      "repeat": 1,
+      "a": -2,
+      "b": 3,
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "repeat": 1,
+      "a": 1.25,
+      "b": 2.5,
+      "expected": 3.75,
+      "actual": 3.75,
+      "passed": true
+    },
+    {
+      "repeat": 2,
+      "a": 2,
+      "b": 3,
+      "expected": 5,
+      "actual": 5,
+      "passed": true
+    },
+    {
+      "repeat": 2,
+      "a": 0,
+      "b": 0,
+      "expected": 0,
+      "actual": 0,
+      "passed": true
+    },
+    {
+      "repeat": 2,
+      "a": -2,
+      "b": 3,
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "repeat": 2,
+      "a": 1.25,
+      "b": 2.5,
+      "expected": 3.75,
+      "actual": 3.75,
+      "passed": true
+    }
+  ],
+  "frames": [
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-03-26",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "repeatable-arithmetic-smoke",
+            "version": "1.0"
+          }
+        },
+        "id": 1
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": "2025-03-26",
+          "capabilities": {
+            "tools": {
+              "listChanged": false
+            }
+          },
+          "serverInfo": {
+            "name": "arithmetic-fixture",
+            "version": "1.0.0"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      },
+      "response": null
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/list",
+        "params": {},
+        "id": 2
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "tools": [
+            {
+              "name": "add",
+              "description": "Add two finite numbers and return their sum.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "a": {
+                    "type": "number"
+                  },
+                  "b": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "a",
+                  "b"
+                ],
+                "additionalProperties": false
+              },
+              "outputSchema": {
+                "type": "object",
+                "properties": {
+                  "sum": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "sum"
+                ]
+              },
+              "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        "id": 4
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 5}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 5
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 0,
+            "b": 0
+          }
+        },
+        "id": 5
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 0}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 0
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": -2,
+            "b": 3
+          }
+        },
+        "id": 6
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 1}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 1
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 1.25,
+            "b": 2.5
+          }
+        },
+        "id": 7
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 3.75}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 3.75
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        "id": 8
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 5}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 5
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 0,
+            "b": 0
+          }
+        },
+        "id": 9
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 0}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 0
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": -2,
+            "b": 3
+          }
+        },
+        "id": 10
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 1}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 1
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 1.25,
+            "b": 2.5
+          }
+        },
+        "id": 11
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 3.75}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 3.75
+          },
+          "isError": false
+        }
+      }
+    }
+  ]
+}

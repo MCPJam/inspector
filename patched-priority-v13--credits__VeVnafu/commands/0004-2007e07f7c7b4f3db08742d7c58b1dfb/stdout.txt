@@ -1,0 +1,17 @@
+{"code": "FEATURE_NOT_SUPPORTED", "message": "The synthetic fixture does not implement disclosure.", "details": {"reason": "contract_unavailable"}}
+HTTP 422
+> Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: "api"`.
+A bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: "CONCURRENT_RUN_LIMIT"`.
+      Asynchronous eval suite runs: create with 202, poll status, iterations,
+      and free; requesting wave insights runs models and draws on your shared
+  /projects/{projectId}/eval-runs:
+    post:
+        Creates a suite run from an existing `suiteId` (rerun) and/or inline
+        A bare `suiteId` with no inline tests reruns the suite as configured.
+              serverIds:
+                suiteId: suite_def456
+        Two valid shapes: `suiteId` (rerun an existing suite, optionally
+        upserting inline `tests` into it) or `suiteName` + `tests` + `serverIds`
+        `suiteId` or a `suiteName` — are rejected with `VALIDATION_ERROR`.
+        `environmentId` requires `suiteId`: an environment is launchable only
+        /eval-suites/{suiteId}`), so an environment run on a not-yet-created

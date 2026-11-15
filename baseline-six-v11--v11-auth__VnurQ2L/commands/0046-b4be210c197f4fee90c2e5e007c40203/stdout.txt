@@ -1,0 +1,140 @@
+[
+  {
+    "name": "zero",
+    "arguments": {
+      "a": 0,
+      "b": 0
+    },
+    "expectedSum": 0,
+    "expectRejection": false,
+    "exitCode": 0,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": 0}"
+        }
+      ],
+      "structuredContent": {
+        "sum": 0
+      },
+      "isError": false,
+      "_durationMs": 8
+    }
+  },
+  {
+    "name": "negative",
+    "arguments": {
+      "a": -7,
+      "b": 2
+    },
+    "expectedSum": -5,
+    "expectRejection": false,
+    "exitCode": 0,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": -5}"
+        }
+      ],
+      "structuredContent": {
+        "sum": -5
+      },
+      "isError": false,
+      "_durationMs": 8
+    }
+  },
+  {
+    "name": "fraction",
+    "arguments": {
+      "a": 1.25,
+      "b": 2.5
+    },
+    "expectedSum": 3.75,
+    "expectRejection": false,
+    "exitCode": 0,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": 3.75}"
+        }
+      ],
+      "structuredContent": {
+        "sum": 3.75
+      },
+      "isError": false,
+      "_durationMs": 29
+    }
+  },
+  {
+    "name": "missing",
+    "arguments": {
+      "a": 2
+    },
+    "expectedSum": null,
+    "expectRejection": true,
+    "exitCode": 1,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "a and b must be finite numbers"
+        }
+      ],
+      "isError": true,
+      "_durationMs": 21
+    }
+  },
+  {
+    "name": "wrong-type",
+    "arguments": {
+      "a": "2",
+      "b": 3
+    },
+    "expectedSum": null,
+    "expectRejection": true,
+    "exitCode": 1,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "a and b must be finite numbers"
+        }
+      ],
+      "isError": true,
+      "_durationMs": 7
+    }
+  },
+  {
+    "name": "extra",
+    "arguments": {
+      "a": 2,
+      "b": 3,
+      "c": 4
+    },
+    "expectedSum": null,
+    "expectRejection": true,
+    "exitCode": 0,
+    "passed": false,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": 5}"
+        }
+      ],
+      "structuredContent": {
+        "sum": 5
+      },
+      "isError": false,
+      "_durationMs": 10
+    }
+  }
+]

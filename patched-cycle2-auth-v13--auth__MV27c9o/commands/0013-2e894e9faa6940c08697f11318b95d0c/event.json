@@ -1,0 +1,22 @@
+{
+  "event_id": "2e894e9faa6940c08697f11318b95d0c",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/validation/check-arithmetic.py <<'PY'\nimport subprocess,json,os\ncases=[('positive',{'a':2,'b':3},5),('negative',{'a':-8,'b':3},-5),('decimal',{'a':1.25,'b':2.5},3.75),('zero',{'a':0,'b':0},0),('missing',{'a':2},None),('wrong-type',{'a':'two','b':3},None)]\nresults=[]\nfor label,args,expected in cases:\n cmd=['npm','exec','--yes','--package=@mcpjam/cli@6.2.2','--','mcpjam','tools','call','--url','http://fixture:8765/mcp','--access-token',os.environ['MCP_SERVER_TOKEN'],'--tool-name','add','--tool-args',json.dumps(args),'--format','json']\n p=subprocess.run(cmd,capture_output=True,text=True,timeout=15)\n try:r=json.loads(p.stdout)\n except ValueError:r={'stdout':p.stdout,'stderr':p.stderr}\n ok=(r.get('structuredContent',{}).get('sum')==expected and not r.get('isError',False)) if expected is not None else (p.returncode!=0 or r.get('isError',False) or 'error' in r)\n results.append({'case':label,'arguments':args,'expected':expected,'passed':ok,'exitCode':p.returncode,'response':r})\njson.dump(results,open('/workspace/validation/arithmetic-results.json','w'),indent=2)\nprint(json.dumps(results))\nPY\npython3 /workspace/validation/check-arithmetic.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:28:55.646610+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 5.202527761459351,
+  "end": "2026-11-15T02:29:00.849102+00:00"
+}

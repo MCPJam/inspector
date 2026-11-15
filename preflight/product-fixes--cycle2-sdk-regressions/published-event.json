@@ -1,0 +1,27 @@
+{
+  "id": "product-fixes:cycle2-sdk-regressions",
+  "path": "product-fixes--cycle2-sdk-regressions",
+  "argv": [
+    "npm",
+    "exec",
+    "-w",
+    "@mcpjam/sdk",
+    "--",
+    "vitest",
+    "run",
+    "tests/mcp-conformance/http-rejection-wire.test.ts",
+    "tests/mcp-conformance/wire-observations.test.ts",
+    "tests/mcp-conformance/wire-schema.test.ts",
+    "tests/mcp-conformance/wire-schema.integration.test.ts"
+  ],
+  "start": "2026-11-15T02:23:42.862818+00:00",
+  "end": "2026-11-15T02:23:44.655390+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

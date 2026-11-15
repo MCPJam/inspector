@@ -1,0 +1,7 @@
+{
+  "result_present": true,
+  "finished_at_observed": "2026-11-15T01:51:53.173896Z",
+  "explicitly_harness_invalid": true,
+  "comparison_eligible": false,
+  "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+}

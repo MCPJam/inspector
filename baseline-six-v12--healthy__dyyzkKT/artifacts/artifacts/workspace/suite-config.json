@@ -1,0 +1,19 @@
+{
+  "id": "suite_authored_1",
+  "name": "Arithmetic repeatable validation",
+  "projectId": "project_fixture",
+  "description": "Synthetic fixture: add 2 and 3 and assert 5.",
+  "environment": {
+    "servers": []
+  },
+  "executionConfig": null,
+  "hosts": [],
+  "environmentIds": [],
+  "settings": {
+    "policy": "legacy",
+    "minimumIterations": 1
+  },
+  "schedule": {},
+  "createdAt": 1,
+  "updatedAt": 2
+}

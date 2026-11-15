@@ -1,0 +1,39 @@
+{
+  "id": "bootstrap:fixture-regression-final",
+  "path": "bootstrap--fixture-regression-final",
+  "argv": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "work/inspector/scripts/harbor-activation/fixtures",
+    "-p",
+    "test_*.py",
+    "-v"
+  ],
+  "start": "2026-11-15T01:46:54.756493+00:00",
+  "end": "2026-11-15T01:46:54.890988+00:00",
+  "exit_status": 1,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg",
+    "outcome-004.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg",
+    "intermediate-003-001.svg",
+    "intermediate-004-001.svg",
+    "intermediate-005-001.svg",
+    "intermediate-006-001.svg",
+    "intermediate-007-001.svg",
+    "intermediate-008-001.svg",
+    "intermediate-009-001.svg",
+    "intermediate-010-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

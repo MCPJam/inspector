@@ -1,0 +1,21 @@
+{
+  "id": "product-fixes:cycle2-slop",
+  "path": "product-fixes--cycle2-slop",
+  "argv": [
+    "npm",
+    "run",
+    "slop:check"
+  ],
+  "start": "2026-11-15T02:24:00.571839+00:00",
+  "end": "2026-11-15T02:24:01.009140+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

@@ -1,0 +1,1 @@
+{"valid":false,"file":"arithmetic.eval.yaml","stage":"contract","findings":[{"code":"SUITE_FILE_INVALID","path":[],"pointer":"","message":"Unrecognized key: \"project\""}]}

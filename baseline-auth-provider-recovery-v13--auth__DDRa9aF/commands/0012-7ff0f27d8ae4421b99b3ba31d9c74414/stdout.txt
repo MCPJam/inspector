@@ -1,0 +1,31 @@
+Usage: mcpjam server doctor [options]
+
+Run a stateless diagnostic sweep against an MCP server
+
+Options:
+  --out <path>                  Write the doctor JSON artifact to a file
+  --transport <transport>       Explicit transport type: "http" or "stdio"
+  --url <url>                   HTTP MCP server URL
+  --access-token <token>        Bearer access token for HTTP servers
+  --oauth-access-token <token>  OAuth bearer access token for HTTP servers
+  --refresh-token <token>       OAuth refresh token for HTTP servers
+  --client-id <id>              OAuth client ID used with --refresh-token
+  --client-secret <secret>      OAuth client secret used with --refresh-token
+  --credentials-file <path>     Load OAuth credentials from a file created by
+                                oauth login or oauth conformance
+                                --credentials-out
+  --header <header>             HTTP header in "Key: Value" format. Repeat to
+                                send multiple headers. (default: [])
+  --client-capabilities <json>  Client capabilities as JSON, @path, or - for
+                                stdin
+  --command <command>           Command for a stdio MCP server
+  --args <arg...>               Preferred stdio command arguments. Pass multiple
+                                values or repeat the flag.
+  --command-args <arg>          Legacy stdio command argument. Repeat to pass
+                                multiple arguments.
+  -e, --env <env...>            Stdio environment assignment in "KEY=[REDACTED]"
+                                format. Pass multiple values or repeat the flag.
+  --cwd <path>                  Working directory for the stdio MCP server
+                                process
+  --retries <count>             Retry transient failures this many times
+{"url":"http://fixture:8765/mcp","protocolVersion":"2025-11-25","status":"ready","transport":{"selected":"streamable-http","attempts":[{"name":"streamable_initialize","request":{"method":"POST","url":"http://fixture:8765/mcp","headers":{"Content-Type":"application/json","Accept":"application/json, text/event-stream","sensitive_value": "[REDACTED]"},"body":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"mcpjam-probe","version":"1.0.0"}}}},"durationMs":11,"response":{"status":200,"statusText":"OK","headers":{"content-length":"189","content-type":"application/json","date":"Sun, 15 Nov 2026 02:19:46 GMT","server":"HarborSyntheticFixture/1 Python/3.11.2"},"body":{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"arithmetic-fixture","version":"1.0.0"}}},"contentType":"application/json"}}]},"initialize":{"protocolVersion":"2025-11-25","serverInfo":{"name":"arithmetic-fixture","version":"1.0.0"},"capabilities":{"tools":{"listChanged":false}},"contentType":"application/json"},"oauth":{"required":false,"optional":false,"registrationStrategies":[]}}

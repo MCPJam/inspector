@@ -1,0 +1,2 @@
+reports/first-passing-run.json: run_fixture_1 passed
+reports/run.json: run_fixture_2 passed

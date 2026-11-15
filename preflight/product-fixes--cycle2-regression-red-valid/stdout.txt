@@ -1,0 +1,12 @@
+
+ RUN  v4.1.12 $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/sdk
+
+ ❯ tests/mcp-conformance/http-rejection-wire.test.ts (6 tests | 2 failed) 42ms
+     × 'GET' 405 retains +0 schema violations 22ms
+     × still validates real JSON-RPC responses after a GET refusal 7ms
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 4 passed (6)
+   Start at  18:23:15
+   Duration  453ms (transform 64ms, setup 17ms, import 164ms, tests 42ms, environment 0ms)
+

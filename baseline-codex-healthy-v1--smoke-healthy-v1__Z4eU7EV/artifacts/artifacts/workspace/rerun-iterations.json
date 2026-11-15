@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "id": "run_fixture_2_iteration",
+      "testCaseId": "case_add",
+      "title": "add 2 and 3 returns 5",
+      "iterationNumber": 1,
+      "status": "completed",
+      "result": "passed",
+      "actualToolCalls": [
+        {
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        }
+      ],
+      "expectedToolCalls": [
+        {
+          "toolName": "add"
+        }
+      ],
+      "durationMs": 1,
+      "error": null
+    }
+  ]
+}

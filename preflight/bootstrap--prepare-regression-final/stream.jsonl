@@ -1,0 +1,7 @@
+{"seconds": 0.03979897499084473, "stream": "stderr", "data": "test_credit_resolution_runs_only_in_the_private_sidecar (test_prepare.PrepareTest.test_credit_resolution_runs_only_in_the_private_sidecar) ... "}
+{"seconds": 0.05904793739318848, "stream": "stderr", "data": "ok\ntest_separate_verifier_bundles_tests_and_uses_source_artifact_paths (test_prepare.PrepareTest.test_separate_verifier_bundles_tests_and_uses_source_artifact_paths) ... "}
+{"seconds": 0.07069110870361328, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.07069683074951172, "stream": "stderr", "data": "\n"}
+{"seconds": 0.07070302963256836, "stream": "stderr", "data": "----------------------------------------------------------------------\n"}
+{"seconds": 0.07070684432983398, "stream": "stderr", "data": "Ran 2 tests in 0.031s\n\n"}
+{"seconds": 0.07071685791015625, "stream": "stderr", "data": "OK\n"}

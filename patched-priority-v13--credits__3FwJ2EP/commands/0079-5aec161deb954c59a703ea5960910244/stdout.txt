@@ -1,0 +1,81 @@
+{
+  "status": 202,
+  "body": {
+    "runId": "run_fixture_1",
+    "suiteId": "suite_fixture",
+    "status": "running",
+    "servers": [
+      {
+        "id": "server_fixture",
+        "name": "Arithmetic"
+      }
+    ],
+    "environment": null
+  }
+}
+{
+  "status": 200,
+  "body": {
+    "id": "run_fixture_1",
+    "suiteId": "suite_fixture",
+    "runNumber": 1,
+    "status": "completed",
+    "result": "passed",
+    "summary": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "passRate": 1.0
+    },
+    "source": "api",
+    "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+    "createdAt": 1794708529890,
+    "completedAt": 1794708529890
+  }
+}
+{
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "run_fixture_1_0",
+        "testCaseId": "case_add",
+        "title": "add 2 and 3 returns 5",
+        "iterationNumber": 1,
+        "status": "completed",
+        "result": "passed",
+        "actualToolCalls": [
+          {
+            "toolName": "add",
+            "arguments": {
+              "a": 2,
+              "b": 3
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"sum\": 5}"
+                }
+              ],
+              "structuredContent": {
+                "sum": 5
+              },
+              "isError": false
+            }
+          }
+        ],
+        "expectedToolCalls": [],
+        "durationMs": 1,
+        "error": null
+      }
+    ]
+  }
+}
+{
+  "status": 404,
+  "body": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

@@ -1,0 +1,10 @@
+== /organizations/org_fixture/spend-budget
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+HTTP 404
+== /projects/project_fixture/eval-suites/suite_fixture
+{"id": "suite_fixture", "name": "Arithmetic smoke", "projectId": "project_fixture", "description": "Synthetic fixture: add 2 and 3 and assert 5.", "environment": {"servers": []}, "executionConfig": null, "hosts": [], "environmentIds": [], "settings": {"policy": "legacy", "minimumIterations": 1}, "schedule": {}, "createdAt": 1, "updatedAt": 2}
+HTTP 200
+== /projects/project_fixture/eval-suites/suite_fixture/launch-disclosure
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+HTTP 404
+  /projects/{projectId}/eval-suites/{suiteId}/run-disclosure:

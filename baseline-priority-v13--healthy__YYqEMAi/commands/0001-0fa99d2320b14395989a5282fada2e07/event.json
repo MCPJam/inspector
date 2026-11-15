@@ -1,0 +1,22 @@
+{
+  "event_id": "0fa99d2320b14395989a5282fada2e07",
+  "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat > suite.json <<'JSON'\n{\n  \"schemaVersion\": \"2\",\n  \"mode\": \"agentWorkflow\",\n  \"reportingMode\": \"standard\",\n  \"suite\": {\"id\":\"s_arithmetic_validation\", \"name\":\"Arithmetic server regression\"},\n  \"target\": {\"servers\":[{\"name\":\"arithmetic-validation\"}]},\n  \"defaults\": {\"judge\":{\"enabled\":false},\"model\":\"anthropic/claude-haiku-4.5\",\"iterations\":1,\"passThreshold\":1,\"validity\":{}},\n  \"cases\": [{\n    \"id\":\"c_add_2_3\", \"title\":\"2 plus 3 returns 5\",\n    \"steps\":[\n      {\"id\":\"call_add\",\"kind\":\"toolCall\",\"serverName\":\"arithmetic-validation\",\"toolName\":\"add\",\"arguments\":{\"a\":2,\"b\":3}},\n      {\"id\":\"assert_no_errors\",\"kind\":\"assert\",\"assertion\":{\"type\":\"noToolErrors\"}},\n      {\"id\":\"assert_sum\",\"kind\":\"assert\",\"assertion\":{\"type\":\"toolResultMatches\",\"toolName\":\"add\",\"path\":\"/sum\",\"patterns\":[\"^5$\"]}}\n    ]\n  }]\n}\nJSON\nnpx mcpjam cloud eval validate --file suite.json --no-telemetry > validation.json\ncat validation.json\nnpx mcpjam cloud eval run --file suite.json --project project_fixture --wait --wait-timeout 60000 --out eval-report.json --no-telemetry > run.json\ncat run.json"
+  ],
+  "cwd": "/workspace/mcpjam-validation",
+  "start": "2026-11-15T02:04:41.566448+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/installed-agent/codex-home/tmp/arg0/codex-arg0AI98Jh:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.2134652137756348,
+  "end": "2026-11-15T02:04:42.779843+00:00"
+}

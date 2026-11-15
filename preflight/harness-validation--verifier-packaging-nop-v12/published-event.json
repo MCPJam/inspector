@@ -1,0 +1,20 @@
+{
+  "id": "harness-validation:verifier-packaging-nop-v12",
+  "path": "harness-validation--verifier-packaging-nop-v12",
+  "argv": [
+    "work/venv/bin/harbor",
+    "run",
+    "--config",
+    "work/packaging-nop-v12.json"
+  ],
+  "start": "2026-11-15T01:30:19.938972+00:00",
+  "end": "2026-11-15T01:31:28.051073+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "harness-validation"
+}

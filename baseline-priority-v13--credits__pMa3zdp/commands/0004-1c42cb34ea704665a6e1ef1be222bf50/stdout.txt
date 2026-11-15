@@ -1,0 +1,269 @@
+{
+  "type": "object",
+  "description": "Two valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it) or `suiteName` + `tests` + `serverIds` (create a new suite and run it). Inline `tests` alone \u2014 without a `suiteId` or a `suiteName` \u2014 are rejected with `VALIDATION_ERROR`.\n\n`environmentId` requires `suiteId`: an environment is launchable only through a suite that has it attached (`environmentIds`, set via `PATCH /eval-suites/{suiteId}`), so an environment run on a not-yet-created suite could never be satisfied. `environmentId` and `serverIds` are mutually exclusive.",
+  "anyOf": [
+    {
+      "required": [
+        "suiteId"
+      ]
+    },
+    {
+      "required": [
+        "suiteName",
+        "tests",
+        "serverIds"
+      ],
+      "properties": {
+        "tests": {
+          "minItems": 1
+        }
+      }
+    }
+  ],
+  "properties": {
+    "suiteId": {
+      "type": "string",
+      "description": "Existing suite to rerun. A bare `suiteId` with no `tests` reruns the suite exactly as configured."
+    },
+    "hosts": {
+      "type": "array",
+      "description": "Attachments for a new inline suite only. Each host is a project host name or ID; servers optionally selects bound server names or IDs. A sole host is selected automatically. Omit for the project default. Cannot be combined with suiteId.",
+      "items": {
+        "type": "object",
+        "required": [
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "minLength": 1
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "suiteName": {
+      "type": "string",
+      "description": "Name for a new suite. Required (non-empty) when no `suiteId` is given."
+    },
+    "suiteDescription": {
+      "type": "string"
+    },
+    "tests": {
+      "type": "array",
+      "maxItems": 100,
+      "description": "Inline test cases to upsert into the suite before running.",
+      "items": {
+        "$ref": "#/components/schemas/EvalTestCase"
+      }
+    },
+    "serverIds": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Servers (by ID) the run connects to. Required when creating a new suite; optional on reruns \u2014 when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`). Rejected outright for a suite with attached environments (`details.reason: \"ENVIRONMENT_SERVERS_NOT_OVERRIDABLE\"`): the environment supplies a closed set that a server override cannot change, so accepting one would connect a different set than the run is stamped with.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "serverNames": {
+      "type": "array",
+      "description": "Optional display names, parallel to `serverIds`.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "suiteRerun": {
+      "type": "boolean",
+      "description": "When true, skip per-case upsert and rerun the persisted suite. A bare `suiteId` with no `tests` is always treated as a rerun."
+    },
+    "modelApiKeys": {
+      "type": "object",
+      "description": "Optional per-provider model API keys (e.g. `{ \"anthropic\": \"sk-ant-\u2026\" }`). Falls back to your organization's configured providers when omitted.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "string"
+    },
+    "passCriteria": {
+      "type": "object",
+      "description": "The floor a run must clear, as a PERCENT in [0, 100] \u2014 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
+      "properties": {
+        "minimumPassRatePercent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included \u2014 the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+        },
+        "minimumPassRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "deprecated": true,
+          "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here \u2014 it reads as a fraction sent by mistake \u2014 which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+          "not": {
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 1
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "minimumPassRatePercent"
+          ]
+        },
+        {
+          "required": [
+            "minimumPassRate"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "iterationOverride": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Override the per-case `runs` count for this run only."
+    },
+    "environmentId": {
+      "type": "string",
+      "description": "Run against one of the suite's attached project environments. Requires `suiteId`, and must be a member of that suite's `environmentIds` \u2014 otherwise `400` with `details.reason: \"ENVIRONMENT_NOT_ATTACHED\"`, raised before any case is authored or any server connected.\n\nOmission is meaningful: a suite with no attached environments runs legacy; a suite with exactly ONE attached environment runs against it automatically (the response's `environment` says which); a suite with several returns `400` with `details.reason: \"ENVIRONMENT_REQUIRED\"`, naming the candidates.\n\nThe environment supplies the closed server set (so `serverIds` is not required, and is rejected alongside it), and the run is pinned to the revision resolved at launch \u2014 if the environment changes in between, the run is rejected with `409` rather than executing against a different configuration."
+    },
+    "ephemeralEnvironment": {
+      "type": "boolean",
+      "description": "When true, `environmentId` may be a project-scoped, non-archived environment that is NOT attached to the suite. The launch never mutates the suite. Absent / false keeps the membership check. Probe `GET /environments/capabilities` (`ephemeralEnvironmentLaunch`) before sending \u2014 older servers reject the unknown field."
+    },
+    "namedHostId": {
+      "type": "string",
+      "description": "Run against ONE host attached to the suite. The platform snapshots that host's current config onto the run and derives the run's server set from it, so a host launch needs no `serverIds`. Without this, a suite with host attachments runs under the suite's own default host config \u2014 the run executes, but the result is attributed to the wrong host.\n\nTo run SEVERAL attached hosts, use `POST /eval-run-groups` rather than N calls here: it is the surface that bounds the fan-out and meters it as one launch."
+    },
+    "caseIds": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Narrow the run to these suite cases. The persisted suite is untouched \u2014 this filters the run's snapshot only. Every id must belong to the suite; none matching returns `404`.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "matchOptionsOverride": {
+      "description": "One-off tool-call match options for this run only, layered over suite defaults and per-case overrides. Does NOT mutate the suite or its cases.\n\nAccepts EITHER the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or the internal one (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`). The two are disjoint, so a body can only be one of them; public bodies are normalized server-side.",
+      "type": "object",
+      "properties": {
+        "toolCallOrder": {
+          "type": "string",
+          "description": "Public: `any` (order ignored) | `in-order` (expected calls appear in order, extras allowed) | `exact` (exact sequence). Internal equivalents: `ignore` | `superset` | `strict`.",
+          "enum": [
+            "any",
+            "in-order",
+            "exact",
+            "ignore",
+            "superset",
+            "strict"
+          ]
+        },
+        "extraToolCalls": {
+          "description": "Public form: `\"unlimited\"`, or a maximum count of unexpected extra tool calls.",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "unlimited"
+              ]
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "arguments": {
+          "type": "string",
+          "description": "Public form of argument-comparison strictness.",
+          "enum": [
+            "ignore",
+            "partial",
+            "exact"
+          ]
+        },
+        "maxExtraToolCalls": {
+          "description": "Internal form of `extraToolCalls`: `null` is unlimited.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "argumentMatching": {
+          "type": "string",
+          "description": "Internal form of `arguments`.",
+          "enum": [
+            "ignore",
+            "partial",
+            "exact"
+          ]
+        }
+      }
+    },
+    "skillsOverride": {
+      "type": "string",
+      "enum": [
+        "exclude"
+      ],
+      "description": "The \"without skills\" arm of an A/B comparison: the run pins NO skills from any channel and is marked `skillsExcluded`, so the arm is labelled rather than merely empty. Scoped to skill DELIVERY \u2014 a pinned plugin's MCP servers stay connected, because which servers an arm connects is the one variable a skills A/B has to hold fixed."
+    },
+    "refreshSnapshot": {
+      "type": "boolean",
+      "description": "**PERSISTS A SUITE MUTATION.** Re-derives and stores the suite's host-config snapshot from this request's server list, so future runs of the suite use it too. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target launches only \u2014 it is not accepted on `POST /eval-run-groups`, where last-writer-wins on a frozen snapshot is never what a fan-out means."
+    },
+    "runGroupId": {
+      "type": "string",
+      "description": "A LABEL that groups sibling run rows for display. It has NO quota or launch semantics here: N calls carrying one id are still N independent launches, each metered separately. Grouped-launch behaviour lives on `POST /eval-run-groups`, which mints the id itself. Echoed back on the `202`."
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Write-idempotency key. A repeat call with the same key (same actor and suite) returns the EXISTING run instead of creating and billing a second one. The `Idempotency-Key` header carries the same value and WINS over this field \u2014 it is the transport-level channel unattended clients control, whereas a body key could be shaped by model output."
+    },
+    "sourceHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hex of the suite-file bytes that launched this run. Lowercase, 64 characters. Set by `eval run --file`; a UI or API launch that did not come from a file omits it."
+    },
+    "importApprovals": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Approve `approximated` imported cases for THIS RUN ONLY. The caller supplies a hosted test-case id and a reason and nothing else: the approver's identity and the approval time are derived server-side and frozen into the run's snapshot, because a caller-supplied approver would file one person's approval under another's name and a caller-supplied timestamp could be backdated past the edit that invalidated the claim. Nothing persists on the case \u2014 the next run of the same approximation needs a new approval.",
+      "items": {
+        "type": "object",
+        "required": [
+          "testCaseId",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "testCaseId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Hosted test-case id \u2014 not the authored/declared case id."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Why this approximation is acceptable for this run."
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

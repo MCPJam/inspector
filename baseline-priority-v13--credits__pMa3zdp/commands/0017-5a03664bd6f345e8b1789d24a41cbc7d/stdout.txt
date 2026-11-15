@@ -1,0 +1,52 @@
+132:There is no fallback: a key the provider rejects is a credential failure (exit `3`), never a reason to spend platform credits instead.
+185:Every selected case is checked before any model or tool call, so an unsupported later case costs nothing. Hosted-only capabilities run with `mcpjam cloud eval run --file <file>`.
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Pay for one local eval iteration
+
+> Collect the declared prompt fee and reserve one iteration atomically before execution. Retries with the same identity reuse the receipt; changed requests conflict. Uploads claim the payment without charging again.
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json post /projects/{projectId}/eval-ingest/pay-iteration
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects: live
+    diagnostics (validate, inspect, export) and operations: call tools, render
+    prompts, run eval suites asynchronously and poll their results, and import
+    OAuth tokens.
+
+
+    **The API is in preview**: the surface may change while we finish the
+    design. Error `code` values are stable; error `message` strings are not.
+    Write clients that ignore unknown response fields.
+  contact:
+    name: MCPJam
+    url: https://github.com/MCPJam/inspector/issues
+servers:
+  - url: https://app.mcpjam.com/api/v1
+    description: Hosted MCPJam
+security:
+  - bearerAuth: []
+tags:
+  - name: Clients
+    description: >-
+      Clients: the named, reusable configurations that define how MCPJam
+      connects to and talks to your MCP servers. The original `/hosts` paths
+      remain as deprecated, ID-only compatibility aliases with their original
+      DTOs and their original (tokenless) write contracts; every alias response
+      carries `Deprecation: true`. New integrations should use `/clients`.
+  - name: Environments
+    description: >-
+      Project environments: named, live-editable execution bundles (one host and
+      an optional standalone server group) that eval suites and goals run
+      against. Reads require project membership; archiving requires project
+      admin.
+  - name: Server diagnostics

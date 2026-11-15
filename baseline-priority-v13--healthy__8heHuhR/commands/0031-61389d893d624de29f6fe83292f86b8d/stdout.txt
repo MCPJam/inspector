@@ -1,0 +1,57 @@
+{"status":"linked","path":"/workspace/.mcpjam/project.json","project":{"id":"project_fixture","name":"Fixture"},"apiUrl":"http://fixture:8765/api/v1"}
+Usage: mcpjam cloud projects servers [options] [command]
+
+List and manage the servers saved in a project
+
+Options:
+  --project <id-or-name>    Project name or ID (defaults to the most recently
+                            updated project)
+  -h, --help                display help for command
+
+Commands:
+  create|add [options]      Create a saved MCP server
+  get [options]             Get one saved MCP server
+  revisions [options]       List a saved server's stored revisions, newest
+                            first: captures of its tools and server info
+  revision [options]        Read one stored revision of a saved server: its
+                            tools and server info
+  revision-diff [options]   Compare two stored revisions of a saved server:
+                            tools added, removed and changed, and server info
+                            changes
+  update [options]          Update one saved MCP server
+  delete|remove [options]   Delete one saved MCP server
+  connect [options]         Connect an MCP server URL to a project, authorizing
+                            in a browser if needed
+  connect-status [options]  Check a connection request started by `server
+                            connect`
+  connect-cancel [options]  Cancel a pending connection request started by
+                            `server connect`
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud projects servers connect`
+
+Start a connection request for an MCP server URL. Discovery, browser consent, and validation happen asynchronously. When the server requires OAuth, the command prints a private authorization link and (by default) opens it in a browser. The command then polls until the request reaches a terminal status.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--url <url>` | Yes | MCP server URL to connect |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--server <id>` | No | Existing server ID, when the project has several on this URL |
+| `--name <name>` | No | Name for the server, if one is created |
+| `--reauthorize` | No | Force a fresh authorization |
+| `--no-browser` | No | Print the authorization link instead of opening it |
+| `--no-wait` | No | Return as soon as the request is created |
+
+With `--no-wait`, the command prints the request id and exits immediately. The request continues in the cloud; use `connect-status` to check it and `connect-cancel` to stop it.
+
+Each pending request holds one of the account's five concurrent-connection slots for up to an hour. If `connect` reports `ACTIVE_REQUEST_LIMIT`, the error details include the ids of the open requests — cancel the abandoned ones with `connect-cancel` to free slots.
+
+### `cloud projects servers connect-status`
+1787:(`defaults.repetitions`, or `defaults.iterations` in `schemaVersion: "2"`) is

@@ -1,0 +1,2 @@
+{"seconds": 0.39638543128967285, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 0.4581148624420166, "stream": "stdout", "data": "-rw-r--r-- 1 root root 3010 Nov 15 02:05 README.md\n-rw-r--r-- 1 root root 1703 Nov 15 02:05 eval-report.json\n-rwxr-xr-x 1 root root  527 Nov 15 02:05 run-eval.sh\n-rw-r--r-- 1 root root 1184 Nov 15 02:04 suite.json\n"}

@@ -1,0 +1,135 @@
+41315 /workspace/validation/conformance.json
+  583 /workspace/validation/conformance.stderr
+41898 total
+ejects with -32021.",
+              "error": "check applies to the extension wire only"
+            },
+            {
+              "id": "tasks-undeclared-capability-rejected",
+              "title": "Undeclared Capability Rejected",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "tasks/get, tasks/update, tasks/cancel and a task-filtered subscriptions/listen sent WITHOUT the extension declaration must each be rejected with -32021 (Missing Required Client Capability).",
+              "error": "check applies to the extension wire only"
+            },
+            {
+              "id": "tasks-ttl-shape",
+              "title": "TTL And Poll Interval Shapes",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "Task TTL and poll interval use the era-native shapes: `ttlMs: number|null` / `pollIntervalMs` on the extension, `ttl` / `pollInterval` on the legacy wire.",
+              "error": "connection resolves to no tasks wire, so there is no task behavior to probe"
+            },
+            {
+              "id": "tasks-inline-result",
+              "title": "Completed Task Carries Its Result",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "A completed task exposes its result the era-native way: inline on the extension's tasks/get, via tasks/result on the legacy wire.",
+              "error": "connection resolves to no tasks wire, so there is no task behavior to probe"
+            },
+            {
+              "id": "tasks-mcp-name-routing",
+              "title": "Mcp-Name Task Routing",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "Over HTTP, tasks/get is sent with Mcp-Name set to the task id (captured off the fetch seam) and accepted by the server.",
+              "error": "Mcp-Name task routing applies to the extension wire only"
+            },
+            {
+              "id": "tasks-invalid-task-id-rejected",
+              "title": "Invalid Task Id Rejected",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and is reported as advice.",
+              "error": "check applies to the extension wire only"
+            },
+            {
+              "id": "tasks-status-payload-shape",
+              "title": "Status Payload Shape",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "Each observed task status carries the payload its status requires: `result` on completed, `error` on failed, `inputRequests` on input_required.",
+              "error": "check applies to the extension wire only"
+            },
+            {
+              "id": "tasks-cancel-ack-shape",
+              "title": "Cancel Acknowledged With An Empty Result",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "tasks/cancel is acknowledged with an empty result rather than a task state, and the task's observable status is allowed to remain non-terminal afterwards.",
+              "error": "check applies to the extension wire only"
+            },
+            {
+              "id": "tasks-update-ack-shape",
+              "title": "Update Acknowledged With An Empty Result",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "tasks/update answering a task's input_required is acknowledged with an empty result carrying resultType \"complete\"; the task is not required to reach a terminal status afterwards.",
+              "error": "tasks/update is an extension-wire method"
+            },
+            {
+              "id": "tasks-ttl-integer-shape",
+              "title": "TTL And Poll Interval Are Integers",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "ttlMs and pollIntervalMs are integer milliseconds, as the extension's Task interface states.",
+              "error": "the integer-milliseconds statement belongs to the tasks extension; the legacy wire states no such bound"
+            },
+            {
+              "id": "tasks-undeclared-capability-names-requirements",
+              "title": "Undeclared Capability Error Names What Is Missing",
+              "category": "lifecycle",
+              "status": "skipped",
+              "skipReason": "not-applicable",
+              "durationMs": 0,
+              "description": "A -32021 rejection carries error.data.requiredCapabilities naming the capability the client failed to declare.",
+              "error": "check applies to the extension wire only"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "outcome": "failed",
+  "score": {
+    "score": 93.7,
+    "outcome": "failed",
+    "applicable": 16,
+    "passed": 15,
+    "failed": 1,
+    "couldNotRun": 0,
+    "notApplicable": 49,
+    "pending": 0,
+    "advisories": [],
+    "advicePointsLost": 0,
+    "protocolVersion": "2025-11-25"
+  },
+  "durationMs": 331,
+  "protocolVersion": "2025-11-25",
+  "engineVersion": "6.2.2"
+}
+Client.listResources() called but server does not advertise resources capability - returning empty list
+Client.listResourceTemplates() called but server does not advertise resources capability - returning empty list
+Client.listResources() called but server does not advertise resources capability - returning empty list
+Client.listResources() called but server does not advertise resources capability - returning empty list
+Score: 93.7/100 — 15/16 applicable checks passed, 1 failed [2025-11-25]
+Warning: conformance upload failed: Synthetic fixture does not implement this route.

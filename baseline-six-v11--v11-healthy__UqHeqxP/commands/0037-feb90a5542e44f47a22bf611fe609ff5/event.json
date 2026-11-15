@@ -1,0 +1,22 @@
+{
+  "event_id": "feb90a5542e44f47a22bf611fe609ff5",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794706093281-lqxnat.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'curl -s https://docs.mcpjam.com/cli/self-hosted.md | grep -inE \"http://|insecure|allow|loopback|tunnel\" | cut -c1-300 | head -20' < /dev/null && pwd -P >| /tmp/claude-e869-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:28:48.014584+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.34845447540283203,
+  "end": "2026-11-15T01:28:48.362954+00:00"
+}

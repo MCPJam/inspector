@@ -1,0 +1,38 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "326f771854370f8f8e39766b1e6b53a420d16f5cc1ca6af735edd4488d78bde9"
+  },
+  {
+    "source": "artifacts/workspace/.mcp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcp.json",
+    "sha256": "660ee8fa627700a5c33547a65fdc243b9ef8c2d76f618fc620bb66a4af3265ec"
+  },
+  {
+    "source": "artifacts/workspace/README.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/README.md",
+    "sha256": "15bd2a310c76bee427e05c695a0d20a4ada25b794e7653d48092e8aa4ac1dc68"
+  },
+  {
+    "source": "artifacts/workspace/reports/hosted.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/reports/hosted.json",
+    "sha256": "d0b777ea82a3d40db1af3d436295e0355318e4a6d0b8595768d64a95f1fc0c23"
+  },
+  {
+    "source": "artifacts/workspace/.mcpjam/evals/arith-hosted.yaml",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcpjam/evals/arith-hosted.yaml",
+    "sha256": "49539c6caf39eb14872a1a4f7a07d63e94c1b259179bc1253eebbc2598192312"
+  },
+  {
+    "source": "artifacts/workspace/.mcpjam/evals/arith.yaml",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcpjam/evals/arith.yaml",
+    "sha256": "e3ffa5e995d0e48288b7722f4bfdb21c251a5a53719f58e7161d93b8c2af957b"
+  }
+]

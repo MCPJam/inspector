@@ -1,0 +1,408 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.control.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.control.json",
+    "sha256": "dd368d1a61417e9f8b7ff0b8eef0f1cb47b2563614dc99a09cdb6145fd48c477"
+  },
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "2a6612117217afcf976826061971a8e4245f1dcc4a881f06ddb3937ee373486b"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/public-api.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/public-api.md",
+    "sha256": "0736072145c7f701c9c613d901ad0b503b6a4026187c89d922ed8bc3631a279b"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/protocol-smoke-results.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/protocol-smoke-results.json",
+    "sha256": "416c77dd787549664e767879cc2e564fee51735bc4f25c07255029e92d1d8a57"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/mcp-initialize.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/mcp-initialize.json",
+    "sha256": "5ec9716c4a42e153bb77c11b3b77a34f06892270b33f6a5d12036d1bb5e455b1"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/tools.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/tools.json",
+    "sha256": "230da55c9246791bf46d5612dc2d46d51d8ce9a051754f12dd54a023677a8f39"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/account-before.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/account-before.json",
+    "sha256": "c3906d73a0ac28397aa95b0cefe1508470d0dce4686ab0f5c3fa2e713e15412a"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/budget-before.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/budget-before.json",
+    "sha256": "ea17c2f5659604290065dd03f5e17d2eb6116e856ec5430dfb705d5eb521e08f"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/README.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/README.md",
+    "sha256": "0f2144e3ae7c935fb01e25a87096af858ccf9561d440fe74f4ea858a54081127"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/app-entry.html",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/replay.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/hosted-doc.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/hosted-doc.md",
+    "sha256": "59710c7c2685d702380f15facab7959eaef36a4c35260014688717dd17477d70"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/launch-before.headers",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/cases.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/cases.json",
+    "sha256": "fa414b4e27ebfa0240737e88f78c87480d4575b690dc772cb14b6de7249e7feb"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/docs-index.txt",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/docs-index.txt",
+    "sha256": "9654f2d4d237e5a10221f10d205a8569deaa3224f7e12bc1b89bba608168058e"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/protocol-smoke.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/servers-before.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/servers-before.json",
+    "sha256": "17e263da222f76568efe024edca2d0d2285fc067af9aeac05254eccb7eed2c45"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/budget-doc.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/budget-doc.md",
+    "sha256": "fc9918940824a7ffa62c004b2bca57d50467f133879ee9c1115ed6036683faa9"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/cli-reference.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/cli-reference.md",
+    "sha256": "a28de1090411ef1cad67b701ad9e4906a13be470376157de11ed8ee8918dcc2b"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/error-codes.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/error-codes.md",
+    "sha256": "42da7ad11fa39717c449c0354b1ce023ea97acb7c2895166fc69c5b7ff4f701c"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/local-evals-doc.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/local-evals-doc.md",
+    "sha256": "d1cf3b193596d5feca31ec63bc9649a729127428225c1ae21969ba84138986ab"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/cli-doc.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/cli-doc.md",
+    "sha256": "3540d07971a09946c1ece0fe0a2448fe8414add8ca6c2be95e4ff431d5531baf"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/eval-suites-before.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/eval-suites-before.json",
+    "sha256": "51e704a0fb650ceecb20affd071eb8a68bd9c60ec71c5fc4548c4140440189f5"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/launch-before.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/launch-before.json",
+    "sha256": "e13909d1428d0546659da3ad3ee1abdf610ccf32f4c18040a01a71b3edefa45f"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/run-request.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/run-request.json",
+    "sha256": "899e6a18163f961eccdb9f67be295aea0d97feb3862012e01bc36467f996b0b0"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/suite-before.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/suite-before.json",
+    "sha256": "216f21c18a9cbf74e00cc8ef2b75f4350eae4ad63095eade2e280d0327d94336"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/openapi.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/openapi.json",
+    "sha256": "53d45b9b1bf44189b5c9eded3d5600221298c49c9375f8d34fb76944235f7d28"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/organizations-before.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/organizations-before.json",
+    "sha256": "073b3708899afd1927c5cff51c38a77d298766f8d1fb29dfabebb8f456b8597a"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/mcp-headers.txt",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/mcp-headers.txt",
+    "sha256": "5a6d85e8353829eec00aa1a588608907ea720b0ac256158dc3f6d3372f03f24a"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/disclosure-before.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/disclosure-before.json",
+    "sha256": "2c18096272b3869343f68d4730551ba7245da374c53f216a0598e7bae30649c0"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcpjam-eval/account-check.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcpjam-eval/account-check.json",
+    "sha256": "c3906d73a0ac28397aa95b0cefe1508470d0dce4686ab0f5c3fa2e713e15412a"
+  },
+  {
+    "source": "steps/resume/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/fixture/state.json",
+    "sha256": "e153eed0dcf46fdde4b1ad0edc3a9048d648aeadb71dd19c81978946d3ed7c2a"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/public-api.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/public-api.md",
+    "sha256": "0736072145c7f701c9c613d901ad0b503b6a4026187c89d922ed8bc3631a279b"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/summary.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/summary.json",
+    "sha256": "1a61f5c7e2f5f36cdc3512f4fcf3edba299d4876089431e705e8de70e2e9afaf"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/models-after.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/models-after.json",
+    "sha256": "0c47d89451b46361fdbf5af8396ab3a4e1ec371c249d9bb63f21bca72abceb88"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/protocol-smoke-results.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/protocol-smoke-results.json",
+    "sha256": "416c77dd787549664e767879cc2e564fee51735bc4f25c07255029e92d1d8a57"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/mcp-initialize.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/mcp-initialize.json",
+    "sha256": "5ec9716c4a42e153bb77c11b3b77a34f06892270b33f6a5d12036d1bb5e455b1"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/tools.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/tools.json",
+    "sha256": "230da55c9246791bf46d5612dc2d46d51d8ce9a051754f12dd54a023677a8f39"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/disclosure-after.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/disclosure-after.json",
+    "sha256": "e32bb14f98c3b7561d91103dbe165e3e3f9735babbb866ed31f172fceb273f70"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/account-before.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/account-before.json",
+    "sha256": "c3906d73a0ac28397aa95b0cefe1508470d0dce4686ab0f5c3fa2e713e15412a"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/budget-after.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/budget-after.json",
+    "sha256": "0c47d89451b46361fdbf5af8396ab3a4e1ec371c249d9bb63f21bca72abceb88"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/budget-before.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/budget-before.json",
+    "sha256": "ea17c2f5659604290065dd03f5e17d2eb6116e856ec5430dfb705d5eb521e08f"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/README.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/README.md",
+    "sha256": "c4db4fb3cbc69c3aca0b4624e087a5b9bb1e538933166347c7ee77874cdc5020"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/app-entry.html",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/replay.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/hosted-doc.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/hosted-doc.md",
+    "sha256": "59710c7c2685d702380f15facab7959eaef36a4c35260014688717dd17477d70"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/launch-before.headers",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/cases.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/cases.json",
+    "sha256": "fa414b4e27ebfa0240737e88f78c87480d4575b690dc772cb14b6de7249e7feb"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/docs-index.txt",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/docs-index.txt",
+    "sha256": "9654f2d4d237e5a10221f10d205a8569deaa3224f7e12bc1b89bba608168058e"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/protocol-smoke.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/servers-before.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/servers-before.json",
+    "sha256": "17e263da222f76568efe024edca2d0d2285fc067af9aeac05254eccb7eed2c45"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/budget-doc.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/budget-doc.md",
+    "sha256": "fc9918940824a7ffa62c004b2bca57d50467f133879ee9c1115ed6036683faa9"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/cli-reference.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/cli-reference.md",
+    "sha256": "a28de1090411ef1cad67b701ad9e4906a13be470376157de11ed8ee8918dcc2b"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/error-codes.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/error-codes.md",
+    "sha256": "42da7ad11fa39717c449c0354b1ce023ea97acb7c2895166fc69c5b7ff4f701c"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/local-evals-doc.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/local-evals-doc.md",
+    "sha256": "d1cf3b193596d5feca31ec63bc9649a729127428225c1ae21969ba84138986ab"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/cli-doc.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/cli-doc.md",
+    "sha256": "3540d07971a09946c1ece0fe0a2448fe8414add8ca6c2be95e4ff431d5531baf"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/eval-suites-before.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/eval-suites-before.json",
+    "sha256": "51e704a0fb650ceecb20affd071eb8a68bd9c60ec71c5fc4548c4140440189f5"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/launch-before.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/launch-before.json",
+    "sha256": "e13909d1428d0546659da3ad3ee1abdf610ccf32f4c18040a01a71b3edefa45f"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/run-request.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/run-request.json",
+    "sha256": "899e6a18163f961eccdb9f67be295aea0d97feb3862012e01bc36467f996b0b0"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/suite-before.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/suite-before.json",
+    "sha256": "216f21c18a9cbf74e00cc8ef2b75f4350eae4ad63095eade2e280d0327d94336"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/openapi.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/openapi.json",
+    "sha256": "53d45b9b1bf44189b5c9eded3d5600221298c49c9375f8d34fb76944235f7d28"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/organizations-before.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/organizations-before.json",
+    "sha256": "073b3708899afd1927c5cff51c38a77d298766f8d1fb29dfabebb8f456b8597a"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/mcp-headers.txt",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/mcp-headers.txt",
+    "sha256": "5a6d85e8353829eec00aa1a588608907ea720b0ac256158dc3f6d3372f03f24a"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/disclosure-before.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/disclosure-before.json",
+    "sha256": "2c18096272b3869343f68d4730551ba7245da374c53f216a0598e7bae30649c0"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/account-check.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/account-check.json",
+    "sha256": "c3906d73a0ac28397aa95b0cefe1508470d0dce4686ab0f5c3fa2e713e15412a"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/after-credit-resolution/decision-summary.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/after-credit-resolution/decision-summary.json",
+    "sha256": "0c47d89451b46361fdbf5af8396ab3a4e1ec371c249d9bb63f21bca72abceb88"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/after-credit-resolution/launch.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/after-credit-resolution/launch.json",
+    "sha256": "c45bd269c328e542d26271c54ad328a85934de166e68ad488e5e564e1abbaebe"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/after-credit-resolution/status.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/after-credit-resolution/status.json",
+    "sha256": "ee55a729b4ecde84611b2cf76c8c0a112b9655bd0eb26e8b8beb2073bf6157eb"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcpjam-eval/after-credit-resolution/iterations.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcpjam-eval/after-credit-resolution/iterations.json",
+    "sha256": "62216e038ff7de8ad67064cac6647cd56fbd9115295344f36e3d5900543dce3a"
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "event_id": "26f2d68b30874ab6939d2d33a8bec01a",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707872572-ob3qvp.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; sed -i '\"'\"'s/^  iterations: 1/  validity: {}\\n  iterations: 1/; s/^        toolName: add$/        serverName: fixture\\n        toolName: add/'\"'\"' .mcpjam/evals/add.yaml\n# only first toolName (step) should get serverName; fix assertion\npython3 - <<'\"'\"'E'\"'\"'\np='\"'\"'.mcpjam/evals/add.yaml'\"'\"';s=open(p).read()\ns=s.replace(\"          toolName: add\",\"          toolName: add\")\nopen(p,'\"'\"'w'\"'\"').write(s)\nE\ncat .mcpjam/evals/add.yaml | tail -14; mcpjam cloud eval run --file .mcpjam/evals/add.yaml --project project_fixture 2>&1 | tail -15' && pwd -P >| /tmp/claude-8ebe-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:58:42.093021+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.43656229972839355,
+  "end": "2026-11-15T01:58:42.529499+00:00"
+}

@@ -1,0 +1,57 @@
+[
+  {
+    "source": "verifier/metrics.json",
+    "metrics": {
+      "schema_version": 1,
+      "simulation": true,
+      "prompt": "B",
+      "task_success": true,
+      "first_meaningful_result": true,
+      "server_observed_successful_tool_call": true,
+      "time_to_first_result_seconds": 56.64327073097229,
+      "first_conformance_result": null,
+      "first_eval_completed": true,
+      "server_observed_simulated_eval": true,
+      "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+      "correct_diagnosis": null,
+      "successful_recovery": null,
+      "auth_refusal_count": 0,
+      "credit_refusal_count": 0,
+      "repeated_ineffective_requests": 0,
+      "state_preserved": true,
+      "duplicate_charges": 0,
+      "charge_count": 2,
+      "synthetic_credits_remaining": 18,
+      "human_handoff_correct": null,
+      "credit_cost_understanding": null,
+      "errors_explain_cause_action_actor": null,
+      "evidence_completeness": true,
+      "mcpjam_tool_event_ids": [
+        "4846ab9997ac446c9c86cfc690eab908",
+        "74d8983d7f1847a58c506c10833cf219"
+      ],
+      "mcpjam_eval_event_ids": [
+        "f2b4e2793025416a81387dbb71785504",
+        "6010ecdb744347b1a653e5e20d4c31b0",
+        "ab88068bdfad46bd94d8c25cc68b9db4",
+        "7728777af1284fc98b882ff9700a84bf"
+      ],
+      "reproducible_artifacts": [
+        "cli-doc.md",
+        "first-result.json",
+        "README.md",
+        "api-doc.md",
+        "inspector-evals.md",
+        "eval-doc.md",
+        "run-eval.sh",
+        "reports/repeat-iterations.json",
+        "reports/iterations.json"
+      ],
+      "command_count": 75,
+      "reward": 1.0,
+      "request_count": 292,
+      "workspace_collected": true,
+      "command_evidence_collected": true
+    }
+  }
+]

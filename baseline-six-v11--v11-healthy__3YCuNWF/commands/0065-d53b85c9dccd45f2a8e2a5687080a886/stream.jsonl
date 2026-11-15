@@ -1,0 +1,2 @@
+{"seconds": 0.7360708713531494, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 0.8811299800872803, "stream": "stderr", "data": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Synthetic fixture does not implement this route.\"}}\n"}

@@ -1,0 +1,67 @@
+                              claude-code options                               
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ Name              ┃ Type              ┃ Default           ┃ Description      ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ base_url          │ string | null     │ null              │ Inference        │
+│                   │                   │                   │ endpoint         │
+│                   │                   │                   │ override         │
+│                   │                   │                   │ (--base-url).    │
+│ disable_web_sear… │ boolean           │ false             │ Disable native   │
+│                   │                   │                   │ web search and   │
+│                   │                   │                   │ fetch tools when │
+│                   │                   │                   │ supported.       │
+│ reasoning_effort  │ "low" | "medium"  │ null              │ Model reasoning  │
+│                   │ | "high" |        │                   │ effort.          │
+│                   │ "xhigh" | "max" | │                   │                  │
+│                   │ null              │                   │                  │
+│ version           │ string | null     │ null              │ Agent CLI        │
+│                   │                   │                   │ version to       │
+│                   │                   │                   │ install. Omit    │
+│                   │                   │                   │ for latest, or   │
+│                   │                   │                   │ to use the       │
+│                   │                   │                   │ version the      │
+│                   │                   │                   │ image already    │
+│                   │                   │                   │ has for agents   │
+│                   │                   │                   │ that check for   │
+│                   │                   │                   │ one.             │
+│ skip_install      │ boolean           │ false             │ Skip installing  │
+│                   │                   │                   │ the agent; the   │
+│                   │                   │                   │ environment must │
+│                   │                   │                   │ already provide  │
+│                   │                   │                   │ it and its       │
+│                   │                   │                   │ dependencies.    │
+│ prompt_template_… │ string | null     │ null              │ Jinja2 template  │
+│                   │                   │                   │ path; must       │
+│                   │                   │                   │ include {{       │
+│                   │                   │                   │ instruction }}.  │
+│ config            │ any               │ null              │ Native config    │
+│                   │                   │                   │ file path or     │
+│                   │                   │                   │ inline JSON.     │
+│ max_turns         │ integer | null    │ null              │ Maximum agent    │
+│                   │                   │                   │ turns.           │
+│ thinking_display  │ "summarized" |    │ null              │ How thinking is  │
+│                   │ "omitted" | null  │                   │ displayed.       │
+│ max_budget_usd    │ string | null     │ null              │ Maximum spend in │
+│                   │                   │                   │ USD.             │
+│ fallback_model    │ string | null     │ null              │ Fallback model   │
+│                   │                   │                   │ name.            │
+│ append_system_pr… │ string | null     │ null              │ Text appended to │
+│                   │                   │                   │ the system       │
+│                   │                   │                   │ prompt.          │
+│ allowed_tools     │ string | null     │ null              │ Comma-separated  │
+│                   │                   │                   │ allowed tools.   │
+│ disallowed_tools  │ string | null     │ null              │ Comma-separated  │
+│                   │                   │                   │ disallowed       │
+│                   │                   │                   │ tools.           │
+│ permission_mode   │ "default" |       │ "bypassPermissio… │ Permission mode. │
+│                   │ "acceptEdits" |   │                   │                  │
+│                   │ "plan" | "auto" | │                   │                  │
+│                   │ "dontAsk" |       │                   │                  │
+│                   │ "bypassPermissio… │                   │                  │
+│                   │ | null            │                   │                  │
+│ max_thinking_tok… │ integer | null    │ null              │ Maximum thinking │
+│                   │                   │                   │ tokens.          │
+│ memory_dir        │ string | null     │ null              │ Host directory   │
+│                   │                   │                   │ uploaded as      │
+│                   │                   │                   │ Claude memory.   │
+└───────────────────┴───────────────────┴───────────────────┴──────────────────┘

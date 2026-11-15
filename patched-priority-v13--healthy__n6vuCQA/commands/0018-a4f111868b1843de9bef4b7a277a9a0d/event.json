@@ -1,0 +1,22 @@
+{
+  "event_id": "a4f111868b1843de9bef4b7a277a9a0d",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708600651-f6pac3.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; A=$MCPJAM_API_URL; H=\"Authorization: Bearer $MCPJAM_API_KEY\"; P=$A/projects/project_fixture\ncat > run.json <<'\"'\"'E'\"'\"'\n{\"suiteName\":\"Arithmetic deterministic\",\"serverIds\":[\"server_fixture\"],\n \"tests\":[{\"title\":\"add 17+25\",\"runs\":1,\"steps\":[\n  {\"id\":\"s1\",\"kind\":\"toolCall\",\"toolName\":\"add\",\"args\":{\"a\":17,\"b\":25}},\n  {\"id\":\"s2\",\"kind\":\"assert\",\"assertion\":{\"type\":\"toolCalledWith\",\"toolName\":\"add\",\"args\":{\"args\":{\"a\":17,\"b\":25}}}}]}]}\nE\ncurl -s -X POST -H \"$H\" -H \"Content-Type: application/json\" -d @run.json $P/eval-runs | tee run-resp.json; echo\nR=$(python3 -I -c \"import json;print(json.load(open('\"'\"'run-resp.json'\"'\"')).get('\"'\"'runId'\"'\"','\"'\"''\"'\"'))\")\n[ -n \"$R\" ] && for i in 1 2 3; do sleep 3; curl -s -H \"$H\" $P/eval-runs/$R | cut -c1-700; echo; done; [ -n \"$R\" ] && curl -s -H \"$H\" $P/eval-runs/$R/iterations | cut -c1-900' && pwd -P >| /tmp/claude-cb4e-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:11:12.975289+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.016954660415649414,
+  "end": "2026-11-15T02:11:12.992180+00:00"
+}

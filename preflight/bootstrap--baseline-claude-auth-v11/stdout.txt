@@ -1,0 +1,20 @@
+  1/1 Running trials... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:02:29 0:00:00
+adhoc • claude-code • sonnet
+┏━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Trials ┃ Exceptions ┃
+┡━━━━━━━━╇━━━━━━━━━━━━┩
+│      0 │          1 │
+└────────┴────────────┘
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Exception               ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ RewardFileNotFoundError │     1 │
+└─────────────────────────┴───────┘
+
+Job Info
+Total runtime: 2m 29s
+Results written to work/jobs/baseline-claude-auth-v11/result.json
+Inspect results by running `harbor view work/jobs`
+Share results by running `harbor upload work/jobs/baseline-claude-auth-v11`
+

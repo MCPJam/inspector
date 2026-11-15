@@ -1,0 +1,14 @@
+{
+  "runId": "run_fixture_1",
+  "status": "completed",
+  "result": "passed",
+  "total": 1,
+  "passed": 1,
+  "failed": 0,
+  "observed": {"tool": "add", "arguments": {"a": 2, "b": 3}, "sum": 5},
+  "execution": "simulated deterministic execution; no hosted model or live billing",
+  "balance": null,
+  "chargedCredits": null,
+  "costLimitation": "Account spend and model catalog endpoints unavailable; no numeric cost verified",
+  "idempotencyVerified": true
+}

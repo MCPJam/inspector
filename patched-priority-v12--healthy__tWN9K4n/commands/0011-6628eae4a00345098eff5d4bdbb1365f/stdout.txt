@@ -1,0 +1,23 @@
+{"ok":true,"credential":{"source":"env","kind":"api-key","valid":true,"redactedKey":"sk_…etic","envShadowsOauth":false,"storedOauthPresent":false},"deployment":{"apiUrl":"http://fixture:8765/api/v1","source":"env","description":"set by MCPJAM_API_URL or MCPJAM_BASE_URL","valid":true},"project":{"selector":null,"source":"automatic","description":"automatic (most recently updated)"},"link":{"path":null,"valid":null},"warnings":[]}
+Usage: mcpjam cloud projects servers [options] [command]
+
+List and manage the servers saved in a project
+
+Options:
+  --project <id-or-name>    Project name or ID (defaults to the most recently
+                            updated project)
+  -h, --help                display help for command
+
+Commands:
+  create|add [options]      Create a saved MCP server
+  get [options]             Get one saved MCP server
+  revisions [options]       List a saved server's stored revisions, newest
+                            first: captures of its tools and server info
+  revision [options]        Read one stored revision of a saved server: its
+                            tools and server info
+  revision-diff [options]   Compare two stored revisions of a saved server:
+                            tools added, removed and changed, and server info
+                            changes
+  update [options]          Update one saved MCP server
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"items":[{"id":"suite_fixture","name":"Arithmetic smoke","projectId":"project_fixture","description":"Synthetic fixture: add 2 and 3 and assert 5.","environment":{"servers":[]},"executionConfig":null,"hosts":[],"environmentIds":[],"settings":{"policy":"legacy","minimumIterations":1},"schedule":{},"createdAt":1,"updatedAt":2}],"otherProjects":[]}

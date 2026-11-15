@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "id": "7fa4cf27-5dd2-4593-be5e-7590ca4f07a4",
+  "task_name": "mcpjam/healthy",
+  "trial_name": "healthy__YYqEMAi",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/baseline-priority-v13/healthy__YYqEMAi",
+  "task_id": {
+    "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/baseline-priority-v13/healthy"
+  },
+  "source": null,
+  "task_checksum": "f3ce28d9f81d5bb2a7e59adff44c57c6184d2eb2ec633979d77faba308fcf9e4",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/baseline-priority-v13/healthy",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "healthy__YYqEMAi",
+    "trials_dir": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/baseline-priority-v13",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "codex",
+      "import_path": null,
+      "model_name": "openai/gpt-6.1-sol",
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": true,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {
+        "version": "0.160.0",
+        "reasoning_effort": "medium",
+        "reasoning_summary": "none"
+      },
+      "env": {
+        "CODEX_FORCE_AUTH_JSON": "****"
+      },
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "81966d49-d4e1-4901-ab1d-7afdafcf8613",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 872652,
+    "n_cache_tokens": 822272,
+    "n_output_tokens": 4480,
+    "cost_usd": 0.2277872,
+    "model_usage": {
+      "gpt-6.1-sol": {
+        "n_input_tokens": 872652,
+        "n_cache_tokens": 822272,
+        "n_output_tokens": 4480,
+        "cost_usd": 0.2277872
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  },
+  "verifier_environment_mode": "separate",
+  "exception_info": null,
+  "started_at": "2026-11-15T02:03:25.622474Z",
+  "finished_at": "2026-11-15T02:06:29.550083Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T02:03:25.626443Z",
+    "finished_at": "2026-11-15T02:03:28.668571Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-15T02:03:28.668642Z",
+    "finished_at": "2026-11-15T02:03:28.888144Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-15T02:03:28.888418Z",
+    "finished_at": "2026-11-15T02:05:55.298642Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-15T02:06:16.730068Z",
+    "finished_at": "2026-11-15T02:06:29.550057Z"
+  },
+  "step_results": null,
+  "reward_valid": true
+}

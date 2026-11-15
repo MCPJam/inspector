@@ -1,0 +1,8 @@
+                                organization's server or
+  projects                      Operate the MCP servers saved in your hosted
+  tunnel [options] [target...]  Expose a local MCP server through an MCPJam
+                                tunnel and register it as a server in your
+                                environments (host + servers + pinned
+  server-accounts               Manage the accounts a saved server signs in with
+  conformance                   Hosted conformance runs on saved servers: start,
+{"error":{"code":"USAGE_ERROR","message":"error: unknown command 'servers'\n(Did you mean secrets?)"}}

@@ -1,0 +1,2 @@
+{"seconds": 0.017427444458007812, "stream": "stdout", "data": "total 8\ndrwxr-xr-x 2 root root 4096 Nov 15 01:18 .\ndrwxr-xr-x 1 root root 4096 Nov 15 01:21 ..\n"}
+{"seconds": 0.025778532028198242, "stream": "stdout", "data": "MCPJAM_API_URL\nCODEX_MANAGED_BY_NPM\nMCPJAM_TELEMETRY_DISABLED\nMCPJAM_API_KEY\nNODE_VERSION\n"}

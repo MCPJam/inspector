@@ -1,0 +1,8 @@
+{"seconds": 0.0011582374572753906, "stream": "stdout", "data": "== cloud whoami\n"}
+{"seconds": 0.6248495578765869, "stream": "stdout", "data": "{\"id\":\"user_fixture\",\"email\":\"[EMAIL REDACTED]\",\"name\":\"Fixture user\",\"plan\":\"team\",\"credential\":\"api-key\"}\n"}
+{"seconds": 0.6248853206634521, "stream": "stdout", "data": "\n== cloud organizations\n"}
+{"seconds": 1.2341156005859375, "stream": "stdout", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"(outputHelp) Run `mcpjam cloud organizations --help` for this command's arguments and options.\"}}\n"}
+{"seconds": 1.2341554164886475, "stream": "stdout", "data": "\n"}
+{"seconds": 1.2341623306274414, "stream": "stdout", "data": "== cloud eval list\n"}
+{"seconds": 1.897327184677124, "stream": "stdout", "data": "Using MCPJam Cloud as sk_…etic · project: env (project_fixture) · http://fixture:8765/api/v1\n{\"project\":{\"id\":\"project_fixture\",\"name\":\"Fixture\",\"sensitive_value\": \"[REDACTED]\"},\"items\":[{\"id\":\"suite_fixture\",\"name\":\"Arithmetic smoke\",\"projectId\":\"project_fixture\",\"description\":\"Synthetic fixture: add 2 and 3 and assert 5.\",\"environment\":{\"servers\":[]},\"executionConfig\":null,\"hosts\":[],\"environmentIds\":[],\"settings\":{\"policy\":\"legacy\",\"minimumIterations\":1},\"schedule\":{},\"createdAt\":1,\"updatedAt\":2}],\"otherProjects\":[]}\n"}
+{"seconds": 1.897376537322998, "stream": "stdout", "data": "\n"}

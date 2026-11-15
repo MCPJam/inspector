@@ -1,0 +1,1 @@
+{"valid":true,"file":".mcpjam/evals/arithmetic.json","suite":{"id":"s_arithmetic_smoke","name":"Arithmetic smoke","cases":1,"enabledCases":1},"findings":[],"projectValidation":{"project":{"id":"project_fixture","name":"Fixture"},"targets":[],"valid":true,"findings":[]}}

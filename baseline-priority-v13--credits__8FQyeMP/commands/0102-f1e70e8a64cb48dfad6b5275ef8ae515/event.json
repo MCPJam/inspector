@@ -1,0 +1,22 @@
+{
+  "event_id": "f1e70e8a64cb48dfad6b5275ef8ae515",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat /workspace/mcp-evaluation/resume.py && cat /workspace/mcp-evaluation/README.md"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:13:23.695244+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0012733936309814453,
+  "end": "2026-11-15T02:13:23.696461+00:00"
+}

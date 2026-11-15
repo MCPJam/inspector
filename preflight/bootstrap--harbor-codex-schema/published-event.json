@@ -1,0 +1,22 @@
+{
+  "id": "bootstrap:harbor-codex-schema",
+  "path": "bootstrap--harbor-codex-schema",
+  "argv": [
+    "work/venv/bin/harbor",
+    "agent",
+    "schema",
+    "codex"
+  ],
+  "start": "2026-11-15T01:14:36.942990+00:00",
+  "end": "2026-11-15T01:14:38.620536+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

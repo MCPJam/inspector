@@ -1,0 +1,22 @@
+{
+  "event_id": "7a1a6655a07b4cd0b0456090ad4f5746",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -fsS \"$MCPJAM_API_URL/api/v1/projects/project_fixture/eval-runs/run_fixture_1\" -H \"Authorization: Bearer $MCPJAM_API_KEY\" -o eval-status.json && cat eval-status.json; curl -sS \"$MCPJAM_API_URL/api/v1/projects/project_fixture/eval-runs/run_fixture_1/decision-summary\" -H \"Authorization: Bearer $MCPJAM_API_KEY\" -o decision-summary.json; cat decision-summary.json; curl -sS \"$MCPJAM_API_URL/api/v1/projects/project_fixture/eval-runs/run_fixture_1/iterations\" -H \"Authorization: Bearer $MCPJAM_API_KEY\" -o iterations.json; cat iterations.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:23:59.252815+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.06123208999633789,
+  "end": "2026-11-15T01:23:59.313429+00:00"
+}

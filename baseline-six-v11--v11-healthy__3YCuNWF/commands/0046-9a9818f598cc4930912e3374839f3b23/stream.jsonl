@@ -1,0 +1,4 @@
+{"seconds": 0.31101489067077637, "stream": "stdout", "data": "Wrote to /workspace/package.json:\n\n{\n  \"name\": \"workspace\",\n  \"version\": \"1.0.0\",\n  \"description\": \"\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"test\": \"echo \\\"Error: no test specified\\\" && exit 1\"\n  },\n  \"keywords\": [],\n  \"author\": \"\",\n  \"license\": \"ISC\",\n  \"type\": \"commonjs\"\n}\n\n\n"}
+{"seconds": 12.485044240951538, "stream": "stdout", "data": "\nadded 153 packages, and audited 154 packages in 12s\n\n39 packages are looking for funding\n"}
+{"seconds": 12.48507308959961, "stream": "stdout", "data": "  run `npm fund` for details\n"}
+{"seconds": 12.485469818115234, "stream": "stdout", "data": "\nfound 0 vulnerabilities\n"}

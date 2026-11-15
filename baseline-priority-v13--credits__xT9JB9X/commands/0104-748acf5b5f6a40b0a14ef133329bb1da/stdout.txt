@@ -1,0 +1,3 @@
+budget-after 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+models-after 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+disclosure-after 422 {"code": "FEATURE_NOT_SUPPORTED", "message": "The synthetic fixture does not implement disclosure.", "details": {"reason": "contract_unavailable"}}

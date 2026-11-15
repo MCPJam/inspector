@@ -1,0 +1,60 @@
+
+A run that never uses a browser tool records nothing, and costs nothing.
+
+Assertions are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
+
+--
+| **Widget no console errors** | The widget rendered without console errors. | Turn or case |
+| **Token budget under N** | Total token usage stayed below the cap. | Case only |
+
+When an assertion is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other assertions are turn-scopable.
+
+> [!NOTE]
+>
+--
+>   N` remains a valid assertion and keeps working wherever it is already authored,
+> but for spend, two things replace it: [cost on every run](#cost), which shows
+> what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
+> when a change makes the suite more expensive relative to its own baseline. For
+> a ceiling on what the whole organization may spend, see the [spend
+> budget](https://docs.mcpjam.com/hosted/overview.md#spend-budget).
+--
+>
+> If **Run all** is disabled, no models are selected or a run for that suite is already in progress. For non-environment suites, a missing connected server also disables it. When every model the suite would run is out of MCPJam credits, **Run all** and each case's **Run** button are disabled with an "Out of MCPJam credits · resets in …" tooltip — switching any case to a model from your own providers re-enables those buttons. The header pickers will tell you which condition applies.
+
+### Run review
+
+--
+
+### Pre-run credit estimate
+
+When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
+
+The estimate appears on:
+
+--
+| - | - |
+| Estimated: \~N credits — based on your recent runs | Full coverage, grounded in your own run history |
+| Estimated: \~N credits — partly based on recent runs | Full coverage, partially grounded in history |
+| Rough estimate: \~N credits — improves after first run | Full coverage, heuristic only (no history yet) |
+| At least \~N credits — part of this run is unpriced | Some models or run slices could not be priced |
+| Estimate unavailable for these models | No pricing data available |
+
+1 credit = \$0.01. Your free daily allowance and any BYOK keys change what is actually deducted. The estimate is informational only — it never blocks or gates a run.
+
+### Frozen execution snapshots
+
+--
+* **Suite accuracy** — pass rate of the most recent run, with the last three runs' trend so you can see whether you're improving or regressing.
+* **Run insights** — an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole. The model pass is **included with MCPJam and consumes no credits**; it counts against a daily insight quota shared with swarm wave and user-testing insights. Guests browsing without a signed-in account will see a **Sign in** prompt in the insights band — signing in unlocks the feature without losing your place.
+* **Overview tab** — every run with its summary metrics, plus a Suite Health chart whose bars link to individual run rows. Click in for the iteration-level breakdown. The table shows **Date** first, then **Run**, with separate **Client**, **Model**, **Platform**, **Commit**, **Rate**, **Latency**, **Tokens**, and **Calls** columns. The Client column counts unique clients; when there are more than two, a **+N** badge appears — hover it to see all clients in a tooltip.
+* **Cases tab** — every case with its latest verdict and a quick replay button. To delete a case, hover its row and click the trash icon; a confirmation dialog appears before the case is removed. The trash icon is hidden for CI-managed suites and read-only configurations. You can also delete the open case from the case editor header using the same trash icon — it is hidden for unsaved drafts.
+* **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
+--
+
+When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
+
+### Cost
+
+Every iteration carries the MCPJam-billed cost of the model work it did,
+priced when the trial finished and stamped with the rates used — so a run's

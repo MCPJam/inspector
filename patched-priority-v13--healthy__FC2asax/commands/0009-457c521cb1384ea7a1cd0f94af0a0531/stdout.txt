@@ -1,0 +1,2 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"SUITE_FILE_INVALID","message":".mcpjam/evals/add.yaml: invalid (1 finding)\n  SUITE_FILE_INVALID target.servers[0]: Unrecognized key: \"url\"","details":{"valid":false,"file":".mcpjam/evals/add.yaml","stage":"contract","findings":[{"code":"SUITE_FILE_INVALID","path":["target","servers",0],"pointer":"target.servers[0]","message":"Unrecognized key: \"url\""}]}}}

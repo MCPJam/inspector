@@ -1,0 +1,6 @@
+{"seconds": 0.0014820098876953125, "stream": "stdout", "data": "== {\"a\":2,\"b\":3}\n"}
+{"seconds": 0.680537223815918, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":6}\n"}
+{"seconds": 0.6806600093841553, "stream": "stdout", "data": "== {\"a\":1.5,\"b\":-4}\n"}
+{"seconds": 1.3687853813171387, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": -2.5}\"}],\"structuredContent\":{\"sum\":-2.5},\"isError\":false,\"_durationMs\":5}\n"}
+{"seconds": 1.3688256740570068, "stream": "stdout", "data": "== {\"a\":\"x\",\"b\":1}\n"}
+{"seconds": 2.07424259185791, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"a and b must be finite numbers\"}],\"isError\":true,\"_durationMs\":13}\n"}

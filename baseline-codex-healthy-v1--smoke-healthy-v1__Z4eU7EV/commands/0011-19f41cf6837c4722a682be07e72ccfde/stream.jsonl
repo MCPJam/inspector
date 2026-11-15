@@ -1,0 +1,2 @@
+{"seconds": 0.9215304851531982, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":7}\n"}
+{"seconds": 1.6269595623016357, "stream": "stdout", "data": "Usage: mcpjam cloud projects servers create|add [options]\n\nCreate a saved MCP server\n\nOptions:\n  --project <id-or-name>  Project name or ID\n  --body <json>           Server JSON body\n  -h, --help              display help for command\n"}

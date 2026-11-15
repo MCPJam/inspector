@@ -1,0 +1,270 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "bfde1dc5f68bd3cc062e8164f33ddc9706cc88d0f1ace56a6441cfe44d260c48"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/cli-doctor.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/call-missing.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/call-missing.json",
+    "sha256": "d903dbcd2e86ce3602ce6a5060ec9b2aaef20a000ec467ef06aa7c50340222b2"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/check.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/call-decimal.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/call-decimal.json",
+    "sha256": "5de93443b70761d57728f3c420c76869b0788c6b4c62a8bc61d9401b89d0b1f4"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/call-wrong_type.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/call-wrong_type.json",
+    "sha256": "5427b206923a82652880f0a5d43ec3bbf8ff1013010e747794b888488db89535"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/tools.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/tools.json",
+    "sha256": "6cf5eb10f72f93cd55b054026c76c8d72ae634a3a08c1b6c05ec2452cc4a18e7"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/call-positive.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/call-positive.json",
+    "sha256": "22c9fa0c2cbb887896c17b4807c97ab76d2f34571e32be1da9957e205a837fe5"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/conformance-start.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/conformance-start.json",
+    "sha256": "d98d53f80b4435ecc2ca0c952376e343488bebf38a5a4869be94da12eca6a9d5"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/call-negative.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/call-negative.json",
+    "sha256": "cbebbda9c73a575a07d6a9d9204fa3c559a92466cc474dd1b39d4e3ce9c7673a"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/cli-doctor.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/cli-doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/cli-doctor.json",
+    "sha256": "b030e63d0e93a1f099b35cc5234dce6383580463659e3613a9fb3d71fd6718e8"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/doctor.json",
+    "sha256": "5b7e0a127c3afe0536bcfc5278309ab31e95028b46dda1c14dba063b996bea99"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/README.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/README.md",
+    "sha256": "6695ca0cb4164d1a2b0cd980d598215f69210857e0456b217ea0d0a6c4c1f45f"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/api.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/package-lock.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/package-lock.json",
+    "sha256": "f9fbfee12ae4fec0657e5a705c96adca7e4adc9c6a784f843a358bc4563c7b1a"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/package.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/package.json",
+    "sha256": "9d70f5ebd7fa198f3959fb6757ec60d20804965f55a3de656b7c5c5c9f9978e8"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/cli-positive-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/cli-positive-trace.json",
+    "sha256": "ed2670c9871acf61a1052d02deb2fccc21814c1cee231605acabc5311ac888d5"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/install.log",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/install.log",
+    "sha256": "b06e87d2e2c5237452cf7dbf2f3e84ed4b12d1c544a5a4b4566946804babfc92"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/docs/public-api.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/docs/public-api.md",
+    "sha256": "c9aef67b87269365a88992b95bc3966958352e3aff058c3f0a1d238c3e7e60ac"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/docs/server-inspection.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/docs/server-inspection.md",
+    "sha256": "70a5d9f52dc871d441eebde4c8b76d993d542d76d05845aefaccdb0bb916e0c6"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/docs/openapi.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/docs/openapi.json",
+    "sha256": "5a3524fcab42c84149156171e7c5b42765f4c5a142e14e9b7ff4ba141d5697db"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/docs/tools-resources-prompts.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/docs/tools-resources-prompts.md",
+    "sha256": "0c6804356ac3bc0f195a92bf7f7039ab2f07fc7cb197024bc5127e69a2f2f79e"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/cancellation-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/cancellation-trace.json",
+    "sha256": "51c626d934beae0f023959155c0e291c7c4b620425381bcf3af2c491d11bd6c8"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/summary.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/summary.json",
+    "sha256": "1b4b94ecc59a20b8c1c0dd12fb218695e265b66400ddabfaa4c1e8c7837f6345"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/decimal-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/decimal-trace.json",
+    "sha256": "ba83fcc55c536be6d64efba4dac99de722e1bce2f61bbaf6ae2903bc6046009f"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/negative.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/positive.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/missing-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/missing-trace.json",
+    "sha256": "f13dc9adfc56cc55996d1a829b7b39505b81d0cf6299d3204da915b92a161436"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/negative.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/positive.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/extra_property-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/extra_property-trace.json",
+    "sha256": "df0454b7e1edb2b2417366e03e0135f483faf871f7b3987c845c399a5994c689"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/cancellation.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/missing.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/decimal.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/zero.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/wrong_type.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/extra_property.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/zero.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/decimal.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/negative-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/negative-trace.json",
+    "sha256": "1f533e18494dbfbdd75a2bd3487e227d1f371f51c50ba2035755c121c3e9f609"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/zero-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/zero-trace.json",
+    "sha256": "0ee24e06529b729af379ef8595eab3bf421069d74e7f1b82629b002611cdef3c"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/extra_property.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/wrong_type.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/wrong_type-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/wrong_type-trace.json",
+    "sha256": "586cc6c7372654da82d5351bc5c2cb410f7db41963123de8719da3a14f32d8ca"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/missing.stdout",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/positive-trace.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp-check/results/positive-trace.json",
+    "sha256": "2706d37c797c53ea1650adb171e8d26197cff7d888419a2138c685c9c521330d"
+  },
+  {
+    "source": "artifacts/workspace/mcp-check/results/cancellation.stderr",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  }
+]

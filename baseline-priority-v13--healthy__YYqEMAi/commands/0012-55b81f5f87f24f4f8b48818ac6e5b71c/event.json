@@ -1,0 +1,22 @@
+{
+  "event_id": "55b81f5f87f24f4f8b48818ac6e5b71c",
+  "argv": [
+    "/bin/bash",
+    "-lc",
+    "grep -n -E 'eval create|eval run|eval validate|--from|--prompt|connect --' docs/reference.md | head -60"
+  ],
+  "cwd": "/workspace/mcpjam-validation",
+  "start": "2026-11-15T02:04:06.666249+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/installed-agent/codex-home/tmp/arg0/codex-arg0AI98Jh:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.002601146697998047,
+  "end": "2026-11-15T02:04:06.668787+00:00"
+}

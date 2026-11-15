@@ -1,0 +1,110 @@
+[
+  {
+    "phase": "blocked",
+    "id": "toolu_01LjC7JL9YXXbFKEURhaWJQt",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 4,
+    "command": "cd /workspace; curl -s -m 20 https://docs.mcpjam.com | head -c 1500; echo ----; for p in usage credits billing cost; do echo \"== $p\"; curl -s -m 15 -H \"Authorization: Bearer $MCPJAM_API_KEY\" \"$MCPJAM_API_URL/$p\" | head -c 600; echo; done; echo; curl -s -m 15 -i -H \"Authorization: Bearer $MCPJAM_API_KEY\" \"$MCPJAM_API_URL/\" | head -c 1000",
+    "observed_output_sha256": "31a99481910e8895901d1dde5c15b0e2a1caf9a120979f3d622fab5312c87704",
+    "successful_sum_output": false,
+    "result_public_line": 6,
+    "source": "public-steps-blocked-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "blocked",
+    "id": "toolu_01MAmieuqhUE9EnG3rHCrGx7",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 8,
+    "command": "cd /workspace; curl -s -m 20 https://docs.mcpjam.com/llms.txt | head -c 5000",
+    "observed_output_sha256": "7052f8055daebbcf5a3012d40bc33af282ce24e867efa8f9e83cb4208ec44d20",
+    "successful_sum_output": false,
+    "result_public_line": 9,
+    "source": "public-steps-blocked-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "blocked",
+    "id": "toolu_019buZJ6jHXYT6UGRzTzWWhn",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 10,
+    "command": "cd /workspace; curl -s -m 20 https://docs.mcpjam.com/llms.txt | tail -c +5000 | grep -iE \"cli|billing|credit|usage|plan|pricing|api|eval\" | head -30; echo ----; curl -s -m 20 https://docs.mcpjam.com/inspector/evals.md | head -c 3500; which mcpjam npx",
+    "observed_output_sha256": "a834d3146701638c9992b4c4bf3aba62f73c8321ee6f4e61b58c4398d35337aa",
+    "successful_sum_output": false,
+    "result_public_line": 11,
+    "source": "public-steps-blocked-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "blocked",
+    "id": "toolu_01X5u7Daai5EXViyLSYi7cdi",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 12,
+    "command": "cd /workspace; curl -s -m 20 https://docs.mcpjam.com/cli/reference.md | grep -iE -B1 -A3 \"credit|usage|billing|cloud (evals|usage)|--cost|limit\" | head -60; curl -s -m 20 https://docs.mcpjam.com/cli/overview.md | grep -iE \"MCPJAM_API|api-key|cloud \" | head",
+    "observed_output_sha256": "dbefe22eef0dd2fab830d5c13261f2ba630e114d47486fdc8b866dfd7834dbb9",
+    "successful_sum_output": false,
+    "result_public_line": 13,
+    "source": "public-steps-blocked-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "blocked",
+    "id": "toolu_01FwRBN9716vimFZPLkiQtYJ",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 14,
+    "command": "cd /workspace; timeout 90 npx -y @mcpjam/cli@latest cloud --help 2>&1 | head -40; timeout 60 npx -y @mcpjam/cli@latest cloud eval list --project project_fixture 2>&1 | head -30",
+    "observed_output_sha256": "27f2f8b152815d5e49e50158910d76e1edc9c48501f892bd64275aa61b5902fc",
+    "successful_sum_output": false,
+    "result_public_line": 17,
+    "source": "public-steps-blocked-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "blocked",
+    "id": "toolu_01PQwBxgoTpKLGqLeGPAFMKq",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 19,
+    "command": "cd /workspace; C=\"npx -y @mcpjam/cli@latest cloud\"; $C orgs --help 2>&1 | sed -n 1,25p; $C whoami 2>&1|tail -5; $C eval run --help 2>&1 | sed -n 1,30p",
+    "observed_output_sha256": "0fd095214853ce2214eefda899b2728f8beb1b9c2a3f769c37a09965b89a9c82",
+    "successful_sum_output": false,
+    "result_public_line": 20,
+    "source": "public-steps-blocked-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "blocked",
+    "id": "toolu_01KU7qYhYWDKe9qtyJEPVmi3",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 21,
+    "command": "cd /workspace; C=\"npx -y @mcpjam/cli@latest cloud\"; $C orgs list 2>&1|tail -5; $C eval run --project project_fixture --suite suite_fixture --server http://fixture:8765/mcp --idempotency-key trial-1 --wait --reporter json-summary --out /workspace/report.json 2>&1 | tail -20; echo \"exit ${PIPESTATUS[0]}\"",
+    "observed_output_sha256": "bca08216d60e4735d0d47e194381dd384f21778009a3d7c16e42f38684f669d7",
+    "successful_sum_output": false,
+    "result_public_line": 22,
+    "source": "public-steps-blocked-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "blocked",
+    "id": "toolu_01W66tZRMF7AHxggA9YRoqJ6",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 23,
+    "command": "cd /workspace; C=\"npx -y @mcpjam/cli@latest cloud\"; $C eval run --project project_fixture --suite suite_fixture --server server_fixture --idempotency-key trial-1 --wait --reporter json-summary --out /workspace/report.json 2>&1 | tail -20; echo \"exit ${PIPESTATUS[0]}\"",
+    "observed_output_sha256": "549cff54929bf1d507f9ce8227c07f38673700be8543e1f8803acfdec7691774",
+    "successful_sum_output": false,
+    "result_public_line": 24,
+    "source": "public-steps-blocked-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "resume",
+    "id": "toolu_01VKZvrdZErNn3nFK6Etu2jj",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 2,
+    "command": "cd /workspace; npx -y @mcpjam/cli@latest cloud eval run --project project_fixture --suite suite_fixture --server server_fixture --idempotency-key trial-1 --wait --reporter json-summary --out /workspace/report.json 2>&1 | tail -20; echo \"exit ${PIPESTATUS[0]}\"; ls -la report.json; head -c 1500 report.json",
+    "observed_output_sha256": "6fe24bec68b3f648deca6d1c80adcb98582221a78860a5792a9d9fda43c1499b",
+    "successful_sum_output": false,
+    "result_public_line": 4,
+    "source": "public-steps-resume-agent-claude-code.txt.jsonl"
+  }
+]

@@ -1,0 +1,3 @@
+{"seconds": 0.4236299991607666, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 0.6638314723968506, "stream": "stderr", "data": "Eval idempotency key: 85fc91a1-dd46-4990-a578-4fc9a20ac6df\n"}
+{"seconds": 0.9055497646331787, "stream": "stdout", "data": "Negative control exit: 1\n"}

@@ -1,0 +1,24 @@
+{
+  "projectId": "project_fixture",
+  "suiteId": "suite_fixture",
+  "runId": "run_fixture_1",
+  "originalBlocker": "PLATFORM_FEE_REQUIRED",
+  "accountResolution": "Reported by environment via user",
+  "resumed": true,
+  "status": "completed",
+  "result": "passed",
+  "passed": 1,
+  "total": 1,
+  "executionKind": "simulated deterministic execution; no hosted model or live billing",
+  "availableCredits": null,
+  "historicalUsage": null,
+  "expectedLiveCost": null,
+  "measuredLiveCost": null,
+  "evidenceDirectory": "after-credit-resolution",
+  "limitations": [
+    "Budget and model routes unavailable",
+    "Pre-run disclosure unsupported",
+    "Decision summary unavailable",
+    "No token usage or billed amount returned"
+  ]
+}

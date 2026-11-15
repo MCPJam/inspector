@@ -1,0 +1,22 @@
+{
+  "event_id": "6f8f786bf2254d2a8f452425b406212d",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -fsSL https://docs.mcpjam.com/inspector/evals.md -o /workspace/evals.md && rg -n 'toolCall|toolResultContains|schemaVersion|deterministic|suite file' /workspace/evals.md | head -55 && python - <<'PY'\nimport json\ns=json.load(open('openapi.json'))\nfor p, ops in s['paths'].items():\n if '/eval' in p and any(v in p for v in ['suites','cases','runs']):\n  print(p, ','.join(ops))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:08:53.915593+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 127,
+  "signal": null,
+  "duration_seconds": 0.15793609619140625,
+  "end": "2026-11-15T02:08:54.073474+00:00"
+}

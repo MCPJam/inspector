@@ -1,0 +1,22 @@
+{
+  "event_id": "47cb3b6dd9d8467f9412bb5fd36fbf14",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json\np='arithmetic.eval.json';s=json.load(open(p));s['cases'][0]['steps'][1]['assertion']['args']={'args':{'a':17,'b':25}};open(p,'w').write(json.dumps(s,indent=2)+'\\n')\nPY\nnpx mcpjam cloud eval validate --file arithmetic.eval.json --project project_fixture --format json > reports/validation.json && cat reports/validation.json && npx mcpjam cloud eval run --file arithmetic.eval.json --project project_fixture --wait --wait-timeout 60000 --out reports/eval.json --format json > reports/launch.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:09:47.828366+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 4,
+  "signal": null,
+  "duration_seconds": 1.1382637023925781,
+  "end": "2026-11-15T02:09:48.966562+00:00"
+}

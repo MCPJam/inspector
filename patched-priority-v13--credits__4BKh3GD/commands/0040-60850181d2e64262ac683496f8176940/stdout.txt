@@ -1,0 +1,70 @@
+
+Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token. See the [XAA Debugger guide](https://docs.mcpjam.com/cli/xaa.md) for the trust setup, registration strategies, and CI usage.
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+--
+
+An unknown ID, or an ID or flag for a suite the run leaves out, is a usage error (exit code `2`) before anything runs.
+
+The OAuth suite signs in on its own. When the server needs a sign-in for the other suites too, give them a token, for example from `oauth login --credentials-out`:
+
+--
+| `--case <id>` | every enabled case | Run only this exact case id. Repeatable. |
+| `--server <name=url>` | | Bind a target server to an HTTP(S) URL. Repeatable. Split on the first `=`; duplicate or unknown names are usage errors. |
+| `--mcp-config <path>` | | Explicit MCP JSON config, consulted before `./.mcp.json` and `./.mcpjam/mcp.json`. A missing or invalid file fails setup. |
+| `--host <template>` | none | Emulate one host template's handshake and settings. Never launches the real client. |
+| `--inference <mode>` | `auto` | `auto`, `byok` or `mcpjam`. |
+--
+
+Global `--timeout` bounds each setup operation and MCP request, not the whole run. Exit codes: `0` passed, `1` failed, `2` usage/unsupported/import/policy, `3` credentials, `4` setup/billing/artifact, `5` inconclusive or interrupted; see [Exit codes](https://docs.mcpjam.com/cli/local-evals.md#exit-codes).
+
+***
+
+--
+`--host` as a deprecated spelling of `--client`. Passing both `--client` and
+`--host` is a usage error rather than a silent precedence rule.
+
+### Editing safely: `configId` and `expectedConfigId`
+
+--
+
+Launch a goal run. **Spends model credits**: fans out into `targets × iterations` chat sessions.
+
+| Flag | Required | Description |
+| - | - | - |
+--
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started and starts no second runner |
+| `--expected-sponsored <n>` | No | How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` and nothing is created. Omit to accept whatever split applies. |
+
+***
+
+--
+
+Each pending request holds one of the account's five concurrent-connection slots for up to an hour. If `connect` reports `ACTIVE_REQUEST_LIMIT`, the error details include the ids of the open requests; cancel the abandoned ones with `connect-cancel` to free slots.
+
+### `cloud projects servers connect-status`
+
+--
+| `--project <id-or-name>` | No | Project name or ID |
+| `--limit <n>` | No | Revisions per page, 1 to 200 (default 50) |
+| `--cursor <cursor>` | No | `nextCursor` from the previous page |
+
+### `cloud projects servers revision`
+--
+
+Grade a saved server against a publisher's directory as the platform reaches it, through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam; no credits are consumed), and leaves a persistent record.
+
+All `readiness` hosted commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+--
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths; see [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md).
+These stay at the program root. They reject `--api-key` / `--api-url` / `--project`, except `test`, which accepts them only to reach MCPJam-hosted inference.
+| [`readiness`](https://docs.mcpjam.com/cli/reference#readiness-hosted-commands) | Grade a server against a publisher's directory. Hosted `start` / `status` / `list` / `cancel` / `report` stay here (leaf `--api-key`; no Cloud project link) | `check`, `start claude`, `start openai`, `start muse`, `status`, `list`, `cancel`, `report` |
+Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (before or after descendants). `mcpjam oauth login` is MCP-server OAuth; `mcpjam cloud login` is your MCPJam account.
+| [`cloud eval`](https://docs.mcpjam.com/cli/reference#cloud-eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
+| [`cloud tunnel`](https://docs.mcpjam.com/cli/reference#cloud-tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel --server <name> <url>`, `tunnel --server <name> -- <command>` |
+| [`cloud clients`](https://docs.mcpjam.com/cli/reference#cloud-clients-commands) | Manage clients in your hosted MCPJam projects (`cloud hosts` is a deprecated alias) | `list`, `get`, `create`, `update`, `servers`, `duplicate`, `delete`, `templates` |
+| [`cloud environments`](https://docs.mcpjam.com/cli/reference#cloud-environments-commands) | Manage project environments, the host and server bundles eval suites and goals run against | `list`, `get`, `resolve`, `archive`, `ensure-adhoc` |
+| [`cloud projects servers`](https://docs.mcpjam.com/cli/reference#cloud-projects-servers-commands) | Connect MCP servers to a project and manage pending connection requests | `connect`, `connect-status`, `connect-cancel` |
+## Cloud credentials and API URL

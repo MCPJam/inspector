@@ -1,0 +1,3563 @@
+{
+  "schema_version": 1,
+  "baseline_jobs": [
+    "baseline-priority-v13",
+    "baseline-auth-v13",
+    "baseline-auth-provider-recovery-v13"
+  ],
+  "patched_jobs": [
+    "patched-priority-v13",
+    "patched-auth-v13",
+    "patched-auth-provider-recovery-v13"
+  ],
+  "rows": [
+    {
+      "run_id": "baseline-auth-provider-recovery-v13--auth__DDRa9aF",
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "auth",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "C",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 29.935818672180176,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 1,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 20,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "2550216e7cd940bdbc3169470c5256d9"
+        ],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp.json",
+          "validate.sh"
+        ],
+        "command_count": 20,
+        "reward": 1.0,
+        "request_count": 91,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 8,
+      "commands_to_first_cli_tool_result": 7,
+      "concern_count": 1,
+      "assessment_flags": [],
+      "evidence": "../baseline-auth-provider-recovery-v13--auth__DDRa9aF/index.md"
+    },
+    {
+      "run_id": "baseline-auth-v13--auth__DebKeUR",
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "auth",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "C",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 89.62051701545715,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 1,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 2,
+        "synthetic_credits_remaining": 18,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp.json",
+          "validation/public-api.md",
+          "validation/arithmetic-checks.json",
+          "validation/server-inspection.md",
+          "validation/reproduce.sh",
+          "validation/run-2-iterations.json",
+          "validation/mcp.original.json",
+          "validation/cli-add.json",
+          "validation/README.md",
+          "validation/tools-doc.md",
+          "validation/run-1-iterations.json"
+        ],
+        "command_count": 73,
+        "reward": 0.0,
+        "request_count": 313,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 27,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 0,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../baseline-auth-v13--auth__DebKeUR/index.md"
+    },
+    {
+      "run_id": "baseline-auth-v13--auth__HzCGt8k",
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "auth",
+      "outcome": "provider-blocked",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": false,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "C",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": false,
+        "auth_refusal_count": 1,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 20,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp.json"
+        ],
+        "command_count": 15,
+        "reward": 0.0,
+        "request_count": 40,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 3,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 0,
+      "assessment_flags": [],
+      "evidence": "../baseline-auth-v13--auth__HzCGt8k/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--credits__8FQyeMP",
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp-evaluation/iterations.json"
+        ],
+        "command_count": 64,
+        "reward": 0.0,
+        "request_count": 194,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 14,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 4,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../baseline-priority-v13--credits__8FQyeMP/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--credits__BkqRPJ9",
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 2,
+        "repeated_ineffective_requests": 1,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [],
+        "command_count": 38,
+        "reward": 0.0,
+        "request_count": 120,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 14,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 2,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../baseline-priority-v13--credits__BkqRPJ9/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--credits__GNYWrm4",
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "run_eval.sh"
+        ],
+        "command_count": 37,
+        "reward": 0.0,
+        "request_count": 123,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 12,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 2,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../baseline-priority-v13--credits__GNYWrm4/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--credits__pMa3zdp",
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp-eval/public-api.md",
+          "mcp-eval/iterations-latest.json",
+          "mcp-eval/local-evals.md",
+          "mcp-eval/README.md",
+          "mcp-eval/iteration-payment.md",
+          "mcp-eval/budget-doc.md"
+        ],
+        "command_count": 70,
+        "reward": 0.0,
+        "request_count": 260,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 17,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 2,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../baseline-priority-v13--credits__pMa3zdp/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--credits__qc4mKtM",
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [],
+        "command_count": 36,
+        "reward": 0.0,
+        "request_count": 122,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 12,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 3,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../baseline-priority-v13--credits__qc4mKtM/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--credits__xT9JB9X",
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 138.57758235931396,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcpjam-eval/public-api.md",
+          "mcpjam-eval/cli-doc.md",
+          "mcpjam-eval/protocol-smoke-results.json",
+          "mcpjam-eval/local-evals-doc.md",
+          "mcpjam-eval/budget-doc.md",
+          "mcpjam-eval/after-credit-resolution/iterations.json"
+        ],
+        "command_count": 90,
+        "reward": 0.0,
+        "request_count": 264,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 27,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 4,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../baseline-priority-v13--credits__xT9JB9X/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--healthy__8heHuhR",
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "healthy",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 56.64327073097229,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 2,
+        "synthetic_credits_remaining": 18,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "4846ab9997ac446c9c86cfc690eab908",
+          "74d8983d7f1847a58c506c10833cf219"
+        ],
+        "mcpjam_eval_event_ids": [
+          "f2b4e2793025416a81387dbb71785504",
+          "6010ecdb744347b1a653e5e20d4c31b0",
+          "ab88068bdfad46bd94d8c25cc68b9db4",
+          "7728777af1284fc98b882ff9700a84bf"
+        ],
+        "reproducible_artifacts": [
+          "cli-doc.md",
+          "first-result.json",
+          "README.md",
+          "api-doc.md",
+          "inspector-evals.md",
+          "eval-doc.md",
+          "run-eval.sh",
+          "reports/repeat-iterations.json",
+          "reports/iterations.json"
+        ],
+        "command_count": 75,
+        "reward": 1.0,
+        "request_count": 292,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 28,
+      "commands_to_first_cli_tool_result": 11,
+      "concern_count": 3,
+      "assessment_flags": [],
+      "evidence": "../baseline-priority-v13--healthy__8heHuhR/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--healthy__9ZDP5bv",
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "healthy",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": false,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 28.110678911209106,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "3a3152bb64d94969affa13b7cf5ff0d8"
+        ],
+        "mcpjam_eval_event_ids": [
+          "db8fac1b5c6d41fcba506073ede2112b"
+        ],
+        "reproducible_artifacts": [],
+        "command_count": 27,
+        "reward": 0.0,
+        "request_count": 153,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 15,
+      "commands_to_first_cli_tool_result": 5,
+      "concern_count": 0,
+      "assessment_flags": [],
+      "evidence": "../baseline-priority-v13--healthy__9ZDP5bv/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--healthy__9e6btMY",
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "healthy",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": false,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 26.75434446334839,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 20,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "91cb8450d0eb41e59e902f26d22c4b9c"
+        ],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          ".mcp.json"
+        ],
+        "command_count": 20,
+        "reward": 0.0,
+        "request_count": 86,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 8,
+      "commands_to_first_cli_tool_result": 4,
+      "concern_count": 1,
+      "assessment_flags": [],
+      "evidence": "../baseline-priority-v13--healthy__9e6btMY/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--healthy__Vju72to",
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "healthy",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 26.26861310005188,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "f7c9c4762c174c638f8e1ea24c3c6f08"
+        ],
+        "mcpjam_eval_event_ids": [
+          "e7ef7eb9326e48fdb896a61a04c19623"
+        ],
+        "reproducible_artifacts": [
+          ".mcp.json"
+        ],
+        "command_count": 26,
+        "reward": 1.0,
+        "request_count": 147,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 14,
+      "commands_to_first_cli_tool_result": 5,
+      "concern_count": 0,
+      "assessment_flags": [],
+      "evidence": "../baseline-priority-v13--healthy__Vju72to/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--healthy__YYqEMAi",
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "healthy",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 45.87964129447937,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 3,
+        "synthetic_credits_remaining": 17,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "a19972aad5c34ffc9d41752d3ae183ea"
+        ],
+        "mcpjam_eval_event_ids": [
+          "1e60c0c571cb4d81a696adef3bbf6d40",
+          "2169e7b8b7f4466a81ce4917e1765d09"
+        ],
+        "reproducible_artifacts": [
+          "mcpjam-validation/first-result.json",
+          "mcpjam-validation/README.md",
+          "mcpjam-validation/latest-iterations.json",
+          "mcpjam-validation/iterations.json",
+          "mcpjam-validation/run-eval.sh",
+          "mcpjam-validation/docs/tools.md",
+          "mcpjam-validation/docs/local-evals.md",
+          "mcpjam-validation/docs/evals.md",
+          "mcpjam-validation/docs/cli.md"
+        ],
+        "command_count": 44,
+        "reward": 1.0,
+        "request_count": 254,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 21,
+      "commands_to_first_cli_tool_result": 10,
+      "concern_count": 3,
+      "assessment_flags": [],
+      "evidence": "../baseline-priority-v13--healthy__YYqEMAi/index.md"
+    },
+    {
+      "run_id": "baseline-priority-v13--healthy__aNWS6j4",
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "healthy",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 42.62747526168823,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 4,
+        "synthetic_credits_remaining": 16,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "94592ac1ac8c4e71934d0d6429ad27fa",
+          "0d37a358f09c41ca820bf5329f058506"
+        ],
+        "mcpjam_eval_event_ids": [
+          "acdc0da38bca451584ec71c7b95c8302",
+          "f3e0ed2eede54a8490cd0afa67d59dc9",
+          "8d9d46cdfd844049a29a19956d7099b6",
+          "ac3db08e1cb1418b8ccd561f732b8cef",
+          "90de452851074b0a95b31f7f440f7a29",
+          "5c8f520090994b85a9b2466909a29e01"
+        ],
+        "reproducible_artifacts": [
+          "README.md",
+          "run-eval.sh",
+          "docs/local-evals.md",
+          "docs/create-case.md",
+          "docs/evals.md",
+          "artifacts/add.json",
+          "artifacts/iterations.json"
+        ],
+        "command_count": 63,
+        "reward": 1.0,
+        "request_count": 292,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 22,
+      "commands_to_first_cli_tool_result": 7,
+      "concern_count": 3,
+      "assessment_flags": [],
+      "evidence": "../baseline-priority-v13--healthy__aNWS6j4/index.md"
+    },
+    {
+      "run_id": "patched-auth-provider-recovery-v13--auth__Qgcz284",
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "auth",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "C",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 26.63939595222473,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 1,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 20,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "78b61d0c6cc444e7a326f4c1001e8fee"
+        ],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp.json",
+          "call_ok.json",
+          "validate.sh"
+        ],
+        "command_count": 18,
+        "reward": 1.0,
+        "request_count": 71,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 6,
+      "commands_to_first_cli_tool_result": 5,
+      "concern_count": 1,
+      "assessment_flags": [],
+      "evidence": "../patched-auth-provider-recovery-v13--auth__Qgcz284/index.md"
+    },
+    {
+      "run_id": "patched-auth-v13--auth__GiXEbFi",
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "auth",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "C",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 70.5695412158966,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 1,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "026a777ae8bd4bac93a23155af9802ff",
+          "902afca4bd0643e99fa1cb80dd482af3"
+        ],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp.json",
+          "validation/positive.json",
+          "validation/add-smoke.json",
+          "validation/reproduce.sh",
+          "validation/extra-property.json",
+          "validation/iterations.json",
+          "validation/REPORT.md"
+        ],
+        "command_count": 56,
+        "reward": 1.0,
+        "request_count": 353,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 19,
+      "commands_to_first_cli_tool_result": 10,
+      "concern_count": 0,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../patched-auth-v13--auth__GiXEbFi/index.md"
+    },
+    {
+      "run_id": "patched-auth-v13--auth__UifmxRq",
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "auth",
+      "outcome": "provider-blocked",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": false,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "C",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": false,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 20,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp.json"
+        ],
+        "command_count": 10,
+        "reward": 0.0,
+        "request_count": 15,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 0,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 0,
+      "assessment_flags": [],
+      "evidence": "../patched-auth-v13--auth__UifmxRq/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--credits__2VnceLk",
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 2,
+        "synthetic_credits_remaining": 18,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp-eval/repeat-iterations.json",
+          "mcp-eval/evaluation-iterations.json",
+          "mcp-eval/docs/public-api.md",
+          "mcp-eval/docs/local-evals.md"
+        ],
+        "command_count": 74,
+        "reward": 0.0,
+        "request_count": 204,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 19,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 3,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../patched-priority-v13--credits__2VnceLk/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--credits__3FwJ2EP",
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 140.51080918312073,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp-eval/public-api.md",
+          "mcp-eval/direct-smoke-results.json",
+          "mcp-eval/evals.md",
+          "mcp-eval/cli-overview.md",
+          "mcp-eval/iterations.json"
+        ],
+        "command_count": 76,
+        "reward": 0.0,
+        "request_count": 252,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 20,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 3,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../patched-priority-v13--credits__3FwJ2EP/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--credits__4BKh3GD",
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [
+          "24b557d3554e49aeb9a43e38a945470f"
+        ],
+        "reproducible_artifacts": [],
+        "command_count": 33,
+        "reward": 0.0,
+        "request_count": 114,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 9,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 2,
+      "assessment_flags": [],
+      "evidence": "../patched-priority-v13--credits__4BKh3GD/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--credits__N899Gvo",
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 2,
+        "synthetic_credits_remaining": 18,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcpjam-eval/public-api.md",
+          "mcpjam-eval/pay-iteration.md",
+          "mcpjam-eval/attempt-1794708212611813946-iterations-0.json",
+          "mcpjam-eval/local-evals.md",
+          "mcpjam-eval/attempt-1794708217776976755-iterations-0.json",
+          "mcpjam-eval/evals.md"
+        ],
+        "command_count": 72,
+        "reward": 0.0,
+        "request_count": 291,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 18,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 5,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../patched-priority-v13--credits__N899Gvo/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--credits__VeVnafu",
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [],
+        "command_count": 38,
+        "reward": 0.0,
+        "request_count": 126,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 14,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 2,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../patched-priority-v13--credits__VeVnafu/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--credits__ahsPU49",
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "credits",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "resume",
+      "usable_product_trial": true,
+      "metrics_source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "run_eval.sh"
+        ],
+        "command_count": 39,
+        "reward": 0.0,
+        "request_count": 118,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 14,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 2,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../patched-priority-v13--credits__ahsPU49/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--healthy__7v3Rxn2",
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "healthy",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 53.50585198402405,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 3,
+        "synthetic_credits_remaining": 17,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "a195964142504df0b8e80fe26a3167bc",
+          "f2f04440a23d4eb29f77fc23c66e8251"
+        ],
+        "mcpjam_eval_event_ids": [
+          "6c31b55e114a4f67b7e630b87889f643",
+          "57023f110daf4df3b1bcc1dd34527536"
+        ],
+        "reproducible_artifacts": [
+          "public-api.md",
+          "local-evals.md",
+          "README.md",
+          "evals.md",
+          "cli-overview.md",
+          "run-eval.sh"
+        ],
+        "command_count": 81,
+        "reward": 1.0,
+        "request_count": 362,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 31,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 3,
+      "assessment_flags": [],
+      "evidence": "../patched-priority-v13--healthy__7v3Rxn2/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--healthy__Am8udgv",
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "healthy",
+      "outcome": "passed",
+      "strict_reward": {
+        "reward": 1.0
+      },
+      "strict_success": true,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 38.32764983177185,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 2,
+        "synthetic_credits_remaining": 18,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "1687bd78eb1443e19b6b0877e95a2ede",
+          "7f39cec27f79400c81d8932295875357"
+        ],
+        "mcpjam_eval_event_ids": [
+          "ffc87a160f874317a149747b6440c9d0",
+          "21cb2bbe43c649a19f0871ae39a2c161",
+          "49b4d2f01b8a4e2c90ba91546aa3e956",
+          "2f7107cd2e6d4695b6f8ef4a1a3c9d89"
+        ],
+        "reproducible_artifacts": [
+          "first-result.json",
+          "README.md",
+          "local-evals-doc.md",
+          "evals-doc.md",
+          "case-api-doc.md",
+          "run-eval.sh",
+          "reports/iterations.json"
+        ],
+        "command_count": 69,
+        "reward": 1.0,
+        "request_count": 264,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 25,
+      "commands_to_first_cli_tool_result": 9,
+      "concern_count": 2,
+      "assessment_flags": [],
+      "evidence": "../patched-priority-v13--healthy__Am8udgv/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--healthy__FC2asax",
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "healthy",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [
+          "48fcc69938b64b458d561a69ef8d9059"
+        ],
+        "reproducible_artifacts": [],
+        "command_count": 26,
+        "reward": 0.0,
+        "request_count": 161,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 14,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 0,
+      "assessment_flags": [
+        "eval_completed_but_strict_first_tool_value_check_not_met"
+      ],
+      "evidence": "../patched-priority-v13--healthy__FC2asax/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--healthy__Y5tN7Rb",
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "healthy",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": false,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 27.318884134292603,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 20,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "9a819c592aae4a238885ed1b75674361"
+        ],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          ".mcp.json"
+        ],
+        "command_count": 19,
+        "reward": 0.0,
+        "request_count": 77,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 7,
+      "commands_to_first_cli_tool_result": 5,
+      "concern_count": 1,
+      "assessment_flags": [],
+      "evidence": "../patched-priority-v13--healthy__Y5tN7Rb/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--healthy__n6vuCQA",
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "healthy",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 2,
+        "synthetic_credits_remaining": 18,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "api.md"
+        ],
+        "command_count": 31,
+        "reward": 0.0,
+        "request_count": 156,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 18,
+      "commands_to_first_cli_tool_result": null,
+      "concern_count": 0,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../patched-priority-v13--healthy__n6vuCQA/index.md"
+    },
+    {
+      "run_id": "patched-priority-v13--healthy__v7cNkex",
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "healthy",
+      "outcome": "failed",
+      "strict_reward": {
+        "reward": 0.0
+      },
+      "strict_success": false,
+      "final_phase": "trial",
+      "usable_product_trial": true,
+      "metrics_source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": false,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 50.90388345718384,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 3,
+        "synthetic_credits_remaining": 17,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "fd06c804956243568c07811b251b6d0b",
+          "c5a9cd99522b4b4da175b7d261661f33"
+        ],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "public-api.md",
+          "first-eval-iterations.json",
+          "first-result.json",
+          "README.md",
+          "cli-overview.md",
+          "iterations.json"
+        ],
+        "command_count": 70,
+        "reward": 0.0,
+        "request_count": 214,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      },
+      "native_shell_invocations": 26,
+      "commands_to_first_cli_tool_result": 11,
+      "concern_count": 3,
+      "assessment_flags": [
+        "simulated_eval_observed_but_strict_command_match_missing"
+      ],
+      "evidence": "../patched-priority-v13--healthy__v7cNkex/index.md"
+    }
+  ],
+  "groups": [
+    {
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "auth",
+      "sample_size": 1,
+      "attempt_count": 2,
+      "provider_blocked_count": 1,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "state_preserved": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "evidence_completeness": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "strict_success": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 8,
+          "min": 8,
+          "max": 8,
+          "observed": 1,
+          "total": 1
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": 7,
+          "min": 7,
+          "max": 7,
+          "observed": 1,
+          "total": 1
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 29.935818672180176,
+          "min": 29.935818672180176,
+          "max": 29.935818672180176,
+          "observed": 1,
+          "total": 1
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 1,
+          "total": 1
+        }
+      },
+      "outcomes": {
+        "passed": 1,
+        "provider-blocked": 1
+      },
+      "run_ids": [
+        "baseline-auth-provider-recovery-v13--auth__DDRa9aF",
+        "baseline-auth-v13--auth__HzCGt8k"
+      ]
+    },
+    {
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "credits",
+      "sample_size": 3,
+      "attempt_count": 3,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "state_preserved": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "evidence_completeness": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "strict_success": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 12,
+          "min": 12,
+          "max": 14,
+          "observed": 3,
+          "total": 3
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "observed": 0,
+          "total": 3
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "observed": 0,
+          "total": 3
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 1,
+          "observed": 3,
+          "total": 3
+        }
+      },
+      "outcomes": {
+        "failed": 3
+      },
+      "run_ids": [
+        "baseline-priority-v13--credits__BkqRPJ9",
+        "baseline-priority-v13--credits__GNYWrm4",
+        "baseline-priority-v13--credits__qc4mKtM"
+      ]
+    },
+    {
+      "cohort": "baseline",
+      "agent": "claude-code",
+      "scenario": "healthy",
+      "sample_size": 3,
+      "attempt_count": 3,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 2,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 2,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "state_preserved": {
+          "positive": 2,
+          "observed": 2,
+          "total": 3,
+          "unknown": 1
+        },
+        "evidence_completeness": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "strict_success": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 14,
+          "min": 8,
+          "max": 15,
+          "observed": 3,
+          "total": 3
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": 5,
+          "min": 4,
+          "max": 5,
+          "observed": 3,
+          "total": 3
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 26.75434446334839,
+          "min": 26.26861310005188,
+          "max": 28.110678911209106,
+          "observed": 3,
+          "total": 3
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 3,
+          "total": 3
+        }
+      },
+      "outcomes": {
+        "failed": 2,
+        "passed": 1
+      },
+      "run_ids": [
+        "baseline-priority-v13--healthy__9ZDP5bv",
+        "baseline-priority-v13--healthy__9e6btMY",
+        "baseline-priority-v13--healthy__Vju72to"
+      ]
+    },
+    {
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "auth",
+      "sample_size": 1,
+      "attempt_count": 1,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "state_preserved": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "evidence_completeness": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "strict_success": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 27,
+          "min": 27,
+          "max": 27,
+          "observed": 1,
+          "total": 1
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "observed": 0,
+          "total": 1
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 89.62051701545715,
+          "min": 89.62051701545715,
+          "max": 89.62051701545715,
+          "observed": 1,
+          "total": 1
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 1,
+          "total": 1
+        }
+      },
+      "outcomes": {
+        "failed": 1
+      },
+      "run_ids": [
+        "baseline-auth-v13--auth__DebKeUR"
+      ]
+    },
+    {
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "credits",
+      "sample_size": 3,
+      "attempt_count": 3,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "state_preserved": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "evidence_completeness": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "strict_success": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 17,
+          "min": 14,
+          "max": 27,
+          "observed": 3,
+          "total": 3
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "observed": 0,
+          "total": 3
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 138.57758235931396,
+          "min": 138.57758235931396,
+          "max": 138.57758235931396,
+          "observed": 1,
+          "total": 3
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 3,
+          "total": 3
+        }
+      },
+      "outcomes": {
+        "failed": 3
+      },
+      "run_ids": [
+        "baseline-priority-v13--credits__8FQyeMP",
+        "baseline-priority-v13--credits__pMa3zdp",
+        "baseline-priority-v13--credits__xT9JB9X"
+      ]
+    },
+    {
+      "cohort": "baseline",
+      "agent": "codex",
+      "scenario": "healthy",
+      "sample_size": 3,
+      "attempt_count": 3,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "state_preserved": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "evidence_completeness": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "strict_success": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 22,
+          "min": 21,
+          "max": 28,
+          "observed": 3,
+          "total": 3
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": 10,
+          "min": 7,
+          "max": 11,
+          "observed": 3,
+          "total": 3
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 45.87964129447937,
+          "min": 42.62747526168823,
+          "max": 56.64327073097229,
+          "observed": 3,
+          "total": 3
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 3,
+          "total": 3
+        }
+      },
+      "outcomes": {
+        "passed": 3
+      },
+      "run_ids": [
+        "baseline-priority-v13--healthy__8heHuhR",
+        "baseline-priority-v13--healthy__YYqEMAi",
+        "baseline-priority-v13--healthy__aNWS6j4"
+      ]
+    },
+    {
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "auth",
+      "sample_size": 1,
+      "attempt_count": 2,
+      "provider_blocked_count": 1,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "state_preserved": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "evidence_completeness": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "strict_success": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 6,
+          "min": 6,
+          "max": 6,
+          "observed": 1,
+          "total": 1
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": 5,
+          "min": 5,
+          "max": 5,
+          "observed": 1,
+          "total": 1
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 26.63939595222473,
+          "min": 26.63939595222473,
+          "max": 26.63939595222473,
+          "observed": 1,
+          "total": 1
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 1,
+          "total": 1
+        }
+      },
+      "outcomes": {
+        "passed": 1,
+        "provider-blocked": 1
+      },
+      "run_ids": [
+        "patched-auth-provider-recovery-v13--auth__Qgcz284",
+        "patched-auth-v13--auth__UifmxRq"
+      ]
+    },
+    {
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "credits",
+      "sample_size": 3,
+      "attempt_count": 3,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "state_preserved": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "evidence_completeness": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "strict_success": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 14,
+          "min": 9,
+          "max": 14,
+          "observed": 3,
+          "total": 3
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "observed": 0,
+          "total": 3
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "observed": 0,
+          "total": 3
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 3,
+          "total": 3
+        }
+      },
+      "outcomes": {
+        "failed": 3
+      },
+      "run_ids": [
+        "patched-priority-v13--credits__4BKh3GD",
+        "patched-priority-v13--credits__VeVnafu",
+        "patched-priority-v13--credits__ahsPU49"
+      ]
+    },
+    {
+      "cohort": "patched",
+      "agent": "claude-code",
+      "scenario": "healthy",
+      "sample_size": 3,
+      "attempt_count": 3,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 2,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "state_preserved": {
+          "positive": 2,
+          "observed": 2,
+          "total": 3,
+          "unknown": 1
+        },
+        "evidence_completeness": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "strict_success": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 14,
+          "min": 7,
+          "max": 18,
+          "observed": 3,
+          "total": 3
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": 5,
+          "min": 5,
+          "max": 5,
+          "observed": 1,
+          "total": 3
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 27.318884134292603,
+          "min": 27.318884134292603,
+          "max": 27.318884134292603,
+          "observed": 1,
+          "total": 3
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 3,
+          "total": 3
+        }
+      },
+      "outcomes": {
+        "failed": 3
+      },
+      "run_ids": [
+        "patched-priority-v13--healthy__FC2asax",
+        "patched-priority-v13--healthy__Y5tN7Rb",
+        "patched-priority-v13--healthy__n6vuCQA"
+      ]
+    },
+    {
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "auth",
+      "sample_size": 1,
+      "attempt_count": 1,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "state_preserved": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "evidence_completeness": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 1,
+          "unknown": 1
+        },
+        "strict_success": {
+          "positive": 1,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 1,
+          "total": 1,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 19,
+          "min": 19,
+          "max": 19,
+          "observed": 1,
+          "total": 1
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": 10,
+          "min": 10,
+          "max": 10,
+          "observed": 1,
+          "total": 1
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 70.5695412158966,
+          "min": 70.5695412158966,
+          "max": 70.5695412158966,
+          "observed": 1,
+          "total": 1
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 1,
+          "total": 1
+        }
+      },
+      "outcomes": {
+        "passed": 1
+      },
+      "run_ids": [
+        "patched-auth-v13--auth__GiXEbFi"
+      ]
+    },
+    {
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "credits",
+      "sample_size": 3,
+      "attempt_count": 3,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 1,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "state_preserved": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "evidence_completeness": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "strict_success": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 19,
+          "min": 18,
+          "max": 20,
+          "observed": 3,
+          "total": 3
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "observed": 0,
+          "total": 3
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 140.51080918312073,
+          "min": 140.51080918312073,
+          "max": 140.51080918312073,
+          "observed": 1,
+          "total": 3
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 3,
+          "total": 3
+        }
+      },
+      "outcomes": {
+        "failed": 3
+      },
+      "run_ids": [
+        "patched-priority-v13--credits__2VnceLk",
+        "patched-priority-v13--credits__3FwJ2EP",
+        "patched-priority-v13--credits__N899Gvo"
+      ]
+    },
+    {
+      "cohort": "patched",
+      "agent": "codex",
+      "scenario": "healthy",
+      "sample_size": 3,
+      "attempt_count": 3,
+      "provider_blocked_count": 0,
+      "rates": {
+        "first_meaningful_result": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_successful_tool_call": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "first_eval_completed": {
+          "positive": 2,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "server_observed_simulated_eval": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "successful_recovery": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "state_preserved": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "evidence_completeness": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "correct_diagnosis": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "human_handoff_correct": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "credit_cost_understanding": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "errors_explain_cause_action_actor": {
+          "positive": 0,
+          "observed": 0,
+          "total": 3,
+          "unknown": 3
+        },
+        "strict_success": {
+          "positive": 2,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "had_concern_note": {
+          "positive": 3,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        },
+        "duplicate_charges_observed": {
+          "positive": 0,
+          "observed": 3,
+          "total": 3,
+          "unknown": 0
+        }
+      },
+      "descriptive_metrics": {
+        "native_shell_invocations": {
+          "median": 26,
+          "min": 25,
+          "max": 31,
+          "observed": 3,
+          "total": 3
+        },
+        "commands_to_first_cli_tool_result": {
+          "median": 10.0,
+          "min": 9,
+          "max": 11,
+          "observed": 2,
+          "total": 3
+        },
+        "time_to_first_direct_tester_tool_seconds": {
+          "median": 50.90388345718384,
+          "min": 38.32764983177185,
+          "max": 53.50585198402405,
+          "observed": 3,
+          "total": 3
+        },
+        "repeated_ineffective_requests": {
+          "median": 0,
+          "min": 0,
+          "max": 0,
+          "observed": 3,
+          "total": 3
+        }
+      },
+      "outcomes": {
+        "failed": 1,
+        "passed": 2
+      },
+      "run_ids": [
+        "patched-priority-v13--healthy__7v3Rxn2",
+        "patched-priority-v13--healthy__Am8udgv",
+        "patched-priority-v13--healthy__v7cNkex"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "run_id": "baseline-claude-auth-v11--baseline-auth-v11__bVF8dkf",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-codex-healthy-smoke--smoke-healthy__esC2H66",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-codex-healthy-v1--smoke-healthy-v1__Z4eU7EV",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-priority-v12--credits__5u9gdM8",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-priority-v12--credits__Pdxefqz",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-priority-v12--healthy__ApzP8X2",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-priority-v12--healthy__c2DiAmK",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-priority-v12--healthy__qAWEduZ",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-priority-v12--healthy__tehtdW6",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v11--v11-auth__J2ocbRr",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v11--v11-auth__VnurQ2L",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v11--v11-credits__GfAaPew",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v11--v11-credits__rRzz8xe",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v11--v11-healthy__3YCuNWF",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v11--v11-healthy__UqHeqxP",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v12--auth__E5Qeyba",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v12--auth__Tx2qPDy",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v12--credits__cVKVZ3s",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v12--credits__nSYKqAf",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v12--healthy__dyyzkKT",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "baseline-six-v12--healthy__nn7HFaC",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "heldout-discovery-v13--discovery__gvhHS8f",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "passed"
+    },
+    {
+      "run_id": "heldout-discovery-v13--discovery__pXszNVb",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "passed"
+    },
+    {
+      "run_id": "patched-cycle2-auth-v13--auth__3bkokhu",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "passed"
+    },
+    {
+      "run_id": "patched-cycle2-auth-v13--auth__MV27c9o",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "passed"
+    },
+    {
+      "run_id": "patched-priority-v12--credits__dgE22DX",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "patched-priority-v12--healthy__HKPw54D",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    },
+    {
+      "run_id": "patched-priority-v12--healthy__tWN9K4n",
+      "reason": "Outside explicitly selected comparison jobs",
+      "outcome": "harness-invalid"
+    }
+  ],
+  "limitations": [
+    "All Eval/credit outcomes are deterministic sandbox simulations, not live billing.",
+    "Final-phase metrics are selected once; blocked-step snapshots never count as separate trials.",
+    "Strict frozen reward and ledger-confirmed public-surface milestones are separate; no retrospective regrading.",
+    "Provider-blocked attempts remain visible but are excluded from usable product-trial rates. Null metrics are unknown, not failures; unknown counts are explicit.",
+    "Time begins at fixture initialization; it is descriptive and includes variable provider/container delays.",
+    "Native command counts include tester installation and compound shell invocations once; exclude Harbor startup and nested wrapper captures.",
+    "A concern note count measures observed statements, not severity, unique issue count, or human prevalence.",
+    "No statistical significance or causal improvement is inferred from these small samples."
+  ]
+}

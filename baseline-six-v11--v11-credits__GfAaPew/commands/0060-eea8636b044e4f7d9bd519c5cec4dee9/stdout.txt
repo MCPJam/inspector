@@ -1,0 +1,118 @@
+{
+  "path": "/projects/project_fixture/eval-suites/suite_fixture",
+  "status": 200,
+  "body": {
+    "id": "suite_fixture",
+    "name": "Arithmetic smoke",
+    "projectId": "project_fixture",
+    "description": "Synthetic fixture: add 2 and 3 and assert 5.",
+    "environment": {
+      "servers": []
+    },
+    "executionConfig": null,
+    "hosts": [],
+    "environmentIds": [],
+    "settings": {
+      "policy": "legacy",
+      "minimumIterations": 1
+    },
+    "schedule": {},
+    "createdAt": 1,
+    "updatedAt": 2
+  }
+}
+{
+  "path": "/projects/project_fixture/eval-suites/suite_fixture/cases",
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "case_add",
+        "title": "add 2 and 3 returns 5",
+        "steps": [
+          {
+            "id": "add",
+            "kind": "toolCall",
+            "toolName": "add",
+            "arguments": {
+              "a": 2,
+              "b": 3
+            }
+          }
+        ],
+        "expectedOutput": "5"
+      }
+    ]
+  }
+}
+{
+  "path": "/projects/project_fixture/eval-suites/suite_fixture/run-disclosure",
+  "status": 422,
+  "body": {
+    "code": "FEATURE_NOT_SUPPORTED",
+    "message": "The synthetic fixture does not implement disclosure.",
+    "details": {
+      "reason": "contract_unavailable"
+    }
+  }
+}
+
+### Spend budget
+
+An owner or admin can cap what the whole organization spends on MCPJam-billed
+work — chat, evals, judges and computer time — for each billing period, from
+**Organization → Budget**.
+
+* Set the cap in dollars, and choose the percentages to be warned at. The
+  default warns at 80%; reaching the cap always notifies, whether or not you
+  list it.
+* Warnings go to the organization's owners and admins in the notifications
+  bell, and to the owner by email.
+* **When the budget is reached**, new chat turns, eval runs and computer starts
+  are refused for the whole organization. The refusal says the budget is
+  reached and that an owner or admin can raise it — buying credits does not
+  clear it. Work already in flight finishes, and running computers keep going
+  until they hibernate.
+* A scheduled eval that hits the budget pauses its schedule rather than
+  retrying into the same cap every window; it resumes once you raise the cap or
+  the period rolls over.
+* Runs that use **your own API keys** are never counted against the budget and
+  never blocked by it. Neither is the free daily allowance, which is not
+  credits.
+* The window is your organization's own billing period: the subscription cycle
+  for team and enterprise plans, and the calendar month otherwise. Raising or
+  lowering the cap mid-period does not reset what has already been spent.
+
+Any member can see the budget and how much of it is left; only owners and
+admins can change it. Every change is recorded in the organization's audit log
+with who made it and what it was before.
+
+The same budget is readable and writable from the API at
+`/v1/organizations/{organizationId}/spend-budget`.
+
+### Managing billing details
+2459:  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+2473:        "serverName": "billing",
+2477:        "message": "Server \"billing\" in environment prod exposes no tool named \"render_gone\"."
+2564:Edit an eval suite's settings (only the flags you pass change).
+2579:| `--model-selection <json>` | No | Whole saved model selection for the suite (source, connection, `settings.reasoningEffort`) as JSON. A bare `--model` change drops a selection saved for a different model |
+2598:`mcpjam cloud eval get` reports which under `settings.policy`:
+2600:| `settings.policy` | Criterion flag | Iteration flag |
+2616:Passing both flags of a pair is a usage error. The CLI and MCP read the suite's
+2619:it writes `settings.minimumAccuracy: 90`; on a per-case suite it writes
+2620:`settings.passThreshold: 0.9`. Grading flag edits carry the revision read from
+2624:a direct API `PATCH` with both `settings.repetitions` and `settings.passThreshold`.
+2629:List a suite's settings history, newest first: one entry per committed edit,
+2859:| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again |
+2879:| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again |
+2917:`mcpjam cloud` is the account-bound namespace. Log in, link a project, then run evals, tunnels, and the rest of the Cloud groups.
+2919:### Cloud account session
+2962:Send one message to a project's MCP servers and print the reply plus the raw tool calls, per-call latency and token usage — the telemetry a participant in the conversation cannot see.
+2991:> Hosted session browsers require browser availability for your account and deployment. An unavailable browser reports a refusal or `browser.attached: false` with its reason. The live pane opens in the Playground when the browser workspace is enabled.
+3030:Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript.
+3049:**Your text is sent to the MCPJam team, outside your organization, and stored for 180 days.** It is kept in MCPJam's own database and never published. Summarize. Never paste secrets, tokens, or raw tool output. Requires a signed-in account (`cloud login` or an `sk_` key).
+3071:These commands manage your MCPJam platform session. `login` opens a browser for OAuth and stores the session locally; `logout` removes it; `whoami` shows the account behind the current credentials.
+3091:`--api-header` values are sent on MCPJam API requests and the login settings request only, never to the sign-in provider. MCPJam API requests never follow a redirect: a `3xx` answer exits `2` (`BACKEND_REDIRECT_REFUSED`).
+3093:A locked IT settings file sets the server ahead of all of these, and an unlocked one takes the place of the production default; see [Self-hosted MCPJam](https://docs.mcpjam.com/cli/self-hosted.md) for the file, the lock and corporate proxies.
+3105:| `email` | Account email address (present when account lookup succeeded) |
+3106:| `plan` | Account plan (present when account lookup succeeded) |

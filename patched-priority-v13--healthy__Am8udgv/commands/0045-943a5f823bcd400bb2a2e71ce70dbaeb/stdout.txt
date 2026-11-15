@@ -1,0 +1,25 @@
+{
+  "runId": "run_fixture_2",
+  "suite": {
+    "id": "suite_authored_1",
+    "name": "Arithmetic smoke"
+  },
+  "decision": {
+    "schemaVersion": 1,
+    "runId": "run_fixture_2",
+    "runStatus": "completed",
+    "diagnostics": {
+      "items": [],
+      "complete": true,
+      "scannedIterations": 1
+    },
+    "verdict": "passed",
+    "verdictSource": "legacy",
+    "counts": {
+      "measurementUnit": "trial",
+      "total": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  }
+}

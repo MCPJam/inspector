@@ -1,0 +1,22 @@
+{
+  "event_id": "580ffb8f74774acf8bbb0ffc3ee471aa",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "node - <<'JS'\nconst fs=require('fs');const s=JSON.parse(fs.readFileSync('minimal-suite.json'));s.tests[0].steps.push({id:'assert_sum',kind:'assert',assertion:{type:'toolResultContains',toolName:'add',needle:'5'}});fs.writeFileSync('deterministic-suite.json',JSON.stringify(s,null,2));\nJS\ncurl -fsS \"$MCPJAM_API_URL/projects/project_fixture/eval-suites\" -H \"Authorization: Bearer $MCPJAM_API_KEY\" -H 'Content-Type: application/json' --data-binary @deterministic-suite.json -o reports/deterministic-suite.json\nnode - <<'JS'\nconst fs=require('fs');fs.writeFileSync('run-request.json',JSON.stringify({suiteId:JSON.parse(fs.readFileSync('reports/deterministic-suite.json')).suiteId}));\nJS\ncurl -sS \"$MCPJAM_API_URL/projects/project_fixture/eval-runs\" -H \"Authorization: Bearer $MCPJAM_API_KEY\" -H 'Content-Type: application/json' --data-binary @run-request.json -o reports/run-response.json\ncat reports/deterministic-suite.json reports/run-response.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:30:54.037819+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.06299281120300293,
+  "end": "2026-11-15T01:30:54.100769+00:00"
+}

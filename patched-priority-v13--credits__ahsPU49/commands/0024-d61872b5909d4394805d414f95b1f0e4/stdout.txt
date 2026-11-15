@@ -1,0 +1,76 @@
+- [MCPJam Docs](https://docs.mcpjam.com/index.md): Test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps across every major AI client.
+- [Slack](https://docs.mcpjam.com/hosted/slack.md): Run MCPJam from Slack — mention the bot to ask about your projects, and approve the actions that spend credits
+- [Home](https://docs.mcpjam.com/inspector/home.md): Org-scoped dashboard with activity stats, recommended servers, and quick-start clients
+- [Clients](https://docs.mcpjam.com/inspector/clients.md): Reusable MCP client configurations for testing servers and apps under realistic conditions
+- [View origins](https://docs.mcpjam.com/inspector/view-origins.md): Which origin your MCP App's view runs at, and how to allowlist it with a third-party API
+- [XAA Debugger](https://docs.mcpjam.com/inspector/xaa-debugger.md): Configure and debug Cross-App Access flows with MCPJam as the test identity provider and client/agent
+- [CLI Overview](https://docs.mcpjam.com/cli/overview.md): Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal
+- [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md): Command-path and flag changes when account-bound mcpjam commands moved under mcpjam cloud
+- [Local Evals](https://docs.mcpjam.com/cli/local-evals.md): Run an MCPJam eval suite file on your machine with mcpjam test with local results and an MCPJam identity
+- [MCPJam as an MCP Server](https://docs.mcpjam.com/cli/mcp-server.md): Run MCPJam as a local stdio MCP server so agents can connect to, exercise, and debug other MCP servers
+- [Server Inspection](https://docs.mcpjam.com/cli/server-inspection.md): Probe, diagnose, and export MCP server connectivity and capabilities
+- [OAuth Conformance](https://docs.mcpjam.com/cli/oauth-conformance.md): Test your MCP server's OAuth implementation across all registration methods and protocol versions
+- [OAuth Login & Debugging](https://docs.mcpjam.com/cli/oauth-login.md): Authenticate with MCP servers and debug OAuth flows
+- [XAA Debugger (CLI)](https://docs.mcpjam.com/cli/xaa.md): Run the full Cross-App Access (ID-JAG) grant chain against your authorization server and MCP server, headlessly, from one command
+- [MCP Apps Conformance](https://docs.mcpjam.com/cli/apps-conformance.md): Validate MCP Apps tool metadata and ui:// resource wiring from the CLI
+- [MCP Tasks](https://docs.mcpjam.com/cli/tasks.md): Create, inspect, answer and watch MCP Tasks from the CLI — legacy 2025-11-25 and the SEP-2663 extension
+- [MCP Tasks Conformance](https://docs.mcpjam.com/cli/tasks-conformance.md): Validate MCP Tasks wire behavior — legacy and SEP-2663 extension — from the CLI
+- [MCP Events](https://docs.mcpjam.com/cli/events.md): List, poll, watch, subscribe to and conformance-check MCP Events (triggers) from the CLI: push, poll and webhook delivery, judged by the draft or the ChatGPT profile
+- [Tools, Resources & Prompts](https://docs.mcpjam.com/cli/tools-resources-prompts.md): List, read, and call MCP server tools, resources, and prompts
+- [CI / CD](https://docs.mcpjam.com/cli/ci.md): Run MCP health checks, conformance suites, and evals in GitHub Actions, GitLab CI, and other CI environments
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Evaluate
+
+> Author test cases for your MCP server, run them across models, and gate pass/fail on deterministic assertions plus optional LLM-as-judge.
+
+A benchmark score doesn't tell you whether your server holds up in production. Evaluate lets you pin down the behaviors you care about — which tools fire, with what arguments, what the final answer looks like — and run them across the models your users actually use.
+
+## Requirements
+
+Evals are available to both signed-in users and guests. Guests authenticate automatically using their guest session, so no sign-in is required to run or generate tests.
+
+## How it's organized
+
+**1. Project**
+
+Holds your servers and your suites. Everything below lives in one project.
+
+**2. Suite**
+
+A group of cases plus the defaults they share: attached servers, models to run against, default assertions, judge config, and argument-matching mode.
+
+**3. Case**
+
+One scenario you want to verify — a prompt (or a sequence of prompts), the tools you expect to fire, an optional expected output, and the assertions that decide pass/fail.
+
+**4. Run**
+
+One execution of a suite. Produces **iterations** — one per case × model. Each iteration has its own transcript, tool calls, tokens, duration, and verdict.
+
+## Authoring a case
+
+Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open the case workspace. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
+
+### Case workspace
+
+The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
+
+**Left column — the case spine**
+
+Every case opens in the spine, however it was authored — in the app, through the CLI, or from an SDK suite file. The spine is a flat, ordered list of steps. Each step is one of:
+
+* **Prompt** — a user turn the model receives. The first prompt is always present; use **Add assertion or action** to add a second prompt for multi-turn cases.
+* **Interact** — a widget interaction (click, typing) recorded against a live widget.
+* **Assert** — an assertion that grades the case.
+
+Below the step list, an **Expected outcome** field holds the goal sentence the judge grades against.
+
+**Assertions**
+
+Use **Add assertion or action** to add an assertion, a second prompt, or an interact step. Each assertion row says what it checks, who wrote it, and what a miss does:
+
+* **Route** — answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
+* **Step N** — an assertion written as a step

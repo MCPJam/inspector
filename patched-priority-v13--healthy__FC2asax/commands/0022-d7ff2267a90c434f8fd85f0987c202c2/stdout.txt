@@ -1,0 +1,18 @@
+Client.listResources() called but server does not advertise resources capability - returning empty list
+Client.listResourceTemplates() called but server does not advertise resources capability - returning empty list
+Status: ready
+Target: http://fixture:8765/mcp
+Probe: ready (streamable-http)
+Connection: connected (Connected and initialized successfully.)
+Counts: tools 1, resources 0, resourceTemplates 0, prompts 0, skills 0
+Checks:
+- probe: ok (HTTP initialize probe succeeded via streamable-http.)
+- connection: ok (Connected and initialized successfully.)
+- initialization: ok (Initialization info captured.)
+- capabilities: ok (Server capabilities captured.)
+- tools: ok (1 tool discovered.)
+- resources: ok (0 resources discovered.)
+- resourceTemplates: ok (0 resource templates discovered.)
+- prompts: ok (0 prompts discovered.)
+- skills: skipped (The server does not declare the Skills over MCP extension (`io.modelcontextprotocol/skills`).)
+{"tools":[{"name":"add","description":"Add two finite numbers and return their sum.","inputSchema":{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"],"additionalProperties":false},"outputSchema":{"type":"object","properties":{"sum":{"type":"number"}},"required":["sum"]},"annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}],"toolsMetadata":{}}

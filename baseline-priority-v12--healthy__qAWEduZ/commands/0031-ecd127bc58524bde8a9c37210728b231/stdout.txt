@@ -1,0 +1,58 @@
+Usage: mcpjam cloud eval run [options]
+
+Start an eval run of an existing suite, or upload a versioned suite file and run
+it. The upload-and-launch has a 120s deadline overall, not per request (raise it
+with the global --timeout <ms>); --wait-timeout bounds the RUN instead.
+
+Options:
+  --suite <id-or-name>                      Eval suite name or ID
+  --file <path>                             Versioned suite file to upload and run (.yaml or .json, or - for stdin)
+  --project <id-or-name>                    Project name or ID (defaults to the most recently updated project)
+  --server <id-or-name...>                  Override the suite's saved server selection (HTTP servers only)
+  --environment <id-or-name...>             Attached project environment(s) to run. Several values start one PAID RUN each.
+  --client <id-or-name...>                  Attached client(s) to run, so the run is stamped with that client's config. Several values start one PAID RUN each.
+  --host <id-or-name...>                    Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes.
+  --all-targets                             Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target
+  --iterations <n>                          Run each case this many times under verdict policy 2 (1-10)
+  --repetitions <n>                         Legacy spelling of --iterations
+  --case <id-or-title...>                   Run only these cases instead of the whole suite
+  --exclude-skills                          Run the 'without skills' arm: no skills are pinned, and the run is labelled as excluded
+  --refresh-snapshot                        PERSISTS a new host-config snapshot on the suite, changing every future run of it. Single-target runs only.
+  --notes <text>                            Free-text note stored on the run
+  --min-pass-rate <n>                       Pass threshold for this run (0-100)
+  --match-options <json>                    Tool-call match options for this run, e.g. '{"toolCallOrder":"exact"}'
+  --idempotency-key <key>                   Retry key for a lost launch response; for --file, one is minted and printed when omitted
+  --wait                                    Wait for every started run to reach a terminal status
+  --wait-timeout <ms>                       Maximum time to wait for completion (default 600000; a run held for its judge gets up to 31 more minutes unless this flag is set)
+  --reporter <json-summary|junit-xml|html>  Render the completed run report to stdout
+  --out <path>                              Atomically write the completed report selected by --reporter (default: json-summary)
+  --compose-client <id-or-name>             Compose a stack to run instead of naming a saved environment: the client it runs as. Default is EPHEMERAL (does not attach to the suite).
+  --compose-host <id-or-name>               Deprecated alias for --compose-client
+  --compose-computer <id-or-name>           Sandbox image to pin on the composed stack
+  --compose-model <id...>                   Model(s) to run on the composed stack. Replaces the client default unless --with-client-default is set.
+  --compose-model-selection <json...>       A whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -): one cell for its model, at its effort. Alongside --compose-model. Repeat it to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell.
+  --with-client-default                     Also launch an inherit cell that uses each client's pinned model, alongside --compose-model
+  --save-targets                            Attach the composed environments to the suite (append, capped at 10). Default is ephemeral.
+  --compose-server <id-or-name...>          Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group.
+  --compose-server-group <id>               Standalone server group to pin on the composed stack
+  --compose-host-servers                    No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group.
+  --compose-skill <id...>                   Project-shared skill IDs to pin on the composed stack
+  --compose-secret <id...>                  Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`.
+  --allow-approximated <case...>            Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason.
+  --approval-reason <text>                  Why the approximations named by --allow-approximated are acceptable for this run (1-500 characters). Recorded on the run by the server.
+  -h, --help                                display help for command
+Usage: mcpjam cloud [options] [command]
+
+MCPJam Cloud account commands (login, projects, evals, tunnels). Local MCP
+testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam
+cloud login` is your MCPJam account.
+
+Options:
+  --api-key <key>               MCPJam sk_ API key (overrides MCPJAM_API_KEY)
+  --api-url <url>               MCPJam API base URL (defaults to your
+                                organization's server or
+                                https://app.mcpjam.com/api/v1)
+  --api-header <header...>      Extra request header for a deployment behind an
+                                edge authenticator, as "Name: value"
+                                (repeatable; also MCPJAM_API_HEADERS,
+                                newline-separated)

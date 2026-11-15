@@ -1,0 +1,26 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.control.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.control.json",
+    "sha256": "dd368d1a61417e9f8b7ff0b8eef0f1cb47b2563614dc99a09cdb6145fd48c477"
+  },
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "aed8d00620ad33fe145c9fcb0eb1705910584b00844aad802a0b4a4a1444285a"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/.mcp.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/.mcp.json",
+    "sha256": "d1ab4f85f6933ba6bbfd59292b6babc00101bd6fc27136ba3207da5f0ca4bac4"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/.mcpjam/evals/add.yaml",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/.mcpjam/evals/add.yaml",
+    "sha256": "c7af37e52d241184318e2529374fd18cc12f4a92338036461a03b1d30f5c66aa"
+  }
+]

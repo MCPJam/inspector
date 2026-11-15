@@ -1,0 +1,22 @@
+{
+  "event_id": "3ae11c94924749acb8e24fdeedd0f6ff",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python - <<'PY'\nimport json\ns=json.load(open('/workspace/validation/openapi.json'))\nfor p,ops in s['paths'].items():\n if any(x in p for x in ['/servers/{serverId}/accounts','/doctor','/validate','/snapshot','/eval-runs','/conformance-runs']) and 'iteration' not in p and 'insights' not in p:\n  print(p, ','.join(ops))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:15:47.543806+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 127,
+  "signal": null,
+  "duration_seconds": 0.0011756420135498047,
+  "end": "2026-11-15T02:15:47.544912+00:00"
+}

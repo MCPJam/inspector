@@ -1,0 +1,2 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"valid":true,"file":".mcpjam/evals/arith.yaml","suite":{"id":"s_arith","name":"Arithmetic fixture","cases":1,"enabledCases":1},"findings":[],"projectValidation":{"project":{"id":"project_fixture","name":"Fixture"},"targets":["the file's target.servers"],"valid":true,"findings":[]}}

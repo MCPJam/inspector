@@ -1,0 +1,4 @@
+Saved artifacts contain neither credential value.
+-rw-r--r-- 1 root root 3.5K Nov 15 01:41 /workspace/validation/REPORT.md
+-rw-r--r-- 1 root root  41K Nov 15 01:40 /workspace/validation/conformance.json
+-rwxr-xr-x 1 root root 1.2K Nov 15 01:41 /workspace/validation/reproduce.sh

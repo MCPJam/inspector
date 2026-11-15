@@ -1,0 +1,40 @@
+{
+  "suiteName": "Arithmetic model-free smoke",
+  "serverIds": [
+    "server_fixture"
+  ],
+  "tests": [
+    {
+      "title": "add 2 and 3 returns 5",
+      "runs": 1,
+      "steps": [
+        {
+          "id": "add",
+          "kind": "toolCall",
+          "serverName": "Arithmetic",
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        {
+          "id": "result",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultContains",
+            "toolName": "add",
+            "needle": "5"
+          }
+        },
+        {
+          "id": "errors",
+          "kind": "assert",
+          "assertion": {
+            "type": "noToolErrors"
+          }
+        }
+      ]
+    }
+  ]
+}

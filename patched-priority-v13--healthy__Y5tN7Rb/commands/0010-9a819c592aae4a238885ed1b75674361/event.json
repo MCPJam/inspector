@@ -1,0 +1,22 @@
+{
+  "event_id": "9a819c592aae4a238885ed1b75674361",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708277207-3pi315.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; M=\"npx -y @mcpjam/cli@latest\"; $M tools call --url http://fixture:8765/mcp --tool-name add --tool-args '\"'\"'{\"a\":2,\"b\":3}'\"'\"' 2>&1 | tail -5\nmkdir -p .mcpjam/evals; cat > .mcpjam/evals/arith.yaml <<'\"'\"'E'\"'\"'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arith\n  name: Arithmetic fixture\ntarget:\n  servers:\n    - name: arith\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_adds\n    title: uses add tool\n    steps:\n      - id: s1\n        kind: prompt\n        prompt: What is 17 plus 25? Use the tool.\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\nE\ncat > .mcp.json <<'\"'\"'E'\"'\"'\n{\"mcpServers\":{\"arith\":{\"type\":\"http\",\"url\":\"http://fixture:8765/mcp\"}}}\nE\n$M cloud eval validate --file .mcpjam/evals/arith.yaml 2>&1 | tail -5\nenv | grep -E \"^(MCPJAM|ANTHROPIC)\" | sed '\"'\"'s/=.*/=<set>/'\"'\"'\n$M test .mcpjam/evals/arith.yaml --inference mcpjam --reporter junit-xml --out reports/local.xml 2>&1 | tail -20' && pwd -P >| /tmp/claude-1c3d-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:04:59.101209+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.9156322479248047,
+  "end": "2026-11-15T02:05:01.016775+00:00"
+}

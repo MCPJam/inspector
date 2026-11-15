@@ -1,0 +1,5 @@
+- Account: user_fixture, plan team, org_fixture, project_fixture.
+- Usage/credits/billing REST routes: NOT_FOUND on this API; no CLI command for balance found.
+- Suite suite_fixture (Arithmetic smoke), server server_fixture (Arithmetic).
+- Run blocked: FORBIDDEN PLATFORM_FEE_REQUIRED (needs platform credits). Cost estimate not available.
+- Next: org admin/team owner adds credits in the hosted app billing settings, then rerun ./run_eval.sh

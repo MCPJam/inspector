@@ -1,0 +1,150 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Read the organization's spend budget
+
+> The ceiling on what this organization may spend on MCPJam-billed work — chat, evals, judges and computer time — in the current billing window, and how much of it has been spent.
+
+Any member may read it: a member who cannot raise the ceiling still needs to know it exists, because it is what refused their run. `capUsd: null` means the organization is uncapped, which is the default.
+
+Runs that use your own provider keys are never counted against the budget and never blocked by it. Neither is the free daily allowance — it is not credits.
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json get /organizations/{organizationId}/spend-budget
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects — live
+    diagnostics (validate, inspect, export) and operations: call tools, render
+    prompts, run eval suites asynchronously and poll their results, and import
+    OAuth tokens.
+
+
+    **The API is in preview**: the surface may change while we finish the
+    design. Error `code` values are stable; error `message` strings are not.
+    Write clients that ignore unknown response fields.
+  contact:
+    name: MCPJam
+    url: https://github.com/MCPJam/inspector/issues
+servers:
+  - url: https://app.mcpjam.com/api/v1
+    description: Hosted MCPJam
+security:
+  - bearerAuth: []
+tags:
+  - name: Agent browsers
+    description: >-
+      Isolated cloud browser sessions for coding agents. Requires authenticated
+      project membership and a configured desktop runtime.
+  - name: Clients
+    description: >-
+      Clients — the named, reusable configurations that define how MCPJam
+      connects to and talks to your MCP servers. The original `/hosts` paths
+      remain as deprecated, ID-only compatibility aliases with their original
+      DTOs and their original (tokenless) write contracts; every alias response
+      carries `Deprecation: true`. New integrations should use `/clients`.
+  - name: Environments
+    description: >-
+      Project environments: named, live-editable execution bundles (one host, an
+      optional standalone server group, optionally pinned skills and plugin
+      versions) that eval suites and goals run against. Distinct from Sandbox
+      image=====
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# List organizations
+
+> The organizations the caller belongs to — the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json get /organizations
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects — live
+    diagnostics (validate, inspect, export) and operations: call tools, render
+    prompts, run eval suites asynchronously and poll their results, and import
+    OAuth tokens.
+
+
+    **The API is in preview**: the surface may change while we finish the
+    design. Error `code` values are stable; error `message` strings are not.
+    Write clients that ignore unknown response fields.
+  contact:
+    name: MCPJam
+    url: https://github.com/MCPJam/inspector/issues
+servers:
+  - url: https://app.mcpjam.com/api/v1
+    description: Hosted MCPJam
+security:
+  - bearerAuth: []
+tags:
+  - name: Agent browsers
+    description: >-
+      Isolated cloud browser sessions for coding agents. Requires authenticated
+      project membership and a configured desktop runtime.
+  - nam- [Pay for one local eval iteration](https://docs.mcpjam.com/api-reference/eval-runs/pay-for-one-local-eval-it
+- [Preview draft judge grading on one recorded iteration](https://docs.mcpjam.com/api-reference/eval-runs/prev
+- [Create an eval run (async)](https://docs.mcpjam.com/api-reference/eval-runs/create-an-eval-run-async.md): C
+- [Get run status](https://docs.mcpjam.com/api-reference/eval-runs/get-run-status.md): Run status, result, and
+- [Get a run's decision summary](https://docs.mcpjam.com/api-reference/eval-runs/get-a-runs-decision-summary.m
+- [Compare a run against a baseline](https://docs.mcpjam.com/api-reference/eval-runs/compare-a-run-against-a-b
+- [List run iterations](https://docs.mcpjam.com/api-reference/eval-runs/list-run-iterations.md): Per-iteration
+- [Get an iteration trace](https://docs.mcpjam.com/api-reference/eval-runs/get-an-iteration-trace.md): Full tr
+- [Get an iteration's step results](https://docs.mcpjam.com/api-reference/eval-runs/get-an-iterations-step-res
+- [Cancel a run](https://docs.mcpjam.com/api-reference/eval-runs/cancel-a-run.md): Request cancellation of an 
+- [Preview a failed-cases rerun](https://docs.mcpjam.com/api-reference/eval-runs/preview-a-failed-cases-rerun.
+- [Rerun a run's failed cases](https://docs.mcpjam.com/api-reference/eval-runs/rerun-a-runs-failed-cases.md): 
+- [List a suite's runs](https://docs.mcpjam.com/api-reference/eval-runs/list-a-suites-runs.md): Recent runs fo
+- [List a suite's per-run stage analytics](https://docs.mcpjam.com/api-reference/eval-runs/list-a-suites-per-r
+- [Get one run's stage analytics](https://docs.mcpjam.com/api-reference/eval-runs/get-one-runs-stage-analytics
+- [Get one run's suite quality-gate report](https://docs.mcpjam.com/api-reference/eval-runs/get-one-runs-suite
+- [Enable, repoint, or disable a suite's schedule](https://docs.mcpjam.com/api-reference/eval-runs/enable-repo
+- [Launch one run per target as a group (async)](https://docs.mcpjam.com/api-reference/eval-runs/launch-one-ru
+- [Create an eval suite (author-only, does not run)](https://docs.mcpjam.com/api-reference/eval-runs/create-an
+- [Resolve or create a file-owned eval suite](https://docs.mcpjam.com/api-reference/eval-runs/resolve-or-creat
+- [Get one eval suite's configuration](https://docs.mcpjam.com/api-reference/eval-runs/get-one-eval-suites-con
+- [Delete an eval suite](https://docs.mcpjam.com/api-reference/eval-runs/delete-an-eval-suite.md): Deletes the
+- [Update an eval suite's settings](https://docs.mcpjam.com/api-reference/eval-runs/update-an-eval-suites-sett
+- [Get the pre-run disclosure for a suite launch plan](https://docs.mcpjam.com/api-reference/eval-runs/get-the
+- [List a suite's eval cases](https://docs.mcpjam.com/api-reference/eval-runs/list-a-suites-eval-cases.md): Ev
+- [Create an eval case](https://docs.mcpjam.com/api-reference/eval-runs/create-an-eval-case.md): Adds one case
+- [Create several eval cases](https://docs.mcpjam.com/api-reference/eval-runs/create-several-eval-cases.md): A
+- [Generate eval cases from the suite's tools](https://docs.mcpjam.com/api-reference/eval-runs/generate-eval-c
+- [Author eval cases from a document](https://docs.mcpjam.com/api-reference/eval-runs/author-eval-cases-from-a
+- [Read an eval authoring job](https://docs.mcpjam.com/api-reference/eval-runs/read-an-eval-authoring-job.md):
+- [Write a finished authoring job's cases into the suite](https://docs.mcpjam.com/api-reference/eval-runs/writ
+- [Get one eval case](https://docs.mcpjam.com/api-reference/eval-runs/get-one-eval-case.md): A case that belon
+- [Delete an eval case](https://docs.mcpjam.com/api-reference/eval-runs/delete-an-eval-case.md): Removes the c
+- [Update an eval case](https://docs.mcpjam.com/api-reference/eval-runs/update-an-eval-case.md): Partial updat
+- [Upload a run artifact](https://docs.mcpjam.com/api-reference/eval-runs/upload-a-run-artifact.md): Stores on
+- [Get an upload URL for a run artifact](https://docs.mcpjam.com/api-reference/eval-runs/get-an-upload-url-for
+- [Discover authenticated eval ingestion capabilities](https://docs.mcpjam.com/api-reference/eval-runs/discove
+- [Persist advisory case-run evaluations](https://docs.mcpjam.com/api-reference/eval-runs/persist-advisory-cas
+- [Ingest a completed eval run in one call](https://docs.mcpjam.com/api-reference/eval-runs/ingest-a-completed
+- [Mint a model lease for MCPJam-hosted inference](https://docs.mcpjam.com/api-reference/eval-runs/mint-a-mode
+- [Revoke a model lease](https://docs.mcpjam.com/api-reference/eval-runs/revoke-a-model-lease.md): Kills this 
+- [Close an open ingestion run](https://docs.mcpjam.com/api-reference/eval-runs/close-an-open-ingestion-run.md
+- [Append iterations to an open run](https://docs.mcpjam.com/api-reference/eval-runs/append-iterations-to-an-o
+- [Authenticate and record an eval start](https://docs.mcpjam.com/api-reference/eval-runs/authenticate-and-rec
+- [Open a run for incremental ingestion](https://docs.mcpjam.com/api-reference/eval-runs/open-a-run-for-increm
+- [Get a run's gate waiver](https://docs.mcpjam.com/api-reference/eval-runs/get-a-runs-gate-waiver.md): The wa
+- [Waive a run gate](https://docs.mcpjam.com/api-reference/eval-runs/waive-a-run-gate.md): Override a FAILING 
+- [Revoke a gate waiver](https://docs.mcpjam.com/api-reference/eval-runs/revoke-a-gate-waiver.md): End a waive
+- [Preview deterministic draft evaluators against stored evidence](https://docs.mcpjam.com/api-reference/eval-
+- [List GitHub Checks repositories](https://docs.mcpjam.com/api-reference/evals/list-github-checks-repositorie
+- [Run an eval suite on a repository's pull requests](https://docs.mcpjam.com/api-reference/evals/run-an-eval-
+- [Request insights for an eval run](https://docs.mcpjam.com/api-reference/evals/request-insights-for-an-eval-
+- [Grade an eval run with LLM as Judge](https://docs.mcpjam.com/api-reference/evals/grade-an-eval-run-with-llm

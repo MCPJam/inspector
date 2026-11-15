@@ -1,0 +1,61 @@
+standard error envelope rather than as findings — nothing was read, so there is
+nothing to report about.
+
+**What "valid" does not mean, without `--project`.** The offline check judges
+the file against the suite-file contract. It does **not** re-resolve tool names,
+server references or fixtures against a project's live discovery, so a file that
+validates here can still fail to run.
+
+#### `--project`: resolving the names against a real project
+
+With `--project`, the command authenticates, resolves the named project, and
+checks every deterministic `toolCall` step against the live tool inventory of
+the targets the file would run on. Structural findings are unchanged and the
+live half is additive, under its own key:
+
+```jsonc theme={"theme":"css-variables"}
+{
+  "valid": false,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+  "findings": [],
+  "projectValidation": {
+    "project": { "id": "proj_123", "name": "Alpha" },
+    "targets": ["environment prod"],
+    "valid": false,
+    "findings": [
+      {
+        "code": "TOOL_REFERENCE_UNRESOLVED",   // or TOOL_DISCOVERY_UNAVAILABLE
+        "path": ["cases", 1, "steps", 0, "toolName"],
+        "pointer": "cases[1].steps[0].toolName",
+        "caseId": "c_render_legacy",
+        "caseTitle": "Renders the legacy receipt",
+        "toolName": "render_gone",
+        "serverName": "billing",
+        "targetLabel": "environment prod",
+        "disabled": true,
+        "imported": true,
+        "message": "Server \"billing\" in environment prod exposes no tool named \"render_gone\"."
+      }
+    ]
+  }
+}
+```
+
+Three properties of the live check are worth knowing before you rely on it:
+
+* **Only `toolCall` steps count.** A tool named in prompt text is a hint the
+  model may or may not act on, and an `assert` step is an expectation a case may
+  legitimately fail at run time. Treating either as a deterministic reference
+  would make a negative test unwritable.
+* **Per target, never over their union.** A file that runs against several
+  targets must resolve in all of them; a union would green-light a case that
+  fails on two targets out of three.
+* **Auth and network failures are command errors, not findings.** "Your file
+  names a tool that does not exist" and "we could not look" send you to two
+  different places, so they are never reported as the same thing.
+
+A completed live check with unresolved references is a **verdict on the file**
+and exits `1`, like any other contract failure. A failure to authenticate,
+reach the project, or list a server's tools is a command error on stderr.
+

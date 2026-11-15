@@ -1,0 +1,36 @@
+{
+  "runs": [
+    {
+      "runId": "run_fixture_1",
+      "status": "completed",
+      "result": "passed",
+      "cases": 1,
+      "passed": 1,
+      "actualResult": {
+        "sum": 5
+      },
+      "durationMs": 1,
+      "simulation": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+      "statusEvidence": "attempt-1794708212611813946-status.json",
+      "iterationEvidence": "attempt-1794708212611813946-iterations-0.json"
+    },
+    {
+      "runId": "run_fixture_2",
+      "status": "completed",
+      "result": "passed",
+      "cases": 1,
+      "passed": 1,
+      "actualResult": {
+        "sum": 5
+      },
+      "durationMs": 1,
+      "simulation": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+      "statusEvidence": "attempt-1794708217776976755-status.json",
+      "iterationEvidence": "attempt-1794708217776976755-iterations-0.json"
+    }
+  ],
+  "scope": "One synthetic deterministic arithmetic smoke case repeated twice. No hosted model or live billing.",
+  "creditBalance": null,
+  "usage": null,
+  "expectedFee": null
+}

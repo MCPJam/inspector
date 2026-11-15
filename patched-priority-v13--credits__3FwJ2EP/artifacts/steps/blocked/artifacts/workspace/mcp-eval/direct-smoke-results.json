@@ -1,0 +1,180 @@
+{
+  "passed": 3,
+  "total": 3,
+  "records": [
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-03-26",
+          "capabilities": {},
+          "clientInfo": {
+            "name": "repeatable-evaluation",
+            "version": "1.0"
+          }
+        },
+        "id": 1
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": "2025-03-26",
+          "capabilities": {
+            "tools": {
+              "listChanged": false
+            }
+          },
+          "serverInfo": {
+            "name": "arithmetic-fixture",
+            "version": "1.0.0"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/list",
+        "params": {},
+        "id": 2
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "tools": [
+            {
+              "name": "add",
+              "description": "Add two finite numbers and return their sum.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "a": {
+                    "type": "number"
+                  },
+                  "b": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "a",
+                  "b"
+                ],
+                "additionalProperties": false
+              },
+              "outputSchema": {
+                "type": "object",
+                "properties": {
+                  "sum": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "sum"
+                ]
+              },
+              "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        "id": 3
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 5}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 5
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        "id": 4
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 5}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 5
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "request": {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        "id": 5
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 5}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 5
+          },
+          "isError": false
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,2942 @@
+[
+  {
+    "id": "bootstrap:baseline-claude-auth-v11",
+    "path": "bootstrap--baseline-claude-auth-v11",
+    "argv": [
+      "env",
+      "DOCKER_CONFIG=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/docker-config",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "work/venv/bin/harbor",
+      "run",
+      "--path",
+      "work/tasks/baseline-auth-v11",
+      "--agent",
+      "claude-code",
+      "--model",
+      "anthropic/sonnet",
+      "--ak",
+      "version=2.1.323",
+      "--ak",
+      "max_turns=30",
+      "--ak",
+      "max_budget_usd=2",
+      "--ak",
+      "thinking_display=omitted",
+      "--n-concurrent",
+      "1",
+      "--n-attempts",
+      "1",
+      "--max-retries",
+      "0",
+      "--job-name",
+      "baseline-claude-auth-v11",
+      "--jobs-dir",
+      "work/jobs"
+    ],
+    "start": "2026-11-15T01:25:01.863621+00:00",
+    "end": "2026-11-15T01:27:46.830819+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:baseline-cloud-link-usage",
+    "path": "bootstrap--baseline-cloud-link-usage",
+    "argv": [
+      "env",
+      "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/node-v24.22.1-darwin-arm64/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/.local/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "DO_NOT_TRACK=1",
+      "node",
+      "work/inspector/cli/dist/index.js",
+      "cloud",
+      "link",
+      "--project",
+      "project_fixture"
+    ],
+    "start": "2026-11-15T01:35:38.567645+00:00",
+    "end": "2026-11-15T01:35:39.382809+00:00",
+    "exit_status": 2,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "USAGE_ERROR"
+    ],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:baseline-eval-run-help",
+    "path": "bootstrap--baseline-eval-run-help",
+    "argv": [
+      "env",
+      "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/node-v24.22.1-darwin-arm64/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/.local/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "DO_NOT_TRACK=1",
+      "node",
+      "work/inspector/cli/dist/index.js",
+      "cloud",
+      "eval",
+      "run",
+      "--help"
+    ],
+    "start": "2026-11-15T01:34:52.484505+00:00",
+    "end": "2026-11-15T01:34:54.222571+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:baseline-link-usage",
+    "path": "bootstrap--baseline-link-usage",
+    "argv": [
+      "env",
+      "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/node-v24.22.1-darwin-arm64/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/.local/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "DO_NOT_TRACK=1",
+      "node",
+      "work/inspector/cli/dist/index.js",
+      "cloud",
+      "project",
+      "link",
+      "--project",
+      "project_fixture"
+    ],
+    "start": "2026-11-15T01:34:54.300181+00:00",
+    "end": "2026-11-15T01:34:55.117174+00:00",
+    "exit_status": 2,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "USAGE_ERROR"
+    ],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:baseline-local-cli-help",
+    "path": "bootstrap--baseline-local-cli-help",
+    "argv": [
+      "env",
+      "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/node-v24.22.1-darwin-arm64/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/.local/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "DO_NOT_TRACK=1",
+      "node",
+      "work/inspector/cli/dist/index.js",
+      "--help"
+    ],
+    "start": "2026-11-15T01:19:46.776313+00:00",
+    "end": "2026-11-15T01:19:48.066848+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:baseline-pack",
+    "path": "bootstrap--baseline-pack",
+    "argv": [
+      "env",
+      "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/../node-v24.22.1-darwin-arm64/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "npm",
+      "pack",
+      "--workspace",
+      "@mcpjam/cli",
+      "--workspace",
+      "@mcpjam/sdk",
+      "--workspace",
+      "@mcpjam/evaluators",
+      "--pack-destination",
+      "../packages/baseline",
+      "--ignore-scripts"
+    ],
+    "start": "2026-11-15T01:18:45.256068+00:00",
+    "end": "2026-11-15T01:18:46.082527+00:00",
+    "exit_status": 255,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg",
+      "intermediate-004-001.svg",
+      "intermediate-005-001.svg",
+      "intermediate-006-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:baseline-pack-retry",
+    "path": "bootstrap--baseline-pack-retry",
+    "argv": [
+      "env",
+      "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/../node-v24.22.1-darwin-arm64/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "npm_config_cache=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/../cache/npm",
+      "npm",
+      "pack",
+      "--workspace",
+      "@mcpjam/cli",
+      "--workspace",
+      "@mcpjam/sdk",
+      "--workspace",
+      "@mcpjam/evaluators",
+      "--pack-destination",
+      "../packages/baseline",
+      "--ignore-scripts"
+    ],
+    "start": "2026-11-15T01:18:54.911973+00:00",
+    "end": "2026-11-15T01:18:57.834470+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:baseline-packages-build",
+    "path": "bootstrap--baseline-packages-build",
+    "argv": [
+      "env",
+      "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/../node-v24.22.1-darwin-arm64/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "npm",
+      "run",
+      "build:packages"
+    ],
+    "start": "2026-11-15T01:17:13.256894+00:00",
+    "end": "2026-11-15T01:18:09.463145+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:baseline-six-v11",
+    "path": "bootstrap--baseline-six-v11",
+    "argv": [
+      "env",
+      "DOCKER_CONFIG=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/docker-config",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/baseline-six.json"
+    ],
+    "start": "2026-11-15T01:27:56.001660+00:00",
+    "end": "2026-11-15T01:37:14.542875+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:buildx-download",
+    "path": "bootstrap--buildx-download",
+    "argv": [
+      "curl",
+      "-fL",
+      "https://github.com/docker/buildx/releases/download/v0.39.0/buildx-v0.39.0.darwin-arm64",
+      "-o",
+      "work/docker-config/cli-plugins/docker-buildx"
+    ],
+    "start": "2026-11-15T01:21:09.162450+00:00",
+    "end": "2026-11-15T01:21:15.738474+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:buildx-release",
+    "path": "bootstrap--buildx-release",
+    "argv": [
+      "curl",
+      "-fsSL",
+      "https://api.github.com/repos/docker/buildx/releases/latest"
+    ],
+    "start": "2026-11-15T01:20:38.791098+00:00",
+    "end": "2026-11-15T01:20:39.138641+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg",
+      "outcome-011.svg",
+      "outcome-012.svg",
+      "outcome-013.svg",
+      "outcome-014.svg",
+      "outcome-015.svg",
+      "outcome-016.svg",
+      "outcome-017.svg",
+      "outcome-018.svg",
+      "outcome-019.svg",
+      "outcome-020.svg",
+      "outcome-021.svg",
+      "outcome-022.svg",
+      "outcome-023.svg",
+      "outcome-024.svg",
+      "outcome-025.svg",
+      "outcome-026.svg",
+      "outcome-027.svg",
+      "outcome-028.svg",
+      "outcome-029.svg",
+      "outcome-030.svg",
+      "outcome-031.svg",
+      "outcome-032.svg",
+      "outcome-033.svg",
+      "outcome-034.svg",
+      "outcome-035.svg",
+      "outcome-036.svg",
+      "outcome-037.svg",
+      "outcome-038.svg",
+      "outcome-039.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:claude-auth-help",
+    "path": "bootstrap--claude-auth-help",
+    "argv": [
+      "claude",
+      "auth",
+      "--help"
+    ],
+    "start": "2026-11-15T01:13:02.265613+00:00",
+    "end": "2026-11-15T01:13:02.615485+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:claude-auth-native",
+    "path": "bootstrap--claude-auth-native",
+    "argv": [
+      "claude",
+      "auth",
+      "status"
+    ],
+    "start": "2026-11-15T01:21:08.708483+00:00",
+    "end": "2026-11-15T01:21:09.108523+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:claude-auth-status",
+    "path": "bootstrap--claude-auth-status",
+    "argv": [
+      "claude",
+      "auth",
+      "status"
+    ],
+    "start": "2026-11-15T01:13:32.175173+00:00",
+    "end": "2026-11-15T01:13:32.623049+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:claude-harbor-auth-check",
+    "path": "bootstrap--claude-harbor-auth-check",
+    "argv": [
+      "env",
+      "DOCKER_CONFIG=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/docker-config",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "work/venv/bin/harbor",
+      "run",
+      "--path",
+      "work/tasks/smoke-healthy-v1",
+      "--agent",
+      "claude-code",
+      "--model",
+      "anthropic/claude-sonnet-4-6",
+      "--ak",
+      "version=2.1.323",
+      "--ak",
+      "max_turns=30",
+      "--ak",
+      "max_budget_usd=2",
+      "--n-concurrent",
+      "1",
+      "--n-attempts",
+      "1",
+      "--max-retries",
+      "0",
+      "--jobs-dir",
+      "work/jobs",
+      "--dry-run"
+    ],
+    "start": "2026-11-15T01:22:16.336578+00:00",
+    "end": "2026-11-15T01:22:23.438469+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:claude-help",
+    "path": "bootstrap--claude-help",
+    "argv": [
+      "claude",
+      "--help"
+    ],
+    "start": "2026-11-15T01:12:48.441735+00:00",
+    "end": "2026-11-15T01:12:48.638888+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-001-003.svg",
+      "intermediate-001-004.svg",
+      "intermediate-001-005.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:claude-native-refresh",
+    "path": "bootstrap--claude-native-refresh",
+    "argv": [
+      "claude",
+      "-p",
+      "--model",
+      "claude-sonnet-5-5",
+      "--max-budget-usd",
+      "0.10",
+      "--no-session-persistence",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--mcp-config",
+      "{\"mcpServers\":{}}",
+      "--tools",
+      "",
+      "--disable-slash-commands",
+      "--system-prompt",
+      "Respond only with OK.",
+      "Authentication check."
+    ],
+    "start": "2026-11-15T02:18:15.992118+00:00",
+    "end": "2026-11-15T02:18:19.741263+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:claude-version",
+    "path": "bootstrap--claude-version",
+    "argv": [
+      "claude",
+      "--version"
+    ],
+    "start": "2026-11-15T01:12:47.945426+00:00",
+    "end": "2026-11-15T01:12:48.218914+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:codex-auth-status",
+    "path": "bootstrap--codex-auth-status",
+    "argv": [
+      "codex",
+      "login",
+      "status"
+    ],
+    "start": "2026-11-15T01:13:32.679934+00:00",
+    "end": "2026-11-15T01:13:32.798559+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:codex-exec-help",
+    "path": "bootstrap--codex-exec-help",
+    "argv": [
+      "codex",
+      "exec",
+      "--help"
+    ],
+    "start": "2026-11-15T01:13:02.745481+00:00",
+    "end": "2026-11-15T01:13:02.761568+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-002-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:codex-help",
+    "path": "bootstrap--codex-help",
+    "argv": [
+      "codex",
+      "--help"
+    ],
+    "start": "2026-11-15T01:12:48.699029+00:00",
+    "end": "2026-11-15T01:12:48.716807+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-002-002.svg",
+      "intermediate-002-003.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:codex-login-help",
+    "path": "bootstrap--codex-login-help",
+    "argv": [
+      "codex",
+      "login",
+      "--help"
+    ],
+    "start": "2026-11-15T01:13:02.660380+00:00",
+    "end": "2026-11-15T01:13:02.701465+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:codex-version",
+    "path": "bootstrap--codex-version",
+    "argv": [
+      "codex",
+      "--version"
+    ],
+    "start": "2026-11-15T01:12:48.267793+00:00",
+    "end": "2026-11-15T01:12:48.358153+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:colima-start",
+    "path": "bootstrap--colima-start",
+    "argv": [
+      "colima",
+      "start",
+      "--cpu",
+      "4",
+      "--memory",
+      "6",
+      "--disk",
+      "30",
+      "--activate=false",
+      "--ssh-config=false"
+    ],
+    "start": "2026-11-15T01:12:46.772604+00:00",
+    "end": "2026-11-15T01:13:01.689295+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:compose-download",
+    "path": "bootstrap--compose-download",
+    "argv": [
+      "curl",
+      "-fL",
+      "https://github.com/docker/compose/releases/latest/download/docker-compose-darwin-aarch64",
+      "-o",
+      "work/docker-config/cli-plugins/docker-compose"
+    ],
+    "start": "2026-11-15T01:20:26.229208+00:00",
+    "end": "2026-11-15T01:20:29.190313+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:compose-version",
+    "path": "bootstrap--compose-version",
+    "argv": [
+      "env",
+      "DOCKER_CONFIG=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/docker-config",
+      "docker",
+      "compose",
+      "version"
+    ],
+    "start": "2026-11-15T01:20:39.472293+00:00",
+    "end": "2026-11-15T01:20:40.377637+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:docker-node-pull",
+    "path": "bootstrap--docker-node-pull",
+    "argv": [
+      "env",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "docker",
+      "pull",
+      "node:24.22.1-bookworm-slim"
+    ],
+    "start": "2026-11-15T01:16:03.861420+00:00",
+    "end": "2026-11-15T01:16:14.941114+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:docker-preflight",
+    "path": "bootstrap--docker-preflight",
+    "argv": [
+      "env",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "docker",
+      "info",
+      "--format",
+      "{{.ServerVersion}} {{.Architecture}}"
+    ],
+    "start": "2026-11-15T01:16:03.533799+00:00",
+    "end": "2026-11-15T01:16:03.778803+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:fixture-regression-final",
+    "path": "bootstrap--fixture-regression-final",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/fixtures",
+      "-p",
+      "test_*.py",
+      "-v"
+    ],
+    "start": "2026-11-15T01:46:54.756493+00:00",
+    "end": "2026-11-15T01:46:54.890988+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg",
+      "intermediate-004-001.svg",
+      "intermediate-005-001.svg",
+      "intermediate-006-001.svg",
+      "intermediate-007-001.svg",
+      "intermediate-008-001.svg",
+      "intermediate-009-001.svg",
+      "intermediate-010-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:fixture-regression-final-native",
+    "path": "bootstrap--fixture-regression-final-native",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/fixtures",
+      "-p",
+      "test_*.py",
+      "-v"
+    ],
+    "start": "2026-11-15T01:47:08.740944+00:00",
+    "end": "2026-11-15T01:47:14.000209+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:github-auth-native",
+    "path": "bootstrap--github-auth-native",
+    "argv": [
+      "gh",
+      "auth",
+      "status"
+    ],
+    "start": "2026-11-15T01:32:07.723678+00:00",
+    "end": "2026-11-15T01:32:07.969881+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:github-auth-status",
+    "path": "bootstrap--github-auth-status",
+    "argv": [
+      "gh",
+      "auth",
+      "status"
+    ],
+    "start": "2026-11-15T01:31:47.491175+00:00",
+    "end": "2026-11-15T01:31:47.597368+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-claude-preflight",
+    "path": "bootstrap--harbor-claude-preflight",
+    "argv": [
+      "env",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "work/venv/bin/harbor",
+      "run",
+      "--path",
+      "work/tasks/smoke-healthy",
+      "--agent",
+      "claude-code",
+      "--model",
+      "anthropic/claude-sonnet-4-6",
+      "--ak",
+      "version=2.1.323",
+      "--ak",
+      "max_turns=30",
+      "--ak",
+      "max_budget_usd=2",
+      "--n-concurrent",
+      "1",
+      "--n-attempts",
+      "1",
+      "--max-retries",
+      "0",
+      "--job-name",
+      "baseline-claude-healthy-preflight",
+      "--jobs-dir",
+      "work/jobs",
+      "--dry-run"
+    ],
+    "start": "2026-11-15T01:20:01.120723+00:00",
+    "end": "2026-11-15T01:20:04.888583+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-claude-schema",
+    "path": "bootstrap--harbor-claude-schema",
+    "argv": [
+      "work/venv/bin/harbor",
+      "agent",
+      "schema",
+      "claude-code"
+    ],
+    "start": "2026-11-15T01:14:38.690894+00:00",
+    "end": "2026-11-15T01:14:39.599722+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-codex-schema",
+    "path": "bootstrap--harbor-codex-schema",
+    "argv": [
+      "work/venv/bin/harbor",
+      "agent",
+      "schema",
+      "codex"
+    ],
+    "start": "2026-11-15T01:14:36.942990+00:00",
+    "end": "2026-11-15T01:14:38.620536+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-help",
+    "path": "bootstrap--harbor-help",
+    "argv": [
+      "work/venv/bin/harbor",
+      "--help"
+    ],
+    "start": "2026-11-15T01:13:48.825119+00:00",
+    "end": "2026-11-15T01:13:53.044371+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-install",
+    "path": "bootstrap--harbor-install",
+    "argv": [
+      "env",
+      "UV_CACHE_DIR=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/cache/uv",
+      "uv",
+      "venv",
+      "work/venv",
+      "--python",
+      "3.12"
+    ],
+    "start": "2026-11-15T01:12:42.428372+00:00",
+    "end": "2026-11-15T01:12:42.674916+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-package-install",
+    "path": "bootstrap--harbor-package-install",
+    "argv": [
+      "env",
+      "UV_CACHE_DIR=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/cache/uv",
+      "uv",
+      "pip",
+      "install",
+      "--python",
+      "work/venv/bin/python",
+      "harbor"
+    ],
+    "start": "2026-11-15T01:13:01.114858+00:00",
+    "end": "2026-11-15T01:13:20.649541+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg",
+      "outcome-011.svg",
+      "outcome-012.svg",
+      "outcome-013.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-run-help",
+    "path": "bootstrap--harbor-run-help",
+    "argv": [
+      "work/venv/bin/harbor",
+      "run",
+      "--help"
+    ],
+    "start": "2026-11-15T01:13:53.095877+00:00",
+    "end": "2026-11-15T01:13:53.806072+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg",
+      "intermediate-003-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-smoke-codex-healthy",
+    "path": "bootstrap--harbor-smoke-codex-healthy",
+    "argv": [
+      "env",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "work/venv/bin/harbor",
+      "run",
+      "--path",
+      "work/tasks/smoke-healthy",
+      "--agent",
+      "codex",
+      "--model",
+      "openai/gpt-6.1-sol",
+      "--ak",
+      "version=0.160.0",
+      "--ak",
+      "reasoning_effort=medium",
+      "--ak",
+      "reasoning_summary=none",
+      "--ae",
+      "CODEX_FORCE_AUTH_JSON=1",
+      "--n-concurrent",
+      "1",
+      "--n-attempts",
+      "1",
+      "--max-retries",
+      "0",
+      "--job-name",
+      "baseline-codex-healthy-smoke",
+      "--jobs-dir",
+      "work/jobs"
+    ],
+    "start": "2026-11-15T01:19:45.638819+00:00",
+    "end": "2026-11-15T01:19:50.469888+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-smoke-codex-healthy-v1",
+    "path": "bootstrap--harbor-smoke-codex-healthy-v1",
+    "argv": [
+      "env",
+      "DOCKER_CONFIG=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/docker-config",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "work/venv/bin/harbor",
+      "run",
+      "--path",
+      "work/tasks/smoke-healthy-v1",
+      "--agent",
+      "codex",
+      "--model",
+      "openai/gpt-6.1-sol",
+      "--ak",
+      "version=0.160.0",
+      "--ak",
+      "reasoning_effort=medium",
+      "--ak",
+      "reasoning_summary=none",
+      "--ae",
+      "CODEX_FORCE_AUTH_JSON=1",
+      "--n-concurrent",
+      "1",
+      "--n-attempts",
+      "1",
+      "--max-retries",
+      "0",
+      "--job-name",
+      "baseline-codex-healthy-v1",
+      "--jobs-dir",
+      "work/jobs"
+    ],
+    "start": "2026-11-15T01:20:52.959334+00:00",
+    "end": "2026-11-15T01:27:37.805343+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-smoke-dryrun",
+    "path": "bootstrap--harbor-smoke-dryrun",
+    "argv": [
+      "work/venv/bin/harbor",
+      "run",
+      "--path",
+      "work/tasks/smoke-healthy",
+      "--agent",
+      "codex",
+      "--model",
+      "openai/gpt-6.1-sol",
+      "--ak",
+      "version=0.160.0",
+      "--ak",
+      "reasoning_effort=medium",
+      "--ak",
+      "reasoning_summary=none",
+      "--ae",
+      "CODEX_FORCE_AUTH_JSON=1",
+      "--n-concurrent",
+      "1",
+      "--n-attempts",
+      "1",
+      "--max-retries",
+      "0",
+      "--job-name",
+      "baseline-codex-healthy-smoke",
+      "--jobs-dir",
+      "work/jobs",
+      "--dry-run"
+    ],
+    "start": "2026-11-15T01:19:20.390830+00:00",
+    "end": "2026-11-15T01:19:28.943051+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harbor-version",
+    "path": "bootstrap--harbor-version",
+    "argv": [
+      "work/venv/bin/harbor",
+      "--version"
+    ],
+    "start": "2026-11-15T01:14:39.668918+00:00",
+    "end": "2026-11-15T01:14:40.655781+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:harness-regression",
+    "path": "bootstrap--harness-regression",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/tests",
+      "-v"
+    ],
+    "start": "2026-11-15T01:44:31.498892+00:00",
+    "end": "2026-11-15T01:44:31.613146+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:image-cli-versions",
+    "path": "bootstrap--image-cli-versions",
+    "argv": [
+      "env",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "docker",
+      "run",
+      "--rm",
+      "mcpjam-harbor-agent:v1",
+      "sh",
+      "-c",
+      "codex --version; claude --version; node --version"
+    ],
+    "start": "2026-11-15T01:18:58.927635+00:00",
+    "end": "2026-11-15T01:18:59.479760+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:node-download",
+    "path": "bootstrap--node-download",
+    "argv": [
+      "curl",
+      "-fL",
+      "https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz",
+      "-o",
+      "work/node.tar.gz"
+    ],
+    "start": "2026-11-15T01:14:35.941808+00:00",
+    "end": "2026-11-15T01:14:40.170985+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:npm-source-install",
+    "path": "bootstrap--npm-source-install",
+    "argv": [
+      "env",
+      "PATH=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/../node-v24.22.1-darwin-arm64/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+      "npm_config_cache=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/../cache/npm",
+      "npm",
+      "install",
+      "--legacy-peer-deps",
+      "--workspace",
+      "@mcpjam/cli",
+      "--workspace",
+      "@mcpjam/sdk",
+      "--workspace",
+      "@mcpjam/evaluators",
+      "--include-workspace-root"
+    ],
+    "start": "2026-11-15T01:15:39.770412+00:00",
+    "end": "2026-11-15T01:16:24.737105+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:pack-patched",
+    "path": "bootstrap--pack-patched",
+    "argv": [
+      "npm",
+      "pack",
+      "--workspace",
+      "@mcpjam/cli",
+      "--workspace",
+      "@mcpjam/sdk",
+      "--workspace",
+      "@mcpjam/evaluators",
+      "--pack-destination",
+      "../packages/patched",
+      "--ignore-scripts"
+    ],
+    "start": "2026-11-15T01:43:35.078862+00:00",
+    "end": "2026-11-15T01:43:39.106614+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:pack-patched-cycle2",
+    "path": "bootstrap--pack-patched-cycle2",
+    "argv": [
+      "npm",
+      "pack",
+      "--workspace",
+      "@mcpjam/cli",
+      "--workspace",
+      "@mcpjam/sdk",
+      "--workspace",
+      "@mcpjam/evaluators",
+      "--pack-destination",
+      "../packages/patched-cycle2",
+      "--ignore-scripts"
+    ],
+    "start": "2026-11-15T02:26:07.814057+00:00",
+    "end": "2026-11-15T02:26:10.110903+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:pack-patched-final",
+    "path": "bootstrap--pack-patched-final",
+    "argv": [
+      "npm",
+      "pack",
+      "--workspace",
+      "@mcpjam/cli",
+      "--workspace",
+      "@mcpjam/sdk",
+      "--workspace",
+      "@mcpjam/evaluators",
+      "--pack-destination",
+      "../packages/patched-final",
+      "--ignore-scripts"
+    ],
+    "start": "2026-11-15T01:46:28.430672+00:00",
+    "end": "2026-11-15T01:46:31.149439+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:prepare-regression-final",
+    "path": "bootstrap--prepare-regression-final",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation",
+      "-p",
+      "test_prepare.py",
+      "-v"
+    ],
+    "start": "2026-11-15T01:46:54.939720+00:00",
+    "end": "2026-11-15T01:46:55.014734+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:publisher-cycle2-regression34",
+    "path": "bootstrap--publisher-cycle2-regression34",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/tests"
+    ],
+    "start": "2026-11-15T02:28:31.198874+00:00",
+    "end": "2026-11-15T02:28:31.357296+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:publisher-final-regression",
+    "path": "bootstrap--publisher-final-regression",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/tests",
+      "-v"
+    ],
+    "start": "2026-11-15T02:12:21.035582+00:00",
+    "end": "2026-11-15T02:12:21.163757+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:publisher-metadata-regression28",
+    "path": "bootstrap--publisher-metadata-regression28",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/tests"
+    ],
+    "start": "2026-11-15T02:15:42.441502+00:00",
+    "end": "2026-11-15T02:15:42.605457+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:publisher-provider-audit-regression31",
+    "path": "bootstrap--publisher-provider-audit-regression31",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/tests"
+    ],
+    "start": "2026-11-15T02:19:47.021993+00:00",
+    "end": "2026-11-15T02:19:47.162997+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:publisher-schema-regression29",
+    "path": "bootstrap--publisher-schema-regression29",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/tests"
+    ],
+    "start": "2026-11-15T02:16:41.365329+00:00",
+    "end": "2026-11-15T02:16:41.502850+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:publisher-supplemental-regression32",
+    "path": "bootstrap--publisher-supplemental-regression32",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "work/inspector/scripts/harbor-activation/tests"
+    ],
+    "start": "2026-11-15T02:23:06.511647+00:00",
+    "end": "2026-11-15T02:23:06.657598+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:slop-size-committed",
+    "path": "bootstrap--slop-size-committed",
+    "argv": [
+      "npm",
+      "run",
+      "slop:size"
+    ],
+    "start": "2026-11-15T01:58:11.610953+00:00",
+    "end": "2026-11-15T01:58:12.067892+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:slop-size-final",
+    "path": "bootstrap--slop-size-final",
+    "argv": [
+      "npm",
+      "run",
+      "slop:size"
+    ],
+    "start": "2026-11-15T02:32:04.715125+00:00",
+    "end": "2026-11-15T02:32:05.007030+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "bootstrap:trial-image-build",
+    "path": "bootstrap--trial-image-build",
+    "argv": [
+      "env",
+      "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+      "docker",
+      "build",
+      "-t",
+      "mcpjam-harbor-agent:v1",
+      "work/inspector/scripts/harbor-activation"
+    ],
+    "start": "2026-11-15T01:16:50.282159+00:00",
+    "end": "2026-11-15T01:18:08.780586+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg",
+      "intermediate-004-001.svg",
+      "intermediate-005-001.svg",
+      "intermediate-006-001.svg",
+      "intermediate-007-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "bootstrap"
+  },
+  {
+    "id": "harness-validation:fixture-v13-negative-controls",
+    "path": "harness-validation--fixture-v13-negative-controls",
+    "argv": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "scripts/harbor-activation/fixtures",
+      "-p",
+      "test_*.py",
+      "-v"
+    ],
+    "start": "2026-11-15T01:55:45.413234+00:00",
+    "end": "2026-11-15T01:55:51.297703+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "harness-validation"
+  },
+  {
+    "id": "harness-validation:verifier-packaging-nop-v12",
+    "path": "harness-validation--verifier-packaging-nop-v12",
+    "argv": [
+      "work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/packaging-nop-v12.json"
+    ],
+    "start": "2026-11-15T01:30:19.938972+00:00",
+    "end": "2026-11-15T01:31:28.051073+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "harness-validation"
+  },
+  {
+    "id": "harness-validation:verifier-packaging-nop-v12b",
+    "path": "harness-validation--verifier-packaging-nop-v12b",
+    "argv": [
+      "work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/packaging-nop-v12b.json"
+    ],
+    "start": "2026-11-15T01:31:53.037158+00:00",
+    "end": "2026-11-15T01:32:52.890637+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "harness-validation"
+  },
+  {
+    "id": "harness-validation:verifier-packaging-nop-v13",
+    "path": "harness-validation--verifier-packaging-nop-v13",
+    "argv": [
+      "work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/packaging-nop-v13.json"
+    ],
+    "start": "2026-11-15T01:56:00.496505+00:00",
+    "end": "2026-11-15T01:56:55.463086+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "harness-validation"
+  },
+  {
+    "id": "orchestrator-events:baseline-auth-provider-recovery-v13",
+    "path": "orchestrator-events--baseline-auth-provider-recovery-v13",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/baseline-auth-provider-recovery-v13.json"
+    ],
+    "start": "2026-11-15T02:19:19.718329+00:00",
+    "end": "2026-11-15T02:20:36.243076+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:baseline-auth-v13",
+    "path": "orchestrator-events--baseline-auth-v13",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/baseline-auth-v13.json"
+    ],
+    "start": "2026-11-15T02:15:16.643189+00:00",
+    "end": "2026-11-15T02:19:08.120132+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:baseline-priority-v12",
+    "path": "orchestrator-events--baseline-priority-v12",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/baseline-priority-v12.json"
+    ],
+    "start": "2026-11-15T01:45:30.597370+00:00",
+    "end": "2026-11-15T01:52:48.242636+00:00",
+    "exit_status": 130,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:baseline-priority-v13",
+    "path": "orchestrator-events--baseline-priority-v13",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/baseline-priority-v13.json"
+    ],
+    "start": "2026-11-15T01:57:25.676338+00:00",
+    "end": "2026-11-15T02:14:23.427075+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:baseline-six-v12",
+    "path": "orchestrator-events--baseline-six-v12",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/baseline-six-v12.json"
+    ],
+    "start": "2026-11-15T01:36:55.664787+00:00",
+    "end": "2026-11-15T01:45:05.246584+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:heldout-discovery-v13",
+    "path": "orchestrator-events--heldout-discovery-v13",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/heldout-discovery-v13.json"
+    ],
+    "start": "2026-11-15T02:26:51.015421+00:00",
+    "end": "2026-11-15T02:30:03.027343+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:patched-auth-provider-recovery-v13",
+    "path": "orchestrator-events--patched-auth-provider-recovery-v13",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/patched-auth-provider-recovery-v13.json"
+    ],
+    "start": "2026-11-15T02:19:23.062906+00:00",
+    "end": "2026-11-15T02:20:35.891950+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:patched-auth-v13",
+    "path": "orchestrator-events--patched-auth-v13",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/patched-auth-v13.json"
+    ],
+    "start": "2026-11-15T02:16:03.153612+00:00",
+    "end": "2026-11-15T02:19:43.648128+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:patched-cycle2-auth-v13",
+    "path": "orchestrator-events--patched-cycle2-auth-v13",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/patched-cycle2-auth-v13.json"
+    ],
+    "start": "2026-11-15T02:26:46.425419+00:00",
+    "end": "2026-11-15T02:30:27.138529+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:patched-priority-v12",
+    "path": "orchestrator-events--patched-priority-v12",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/patched-priority-v12.json"
+    ],
+    "start": "2026-11-15T01:50:56.357353+00:00",
+    "end": "2026-11-15T01:52:48.336510+00:00",
+    "exit_status": 130,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:patched-priority-v13",
+    "path": "orchestrator-events--patched-priority-v13",
+    "argv": [
+      "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+      "run",
+      "--config",
+      "work/patched-priority-v13.json"
+    ],
+    "start": "2026-11-15T01:57:29.284593+00:00",
+    "end": "2026-11-15T02:15:43.177402+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:publish-v13-auth-attempts",
+    "path": "orchestrator-events--publish-v13-auth-attempts",
+    "argv": [
+      "python3",
+      "work/inspector/scripts/harbor-activation/report.py",
+      "--jobs",
+      "work/jobs",
+      "--out",
+      "outputs/evidence",
+      "--job",
+      "baseline-auth-v13",
+      "--job",
+      "patched-auth-v13",
+      "--bootstrap",
+      "outputs/evidence/bootstrap",
+      "--bootstrap",
+      "outputs/evidence/product-fixes",
+      "--bootstrap",
+      "outputs/evidence/harness-validation",
+      "--bootstrap",
+      "work/orchestrator-events",
+      "--versions",
+      "work/versions.json",
+      "--redact-file",
+      "work/redactions.json",
+      "--analysis-source",
+      "work/baseline-observations.md",
+      "--analysis-source",
+      "work/baseline-observations.json",
+      "--analysis-source",
+      "work/benchmark-validity.md",
+      "--analysis-source",
+      "work/fixture-v13-audit.md",
+      "--compare-baseline-job",
+      "baseline-priority-v13",
+      "--compare-baseline-job",
+      "baseline-auth-v13",
+      "--compare-baseline-job",
+      "baseline-auth-provider-recovery-v13",
+      "--compare-patched-job",
+      "patched-priority-v13",
+      "--compare-patched-job",
+      "patched-auth-v13",
+      "--compare-patched-job",
+      "patched-auth-provider-recovery-v13",
+      "--gallery"
+    ],
+    "start": "2026-11-15T02:20:15.638084+00:00",
+    "end": "2026-11-15T02:21:26.289711+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:publish-v13-auth-replacements",
+    "path": "orchestrator-events--publish-v13-auth-replacements",
+    "argv": [
+      "python3",
+      "work/inspector/scripts/harbor-activation/report.py",
+      "--jobs",
+      "work/jobs",
+      "--out",
+      "outputs/evidence",
+      "--job",
+      "baseline-auth-provider-recovery-v13",
+      "--job",
+      "patched-auth-provider-recovery-v13",
+      "--bootstrap",
+      "outputs/evidence/bootstrap",
+      "--bootstrap",
+      "outputs/evidence/product-fixes",
+      "--bootstrap",
+      "outputs/evidence/harness-validation",
+      "--bootstrap",
+      "work/orchestrator-events",
+      "--versions",
+      "work/versions.json",
+      "--redact-file",
+      "work/redactions.json",
+      "--analysis-source",
+      "work/baseline-observations.md",
+      "--analysis-source",
+      "work/baseline-observations.json",
+      "--analysis-source",
+      "work/benchmark-validity.md",
+      "--analysis-source",
+      "work/fixture-v13-audit.md",
+      "--compare-baseline-job",
+      "baseline-priority-v13",
+      "--compare-baseline-job",
+      "baseline-auth-v13",
+      "--compare-baseline-job",
+      "baseline-auth-provider-recovery-v13",
+      "--compare-patched-job",
+      "patched-priority-v13",
+      "--compare-patched-job",
+      "patched-auth-v13",
+      "--compare-patched-job",
+      "patched-auth-provider-recovery-v13",
+      "--targeted-job",
+      "patched-cycle2-auth-v13",
+      "--heldout-job",
+      "heldout-discovery-v13",
+      "--gallery"
+    ],
+    "start": "2026-11-15T02:23:17.081714+00:00",
+    "end": "2026-11-15T02:24:25.077457+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:publish-v13-priority",
+    "path": "orchestrator-events--publish-v13-priority",
+    "argv": [
+      "python3",
+      "work/inspector/scripts/harbor-activation/report.py",
+      "--jobs",
+      "work/jobs",
+      "--out",
+      "outputs/evidence",
+      "--job",
+      "baseline-priority-v13",
+      "--job",
+      "patched-priority-v13",
+      "--resume-publication",
+      "--bootstrap",
+      "outputs/evidence/bootstrap",
+      "--bootstrap",
+      "outputs/evidence/product-fixes",
+      "--bootstrap",
+      "outputs/evidence/harness-validation",
+      "--bootstrap",
+      "work/orchestrator-events",
+      "--versions",
+      "work/versions.json",
+      "--redact-file",
+      "work/redactions.json",
+      "--analysis-source",
+      "work/baseline-observations.md",
+      "--analysis-source",
+      "work/baseline-observations.json",
+      "--analysis-source",
+      "work/benchmark-validity.md",
+      "--analysis-source",
+      "work/fixture-v13-audit.md",
+      "--compare-baseline-job",
+      "baseline-priority-v13",
+      "--compare-baseline-job",
+      "baseline-auth-v13",
+      "--compare-patched-job",
+      "patched-priority-v13",
+      "--compare-patched-job",
+      "patched-auth-v13",
+      "--gallery"
+    ],
+    "start": "2026-11-15T02:16:57.061783+00:00",
+    "end": "2026-11-15T02:18:17.409017+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "orchestrator-events:publish-v13-supplemental",
+    "path": "orchestrator-events--publish-v13-supplemental",
+    "argv": [
+      "python3",
+      "work/inspector/scripts/harbor-activation/report.py",
+      "--jobs",
+      "work/jobs",
+      "--out",
+      "outputs/evidence",
+      "--job",
+      "heldout-discovery-v13",
+      "--job",
+      "patched-cycle2-auth-v13",
+      "--bootstrap",
+      "outputs/evidence/bootstrap",
+      "--bootstrap",
+      "outputs/evidence/product-fixes",
+      "--bootstrap",
+      "outputs/evidence/harness-validation",
+      "--bootstrap",
+      "work/orchestrator-events",
+      "--versions",
+      "work/versions.json",
+      "--redact-file",
+      "work/redactions.json",
+      "--analysis-source",
+      "work/baseline-observations.md",
+      "--analysis-source",
+      "work/baseline-observations.json",
+      "--analysis-source",
+      "work/benchmark-validity.md",
+      "--analysis-source",
+      "work/fixture-v13-audit.md",
+      "--analysis-source",
+      "work/cycle2-conformance-comparison.json",
+      "--compare-baseline-job",
+      "baseline-priority-v13",
+      "--compare-baseline-job",
+      "baseline-auth-v13",
+      "--compare-baseline-job",
+      "baseline-auth-provider-recovery-v13",
+      "--compare-patched-job",
+      "patched-priority-v13",
+      "--compare-patched-job",
+      "patched-auth-v13",
+      "--compare-patched-job",
+      "patched-auth-provider-recovery-v13",
+      "--targeted-job",
+      "patched-cycle2-auth-v13",
+      "--heldout-job",
+      "heldout-discovery-v13",
+      "--gallery"
+    ],
+    "start": "2026-11-15T02:30:28.674647+00:00",
+    "end": "2026-11-15T02:31:46.415576+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "orchestrator-events"
+  },
+  {
+    "id": "product-fixes:after-conformance-get405",
+    "path": "product-fixes--after-conformance-get405",
+    "argv": [
+      "work/node-v24.22.1-darwin-arm64/bin/node",
+      "work/inspector/cli/dist/index.js",
+      "--no-telemetry",
+      "protocol",
+      "conformance",
+      "--url",
+      "http://127.0.0.1:8875/mcp",
+      "--access-token",
+      "[REDACTED]",
+      "--protocol-version",
+      "2025-11-25",
+      "--check-timeout",
+      "2000",
+      "--reporter",
+      "json-summary"
+    ],
+    "start": "2026-11-15T02:25:36.256841+00:00",
+    "end": "2026-11-15T02:25:36.924253+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:after-eval-help",
+    "path": "product-fixes--after-eval-help",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "cli/dist/index.js",
+      "cloud",
+      "eval",
+      "run",
+      "--help"
+    ],
+    "start": "2026-11-15T01:39:43.258026+00:00",
+    "end": "2026-11-15T01:39:44.779032+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:after-link-usage",
+    "path": "product-fixes--after-link-usage",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "cli/dist/index.js",
+      "cloud",
+      "link",
+      "--project",
+      "project_fixture"
+    ],
+    "start": "2026-11-15T01:39:43.258031+00:00",
+    "end": "2026-11-15T01:39:44.759783+00:00",
+    "exit_status": 2,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "USAGE_ERROR"
+    ],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:after-platform-fee",
+    "path": "product-fixes--after-platform-fee",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "--import",
+      "tsx",
+      "../fee-repro.mts"
+    ],
+    "start": "2026-11-15T01:39:43.258053+00:00",
+    "end": "2026-11-15T01:39:44.783498+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "FORBIDDEN",
+      "PLATFORM_FEE_REQUIRED"
+    ],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:after-platform-fee-corrected",
+    "path": "product-fixes--after-platform-fee-corrected",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "--import",
+      "tsx",
+      "../fee-repro.mts"
+    ],
+    "start": "2026-11-15T01:46:13.756363+00:00",
+    "end": "2026-11-15T01:46:14.723105+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "FORBIDDEN",
+      "PLATFORM_FEE_REQUIRED"
+    ],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-conformance-before",
+    "path": "product-fixes--before-conformance-get405",
+    "argv": [
+      "env",
+      "MCP_SERVER_TOKEN=[REDACTED]",
+      "work/node-v24.22.1-darwin-arm64/bin/node",
+      "work/inspector/cli/dist/index.js",
+      "--no-telemetry",
+      "protocol",
+      "conformance",
+      "--url",
+      "http://127.0.0.1:8875/mcp",
+      "--access-token",
+      "[REDACTED]",
+      "--protocol-version",
+      "2025-11-25",
+      "--check-timeout",
+      "2000",
+      "--reporter",
+      "json-summary"
+    ],
+    "start": "2026-11-15T02:22:29.421739+00:00",
+    "end": "2026-11-15T02:22:30.805881+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-001-003.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:before-eval-help",
+    "path": "product-fixes--before-eval-help",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "cli/dist/index.js",
+      "cloud",
+      "eval",
+      "run",
+      "--help"
+    ],
+    "start": "2026-11-15T01:37:25.359780+00:00",
+    "end": "2026-11-15T01:37:25.980766+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:before-link-usage",
+    "path": "product-fixes--before-link-usage",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "cli/dist/index.js",
+      "cloud",
+      "link",
+      "--project",
+      "project_fixture"
+    ],
+    "start": "2026-11-15T01:37:41.745702+00:00",
+    "end": "2026-11-15T01:37:42.309988+00:00",
+    "exit_status": 2,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "USAGE_ERROR"
+    ],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:before-platform-fee",
+    "path": "product-fixes--before-platform-fee",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "--import",
+      "tsx",
+      "../fee-repro.ts"
+    ],
+    "start": "2026-11-15T01:37:42.423848+00:00",
+    "end": "2026-11-15T01:37:42.954912+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:before-platform-fee-esm",
+    "path": "product-fixes--before-platform-fee-esm",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "--import",
+      "tsx",
+      "../fee-repro.mts"
+    ],
+    "start": "2026-11-15T01:37:47.347190+00:00",
+    "end": "2026-11-15T01:37:48.384686+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "FORBIDDEN",
+      "PLATFORM_FEE_REQUIRED"
+    ],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:before-platform-fee-message",
+    "path": "product-fixes--before-platform-fee-message",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "--import",
+      "tsx",
+      "../fee-repro.mts"
+    ],
+    "start": "2026-11-15T01:37:54.733713+00:00",
+    "end": "2026-11-15T01:37:55.715177+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "FORBIDDEN",
+      "PLATFORM_FEE_REQUIRED"
+    ],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:before-usage-help",
+    "path": "product-fixes--before-usage-help",
+    "argv": [
+      "../node-v24.22.1-darwin-arm64/bin/node",
+      "cli/dist/index.js",
+      "cloud",
+      "project",
+      "link",
+      "--project",
+      "project_fixture"
+    ],
+    "start": "2026-11-15T01:37:23.997222+00:00",
+    "end": "2026-11-15T01:37:25.228754+00:00",
+    "exit_status": 2,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "USAGE_ERROR"
+    ],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cli-fee-copy-build",
+    "path": "product-fixes--cli-fee-copy-build",
+    "argv": [
+      "npm",
+      "run",
+      "build",
+      "-w",
+      "@mcpjam/cli"
+    ],
+    "start": "2026-11-15T01:46:01.999326+00:00",
+    "end": "2026-11-15T01:46:03.260368+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cli-fee-copy-regression",
+    "path": "product-fixes--cli-fee-copy-regression",
+    "argv": [
+      "node",
+      "--import",
+      "tsx",
+      "--test",
+      "cli/tests/platform-client.test.ts"
+    ],
+    "start": "2026-11-15T01:46:04.876054+00:00",
+    "end": "2026-11-15T01:46:06.976047+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg",
+      "intermediate-004-001.svg",
+      "intermediate-005-001.svg",
+      "intermediate-006-001.svg",
+      "intermediate-007-001.svg",
+      "intermediate-008-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cli-fee-copy-typecheck",
+    "path": "product-fixes--cli-fee-copy-typecheck",
+    "argv": [
+      "npm",
+      "run",
+      "typecheck",
+      "-w",
+      "@mcpjam/cli"
+    ],
+    "start": "2026-11-15T01:46:01.998868+00:00",
+    "end": "2026-11-15T01:46:06.708428+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cli-focused-regression",
+    "path": "product-fixes--cli-focused-regression",
+    "argv": [
+      "node",
+      "--import",
+      "tsx",
+      "--test",
+      "cli/tests/index.test.ts",
+      "cli/tests/platform-client.test.ts"
+    ],
+    "start": "2026-11-15T01:40:28.422484+00:00",
+    "end": "2026-11-15T01:40:30.288539+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg",
+      "intermediate-004-001.svg",
+      "intermediate-005-001.svg",
+      "intermediate-006-001.svg",
+      "intermediate-007-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cli-slop-check",
+    "path": "product-fixes--cli-slop-check",
+    "argv": [
+      "npm",
+      "run",
+      "slop:check"
+    ],
+    "start": "2026-11-15T01:40:25.408968+00:00",
+    "end": "2026-11-15T01:40:26.308864+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cli-typecheck",
+    "path": "product-fixes--cli-typecheck",
+    "argv": [
+      "npm",
+      "run",
+      "typecheck",
+      "-w",
+      "@mcpjam/cli"
+    ],
+    "start": "2026-11-15T01:40:25.408968+00:00",
+    "end": "2026-11-15T01:40:29.742302+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-cli-build",
+    "path": "product-fixes--cycle2-cli-build",
+    "argv": [
+      "npm",
+      "run",
+      "build",
+      "-w",
+      "@mcpjam/cli"
+    ],
+    "start": "2026-11-15T02:25:22.036407+00:00",
+    "end": "2026-11-15T02:25:22.798075+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-conformance-before",
+    "path": "product-fixes--cycle2-conformance-before",
+    "argv": [
+      "env",
+      "MCP_SERVER_TOKEN=[REDACTED]",
+      "work/node-v24.22.1-darwin-arm64/bin/node",
+      "work/inspector/cli/dist/index.js",
+      "--no-telemetry",
+      "protocol",
+      "conformance",
+      "--url",
+      "http://127.0.0.1:8875/mcp",
+      "--access-token",
+      "[SYNTHETIC CREDENTIAL REDACTED]",
+      "--protocol-version",
+      "2025-11-25",
+      "--check-timeout",
+      "2000",
+      "--reporter",
+      "json-summary"
+    ],
+    "start": "2026-11-15T02:22:29.421739+00:00",
+    "end": "2026-11-15T02:22:30.805881+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-001-003.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-regression-before",
+    "path": "product-fixes--cycle2-regression-before",
+    "argv": [
+      "node",
+      "node_modules/vitest/vitest.mjs",
+      "run",
+      "--project",
+      "sdk",
+      "sdk/tests/mcp-conformance/http-rejection-wire.test.ts"
+    ],
+    "start": "2026-11-15T02:22:57.278527+00:00",
+    "end": "2026-11-15T02:22:57.811123+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-regression-red",
+    "path": "product-fixes--cycle2-regression-red",
+    "argv": [
+      "node",
+      "node_modules/vitest/vitest.mjs",
+      "run",
+      "--root",
+      "sdk",
+      "--config",
+      "sdk/vitest.config.ts",
+      "tests/mcp-conformance/http-rejection-wire.test.ts"
+    ],
+    "start": "2026-11-15T02:23:09.415961+00:00",
+    "end": "2026-11-15T02:23:09.587259+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-regression-red-valid",
+    "path": "product-fixes--cycle2-regression-red-valid",
+    "argv": [
+      "npm",
+      "exec",
+      "-w",
+      "@mcpjam/sdk",
+      "--",
+      "vitest",
+      "run",
+      "tests/mcp-conformance/http-rejection-wire.test.ts"
+    ],
+    "start": "2026-11-15T02:23:14.639321+00:00",
+    "end": "2026-11-15T02:23:15.918894+00:00",
+    "exit_status": 1,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-sdk-build",
+    "path": "product-fixes--cycle2-sdk-build",
+    "argv": [
+      "npm",
+      "run",
+      "build",
+      "-w",
+      "@mcpjam/sdk"
+    ],
+    "start": "2026-11-15T02:24:36.396795+00:00",
+    "end": "2026-11-15T02:25:05.136521+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-sdk-regressions",
+    "path": "product-fixes--cycle2-sdk-regressions",
+    "argv": [
+      "npm",
+      "exec",
+      "-w",
+      "@mcpjam/sdk",
+      "--",
+      "vitest",
+      "run",
+      "tests/mcp-conformance/http-rejection-wire.test.ts",
+      "tests/mcp-conformance/wire-observations.test.ts",
+      "tests/mcp-conformance/wire-schema.test.ts",
+      "tests/mcp-conformance/wire-schema.integration.test.ts"
+    ],
+    "start": "2026-11-15T02:23:42.862818+00:00",
+    "end": "2026-11-15T02:23:44.655390+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-sdk-typecheck",
+    "path": "product-fixes--cycle2-sdk-typecheck",
+    "argv": [
+      "npm",
+      "run",
+      "typecheck",
+      "-w",
+      "@mcpjam/sdk"
+    ],
+    "start": "2026-11-15T02:24:00.571796+00:00",
+    "end": "2026-11-15T02:24:10.121957+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  },
+  {
+    "id": "product-fixes:cycle2-slop",
+    "path": "product-fixes--cycle2-slop",
+    "argv": [
+      "npm",
+      "run",
+      "slop:check"
+    ],
+    "start": "2026-11-15T02:24:00.571839+00:00",
+    "end": "2026-11-15T02:24:01.009140+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [],
+    "source_group": "product-fixes"
+  }
+]

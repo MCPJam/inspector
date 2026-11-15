@@ -1,0 +1,5 @@
+{"seconds": 4.728047847747803, "stream": "stdout", "data": "Usage: mcpjam tools call [options]\n  --tool-name <tool>            Tool name\n  --name <tool>                 Alias for --tool-name\n  --tool-args <json>            Tool parameter object as JSON, @path, or - for\n  --params <json>               Alias for --tool-args\n  --tool-args-stdin             Read tool parameter JSON from stdin\n  --args <arg...>               Preferred stdio command arguments. Pass multiple\n"}
+{"seconds": 4.933838367462158, "stream": "stdout", "data": "== {\"a\":2,\"b\":3}\n"}
+{"seconds": 10.422954082489014, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":12}\n\n== {\"a\":\"x\"}\n"}
+{"seconds": 18.33177089691162, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"a and b must be finite numbers\"}],\"isError\":true,\"_durationMs\":45}\n"}
+{"seconds": 18.334269523620605, "stream": "stdout", "data": "\n"}

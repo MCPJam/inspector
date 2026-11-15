@@ -1,0 +1,18 @@
+{"seconds": 1093.4208991527557, "stream": "stdout", "data": "  12/12 Mean: 0.333 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:18:11 0:00:00"}
+{"seconds": 1093.4213399887085, "stream": "stdout", "data": "\n"}
+{"seconds": 1093.422875881195, "stream": "stdout", "data": "adhoc • codex • gpt-6.1-sol\n"}
+{"seconds": 1093.4232549667358, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃ Pass@2 ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩\n│      6 │          0 │ 0.333 │  0.500 │\n└────────┴────────────┴───────┴────────┘\n"}
+{"seconds": 1093.423325061798, "stream": "stdout", "data": "\n"}
+{"seconds": 1093.4235999584198, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 0.0    │     4 │\n│ 1.0    │     2 │\n└────────┴───────┘\n"}
+{"seconds": 1093.4236290454865, "stream": "stdout", "data": "\n"}
+{"seconds": 1093.42413687706, "stream": "stdout", "data": "adhoc • claude-code • claude-sonnet-5-5\n"}
+{"seconds": 1093.4244930744171, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃ Pass@2 ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩\n│      6 │          0 │ 0.000 │  0.000 │\n└────────┴────────────┴───────┴────────┘\n"}
+{"seconds": 1093.4245409965515, "stream": "stdout", "data": "\n"}
+{"seconds": 1093.4247720241547, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 0.0    │     6 │\n└────────┴───────┘\n"}
+{"seconds": 1093.4247958660126, "stream": "stdout", "data": "\n"}
+{"seconds": 1093.4249348640442, "stream": "stdout", "data": "Job Info\n"}
+{"seconds": 1093.4250161647797, "stream": "stdout", "data": "Total runtime: 18m 11s\n"}
+{"seconds": 1093.4251489639282, "stream": "stdout", "data": "Results written to \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/patched-priority-v13/result.json\n"}
+{"seconds": 1093.4252700805664, "stream": "stdout", "data": "Inspect results by running `harbor view \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs`\n"}
+{"seconds": 1093.425364971161, "stream": "stdout", "data": "Share results by running `harbor upload \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/patched-priority-v13`\n"}
+{"seconds": 1093.425460100174, "stream": "stdout", "data": "\n"}

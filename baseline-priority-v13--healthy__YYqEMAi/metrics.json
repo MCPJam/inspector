@@ -1,0 +1,54 @@
+[
+  {
+    "source": "verifier/metrics.json",
+    "metrics": {
+      "schema_version": 1,
+      "simulation": true,
+      "prompt": "B",
+      "task_success": true,
+      "first_meaningful_result": true,
+      "server_observed_successful_tool_call": true,
+      "time_to_first_result_seconds": 45.87964129447937,
+      "first_conformance_result": null,
+      "first_eval_completed": true,
+      "server_observed_simulated_eval": true,
+      "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+      "correct_diagnosis": null,
+      "successful_recovery": null,
+      "auth_refusal_count": 0,
+      "credit_refusal_count": 0,
+      "repeated_ineffective_requests": 0,
+      "state_preserved": true,
+      "duplicate_charges": 0,
+      "charge_count": 3,
+      "synthetic_credits_remaining": 17,
+      "human_handoff_correct": null,
+      "credit_cost_understanding": null,
+      "errors_explain_cause_action_actor": null,
+      "evidence_completeness": true,
+      "mcpjam_tool_event_ids": [
+        "a19972aad5c34ffc9d41752d3ae183ea"
+      ],
+      "mcpjam_eval_event_ids": [
+        "1e60c0c571cb4d81a696adef3bbf6d40",
+        "2169e7b8b7f4466a81ce4917e1765d09"
+      ],
+      "reproducible_artifacts": [
+        "mcpjam-validation/first-result.json",
+        "mcpjam-validation/README.md",
+        "mcpjam-validation/latest-iterations.json",
+        "mcpjam-validation/iterations.json",
+        "mcpjam-validation/run-eval.sh",
+        "mcpjam-validation/docs/tools.md",
+        "mcpjam-validation/docs/local-evals.md",
+        "mcpjam-validation/docs/evals.md",
+        "mcpjam-validation/docs/cli.md"
+      ],
+      "command_count": 44,
+      "reward": 1.0,
+      "request_count": 254,
+      "workspace_collected": true,
+      "command_evidence_collected": true
+    }
+  }
+]

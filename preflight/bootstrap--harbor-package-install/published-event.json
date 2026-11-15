@@ -1,0 +1,36 @@
+{
+  "id": "bootstrap:harbor-package-install",
+  "path": "bootstrap--harbor-package-install",
+  "argv": [
+    "env",
+    "UV_CACHE_DIR=$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/cache/uv",
+    "uv",
+    "pip",
+    "install",
+    "--python",
+    "work/venv/bin/python",
+    "harbor"
+  ],
+  "start": "2026-11-15T01:13:01.114858+00:00",
+  "end": "2026-11-15T01:13:20.649541+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg",
+    "outcome-004.svg",
+    "outcome-005.svg",
+    "outcome-006.svg",
+    "outcome-007.svg",
+    "outcome-008.svg",
+    "outcome-009.svg",
+    "outcome-010.svg",
+    "outcome-011.svg",
+    "outcome-012.svg",
+    "outcome-013.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

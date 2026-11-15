@@ -1,0 +1,100 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.control.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.control.json",
+    "sha256": "dd368d1a61417e9f8b7ff0b8eef0f1cb47b2563614dc99a09cdb6145fd48c477"
+  },
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "0daa66b0c94aa141d69efa9e8aa740e170f74358bbd9a0c39d58a14ec67dac46"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcp-evaluation/resume.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcp-evaluation/requests.jsonl",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcp-evaluation/requests.jsonl",
+    "sha256": "22cd91471a547842fe8666928e8159a4afcc1cb5658ce01c0059cc4f449f3ad2"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcp-evaluation/README.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/mcp-evaluation/README.md",
+    "sha256": "5a536dedc5f3daf984946f3487b366884e6144ab44dd20072d09054d766314bb"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/mcp-evaluation/api.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/resume/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/fixture/state.json",
+    "sha256": "26a2eebd7b0abc64cdccaeadefb4a421077a0885678164f9fb305d522ec14bae"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/resume.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/trace-run_fixture_1_0.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcp-evaluation/trace-run_fixture_1_0.json",
+    "sha256": "5f319c2f2d17db4ae05d075df1999070602dbc84dcf726805ff30543d7e5856a"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/requests.jsonl",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcp-evaluation/requests.jsonl",
+    "sha256": "4a91fbb83c8447d87b0b96bc708ae1b720612d97c723a9fbc0e04a55aeb42820"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/README.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcp-evaluation/README.md",
+    "sha256": "73437d5a740926f05075b2e1844e59febf4828087246ac351782c8d1daee7cfe"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/api.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/RESULTS.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcp-evaluation/RESULTS.md",
+    "sha256": "5607572a115e741c419776254edbf6a6c98cb7b12e9f4689556ffaff8f4f2db3"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/launch.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcp-evaluation/launch.json",
+    "sha256": "990bb1de6095b1f79f0cba474092ceabc22fcf997483b43bc43b41a1f1fc351e"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/run-request.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcp-evaluation/run-request.json",
+    "sha256": "5db3623e8b05c342500add9141c464c15ed83ac8954bc8d5f44b58d4dcd82c4e"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/status.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcp-evaluation/status.json",
+    "sha256": "02ec1b15eaf58fbf74710b194e46fb25c1f1bc0693627db3795f0b9ecd247309"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/mcp-evaluation/iterations.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/mcp-evaluation/iterations.json",
+    "sha256": "b047b0988cb7c3b597d1a57497cc8375defb850b3aa6ed5dbc0f11393684375d"
+  }
+]

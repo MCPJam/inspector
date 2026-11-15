@@ -1,0 +1,16 @@
+Usage: mcpjam cloud eval status [options]
+
+Get the status and summary of an eval run
+
+Options:
+  --run <id>                     Eval run ID (from `eval run`)
+  --project <id-or-name>         Project name or ID (defaults to the most
+                                 recently updated project)
+  --diagnostics-limit <n>        Failure diagnostics per page (1–200; default
+                                 20)
+  --diagnostics-cursor <cursor>  Cursor from a previous response's
+                                 decisionSummary.diagnostics.nextCursor
+  --stages                       Print all six user-value chain rows for each
+                                 failing trial (human output)
+  -h, --help                     display help for command
+{"error":{"code":"USAGE_ERROR","message":"error: required option '--run <id>' not specified"}}

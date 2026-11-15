@@ -1,0 +1,22 @@
+{
+  "event_id": "17f955f61490487e8d0b4c99733e0a18",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707379024-n4azkr.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; sed -n 3117,3150p ref.md; grep -n -iE \"cloud eval run|cloud eval estimate|cloud eval (usage|cost)|dry-run|estimate\" ref.md | head' < /dev/null && pwd -P >| /tmp/claude-3581-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:49:51.649052+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.003665447235107422,
+  "end": "2026-11-15T01:49:51.652641+00:00"
+}

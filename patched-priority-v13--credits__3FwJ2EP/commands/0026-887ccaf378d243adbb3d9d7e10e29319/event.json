@@ -1,0 +1,22 @@
+{
+  "event_id": "887ccaf378d243adbb3d9d7e10e29319",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -sS -D /workspace/mcp-eval/mcp-init-headers.txt http://fixture:8765/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"repeatable-evaluation\",\"version\":\"1.0\"}}}' -o /workspace/mcp-eval/mcp-init.json && cat /workspace/mcp-eval/mcp-init.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:07:50.163937+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.005912065505981445,
+  "end": "2026-11-15T02:07:50.169771+00:00"
+}

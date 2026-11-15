@@ -1,0 +1,10 @@
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":6}
+{"valid":true,"file":".mcpjam/evals/arith.yaml","suite":{"id":"s_arith","name":"Arithmetic fixture","cases":1,"enabledCases":1},"findings":[]}
+Run a suite file locally against your MCP servers (BYOK or MCPJam-hosted
+inference). Results are never uploaded.
+  --inference <mode>            auto (default), byok, or mcpjam
+  --reporter <format>           Write a report to stdout: json-summary,
+  --out <path>                  Write the report to this file (the --reporter
+  --api-key <key>               MCPJam sk_ API key (overrides MCPJAM_API_KEY)
+  --project <id-or-name>        Project name or ID (defaults to the most
+                                recently updated project)

@@ -1,0 +1,22 @@
+{
+  "event_id": "228d0b2058714d79b715d6ffcb00db77",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708087652-h26mvy.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; H=\"Authorization: Bearer $MCPJAM_API_KEY\"; B=$MCPJAM_API_URL; curl -s -H \"$H\" $B/organizations/org_fixture/spend-budget; echo; curl -s -H \"$H\" -X POST -H '\"'\"'content-type: application/json'\"'\"' -d '\"'\"'{\"suiteId\":\"suite_fixture\"}'\"'\"' -i $B/projects/project_fixture/eval-runs | tee run1.txt | head -c 1500' < /dev/null && pwd -P >| /tmp/claude-e970-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:01:43.995119+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.00992584228515625,
+  "end": "2026-11-15T02:01:44.004981+00:00"
+}

@@ -1,0 +1,1 @@
+{"items": [{"name": "add", "description": "Add two finite numbers.", "inputSchema": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}}]}{"runId": "run_fixture_1", "suiteId": "suite_fixture", "status": "running", "servers": [{"id": "server_fixture", "name": "Arithmetic"}], "environment": null}

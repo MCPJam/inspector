@@ -1,0 +1,93 @@
+{"status":"linked","path":"/workspace/.mcpjam/project.json","project":{"id":"project_fixture","name":"Fixture"},"apiUrl":"http://fixture:8765/api/v1"}
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"items":[{"id":"server_fixture","name":"Arithmetic","projectId":"project_fixture","transportType":"http","url":"http://fixture:8765/mcp","enabled":true,"useOAuth":false,"hasClientSecret":false}],"otherProjects":[]}
+to revoke the token where the issuer supports revocation. That is best effort,
+and it also ends any copy of the same token you still hold. The default
+account can't be deleted while other accounts exist (`409`): make another
+account the default first.
+
+### The deprecated import route
+
+`POST .../oauth/import-tokens` still works, and is removed 90 days after the
+accounts API shipped. It uploads to your default account, creating an unnamed
+one when the server has none, and keeps its old body and its old
+`{ imported, expiresAt }` answer. Every answer carries `Deprecation: true`, a
+`Sunset` date and a `Link` to `.../accounts`.
+
+An account this route creates is hosted-only. An existing default it writes
+into keeps whatever rule it had. Its `serverUrl` must be the URL saved in the
+project, or the answer is `400`. `authorizationServerUrl`, `oauthResourceUrl`
+and `tokens.id_token` are accepted and ignored. Move to
+`PUT .../accounts/{account}`, which names the account it writes.
+
+The error codes these routes add to `details.code` are listed in the
+[error code reference](https://docs.mcpjam.com/troubleshooting/error-codes.md#server-account-errors).
+
+## Run evals from the API
+
+The shortest useful loop — create a run with one inline test, then poll:
+
+```bash theme={"theme":"css-variables"}
+# 1. Create (responds 202 immediately; -f + jq -e fail fast on errors)
+RUN_ID=$(curl -fsS -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "suiteName": "smoke",
+    "serverIds": ["'$SERVER_ID'"],
+    "tests": [{
+      "title": "echo works",
+      "runs": 1,
+      "model": "anthropic/claude-haiku-4.5",
+      "provider": "anthropic",
+      "steps": [
+        { "id": "s1", "kind": "prompt", "prompt": "Use the echo tool to say hi" },
+        {
+          "id": "s2",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolCalledWith",
+            "toolName": "echo",
+            "args": { "args": { "text": "hi" } }
+          }
+        }
+      ]
+    }]
+  }' | jq -er .runId)
+
+# 2. Poll until status is completed | failed | cancelled | timed_out
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+# 3. If it did not pass, read the decision summary FIRST
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/decision-summary" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+# 4. Or go straight to per-iteration tool calls, token usage, latency
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/iterations" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+```
+
+The decision summary composes steps 2 and 4 into one versioned object so every
+client reads a run the same way. Four things to know before gating on it:
+
+* **`measurementUnit` ships with every count.** Under per-case grading the
+  counts are case-execution *variants*, with iterations as trials inside them;
+  under a suite-wide accuracy threshold they are trials. The same suite reports
+  a different total under each — 3 against 15 for three cases run five times —
+  so a count without its unit is not a fact, and a rate is never converted
+  across that line.
+* **It explains the verdict; it never re-decides it.** The run's own decision is
+  the authority and is carried through on `decision`. The per-trial
+  `diagnostics` sit underneath it — a case can pass with a failing trial in it,
+  so tallying diagnostics gives a different answer than the platform reached.
+* **`verdict: "notEstablished"` is not a failure and not `inconclusive`.** It
+  means no verdict exists at all (unfinished, stopped early, or undecidable);
+  `undecided.reason` says which. `inconclusive` *is* a decision — the validity
+  phase ran and withheld a verdict.
+* **`diagnostics.complete` says whether you have the whole list.** A page
+  fetched with a `cursor` is never complete, and `scannedIterations` separates
+  "nothing failed" from "we did not look".
+
+Evidence is scoped to the claim it supports: for a measured failure the span
+ids, prompt indexes and reasons come from the first failed stage's row alone,

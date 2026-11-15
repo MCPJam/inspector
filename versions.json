@@ -1,0 +1,109 @@
+{
+  "benchmark_version": "1.3.0",
+  "baseline_commit": "c8c4d47141ee0374ca83ae89a8356414026cd5ab",
+  "mcpjam_cli_version": "6.2.2",
+  "mcpjam_sdk_version": "10.7.0",
+  "harbor_version": "0.26.0",
+  "claude_cli_version": "2.1.323",
+  "codex_cli_version": "0.160.0",
+  "claude_model": "claude-sonnet-5-5 (resolved from sonnet in preliminary runs; pinned for v1.2)",
+  "codex_model": "gpt-6.1-sol",
+  "node": "24.22.1",
+  "host": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+  "container": "Debian bookworm Linux arm64",
+  "docker_server": "29.5.2",
+  "compose": "5.7.1",
+  "seed": 42,
+  "budgets": {
+    "agent_phase_seconds": 240,
+    "claude_turns": 30,
+    "claude_reported_cost_cap_usd": 2,
+    "harness_retries": 0,
+    "configured_job_concurrency": 2,
+    "product_real_spending_usd": 0,
+    "synthetic_starting_credits": {
+      "healthy": 20,
+      "auth": 20,
+      "credits": 0
+    },
+    "synthetic_resolved_credits": 20,
+    "provider_billing": "existing subscriptions; quota use separate from MCPJam credits; no top-ups or purchases",
+    "codex_turn_limit": "No supported native max-turn flag; shell-command prompt bound40 and hard wall-time240s. Not a hard token/turn cap.",
+    "global_concurrency_cap": 4,
+    "concurrency_note": "Two trials per job; baseline and patched priority jobs overlap at most four trials total. Per-trial CPU/memory/time bounds unchanged. Wall-time comparisons descriptive, not controlled causal estimates."
+  },
+  "context": "https://www.figma.com/board/CXX0rzePjHb6yBP1nVzoI6/Activation---Billing-\u2014-Brainstorm",
+  "kestral": "https://app.kestral.ai/workspace/yhNILB2/task/1ZGSn6st",
+  "package_sha256": {
+    "baseline": {
+      "mcpjam-sdk-10.7.0.tgz": "aa702044bfc27632878f25a21567a69fe053737e14a34b6653fe250434ac86d4",
+      "mcpjam-cli-6.2.2.tgz": "f11a23aefcf48f017383b0fce3fc0c83177dfda39c605f7306e65c17093f0220",
+      "mcpjam-evaluators-0.6.0.tgz": "13d74feda786861ef6edac4b7e2649cb48d3800e761554258fabca521786459f"
+    },
+    "patched": {
+      "mcpjam-sdk-10.7.0.tgz": "aa702044bfc27632878f25a21567a69fe053737e14a34b6653fe250434ac86d4",
+      "mcpjam-cli-6.2.2.tgz": "7f3f197a30698030308eb758a82cc95b159e61df1d193fe5b10fb16e4c780b76",
+      "mcpjam-evaluators-0.6.0.tgz": "13d74feda786861ef6edac4b7e2649cb48d3800e761554258fabca521786459f"
+    },
+    "patched_cycle2": {
+      "mcpjam-sdk-10.7.0.tgz": "dd4692257f9df997a198e9c682f91efd78dd8dc1ed3aace06817803b67ea0d22",
+      "mcpjam-cli-6.2.2.tgz": "7f3f197a30698030308eb758a82cc95b159e61df1d193fe5b10fb16e4c780b76",
+      "mcpjam-evaluators-0.6.0.tgz": "97107e3f7c1b7abc925da9cd4fc8d6b541d5b0b49da09179b98b67ccf351e931"
+    }
+  },
+  "study_bounds": {
+    "valid_trial_target": 32,
+    "priority_scenarios": [
+      "healthy",
+      "credits"
+    ],
+    "trials_per_priority_agent_phase": 3,
+    "auth_per_agent_phase": 1,
+    "held_out_discovery_per_agent": 1,
+    "fix_cycles_maximum": 2,
+    "pilot_and_infrastructure_runs": "retained separately; excluded from valid denominators",
+    "provider_cost_limit": "Claude $2 per phase; Codex subscription quota with240s phase timeout, no hard monetary cap",
+    "final_comparison_version": "1.3.0",
+    "provider_recovery_replacement_trials_max": 2,
+    "final_scheduled_trials_including_provider_blocks": 34,
+    "provider_recovery_note": "Two Claude auth attempts received provider401 expired OAuth; native tool-free check refreshed existinglogin; fresh named replacements preserveblockedattempts. Harborautomaticretries remain0.",
+    "second_fix_cycle_targeted_trials": 2,
+    "second_cycle_note": "Narrow conformance GET405 validation correction; existing guidancecomparison remainscycle1. Finalbuild receives freshauthCbothagents plusheldoutA."
+  },
+  "superseded_unrun_package_sha256": {
+    "mcpjam-sdk-10.7.0.tgz": "aa702044bfc27632878f25a21567a69fe053737e14a34b6653fe250434ac86d4",
+    "mcpjam-cli-6.2.2.tgz": "ba6600c3e2cdb8d6a31be3645aac7bd2cf648c70dd65eb7565034ee84c22543b",
+    "mcpjam-evaluators-0.6.0.tgz": "13d74feda786861ef6edac4b7e2649cb48d3800e761554258fabca521786459f"
+  },
+  "benchmark_corrections": {
+    "1.0": "API base prefix and fixture coverage corrections; harness-invalid",
+    "1.1": "separate verifier packaging corrections; harness-invalid",
+    "1.2": "negative control exposed false responseContains pass; preliminary and excluded from final comparison",
+    "1.3": "canonical supported predicates validated, wrong expected response fails, unsupported fields refused without synthetic debit; prompts and reward unchanged"
+  },
+  "patched_product_commit": "2b6c647",
+  "harness_commit": "31573e3",
+  "agent_image_id": "sha256:c9656fab9ce39e7b24e5457c64cc907018f8c9323b34242dda0070fa7aaf0f04",
+  "patched_cycle2_commit": "a6e25a8",
+  "cohort_builds": {
+    "baseline": "baseline",
+    "primary_patched_cycle1": "patched",
+    "patched-cycle2-auth-v13": "patched_cycle2",
+    "heldout-discovery-v13": "patched_cycle2"
+  },
+  "final_source_commit": "cf0d4e07e92bbafc20b646bc76f81723d49f3774",
+  "final_run_inventory": {
+    "primary_attempts": 30,
+    "primary_usable": 28,
+    "provider_blocked": 2,
+    "cycle2_targeted": 2,
+    "heldout_discovery": 2,
+    "final_attempts": 34,
+    "usable_final_trials": 32,
+    "preserved_preliminary_reports": 24
+  },
+  "heldout_build_provenance": {
+    "claude-code": "Verified fixture delivery of patched_cycle2 CLI/SDK archives",
+    "codex": "Public npm CLI6.2.2/SDK10.7.0 via --prefix; no fixture archive requests; exact source commit unverified; not patch treatment evidence"
+  }
+}

@@ -1,0 +1,3 @@
+{"seconds": 0.014076948165893555, "stream": "stdout", "data": "/workspace\n"}
+{"seconds": 0.01459646224975586, "stream": "stdout", "data": "total 12\ndrwxr-xr-x 1 root root 4096 Nov 15 01:25 .\ndrwxr-xr-x 1 root root 4096 Nov 15 02:15 ..\n-rw-r--r-- 1 root root   64 Nov 15 01:25 mcp.json\n"}
+{"seconds": 0.014922142028808594, "stream": "stdout", "data": "{\"mcpServers\":{\"arithmetic\":{\"url\":\"http://fixture:8765/mcp\"}}}\n"}

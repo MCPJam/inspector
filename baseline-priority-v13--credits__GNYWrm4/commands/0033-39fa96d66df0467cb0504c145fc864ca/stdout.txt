@@ -1,0 +1,88 @@
+> Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths; see [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md).
+To convert existing promptfoo, pytest, Jest, or CSV tests, use the [MCP eval import skill](https://github.com/MCPJam/inspector/tree/main/skills/mcpjam-eval-import).
+npx skills add mcpjam/inspector --skill mcpjam-eval-import
+To drive MCPJam's hosted eval tools (launch a run, poll it to a verdict, and triage a failure down to the step) use the [run MCPJam evals skill](https://github.com/MCPJam/inspector/tree/main/skills/run-mcpjam-evals). This one is about running suites that already exist, not writing them.
+npx skills add mcpjam/inspector --skill run-mcpjam-evals
+These stay at the program root. They reject `--api-key` / `--api-url` / `--project`, except `test`, which accepts them only to reach MCPJam-hosted inference.
+| [`test`](https://docs.mcpjam.com/cli/local-evals) | Run an eval suite file locally (BYOK or MCPJam-hosted inference); never uploads | `test <file>` |
+| [`oauth`](https://docs.mcpjam.com/cli/oauth-conformance) | Test OAuth flows and conformance against an MCP server | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
+| [`readiness`](https://docs.mcpjam.com/cli/reference#readiness-hosted-commands) | Grade a server against a publisher's directory. Hosted `start` / `status` / `list` / `cancel` / `report` stay here (leaf `--api-key`; no Cloud project link) | `check`, `start claude`, `start openai`, `start muse`, `status`, `list`, `cancel`, `report` |
+### MCPJam Cloud
+Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (before or after descendants). `mcpjam oauth login` is MCP-server OAuth; `mcpjam cloud login` is your MCPJam account.
+| [`cloud`](https://docs.mcpjam.com/cli/reference#cloud-workspace) | Account, project link, and workspace | `login`, `logout`, `whoami`, `link`, `status`, `organizations`, `projects`, `sessions` |
+| [`cloud eval`](https://docs.mcpjam.com/cli/reference#cloud-eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
+| [`cloud tunnel`](https://docs.mcpjam.com/cli/reference#cloud-tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel --server <name> <url>`, `tunnel --server <name> -- <command>` |
+| [`cloud clients`](https://docs.mcpjam.com/cli/reference#cloud-clients-commands) | Manage clients in your hosted MCPJam projects (`cloud hosts` is a deprecated alias) | `list`, `get`, `create`, `update`, `servers`, `duplicate`, `delete`, `templates` |
+| [`cloud environments`](https://docs.mcpjam.com/cli/reference#cloud-environments-commands) | Manage project environments, the host and server bundles eval suites and goals run against | `list`, `get`, `resolve`, `archive`, `ensure-adhoc` |
+| [`cloud projects servers`](https://docs.mcpjam.com/cli/reference#cloud-projects-servers-commands) | Connect MCP servers to a project and manage pending connection requests | `connect`, `connect-status`, `connect-cancel` |
+Also under `mcpjam cloud`: `goals` (`journeys` is a deprecated alias), `personas`, `swarms`, and `studies` (which publishes an environment for outside testers and reads what they did; `scenarios` and `user-testing` are deprecated aliases for it). Full flag tables are in the [command reference](https://docs.mcpjam.com/cli/reference.md).
+## Cloud credentials and API URL
+`--api-key` and `--api-url` are declared on `mcpjam cloud` and work before or after descendants (`mcpjam cloud --api-key sk_… eval list` and `mcpjam cloud eval list --api-key sk_…` are the same). Local commands, including hosted `readiness`, reject those flags at the program root. Hosted `readiness` still takes leaf `--api-key`.
+Credential precedence for Cloud commands:
+1. `--api-key`: must be an `sk_` key. A `mcpjam_…` legacy key is a usage error.
+2. `MCPJAM_API_KEY`: same `sk_` rule. A legacy value in this env var is ignored (with a warning) so SDK eval reporting can still use it.
+3. Stored OAuth from `mcpjam cloud login`
+4. Missing: Cloud commands fail with login guidance before they hit the network (`mcpjam cloud status` reports `missing` instead)
+3. The server saved with the OAuth login (only when that login is the credential; a login saved before logins recorded their server counts as MCPJam Cloud, and one whose recorded server is not a usable address is refused with exit `3`)
+Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) decides its server when it starts, before it contacts anything. An explicit `--api-url`, `MCPJAM_API_URL` or `MCPJAM_BASE_URL` that is not an `http(s)` URL, or that carries credentials, a query or a fragment, is a usage error (exit `2`), and so are the two variables naming different servers. The error masks credentials, a query and a fragment, and does not repeat a value that is not a URL. A saved login is only sent to its own server: when it is the credential and the order picks another server, the command exits `3` before any request. `mcpjam cloud status` uses the same checks but stays network-free: it still emits the complete JSON report, sets `ok: false`, includes `credential.valid` / `deployment.valid` plus an `error` string, and exits `1`. Missing credentials are informational (`credential.valid: null`) and successful.
+Successful Cloud commands print an audience line to stderr (`Using MCPJam Cloud as … · project: … · <apiUrl>`). `--quiet` suppresses it. Machine-readable JSON stays on stdout. `cloud status` redacts API keys.
+## Cloud project scope
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Local Evals
+
+> Run an MCPJam eval suite file on your machine with mcpjam test with local results and an MCPJam identity
+
+`mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and authenticate the run with MCPJam. With MCPJam-hosted inference it uses your existing CLI login and billing.
+
+Results are **never uploaded**. The command writes results to your terminal and, if you ask, to a report file. It records the run start with MCPJam. Like every command, it sends the CLI's single anonymous [telemetry](https://docs.mcpjam.com/cli/telemetry.md) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
+
+## Eval identity and local data
+
+Run `mcpjam cloud login` locally, or set `MCPJAM_API_KEY` to an organization `sk_` key in CI. The SDK also accepts `apiKey` or `mcpjamAuth` in run options. Explicit credentials take precedence over `MCPJAM_API_KEY`, which takes precedence over the saved CLI login. An invalid explicit credential never falls back to another account. CI never starts an interactive login. Ask an organization admin for a key if you cannot create one.
+
+Every logical run needs an online start response. MCPJam retries transient failures within ten seconds, then stops before execution. A prior successful run does not enable offline execution. The CLI resolves the project using its existing `--project`, environment, and linked-project settings; a key can only access its own organization.
+
+With results uploads disabled, the start-run request sends only the credential in the authorization header, any MCPJam API headers you configure through the SDK's `inference.resolveMcpjam`, project selection, a new run-start ID, client version and surface (SDK, CLI, or Vitest), planned iteration count, provider names, and whether a client profile is used (`unknown` for custom executors). The server resolves the organization and account. The start-run request sends no prompts, outputs, tool calls, or server URLs. MCPJam-hosted inference still sends prompts through MCPJam to the model, as before. Retries reuse the same ID. Planned iterations are intent, not completed usage or a charge. This release adds no debit, quota draw, or balance refusal.
+
+`DO_NOT_TRACK`, `MCPJAM_TELEMETRY_DISABLED`, and CLI telemetry settings disable analytics, not the required run-start request. Results remain local unless result uploading is enabled separately.
+
+## Quick start
+
+### 1. Write a suite
+
+Save this as `.mcpjam/evals/example.yaml`:
+
+```yaml theme={"theme":"css-variables"}
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_notes_example
+  name: Notes server
+target:
+  servers:
+    - name: notes
+defaults:
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5
+  iterations: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_reads_a_note
+    title: reads the note it was asked about
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: What does note 7 say?
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: read_note
+  - id: c_never_de/usr/local/bin/npx

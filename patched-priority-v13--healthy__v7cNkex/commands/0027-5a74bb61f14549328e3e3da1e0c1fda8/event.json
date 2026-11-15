@@ -1,0 +1,22 @@
+{
+  "event_id": "5a74bb61f14549328e3e3da1e0c1fda8",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -fsSL -H \"Authorization: Bearer $MCPJAM_API_KEY\" \"$MCPJAM_API_URL/projects/project_fixture/servers\" -o servers.json && cat servers.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:58:02.974124+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.013276100158691406,
+  "end": "2026-11-15T01:58:02.987351+00:00"
+}

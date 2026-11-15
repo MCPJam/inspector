@@ -1,0 +1,7 @@
+HTTP/1.1 403 Forbidden
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 02:12:06 GMT
+Content-Type: application/json
+Content-Length: 176
+
+{"code": "FORBIDDEN", "message": "This work requires platform credits. Add credits or contact your organization administrator.", "details": {"reason": "PLATFORM_FEE_REQUIRED"}}

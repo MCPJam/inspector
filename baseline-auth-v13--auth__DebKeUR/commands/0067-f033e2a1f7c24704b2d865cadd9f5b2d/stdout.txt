@@ -1,0 +1,114 @@
+Usage: mcpjam conformance run [options]
+
+Run Protocol, Apps, and Tasks (default). OAuth is opt-in via --suite oauth.
+
+Options:
+  --suite <suite>               Suite to run: protocol, apps, tasks, or oauth.
+                                Repeatable. Default: protocol, apps, tasks.
+                                (default: [])
+  --protocol-version <version>  Pin one MCP protocol version for every suite in
+                                the run. Default: the version the server
+                                negotiates.
+  --check-id <id>               Specific check ID to run. Repeat for multiple.
+                                Each id goes to the suite that owns it; a suite
+                                with none runs all its checks. (default: [])
+  --advice-id <id>              Specific advice ID to run. Repeat for multiple.
+                                Each id goes to the suite that owns it; a suite
+                                with none runs all its advice. (default: [])
+  --check-timeout <ms>          Per-check timeout in milliseconds for the
+                                protocol suite
+  --fixtures-file <path>        JSON file naming primitives that are SAFE TO
+                                EXECUTE, so checks that need a real result can
+                                run:
+                                {"toolCalls":[{"toolName":"echo","arguments":{}}],"promptGets":[{"promptName":"welcome"}]}.
+                                Nothing is ever called without this.
+  --fixture-tool <name>         Name of a tool that is safe to call with no
+                                arguments. Repeat for multiple. For tools that
+                                need arguments, use --fixtures-file. (default:
+                                [])
+  --fixture-prompt <name>       Name of a prompt that is safe to render with no
+                                arguments. Repeat for multiple. For prompts that
+                                need arguments, use --fixtures-file. (default:
+                                [])
+  --log-probe-tool <name>       Name of a tool that writes logs and is safe to
+                                call a few times. Lets the 2026-07-28 logging
+                                check and log level advice run. Nothing is
+                                called without this.
+  --log-probe-args <json>       Arguments for --log-probe-tool, as a JSON
+                                object. Default: {}.
+  --log-probe-level <level>     Log level the advice asks --log-probe-tool for:
+                                debug, info, notice, warning, error, critical,
+                                alert, emergency. Default: warning.
+  --log-filter-tool <name>      Name of a tool the log level advice calls
+                                instead of --log-probe-tool. Same rules: it
+                                writes logs and is safe to call. Default:
+                                --log-probe-tool.
+  --log-filter-args <json>      Arguments for --log-filter-tool, as a JSON
+                                object. Default: {}.
+  --log-filter-level <level>    Log level the advice asks --log-filter-tool for:
+                                debug, info, notice, warning, error, critical,
+                                alert, emergency. Default: warning.
+  --input-required-tool <name>  Name of a tool that asks the client for input
+                                and is safe to call. Lets the 2026-07-28
+                                undeclared capability check run. Nothing is
+                                called without this.
+  --input-required-args <json>  Arguments for --input-required-tool, as a JSON
+                                object. Default: {}.
+  --tool-name <tool>            Tool used to provoke a task. Required for
+                                servers whose tools carry no task metadata (the
+                                extension wire).
+  --tool-args <json>            Tool arguments as a JSON object
+  --check-overrides <json>      A different tool for some checks, keyed by check
+                                id:
+                                {"tasks-cancel-ack-shape":{"toolName":"slow_job","toolArguments":{"seconds":5}}}.
+                                Checks left out use --tool-name and --tool-args.
+  --input-responses <json>      Responses to submit when the probed task reports
+                                input_required, keyed by inputRequests key:
+                                {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}.
+                                Without it the run stops as soon as the task
+                                parks on input_required, and the tasks/update
+                                acknowledgement check is not applicable.
+  --poll-timeout <ms>           How long to poll a created task for a terminal
+                                status (default: 30000)
+  --client-metadata-url <url>   Client metadata URL used for CIMD registration
+  --redirect-url <url>          OAuth redirect URL to use for the flow
+  --scopes <scopes>             Space-separated scope string
+  --step-timeout <ms>           Per-step timeout in milliseconds (default:
+                                30000)
+  --print-url                   In interactive mode, print the consent URL to
+                                stderr instead of launching a browser
+  --upload                      Upload results even when MCPJAM_API_KEY is not
+                                otherwise implied
+  --require-upload              Fail the process if reporting is configured but
+                                the UI record cannot be written
+  --oauth-strategy <strategy>   How the OAuth suite signs in: interactive
+                                (default), headless, or client_credentials
+  --registration <strategy>     How the OAuth suite registers its client: auto
+                                (default), dcr, cimd, or preregistered. Auto
+                                uses --client-id when given, else what the
+                                server supports
+  --reporter <reporter>         json-summary or junit-xml
+  --transport <transport>       Explicit transport type: "http" or "stdio"
+  --url <url>                   HTTP MCP server URL
+  --access-token <token>        Bearer access token for HTTP servers
+  --oauth-access-token <token>  OAuth bearer access token for HTTP servers
+  --refresh-token <token>       OAuth refresh token for HTTP servers
+  --client-id <id>              OAuth client ID used with --refresh-token
+  --client-secret <secret>      OAuth client secret used with --refresh-token
+  --credentials-file <path>     Load OAuth credentials from a file created by
+                                oauth login or oauth conformance
+                                --credentials-out
+  --header <header>             HTTP header in "Key: Value" format. Repeat to
+                                send multiple headers. (default: [])
+  --client-capabilities <json>  Client capabilities as JSON, @path, or - for
+                                stdin
+  --command <command>           Command for a stdio MCP server
+  --args <arg...>               Preferred stdio command arguments. Pass multiple
+                                values or repeat the flag.
+  --command-args <arg>          Legacy stdio command argument. Repeat to pass
+                                multiple arguments.
+  -e, --env <env...>            Stdio environment assignment in "KEY=[REDACTED]"
+                                format. Pass multiple values or repeat the flag.
+  --cwd <path>                  Working directory for the stdio MCP server
+                                process
+  -h, --help                    display help for command

@@ -1,0 +1,22 @@
+{
+  "event_id": "d4aa2172945b4f7ba822e55ad1cb44c4",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\np='/workspace/mcp-check/check.py'\ns=open(p).read(); start=s.index(' def rpc_errors(obj):'); end=s.index(' if expected is None:',start)\ns=s[:start]+''' pending={}; errors=[]\n for event in trace.get('_rpcLogs',[]):\n  msg=event.get('message',{}); key=[REDACTED]'id')\n  if event.get('direction')=='send' and key is not None:\n   pending[key]=msg.get('method')\n  elif event.get('direction')=='receive' and pending.get(key)=='tools/call' and 'error' in msg:\n   errors.append(msg['error'])\n'''+s[end:];open(p,'w').write(s)\nPY\ncd /workspace/mcp-check && python3 check.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:29:03.175211+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 4.476768732070923,
+  "end": "2026-11-15T02:29:07.651907+00:00"
+}

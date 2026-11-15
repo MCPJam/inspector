@@ -1,0 +1,17 @@
+{
+  "httpStatus": 404,
+  "request": {
+    "path": "/projects/project_fixture/servers/server_fixture/tools/call",
+    "body": {
+      "toolName": "add",
+      "parameters": {
+        "a": 1.25,
+        "b": 2.5
+      }
+    }
+  },
+  "response": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

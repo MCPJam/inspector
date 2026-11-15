@@ -1,0 +1,119 @@
+Usage: mcpjam cloud projects servers [options] [command]
+
+List and manage the servers saved in a project
+
+Options:
+  --project <id-or-name>    Project name or ID (defaults to the most recently
+                            updated project)
+  -h, --help                display help for command
+
+Commands:
+  create|add [options]      Create a saved MCP server
+  get [options]             Get one saved MCP server
+  revisions [options]       List a saved server's stored revisions, newest
+                            first: captures of its tools and server info
+  revision [options]        Read one stored revision of a saved server: its
+                            tools and server info
+  revision-diff [options]   Compare two stored revisions of a saved server:
+                            tools added, removed and changed, and server info
+                            changes
+  update [options]          Update one saved MCP server
+  delete|remove [options]   Delete one saved MCP server
+  connect [options]         Connect an MCP server URL to a project, authorizing
+                            in a browser if needed
+  connect-status [options]  Check a connection request started by `server
+                            connect`
+  connect-cancel [options]  Cancel a pending connection request started by
+                            `server connect`
+Usage: mcpjam cloud eval [options] [command]
+
+Author and run eval suites in your hosted MCPJam projects
+
+Options:
+  -h, --help                 display help for command
+
+Commands:
+  create [options]           Create a runnable eval suite from authored test
+                             cases (does not run it)
+  list [options]             List the eval suites saved in a project
+  runs [options]             List a suite's run history, newest first
+  revisions [options]        List a suite's settings history, newest first
+  run [options]              Start an eval run of an existing suite, or upload a
+                             versioned suite file and run it. The
+                             upload-and-launch has a 120s deadline overall, not
+                             per request (raise it with the global --timeout
+                             <ms>); --wait-timeout bounds the RUN instead.
+  status [options]           Get the status and summary of an eval run
+  stage-analytics [options]  Read the user-value chain funnel for one run
+                             (--run) or a suite's runs as a trend series
+                             (--suite)
+  route-facts [options]      Read the tool routes a run's trials took — which
+                             paths were used, and which expected tools were
+                             missing or substituted
+  server-facts [options]     Read the server a run was taken against — tool
+                             surface, catalog size, annotation coverage,
+                             tool-metadata signals, and what connect and
+                             discovery observed
+  description-experiment     Propose, start, or read a two-arm tool-description
+                             rewrite experiment
+  cancel [options]           Cancel an in-flight eval run (no-op if already
+                             cancelled; errors if it already finished)
+  rerun [options] <run-id>   Rerun a finished eval run's failed cases as a new
+                             run. The platform picks the cases: any with a trial
+                             that did not complete and pass (cancelled and
+                             skipped trials do not count)
+  judge-backtest [options]   Preview draft grading instructions on recorded
+                             evidence (uses credits)
+  backtest [options]         Preview assertion changes on stored evidence
+                             without changing results
+  judge [options]            Grade a finished eval run with LLM as Judge (SPENDS
+                             your model budget)
+  github                     Run an eval suite on a GitHub repository's pull
+                             requests (GitHub checks)
+  checks                     Deprecated alias for `cloud eval github` — a
+                             repository's GitHub checks, not a case's grading
+                             checks
+  iterations [options]       List per-iteration results for an eval run
+                             (pass/fail, tool calls, tokens, latency)
+  gate [options]             Apply a pass/fail policy to a finished eval run and
+                             set an exit code (0 pass or waived, 1 eval failure,
+                             2 usage, 3 incomplete)
+  compare [options]          Compare a finished eval run against a baseline and
+                             set an exit code (0 pass, 1 regression, 2 usage, 3
+                             incomplete)
+  validate [options]         Validate a local eval suite file offline — no auth,
+                             no network unless --project is passed (0 valid, 1
+                             contract-invalid or unresolved reference, 2
+                             unreadable/oversize/malformed)
+  export [options]           Write a hosted eval suite to a local suite file,
+                             refusing anything it cannot represent losslessly
+  pull [options]             LEGACY: materialize a hosted eval suite into a
+                             corpus lock for @mcpjam/vitest — new work should
+                             use `eval export` (0 clean, 1 drift under --frozen,
+                             2 usage, 3 incomplete)
+  trace [options]            Fetch the full trace for one eval iteration (large:
+                             full message history + spans)
+  steps [options]            Per-authored-step results for one eval iteration:
+                             status (ok/fail/skipped/pending), reason, and
+                             evidence (screenshot/video URLs). The fastest way
+                             to see WHICH step failed and why.
+  screenshot [options]       Show the widget screenshot(s) an eval iteration
+                             rendered — inline when the terminal supports it,
+                             otherwise the image URL
+  video [options]            Get the replay recording an eval iteration made —
+                             prints the URL, or downloads it with --out. A local
+                             widget run records a .webm; an unattended run on a
+                             hosted browser records an .mp4
+  get [options]              Show an eval suite's full settings
+  update [options]           Edit an eval suite's settings (only the flags you
+                             pass change)
+  delete [options]           Permanently delete an eval suite (and its cases and
+                             runs)
+  schedule [options]         Enable or disable scheduled runs for a suite
+  environments               Attach or detach the project environments an eval
+                             suite runs against
+  cases                      List, author, and edit an eval suite's test cases
+  help [command]             display help for command
+/projects/{projectId}/servers {"operationId":"createProjectServer","tags":["Servers"],"summary":"Save a server into a project","description":"Creates a saved MCP server and responds `201` with its detail. This is the provisioning entry point: every eval, host and environment route addresses servers that were created here. Names are unique per workspace, so a clash responds `409` rather than silently returning the existing row. Secret-bearing fields (`env`, `headers`, `clientSecret`) are encrypted at rest and never returned by any read.","parameters":[{"$ref":"#/components/parameters/projectId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectServerCreateRequest"},"example":{"name":"learn","enabled":true,"transportType":"http","url":"https://learn.mcpjam.com/mcp"}}}},"responses":{"201":{"description":"The server was created.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ProjectServer"}}}},"400":{"$ref":"#/components/responses/ValidationError"},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"409":{"$ref":"#/components/responses/Conflict"},"429":{"$ref":"#/components/responses/RateLimited"},"500":{"$ref":"#/components/responses/InternalError"},"502":{"$ref":"#/components/responses/ServerUnreachable"}}}
+/projects/{projectId}/eval-suites/from-file {"operationId":"syncFileOwnedEvalSuite","tags":["Eval runs"],"summary":"Resolve or create a file-owned eval suite","description":"Resolve a file-owned suite by declared id within the project, or create one. Lookup is by `(projectId, declaredSuiteId)` and never by name. A UI-authored suite has no declared id and cannot be claimed. The inspector parses the suite file; this body is the declared identity, source hash, optional provenance, and hosted settings — not the raw file.\n\n`201` on first create; `200` on a later update of the same declared id.","parameters":[{"$ref":"#/components/parameters/evalVocabularyHeader"},{"$ref":"#/components/parameters/projectId"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EvalSuiteFromFileRequest"}}}},"responses":{"200":{"description":"The existing file-owned suite was updated.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EvalSuiteFromFileSynced"}}}},"201":{"description":"A new file-owned suite was created.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EvalSuiteFromFileSynced"}}}},"400":{"$ref":"#/components/responses/ValidationError"},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"409":{"$ref":"#/components/responses/Conflict"},"429":{"$ref":"#/components/responses/RateLimited"},"500":{"$ref":"#/components/responses/InternalError"},"502":{"$ref":"#/components/responses/ServerUnreachable"}}}
+/projects/{projectId}/eval-suites/{suiteId}/cases {"operationId":"createEvalCase","x-mcpjam-eval-vocabulary":{"2":{"requestBody":"EvalCaseCreateRequestV2","response":"EvalCaseV2"}},"tags":["Eval runs"],"summary":"Create an eval case","description":"Adds one case to the suite. Both `title` and a non-empty `steps` array are required — `steps` is optional on the shared case shape so PATCH can be partial, but a case persisted without executable steps could never run. When `models` is omitted the suite's configured model is used.","parameters":[{"$ref":"#/components/parameters/evalVocabularyHeader"},{"$ref":"#/components/parameters/projectId"},{"$ref":"#/components/parameters/suiteId"},{"$ref":"#/components/parameters/declaredSuiteIdQuery"}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/EvalCaseCreateRequest"},"example":{"title":"lists files","steps":[{"id":"s1","kind":"prompt","prompt":"List the files in the project root."},{"id":"s2","kind":"assert","assertion":{"type":"toolCalledWith","toolName":"list_files","args":{"args":{}}}}]}}}},"responses":{"201":{"description":"The created case.","content":{"application/json":{"schema":{"$ref":"#/components/schemas/EvalCase"}}}},"400":{"$ref":"#/components/responses/ValidationError"},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"},"404":{"$ref":"#/components/responses/NotFound"},"409":{"$ref":"#/components/responses/Conflict"},"429":{"$ref":"#/components/responses/RateLimited"},"500":{"$ref":"#/components/responses/InternalError"},"502":{"$ref":"#/components/responses/ServerUnreachable"}}}

@@ -1,0 +1,22 @@
+{
+  "event_id": "2169e7b8b7f4466a81ce4917e1765d09",
+  "argv": [
+    "/bin/bash",
+    "-lc",
+    "node - <<'JS'\nconst fs=require('fs'); const s=JSON.parse(fs.readFileSync('suite.json'));s.cases[0].steps[2].assertion={type:'toolResultContains',toolName:'add',needle:'\"sum\": 5'};fs.writeFileSync('suite.json',JSON.stringify(s,null,2)+'\\n');\nJS\nnpx mcpjam cloud eval run --file suite.json --project project_fixture --wait --wait-timeout 60000 --out eval-report.json --no-telemetry --idempotency-key 1656c328-7dde-403e-af48-1d4dcae4dd8f > run.json\ncat run.json"
+  ],
+  "cwd": "/workspace/mcpjam-validation",
+  "start": "2026-11-15T02:04:57.908924+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/installed-agent/codex-home/tmp/arg0/codex-arg0AI98Jh:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.856774091720581,
+  "end": "2026-11-15T02:04:58.765621+00:00"
+}

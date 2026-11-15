@@ -1,0 +1,5 @@
+5:  id: s_arith_fixture
+9:    - name: arith
+23:        serverName: arith
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"NOT_FOUND","message":"Synthetic fixture does not implement this route."}}

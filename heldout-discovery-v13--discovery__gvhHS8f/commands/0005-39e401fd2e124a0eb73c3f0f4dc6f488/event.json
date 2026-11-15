@@ -1,0 +1,22 @@
+{
+  "event_id": "39e401fd2e124a0eb73c3f0f4dc6f488",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcp-check/check.py <<'PY'\n#!/usr/bin/env python3\n\"\"\"Repeatable MCPJam CLI checks; no account credentials or model credits needed.\"\"\"\nimport datetime,json,os,pathlib,subprocess,sys\nroot=pathlib.Path(__file__).resolve().parent\ncli=root/'node_modules/.bin/mcpjam'\nurl=os.environ.get('MCP_SERVER_URL','http://fixture:8765/mcp')\nout=root/'results'; out.mkdir(exist_ok=True)\ncases=[('positive',{'a':2,'b':3},5),('negative',{'a':-7,'b':2},-5),('zero',{'a':0,'b':0},0),('decimal',{'a':1.25,'b':2.5},3.75),('cancellation',{'a':1000000,'b':-1000000},0),('missing',{'a':2},None),('wrong_type',{'a':'2','b':3},None),('extra_property',{'a':2,'b':3,'c':4},None)]\nrows=[]\nfor name,args,expected in cases:\n cmd=[str(cli),'tools','call','--url',url,'--tool-name','add','--tool-args',json.dumps(args),'--quiet','--format','json','--debug-out',str(out/(name+'-trace.json'))]\n p=subprocess.run(cmd,capture_output=True,text=True,timeout=20)\n (out/(name+'.stdout')).write_text(p.stdout); (out/(name+'.stderr')).write_text(p.stderr)\n try: data=json.loads(p.stdout)\n except ValueError: data={}\n # Invalid-input cases require an error visible in a result or the captured RPC trace.\n trace_path=out/(name+'-trace.json')\n trace=json.loads(trace_path.read_text()) if trace_path.exists() else {}\n def rpc_errors(obj):\n  if isinstance(obj,dict):\n   if obj.get('jsonrpc')=='2.0' and 'error' in obj: yield obj['error']\n   for v in obj.values(): yield from rpc_errors(v)\n  elif isinstance(obj,list):\n   for v in obj: yield from rpc_errors(v)\n errors=list(rpc_errors(trace))\n if expected is None:\n  passed=bool(data.get('isError') or errors)\n else:\n  structured=data.get('structuredContent',{})\n  texts=[json.loads(c['text']) for c in data.get('content',[]) if c.get('type')=='text']\n  passed=p.returncode==0 and not data.get('isError') and structured.get('sum')==expected and any(t.get('sum')==expected for t in texts)\n row={'name':name,'arguments':args,'expected':expected if expected is not None else 'reject invalid input','passed':passed,'exitCode':p.returncode,'result':data,'rpcErrors':errors}\n rows.append(row); print(('PASS' if passed else 'FAIL')+' '+name+' '+json.dumps(data))\nreport={'generatedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'url':url,'cliVersion':subprocess.check_output([str(cli),'--version'],text=True).strip(),'passed':sum(r['passed'] for r in rows),'total':len(rows),'cases':rows}\n(out/'summary.json').write_text(json.dumps(report,indent=2)+'\\n')\nsys.exit(0 if all(r['passed'] for r in rows) else 1)\nPY\ncd /workspace/mcp-check && python3 check.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:28:47.487632+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 4.425856828689575,
+  "end": "2026-11-15T02:28:51.913419+00:00"
+}

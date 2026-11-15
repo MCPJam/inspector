@@ -1,0 +1,80 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.control.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.control.json",
+    "sha256": "dd368d1a61417e9f8b7ff0b8eef0f1cb47b2563614dc99a09cdb6145fd48c477"
+  },
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "6c8f91fc923939b3222cb55083b02c227865bdf88e8fb19018fb78635a4b7977"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run1.log",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run1.log",
+    "sha256": "2dba80067693d766fc5dffaa3e1d4bf468d591361739bd23acd241ee52abc694"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run2.log",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run2.log",
+    "sha256": "db07d84796b8d04bce2c97c593dd9994316d5b29b75a3ee8e5142183f177a14e"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run_eval.sh",
+    "sha256": "54016cb1cbb9bb719bbe38df46695a1e1010e8cc05494355dc1d5cfbb547a24c"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/NOTES.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/NOTES.md",
+    "sha256": "199e17b0fa299bff1efb9b362e8cb10e6a3af1a0d248c74a77c231eb0c355bf0"
+  },
+  {
+    "source": "steps/resume/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/fixture/state.json",
+    "sha256": "34967cbe6507d6b7a72fd121d8885b7b41afb02b3b23ff86bb68e5fa9af9ebe2"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run1.log",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run1.log",
+    "sha256": "2dba80067693d766fc5dffaa3e1d4bf468d591361739bd23acd241ee52abc694"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run2.log",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run2.log",
+    "sha256": "db07d84796b8d04bce2c97c593dd9994316d5b29b75a3ee8e5142183f177a14e"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run3.log",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run3.log",
+    "sha256": "189891bbb85af6fda68a09c6661db87fdd2b08cb07157cb2ae0d90bab0259d77"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/status.log",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/status.log",
+    "sha256": "baa315a42863a61dde50ba352b207b8ea948cf4d2536681c2698fe86841a71b7"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run_eval.sh",
+    "sha256": "54016cb1cbb9bb719bbe38df46695a1e1010e8cc05494355dc1d5cfbb547a24c"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/NOTES.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/NOTES.md",
+    "sha256": "199e17b0fa299bff1efb9b362e8cb10e6a3af1a0d248c74a77c231eb0c355bf0"
+  }
+]

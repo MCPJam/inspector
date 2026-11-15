@@ -1,0 +1,22 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"valid":false,"file":".mcpjam/evals/arith-hosted.yaml","suite":{"id":"s_arith_fixture","name":"Arithmetic fixture","cases":1,"enabledCases":1},"findings":[],"projectValidation":{"project":{"id":"project_fixture","name":"Fixture"},"targets":["the file's target.servers"],"valid":false,"findings":[{"code":"TOOL_REFERENCE_UNRESOLVED","path":["cases",0,"steps",0,"toolName"],"pointer":"cases[0].steps[0].toolName","caseId":"c_adds","caseTitle":"add returns 5 for 2+3","toolName":"add","serverName":"arith","targetLabel":"the file's target.servers","disabled":false,"imported":false,"message":"Server \"arith\" is not part of the file's target.servers, so the deterministic call to \"add\" cannot execute there."}]}}
+Usage: mcpjam cloud [options] [command]
+
+MCPJam Cloud account commands (login, projects, evals, tunnels). Local MCP
+testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam
+cloud login` is your MCPJam account.
+
+Options:
+  --api-key <key>               MCPJam sk_ API key (overrides MCPJAM_API_KEY)
+  --api-url <url>               MCPJam API base URL (defaults to your
+                                organization's server or
+                                https://app.mcpjam.com/api/v1)
+  --api-header <header...>      Extra request header for a deployment behind an
+                                edge authenticator, as "Name: value"
+                                (repeatable; also MCPJAM_API_HEADERS,
+                                newline-separated)
+  -h, --help                    display help for command
+
+Account:
+  login [options]               Log in to MCPJam Cloud. Opens your browser for
+                                OAuth and stores the session locally.

@@ -1,0 +1,106 @@
+{
+"operationId": "createEvalRun",
+"tags": [
+"Eval runs"
+],
+"summary": "Create an eval run (async)",
+"description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
+"parameters": [
+{
+"$ref": "#/components/parameters/evalVocabularyHeader"
+},
+{
+"$ref": "#/components/parameters/projectId"
+},
+{
+"$ref": "#/components/parameters/launcherHeader"
+},
+{
+"$ref": "#/components/parameters/ciHeader"
+}
+],
+"requestBody": {
+"required": true,
+"content": {
+"application/json": {
+"schema": {
+"$ref": "#/components/schemas/EvalRunCreateRequest"
+},
+"example": {
+"suiteName": "smoke",
+"serverIds": [
+"srv_abc123"
+],
+"tests": [
+{
+"title": "echo works",
+"runs": 1,
+"model": "anthropic/claude-haiku-4.5",
+"provider": "anthropic",
+"steps": [
+{
+"id": "s1",
+"kind": "prompt",
+"prompt": "Use the echo tool to say hi"
+},
+{
+"id": "s2",
+"kind": "assert",
+"assertion": {
+"type": "toolCalledWith",
+"toolName": "echo",
+"args": {
+"args": {
+"text": "hi"
+}
+}
+}
+}
+]
+}
+]
+}
+}
+}
+},
+"responses": {
+"202": {
+"description": "Run created; execution continues in the background.",
+"content": {
+"application/json": {
+"schema": {
+"$ref": "#/components/schemas/EvalRunCreated"
+},
+"example": {
+"runId": "run_abc123",
+"suiteId": "suite_def456",
+"status": "running",
+"caseUpsert": {
+"committed": [
+{
+"name": "echo works"
+}
+],
+"failed": []
+},
+"environment": null
+}
+}
+}
+},
+"400": {
+"$ref": "#/components/responses/ValidationError"
+},
+"401": {
+"$ref": "#/components/responses/Unauthorized"
+},
+"403": {
+"$ref": "#/components/responses/Forbidden"
+},
+"404": {
+"$ref": "#/components/responses/NotFound"
+},
+"429": {
+"$ref": "#
+{"code": "FEATURE_NOT_SUPPORTED", "message": "The synthetic fixture does not implement disclosure.", "details": {"reason": "contract_unavailable"}}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

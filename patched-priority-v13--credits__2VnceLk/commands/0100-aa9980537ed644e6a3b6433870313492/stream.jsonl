@@ -1,0 +1,1 @@
+{"seconds": 0.006344318389892578, "stream": "stdout", "data": "HTTP/1.1 404 Not Found\r\nServer: HarborSyntheticFixture/1 Python/3.11.2\r\nDate: Sun, 15 Nov 2026 02:12:32 GMT\r\nContent-Type: application/json\r\nContent-Length: 45\r\n\r\n{\"code\": \"NOT_FOUND\", \"message\": \"Not found\"}"}

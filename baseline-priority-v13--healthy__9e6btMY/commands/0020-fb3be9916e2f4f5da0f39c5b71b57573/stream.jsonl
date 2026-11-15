@@ -1,0 +1,2 @@
+{"seconds": 0.002299070358276367, "stream": "stdout", "data": "3\n"}
+{"seconds": 0.600926399230957, "stream": "stdout", "data": "{\"id\":\"user_fixture\",\"email\":\"[EMAIL REDACTED]\",\"name\":\"Fixture user\",\"plan\":\"team\",\"credential\":\"api-key\"}\n"}

@@ -1,0 +1,1082 @@
+[
+  {
+    "id": "0fa99d2320b14395989a5282fada2e07",
+    "path": "commands/0001-0fa99d2320b14395989a5282fada2e07",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "cat > suite.json <<'JSON'\n{\n  \"schemaVersion\": \"2\",\n  \"mode\": \"agentWorkflow\",\n  \"reportingMode\": \"standard\",\n  \"suite\": {\"id\":\"s_arithmetic_validation\", \"name\":\"Arithmetic server regression\"},\n  \"target\": {\"servers\":[{\"name\":\"arithmetic-validation\"}]},\n  \"defaults\": {\"judge\":{\"enabled\":false},\"model\":\"anthropic/claude-haiku-4.5\",\"iterations\":1,\"passThreshold\":1,\"validity\":{}},\n  \"cases\": [{\n    \"id\":\"c_add_2_3\", \"title\":\"2 plus 3 returns 5\",\n    \"steps\":[\n      {\"id\":\"call_add\",\"kind\":\"toolCall\",\"serverName\":\"arithmetic-validation\",\"toolName\":\"add\",\"arguments\":{\"a\":2,\"b\":3}},\n      {\"id\":\"assert_no_errors\",\"kind\":\"assert\",\"assertion\":{\"type\":\"noToolErrors\"}},\n      {\"id\":\"assert_sum\",\"kind\":\"assert\",\"assertion\":{\"type\":\"toolResultMatches\",\"toolName\":\"add\",\"path\":\"/sum\",\"patterns\":[\"^5$\"]}}\n    ]\n  }]\n}\nJSON\nnpx mcpjam cloud eval validate --file suite.json --no-telemetry > validation.json\ncat validation.json\nnpx mcpjam cloud eval run --file suite.json --project project_fixture --wait --wait-timeout 60000 --out eval-report.json --no-telemetry > run.json\ncat run.json"
+    ],
+    "start": "2026-11-15T02:04:41.566448+00:00",
+    "end": "2026-11-15T02:04:42.779843+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "INTERNAL_ERROR"
+    ]
+  },
+  {
+    "id": "1a40c5727c8f4d10acad3e63ac49fc67",
+    "path": "commands/0002-1a40c5727c8f4d10acad3e63ac49fc67",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npx mcpjam cloud eval iterations --project project_fixture --run run_fixture_3 --no-telemetry > latest-iterations.json\ncat > README.md <<'MD'\n# MCPJam validation\n\nInstalled `@mcpjam/cli` 6.2.2 locally with npm; package-lock.json pins the dependency tree. Only public documentation and normal CLI/API interfaces were used. No source, fixture internals, billing purchases, or external messages were accessed.\n\n## Results\n\n- `doctor.json`: ready; connected over Streamable HTTP using MCP 2025-11-25. No OAuth required. Discovered one tool, `add`.\n- `first-result.json`: direct call with `{ \"a\": 2, \"b\": 3 }` returned structured content `{ \"sum\": 5 }` and `isError: false`.\n- `suite.json`: file-owned regression suite; directly calls `add`, asserts no tool errors, and checks the returned text contains `\"sum\": 5`. One iteration, judge disabled, 100% pass threshold.\n- First successful eval: `run_fixture_1`; recorded tool arguments and output are in `iterations.json`.\n- Negative control: `run_fixture_2`; changed expected text to `\"sum\": 6`, failed, CLI exit 1. See `negative-control-report.json`.\n- Repeat via `run-eval.sh`: `run_fixture_3`, passed 1/1, CLI exit 0. See `eval-report.json`, `run.json`, and `latest-iterations.json`.\n\nThese checks cover connectivity and one arithmetic behavior. They are not exhaustive protocol conformance or model-driven tool-selection evaluations. The isolated backend explicitly marks eval runs SIMULATED, deterministic, with no hosted model or live billing. Its launch receipt identifies the target as `server_fixture` / Arithmetic; the saved server created through the CLI is recorded separately in `saved-server.json`.\n\n## Repeat\n\nIn a clean checkout of this directory, with Node.js/npm available and the configured isolated account credentials in the environment:\n\n```bash\ncd /workspace/mcpjam-validation\n./run-eval.sh\n```\n\nThe script installs pinned dependencies if absent, validates the suite, uploads/updates the same declared suite ID in `project_fixture`, starts a fresh run, waits for the verdict, and writes reports. It preserves MCPJam's verdict exit code. A fresh invocation starts a fresh run; use the CLI's printed idempotency key only to recover a lost launch response. Credentials are read from the environment, never saved here.\n\n## Concerns encountered\n\n1. Public local-eval docs say local runs cannot grade tool results. Used the hosted deterministic toolCall path so the expected output is actually graded.\n2. File validation accepted `toolResultMatches`, but this isolated backend rejected the launch with a generic supported-subset error. Switching to documented `toolResultContains` succeeded; the negative control confirmed that assertion detects a wrong expected sum.\n3. The documented per-step evidence route is unimplemented here (`steps.json`). Used the iteration endpoint's actual tool call/result and the completed decision report instead.\n\n## Public references\n\n- https://docs.mcpjam.com/cli/overview\n- https://docs.mcpjam.com/cli/local-evals\n- https://docs.mcpjam.com/cli/reference\n- https://docs.mcpjam.com/reference/openapi.json\n\nCopies of the documentation used are under `docs/`.\nMD\nls -l suite.json run-eval.sh eval-report.json README.md"
+    ],
+    "start": "2026-11-15T02:05:49.761644+00:00",
+    "end": "2026-11-15T02:05:50.219760+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "1e60c0c571cb4d81a696adef3bbf6d40",
+    "path": "commands/0003-1e60c0c571cb4d81a696adef3bbf6d40",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "cat > run-eval.sh <<'SH'\n#!/usr/bin/env bash\nset -euo pipefail\ncd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\"\n: \"${MCPJAM_API_URL:?Set the isolated MCPJam account API URL}\"\n: \"${MCPJAM_API_KEY:?Set the MCPJam account API key}\"\nif [[ ! -x node_modules/.bin/mcpjam ]]; then\n  npm ci\nfi\n./node_modules/.bin/mcpjam cloud eval validate --file suite.json --no-telemetry > validation.json\n./node_modules/.bin/mcpjam cloud eval run \\\n  --file suite.json --project project_fixture \\\n  --wait --wait-timeout 60000 --out eval-report.json \\\n  --no-telemetry > run.json\nSH\nchmod +x run-eval.sh\n./run-eval.sh\ncat run.json\ncat negative-control-report.json"
+    ],
+    "start": "2026-11-15T02:05:25.541313+00:00",
+    "end": "2026-11-15T02:05:26.640960+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "2169e7b8b7f4466a81ce4917e1765d09",
+    "path": "commands/0004-2169e7b8b7f4466a81ce4917e1765d09",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "node - <<'JS'\nconst fs=require('fs'); const s=JSON.parse(fs.readFileSync('suite.json'));s.cases[0].steps[2].assertion={type:'toolResultContains',toolName:'add',needle:'\"sum\": 5'};fs.writeFileSync('suite.json',JSON.stringify(s,null,2)+'\\n');\nJS\nnpx mcpjam cloud eval run --file suite.json --project project_fixture --wait --wait-timeout 60000 --out eval-report.json --no-telemetry --idempotency-key 1656c328-7dde-403e-af48-1d4dcae4dd8f > run.json\ncat run.json"
+    ],
+    "start": "2026-11-15T02:04:57.908924+00:00",
+    "end": "2026-11-15T02:04:58.765621+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "24edbead137c4af8bfc98348cf351beb",
+    "path": "commands/0005-24edbead137c4af8bfc98348cf351beb",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; mkdir -p \"$CODEX_HOME\" /tmp/codex-secrets /logs/agent"
+    ],
+    "start": "2026-11-15T02:03:29.139348+00:00",
+    "end": "2026-11-15T02:03:29.141092+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "28ce4da6ac064dc28691ce9321e5135f",
+    "path": "commands/0006-28ce4da6ac064dc28691ce9321e5135f",
+    "argv": [
+      "/bin/bash",
+      "./run-eval.sh"
+    ],
+    "start": "2026-11-15T02:05:25.555222+00:00",
+    "end": "2026-11-15T02:05:26.636812+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "310cf2ab8fff4299837b8045cdcc19ae",
+    "path": "commands/0007-310cf2ab8fff4299837b8045cdcc19ae",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "tar czf /tmp/.hb-transfer-21fe609e-ae44-42ed-bca2-d2121b63b200.tar.gz --exclude=node_modules --exclude=.npm --exclude=.cache -C /workspace ."
+    ],
+    "start": "2026-11-15T02:05:55.689513+00:00",
+    "end": "2026-11-15T02:05:55.715114+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "35b1d16b8d274f57ad365247bcb31ba6",
+    "path": "commands/0008-35b1d16b8d274f57ad365247bcb31ba6",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npm init -y >/dev/null\nnpm install --save-exact @mcpjam/cli"
+    ],
+    "start": "2026-11-15T02:03:52.009452+00:00",
+    "end": "2026-11-15T02:04:01.213938+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "3720c78f603145c494dd2f605ba0e92b",
+    "path": "commands/0009-3720c78f603145c494dd2f605ba0e92b",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "curl -fsSL https://docs.mcpjam.com/llms.txt"
+    ],
+    "start": "2026-11-15T02:03:40.374256+00:00",
+    "end": "2026-11-15T02:03:40.551534+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg",
+      "outcome-011.svg",
+      "outcome-012.svg",
+      "outcome-013.svg",
+      "outcome-014.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-001-003.svg",
+      "intermediate-002-001.svg",
+      "intermediate-002-002.svg",
+      "intermediate-003-001.svg",
+      "intermediate-003-002.svg",
+      "intermediate-004-001.svg",
+      "intermediate-004-002.svg",
+      "intermediate-004-003.svg",
+      "intermediate-005-001.svg",
+      "intermediate-005-002.svg",
+      "intermediate-006-001.svg",
+      "intermediate-006-002.svg",
+      "intermediate-006-003.svg",
+      "intermediate-006-004.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "44707857f6ae4bdf9ee6da3bc2d0a155",
+    "path": "commands/0010-44707857f6ae4bdf9ee6da3bc2d0a155",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "curl -fsSL https://docs.mcpjam.com/cli/reference.md -o /workspace/mcpjam-validation/docs/reference.md\ncurl -fsSL https://docs.mcpjam.com/cli/tools-resources-prompts.md -o /workspace/mcpjam-validation/docs/tools.md\npython - <<'PY'\nimport json\ns=json.load(open('/workspace/mcpjam-validation/docs/openapi.json'))\nfor p,v in s.get('paths',{}).items():\n if any(x in p for x in ['chat','eval','servers']):\n  print(p,','.join(v))\nPY"
+    ],
+    "start": "2026-11-15T02:03:53.186292+00:00",
+    "end": "2026-11-15T02:03:53.509306+00:00",
+    "exit_status": 127,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "4e56d766458a40d38f1a33b6a58e3643",
+    "path": "commands/0011-4e56d766458a40d38f1a33b6a58e3643",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "if [ -z \"${BASH_ENV-}\" ] && [ -n \"${HOME-}\" ] && [ -r \"$HOME/.bashrc\" ]; then\n  . \"$HOME/.bashrc\"\nfi\necho '# Snapshot file'\necho '# Unset all aliases to avoid conflicts with functions'\necho 'unalias -a 2>/dev/null || true'\nshopt -p || true\necho '# Functions'\ndeclare -f\necho ''\n\n__codex_snapshot_command() {\n  if command -v \"$1\" >/dev/null 2>&1; then\n    \"$@\"\n  else\n    command -p \"$@\"\n  fi\n}\nbash_opts=$(set -o | __codex_snapshot_command awk '$2==\"on\"{print $1}')\nbash_opt_count=$(printf '%s\\n' \"$bash_opts\" | __codex_snapshot_command sed '/^$/d' | __codex_snapshot_command wc -l | __codex_snapshot_command tr -d ' ')\necho \"# setopts $bash_opt_count\"\nif [ -n \"$bash_opts\" ]; then\n  printf 'set -o %s\\n' $bash_opts\nfi\necho ''\nprintf '\\0'\nalias_count=$(\\alias -p | __codex_snapshot_command wc -l | __codex_snapshot_command tr -d ' ')\necho \"# aliases $alias_count\"\n\\alias -p\necho ''\n\nprintf '\\0'\n(\n  while IFS= read -r __codex_snapshot_export_name; do\n    case \"$__codex_snapshot_export_name\" in\n      \"\"|[0-9]*|*[!A-Za-z0-9_]*|PWD|OLDPWD) continue ;;\n    esac\n    printf '%s\\0' \"$__codex_snapshot_export_name\"\n    declare -xp \"$__codex_snapshot_export_name\" 2>/dev/null || true\n    printf '\\0'\n  done < <(compgen -e)\n)\n\nprintf '\\0'\n\n"
+    ],
+    "start": "2026-11-15T02:03:30.116504+00:00",
+    "end": "2026-11-15T02:03:30.122361+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "55b81f5f87f24f4f8b48818ac6e5b71c",
+    "path": "commands/0012-55b81f5f87f24f4f8b48818ac6e5b71c",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "grep -n -E 'eval create|eval run|eval validate|--from|--prompt|connect --' docs/reference.md | head -60"
+    ],
+    "start": "2026-11-15T02:04:06.666249+00:00",
+    "end": "2026-11-15T02:04:06.668787+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "5d0eba147e544d4b9b3c0914665254e7",
+    "path": "commands/0013-5d0eba147e544d4b9b3c0914665254e7",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; mkdir -p /logs/agent\nif [ -d \"$CODEX_HOME/sessions\" ]; then\n  rm -rf /logs/agent/sessions\n  cp -R \"$CODEX_HOME/sessions\" /logs/agent/sessions\nfi"
+    ],
+    "start": "2026-11-15T02:05:55.219523+00:00",
+    "end": "2026-11-15T02:05:55.221934+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "5f23163a6dc242d08f6cff5041cabce1",
+    "path": "commands/0014-5f23163a6dc242d08f6cff5041cabce1",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npx mcpjam cloud projects servers create --project project_fixture --body '{\"name\":\"arithmetic-validation\",\"enabled\":true,\"transportType\":\"http\",\"url\":\"http://fixture:8765/mcp\"}' --no-telemetry > saved-server.json\ncat saved-server.json\ncurl -fsSL https://docs.mcpjam.com/llms.txt -o docs/index.txt\ngrep -n -i 'suite file\\|schema\\|dialect' docs/index.txt | head -20\ngrep -n -E 'toolCall|schemaVersion|mode:' docs/evals.md | head -30"
+    ],
+    "start": "2026-11-15T02:04:31.133680+00:00",
+    "end": "2026-11-15T02:04:31.790687+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "60f598bdbdd04e3cbc6ca31f7f6f983e",
+    "path": "commands/0015-60f598bdbdd04e3cbc6ca31f7f6f983e",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; ln -sf /tmp/codex-secrets/auth.json \"$CODEX_HOME/auth.json\"\n"
+    ],
+    "start": "2026-11-15T02:03:29.408049+00:00",
+    "end": "2026-11-15T02:03:29.408952+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "6a250761d6c14c98aa240f772716ec15",
+    "path": "commands/0016-6a250761d6c14c98aa240f772716ec15",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "rg -n 'eval (create|run|validate)|--from|--prompt|sessions|chat|connect --' docs/reference.md"
+    ],
+    "start": "2026-11-15T02:03:59.115982+00:00",
+    "end": "2026-11-15T02:03:59.117685+00:00",
+    "exit_status": 127,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "6c6290cb5a3b4bd09c772ad64af7be67",
+    "path": "commands/0017-6c6290cb5a3b4bd09c772ad64af7be67",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "test -d /workspace"
+    ],
+    "start": "2026-11-15T02:05:55.615805+00:00",
+    "end": "2026-11-15T02:05:55.616619+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "6dad874a57f347f88cea255b69787256",
+    "path": "commands/0018-6dad874a57f347f88cea255b69787256",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_1=\"${CODEX_PERMISSION_PROFILE+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_1=\"${CODEX_PERMISSION_PROFILE-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_2=\"${CODEX_PLUGIN_METRICS_OUTPUT+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_2=\"${CODEX_PLUGIN_METRICS_OUTPUT-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_3=\"${CODEX_SESSION_ID+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_3=\"${CODEX_SESSION_ID-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_4=\"${CODEX_THREAD_ID+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_4=\"${CODEX_THREAD_ID-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_5=\"${CODEX_VERSION+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_5=\"${CODEX_VERSION-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0=\"${ALL_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_0=\"${ALL_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1=\"${BUNDLE_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_1=\"${BUNDLE_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2=\"${BUNDLE_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_2=\"${BUNDLE_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3=\"${BUNDLE_NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_3=\"${BUNDLE_NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4=\"${BUNDLE_SSL_CA_CERT+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_4=\"${BUNDLE_SSL_CA_CERT-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5=\"${CARGO_HTTP_CAINFO+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_5=\"${CARGO_HTTP_CAINFO-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6=\"${CODEX_CA_CERTIFICATE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_6=\"${CODEX_CA_CERTIFICATE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7=\"${CODEX_NETWORK_ALLOW_LOCAL_BINDING+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_7=\"${CODEX_NETWORK_ALLOW_LOCAL_BINDING-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8=\"${CODEX_NETWORK_PROXY_ACTIVE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_8=\"${CODEX_NETWORK_PROXY_ACTIVE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9=\"${CODEX_NETWORK_PROXY_ATTRIBUTION+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_9=\"${CODEX_NETWORK_PROXY_ATTRIBUTION-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10=\"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_10=\"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11=\"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_11=\"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12=\"${CURL_CA_BUNDLE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_12=\"${CURL_CA_BUNDLE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13=\"${DOCKER_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_13=\"${DOCKER_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14=\"${DOCKER_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_14=\"${DOCKER_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15=\"${ELECTRON_GET_USE_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_15=\"${ELECTRON_GET_USE_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16=\"${FTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_16=\"${FTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17=\"${GIT_SSL_CAINFO+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_17=\"${GIT_SSL_CAINFO-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18=\"${HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_18=\"${HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19=\"${HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_19=\"${HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20=\"${NODE_EXTRA_CA_CERTS+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_20=\"${NODE_EXTRA_CA_CERTS-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21=\"${NODE_USE_ENV_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_21=\"${NODE_USE_ENV_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22=\"${NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_22=\"${NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23=\"${NPM_CONFIG_CAFILE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_23=\"${NPM_CONFIG_CAFILE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24=\"${NPM_CONFIG_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_24=\"${NPM_CONFIG_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25=\"${NPM_CONFIG_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_25=\"${NPM_CONFIG_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26=\"${NPM_CONFIG_NOPROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_26=\"${NPM_CONFIG_NOPROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27=\"${NPM_CONFIG_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_27=\"${NPM_CONFIG_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28=\"${PIP_CERT+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_28=\"${PIP_CERT-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29=\"${PIP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_29=\"${PIP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30=\"${REQUESTS_CA_BUNDLE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_30=\"${REQUESTS_CA_BUNDLE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31=\"${SSL_CERT_FILE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_31=\"${SSL_CERT_FILE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32=\"${WSS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_32=\"${WSS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33=\"${WS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_33=\"${WS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34=\"${YARN_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_34=\"${YARN_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35=\"${YARN_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_35=\"${YARN_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36=\"${YARN_NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_36=\"${YARN_NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37=\"${all_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_37=\"${all_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38=\"${ftp_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_38=\"${ftp_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39=\"${http_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_39=\"${http_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40=\"${https_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_40=\"${https_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41=\"${no_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_41=\"${no_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42=\"${npm_config_cafile+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_42=\"${npm_config_cafile-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43=\"${npm_config_http_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_43=\"${npm_config_http_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44=\"${npm_config_https_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_44=\"${npm_config_https_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45=\"${npm_config_noproxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_45=\"${npm_config_noproxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46=\"${npm_config_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_46=\"${npm_config_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47=\"${ws_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_47=\"${ws_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48=\"${wss_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_48=\"${wss_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_ENV_SET=\"${CODEX_NETWORK_PROXY_ACTIVE+x}\"\n\nif . '/installed-agent/codex-home/shell_snapshots/01a1dcf1-ff91-7692-9a40-7546928099ce.1794708210104284583.sh' >/dev/null 2>&1; then :; fi\n\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_0}\" ]; then\n  if [ -z \"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\" ] || [ \"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_0}\" ]; then export CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS=\"${__CODEX_SNAPSHOT_OVERRIDE_0}\"; else export CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS; fi\nelse builtin unset CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS 2>/dev/null || command unset CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_0 __CODEX_SNAPSHOT_OVERRIDE_0 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_0 __CODEX_SNAPSHOT_OVERRIDE_0\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_1}\" ]; then\n  if [ -z \"${CODEX_PERMISSION_PROFILE+x}\" ] || [ \"${CODEX_PERMISSION_PROFILE-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_1}\" ]; then export CODEX_PERMISSION_PROFILE=\"${__CODEX_SNAPSHOT_OVERRIDE_1}\"; else export CODEX_PERMISSION_PROFILE; fi\nelse builtin unset CODEX_PERMISSION_PROFILE 2>/dev/null || command unset CODEX_PERMISSION_PROFILE; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_1 __CODEX_SNAPSHOT_OVERRIDE_1 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_1 __CODEX_SNAPSHOT_OVERRIDE_1\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_2}\" ]; then\n  if [ -z \"${CODEX_PLUGIN_METRICS_OUTPUT+x}\" ] || [ \"${CODEX_PLUGIN_METRICS_OUTPUT-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_2}\" ]; then export CODEX_PLUGIN_METRICS_OUTPUT=\"${__CODEX_SNAPSHOT_OVERRIDE_2}\"; else export CODEX_PLUGIN_METRICS_OUTPUT; fi\nelse builtin unset CODEX_PLUGIN_METRICS_OUTPUT 2>/dev/null || command unset CODEX_PLUGIN_METRICS_OUTPUT; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_2 __CODEX_SNAPSHOT_OVERRIDE_2 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_2 __CODEX_SNAPSHOT_OVERRIDE_2\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_3}\" ]; then\n  if [ -z \"${CODEX_SESSION_ID+x}\" ] || [ \"${CODEX_SESSION_ID-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_3}\" ]; then export CODEX_SESSION_ID=\"${__CODEX_SNAPSHOT_OVERRIDE_3}\"; else export CODEX_SESSION_ID; fi\nelse builtin unset CODEX_SESSION_ID 2>/dev/null || command unset CODEX_SESSION_ID; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_3 __CODEX_SNAPSHOT_OVERRIDE_3 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_3 __CODEX_SNAPSHOT_OVERRIDE_3\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_4}\" ]; then\n  if [ -z \"${CODEX_THREAD_ID+x}\" ] || [ \"${CODEX_THREAD_ID-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_4}\" ]; then export CODEX_THREAD_ID=\"${__CODEX_SNAPSHOT_OVERRIDE_4}\"; else export CODEX_THREAD_ID; fi\nelse builtin unset CODEX_THREAD_ID 2>/dev/null || command unset CODEX_THREAD_ID; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_4 __CODEX_SNAPSHOT_OVERRIDE_4 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_4 __CODEX_SNAPSHOT_OVERRIDE_4\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_5}\" ]; then\n  if [ -z \"${CODEX_VERSION+x}\" ] || [ \"${CODEX_VERSION-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_5}\" ]; then export CODEX_VERSION=\"${__CODEX_SNAPSHOT_OVERRIDE_5}\"; else export CODEX_VERSION; fi\nelse builtin unset CODEX_VERSION 2>/dev/null || command unset CODEX_VERSION; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_5 __CODEX_SNAPSHOT_OVERRIDE_5 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_5 __CODEX_SNAPSHOT_OVERRIDE_5\nif [ -n \"$__CODEX_SNAPSHOT_PROXY_ENV_SET\" ] || [ -n \"${CODEX_NETWORK_PROXY_ACTIVE+x}\" ]; then\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0}\" ]; then\n  if [ -z \"${ALL_PROXY+x}\" ] || [ \"${ALL_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_0}\" ]; then export ALL_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_0}\"; else export ALL_PROXY; fi\nelse builtin unset ALL_PROXY 2>/dev/null || command unset ALL_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0 __CODEX_SNAPSHOT_PROXY_OVERRIDE_0 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0 __CODEX_SNAPSHOT_PROXY_OVERRIDE_0\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1}\" ]; then\n  if [ -z \"${BUNDLE_HTTPS_PROXY+x}\" ] || [ \"${BUNDLE_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_1}\" ]; then export BUNDLE_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_1}\"; else export BUNDLE_HTTPS_PROXY; fi\nelse builtin unset BUNDLE_HTTPS_PROXY 2>/dev/null || command unset BUNDLE_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1 __CODEX_SNAPSHOT_PROXY_OVERRIDE_1 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1 __CODEX_SNAPSHOT_PROXY_OVERRIDE_1\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2}\" ]; then\n  if [ -z \"${BUNDLE_HTTP_PROXY+x}\" ] || [ \"${BUNDLE_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_2}\" ]; then export BUNDLE_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_2}\"; else export BUNDLE_HTTP_PROXY; fi\nelse builtin unset BUNDLE_HTTP_PROXY 2>/dev/null || command unset BUNDLE_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2 __CODEX_SNAPSHOT_PROXY_OVERRIDE_2 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2 __CODEX_SNAPSHOT_PROXY_OVERRIDE_2\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3}\" ]; then\n  if [ -z \"${BUNDLE_NO_PROXY+x}\" ] || [ \"${BUNDLE_NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_3}\" ]; then export BUNDLE_NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_3}\"; else export BUNDLE_NO_PROXY; fi\nelse builtin unset BUNDLE_NO_PROXY 2>/dev/null || command unset BUNDLE_NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3 __CODEX_SNAPSHOT_PROXY_OVERRIDE_3 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3 __CODEX_SNAPSHOT_PROXY_OVERRIDE_3\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4}\" ]; then\n  if [ -z \"${BUNDLE_SSL_CA_CERT+x}\" ] || [ \"${BUNDLE_SSL_CA_CERT-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_4}\" ]; then export BUNDLE_SSL_CA_CERT=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_4}\"; else export BUNDLE_SSL_CA_CERT; fi\nelse builtin unset BUNDLE_SSL_CA_CERT 2>/dev/null || command unset BUNDLE_SSL_CA_CERT; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4 __CODEX_SNAPSHOT_PROXY_OVERRIDE_4 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4 __CODEX_SNAPSHOT_PROXY_OVERRIDE_4\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5}\" ]; then\n  if [ -z \"${CARGO_HTTP_CAINFO+x}\" ] || [ \"${CARGO_HTTP_CAINFO-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_5}\" ]; then export CARGO_HTTP_CAINFO=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_5}\"; else export CARGO_HTTP_CAINFO; fi\nelse builtin unset CARGO_HTTP_CAINFO 2>/dev/null || command unset CARGO_HTTP_CAINFO; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5 __CODEX_SNAPSHOT_PROXY_OVERRIDE_5 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5 __CODEX_SNAPSHOT_PROXY_OVERRIDE_5\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6}\" ]; then\n  if [ -z \"${CODEX_CA_CERTIFICATE+x}\" ] || [ \"${CODEX_CA_CERTIFICATE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_6}\" ]; then export CODEX_CA_CERTIFICATE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_6}\"; else export CODEX_CA_CERTIFICATE; fi\nelse builtin unset CODEX_CA_CERTIFICATE 2>/dev/null || command unset CODEX_CA_CERTIFICATE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6 __CODEX_SNAPSHOT_PROXY_OVERRIDE_6 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6 __CODEX_SNAPSHOT_PROXY_OVERRIDE_6\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7}\" ]; then\n  if [ -z \"${CODEX_NETWORK_ALLOW_LOCAL_BINDING+x}\" ] || [ \"${CODEX_NETWORK_ALLOW_LOCAL_BINDING-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_7}\" ]; then export CODEX_NETWORK_ALLOW_LOCAL_BINDING=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_7}\"; else export CODEX_NETWORK_ALLOW_LOCAL_BINDING; fi\nelse builtin unset CODEX_NETWORK_ALLOW_LOCAL_BINDING 2>/dev/null || command unset CODEX_NETWORK_ALLOW_LOCAL_BINDING; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7 __CODEX_SNAPSHOT_PROXY_OVERRIDE_7 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7 __CODEX_SNAPSHOT_PROXY_OVERRIDE_7\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_ACTIVE+x}\" ] || [ \"${CODEX_NETWORK_PROXY_ACTIVE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_8}\" ]; then export CODEX_NETWORK_PROXY_ACTIVE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_8}\"; else export CODEX_NETWORK_PROXY_ACTIVE; fi\nelse builtin unset CODEX_NETWORK_PROXY_ACTIVE 2>/dev/null || command unset CODEX_NETWORK_PROXY_ACTIVE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8 __CODEX_SNAPSHOT_PROXY_OVERRIDE_8 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8 __CODEX_SNAPSHOT_PROXY_OVERRIDE_8\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_ATTRIBUTION+x}\" ] || [ \"${CODEX_NETWORK_PROXY_ATTRIBUTION-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_9}\" ]; then export CODEX_NETWORK_PROXY_ATTRIBUTION=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_9}\"; else export CODEX_NETWORK_PROXY_ATTRIBUTION; fi\nelse builtin unset CODEX_NETWORK_PROXY_ATTRIBUTION 2>/dev/null || command unset CODEX_NETWORK_PROXY_ATTRIBUTION; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9 __CODEX_SNAPSHOT_PROXY_OVERRIDE_9 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9 __CODEX_SNAPSHOT_PROXY_OVERRIDE_9\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS+x}\" ] || [ \"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_10}\" ]; then export CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_10}\"; else export CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS; fi\nelse builtin unset CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS 2>/dev/null || command unset CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10 __CODEX_SNAPSHOT_PROXY_OVERRIDE_10 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10 __CODEX_SNAPSHOT_PROXY_OVERRIDE_10\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE+x}\" ] || [ \"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_11}\" ]; then export CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_11}\"; else export CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE; fi\nelse builtin unset CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE 2>/dev/null || command unset CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11 __CODEX_SNAPSHOT_PROXY_OVERRIDE_11 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11 __CODEX_SNAPSHOT_PROXY_OVERRIDE_11\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12}\" ]; then\n  if [ -z \"${CURL_CA_BUNDLE+x}\" ] || [ \"${CURL_CA_BUNDLE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_12}\" ]; then export CURL_CA_BUNDLE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_12}\"; else export CURL_CA_BUNDLE; fi\nelse builtin unset CURL_CA_BUNDLE 2>/dev/null || command unset CURL_CA_BUNDLE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12 __CODEX_SNAPSHOT_PROXY_OVERRIDE_12 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12 __CODEX_SNAPSHOT_PROXY_OVERRIDE_12\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13}\" ]; then\n  if [ -z \"${DOCKER_HTTPS_PROXY+x}\" ] || [ \"${DOCKER_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_13}\" ]; then export DOCKER_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_13}\"; else export DOCKER_HTTPS_PROXY; fi\nelse builtin unset DOCKER_HTTPS_PROXY 2>/dev/null || command unset DOCKER_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13 __CODEX_SNAPSHOT_PROXY_OVERRIDE_13 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13 __CODEX_SNAPSHOT_PROXY_OVERRIDE_13\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14}\" ]; then\n  if [ -z \"${DOCKER_HTTP_PROXY+x}\" ] || [ \"${DOCKER_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_14}\" ]; then export DOCKER_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_14}\"; else export DOCKER_HTTP_PROXY; fi\nelse builtin unset DOCKER_HTTP_PROXY 2>/dev/null || command unset DOCKER_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14 __CODEX_SNAPSHOT_PROXY_OVERRIDE_14 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14 __CODEX_SNAPSHOT_PROXY_OVERRIDE_14\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15}\" ]; then\n  if [ -z \"${ELECTRON_GET_USE_PROXY+x}\" ] || [ \"${ELECTRON_GET_USE_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_15}\" ]; then export ELECTRON_GET_USE_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_15}\"; else export ELECTRON_GET_USE_PROXY; fi\nelse builtin unset ELECTRON_GET_USE_PROXY 2>/dev/null || command unset ELECTRON_GET_USE_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15 __CODEX_SNAPSHOT_PROXY_OVERRIDE_15 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15 __CODEX_SNAPSHOT_PROXY_OVERRIDE_15\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16}\" ]; then\n  if [ -z \"${FTP_PROXY+x}\" ] || [ \"${FTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_16}\" ]; then export FTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_16}\"; else export FTP_PROXY; fi\nelse builtin unset FTP_PROXY 2>/dev/null || command unset FTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16 __CODEX_SNAPSHOT_PROXY_OVERRIDE_16 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16 __CODEX_SNAPSHOT_PROXY_OVERRIDE_16\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17}\" ]; then\n  if [ -z \"${GIT_SSL_CAINFO+x}\" ] || [ \"${GIT_SSL_CAINFO-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_17}\" ]; then export GIT_SSL_CAINFO=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_17}\"; else export GIT_SSL_CAINFO; fi\nelse builtin unset GIT_SSL_CAINFO 2>/dev/null || command unset GIT_SSL_CAINFO; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17 __CODEX_SNAPSHOT_PROXY_OVERRIDE_17 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17 __CODEX_SNAPSHOT_PROXY_OVERRIDE_17\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18}\" ]; then\n  if [ -z \"${HTTPS_PROXY+x}\" ] || [ \"${HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_18}\" ]; then export HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_18}\"; else export HTTPS_PROXY; fi\nelse builtin unset HTTPS_PROXY 2>/dev/null || command unset HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18 __CODEX_SNAPSHOT_PROXY_OVERRIDE_18 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18 __CODEX_SNAPSHOT_PROXY_OVERRIDE_18\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19}\" ]; then\n  if [ -z \"${HTTP_PROXY+x}\" ] || [ \"${HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_19}\" ]; then export HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_19}\"; else export HTTP_PROXY; fi\nelse builtin unset HTTP_PROXY 2>/dev/null || command unset HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19 __CODEX_SNAPSHOT_PROXY_OVERRIDE_19 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19 __CODEX_SNAPSHOT_PROXY_OVERRIDE_19\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20}\" ]; then\n  if [ -z \"${NODE_EXTRA_CA_CERTS+x}\" ] || [ \"${NODE_EXTRA_CA_CERTS-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_20}\" ]; then export NODE_EXTRA_CA_CERTS=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_20}\"; else export NODE_EXTRA_CA_CERTS; fi\nelse builtin unset NODE_EXTRA_CA_CERTS 2>/dev/null || command unset NODE_EXTRA_CA_CERTS; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20 __CODEX_SNAPSHOT_PROXY_OVERRIDE_20 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20 __CODEX_SNAPSHOT_PROXY_OVERRIDE_20\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21}\" ]; then\n  if [ -z \"${NODE_USE_ENV_PROXY+x}\" ] || [ \"${NODE_USE_ENV_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_21}\" ]; then export NODE_USE_ENV_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_21}\"; else export NODE_USE_ENV_PROXY; fi\nelse builtin unset NODE_USE_ENV_PROXY 2>/dev/null || command unset NODE_USE_ENV_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21 __CODEX_SNAPSHOT_PROXY_OVERRIDE_21 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21 __CODEX_SNAPSHOT_PROXY_OVERRIDE_21\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22}\" ]; then\n  if [ -z \"${NO_PROXY+x}\" ] || [ \"${NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_22}\" ]; then export NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_22}\"; else export NO_PROXY; fi\nelse builtin unset NO_PROXY 2>/dev/null || command unset NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22 __CODEX_SNAPSHOT_PROXY_OVERRIDE_22 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22 __CODEX_SNAPSHOT_PROXY_OVERRIDE_22\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23}\" ]; then\n  if [ -z \"${NPM_CONFIG_CAFILE+x}\" ] || [ \"${NPM_CONFIG_CAFILE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_23}\" ]; then export NPM_CONFIG_CAFILE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_23}\"; else export NPM_CONFIG_CAFILE; fi\nelse builtin unset NPM_CONFIG_CAFILE 2>/dev/null || command unset NPM_CONFIG_CAFILE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23 __CODEX_SNAPSHOT_PROXY_OVERRIDE_23 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23 __CODEX_SNAPSHOT_PROXY_OVERRIDE_23\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24}\" ]; then\n  if [ -z \"${NPM_CONFIG_HTTPS_PROXY+x}\" ] || [ \"${NPM_CONFIG_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_24}\" ]; then export NPM_CONFIG_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_24}\"; else export NPM_CONFIG_HTTPS_PROXY; fi\nelse builtin unset NPM_CONFIG_HTTPS_PROXY 2>/dev/null || command unset NPM_CONFIG_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24 __CODEX_SNAPSHOT_PROXY_OVERRIDE_24 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24 __CODEX_SNAPSHOT_PROXY_OVERRIDE_24\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25}\" ]; then\n  if [ -z \"${NPM_CONFIG_HTTP_PROXY+x}\" ] || [ \"${NPM_CONFIG_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_25}\" ]; then export NPM_CONFIG_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_25}\"; else export NPM_CONFIG_HTTP_PROXY; fi\nelse builtin unset NPM_CONFIG_HTTP_PROXY 2>/dev/null || command unset NPM_CONFIG_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25 __CODEX_SNAPSHOT_PROXY_OVERRIDE_25 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25 __CODEX_SNAPSHOT_PROXY_OVERRIDE_25\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26}\" ]; then\n  if [ -z \"${NPM_CONFIG_NOPROXY+x}\" ] || [ \"${NPM_CONFIG_NOPROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_26}\" ]; then export NPM_CONFIG_NOPROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_26}\"; else export NPM_CONFIG_NOPROXY; fi\nelse builtin unset NPM_CONFIG_NOPROXY 2>/dev/null || command unset NPM_CONFIG_NOPROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26 __CODEX_SNAPSHOT_PROXY_OVERRIDE_26 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26 __CODEX_SNAPSHOT_PROXY_OVERRIDE_26\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27}\" ]; then\n  if [ -z \"${NPM_CONFIG_PROXY+x}\" ] || [ \"${NPM_CONFIG_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_27}\" ]; then export NPM_CONFIG_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_27}\"; else export NPM_CONFIG_PROXY; fi\nelse builtin unset NPM_CONFIG_PROXY 2>/dev/null || command unset NPM_CONFIG_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27 __CODEX_SNAPSHOT_PROXY_OVERRIDE_27 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27 __CODEX_SNAPSHOT_PROXY_OVERRIDE_27\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28}\" ]; then\n  if [ -z \"${PIP_CERT+x}\" ] || [ \"${PIP_CERT-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_28}\" ]; then export PIP_CERT=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_28}\"; else export PIP_CERT; fi\nelse builtin unset PIP_CERT 2>/dev/null || command unset PIP_CERT; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28 __CODEX_SNAPSHOT_PROXY_OVERRIDE_28 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28 __CODEX_SNAPSHOT_PROXY_OVERRIDE_28\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29}\" ]; then\n  if [ -z \"${PIP_PROXY+x}\" ] || [ \"${PIP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_29}\" ]; then export PIP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_29}\"; else export PIP_PROXY; fi\nelse builtin unset PIP_PROXY 2>/dev/null || command unset PIP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29 __CODEX_SNAPSHOT_PROXY_OVERRIDE_29 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29 __CODEX_SNAPSHOT_PROXY_OVERRIDE_29\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30}\" ]; then\n  if [ -z \"${REQUESTS_CA_BUNDLE+x}\" ] || [ \"${REQUESTS_CA_BUNDLE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_30}\" ]; then export REQUESTS_CA_BUNDLE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_30}\"; else export REQUESTS_CA_BUNDLE; fi\nelse builtin unset REQUESTS_CA_BUNDLE 2>/dev/null || command unset REQUESTS_CA_BUNDLE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30 __CODEX_SNAPSHOT_PROXY_OVERRIDE_30 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30 __CODEX_SNAPSHOT_PROXY_OVERRIDE_30\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31}\" ]; then\n  if [ -z \"${SSL_CERT_FILE+x}\" ] || [ \"${SSL_CERT_FILE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_31}\" ]; then export SSL_CERT_FILE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_31}\"; else export SSL_CERT_FILE; fi\nelse builtin unset SSL_CERT_FILE 2>/dev/null || command unset SSL_CERT_FILE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31 __CODEX_SNAPSHOT_PROXY_OVERRIDE_31 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31 __CODEX_SNAPSHOT_PROXY_OVERRIDE_31\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32}\" ]; then\n  if [ -z \"${WSS_PROXY+x}\" ] || [ \"${WSS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_32}\" ]; then export WSS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_32}\"; else export WSS_PROXY; fi\nelse builtin unset WSS_PROXY 2>/dev/null || command unset WSS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32 __CODEX_SNAPSHOT_PROXY_OVERRIDE_32 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32 __CODEX_SNAPSHOT_PROXY_OVERRIDE_32\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33}\" ]; then\n  if [ -z \"${WS_PROXY+x}\" ] || [ \"${WS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_33}\" ]; then export WS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_33}\"; else export WS_PROXY; fi\nelse builtin unset WS_PROXY 2>/dev/null || command unset WS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33 __CODEX_SNAPSHOT_PROXY_OVERRIDE_33 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33 __CODEX_SNAPSHOT_PROXY_OVERRIDE_33\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34}\" ]; then\n  if [ -z \"${YARN_HTTPS_PROXY+x}\" ] || [ \"${YARN_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_34}\" ]; then export YARN_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_34}\"; else export YARN_HTTPS_PROXY; fi\nelse builtin unset YARN_HTTPS_PROXY 2>/dev/null || command unset YARN_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34 __CODEX_SNAPSHOT_PROXY_OVERRIDE_34 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34 __CODEX_SNAPSHOT_PROXY_OVERRIDE_34\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35}\" ]; then\n  if [ -z \"${YARN_HTTP_PROXY+x}\" ] || [ \"${YARN_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_35}\" ]; then export YARN_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_35}\"; else export YARN_HTTP_PROXY; fi\nelse builtin unset YARN_HTTP_PROXY 2>/dev/null || command unset YARN_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35 __CODEX_SNAPSHOT_PROXY_OVERRIDE_35 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35 __CODEX_SNAPSHOT_PROXY_OVERRIDE_35\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36}\" ]; then\n  if [ -z \"${YARN_NO_PROXY+x}\" ] || [ \"${YARN_NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_36}\" ]; then export YARN_NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_36}\"; else export YARN_NO_PROXY; fi\nelse builtin unset YARN_NO_PROXY 2>/dev/null || command unset YARN_NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36 __CODEX_SNAPSHOT_PROXY_OVERRIDE_36 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36 __CODEX_SNAPSHOT_PROXY_OVERRIDE_36\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37}\" ]; then\n  if [ -z \"${all_proxy+x}\" ] || [ \"${all_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_37}\" ]; then export all_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_37}\"; else export all_proxy; fi\nelse builtin unset all_proxy 2>/dev/null || command unset all_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37 __CODEX_SNAPSHOT_PROXY_OVERRIDE_37 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37 __CODEX_SNAPSHOT_PROXY_OVERRIDE_37\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38}\" ]; then\n  if [ -z \"${ftp_proxy+x}\" ] || [ \"${ftp_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_38}\" ]; then export ftp_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_38}\"; else export ftp_proxy; fi\nelse builtin unset ftp_proxy 2>/dev/null || command unset ftp_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38 __CODEX_SNAPSHOT_PROXY_OVERRIDE_38 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38 __CODEX_SNAPSHOT_PROXY_OVERRIDE_38\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39}\" ]; then\n  if [ -z \"${http_proxy+x}\" ] || [ \"${http_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_39}\" ]; then export http_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_39}\"; else export http_proxy; fi\nelse builtin unset http_proxy 2>/dev/null || command unset http_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39 __CODEX_SNAPSHOT_PROXY_OVERRIDE_39 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39 __CODEX_SNAPSHOT_PROXY_OVERRIDE_39\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40}\" ]; then\n  if [ -z \"${https_proxy+x}\" ] || [ \"${https_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_40}\" ]; then export https_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_40}\"; else export https_proxy; fi\nelse builtin unset https_proxy 2>/dev/null || command unset https_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40 __CODEX_SNAPSHOT_PROXY_OVERRIDE_40 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40 __CODEX_SNAPSHOT_PROXY_OVERRIDE_40\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41}\" ]; then\n  if [ -z \"${no_proxy+x}\" ] || [ \"${no_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_41}\" ]; then export no_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_41}\"; else export no_proxy; fi\nelse builtin unset no_proxy 2>/dev/null || command unset no_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41 __CODEX_SNAPSHOT_PROXY_OVERRIDE_41 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41 __CODEX_SNAPSHOT_PROXY_OVERRIDE_41\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42}\" ]; then\n  if [ -z \"${npm_config_cafile+x}\" ] || [ \"${npm_config_cafile-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_42}\" ]; then export npm_config_cafile=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_42}\"; else export npm_config_cafile; fi\nelse builtin unset npm_config_cafile 2>/dev/null || command unset npm_config_cafile; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42 __CODEX_SNAPSHOT_PROXY_OVERRIDE_42 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42 __CODEX_SNAPSHOT_PROXY_OVERRIDE_42\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43}\" ]; then\n  if [ -z \"${npm_config_http_proxy+x}\" ] || [ \"${npm_config_http_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_43}\" ]; then export npm_config_http_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_43}\"; else export npm_config_http_proxy; fi\nelse builtin unset npm_config_http_proxy 2>/dev/null || command unset npm_config_http_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43 __CODEX_SNAPSHOT_PROXY_OVERRIDE_43 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43 __CODEX_SNAPSHOT_PROXY_OVERRIDE_43\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44}\" ]; then\n  if [ -z \"${npm_config_https_proxy+x}\" ] || [ \"${npm_config_https_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_44}\" ]; then export npm_config_https_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_44}\"; else export npm_config_https_proxy; fi\nelse builtin unset npm_config_https_proxy 2>/dev/null || command unset npm_config_https_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44 __CODEX_SNAPSHOT_PROXY_OVERRIDE_44 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44 __CODEX_SNAPSHOT_PROXY_OVERRIDE_44\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45}\" ]; then\n  if [ -z \"${npm_config_noproxy+x}\" ] || [ \"${npm_config_noproxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_45}\" ]; then export npm_config_noproxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_45}\"; else export npm_config_noproxy; fi\nelse builtin unset npm_config_noproxy 2>/dev/null || command unset npm_config_noproxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45 __CODEX_SNAPSHOT_PROXY_OVERRIDE_45 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45 __CODEX_SNAPSHOT_PROXY_OVERRIDE_45\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46}\" ]; then\n  if [ -z \"${npm_config_proxy+x}\" ] || [ \"${npm_config_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_46}\" ]; then export npm_config_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_46}\"; else export npm_config_proxy; fi\nelse builtin unset npm_config_proxy 2>/dev/null || command unset npm_config_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46 __CODEX_SNAPSHOT_PROXY_OVERRIDE_46 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46 __CODEX_SNAPSHOT_PROXY_OVERRIDE_46\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47}\" ]; then\n  if [ -z \"${ws_proxy+x}\" ] || [ \"${ws_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_47}\" ]; then export ws_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_47}\"; else export ws_proxy; fi\nelse builtin unset ws_proxy 2>/dev/null || command unset ws_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47 __CODEX_SNAPSHOT_PROXY_OVERRIDE_47 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47 __CODEX_SNAPSHOT_PROXY_OVERRIDE_47\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48}\" ]; then\n  if [ -z \"${wss_proxy+x}\" ] || [ \"${wss_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_48}\" ]; then export wss_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_48}\"; else export wss_proxy; fi\nelse builtin unset wss_proxy 2>/dev/null || command unset wss_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48 __CODEX_SNAPSHOT_PROXY_OVERRIDE_48 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48 __CODEX_SNAPSHOT_PROXY_OVERRIDE_48\nfi\nif [ -n \"${PATH:-}\" ]; then export PATH='/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path':\"$PATH\"; else export PATH='/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path'; fi\n\nexec '/bin/bash' -c 'mkdir -p /workspace/mcpjam-validation/docs\ncurl -fsSL https://docs.mcpjam.com/cli/overview.md -o /workspace/mcpjam-validation/docs/cli.md\ncurl -fsSL https://docs.mcpjam.com/cli/local-evals.md -o /workspace/mcpjam-validation/docs/local-evals.md\ncurl -fsSL https://docs.mcpjam.com/reference/openapi.json -o /workspace/mcpjam-validation/docs/openapi.json\ncat /workspace/mcpjam-validation/docs/cli.md /workspace/mcpjam-validation/docs/local-evals.md'"
+    ],
+    "start": "2026-11-15T02:03:44.895952+00:00",
+    "end": "2026-11-15T02:03:45.705442+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg",
+      "outcome-011.svg",
+      "outcome-012.svg",
+      "outcome-013.svg",
+      "outcome-014.svg",
+      "outcome-015.svg",
+      "outcome-016.svg",
+      "outcome-017.svg",
+      "outcome-018.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-001-003.svg",
+      "intermediate-001-004.svg",
+      "intermediate-001-005.svg",
+      "intermediate-001-006.svg",
+      "intermediate-001-007.svg",
+      "intermediate-001-008.svg",
+      "intermediate-001-009.svg",
+      "intermediate-001-010.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "73e81ac5471849cea96635a298146077",
+    "path": "commands/0019-73e81ac5471849cea96635a298146077",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_1=\"${CODEX_PERMISSION_PROFILE+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_1=\"${CODEX_PERMISSION_PROFILE-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_2=\"${CODEX_PLUGIN_METRICS_OUTPUT+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_2=\"${CODEX_PLUGIN_METRICS_OUTPUT-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_3=\"${CODEX_SESSION_ID+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_3=\"${CODEX_SESSION_ID-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_4=\"${CODEX_THREAD_ID+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_4=\"${CODEX_THREAD_ID-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_5=\"${CODEX_VERSION+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_5=\"${CODEX_VERSION-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0=\"${ALL_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_0=\"${ALL_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1=\"${BUNDLE_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_1=\"${BUNDLE_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2=\"${BUNDLE_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_2=\"${BUNDLE_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3=\"${BUNDLE_NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_3=\"${BUNDLE_NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4=\"${BUNDLE_SSL_CA_CERT+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_4=\"${BUNDLE_SSL_CA_CERT-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5=\"${CARGO_HTTP_CAINFO+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_5=\"${CARGO_HTTP_CAINFO-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6=\"${CODEX_CA_CERTIFICATE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_6=\"${CODEX_CA_CERTIFICATE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7=\"${CODEX_NETWORK_ALLOW_LOCAL_BINDING+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_7=\"${CODEX_NETWORK_ALLOW_LOCAL_BINDING-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8=\"${CODEX_NETWORK_PROXY_ACTIVE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_8=\"${CODEX_NETWORK_PROXY_ACTIVE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9=\"${CODEX_NETWORK_PROXY_ATTRIBUTION+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_9=\"${CODEX_NETWORK_PROXY_ATTRIBUTION-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10=\"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_10=\"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11=\"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_11=\"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12=\"${CURL_CA_BUNDLE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_12=\"${CURL_CA_BUNDLE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13=\"${DOCKER_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_13=\"${DOCKER_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14=\"${DOCKER_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_14=\"${DOCKER_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15=\"${ELECTRON_GET_USE_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_15=\"${ELECTRON_GET_USE_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16=\"${FTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_16=\"${FTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17=\"${GIT_SSL_CAINFO+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_17=\"${GIT_SSL_CAINFO-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18=\"${HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_18=\"${HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19=\"${HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_19=\"${HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20=\"${NODE_EXTRA_CA_CERTS+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_20=\"${NODE_EXTRA_CA_CERTS-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21=\"${NODE_USE_ENV_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_21=\"${NODE_USE_ENV_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22=\"${NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_22=\"${NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23=\"${NPM_CONFIG_CAFILE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_23=\"${NPM_CONFIG_CAFILE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24=\"${NPM_CONFIG_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_24=\"${NPM_CONFIG_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25=\"${NPM_CONFIG_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_25=\"${NPM_CONFIG_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26=\"${NPM_CONFIG_NOPROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_26=\"${NPM_CONFIG_NOPROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27=\"${NPM_CONFIG_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_27=\"${NPM_CONFIG_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28=\"${PIP_CERT+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_28=\"${PIP_CERT-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29=\"${PIP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_29=\"${PIP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30=\"${REQUESTS_CA_BUNDLE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_30=\"${REQUESTS_CA_BUNDLE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31=\"${SSL_CERT_FILE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_31=\"${SSL_CERT_FILE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32=\"${WSS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_32=\"${WSS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33=\"${WS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_33=\"${WS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34=\"${YARN_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_34=\"${YARN_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35=\"${YARN_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_35=\"${YARN_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36=\"${YARN_NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_36=\"${YARN_NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37=\"${all_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_37=\"${all_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38=\"${ftp_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_38=\"${ftp_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39=\"${http_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_39=\"${http_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40=\"${https_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_40=\"${https_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41=\"${no_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_41=\"${no_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42=\"${npm_config_cafile+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_42=\"${npm_config_cafile-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43=\"${npm_config_http_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_43=\"${npm_config_http_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44=\"${npm_config_https_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_44=\"${npm_config_https_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45=\"${npm_config_noproxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_45=\"${npm_config_noproxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46=\"${npm_config_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_46=\"${npm_config_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47=\"${ws_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_47=\"${ws_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48=\"${wss_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_48=\"${wss_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_ENV_SET=\"${CODEX_NETWORK_PROXY_ACTIVE+x}\"\n\nif . '/installed-agent/codex-home/shell_snapshots/01a1dcf1-ff91-7692-9a40-7546928099ce.1794708210104284583.sh' >/dev/null 2>&1; then :; fi\n\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_0}\" ]; then\n  if [ -z \"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\" ] || [ \"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_0}\" ]; then export CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS=\"${__CODEX_SNAPSHOT_OVERRIDE_0}\"; else export CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS; fi\nelse builtin unset CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS 2>/dev/null || command unset CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_0 __CODEX_SNAPSHOT_OVERRIDE_0 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_0 __CODEX_SNAPSHOT_OVERRIDE_0\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_1}\" ]; then\n  if [ -z \"${CODEX_PERMISSION_PROFILE+x}\" ] || [ \"${CODEX_PERMISSION_PROFILE-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_1}\" ]; then export CODEX_PERMISSION_PROFILE=\"${__CODEX_SNAPSHOT_OVERRIDE_1}\"; else export CODEX_PERMISSION_PROFILE; fi\nelse builtin unset CODEX_PERMISSION_PROFILE 2>/dev/null || command unset CODEX_PERMISSION_PROFILE; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_1 __CODEX_SNAPSHOT_OVERRIDE_1 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_1 __CODEX_SNAPSHOT_OVERRIDE_1\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_2}\" ]; then\n  if [ -z \"${CODEX_PLUGIN_METRICS_OUTPUT+x}\" ] || [ \"${CODEX_PLUGIN_METRICS_OUTPUT-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_2}\" ]; then export CODEX_PLUGIN_METRICS_OUTPUT=\"${__CODEX_SNAPSHOT_OVERRIDE_2}\"; else export CODEX_PLUGIN_METRICS_OUTPUT; fi\nelse builtin unset CODEX_PLUGIN_METRICS_OUTPUT 2>/dev/null || command unset CODEX_PLUGIN_METRICS_OUTPUT; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_2 __CODEX_SNAPSHOT_OVERRIDE_2 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_2 __CODEX_SNAPSHOT_OVERRIDE_2\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_3}\" ]; then\n  if [ -z \"${CODEX_SESSION_ID+x}\" ] || [ \"${CODEX_SESSION_ID-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_3}\" ]; then export CODEX_SESSION_ID=\"${__CODEX_SNAPSHOT_OVERRIDE_3}\"; else export CODEX_SESSION_ID; fi\nelse builtin unset CODEX_SESSION_ID 2>/dev/null || command unset CODEX_SESSION_ID; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_3 __CODEX_SNAPSHOT_OVERRIDE_3 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_3 __CODEX_SNAPSHOT_OVERRIDE_3\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_4}\" ]; then\n  if [ -z \"${CODEX_THREAD_ID+x}\" ] || [ \"${CODEX_THREAD_ID-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_4}\" ]; then export CODEX_THREAD_ID=\"${__CODEX_SNAPSHOT_OVERRIDE_4}\"; else export CODEX_THREAD_ID; fi\nelse builtin unset CODEX_THREAD_ID 2>/dev/null || command unset CODEX_THREAD_ID; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_4 __CODEX_SNAPSHOT_OVERRIDE_4 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_4 __CODEX_SNAPSHOT_OVERRIDE_4\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_5}\" ]; then\n  if [ -z \"${CODEX_VERSION+x}\" ] || [ \"${CODEX_VERSION-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_5}\" ]; then export CODEX_VERSION=\"${__CODEX_SNAPSHOT_OVERRIDE_5}\"; else export CODEX_VERSION; fi\nelse builtin unset CODEX_VERSION 2>/dev/null || command unset CODEX_VERSION; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_5 __CODEX_SNAPSHOT_OVERRIDE_5 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_5 __CODEX_SNAPSHOT_OVERRIDE_5\nif [ -n \"$__CODEX_SNAPSHOT_PROXY_ENV_SET\" ] || [ -n \"${CODEX_NETWORK_PROXY_ACTIVE+x}\" ]; then\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0}\" ]; then\n  if [ -z \"${ALL_PROXY+x}\" ] || [ \"${ALL_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_0}\" ]; then export ALL_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_0}\"; else export ALL_PROXY; fi\nelse builtin unset ALL_PROXY 2>/dev/null || command unset ALL_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0 __CODEX_SNAPSHOT_PROXY_OVERRIDE_0 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0 __CODEX_SNAPSHOT_PROXY_OVERRIDE_0\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1}\" ]; then\n  if [ -z \"${BUNDLE_HTTPS_PROXY+x}\" ] || [ \"${BUNDLE_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_1}\" ]; then export BUNDLE_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_1}\"; else export BUNDLE_HTTPS_PROXY; fi\nelse builtin unset BUNDLE_HTTPS_PROXY 2>/dev/null || command unset BUNDLE_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1 __CODEX_SNAPSHOT_PROXY_OVERRIDE_1 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1 __CODEX_SNAPSHOT_PROXY_OVERRIDE_1\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2}\" ]; then\n  if [ -z \"${BUNDLE_HTTP_PROXY+x}\" ] || [ \"${BUNDLE_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_2}\" ]; then export BUNDLE_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_2}\"; else export BUNDLE_HTTP_PROXY; fi\nelse builtin unset BUNDLE_HTTP_PROXY 2>/dev/null || command unset BUNDLE_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2 __CODEX_SNAPSHOT_PROXY_OVERRIDE_2 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2 __CODEX_SNAPSHOT_PROXY_OVERRIDE_2\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3}\" ]; then\n  if [ -z \"${BUNDLE_NO_PROXY+x}\" ] || [ \"${BUNDLE_NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_3}\" ]; then export BUNDLE_NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_3}\"; else export BUNDLE_NO_PROXY; fi\nelse builtin unset BUNDLE_NO_PROXY 2>/dev/null || command unset BUNDLE_NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3 __CODEX_SNAPSHOT_PROXY_OVERRIDE_3 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3 __CODEX_SNAPSHOT_PROXY_OVERRIDE_3\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4}\" ]; then\n  if [ -z \"${BUNDLE_SSL_CA_CERT+x}\" ] || [ \"${BUNDLE_SSL_CA_CERT-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_4}\" ]; then export BUNDLE_SSL_CA_CERT=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_4}\"; else export BUNDLE_SSL_CA_CERT; fi\nelse builtin unset BUNDLE_SSL_CA_CERT 2>/dev/null || command unset BUNDLE_SSL_CA_CERT; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4 __CODEX_SNAPSHOT_PROXY_OVERRIDE_4 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4 __CODEX_SNAPSHOT_PROXY_OVERRIDE_4\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5}\" ]; then\n  if [ -z \"${CARGO_HTTP_CAINFO+x}\" ] || [ \"${CARGO_HTTP_CAINFO-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_5}\" ]; then export CARGO_HTTP_CAINFO=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_5}\"; else export CARGO_HTTP_CAINFO; fi\nelse builtin unset CARGO_HTTP_CAINFO 2>/dev/null || command unset CARGO_HTTP_CAINFO; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5 __CODEX_SNAPSHOT_PROXY_OVERRIDE_5 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5 __CODEX_SNAPSHOT_PROXY_OVERRIDE_5\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6}\" ]; then\n  if [ -z \"${CODEX_CA_CERTIFICATE+x}\" ] || [ \"${CODEX_CA_CERTIFICATE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_6}\" ]; then export CODEX_CA_CERTIFICATE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_6}\"; else export CODEX_CA_CERTIFICATE; fi\nelse builtin unset CODEX_CA_CERTIFICATE 2>/dev/null || command unset CODEX_CA_CERTIFICATE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6 __CODEX_SNAPSHOT_PROXY_OVERRIDE_6 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6 __CODEX_SNAPSHOT_PROXY_OVERRIDE_6\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7}\" ]; then\n  if [ -z \"${CODEX_NETWORK_ALLOW_LOCAL_BINDING+x}\" ] || [ \"${CODEX_NETWORK_ALLOW_LOCAL_BINDING-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_7}\" ]; then export CODEX_NETWORK_ALLOW_LOCAL_BINDING=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_7}\"; else export CODEX_NETWORK_ALLOW_LOCAL_BINDING; fi\nelse builtin unset CODEX_NETWORK_ALLOW_LOCAL_BINDING 2>/dev/null || command unset CODEX_NETWORK_ALLOW_LOCAL_BINDING; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7 __CODEX_SNAPSHOT_PROXY_OVERRIDE_7 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7 __CODEX_SNAPSHOT_PROXY_OVERRIDE_7\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_ACTIVE+x}\" ] || [ \"${CODEX_NETWORK_PROXY_ACTIVE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_8}\" ]; then export CODEX_NETWORK_PROXY_ACTIVE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_8}\"; else export CODEX_NETWORK_PROXY_ACTIVE; fi\nelse builtin unset CODEX_NETWORK_PROXY_ACTIVE 2>/dev/null || command unset CODEX_NETWORK_PROXY_ACTIVE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8 __CODEX_SNAPSHOT_PROXY_OVERRIDE_8 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8 __CODEX_SNAPSHOT_PROXY_OVERRIDE_8\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_ATTRIBUTION+x}\" ] || [ \"${CODEX_NETWORK_PROXY_ATTRIBUTION-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_9}\" ]; then export CODEX_NETWORK_PROXY_ATTRIBUTION=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_9}\"; else export CODEX_NETWORK_PROXY_ATTRIBUTION; fi\nelse builtin unset CODEX_NETWORK_PROXY_ATTRIBUTION 2>/dev/null || command unset CODEX_NETWORK_PROXY_ATTRIBUTION; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9 __CODEX_SNAPSHOT_PROXY_OVERRIDE_9 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9 __CODEX_SNAPSHOT_PROXY_OVERRIDE_9\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS+x}\" ] || [ \"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_10}\" ]; then export CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_10}\"; else export CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS; fi\nelse builtin unset CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS 2>/dev/null || command unset CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10 __CODEX_SNAPSHOT_PROXY_OVERRIDE_10 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10 __CODEX_SNAPSHOT_PROXY_OVERRIDE_10\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE+x}\" ] || [ \"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_11}\" ]; then export CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_11}\"; else export CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE; fi\nelse builtin unset CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE 2>/dev/null || command unset CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11 __CODEX_SNAPSHOT_PROXY_OVERRIDE_11 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11 __CODEX_SNAPSHOT_PROXY_OVERRIDE_11\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12}\" ]; then\n  if [ -z \"${CURL_CA_BUNDLE+x}\" ] || [ \"${CURL_CA_BUNDLE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_12}\" ]; then export CURL_CA_BUNDLE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_12}\"; else export CURL_CA_BUNDLE; fi\nelse builtin unset CURL_CA_BUNDLE 2>/dev/null || command unset CURL_CA_BUNDLE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12 __CODEX_SNAPSHOT_PROXY_OVERRIDE_12 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12 __CODEX_SNAPSHOT_PROXY_OVERRIDE_12\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13}\" ]; then\n  if [ -z \"${DOCKER_HTTPS_PROXY+x}\" ] || [ \"${DOCKER_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_13}\" ]; then export DOCKER_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_13}\"; else export DOCKER_HTTPS_PROXY; fi\nelse builtin unset DOCKER_HTTPS_PROXY 2>/dev/null || command unset DOCKER_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13 __CODEX_SNAPSHOT_PROXY_OVERRIDE_13 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13 __CODEX_SNAPSHOT_PROXY_OVERRIDE_13\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14}\" ]; then\n  if [ -z \"${DOCKER_HTTP_PROXY+x}\" ] || [ \"${DOCKER_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_14}\" ]; then export DOCKER_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_14}\"; else export DOCKER_HTTP_PROXY; fi\nelse builtin unset DOCKER_HTTP_PROXY 2>/dev/null || command unset DOCKER_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14 __CODEX_SNAPSHOT_PROXY_OVERRIDE_14 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14 __CODEX_SNAPSHOT_PROXY_OVERRIDE_14\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15}\" ]; then\n  if [ -z \"${ELECTRON_GET_USE_PROXY+x}\" ] || [ \"${ELECTRON_GET_USE_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_15}\" ]; then export ELECTRON_GET_USE_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_15}\"; else export ELECTRON_GET_USE_PROXY; fi\nelse builtin unset ELECTRON_GET_USE_PROXY 2>/dev/null || command unset ELECTRON_GET_USE_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15 __CODEX_SNAPSHOT_PROXY_OVERRIDE_15 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15 __CODEX_SNAPSHOT_PROXY_OVERRIDE_15\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16}\" ]; then\n  if [ -z \"${FTP_PROXY+x}\" ] || [ \"${FTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_16}\" ]; then export FTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_16}\"; else export FTP_PROXY; fi\nelse builtin unset FTP_PROXY 2>/dev/null || command unset FTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16 __CODEX_SNAPSHOT_PROXY_OVERRIDE_16 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16 __CODEX_SNAPSHOT_PROXY_OVERRIDE_16\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17}\" ]; then\n  if [ -z \"${GIT_SSL_CAINFO+x}\" ] || [ \"${GIT_SSL_CAINFO-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_17}\" ]; then export GIT_SSL_CAINFO=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_17}\"; else export GIT_SSL_CAINFO; fi\nelse builtin unset GIT_SSL_CAINFO 2>/dev/null || command unset GIT_SSL_CAINFO; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17 __CODEX_SNAPSHOT_PROXY_OVERRIDE_17 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17 __CODEX_SNAPSHOT_PROXY_OVERRIDE_17\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18}\" ]; then\n  if [ -z \"${HTTPS_PROXY+x}\" ] || [ \"${HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_18}\" ]; then export HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_18}\"; else export HTTPS_PROXY; fi\nelse builtin unset HTTPS_PROXY 2>/dev/null || command unset HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18 __CODEX_SNAPSHOT_PROXY_OVERRIDE_18 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18 __CODEX_SNAPSHOT_PROXY_OVERRIDE_18\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19}\" ]; then\n  if [ -z \"${HTTP_PROXY+x}\" ] || [ \"${HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_19}\" ]; then export HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_19}\"; else export HTTP_PROXY; fi\nelse builtin unset HTTP_PROXY 2>/dev/null || command unset HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19 __CODEX_SNAPSHOT_PROXY_OVERRIDE_19 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19 __CODEX_SNAPSHOT_PROXY_OVERRIDE_19\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20}\" ]; then\n  if [ -z \"${NODE_EXTRA_CA_CERTS+x}\" ] || [ \"${NODE_EXTRA_CA_CERTS-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_20}\" ]; then export NODE_EXTRA_CA_CERTS=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_20}\"; else export NODE_EXTRA_CA_CERTS; fi\nelse builtin unset NODE_EXTRA_CA_CERTS 2>/dev/null || command unset NODE_EXTRA_CA_CERTS; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20 __CODEX_SNAPSHOT_PROXY_OVERRIDE_20 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20 __CODEX_SNAPSHOT_PROXY_OVERRIDE_20\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21}\" ]; then\n  if [ -z \"${NODE_USE_ENV_PROXY+x}\" ] || [ \"${NODE_USE_ENV_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_21}\" ]; then export NODE_USE_ENV_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_21}\"; else export NODE_USE_ENV_PROXY; fi\nelse builtin unset NODE_USE_ENV_PROXY 2>/dev/null || command unset NODE_USE_ENV_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21 __CODEX_SNAPSHOT_PROXY_OVERRIDE_21 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21 __CODEX_SNAPSHOT_PROXY_OVERRIDE_21\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22}\" ]; then\n  if [ -z \"${NO_PROXY+x}\" ] || [ \"${NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_22}\" ]; then export NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_22}\"; else export NO_PROXY; fi\nelse builtin unset NO_PROXY 2>/dev/null || command unset NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22 __CODEX_SNAPSHOT_PROXY_OVERRIDE_22 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22 __CODEX_SNAPSHOT_PROXY_OVERRIDE_22\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23}\" ]; then\n  if [ -z \"${NPM_CONFIG_CAFILE+x}\" ] || [ \"${NPM_CONFIG_CAFILE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_23}\" ]; then export NPM_CONFIG_CAFILE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_23}\"; else export NPM_CONFIG_CAFILE; fi\nelse builtin unset NPM_CONFIG_CAFILE 2>/dev/null || command unset NPM_CONFIG_CAFILE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23 __CODEX_SNAPSHOT_PROXY_OVERRIDE_23 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23 __CODEX_SNAPSHOT_PROXY_OVERRIDE_23\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24}\" ]; then\n  if [ -z \"${NPM_CONFIG_HTTPS_PROXY+x}\" ] || [ \"${NPM_CONFIG_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_24}\" ]; then export NPM_CONFIG_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_24}\"; else export NPM_CONFIG_HTTPS_PROXY; fi\nelse builtin unset NPM_CONFIG_HTTPS_PROXY 2>/dev/null || command unset NPM_CONFIG_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24 __CODEX_SNAPSHOT_PROXY_OVERRIDE_24 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24 __CODEX_SNAPSHOT_PROXY_OVERRIDE_24\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25}\" ]; then\n  if [ -z \"${NPM_CONFIG_HTTP_PROXY+x}\" ] || [ \"${NPM_CONFIG_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_25}\" ]; then export NPM_CONFIG_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_25}\"; else export NPM_CONFIG_HTTP_PROXY; fi\nelse builtin unset NPM_CONFIG_HTTP_PROXY 2>/dev/null || command unset NPM_CONFIG_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25 __CODEX_SNAPSHOT_PROXY_OVERRIDE_25 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25 __CODEX_SNAPSHOT_PROXY_OVERRIDE_25\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26}\" ]; then\n  if [ -z \"${NPM_CONFIG_NOPROXY+x}\" ] || [ \"${NPM_CONFIG_NOPROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_26}\" ]; then export NPM_CONFIG_NOPROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_26}\"; else export NPM_CONFIG_NOPROXY; fi\nelse builtin unset NPM_CONFIG_NOPROXY 2>/dev/null || command unset NPM_CONFIG_NOPROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26 __CODEX_SNAPSHOT_PROXY_OVERRIDE_26 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26 __CODEX_SNAPSHOT_PROXY_OVERRIDE_26\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27}\" ]; then\n  if [ -z \"${NPM_CONFIG_PROXY+x}\" ] || [ \"${NPM_CONFIG_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_27}\" ]; then export NPM_CONFIG_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_27}\"; else export NPM_CONFIG_PROXY; fi\nelse builtin unset NPM_CONFIG_PROXY 2>/dev/null || command unset NPM_CONFIG_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27 __CODEX_SNAPSHOT_PROXY_OVERRIDE_27 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27 __CODEX_SNAPSHOT_PROXY_OVERRIDE_27\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28}\" ]; then\n  if [ -z \"${PIP_CERT+x}\" ] || [ \"${PIP_CERT-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_28}\" ]; then export PIP_CERT=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_28}\"; else export PIP_CERT; fi\nelse builtin unset PIP_CERT 2>/dev/null || command unset PIP_CERT; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28 __CODEX_SNAPSHOT_PROXY_OVERRIDE_28 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28 __CODEX_SNAPSHOT_PROXY_OVERRIDE_28\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29}\" ]; then\n  if [ -z \"${PIP_PROXY+x}\" ] || [ \"${PIP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_29}\" ]; then export PIP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_29}\"; else export PIP_PROXY; fi\nelse builtin unset PIP_PROXY 2>/dev/null || command unset PIP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29 __CODEX_SNAPSHOT_PROXY_OVERRIDE_29 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29 __CODEX_SNAPSHOT_PROXY_OVERRIDE_29\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30}\" ]; then\n  if [ -z \"${REQUESTS_CA_BUNDLE+x}\" ] || [ \"${REQUESTS_CA_BUNDLE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_30}\" ]; then export REQUESTS_CA_BUNDLE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_30}\"; else export REQUESTS_CA_BUNDLE; fi\nelse builtin unset REQUESTS_CA_BUNDLE 2>/dev/null || command unset REQUESTS_CA_BUNDLE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30 __CODEX_SNAPSHOT_PROXY_OVERRIDE_30 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30 __CODEX_SNAPSHOT_PROXY_OVERRIDE_30\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31}\" ]; then\n  if [ -z \"${SSL_CERT_FILE+x}\" ] || [ \"${SSL_CERT_FILE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_31}\" ]; then export SSL_CERT_FILE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_31}\"; else export SSL_CERT_FILE; fi\nelse builtin unset SSL_CERT_FILE 2>/dev/null || command unset SSL_CERT_FILE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31 __CODEX_SNAPSHOT_PROXY_OVERRIDE_31 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31 __CODEX_SNAPSHOT_PROXY_OVERRIDE_31\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32}\" ]; then\n  if [ -z \"${WSS_PROXY+x}\" ] || [ \"${WSS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_32}\" ]; then export WSS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_32}\"; else export WSS_PROXY; fi\nelse builtin unset WSS_PROXY 2>/dev/null || command unset WSS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32 __CODEX_SNAPSHOT_PROXY_OVERRIDE_32 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32 __CODEX_SNAPSHOT_PROXY_OVERRIDE_32\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33}\" ]; then\n  if [ -z \"${WS_PROXY+x}\" ] || [ \"${WS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_33}\" ]; then export WS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_33}\"; else export WS_PROXY; fi\nelse builtin unset WS_PROXY 2>/dev/null || command unset WS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33 __CODEX_SNAPSHOT_PROXY_OVERRIDE_33 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33 __CODEX_SNAPSHOT_PROXY_OVERRIDE_33\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34}\" ]; then\n  if [ -z \"${YARN_HTTPS_PROXY+x}\" ] || [ \"${YARN_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_34}\" ]; then export YARN_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_34}\"; else export YARN_HTTPS_PROXY; fi\nelse builtin unset YARN_HTTPS_PROXY 2>/dev/null || command unset YARN_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34 __CODEX_SNAPSHOT_PROXY_OVERRIDE_34 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34 __CODEX_SNAPSHOT_PROXY_OVERRIDE_34\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35}\" ]; then\n  if [ -z \"${YARN_HTTP_PROXY+x}\" ] || [ \"${YARN_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_35}\" ]; then export YARN_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_35}\"; else export YARN_HTTP_PROXY; fi\nelse builtin unset YARN_HTTP_PROXY 2>/dev/null || command unset YARN_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35 __CODEX_SNAPSHOT_PROXY_OVERRIDE_35 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35 __CODEX_SNAPSHOT_PROXY_OVERRIDE_35\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36}\" ]; then\n  if [ -z \"${YARN_NO_PROXY+x}\" ] || [ \"${YARN_NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_36}\" ]; then export YARN_NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_36}\"; else export YARN_NO_PROXY; fi\nelse builtin unset YARN_NO_PROXY 2>/dev/null || command unset YARN_NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36 __CODEX_SNAPSHOT_PROXY_OVERRIDE_36 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36 __CODEX_SNAPSHOT_PROXY_OVERRIDE_36\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37}\" ]; then\n  if [ -z \"${all_proxy+x}\" ] || [ \"${all_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_37}\" ]; then export all_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_37}\"; else export all_proxy; fi\nelse builtin unset all_proxy 2>/dev/null || command unset all_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37 __CODEX_SNAPSHOT_PROXY_OVERRIDE_37 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37 __CODEX_SNAPSHOT_PROXY_OVERRIDE_37\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38}\" ]; then\n  if [ -z \"${ftp_proxy+x}\" ] || [ \"${ftp_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_38}\" ]; then export ftp_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_38}\"; else export ftp_proxy; fi\nelse builtin unset ftp_proxy 2>/dev/null || command unset ftp_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38 __CODEX_SNAPSHOT_PROXY_OVERRIDE_38 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38 __CODEX_SNAPSHOT_PROXY_OVERRIDE_38\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39}\" ]; then\n  if [ -z \"${http_proxy+x}\" ] || [ \"${http_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_39}\" ]; then export http_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_39}\"; else export http_proxy; fi\nelse builtin unset http_proxy 2>/dev/null || command unset http_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39 __CODEX_SNAPSHOT_PROXY_OVERRIDE_39 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39 __CODEX_SNAPSHOT_PROXY_OVERRIDE_39\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40}\" ]; then\n  if [ -z \"${https_proxy+x}\" ] || [ \"${https_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_40}\" ]; then export https_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_40}\"; else export https_proxy; fi\nelse builtin unset https_proxy 2>/dev/null || command unset https_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40 __CODEX_SNAPSHOT_PROXY_OVERRIDE_40 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40 __CODEX_SNAPSHOT_PROXY_OVERRIDE_40\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41}\" ]; then\n  if [ -z \"${no_proxy+x}\" ] || [ \"${no_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_41}\" ]; then export no_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_41}\"; else export no_proxy; fi\nelse builtin unset no_proxy 2>/dev/null || command unset no_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41 __CODEX_SNAPSHOT_PROXY_OVERRIDE_41 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41 __CODEX_SNAPSHOT_PROXY_OVERRIDE_41\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42}\" ]; then\n  if [ -z \"${npm_config_cafile+x}\" ] || [ \"${npm_config_cafile-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_42}\" ]; then export npm_config_cafile=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_42}\"; else export npm_config_cafile; fi\nelse builtin unset npm_config_cafile 2>/dev/null || command unset npm_config_cafile; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42 __CODEX_SNAPSHOT_PROXY_OVERRIDE_42 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42 __CODEX_SNAPSHOT_PROXY_OVERRIDE_42\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43}\" ]; then\n  if [ -z \"${npm_config_http_proxy+x}\" ] || [ \"${npm_config_http_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_43}\" ]; then export npm_config_http_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_43}\"; else export npm_config_http_proxy; fi\nelse builtin unset npm_config_http_proxy 2>/dev/null || command unset npm_config_http_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43 __CODEX_SNAPSHOT_PROXY_OVERRIDE_43 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43 __CODEX_SNAPSHOT_PROXY_OVERRIDE_43\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44}\" ]; then\n  if [ -z \"${npm_config_https_proxy+x}\" ] || [ \"${npm_config_https_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_44}\" ]; then export npm_config_https_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_44}\"; else export npm_config_https_proxy; fi\nelse builtin unset npm_config_https_proxy 2>/dev/null || command unset npm_config_https_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44 __CODEX_SNAPSHOT_PROXY_OVERRIDE_44 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44 __CODEX_SNAPSHOT_PROXY_OVERRIDE_44\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45}\" ]; then\n  if [ -z \"${npm_config_noproxy+x}\" ] || [ \"${npm_config_noproxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_45}\" ]; then export npm_config_noproxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_45}\"; else export npm_config_noproxy; fi\nelse builtin unset npm_config_noproxy 2>/dev/null || command unset npm_config_noproxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45 __CODEX_SNAPSHOT_PROXY_OVERRIDE_45 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45 __CODEX_SNAPSHOT_PROXY_OVERRIDE_45\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46}\" ]; then\n  if [ -z \"${npm_config_proxy+x}\" ] || [ \"${npm_config_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_46}\" ]; then export npm_config_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_46}\"; else export npm_config_proxy; fi\nelse builtin unset npm_config_proxy 2>/dev/null || command unset npm_config_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46 __CODEX_SNAPSHOT_PROXY_OVERRIDE_46 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46 __CODEX_SNAPSHOT_PROXY_OVERRIDE_46\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47}\" ]; then\n  if [ -z \"${ws_proxy+x}\" ] || [ \"${ws_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_47}\" ]; then export ws_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_47}\"; else export ws_proxy; fi\nelse builtin unset ws_proxy 2>/dev/null || command unset ws_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47 __CODEX_SNAPSHOT_PROXY_OVERRIDE_47 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47 __CODEX_SNAPSHOT_PROXY_OVERRIDE_47\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48}\" ]; then\n  if [ -z \"${wss_proxy+x}\" ] || [ \"${wss_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_48}\" ]; then export wss_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_48}\"; else export wss_proxy; fi\nelse builtin unset wss_proxy 2>/dev/null || command unset wss_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48 __CODEX_SNAPSHOT_PROXY_OVERRIDE_48 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48 __CODEX_SNAPSHOT_PROXY_OVERRIDE_48\nfi\nif [ -n \"${PATH:-}\" ]; then export PATH='/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path':\"$PATH\"; else export PATH='/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path'; fi\n\nexec '/bin/bash' -c 'curl -fsSL https://docs.mcpjam.com/cli/reference.md -o /workspace/mcpjam-validation/docs/reference.md\ncurl -fsSL https://docs.mcpjam.com/cli/tools-resources-prompts.md -o /workspace/mcpjam-validation/docs/tools.md\npython - <<'\"'\"'PY'\"'\"'\nimport json\ns=json.load(open('\"'\"'/workspace/mcpjam-validation/docs/openapi.json'\"'\"'))\nfor p,v in s.get('\"'\"'paths'\"'\"',{}).items():\n if any(x in p for x in ['\"'\"'chat'\"'\"','\"'\"'eval'\"'\"','\"'\"'servers'\"'\"']):\n  print(p,'\"'\"','\"'\"'.join(v))\nPY'"
+    ],
+    "start": "2026-11-15T02:03:53.171789+00:00",
+    "end": "2026-11-15T02:03:53.512475+00:00",
+    "exit_status": 127,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "83c8d81f410b4cfa85625cf59784bd90",
+    "path": "commands/0020-83c8d81f410b4cfa85625cf59784bd90",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npx mcpjam --version\nnpx mcpjam protocol conformance --help"
+    ],
+    "start": "2026-11-15T02:04:47.126662+00:00",
+    "end": "2026-11-15T02:04:47.981571+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "876f777367aa40248d6812026e0041cb",
+    "path": "commands/0021-876f777367aa40248d6812026e0041cb",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_1=\"${CODEX_PERMISSION_PROFILE+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_1=\"${CODEX_PERMISSION_PROFILE-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_2=\"${CODEX_PLUGIN_METRICS_OUTPUT+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_2=\"${CODEX_PLUGIN_METRICS_OUTPUT-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_3=\"${CODEX_SESSION_ID+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_3=\"${CODEX_SESSION_ID-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_4=\"${CODEX_THREAD_ID+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_4=\"${CODEX_THREAD_ID-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_5=\"${CODEX_VERSION+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_5=\"${CODEX_VERSION-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0=\"${ALL_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_0=\"${ALL_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1=\"${BUNDLE_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_1=\"${BUNDLE_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2=\"${BUNDLE_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_2=\"${BUNDLE_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3=\"${BUNDLE_NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_3=\"${BUNDLE_NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4=\"${BUNDLE_SSL_CA_CERT+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_4=\"${BUNDLE_SSL_CA_CERT-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5=\"${CARGO_HTTP_CAINFO+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_5=\"${CARGO_HTTP_CAINFO-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6=\"${CODEX_CA_CERTIFICATE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_6=\"${CODEX_CA_CERTIFICATE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7=\"${CODEX_NETWORK_ALLOW_LOCAL_BINDING+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_7=\"${CODEX_NETWORK_ALLOW_LOCAL_BINDING-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8=\"${CODEX_NETWORK_PROXY_ACTIVE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_8=\"${CODEX_NETWORK_PROXY_ACTIVE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9=\"${CODEX_NETWORK_PROXY_ATTRIBUTION+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_9=\"${CODEX_NETWORK_PROXY_ATTRIBUTION-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10=\"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_10=\"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11=\"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_11=\"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12=\"${CURL_CA_BUNDLE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_12=\"${CURL_CA_BUNDLE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13=\"${DOCKER_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_13=\"${DOCKER_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14=\"${DOCKER_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_14=\"${DOCKER_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15=\"${ELECTRON_GET_USE_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_15=\"${ELECTRON_GET_USE_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16=\"${FTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_16=\"${FTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17=\"${GIT_SSL_CAINFO+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_17=\"${GIT_SSL_CAINFO-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18=\"${HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_18=\"${HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19=\"${HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_19=\"${HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20=\"${NODE_EXTRA_CA_CERTS+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_20=\"${NODE_EXTRA_CA_CERTS-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21=\"${NODE_USE_ENV_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_21=\"${NODE_USE_ENV_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22=\"${NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_22=\"${NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23=\"${NPM_CONFIG_CAFILE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_23=\"${NPM_CONFIG_CAFILE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24=\"${NPM_CONFIG_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_24=\"${NPM_CONFIG_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25=\"${NPM_CONFIG_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_25=\"${NPM_CONFIG_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26=\"${NPM_CONFIG_NOPROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_26=\"${NPM_CONFIG_NOPROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27=\"${NPM_CONFIG_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_27=\"${NPM_CONFIG_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28=\"${PIP_CERT+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_28=\"${PIP_CERT-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29=\"${PIP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_29=\"${PIP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30=\"${REQUESTS_CA_BUNDLE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_30=\"${REQUESTS_CA_BUNDLE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31=\"${SSL_CERT_FILE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_31=\"${SSL_CERT_FILE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32=\"${WSS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_32=\"${WSS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33=\"${WS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_33=\"${WS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34=\"${YARN_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_34=\"${YARN_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35=\"${YARN_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_35=\"${YARN_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36=\"${YARN_NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_36=\"${YARN_NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37=\"${all_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_37=\"${all_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38=\"${ftp_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_38=\"${ftp_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39=\"${http_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_39=\"${http_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40=\"${https_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_40=\"${https_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41=\"${no_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_41=\"${no_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42=\"${npm_config_cafile+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_42=\"${npm_config_cafile-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43=\"${npm_config_http_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_43=\"${npm_config_http_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44=\"${npm_config_https_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_44=\"${npm_config_https_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45=\"${npm_config_noproxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_45=\"${npm_config_noproxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46=\"${npm_config_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_46=\"${npm_config_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47=\"${ws_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_47=\"${ws_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48=\"${wss_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_48=\"${wss_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_ENV_SET=\"${CODEX_NETWORK_PROXY_ACTIVE+x}\"\n\nif . '/installed-agent/codex-home/shell_snapshots/01a1dcf1-ff91-7692-9a40-7546928099ce.1794708210104284583.sh' >/dev/null 2>&1; then :; fi\n\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_0}\" ]; then\n  if [ -z \"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\" ] || [ \"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_0}\" ]; then export CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS=\"${__CODEX_SNAPSHOT_OVERRIDE_0}\"; else export CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS; fi\nelse builtin unset CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS 2>/dev/null || command unset CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_0 __CODEX_SNAPSHOT_OVERRIDE_0 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_0 __CODEX_SNAPSHOT_OVERRIDE_0\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_1}\" ]; then\n  if [ -z \"${CODEX_PERMISSION_PROFILE+x}\" ] || [ \"${CODEX_PERMISSION_PROFILE-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_1}\" ]; then export CODEX_PERMISSION_PROFILE=\"${__CODEX_SNAPSHOT_OVERRIDE_1}\"; else export CODEX_PERMISSION_PROFILE; fi\nelse builtin unset CODEX_PERMISSION_PROFILE 2>/dev/null || command unset CODEX_PERMISSION_PROFILE; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_1 __CODEX_SNAPSHOT_OVERRIDE_1 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_1 __CODEX_SNAPSHOT_OVERRIDE_1\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_2}\" ]; then\n  if [ -z \"${CODEX_PLUGIN_METRICS_OUTPUT+x}\" ] || [ \"${CODEX_PLUGIN_METRICS_OUTPUT-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_2}\" ]; then export CODEX_PLUGIN_METRICS_OUTPUT=\"${__CODEX_SNAPSHOT_OVERRIDE_2}\"; else export CODEX_PLUGIN_METRICS_OUTPUT; fi\nelse builtin unset CODEX_PLUGIN_METRICS_OUTPUT 2>/dev/null || command unset CODEX_PLUGIN_METRICS_OUTPUT; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_2 __CODEX_SNAPSHOT_OVERRIDE_2 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_2 __CODEX_SNAPSHOT_OVERRIDE_2\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_3}\" ]; then\n  if [ -z \"${CODEX_SESSION_ID+x}\" ] || [ \"${CODEX_SESSION_ID-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_3}\" ]; then export CODEX_SESSION_ID=\"${__CODEX_SNAPSHOT_OVERRIDE_3}\"; else export CODEX_SESSION_ID; fi\nelse builtin unset CODEX_SESSION_ID 2>/dev/null || command unset CODEX_SESSION_ID; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_3 __CODEX_SNAPSHOT_OVERRIDE_3 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_3 __CODEX_SNAPSHOT_OVERRIDE_3\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_4}\" ]; then\n  if [ -z \"${CODEX_THREAD_ID+x}\" ] || [ \"${CODEX_THREAD_ID-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_4}\" ]; then export CODEX_THREAD_ID=\"${__CODEX_SNAPSHOT_OVERRIDE_4}\"; else export CODEX_THREAD_ID; fi\nelse builtin unset CODEX_THREAD_ID 2>/dev/null || command unset CODEX_THREAD_ID; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_4 __CODEX_SNAPSHOT_OVERRIDE_4 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_4 __CODEX_SNAPSHOT_OVERRIDE_4\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_5}\" ]; then\n  if [ -z \"${CODEX_VERSION+x}\" ] || [ \"${CODEX_VERSION-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_5}\" ]; then export CODEX_VERSION=\"${__CODEX_SNAPSHOT_OVERRIDE_5}\"; else export CODEX_VERSION; fi\nelse builtin unset CODEX_VERSION 2>/dev/null || command unset CODEX_VERSION; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_5 __CODEX_SNAPSHOT_OVERRIDE_5 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_5 __CODEX_SNAPSHOT_OVERRIDE_5\nif [ -n \"$__CODEX_SNAPSHOT_PROXY_ENV_SET\" ] || [ -n \"${CODEX_NETWORK_PROXY_ACTIVE+x}\" ]; then\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0}\" ]; then\n  if [ -z \"${ALL_PROXY+x}\" ] || [ \"${ALL_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_0}\" ]; then export ALL_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_0}\"; else export ALL_PROXY; fi\nelse builtin unset ALL_PROXY 2>/dev/null || command unset ALL_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0 __CODEX_SNAPSHOT_PROXY_OVERRIDE_0 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0 __CODEX_SNAPSHOT_PROXY_OVERRIDE_0\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1}\" ]; then\n  if [ -z \"${BUNDLE_HTTPS_PROXY+x}\" ] || [ \"${BUNDLE_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_1}\" ]; then export BUNDLE_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_1}\"; else export BUNDLE_HTTPS_PROXY; fi\nelse builtin unset BUNDLE_HTTPS_PROXY 2>/dev/null || command unset BUNDLE_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1 __CODEX_SNAPSHOT_PROXY_OVERRIDE_1 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1 __CODEX_SNAPSHOT_PROXY_OVERRIDE_1\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2}\" ]; then\n  if [ -z \"${BUNDLE_HTTP_PROXY+x}\" ] || [ \"${BUNDLE_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_2}\" ]; then export BUNDLE_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_2}\"; else export BUNDLE_HTTP_PROXY; fi\nelse builtin unset BUNDLE_HTTP_PROXY 2>/dev/null || command unset BUNDLE_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2 __CODEX_SNAPSHOT_PROXY_OVERRIDE_2 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2 __CODEX_SNAPSHOT_PROXY_OVERRIDE_2\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3}\" ]; then\n  if [ -z \"${BUNDLE_NO_PROXY+x}\" ] || [ \"${BUNDLE_NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_3}\" ]; then export BUNDLE_NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_3}\"; else export BUNDLE_NO_PROXY; fi\nelse builtin unset BUNDLE_NO_PROXY 2>/dev/null || command unset BUNDLE_NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3 __CODEX_SNAPSHOT_PROXY_OVERRIDE_3 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3 __CODEX_SNAPSHOT_PROXY_OVERRIDE_3\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4}\" ]; then\n  if [ -z \"${BUNDLE_SSL_CA_CERT+x}\" ] || [ \"${BUNDLE_SSL_CA_CERT-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_4}\" ]; then export BUNDLE_SSL_CA_CERT=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_4}\"; else export BUNDLE_SSL_CA_CERT; fi\nelse builtin unset BUNDLE_SSL_CA_CERT 2>/dev/null || command unset BUNDLE_SSL_CA_CERT; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4 __CODEX_SNAPSHOT_PROXY_OVERRIDE_4 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4 __CODEX_SNAPSHOT_PROXY_OVERRIDE_4\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5}\" ]; then\n  if [ -z \"${CARGO_HTTP_CAINFO+x}\" ] || [ \"${CARGO_HTTP_CAINFO-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_5}\" ]; then export CARGO_HTTP_CAINFO=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_5}\"; else export CARGO_HTTP_CAINFO; fi\nelse builtin unset CARGO_HTTP_CAINFO 2>/dev/null || command unset CARGO_HTTP_CAINFO; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5 __CODEX_SNAPSHOT_PROXY_OVERRIDE_5 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5 __CODEX_SNAPSHOT_PROXY_OVERRIDE_5\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6}\" ]; then\n  if [ -z \"${CODEX_CA_CERTIFICATE+x}\" ] || [ \"${CODEX_CA_CERTIFICATE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_6}\" ]; then export CODEX_CA_CERTIFICATE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_6}\"; else export CODEX_CA_CERTIFICATE; fi\nelse builtin unset CODEX_CA_CERTIFICATE 2>/dev/null || command unset CODEX_CA_CERTIFICATE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6 __CODEX_SNAPSHOT_PROXY_OVERRIDE_6 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6 __CODEX_SNAPSHOT_PROXY_OVERRIDE_6\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7}\" ]; then\n  if [ -z \"${CODEX_NETWORK_ALLOW_LOCAL_BINDING+x}\" ] || [ \"${CODEX_NETWORK_ALLOW_LOCAL_BINDING-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_7}\" ]; then export CODEX_NETWORK_ALLOW_LOCAL_BINDING=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_7}\"; else export CODEX_NETWORK_ALLOW_LOCAL_BINDING; fi\nelse builtin unset CODEX_NETWORK_ALLOW_LOCAL_BINDING 2>/dev/null || command unset CODEX_NETWORK_ALLOW_LOCAL_BINDING; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7 __CODEX_SNAPSHOT_PROXY_OVERRIDE_7 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7 __CODEX_SNAPSHOT_PROXY_OVERRIDE_7\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_ACTIVE+x}\" ] || [ \"${CODEX_NETWORK_PROXY_ACTIVE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_8}\" ]; then export CODEX_NETWORK_PROXY_ACTIVE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_8}\"; else export CODEX_NETWORK_PROXY_ACTIVE; fi\nelse builtin unset CODEX_NETWORK_PROXY_ACTIVE 2>/dev/null || command unset CODEX_NETWORK_PROXY_ACTIVE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8 __CODEX_SNAPSHOT_PROXY_OVERRIDE_8 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8 __CODEX_SNAPSHOT_PROXY_OVERRIDE_8\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_ATTRIBUTION+x}\" ] || [ \"${CODEX_NETWORK_PROXY_ATTRIBUTION-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_9}\" ]; then export CODEX_NETWORK_PROXY_ATTRIBUTION=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_9}\"; else export CODEX_NETWORK_PROXY_ATTRIBUTION; fi\nelse builtin unset CODEX_NETWORK_PROXY_ATTRIBUTION 2>/dev/null || command unset CODEX_NETWORK_PROXY_ATTRIBUTION; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9 __CODEX_SNAPSHOT_PROXY_OVERRIDE_9 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9 __CODEX_SNAPSHOT_PROXY_OVERRIDE_9\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS+x}\" ] || [ \"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_10}\" ]; then export CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_10}\"; else export CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS; fi\nelse builtin unset CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS 2>/dev/null || command unset CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10 __CODEX_SNAPSHOT_PROXY_OVERRIDE_10 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10 __CODEX_SNAPSHOT_PROXY_OVERRIDE_10\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE+x}\" ] || [ \"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_11}\" ]; then export CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_11}\"; else export CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE; fi\nelse builtin unset CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE 2>/dev/null || command unset CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11 __CODEX_SNAPSHOT_PROXY_OVERRIDE_11 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11 __CODEX_SNAPSHOT_PROXY_OVERRIDE_11\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12}\" ]; then\n  if [ -z \"${CURL_CA_BUNDLE+x}\" ] || [ \"${CURL_CA_BUNDLE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_12}\" ]; then export CURL_CA_BUNDLE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_12}\"; else export CURL_CA_BUNDLE; fi\nelse builtin unset CURL_CA_BUNDLE 2>/dev/null || command unset CURL_CA_BUNDLE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12 __CODEX_SNAPSHOT_PROXY_OVERRIDE_12 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12 __CODEX_SNAPSHOT_PROXY_OVERRIDE_12\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13}\" ]; then\n  if [ -z \"${DOCKER_HTTPS_PROXY+x}\" ] || [ \"${DOCKER_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_13}\" ]; then export DOCKER_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_13}\"; else export DOCKER_HTTPS_PROXY; fi\nelse builtin unset DOCKER_HTTPS_PROXY 2>/dev/null || command unset DOCKER_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13 __CODEX_SNAPSHOT_PROXY_OVERRIDE_13 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13 __CODEX_SNAPSHOT_PROXY_OVERRIDE_13\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14}\" ]; then\n  if [ -z \"${DOCKER_HTTP_PROXY+x}\" ] || [ \"${DOCKER_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_14}\" ]; then export DOCKER_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_14}\"; else export DOCKER_HTTP_PROXY; fi\nelse builtin unset DOCKER_HTTP_PROXY 2>/dev/null || command unset DOCKER_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14 __CODEX_SNAPSHOT_PROXY_OVERRIDE_14 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14 __CODEX_SNAPSHOT_PROXY_OVERRIDE_14\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15}\" ]; then\n  if [ -z \"${ELECTRON_GET_USE_PROXY+x}\" ] || [ \"${ELECTRON_GET_USE_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_15}\" ]; then export ELECTRON_GET_USE_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_15}\"; else export ELECTRON_GET_USE_PROXY; fi\nelse builtin unset ELECTRON_GET_USE_PROXY 2>/dev/null || command unset ELECTRON_GET_USE_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15 __CODEX_SNAPSHOT_PROXY_OVERRIDE_15 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15 __CODEX_SNAPSHOT_PROXY_OVERRIDE_15\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16}\" ]; then\n  if [ -z \"${FTP_PROXY+x}\" ] || [ \"${FTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_16}\" ]; then export FTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_16}\"; else export FTP_PROXY; fi\nelse builtin unset FTP_PROXY 2>/dev/null || command unset FTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16 __CODEX_SNAPSHOT_PROXY_OVERRIDE_16 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16 __CODEX_SNAPSHOT_PROXY_OVERRIDE_16\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17}\" ]; then\n  if [ -z \"${GIT_SSL_CAINFO+x}\" ] || [ \"${GIT_SSL_CAINFO-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_17}\" ]; then export GIT_SSL_CAINFO=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_17}\"; else export GIT_SSL_CAINFO; fi\nelse builtin unset GIT_SSL_CAINFO 2>/dev/null || command unset GIT_SSL_CAINFO; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17 __CODEX_SNAPSHOT_PROXY_OVERRIDE_17 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17 __CODEX_SNAPSHOT_PROXY_OVERRIDE_17\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18}\" ]; then\n  if [ -z \"${HTTPS_PROXY+x}\" ] || [ \"${HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_18}\" ]; then export HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_18}\"; else export HTTPS_PROXY; fi\nelse builtin unset HTTPS_PROXY 2>/dev/null || command unset HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18 __CODEX_SNAPSHOT_PROXY_OVERRIDE_18 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18 __CODEX_SNAPSHOT_PROXY_OVERRIDE_18\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19}\" ]; then\n  if [ -z \"${HTTP_PROXY+x}\" ] || [ \"${HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_19}\" ]; then export HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_19}\"; else export HTTP_PROXY; fi\nelse builtin unset HTTP_PROXY 2>/dev/null || command unset HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19 __CODEX_SNAPSHOT_PROXY_OVERRIDE_19 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19 __CODEX_SNAPSHOT_PROXY_OVERRIDE_19\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20}\" ]; then\n  if [ -z \"${NODE_EXTRA_CA_CERTS+x}\" ] || [ \"${NODE_EXTRA_CA_CERTS-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_20}\" ]; then export NODE_EXTRA_CA_CERTS=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_20}\"; else export NODE_EXTRA_CA_CERTS; fi\nelse builtin unset NODE_EXTRA_CA_CERTS 2>/dev/null || command unset NODE_EXTRA_CA_CERTS; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20 __CODEX_SNAPSHOT_PROXY_OVERRIDE_20 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20 __CODEX_SNAPSHOT_PROXY_OVERRIDE_20\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21}\" ]; then\n  if [ -z \"${NODE_USE_ENV_PROXY+x}\" ] || [ \"${NODE_USE_ENV_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_21}\" ]; then export NODE_USE_ENV_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_21}\"; else export NODE_USE_ENV_PROXY; fi\nelse builtin unset NODE_USE_ENV_PROXY 2>/dev/null || command unset NODE_USE_ENV_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21 __CODEX_SNAPSHOT_PROXY_OVERRIDE_21 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21 __CODEX_SNAPSHOT_PROXY_OVERRIDE_21\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22}\" ]; then\n  if [ -z \"${NO_PROXY+x}\" ] || [ \"${NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_22}\" ]; then export NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_22}\"; else export NO_PROXY; fi\nelse builtin unset NO_PROXY 2>/dev/null || command unset NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22 __CODEX_SNAPSHOT_PROXY_OVERRIDE_22 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22 __CODEX_SNAPSHOT_PROXY_OVERRIDE_22\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23}\" ]; then\n  if [ -z \"${NPM_CONFIG_CAFILE+x}\" ] || [ \"${NPM_CONFIG_CAFILE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_23}\" ]; then export NPM_CONFIG_CAFILE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_23}\"; else export NPM_CONFIG_CAFILE; fi\nelse builtin unset NPM_CONFIG_CAFILE 2>/dev/null || command unset NPM_CONFIG_CAFILE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23 __CODEX_SNAPSHOT_PROXY_OVERRIDE_23 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23 __CODEX_SNAPSHOT_PROXY_OVERRIDE_23\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24}\" ]; then\n  if [ -z \"${NPM_CONFIG_HTTPS_PROXY+x}\" ] || [ \"${NPM_CONFIG_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_24}\" ]; then export NPM_CONFIG_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_24}\"; else export NPM_CONFIG_HTTPS_PROXY; fi\nelse builtin unset NPM_CONFIG_HTTPS_PROXY 2>/dev/null || command unset NPM_CONFIG_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24 __CODEX_SNAPSHOT_PROXY_OVERRIDE_24 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24 __CODEX_SNAPSHOT_PROXY_OVERRIDE_24\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25}\" ]; then\n  if [ -z \"${NPM_CONFIG_HTTP_PROXY+x}\" ] || [ \"${NPM_CONFIG_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_25}\" ]; then export NPM_CONFIG_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_25}\"; else export NPM_CONFIG_HTTP_PROXY; fi\nelse builtin unset NPM_CONFIG_HTTP_PROXY 2>/dev/null || command unset NPM_CONFIG_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25 __CODEX_SNAPSHOT_PROXY_OVERRIDE_25 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25 __CODEX_SNAPSHOT_PROXY_OVERRIDE_25\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26}\" ]; then\n  if [ -z \"${NPM_CONFIG_NOPROXY+x}\" ] || [ \"${NPM_CONFIG_NOPROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_26}\" ]; then export NPM_CONFIG_NOPROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_26}\"; else export NPM_CONFIG_NOPROXY; fi\nelse builtin unset NPM_CONFIG_NOPROXY 2>/dev/null || command unset NPM_CONFIG_NOPROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26 __CODEX_SNAPSHOT_PROXY_OVERRIDE_26 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26 __CODEX_SNAPSHOT_PROXY_OVERRIDE_26\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27}\" ]; then\n  if [ -z \"${NPM_CONFIG_PROXY+x}\" ] || [ \"${NPM_CONFIG_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_27}\" ]; then export NPM_CONFIG_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_27}\"; else export NPM_CONFIG_PROXY; fi\nelse builtin unset NPM_CONFIG_PROXY 2>/dev/null || command unset NPM_CONFIG_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27 __CODEX_SNAPSHOT_PROXY_OVERRIDE_27 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27 __CODEX_SNAPSHOT_PROXY_OVERRIDE_27\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28}\" ]; then\n  if [ -z \"${PIP_CERT+x}\" ] || [ \"${PIP_CERT-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_28}\" ]; then export PIP_CERT=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_28}\"; else export PIP_CERT; fi\nelse builtin unset PIP_CERT 2>/dev/null || command unset PIP_CERT; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28 __CODEX_SNAPSHOT_PROXY_OVERRIDE_28 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28 __CODEX_SNAPSHOT_PROXY_OVERRIDE_28\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29}\" ]; then\n  if [ -z \"${PIP_PROXY+x}\" ] || [ \"${PIP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_29}\" ]; then export PIP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_29}\"; else export PIP_PROXY; fi\nelse builtin unset PIP_PROXY 2>/dev/null || command unset PIP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29 __CODEX_SNAPSHOT_PROXY_OVERRIDE_29 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29 __CODEX_SNAPSHOT_PROXY_OVERRIDE_29\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30}\" ]; then\n  if [ -z \"${REQUESTS_CA_BUNDLE+x}\" ] || [ \"${REQUESTS_CA_BUNDLE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_30}\" ]; then export REQUESTS_CA_BUNDLE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_30}\"; else export REQUESTS_CA_BUNDLE; fi\nelse builtin unset REQUESTS_CA_BUNDLE 2>/dev/null || command unset REQUESTS_CA_BUNDLE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30 __CODEX_SNAPSHOT_PROXY_OVERRIDE_30 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30 __CODEX_SNAPSHOT_PROXY_OVERRIDE_30\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31}\" ]; then\n  if [ -z \"${SSL_CERT_FILE+x}\" ] || [ \"${SSL_CERT_FILE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_31}\" ]; then export SSL_CERT_FILE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_31}\"; else export SSL_CERT_FILE; fi\nelse builtin unset SSL_CERT_FILE 2>/dev/null || command unset SSL_CERT_FILE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31 __CODEX_SNAPSHOT_PROXY_OVERRIDE_31 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31 __CODEX_SNAPSHOT_PROXY_OVERRIDE_31\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32}\" ]; then\n  if [ -z \"${WSS_PROXY+x}\" ] || [ \"${WSS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_32}\" ]; then export WSS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_32}\"; else export WSS_PROXY; fi\nelse builtin unset WSS_PROXY 2>/dev/null || command unset WSS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32 __CODEX_SNAPSHOT_PROXY_OVERRIDE_32 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32 __CODEX_SNAPSHOT_PROXY_OVERRIDE_32\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33}\" ]; then\n  if [ -z \"${WS_PROXY+x}\" ] || [ \"${WS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_33}\" ]; then export WS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_33}\"; else export WS_PROXY; fi\nelse builtin unset WS_PROXY 2>/dev/null || command unset WS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33 __CODEX_SNAPSHOT_PROXY_OVERRIDE_33 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33 __CODEX_SNAPSHOT_PROXY_OVERRIDE_33\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34}\" ]; then\n  if [ -z \"${YARN_HTTPS_PROXY+x}\" ] || [ \"${YARN_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_34}\" ]; then export YARN_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_34}\"; else export YARN_HTTPS_PROXY; fi\nelse builtin unset YARN_HTTPS_PROXY 2>/dev/null || command unset YARN_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34 __CODEX_SNAPSHOT_PROXY_OVERRIDE_34 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34 __CODEX_SNAPSHOT_PROXY_OVERRIDE_34\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35}\" ]; then\n  if [ -z \"${YARN_HTTP_PROXY+x}\" ] || [ \"${YARN_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_35}\" ]; then export YARN_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_35}\"; else export YARN_HTTP_PROXY; fi\nelse builtin unset YARN_HTTP_PROXY 2>/dev/null || command unset YARN_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35 __CODEX_SNAPSHOT_PROXY_OVERRIDE_35 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35 __CODEX_SNAPSHOT_PROXY_OVERRIDE_35\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36}\" ]; then\n  if [ -z \"${YARN_NO_PROXY+x}\" ] || [ \"${YARN_NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_36}\" ]; then export YARN_NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_36}\"; else export YARN_NO_PROXY; fi\nelse builtin unset YARN_NO_PROXY 2>/dev/null || command unset YARN_NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36 __CODEX_SNAPSHOT_PROXY_OVERRIDE_36 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36 __CODEX_SNAPSHOT_PROXY_OVERRIDE_36\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37}\" ]; then\n  if [ -z \"${all_proxy+x}\" ] || [ \"${all_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_37}\" ]; then export all_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_37}\"; else export all_proxy; fi\nelse builtin unset all_proxy 2>/dev/null || command unset all_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37 __CODEX_SNAPSHOT_PROXY_OVERRIDE_37 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37 __CODEX_SNAPSHOT_PROXY_OVERRIDE_37\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38}\" ]; then\n  if [ -z \"${ftp_proxy+x}\" ] || [ \"${ftp_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_38}\" ]; then export ftp_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_38}\"; else export ftp_proxy; fi\nelse builtin unset ftp_proxy 2>/dev/null || command unset ftp_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38 __CODEX_SNAPSHOT_PROXY_OVERRIDE_38 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38 __CODEX_SNAPSHOT_PROXY_OVERRIDE_38\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39}\" ]; then\n  if [ -z \"${http_proxy+x}\" ] || [ \"${http_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_39}\" ]; then export http_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_39}\"; else export http_proxy; fi\nelse builtin unset http_proxy 2>/dev/null || command unset http_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39 __CODEX_SNAPSHOT_PROXY_OVERRIDE_39 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39 __CODEX_SNAPSHOT_PROXY_OVERRIDE_39\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40}\" ]; then\n  if [ -z \"${https_proxy+x}\" ] || [ \"${https_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_40}\" ]; then export https_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_40}\"; else export https_proxy; fi\nelse builtin unset https_proxy 2>/dev/null || command unset https_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40 __CODEX_SNAPSHOT_PROXY_OVERRIDE_40 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40 __CODEX_SNAPSHOT_PROXY_OVERRIDE_40\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41}\" ]; then\n  if [ -z \"${no_proxy+x}\" ] || [ \"${no_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_41}\" ]; then export no_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_41}\"; else export no_proxy; fi\nelse builtin unset no_proxy 2>/dev/null || command unset no_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41 __CODEX_SNAPSHOT_PROXY_OVERRIDE_41 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41 __CODEX_SNAPSHOT_PROXY_OVERRIDE_41\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42}\" ]; then\n  if [ -z \"${npm_config_cafile+x}\" ] || [ \"${npm_config_cafile-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_42}\" ]; then export npm_config_cafile=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_42}\"; else export npm_config_cafile; fi\nelse builtin unset npm_config_cafile 2>/dev/null || command unset npm_config_cafile; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42 __CODEX_SNAPSHOT_PROXY_OVERRIDE_42 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42 __CODEX_SNAPSHOT_PROXY_OVERRIDE_42\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43}\" ]; then\n  if [ -z \"${npm_config_http_proxy+x}\" ] || [ \"${npm_config_http_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_43}\" ]; then export npm_config_http_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_43}\"; else export npm_config_http_proxy; fi\nelse builtin unset npm_config_http_proxy 2>/dev/null || command unset npm_config_http_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43 __CODEX_SNAPSHOT_PROXY_OVERRIDE_43 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43 __CODEX_SNAPSHOT_PROXY_OVERRIDE_43\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44}\" ]; then\n  if [ -z \"${npm_config_https_proxy+x}\" ] || [ \"${npm_config_https_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_44}\" ]; then export npm_config_https_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_44}\"; else export npm_config_https_proxy; fi\nelse builtin unset npm_config_https_proxy 2>/dev/null || command unset npm_config_https_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44 __CODEX_SNAPSHOT_PROXY_OVERRIDE_44 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44 __CODEX_SNAPSHOT_PROXY_OVERRIDE_44\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45}\" ]; then\n  if [ -z \"${npm_config_noproxy+x}\" ] || [ \"${npm_config_noproxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_45}\" ]; then export npm_config_noproxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_45}\"; else export npm_config_noproxy; fi\nelse builtin unset npm_config_noproxy 2>/dev/null || command unset npm_config_noproxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45 __CODEX_SNAPSHOT_PROXY_OVERRIDE_45 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45 __CODEX_SNAPSHOT_PROXY_OVERRIDE_45\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46}\" ]; then\n  if [ -z \"${npm_config_proxy+x}\" ] || [ \"${npm_config_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_46}\" ]; then export npm_config_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_46}\"; else export npm_config_proxy; fi\nelse builtin unset npm_config_proxy 2>/dev/null || command unset npm_config_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46 __CODEX_SNAPSHOT_PROXY_OVERRIDE_46 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46 __CODEX_SNAPSHOT_PROXY_OVERRIDE_46\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47}\" ]; then\n  if [ -z \"${ws_proxy+x}\" ] || [ \"${ws_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_47}\" ]; then export ws_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_47}\"; else export ws_proxy; fi\nelse builtin unset ws_proxy 2>/dev/null || command unset ws_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47 __CODEX_SNAPSHOT_PROXY_OVERRIDE_47 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47 __CODEX_SNAPSHOT_PROXY_OVERRIDE_47\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48}\" ]; then\n  if [ -z \"${wss_proxy+x}\" ] || [ \"${wss_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_48}\" ]; then export wss_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_48}\"; else export wss_proxy; fi\nelse builtin unset wss_proxy 2>/dev/null || command unset wss_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48 __CODEX_SNAPSHOT_PROXY_OVERRIDE_48 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48 __CODEX_SNAPSHOT_PROXY_OVERRIDE_48\nfi\nif [ -n \"${PATH:-}\" ]; then export PATH='/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path':\"$PATH\"; else export PATH='/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path'; fi\n\nexec '/bin/bash' -c 'curl -fsSL https://docs.mcpjam.com/llms.txt'"
+    ],
+    "start": "2026-11-15T02:03:40.360339+00:00",
+    "end": "2026-11-15T02:03:40.555597+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg",
+      "outcome-011.svg",
+      "outcome-012.svg",
+      "outcome-013.svg",
+      "outcome-014.svg",
+      "outcome-015.svg",
+      "outcome-016.svg",
+      "outcome-017.svg",
+      "outcome-018.svg",
+      "outcome-019.svg",
+      "outcome-020.svg",
+      "outcome-021.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-001-003.svg",
+      "intermediate-002-001.svg",
+      "intermediate-002-002.svg",
+      "intermediate-003-001.svg",
+      "intermediate-003-002.svg",
+      "intermediate-004-001.svg",
+      "intermediate-004-002.svg",
+      "intermediate-004-003.svg",
+      "intermediate-005-001.svg",
+      "intermediate-005-002.svg",
+      "intermediate-006-001.svg",
+      "intermediate-006-002.svg",
+      "intermediate-006-003.svg",
+      "intermediate-006-004.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "88439b115e304067826cdbcde5b0e174",
+    "path": "commands/0022-88439b115e304067826cdbcde5b0e174",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; mkdir -p /installed-agent/codex-home && chown -R 0:0 /installed-agent/codex-home && chmod 700 /installed-agent/codex-home"
+    ],
+    "start": "2026-11-15T02:03:29.053092+00:00",
+    "end": "2026-11-15T02:03:29.054818+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "893066007e474f019c54abadf061d276",
+    "path": "commands/0023-893066007e474f019c54abadf061d276",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "rm -f /tmp/.hb-transfer-21fe609e-ae44-42ed-bca2-d2121b63b200.tar.gz"
+    ],
+    "start": "2026-11-15T02:05:55.842490+00:00",
+    "end": "2026-11-15T02:05:55.843292+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "8a2041b486f34d17a83c28d4db612b25",
+    "path": "commands/0024-8a2041b486f34d17a83c28d4db612b25",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "[ -d /installed-agent ] || mkdir -p /installed-agent"
+    ],
+    "start": "2026-11-15T02:03:28.764344+00:00",
+    "end": "2026-11-15T02:03:28.765349+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "8a8edf5081b246d6afeded2b5c26dc5a",
+    "path": "commands/0025-8a8edf5081b246d6afeded2b5c26dc5a",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "set -e; . \"/installed-agent/codex-home/shell_snapshots/01a1dcf1-ff91-7692-9a40-7546928099ce.tmp-1794708210104284583\""
+    ],
+    "start": "2026-11-15T02:03:30.135279+00:00",
+    "end": "2026-11-15T02:03:30.136098+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "8acc9c662b84492e98dc08be4806c1fa",
+    "path": "commands/0026-8acc9c662b84492e98dc08be4806c1fa",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "__CODEX_SNAPSHOT_OVERRIDE_SET_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_0=\"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_1=\"${CODEX_PERMISSION_PROFILE+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_1=\"${CODEX_PERMISSION_PROFILE-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_2=\"${CODEX_PLUGIN_METRICS_OUTPUT+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_2=\"${CODEX_PLUGIN_METRICS_OUTPUT-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_3=\"${CODEX_SESSION_ID+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_3=\"${CODEX_SESSION_ID-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_4=\"${CODEX_THREAD_ID+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_4=\"${CODEX_THREAD_ID-}\"\n__CODEX_SNAPSHOT_OVERRIDE_SET_5=\"${CODEX_VERSION+x}\"\n__CODEX_SNAPSHOT_OVERRIDE_5=\"${CODEX_VERSION-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0=\"${ALL_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_0=\"${ALL_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1=\"${BUNDLE_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_1=\"${BUNDLE_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2=\"${BUNDLE_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_2=\"${BUNDLE_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3=\"${BUNDLE_NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_3=\"${BUNDLE_NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4=\"${BUNDLE_SSL_CA_CERT+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_4=\"${BUNDLE_SSL_CA_CERT-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5=\"${CARGO_HTTP_CAINFO+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_5=\"${CARGO_HTTP_CAINFO-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6=\"${CODEX_CA_CERTIFICATE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_6=\"${CODEX_CA_CERTIFICATE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7=\"${CODEX_NETWORK_ALLOW_LOCAL_BINDING+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_7=\"${CODEX_NETWORK_ALLOW_LOCAL_BINDING-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8=\"${CODEX_NETWORK_PROXY_ACTIVE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_8=\"${CODEX_NETWORK_PROXY_ACTIVE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9=\"${CODEX_NETWORK_PROXY_ATTRIBUTION+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_9=\"${CODEX_NETWORK_PROXY_ATTRIBUTION-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10=\"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_10=\"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11=\"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_11=\"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12=\"${CURL_CA_BUNDLE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_12=\"${CURL_CA_BUNDLE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13=\"${DOCKER_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_13=\"${DOCKER_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14=\"${DOCKER_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_14=\"${DOCKER_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15=\"${ELECTRON_GET_USE_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_15=\"${ELECTRON_GET_USE_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16=\"${FTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_16=\"${FTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17=\"${GIT_SSL_CAINFO+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_17=\"${GIT_SSL_CAINFO-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18=\"${HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_18=\"${HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19=\"${HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_19=\"${HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20=\"${NODE_EXTRA_CA_CERTS+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_20=\"${NODE_EXTRA_CA_CERTS-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21=\"${NODE_USE_ENV_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_21=\"${NODE_USE_ENV_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22=\"${NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_22=\"${NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23=\"${NPM_CONFIG_CAFILE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_23=\"${NPM_CONFIG_CAFILE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24=\"${NPM_CONFIG_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_24=\"${NPM_CONFIG_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25=\"${NPM_CONFIG_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_25=\"${NPM_CONFIG_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26=\"${NPM_CONFIG_NOPROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_26=\"${NPM_CONFIG_NOPROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27=\"${NPM_CONFIG_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_27=\"${NPM_CONFIG_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28=\"${PIP_CERT+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_28=\"${PIP_CERT-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29=\"${PIP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_29=\"${PIP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30=\"${REQUESTS_CA_BUNDLE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_30=\"${REQUESTS_CA_BUNDLE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31=\"${SSL_CERT_FILE+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_31=\"${SSL_CERT_FILE-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32=\"${WSS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_32=\"${WSS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33=\"${WS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_33=\"${WS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34=\"${YARN_HTTPS_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_34=\"${YARN_HTTPS_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35=\"${YARN_HTTP_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_35=\"${YARN_HTTP_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36=\"${YARN_NO_PROXY+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_36=\"${YARN_NO_PROXY-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37=\"${all_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_37=\"${all_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38=\"${ftp_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_38=\"${ftp_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39=\"${http_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_39=\"${http_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40=\"${https_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_40=\"${https_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41=\"${no_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_41=\"${no_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42=\"${npm_config_cafile+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_42=\"${npm_config_cafile-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43=\"${npm_config_http_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_43=\"${npm_config_http_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44=\"${npm_config_https_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_44=\"${npm_config_https_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45=\"${npm_config_noproxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_45=\"${npm_config_noproxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46=\"${npm_config_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_46=\"${npm_config_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47=\"${ws_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_47=\"${ws_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48=\"${wss_proxy+x}\"\n__CODEX_SNAPSHOT_PROXY_OVERRIDE_48=\"${wss_proxy-}\"\n__CODEX_SNAPSHOT_PROXY_ENV_SET=\"${CODEX_NETWORK_PROXY_ACTIVE+x}\"\n\nif . '/installed-agent/codex-home/shell_snapshots/01a1dcf1-ff91-7692-9a40-7546928099ce.1794708210104284583.sh' >/dev/null 2>&1; then :; fi\n\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_0}\" ]; then\n  if [ -z \"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS+x}\" ] || [ \"${CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_0}\" ]; then export CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS=\"${__CODEX_SNAPSHOT_OVERRIDE_0}\"; else export CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS; fi\nelse builtin unset CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS 2>/dev/null || command unset CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_0 __CODEX_SNAPSHOT_OVERRIDE_0 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_0 __CODEX_SNAPSHOT_OVERRIDE_0\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_1}\" ]; then\n  if [ -z \"${CODEX_PERMISSION_PROFILE+x}\" ] || [ \"${CODEX_PERMISSION_PROFILE-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_1}\" ]; then export CODEX_PERMISSION_PROFILE=\"${__CODEX_SNAPSHOT_OVERRIDE_1}\"; else export CODEX_PERMISSION_PROFILE; fi\nelse builtin unset CODEX_PERMISSION_PROFILE 2>/dev/null || command unset CODEX_PERMISSION_PROFILE; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_1 __CODEX_SNAPSHOT_OVERRIDE_1 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_1 __CODEX_SNAPSHOT_OVERRIDE_1\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_2}\" ]; then\n  if [ -z \"${CODEX_PLUGIN_METRICS_OUTPUT+x}\" ] || [ \"${CODEX_PLUGIN_METRICS_OUTPUT-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_2}\" ]; then export CODEX_PLUGIN_METRICS_OUTPUT=\"${__CODEX_SNAPSHOT_OVERRIDE_2}\"; else export CODEX_PLUGIN_METRICS_OUTPUT; fi\nelse builtin unset CODEX_PLUGIN_METRICS_OUTPUT 2>/dev/null || command unset CODEX_PLUGIN_METRICS_OUTPUT; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_2 __CODEX_SNAPSHOT_OVERRIDE_2 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_2 __CODEX_SNAPSHOT_OVERRIDE_2\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_3}\" ]; then\n  if [ -z \"${CODEX_SESSION_ID+x}\" ] || [ \"${CODEX_SESSION_ID-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_3}\" ]; then export CODEX_SESSION_ID=\"${__CODEX_SNAPSHOT_OVERRIDE_3}\"; else export CODEX_SESSION_ID; fi\nelse builtin unset CODEX_SESSION_ID 2>/dev/null || command unset CODEX_SESSION_ID; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_3 __CODEX_SNAPSHOT_OVERRIDE_3 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_3 __CODEX_SNAPSHOT_OVERRIDE_3\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_4}\" ]; then\n  if [ -z \"${CODEX_THREAD_ID+x}\" ] || [ \"${CODEX_THREAD_ID-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_4}\" ]; then export CODEX_THREAD_ID=\"${__CODEX_SNAPSHOT_OVERRIDE_4}\"; else export CODEX_THREAD_ID; fi\nelse builtin unset CODEX_THREAD_ID 2>/dev/null || command unset CODEX_THREAD_ID; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_4 __CODEX_SNAPSHOT_OVERRIDE_4 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_4 __CODEX_SNAPSHOT_OVERRIDE_4\nif [ -n \"${__CODEX_SNAPSHOT_OVERRIDE_SET_5}\" ]; then\n  if [ -z \"${CODEX_VERSION+x}\" ] || [ \"${CODEX_VERSION-}\" != \"${__CODEX_SNAPSHOT_OVERRIDE_5}\" ]; then export CODEX_VERSION=\"${__CODEX_SNAPSHOT_OVERRIDE_5}\"; else export CODEX_VERSION; fi\nelse builtin unset CODEX_VERSION 2>/dev/null || command unset CODEX_VERSION; fi\nbuiltin unset __CODEX_SNAPSHOT_OVERRIDE_SET_5 __CODEX_SNAPSHOT_OVERRIDE_5 2>/dev/null || command unset __CODEX_SNAPSHOT_OVERRIDE_SET_5 __CODEX_SNAPSHOT_OVERRIDE_5\nif [ -n \"$__CODEX_SNAPSHOT_PROXY_ENV_SET\" ] || [ -n \"${CODEX_NETWORK_PROXY_ACTIVE+x}\" ]; then\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0}\" ]; then\n  if [ -z \"${ALL_PROXY+x}\" ] || [ \"${ALL_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_0}\" ]; then export ALL_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_0}\"; else export ALL_PROXY; fi\nelse builtin unset ALL_PROXY 2>/dev/null || command unset ALL_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0 __CODEX_SNAPSHOT_PROXY_OVERRIDE_0 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_0 __CODEX_SNAPSHOT_PROXY_OVERRIDE_0\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1}\" ]; then\n  if [ -z \"${BUNDLE_HTTPS_PROXY+x}\" ] || [ \"${BUNDLE_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_1}\" ]; then export BUNDLE_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_1}\"; else export BUNDLE_HTTPS_PROXY; fi\nelse builtin unset BUNDLE_HTTPS_PROXY 2>/dev/null || command unset BUNDLE_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1 __CODEX_SNAPSHOT_PROXY_OVERRIDE_1 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_1 __CODEX_SNAPSHOT_PROXY_OVERRIDE_1\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2}\" ]; then\n  if [ -z \"${BUNDLE_HTTP_PROXY+x}\" ] || [ \"${BUNDLE_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_2}\" ]; then export BUNDLE_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_2}\"; else export BUNDLE_HTTP_PROXY; fi\nelse builtin unset BUNDLE_HTTP_PROXY 2>/dev/null || command unset BUNDLE_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2 __CODEX_SNAPSHOT_PROXY_OVERRIDE_2 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_2 __CODEX_SNAPSHOT_PROXY_OVERRIDE_2\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3}\" ]; then\n  if [ -z \"${BUNDLE_NO_PROXY+x}\" ] || [ \"${BUNDLE_NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_3}\" ]; then export BUNDLE_NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_3}\"; else export BUNDLE_NO_PROXY; fi\nelse builtin unset BUNDLE_NO_PROXY 2>/dev/null || command unset BUNDLE_NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3 __CODEX_SNAPSHOT_PROXY_OVERRIDE_3 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_3 __CODEX_SNAPSHOT_PROXY_OVERRIDE_3\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4}\" ]; then\n  if [ -z \"${BUNDLE_SSL_CA_CERT+x}\" ] || [ \"${BUNDLE_SSL_CA_CERT-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_4}\" ]; then export BUNDLE_SSL_CA_CERT=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_4}\"; else export BUNDLE_SSL_CA_CERT; fi\nelse builtin unset BUNDLE_SSL_CA_CERT 2>/dev/null || command unset BUNDLE_SSL_CA_CERT; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4 __CODEX_SNAPSHOT_PROXY_OVERRIDE_4 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_4 __CODEX_SNAPSHOT_PROXY_OVERRIDE_4\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5}\" ]; then\n  if [ -z \"${CARGO_HTTP_CAINFO+x}\" ] || [ \"${CARGO_HTTP_CAINFO-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_5}\" ]; then export CARGO_HTTP_CAINFO=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_5}\"; else export CARGO_HTTP_CAINFO; fi\nelse builtin unset CARGO_HTTP_CAINFO 2>/dev/null || command unset CARGO_HTTP_CAINFO; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5 __CODEX_SNAPSHOT_PROXY_OVERRIDE_5 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_5 __CODEX_SNAPSHOT_PROXY_OVERRIDE_5\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6}\" ]; then\n  if [ -z \"${CODEX_CA_CERTIFICATE+x}\" ] || [ \"${CODEX_CA_CERTIFICATE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_6}\" ]; then export CODEX_CA_CERTIFICATE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_6}\"; else export CODEX_CA_CERTIFICATE; fi\nelse builtin unset CODEX_CA_CERTIFICATE 2>/dev/null || command unset CODEX_CA_CERTIFICATE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6 __CODEX_SNAPSHOT_PROXY_OVERRIDE_6 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_6 __CODEX_SNAPSHOT_PROXY_OVERRIDE_6\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7}\" ]; then\n  if [ -z \"${CODEX_NETWORK_ALLOW_LOCAL_BINDING+x}\" ] || [ \"${CODEX_NETWORK_ALLOW_LOCAL_BINDING-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_7}\" ]; then export CODEX_NETWORK_ALLOW_LOCAL_BINDING=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_7}\"; else export CODEX_NETWORK_ALLOW_LOCAL_BINDING; fi\nelse builtin unset CODEX_NETWORK_ALLOW_LOCAL_BINDING 2>/dev/null || command unset CODEX_NETWORK_ALLOW_LOCAL_BINDING; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7 __CODEX_SNAPSHOT_PROXY_OVERRIDE_7 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_7 __CODEX_SNAPSHOT_PROXY_OVERRIDE_7\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_ACTIVE+x}\" ] || [ \"${CODEX_NETWORK_PROXY_ACTIVE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_8}\" ]; then export CODEX_NETWORK_PROXY_ACTIVE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_8}\"; else export CODEX_NETWORK_PROXY_ACTIVE; fi\nelse builtin unset CODEX_NETWORK_PROXY_ACTIVE 2>/dev/null || command unset CODEX_NETWORK_PROXY_ACTIVE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8 __CODEX_SNAPSHOT_PROXY_OVERRIDE_8 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_8 __CODEX_SNAPSHOT_PROXY_OVERRIDE_8\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_ATTRIBUTION+x}\" ] || [ \"${CODEX_NETWORK_PROXY_ATTRIBUTION-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_9}\" ]; then export CODEX_NETWORK_PROXY_ATTRIBUTION=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_9}\"; else export CODEX_NETWORK_PROXY_ATTRIBUTION; fi\nelse builtin unset CODEX_NETWORK_PROXY_ATTRIBUTION 2>/dev/null || command unset CODEX_NETWORK_PROXY_ATTRIBUTION; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9 __CODEX_SNAPSHOT_PROXY_OVERRIDE_9 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_9 __CODEX_SNAPSHOT_PROXY_OVERRIDE_9\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS+x}\" ] || [ \"${CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_10}\" ]; then export CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_10}\"; else export CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS; fi\nelse builtin unset CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS 2>/dev/null || command unset CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10 __CODEX_SNAPSHOT_PROXY_OVERRIDE_10 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_10 __CODEX_SNAPSHOT_PROXY_OVERRIDE_10\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11}\" ]; then\n  if [ -z \"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE+x}\" ] || [ \"${CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_11}\" ]; then export CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_11}\"; else export CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE; fi\nelse builtin unset CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE 2>/dev/null || command unset CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11 __CODEX_SNAPSHOT_PROXY_OVERRIDE_11 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_11 __CODEX_SNAPSHOT_PROXY_OVERRIDE_11\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12}\" ]; then\n  if [ -z \"${CURL_CA_BUNDLE+x}\" ] || [ \"${CURL_CA_BUNDLE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_12}\" ]; then export CURL_CA_BUNDLE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_12}\"; else export CURL_CA_BUNDLE; fi\nelse builtin unset CURL_CA_BUNDLE 2>/dev/null || command unset CURL_CA_BUNDLE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12 __CODEX_SNAPSHOT_PROXY_OVERRIDE_12 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_12 __CODEX_SNAPSHOT_PROXY_OVERRIDE_12\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13}\" ]; then\n  if [ -z \"${DOCKER_HTTPS_PROXY+x}\" ] || [ \"${DOCKER_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_13}\" ]; then export DOCKER_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_13}\"; else export DOCKER_HTTPS_PROXY; fi\nelse builtin unset DOCKER_HTTPS_PROXY 2>/dev/null || command unset DOCKER_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13 __CODEX_SNAPSHOT_PROXY_OVERRIDE_13 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_13 __CODEX_SNAPSHOT_PROXY_OVERRIDE_13\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14}\" ]; then\n  if [ -z \"${DOCKER_HTTP_PROXY+x}\" ] || [ \"${DOCKER_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_14}\" ]; then export DOCKER_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_14}\"; else export DOCKER_HTTP_PROXY; fi\nelse builtin unset DOCKER_HTTP_PROXY 2>/dev/null || command unset DOCKER_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14 __CODEX_SNAPSHOT_PROXY_OVERRIDE_14 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_14 __CODEX_SNAPSHOT_PROXY_OVERRIDE_14\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15}\" ]; then\n  if [ -z \"${ELECTRON_GET_USE_PROXY+x}\" ] || [ \"${ELECTRON_GET_USE_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_15}\" ]; then export ELECTRON_GET_USE_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_15}\"; else export ELECTRON_GET_USE_PROXY; fi\nelse builtin unset ELECTRON_GET_USE_PROXY 2>/dev/null || command unset ELECTRON_GET_USE_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15 __CODEX_SNAPSHOT_PROXY_OVERRIDE_15 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_15 __CODEX_SNAPSHOT_PROXY_OVERRIDE_15\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16}\" ]; then\n  if [ -z \"${FTP_PROXY+x}\" ] || [ \"${FTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_16}\" ]; then export FTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_16}\"; else export FTP_PROXY; fi\nelse builtin unset FTP_PROXY 2>/dev/null || command unset FTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16 __CODEX_SNAPSHOT_PROXY_OVERRIDE_16 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_16 __CODEX_SNAPSHOT_PROXY_OVERRIDE_16\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17}\" ]; then\n  if [ -z \"${GIT_SSL_CAINFO+x}\" ] || [ \"${GIT_SSL_CAINFO-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_17}\" ]; then export GIT_SSL_CAINFO=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_17}\"; else export GIT_SSL_CAINFO; fi\nelse builtin unset GIT_SSL_CAINFO 2>/dev/null || command unset GIT_SSL_CAINFO; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17 __CODEX_SNAPSHOT_PROXY_OVERRIDE_17 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_17 __CODEX_SNAPSHOT_PROXY_OVERRIDE_17\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18}\" ]; then\n  if [ -z \"${HTTPS_PROXY+x}\" ] || [ \"${HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_18}\" ]; then export HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_18}\"; else export HTTPS_PROXY; fi\nelse builtin unset HTTPS_PROXY 2>/dev/null || command unset HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18 __CODEX_SNAPSHOT_PROXY_OVERRIDE_18 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_18 __CODEX_SNAPSHOT_PROXY_OVERRIDE_18\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19}\" ]; then\n  if [ -z \"${HTTP_PROXY+x}\" ] || [ \"${HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_19}\" ]; then export HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_19}\"; else export HTTP_PROXY; fi\nelse builtin unset HTTP_PROXY 2>/dev/null || command unset HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19 __CODEX_SNAPSHOT_PROXY_OVERRIDE_19 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_19 __CODEX_SNAPSHOT_PROXY_OVERRIDE_19\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20}\" ]; then\n  if [ -z \"${NODE_EXTRA_CA_CERTS+x}\" ] || [ \"${NODE_EXTRA_CA_CERTS-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_20}\" ]; then export NODE_EXTRA_CA_CERTS=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_20}\"; else export NODE_EXTRA_CA_CERTS; fi\nelse builtin unset NODE_EXTRA_CA_CERTS 2>/dev/null || command unset NODE_EXTRA_CA_CERTS; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20 __CODEX_SNAPSHOT_PROXY_OVERRIDE_20 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_20 __CODEX_SNAPSHOT_PROXY_OVERRIDE_20\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21}\" ]; then\n  if [ -z \"${NODE_USE_ENV_PROXY+x}\" ] || [ \"${NODE_USE_ENV_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_21}\" ]; then export NODE_USE_ENV_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_21}\"; else export NODE_USE_ENV_PROXY; fi\nelse builtin unset NODE_USE_ENV_PROXY 2>/dev/null || command unset NODE_USE_ENV_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21 __CODEX_SNAPSHOT_PROXY_OVERRIDE_21 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_21 __CODEX_SNAPSHOT_PROXY_OVERRIDE_21\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22}\" ]; then\n  if [ -z \"${NO_PROXY+x}\" ] || [ \"${NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_22}\" ]; then export NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_22}\"; else export NO_PROXY; fi\nelse builtin unset NO_PROXY 2>/dev/null || command unset NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22 __CODEX_SNAPSHOT_PROXY_OVERRIDE_22 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_22 __CODEX_SNAPSHOT_PROXY_OVERRIDE_22\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23}\" ]; then\n  if [ -z \"${NPM_CONFIG_CAFILE+x}\" ] || [ \"${NPM_CONFIG_CAFILE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_23}\" ]; then export NPM_CONFIG_CAFILE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_23}\"; else export NPM_CONFIG_CAFILE; fi\nelse builtin unset NPM_CONFIG_CAFILE 2>/dev/null || command unset NPM_CONFIG_CAFILE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23 __CODEX_SNAPSHOT_PROXY_OVERRIDE_23 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_23 __CODEX_SNAPSHOT_PROXY_OVERRIDE_23\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24}\" ]; then\n  if [ -z \"${NPM_CONFIG_HTTPS_PROXY+x}\" ] || [ \"${NPM_CONFIG_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_24}\" ]; then export NPM_CONFIG_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_24}\"; else export NPM_CONFIG_HTTPS_PROXY; fi\nelse builtin unset NPM_CONFIG_HTTPS_PROXY 2>/dev/null || command unset NPM_CONFIG_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24 __CODEX_SNAPSHOT_PROXY_OVERRIDE_24 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_24 __CODEX_SNAPSHOT_PROXY_OVERRIDE_24\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25}\" ]; then\n  if [ -z \"${NPM_CONFIG_HTTP_PROXY+x}\" ] || [ \"${NPM_CONFIG_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_25}\" ]; then export NPM_CONFIG_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_25}\"; else export NPM_CONFIG_HTTP_PROXY; fi\nelse builtin unset NPM_CONFIG_HTTP_PROXY 2>/dev/null || command unset NPM_CONFIG_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25 __CODEX_SNAPSHOT_PROXY_OVERRIDE_25 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_25 __CODEX_SNAPSHOT_PROXY_OVERRIDE_25\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26}\" ]; then\n  if [ -z \"${NPM_CONFIG_NOPROXY+x}\" ] || [ \"${NPM_CONFIG_NOPROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_26}\" ]; then export NPM_CONFIG_NOPROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_26}\"; else export NPM_CONFIG_NOPROXY; fi\nelse builtin unset NPM_CONFIG_NOPROXY 2>/dev/null || command unset NPM_CONFIG_NOPROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26 __CODEX_SNAPSHOT_PROXY_OVERRIDE_26 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_26 __CODEX_SNAPSHOT_PROXY_OVERRIDE_26\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27}\" ]; then\n  if [ -z \"${NPM_CONFIG_PROXY+x}\" ] || [ \"${NPM_CONFIG_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_27}\" ]; then export NPM_CONFIG_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_27}\"; else export NPM_CONFIG_PROXY; fi\nelse builtin unset NPM_CONFIG_PROXY 2>/dev/null || command unset NPM_CONFIG_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27 __CODEX_SNAPSHOT_PROXY_OVERRIDE_27 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_27 __CODEX_SNAPSHOT_PROXY_OVERRIDE_27\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28}\" ]; then\n  if [ -z \"${PIP_CERT+x}\" ] || [ \"${PIP_CERT-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_28}\" ]; then export PIP_CERT=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_28}\"; else export PIP_CERT; fi\nelse builtin unset PIP_CERT 2>/dev/null || command unset PIP_CERT; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28 __CODEX_SNAPSHOT_PROXY_OVERRIDE_28 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_28 __CODEX_SNAPSHOT_PROXY_OVERRIDE_28\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29}\" ]; then\n  if [ -z \"${PIP_PROXY+x}\" ] || [ \"${PIP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_29}\" ]; then export PIP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_29}\"; else export PIP_PROXY; fi\nelse builtin unset PIP_PROXY 2>/dev/null || command unset PIP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29 __CODEX_SNAPSHOT_PROXY_OVERRIDE_29 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_29 __CODEX_SNAPSHOT_PROXY_OVERRIDE_29\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30}\" ]; then\n  if [ -z \"${REQUESTS_CA_BUNDLE+x}\" ] || [ \"${REQUESTS_CA_BUNDLE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_30}\" ]; then export REQUESTS_CA_BUNDLE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_30}\"; else export REQUESTS_CA_BUNDLE; fi\nelse builtin unset REQUESTS_CA_BUNDLE 2>/dev/null || command unset REQUESTS_CA_BUNDLE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30 __CODEX_SNAPSHOT_PROXY_OVERRIDE_30 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_30 __CODEX_SNAPSHOT_PROXY_OVERRIDE_30\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31}\" ]; then\n  if [ -z \"${SSL_CERT_FILE+x}\" ] || [ \"${SSL_CERT_FILE-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_31}\" ]; then export SSL_CERT_FILE=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_31}\"; else export SSL_CERT_FILE; fi\nelse builtin unset SSL_CERT_FILE 2>/dev/null || command unset SSL_CERT_FILE; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31 __CODEX_SNAPSHOT_PROXY_OVERRIDE_31 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_31 __CODEX_SNAPSHOT_PROXY_OVERRIDE_31\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32}\" ]; then\n  if [ -z \"${WSS_PROXY+x}\" ] || [ \"${WSS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_32}\" ]; then export WSS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_32}\"; else export WSS_PROXY; fi\nelse builtin unset WSS_PROXY 2>/dev/null || command unset WSS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32 __CODEX_SNAPSHOT_PROXY_OVERRIDE_32 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_32 __CODEX_SNAPSHOT_PROXY_OVERRIDE_32\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33}\" ]; then\n  if [ -z \"${WS_PROXY+x}\" ] || [ \"${WS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_33}\" ]; then export WS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_33}\"; else export WS_PROXY; fi\nelse builtin unset WS_PROXY 2>/dev/null || command unset WS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33 __CODEX_SNAPSHOT_PROXY_OVERRIDE_33 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_33 __CODEX_SNAPSHOT_PROXY_OVERRIDE_33\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34}\" ]; then\n  if [ -z \"${YARN_HTTPS_PROXY+x}\" ] || [ \"${YARN_HTTPS_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_34}\" ]; then export YARN_HTTPS_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_34}\"; else export YARN_HTTPS_PROXY; fi\nelse builtin unset YARN_HTTPS_PROXY 2>/dev/null || command unset YARN_HTTPS_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34 __CODEX_SNAPSHOT_PROXY_OVERRIDE_34 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_34 __CODEX_SNAPSHOT_PROXY_OVERRIDE_34\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35}\" ]; then\n  if [ -z \"${YARN_HTTP_PROXY+x}\" ] || [ \"${YARN_HTTP_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_35}\" ]; then export YARN_HTTP_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_35}\"; else export YARN_HTTP_PROXY; fi\nelse builtin unset YARN_HTTP_PROXY 2>/dev/null || command unset YARN_HTTP_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35 __CODEX_SNAPSHOT_PROXY_OVERRIDE_35 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_35 __CODEX_SNAPSHOT_PROXY_OVERRIDE_35\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36}\" ]; then\n  if [ -z \"${YARN_NO_PROXY+x}\" ] || [ \"${YARN_NO_PROXY-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_36}\" ]; then export YARN_NO_PROXY=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_36}\"; else export YARN_NO_PROXY; fi\nelse builtin unset YARN_NO_PROXY 2>/dev/null || command unset YARN_NO_PROXY; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36 __CODEX_SNAPSHOT_PROXY_OVERRIDE_36 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_36 __CODEX_SNAPSHOT_PROXY_OVERRIDE_36\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37}\" ]; then\n  if [ -z \"${all_proxy+x}\" ] || [ \"${all_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_37}\" ]; then export all_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_37}\"; else export all_proxy; fi\nelse builtin unset all_proxy 2>/dev/null || command unset all_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37 __CODEX_SNAPSHOT_PROXY_OVERRIDE_37 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_37 __CODEX_SNAPSHOT_PROXY_OVERRIDE_37\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38}\" ]; then\n  if [ -z \"${ftp_proxy+x}\" ] || [ \"${ftp_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_38}\" ]; then export ftp_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_38}\"; else export ftp_proxy; fi\nelse builtin unset ftp_proxy 2>/dev/null || command unset ftp_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38 __CODEX_SNAPSHOT_PROXY_OVERRIDE_38 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_38 __CODEX_SNAPSHOT_PROXY_OVERRIDE_38\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39}\" ]; then\n  if [ -z \"${http_proxy+x}\" ] || [ \"${http_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_39}\" ]; then export http_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_39}\"; else export http_proxy; fi\nelse builtin unset http_proxy 2>/dev/null || command unset http_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39 __CODEX_SNAPSHOT_PROXY_OVERRIDE_39 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_39 __CODEX_SNAPSHOT_PROXY_OVERRIDE_39\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40}\" ]; then\n  if [ -z \"${https_proxy+x}\" ] || [ \"${https_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_40}\" ]; then export https_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_40}\"; else export https_proxy; fi\nelse builtin unset https_proxy 2>/dev/null || command unset https_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40 __CODEX_SNAPSHOT_PROXY_OVERRIDE_40 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_40 __CODEX_SNAPSHOT_PROXY_OVERRIDE_40\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41}\" ]; then\n  if [ -z \"${no_proxy+x}\" ] || [ \"${no_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_41}\" ]; then export no_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_41}\"; else export no_proxy; fi\nelse builtin unset no_proxy 2>/dev/null || command unset no_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41 __CODEX_SNAPSHOT_PROXY_OVERRIDE_41 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_41 __CODEX_SNAPSHOT_PROXY_OVERRIDE_41\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42}\" ]; then\n  if [ -z \"${npm_config_cafile+x}\" ] || [ \"${npm_config_cafile-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_42}\" ]; then export npm_config_cafile=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_42}\"; else export npm_config_cafile; fi\nelse builtin unset npm_config_cafile 2>/dev/null || command unset npm_config_cafile; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42 __CODEX_SNAPSHOT_PROXY_OVERRIDE_42 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_42 __CODEX_SNAPSHOT_PROXY_OVERRIDE_42\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43}\" ]; then\n  if [ -z \"${npm_config_http_proxy+x}\" ] || [ \"${npm_config_http_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_43}\" ]; then export npm_config_http_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_43}\"; else export npm_config_http_proxy; fi\nelse builtin unset npm_config_http_proxy 2>/dev/null || command unset npm_config_http_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43 __CODEX_SNAPSHOT_PROXY_OVERRIDE_43 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_43 __CODEX_SNAPSHOT_PROXY_OVERRIDE_43\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44}\" ]; then\n  if [ -z \"${npm_config_https_proxy+x}\" ] || [ \"${npm_config_https_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_44}\" ]; then export npm_config_https_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_44}\"; else export npm_config_https_proxy; fi\nelse builtin unset npm_config_https_proxy 2>/dev/null || command unset npm_config_https_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44 __CODEX_SNAPSHOT_PROXY_OVERRIDE_44 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_44 __CODEX_SNAPSHOT_PROXY_OVERRIDE_44\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45}\" ]; then\n  if [ -z \"${npm_config_noproxy+x}\" ] || [ \"${npm_config_noproxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_45}\" ]; then export npm_config_noproxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_45}\"; else export npm_config_noproxy; fi\nelse builtin unset npm_config_noproxy 2>/dev/null || command unset npm_config_noproxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45 __CODEX_SNAPSHOT_PROXY_OVERRIDE_45 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_45 __CODEX_SNAPSHOT_PROXY_OVERRIDE_45\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46}\" ]; then\n  if [ -z \"${npm_config_proxy+x}\" ] || [ \"${npm_config_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_46}\" ]; then export npm_config_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_46}\"; else export npm_config_proxy; fi\nelse builtin unset npm_config_proxy 2>/dev/null || command unset npm_config_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46 __CODEX_SNAPSHOT_PROXY_OVERRIDE_46 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_46 __CODEX_SNAPSHOT_PROXY_OVERRIDE_46\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47}\" ]; then\n  if [ -z \"${ws_proxy+x}\" ] || [ \"${ws_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_47}\" ]; then export ws_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_47}\"; else export ws_proxy; fi\nelse builtin unset ws_proxy 2>/dev/null || command unset ws_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47 __CODEX_SNAPSHOT_PROXY_OVERRIDE_47 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_47 __CODEX_SNAPSHOT_PROXY_OVERRIDE_47\nif [ -n \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48}\" ]; then\n  if [ -z \"${wss_proxy+x}\" ] || [ \"${wss_proxy-}\" != \"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_48}\" ]; then export wss_proxy=\"${__CODEX_SNAPSHOT_PROXY_OVERRIDE_48}\"; else export wss_proxy; fi\nelse builtin unset wss_proxy 2>/dev/null || command unset wss_proxy; fi\nbuiltin unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48 __CODEX_SNAPSHOT_PROXY_OVERRIDE_48 2>/dev/null || command unset __CODEX_SNAPSHOT_PROXY_OVERRIDE_SET_48 __CODEX_SNAPSHOT_PROXY_OVERRIDE_48\nfi\nif [ -n \"${PATH:-}\" ]; then export PATH='/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path':\"$PATH\"; else export PATH='/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path'; fi\n\nexec '/bin/bash' -c 'ls -la /workspace'"
+    ],
+    "start": "2026-11-15T02:03:37.098418+00:00",
+    "end": "2026-11-15T02:03:37.114294+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "8c86be030a164a3bb63d0ee522d07c32",
+    "path": "commands/0027-8c86be030a164a3bb63d0ee522d07c32",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "mkdir -p /workspace/mcpjam-validation/docs\ncurl -fsSL https://docs.mcpjam.com/cli/overview.md -o /workspace/mcpjam-validation/docs/cli.md\ncurl -fsSL https://docs.mcpjam.com/cli/local-evals.md -o /workspace/mcpjam-validation/docs/local-evals.md\ncurl -fsSL https://docs.mcpjam.com/reference/openapi.json -o /workspace/mcpjam-validation/docs/openapi.json\ncat /workspace/mcpjam-validation/docs/cli.md /workspace/mcpjam-validation/docs/local-evals.md"
+    ],
+    "start": "2026-11-15T02:03:44.908367+00:00",
+    "end": "2026-11-15T02:03:45.701966+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg",
+      "outcome-011.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-001-003.svg",
+      "intermediate-001-004.svg",
+      "intermediate-001-005.svg",
+      "intermediate-001-006.svg",
+      "intermediate-001-007.svg",
+      "intermediate-001-008.svg",
+      "intermediate-001-009.svg",
+      "intermediate-001-010.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "9054b8ab0cc04b71942c9dc8b354d900",
+    "path": "commands/0028-9054b8ab0cc04b71942c9dc8b354d900",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npx mcpjam server doctor --url http://fixture:8765/mcp --no-telemetry --format json > doctor.json\ncat doctor.json\nnpx mcpjam tools list --url http://fixture:8765/mcp --no-telemetry --format json > tools.json\ncat tools.json"
+    ],
+    "start": "2026-11-15T02:04:05.635411+00:00",
+    "end": "2026-11-15T02:04:06.648497+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "NOT_FOUND"
+    ]
+  },
+  {
+    "id": "911744fc64834c15b17dd82163926d7e",
+    "path": "commands/0029-911744fc64834c15b17dd82163926d7e",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npx mcpjam cloud eval steps --project project_fixture --run run_fixture_1 --iteration run_fixture_1_0 --no-telemetry > steps.json\ncat steps.json"
+    ],
+    "start": "2026-11-15T02:05:16.474838+00:00",
+    "end": "2026-11-15T02:05:16.933675+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": [
+      "NOT_FOUND"
+    ]
+  },
+  {
+    "id": "913882d291f84aeba897ec1cf5d1f23a",
+    "path": "commands/0030-913882d291f84aeba897ec1cf5d1f23a",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "mkdir -p /logs/verifier /logs/agent /logs/artifacts && chmod 777 /logs/verifier /logs/agent /logs/artifacts"
+    ],
+    "start": "2026-11-15T02:03:28.676806+00:00",
+    "end": "2026-11-15T02:03:28.678516+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "9550ed92c19942e585cc6f63df6c96a5",
+    "path": "commands/0031-9550ed92c19942e585cc6f63df6c96a5",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npx mcpjam cloud projects servers --help\nnpx mcpjam cloud eval --help\ncurl -fsSL https://docs.mcpjam.com/inspector/evals.md -o docs/evals.md\nnode - <<'JS'\nconst s=require('./docs/openapi.json');for(const p of ['/projects/{projectId}/servers','/projects/{projectId}/eval-suites/from-file','/projects/{projectId}/eval-suites/{suiteId}/cases']) console.log(p,JSON.stringify(s.paths[p]?.post));\nJS"
+    ],
+    "start": "2026-11-15T02:04:19.422212+00:00",
+    "end": "2026-11-15T02:04:20.543349+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "9a6d1674a2fe4aafacf537f4e8c50433",
+    "path": "commands/0032-9a6d1674a2fe4aafacf537f4e8c50433",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "test -d /logs/artifacts"
+    ],
+    "start": "2026-11-15T02:05:55.498131+00:00",
+    "end": "2026-11-15T02:05:55.498746+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "a19972aad5c34ffc9d41752d3ae183ea",
+    "path": "commands/0033-a19972aad5c34ffc9d41752d3ae183ea",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npx mcpjam tools call --url http://fixture:8765/mcp --tool-name add --tool-args '{\"a\":2,\"b\":3}' --no-telemetry --format json > first-result.json\ncat first-result.json\nsed -n '1566,1662p' docs/reference.md\nsed -n '1735,1858p' docs/reference.md"
+    ],
+    "start": "2026-11-15T02:04:11.954507+00:00",
+    "end": "2026-11-15T02:04:12.440003+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-002-002.svg",
+      "intermediate-003-001.svg",
+      "intermediate-004-001.svg",
+      "intermediate-004-002.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "a206bc3d9fce4c0787664937996711e5",
+    "path": "commands/0034-a206bc3d9fce4c0787664937996711e5",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "if [ -s ~/.nvm/nvm.sh ]; then . ~/.nvm/nvm.sh; fi; codex --version"
+    ],
+    "start": "2026-11-15T02:03:28.845636+00:00",
+    "end": "2026-11-15T02:03:28.862060+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "a3423b8ee9d3422082e6f7dd068ed914",
+    "path": "commands/0035-a3423b8ee9d3422082e6f7dd068ed914",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; printf \"\\nCODEX_RUNTIME_ID %s %s\\n\" \"$(id -u)\" \"$(id -g)\""
+    ],
+    "start": "2026-11-15T02:03:28.975417+00:00",
+    "end": "2026-11-15T02:03:28.976964+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "accfad8435b249dcb346cd51740b60d1",
+    "path": "commands/0036-accfad8435b249dcb346cd51740b60d1",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "node - <<'JS'\nconst s=require('./docs/openapi.json');for(const [p,v] of Object.entries(s.paths||{}))if(/chat|eval|servers/.test(p))console.log(p,Object.keys(v).join(','));\nJS"
+    ],
+    "start": "2026-11-15T02:03:59.158580+00:00",
+    "end": "2026-11-15T02:03:59.180463+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "c878c2aed7e845c891a6afe1f9c7500f",
+    "path": "commands/0037-c878c2aed7e845c891a6afe1f9c7500f",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "ls -la /workspace"
+    ],
+    "start": "2026-11-15T02:03:37.110741+00:00",
+    "end": "2026-11-15T02:03:37.111875+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "d1ac2c66bb2f42ee99b905b3f2bd0887",
+    "path": "commands/0038-d1ac2c66bb2f42ee99b905b3f2bd0887",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "node - <<'JS'\nconst fs=require('fs');const s=JSON.parse(fs.readFileSync('suite.json'));s.suite={id:'s_arithmetic_negative_control',name:'Arithmetic negative control'};s.cases[0].steps[2].assertion.needle='\"sum\": 6';fs.writeFileSync('negative-control.json',JSON.stringify(s,null,2)+'\\n');\nJS\nnpx mcpjam cloud eval run --file negative-control.json --project project_fixture --wait --wait-timeout 60000 --out negative-control-report.json --no-telemetry > negative-control-run.json\ncode=$?\nprintf 'Negative control CLI exit: %s\\n' \"$code\"\ntest \"$code\" -eq 1"
+    ],
+    "start": "2026-11-15T02:05:15.581820+00:00",
+    "end": "2026-11-15T02:05:16.455767+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": []
+  },
+  {
+    "id": "daa288398ae74c6e94c3dc3fd5fe7129",
+    "path": "commands/0039-daa288398ae74c6e94c3dc3fd5fe7129",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "npx mcpjam cloud projects servers create --help\nnpx mcpjam cloud whoami --no-telemetry > identity.json\ncat identity.json\nnode - <<'JS'\nconst s=require('./docs/openapi.json');for(const [n,v]of Object.entries(s.components.schemas))if(/Step|Assertion/.test(n)&&/toolCall|toolResultMatches/.test(JSON.stringify(v)))console.log(n,JSON.stringify(v));\nJS"
+    ],
+    "start": "2026-11-15T02:04:25.275960+00:00",
+    "end": "2026-11-15T02:04:26.142966+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "e0a17795629b46948d800e59a4a3f375",
+    "path": "commands/0040-e0a17795629b46948d800e59a4a3f375",
+    "argv": [
+      "/bin/bash",
+      "-lc",
+      "cat eval-report.json\nnpx mcpjam cloud eval iterations --project project_fixture --run run_fixture_1 --no-telemetry > iterations.json\ncat iterations.json\nnpx mcpjam cloud eval trace --help\nnpx mcpjam cloud eval steps --help"
+    ],
+    "start": "2026-11-15T02:05:03.554754+00:00",
+    "end": "2026-11-15T02:05:04.863402+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-001-002.svg",
+      "intermediate-002-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "ef410b3059b6477c9fa24de65d2e4bb2",
+    "path": "commands/0041-ef410b3059b6477c9fa24de65d2e4bb2",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; chown 0:0 /tmp/codex-secrets/auth.json && chmod 600 /tmp/codex-secrets/auth.json"
+    ],
+    "start": "2026-11-15T02:03:29.281012+00:00",
+    "end": "2026-11-15T02:03:29.282458+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "f46d06299563475ba1be343b127bf396",
+    "path": "commands/0042-f46d06299563475ba1be343b127bf396",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; if [ -s ~/.nvm/nvm.sh ]; then . ~/.nvm/nvm.sh; fi; CODEX_API_KEY= OPENAI_API_KEY= codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --model gpt-6.1-sol --json --enable unified_exec -c model_reasoning_effort=medium -c model_reasoning_summary=none -- 'Use MCPJam to validate the MCP server at http://fixture:8765/mcp. Set it up from this clean environment and obtain your first useful result. Then find how to turn that result into a repeatable evaluation and run it.\n\nAt meaningful checkpoints or when confused, write a brief user-facing concern note: what you expected, what you observed, what information was missing, and what you will try next. Report no concern when none exists. Do not provide private chain-of-thought or extended internal reasoning.\n\nTrial context: public documentation entry point https://docs.mcpjam.com; MCP server http://fixture:8765/mcp. MCPJam account API is configured in MCPJAM_API_URL and MCPJAM_API_KEY. Project: project_fixture. Account: team owner. This isolated account uses synthetic credits; do not contact production billing or buy anything. Save reproducible work under /workspace. Budget: 240 seconds, at most 40 shell commands. Use only public documentation and normal product interfaces; do not read product source, test fixtures, or verifier internals.\n' 2>&1 </dev/null | tee /logs/agent/codex.txt"
+    ],
+    "start": "2026-11-15T02:03:29.482581+00:00",
+    "end": "2026-11-15T02:05:55.130115+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg",
+      "outcome-002.svg",
+      "outcome-003.svg",
+      "outcome-004.svg",
+      "outcome-005.svg",
+      "outcome-006.svg",
+      "outcome-007.svg",
+      "outcome-008.svg",
+      "outcome-009.svg",
+      "outcome-010.svg",
+      "outcome-011.svg",
+      "outcome-012.svg",
+      "outcome-013.svg",
+      "outcome-014.svg",
+      "outcome-015.svg",
+      "outcome-016.svg",
+      "outcome-017.svg",
+      "outcome-018.svg",
+      "outcome-019.svg",
+      "outcome-020.svg",
+      "outcome-021.svg",
+      "outcome-022.svg",
+      "outcome-023.svg",
+      "outcome-024.svg",
+      "outcome-025.svg",
+      "outcome-026.svg",
+      "outcome-027.svg",
+      "outcome-028.svg",
+      "outcome-029.svg"
+    ],
+    "intermediate_screenshots": [
+      "intermediate-001-001.svg",
+      "intermediate-002-001.svg",
+      "intermediate-003-001.svg",
+      "intermediate-004-001.svg",
+      "intermediate-004-002.svg",
+      "intermediate-004-003.svg",
+      "intermediate-004-004.svg",
+      "intermediate-004-005.svg",
+      "intermediate-004-006.svg",
+      "intermediate-004-007.svg",
+      "intermediate-004-008.svg",
+      "intermediate-004-009.svg",
+      "intermediate-004-010.svg",
+      "intermediate-004-011.svg",
+      "intermediate-005-001.svg",
+      "intermediate-005-002.svg",
+      "intermediate-005-003.svg",
+      "intermediate-005-004.svg",
+      "intermediate-005-005.svg",
+      "intermediate-006-001.svg",
+      "intermediate-007-001.svg",
+      "intermediate-008-001.svg",
+      "intermediate-009-001.svg",
+      "intermediate-010-001.svg",
+      "intermediate-011-001.svg",
+      "intermediate-012-001.svg",
+      "intermediate-013-001.svg",
+      "intermediate-014-001.svg",
+      "intermediate-014-002.svg",
+      "intermediate-014-003.svg",
+      "intermediate-015-001.svg",
+      "intermediate-015-002.svg",
+      "intermediate-016-001.svg",
+      "intermediate-016-002.svg",
+      "intermediate-016-003.svg",
+      "intermediate-017-001.svg",
+      "intermediate-018-001.svg",
+      "intermediate-019-001.svg",
+      "intermediate-020-001.svg",
+      "intermediate-021-001.svg",
+      "intermediate-022-001.svg",
+      "intermediate-023-001.svg",
+      "intermediate-024-001.svg",
+      "intermediate-025-001.svg"
+    ],
+    "output_classes": []
+  },
+  {
+    "id": "f4a42cd1947440a89b96dd28f1a5cdc6",
+    "path": "commands/0043-f4a42cd1947440a89b96dd28f1a5cdc6",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "test -d /capture"
+    ],
+    "start": "2026-11-15T02:05:55.916621+00:00",
+    "end": "2026-11-15T02:05:55.917292+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  },
+  {
+    "id": "fbae3192836b4529aae415dc9a23646e",
+    "path": "commands/0044-fbae3192836b4529aae415dc9a23646e",
+    "argv": [
+      "/bin/bash",
+      "-c",
+      "(set -o pipefail) 2>/dev/null && set -o pipefail; rm -rf /tmp/codex-secrets /installed-agent/codex-home"
+    ],
+    "start": "2026-11-15T02:05:55.295193+00:00",
+    "end": "2026-11-15T02:05:55.312064+00:00",
+    "exit_status": 0,
+    "complete": true,
+    "screenshots": [
+      "outcome-001.svg"
+    ],
+    "intermediate_screenshots": [],
+    "output_classes": [
+      "empty_output"
+    ]
+  }
+]

@@ -1,0 +1,110 @@
+[
+  {
+    "phase": "trial",
+    "id": "toolu_01QZeEpo7j424BgzyHjH4PZL",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 2,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com | head -c 1500; echo; curl -s https://docs.mcpjam.com/llms.txt | head -c 3000; which mcpjam npx",
+    "observed_output_sha256": "f847ff9476829b32eb6899c643ed55c0b74cb5a279a7bce7f56addb031199037",
+    "successful_sum_output": false,
+    "result_public_line": 4,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01QBqy6KuoMFoTCiroSq6a3Q",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 5,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/llms.txt | grep -i -E \"cli|eval|getting\" ; curl -s https://docs.mcpjam.com/getting-started.md | head -60",
+    "observed_output_sha256": "34f418534a7d6f4d06d44a8dd82886d8dede78afea4b8437b202753e46f4b0e0",
+    "successful_sum_output": false,
+    "result_public_line": 6,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01UxkzhN32rGKFt2RrHRfDKF",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 7,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/cli/overview.md | head -120; echo ======; curl -s https://docs.mcpjam.com/cli/local-evals.md | head -150",
+    "observed_output_sha256": "610d96ea5bd9a25fd20be5f8516d69776781caa47a5776eda713fc450eeeae2d",
+    "successful_sum_output": false,
+    "result_public_line": 8,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01FhERwqtzUqBzV5wo6zjRjo",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 10,
+    "command": "cd /workspace; export MCPJAM_PROJECT=project_fixture; M=\"npx -y @mcpjam/cli@latest\"; $M server probe --url http://fixture:8765/mcp 2>&1 | tail -30; $M tools list --url http://fixture:8765/mcp 2>&1 | tail -40; $M cloud status 2>&1 | tail -15",
+    "observed_output_sha256": "12c0f15eeedde5fef91700b8e0b0e81bb471f2aad23180e73dbeb4d9614d0217",
+    "successful_sum_output": false,
+    "result_public_line": 14,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01Af7RGB5NoEs5SjnAsQrTsd",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 11,
+    "command": "curl -s https://docs.mcpjam.com/cli/reference.md | grep -n -i -A40 \"cloud eval commands\" | head -120",
+    "observed_output_sha256": "cac1685585590361647e7a27b58a25a590f335bfcd0ab70fcdc0424e40c20843",
+    "successful_sum_output": false,
+    "result_public_line": 15,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01AiUs13MCqShWFfV2gHqZmb",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 17,
+    "command": "cd /workspace; export MCPJAM_PROJECT=project_fixture; M=\"npx -y @mcpjam/cli@latest\"; $M tools call add --url http://fixture:8765/mcp --args '{\"a\":2,\"b\":3}' 2>&1 | tail -8; $M cloud eval --help 2>&1 | head -30; $M cloud eval create --help 2>&1 | head -50; curl -s https://docs.mcpjam.com/inspector/evals.md | head -5",
+    "observed_output_sha256": "82577b99c13b2c41b88a91ac34d6fb1d4371d8cfd9b7e2a1648c45b150468833",
+    "successful_sum_output": false,
+    "result_public_line": 18,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_014HVPhviiCAesrZeuLLxvXh",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 19,
+    "command": "cd /workspace; export MCPJAM_PROJECT=project_fixture; M=\"npx -y @mcpjam/cli@latest\"; $M cloud projects servers --help 2>&1|head -12; $M cloud eval list 2>&1 | head -20; $M cloud eval run --help 2>&1 | head -40; curl -s https://docs.mcpjam.com/cli/reference.md | grep -n -i \"eval create\" | head",
+    "observed_output_sha256": "40ab2df6c8c2c8db55685bb717b3dbe45d5af594594608255289dc425401e4ba",
+    "successful_sum_output": false,
+    "result_public_line": 20,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01K7ayU7VkYscoB2TzJqZZXY",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 22,
+    "command": "cd /workspace; export MCPJAM_PROJECT=project_fixture; M=\"npx -y @mcpjam/cli@latest\"; $M cloud projects servers list 2>&1 | tail -5; $M cloud eval run --suite suite_fixture --wait --reporter json-summary --out /workspace/run1.json 2>&1 | tail -30",
+    "observed_output_sha256": "fbd23f3139a7d5dcfaff274027b471c8a97c521d9dadbd1a7c1c5991d2f0b524",
+    "successful_sum_output": false,
+    "result_public_line": 23,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01BtiejavraN3BPn4Dqqf8pF",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 25,
+    "command": "cd /workspace; cat > run_eval.sh <<'E'\n#!/bin/bash\n# Repeatable: probe server, then run hosted eval suite. Needs MCPJAM_API_URL/MCPJAM_API_KEY.\nexport MCPJAM_PROJECT=project_fixture\nM=\"npx -y @mcpjam/cli@latest\"\n$M server probe --url http://fixture:8765/mcp >/dev/null && echo probe ok\n$M cloud eval run --suite suite_fixture --wait --reporter json-summary --out /workspace/run1.json\nE\nchmod +x run_eval.sh",
+    "observed_output_sha256": "cac1685585590361647e7a27b58a25a590f335bfcd0ab70fcdc0424e40c20843",
+    "successful_sum_output": false,
+    "result_public_line": 26,
+    "source": "public-agent-claude-code.txt.jsonl"
+  }
+]

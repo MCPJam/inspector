@@ -1,0 +1,1 @@
+{"seconds": 0.051401376724243164, "stream": "stdout", "data": "422 {\"code\": \"FEATURE_NOT_SUPPORTED\", \"message\": \"Synthetic fixture executes deterministic toolCall steps and simple assertions only; hosted prompt/model execution is not implemented.\", \"details\": {\"reason\": \"fixture_unsupported_execution\"}}\n"}

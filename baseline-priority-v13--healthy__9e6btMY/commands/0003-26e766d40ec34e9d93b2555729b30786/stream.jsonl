@@ -1,0 +1,2 @@
+{"seconds": 0.6615273952484131, "stream": "stdout", "data": "{\"error\":{\"code\":\"OPTIONS_INVALID\",\"message\":\"The MCPJam connection is unusable: baseUrl must be https:// — the platform credential is sent to it (a loopback http:// origin is allowed for local development).\",\"details\":{\"phase\":\"setup\",\"category\":\"usage\"}}}\n"}
+{"seconds": 0.6615760326385498, "stream": "stdout", "data": "exit=0\n"}

@@ -1,0 +1,57 @@
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"items":[{"id":"server_fixture","name":"Arithmetic","projectId":"project_fixture","transportType":"http","url":"http://fixture:8765/mcp","enabled":true,"useOAuth":false,"hasClientSecret":false}],"otherProjects":[]}
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"capabilities":{"projectId":"project_fixture","sensitive_value": "[REDACTED]","role":"owner","projectRole":"owner","surface":"cli","features":{"sandboxes":{"enabled":false,"mode":"off","enforced":false}},"plan":{"name":"team","limits":{},"features":{}},"can":{}}}
+167:                    type: toolCalledWith
+168:                    toolName: list_files
+305:          pattern: ^[A-Za-z0-9_-]{1,128}$
+354:          pattern: ^\S(?:[\s\S]*\S)?$
+390:            (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`)
+391:            or internal (`toolCallOrder: ignore|superset|strict`,
+460:            model-free `toolCall` step is a render-check; `assert` steps hold
+498:          pattern: ^\S(?:[\s\S]*\S)?$
+549:            In the public vocabulary (`toolCallOrder: any|in-order|exact`,
+550:            `extraToolCalls`, `arguments`). Absent when the case sets none:
+589:        `prompt` is a user message (model turn); `toolCall` is a deterministic,
+591:        an assertion (a `Predicate` like `toolCalledWith` / `widgetRendered`, or
+604:            - toolCall
+612:          description: 'Server that owns the tool (`kind: toolCall`).'
+613:        toolName:
+615:          description: 'Tool name (`kind: toolCall` / `interact`).'
+616:        arguments:
+618:          description: 'Tool-call arguments (`kind: toolCall`).'
+699:              const: toolNamesUnique
+763:              const: toolCalledWith
+764:            toolName:
+798:            - toolName
+804:              const: toolCalledAtLeastOnce
+805:            toolName:
+819:            - toolName
+825:            toolName:
+839:            - toolName
+845:            toolNames:
+861:            - toolNames
+867:            toolName:
+881:            - toolName
+909:            pattern:
+923:            - pattern
+982:            toolName:
+1005:            toolName:
+1025:            toolName:
+1085:            toolName:
+1104:              const: toolResultContains
+1111:            toolName:
+1132:            toolName:
+1156:            toolName:
+1175:              const: argumentsMatchToolSchema
+1176:            toolName:
+1192:            A call to toolName whose input matches EVERY pattern (all within one
+1198:            JSON of the arguments (sorted keys, no whitespace), or only the
+1206:            toolName:
+1209:            patterns:
+1211:                Every pattern must match the same call. Use alternation (A|B)
+1212:                inside one pattern for either.
+1222:                Applies to every pattern: i (ignore case), m (multiline), s (dot
+1237:                match the whole arguments object. A call without the key does
+1242:              pattern: ^\/(?:[^/~]|~[01])+$
+1268:            - toolName
+1269:            - patterns
+1272:            A tool result in scope (every result, or only toolName's) whose

@@ -1,0 +1,8 @@
+{
+  "code": "FORBIDDEN",
+  "message": "This work requires platform credits. Add credits or contact your organization administrator. This is a platform-credit requirement, separate from iteration and model-step limits. Check the project's organization in MCPJam under Organizations > Billing. If you are the owner, review the balance and the recovery options available to your plan; top-ups may require an upgrade, and enterprise arrangements may require support. If you are a member or cannot manage billing, ask the organization owner to resolve it. Keep your suite and retry the original task only after the account issue is resolved. This response does not establish the available balance or expected cost.",
+  "exitCode": 1,
+  "details": {
+    "reason": "PLATFORM_FEE_REQUIRED"
+  }
+}

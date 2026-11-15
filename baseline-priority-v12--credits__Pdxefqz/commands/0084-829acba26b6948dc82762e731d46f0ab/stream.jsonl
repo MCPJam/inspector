@@ -1,0 +1,2 @@
+{"seconds": 0.0455322265625, "stream": "stderr", "data": "Traceback (most recent call last):\n  File \"/workspace/mcpjam-eval/protocol-smoke.py\", line 16, in <module>\n    assert any(c.get('text')=='5' for c in result['result'].get('content',[])),result\n"}
+{"seconds": 0.0455775260925293, "stream": "stderr", "data": "AssertionError: {'jsonrpc': '2.0', 'id': 3, 'result': {'content': [{'type': 'text', 'text': '{\"sum\": 5}'}], 'structuredContent': {'sum': 5}, 'isError': False}}\n"}

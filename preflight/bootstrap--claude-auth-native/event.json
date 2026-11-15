@@ -1,0 +1,21 @@
+{
+  "event_id": "claude-auth-native",
+  "role": "orchestrator",
+  "argv": [
+    "claude",
+    "auth",
+    "status"
+  ],
+  "cwd": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor",
+  "start": "2026-11-15T01:21:08.708483+00:00",
+  "environment": {
+    "PATH": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/.local/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+    "HOME": "$USER_HOME"
+  },
+  "capture": "separate pipes; chunks ordered by recorder observation, not kernel total order",
+  "timeout_seconds": 30.0,
+  "exit_status": 0,
+  "timed_out": false,
+  "end": "2026-11-15T01:21:09.108523+00:00",
+  "duration_seconds": 0.4001622200012207
+}

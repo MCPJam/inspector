@@ -1,0 +1,49 @@
+{
+  "files": [
+    {
+      "path": "instruction.md",
+      "original_sha256": "7fd6fb28a8c9ba0cbf72a2741b5aa3ad7499b5c4688a80477032cb9ed6003583",
+      "sanitized_sha256": "7fd6fb28a8c9ba0cbf72a2741b5aa3ad7499b5c4688a80477032cb9ed6003583",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "task.toml",
+      "original_sha256": "219dc1408a3a1a2e8f7795c6bcf6fa06883e4306e2ec031d4766209fe0698d81",
+      "sanitized_sha256": "219dc1408a3a1a2e8f7795c6bcf6fa06883e4306e2ec031d4766209fe0698d81",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "manifest.json",
+      "original_sha256": "218325c0fd66ec9a949cef782264b375d6c4f433e6726fde8956fddd444b811c",
+      "sanitized_sha256": "218325c0fd66ec9a949cef782264b375d6c4f433e6726fde8956fddd444b811c",
+      "matches_recorded_manifest": null
+    },
+    {
+      "path": "environment/Dockerfile",
+      "original_sha256": "e46da6827b1109afa1056498a90c138e401c8acc359d3b076dc72a36b3f5a349",
+      "sanitized_sha256": "e46da6827b1109afa1056498a90c138e401c8acc359d3b076dc72a36b3f5a349",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "environment/docker-compose.yaml",
+      "original_sha256": "cef7430185b860924a0cfe88fe29ff87be68230e73358a21cfbc86b25b8df98a",
+      "sanitized_sha256": "5a539bc6662d76c17c35c5e58da4e9631f19d689873a750f0f1c27ef1fc603b3",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "tests/Dockerfile",
+      "original_sha256": "9b57a9e793b9984a526693994a338ebba404258e60027b30b70a18a6d0a61f4a",
+      "sanitized_sha256": "9b57a9e793b9984a526693994a338ebba404258e60027b30b70a18a6d0a61f4a",
+      "matches_recorded_manifest": true
+    },
+    {
+      "path": "tests/prompt.txt",
+      "original_sha256": "c0cde77fa8fef97d476c10aad3d2d54fcc2f336140d073651c2dcccf1e379fd6",
+      "sanitized_sha256": "c0cde77fa8fef97d476c10aad3d2d54fcc2f336140d073651c2dcccf1e379fd6",
+      "matches_recorded_manifest": true
+    }
+  ],
+  "source_files_verified_against_recorded_manifest": true,
+  "scope": "Allowlisted task instructions, task config, environment definitions, verifier-image packaging and recorded file-hash manifest. Published after tester completion; excludes native agent/auth/config stores and package archives.",
+  "redaction_note": "Published configuration contains redactions, including synthetic credentials and host identity. Original and sanitized hashes are separate. Original hashes authenticate local task bytes, not sanitized bytes."
+}

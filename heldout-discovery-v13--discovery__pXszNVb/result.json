@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "id": "b4dd1d5f-866e-4ea6-8690-bb908288c1a5",
+  "task_name": "mcpjam/healthy",
+  "trial_name": "discovery__pXszNVb",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/heldout-discovery-v13/discovery__pXszNVb",
+  "task_id": {
+    "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/heldout-discovery-v13/discovery"
+  },
+  "source": null,
+  "task_checksum": "eb6d03e7c5e3b06412a6cfe02eca7f20875db74a34731f04fd85b578389d9473",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/heldout-discovery-v13/discovery",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "discovery__pXszNVb",
+    "trials_dir": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/heldout-discovery-v13",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "claude-code",
+      "import_path": null,
+      "model_name": "anthropic/claude-sonnet-5-5",
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": true,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {
+        "version": "2.1.323",
+        "max_turns": 30,
+        "max_budget_usd": "2",
+        "thinking_display": "omitted"
+      },
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "568b05cb-06fd-443f-9014-3447d179008a",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "claude-code",
+    "version": "2.1.323",
+    "model_info": {
+      "name": "claude-sonnet-5-5",
+      "provider": "anthropic"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 112346,
+    "n_cache_tokens": 98323,
+    "n_output_tokens": 1477,
+    "cost_usd": 0.0806743,
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "n_input_tokens": 112346,
+        "n_cache_tokens": 98323,
+        "n_output_tokens": 1477,
+        "cost_usd": 0.05965480000000001
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 1.0
+    }
+  },
+  "verifier_environment_mode": "separate",
+  "exception_info": null,
+  "started_at": "2026-11-15T02:26:53.023873Z",
+  "finished_at": "2026-11-15T02:28:01.216453Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T02:26:53.079501Z",
+    "finished_at": "2026-11-15T02:26:56.329362Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-15T02:26:56.329419Z",
+    "finished_at": "2026-11-15T02:26:56.482727Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-15T02:26:56.483002Z",
+    "finished_at": "2026-11-15T02:27:27.224827Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-15T02:27:48.571133Z",
+    "finished_at": "2026-11-15T02:28:01.216430Z"
+  },
+  "step_results": null,
+  "reward_valid": true
+}

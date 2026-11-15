@@ -1,0 +1,71 @@
+{
+  "scope": "Direct MCP protocol/tool smoke; separate from blocked hosted eval",
+  "passed": 8,
+  "total": 8,
+  "cases": [
+    {
+      "repeat": 1,
+      "a": 2,
+      "b": 3,
+      "expected": 5,
+      "actual": 5,
+      "passed": true
+    },
+    {
+      "repeat": 1,
+      "a": 0,
+      "b": 0,
+      "expected": 0,
+      "actual": 0,
+      "passed": true
+    },
+    {
+      "repeat": 1,
+      "a": -2,
+      "b": 3,
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "repeat": 1,
+      "a": 1.25,
+      "b": 2.5,
+      "expected": 3.75,
+      "actual": 3.75,
+      "passed": true
+    },
+    {
+      "repeat": 2,
+      "a": 2,
+      "b": 3,
+      "expected": 5,
+      "actual": 5,
+      "passed": true
+    },
+    {
+      "repeat": 2,
+      "a": 0,
+      "b": 0,
+      "expected": 0,
+      "actual": 0,
+      "passed": true
+    },
+    {
+      "repeat": 2,
+      "a": -2,
+      "b": 3,
+      "expected": 1,
+      "actual": 1,
+      "passed": true
+    },
+    {
+      "repeat": 2,
+      "a": 1.25,
+      "b": 2.5,
+      "expected": 3.75,
+      "actual": 3.75,
+      "passed": true
+    }
+  ]
+}

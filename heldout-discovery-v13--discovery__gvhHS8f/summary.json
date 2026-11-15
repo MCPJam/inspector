@@ -1,0 +1,112 @@
+{
+  "run_id": "heldout-discovery-v13--discovery__gvhHS8f",
+  "job": "heldout-discovery-v13",
+  "scenario": "mcpjam/healthy",
+  "agent": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "outcome": "passed",
+  "rewards": {
+    "reward": 1.0
+  },
+  "usage": {
+    "n_input_tokens": 771664,
+    "n_cache_tokens": 727296,
+    "n_output_tokens": 4549,
+    "cost_usd": 0.20695560000000002,
+    "model_usage": {
+      "gpt-6.1-sol": {
+        "n_input_tokens": 771664,
+        "n_cache_tokens": 727296,
+        "n_output_tokens": 4549,
+        "cost_usd": 0.20695560000000002
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "exception": null,
+  "capture_event_count": 56,
+  "unique_capture_event_count": 56,
+  "agent_tool_invocation_count": 20,
+  "agent_shell_invocation_count": 19,
+  "incomplete_events": 0,
+  "concern_count": 1,
+  "metrics": [
+    {
+      "source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "A",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 65.02238464355469,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 20,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "a59fd8593ff24c768b872746dfeeb93d",
+          "8f1b78c50f50468a9cbafe0e7505537e"
+        ],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp-check/cli-positive-trace.json",
+          "mcp-check/README.md",
+          "mcp-check/results/positive-trace.json",
+          "mcp-check/results/extra_property-trace.json",
+          "mcp-check/results/cancellation-trace.json",
+          "mcp-check/results/summary.json",
+          "mcp-check/results/wrong_type-trace.json",
+          "mcp-check/results/negative-trace.json",
+          "mcp-check/results/missing-trace.json",
+          "mcp-check/results/zero-trace.json",
+          "mcp-check/results/decimal-trace.json",
+          "mcp-check/docs/public-api.md",
+          "mcp-check/docs/server-inspection.md",
+          "mcp-check/docs/tools-resources-prompts.md"
+        ],
+        "command_count": 56,
+        "reward": 1.0,
+        "request_count": 402,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      }
+    }
+  ],
+  "assessment_flags": [],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T02:30:02.642063Z",
+    "explicitly_harness_invalid": false,
+    "comparison_eligible": true,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": true,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": null,
+    "reason": "No unique native shell output with successful structuredContent.sum exactly matched a verifier-confirmed capture."
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once."
+}

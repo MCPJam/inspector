@@ -1,0 +1,2 @@
+curl: (22) The requested URL returned error: 404
+head: cannot open '/workspace/mcp-eval/account-entry.html' for reading: No such file or directory

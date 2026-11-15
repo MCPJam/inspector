@@ -1,0 +1,26 @@
+{"seconds": 0.0021932125091552734, "stream": "stdout", "data": "# Snapshot file\n# Unset all aliases to avoid conflicts with functions\nunalias -a 2>/dev/null || true\nshopt -u autocd\nshopt -u assoc_expand_once\nshopt -u cdable_vars\nshopt -u cdspell\nshopt -u checkhash\nshopt -u checkjobs\nshopt -s checkwinsize\nshopt -s cmdhist\nshopt -u compat31\nshopt -u compat32\nshopt -u compat40\nshopt -u compat41\nshopt -u compat42\nshopt -u compat43\nshopt -u compat44\nshopt -s complete_fullquote\nshopt -u direxpand\nshopt -u dirspell\nshopt -u dotglob\nshopt -u execfail\nshopt -u expand_aliases\nshopt -u extdebug\nshopt -u extglob\nshopt -s extquote\nshopt -u failglob\nshopt -s force_fignore\nshopt -s globasciiranges\nshopt -s globskipdots\nshopt -u globstar\nshopt -u gnu_errfmt\nshopt -u histappend\nshopt -u histreedit\nshopt -u histverify\nshopt -s hostcomplete\nshopt -u huponexit\nshopt -u inherit_errexit\nshopt -s interactive_comments\nshopt -u lastpipe\nshopt -u lithist\nshopt -u localvar_inherit\nshopt -u localvar_unset\nshopt -s login_shell\nshopt -u mailwarn\nshopt -u no_empty_cmd_completion\nshopt -u nocaseglob\nshopt -u nocasematch\nshopt -u noexpand_translation\nshopt -u nullglob\nshopt -s patsub_replacement\nshopt -s progcomp\nshopt -u progcomp_alias\nshopt -s promptvars\nshopt -u restricted_shell\nshopt -u shift_verbose\nshopt -s sourcepath\nshopt -u varredir_close\nshopt -u xpg_echo\n"}
+{"seconds": 0.0022537708282470703, "stream": "stdout", "data": "# Functions\n\n"}
+{"seconds": 0.005007028579711914, "stream": "stdout", "data": "# setopts 3\nset -o braceexpand\nset -o hashall\nset -o interactive-comments\n\n\u0000"}
+{"seconds": 0.006090641021728516, "stream": "stdout", "data": "# aliases 0\n\n\u0000"}
+{"seconds": 0.006382465362548828, "stream": "stdout", "data": "CODEX_API_KEY\u0000"}
+{"seconds": 0.006398200988769531, "stream": "stdout", "data": "declare -x CODEX_API_KEY=[REDACTED]\n\u0000"}
+{"seconds": 0.006460428237915039, "stream": "stdout", "data": "CODEX_FORCE_AUTH_JSON\u0000declare -x CODEX_FORCE_AUTH_JSON=\"1\"\n\u0000CODEX_HOME\u0000declare -x CODEX_HOME=\"/installed-agent/codex-home\"\n\u0000CODEX_MANAGED_BY_NPM\u0000declare -x CODEX_MANAGED_BY_NPM=\"1\"\n"}
+{"seconds": 0.0065076351165771484, "stream": "stdout", "data": "\u0000CODEX_MANAGED_PACKAGE_ROOT\u0000declare -x CODEX_MANAGED_PACKAGE_ROOT=\"/usr/local/lib/node_modules/@openai/codex\"\n\u0000DISABLE_AUTOUPDATER\u0000"}
+{"seconds": 0.006525516510009766, "stream": "stdout", "data": "declare -x DISABLE_AUTOUPDATER=\"1\"\n\u0000DO_NOT_TRACK\u0000"}
+{"seconds": 0.006534576416015625, "stream": "stdout", "data": "declare -x DO_NOT_TRACK=\"1\"\n\u0000"}
+{"seconds": 0.006541252136230469, "stream": "stdout", "data": "HOME\u0000"}
+{"seconds": 0.006547212600708008, "stream": "stdout", "data": "declare -x HOME=\"/root\"\n\u0000"}
+{"seconds": 0.006566524505615234, "stream": "stdout", "data": "HOSTNAME\u0000declare -x HOSTNAME=\"088e03f2c072\"\n"}
+{"seconds": 0.006574869155883789, "stream": "stdout", "data": "\u0000"}
+{"seconds": 0.006580829620361328, "stream": "stdout", "data": "LC_CTYPE\u0000"}
+{"seconds": 0.006586551666259766, "stream": "stdout", "data": "declare -x LC_CTYPE=\"C.UTF-8\"\n\u0000"}
+{"seconds": 0.00661015510559082, "stream": "stdout", "data": "MCPJAM_API_KEY\u0000declare -x MCPJAM_API_KEY=[REDACTED]\n\u0000"}
+{"seconds": 0.006623268127441406, "stream": "stdout", "data": "MCPJAM_API_URL\u0000"}
+{"seconds": 0.006629467010498047, "stream": "stdout", "data": "declare -x MCPJAM_API_URL=\"http://fixture:8765/api/v1\"\n\u0000"}
+{"seconds": 0.006707906723022461, "stream": "stdout", "data": "MCPJAM_TELEMETRY_DISABLED\u0000declare -x MCPJAM_TELEMETRY_DISABLED=\"1\"\n\u0000MCP_SERVER_TOKEN\u0000declare -x MCP_SERVER_TOKEN=[REDACTED]\n\u0000NODE_VERSION\u0000declare -x NODE_VERSION=\"24.22.1\"\n\u0000OPENAI_API_KEY\u0000declare -x OPENAI_API_KEY=[REDACTED]\n"}
+{"seconds": 0.006723880767822266, "stream": "stdout", "data": "\u0000PATH\u0000declare -x PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\"\n\u0000"}
+{"seconds": 0.006757497787475586, "stream": "stdout", "data": "SHLVL\u0000declare -x SHLVL=\"2\"\n\u0000"}
+{"seconds": 0.006773471832275391, "stream": "stdout", "data": "XDG_CACHE_HOME\u0000declare -x XDG_CACHE_HOME=\"/root/.cache\"\n\u0000"}
+{"seconds": 0.006780862808227539, "stream": "stdout", "data": "XDG_CONFIG_HOME\u0000declare -x XDG_CONFIG_HOME=\"/root/.config\"\n\u0000"}
+{"seconds": 0.006800651550292969, "stream": "stdout", "data": "YARN_VERSION\u0000declare -x YARN_VERSION=\"1.22.22\"\n\u0000"}
+{"seconds": 0.006967306137084961, "stream": "stdout", "data": "\u0000"}

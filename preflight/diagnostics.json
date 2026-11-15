@@ -1,0 +1,23 @@
+[
+  {
+    "diagnostic_id": "packaging-nop-credits-v12--packaging-nop-credits-v12__hC92JSt",
+    "role": "harness_diagnostic",
+    "agent": "nop",
+    "outcome": "failed",
+    "result": "diagnostics/packaging-nop-credits-v12--packaging-nop-credits-v12__hC92JSt/result.json"
+  },
+  {
+    "diagnostic_id": "packaging-nop-credits-v12b--packaging-nop-credits-v12b__SAAguVH",
+    "role": "harness_diagnostic",
+    "agent": "nop",
+    "outcome": "failed",
+    "result": "diagnostics/packaging-nop-credits-v12b--packaging-nop-credits-v12b__SAAguVH/result.json"
+  },
+  {
+    "diagnostic_id": "packaging-nop-credits-v13--packaging-nop-credits-v13__snChW8G",
+    "role": "harness_diagnostic",
+    "agent": "nop",
+    "outcome": "failed",
+    "result": "diagnostics/packaging-nop-credits-v13--packaging-nop-credits-v13__snChW8G/result.json"
+  }
+]

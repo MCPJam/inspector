@@ -1,0 +1,13 @@
+HTTP/1.1 404 Not Found
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 02:11:39 GMT
+Content-Type: application/json
+Content-Length: 45
+
+{"code": "NOT_FOUND", "message": "Not found"}HTTP/1.1 404 Not Found
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 02:11:39 GMT
+Content-Type: application/json
+Content-Length: 45
+
+{"code": "NOT_FOUND", "message": "Not found"}

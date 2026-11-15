@@ -1,0 +1,24 @@
+Usage: mcpjam cloud eval cases create [options]
+
+Add a test case to a suite (definition via --file/--json)
+
+Options:
+  --suite <id-or-name>    Eval suite name or ID
+  --project <id-or-name>  Project name or ID (defaults to most recently updated)
+  --file <path>           Case JSON body (or - for stdin)
+  --json <json>           Inline case JSON (or @file, or -)
+  --title <title>         Case title (overrides the body)
+  -h, --help              display help for command
+Usage: mcpjam cloud eval validate [options]
+
+Validate a local eval suite file offline — no auth, no network unless --project
+is passed (0 valid, 1 contract-invalid or unresolved reference, 2
+unreadable/oversize/malformed)
+
+Options:
+  --file <path>           Suite file to validate, .yaml or .json (or - for
+                          stdin)
+  --project <id-or-name>  Also resolve the file's deterministic tool references
+                          against this project's live servers. Opt-in: without
+                          it the command stays entirely offline.
+  -h, --help              display help for command

@@ -1,0 +1,20 @@
+{
+  "id": "orchestrator-events:heldout-discovery-v13",
+  "path": "orchestrator-events--heldout-discovery-v13",
+  "argv": [
+    "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+    "run",
+    "--config",
+    "work/heldout-discovery-v13.json"
+  ],
+  "start": "2026-11-15T02:26:51.015421+00:00",
+  "end": "2026-11-15T02:30:03.027343+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "orchestrator-events"
+}

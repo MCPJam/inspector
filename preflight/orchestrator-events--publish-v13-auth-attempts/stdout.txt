@@ -1,0 +1,5 @@
+{"run_id": "baseline-auth-v13--auth__DebKeUR", "outcome": "failed", "capture_event_count": 73, "agent_shell_invocation_count": 27, "concern_count": 0}
+{"run_id": "baseline-auth-v13--auth__HzCGt8k", "outcome": "provider-blocked", "capture_event_count": 15, "agent_shell_invocation_count": 3, "concern_count": 0}
+{"run_id": "patched-auth-v13--auth__GiXEbFi", "outcome": "passed", "capture_event_count": 56, "agent_shell_invocation_count": 19, "concern_count": 0}
+{"run_id": "patched-auth-v13--auth__UifmxRq", "outcome": "provider-blocked", "capture_event_count": 10, "agent_shell_invocation_count": 0, "concern_count": 0}
+{"privacy_audit": true, "scanned_files": 32559, "matches_by_category": {"private_identifiers": 0, "jwt": 0, "provider_token": 0, "email": 0, "native_reasoning_block": 0, "secret_assignments": 0}, "in_memory_secret_values": 36}

@@ -1,0 +1,5 @@
+Client.listResources() called but server does not advertise resources capability - returning empty list
+Client.listResourceTemplates() called but server does not advertise resources capability - returning empty list
+Client.listResources() called but server does not advertise resources capability - returning empty list
+Score: 87.5/100 — 14/16 applicable checks passed, 2 failed [2025-11-25]
+Profile: mcp-protocol@2026-11-02.1 (checker 10.7.0)

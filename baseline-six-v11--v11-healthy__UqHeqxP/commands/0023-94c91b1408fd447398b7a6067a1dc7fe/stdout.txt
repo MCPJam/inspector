@@ -1,0 +1,11 @@
+Usage: mcpjam cloud projects servers delete|remove [options]
+
+Delete one saved MCP server
+
+Options:
+  --project <id-or-name>  Project name or ID
+  --server <id>           Server ID
+  -h, --help              display help for command
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"NOT_FOUND","message":"Synthetic fixture does not implement this route."}}
+{"error":{"code":"NOT_FOUND","message":"Synthetic fixture does not implement this route."}}

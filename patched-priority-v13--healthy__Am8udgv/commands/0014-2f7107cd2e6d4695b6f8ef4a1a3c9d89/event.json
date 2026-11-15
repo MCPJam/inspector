@@ -1,0 +1,22 @@
+{
+  "event_id": "2f7107cd2e6d4695b6f8ef4a1a3c9d89",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nfrom pathlib import Path\np=Path('.mcpjam/evals/arithmetic.yaml')\ns=p.read_text().replace('type: toolResultMatches\\n          toolName: add\\n          path: /sum\\n          patterns: [\\'^5$\\']\\n          role: required', 'type: toolResultContains\\n          toolName: add\\n          needle: \\'\"sum\": 5\\'')\np.write_text(s)\nPY\nnpx mcpjam cloud eval run --file .mcpjam/evals/arithmetic.yaml --project project_fixture --wait --wait-timeout 60000 --out reports/eval-run.json > reports/launch.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:04:28.527508+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.8505606651306152,
+  "end": "2026-11-15T02:04:29.378003+00:00"
+}

@@ -1,0 +1,30 @@
+{
+  "httpStatus": 200,
+  "request": {
+    "path": "/projects/project_fixture/servers/server_fixture/tools",
+    "body": {}
+  },
+  "response": {
+    "items": [
+      {
+        "name": "add",
+        "description": "Add two finite numbers.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "event_id": "claude-native-refresh",
+  "role": "orchestrator",
+  "argv": [
+    "claude",
+    "-p",
+    "--model",
+    "claude-sonnet-5-5",
+    "--max-budget-usd",
+    "0.10",
+    "--no-session-persistence",
+    "--setting-sources",
+    "",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{\"mcpServers\":{}}",
+    "--tools",
+    "",
+    "--disable-slash-commands",
+    "--system-prompt",
+    "Respond only with OK.",
+    "Authentication check."
+  ],
+  "cwd": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor",
+  "start": "2026-11-15T02:18:15.992118+00:00",
+  "environment": {
+    "PATH": "/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/.local/bin:$USER_HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/opt/homebrew/bin:$USER_HOME/.codex/tmp/arg0-macos/codex-arg0geNwdM:/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-path:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:$USER_HOME/.codeium/windsurf/bin:$USER_HOME/Library/pnpm:$USER_HOME/.local/bin:/opt/homebrew/sbin:$USER_HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Applications/ChatGPT.app/Contents/Resources:/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+    "HOME": "$USER_HOME"
+  },
+  "capture": "separate pipes; chunks ordered by recorder observation, not kernel total order",
+  "timeout_seconds": 45.0,
+  "exit_status": 0,
+  "timed_out": false,
+  "end": "2026-11-15T02:18:19.741263+00:00",
+  "duration_seconds": 3.7492129802703857
+}

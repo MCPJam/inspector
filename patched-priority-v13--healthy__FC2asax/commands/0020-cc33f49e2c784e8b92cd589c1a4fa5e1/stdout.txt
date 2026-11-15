@@ -1,0 +1,43 @@
+
+39 packages are looking for funding
+  run `npm fund` for details
+Usage: mcpjam [options] [command]
+
+Test, debug, and validate MCP servers locally, or manage MCPJam Cloud via
+`mcpjam cloud`. Health checks, OAuth conformance, tool-surface diffing, and
+structured triage from the terminal or CI.
+
+Options:
+  -v, --version          output the CLI version
+  --timeout <ms>         Request timeout in milliseconds (default: 30000)
+  --rpc                  Include RPC logs in JSON output
+  --quiet                Suppress non-result progress output
+  --no-telemetry         Disable anonymous usage telemetry
+  --format <format>      Output format
+  -h, --help             display help for command
+
+Local MCP testing:
+  test [options] <file>  Run a suite file locally against your MCP servers (BYOK
+                         or MCPJam-hosted inference). Results are never
+                         uploaded.
+  server                 Inspect MCP server connectivity and capabilities
+  tools                  List and invoke MCP server tools
+  resources              List and read MCP resources
+  skills                 Inspect the Agent Skills an MCP server serves
+                         (SEP-2640). For your project's Cloud Skills, see
+                         `mcpjam cloud skills`.
+  subscriptions          Open a long-lived MCP subscription and stream its
+                         notifications (2026-07-28 subscriptions/listen, with a
+                         legacy fallback)
+  compat [options]       Check whether an MCP server's tools and widgets work on
+                         each AI host (Claude, ChatGPT, Cursor, Copilot, Codex,
+                         Goose, …)
+  prompts                List and fetch MCP prompts
+  apps                   Validate MCP Apps metadata and resource wiring
+  tasks                  Create, inspect and drive MCP Tasks (legacy 2025-11-25
+                         and SEP-2663), and validate a server's tasks wire
+                         behavior
+  events                 List, poll, watch, subscribe to and conformance-check
+                         MCP Events (triggers, draft@28ec35e)
+  oauth                  Run MCP OAuth login, proxy, and conformance flows
+  xaa                    Run the Cross-App Access (ID-JAG) debugger against an

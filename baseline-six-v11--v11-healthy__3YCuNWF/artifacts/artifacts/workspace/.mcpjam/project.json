@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "project": {
+    "id": "project_fixture",
+    "name": "Fixture"
+  },
+  "sensitive_value": "[REDACTED]",
+  "apiUrl": "http://fixture:8765/api/v1"
+}

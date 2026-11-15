@@ -1,0 +1,28 @@
+{
+  "id": "product-fixes:cycle2-sdk-build",
+  "path": "product-fixes--cycle2-sdk-build",
+  "argv": [
+    "npm",
+    "run",
+    "build",
+    "-w",
+    "@mcpjam/sdk"
+  ],
+  "start": "2026-11-15T02:24:36.396795+00:00",
+  "end": "2026-11-15T02:25:05.136521+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg",
+    "outcome-004.svg",
+    "outcome-005.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

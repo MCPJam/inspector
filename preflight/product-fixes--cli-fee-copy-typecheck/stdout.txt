@@ -1,0 +1,4 @@
+
+> @mcpjam/cli@6.2.2 typecheck
+> tsc --noEmit
+

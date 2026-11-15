@@ -1,0 +1,1 @@
+{"id":"server_authored_1","projectId":"project_fixture","name":"arithmetic-validation","transportType":"http","url":"http://fixture:8765/mcp","enabled":true,"useOAuth":false,"hasClientSecret":false,"createdAt":1794708271595,"updatedAt":1794708271595}

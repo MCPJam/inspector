@@ -1,0 +1,22 @@
+{
+  "event_id": "2d80f5708b63450794c710d54a22d213",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcp-eval/api.py <<'PY'\nimport os,json,urllib.request,urllib.error,pathlib\nBASE=os.environ['MCPJAM_API_URL'].rstrip('/')\nOUT=pathlib.Path('/workspace/mcp-eval')\ndef call(path,body=None,method=None,name=None):\n req=urllib.request.Request(BASE+path,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'},method=method or ('GET' if body is None else 'POST'))\n try:\n  with urllib.request.urlopen(req,timeout=20) as r: status=r.status; data=json.load(r)\n except urllib.error.HTTPError as e: status=e.code; data=json.load(e)\n if name: (OUT/(name+'.json')).write_text(json.dumps({'http_status':status,'body':data},indent=2))\n print(path,status,json.dumps(data))\n return data\nif __name__=='__main__':\n import sys\n call(sys.argv[1],json.loads(sys.argv[2]) if len(sys.argv)>2 else None,name=sys.argv[3] if len(sys.argv)>3 else None)\nPY\npython3 /workspace/mcp-eval/api.py /me null me\npython3 /workspace/mcp-eval/api.py /organizations null organizations\npython3 /workspace/mcp-eval/api.py /projects/project_fixture/servers null servers\npython3 /workspace/mcp-eval/api.py /projects/project_fixture/eval-suites null suites"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:12:55.294874+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.08645153045654297,
+  "end": "2026-11-15T02:12:55.381257+00:00"
+}

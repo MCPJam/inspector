@@ -1,0 +1,28 @@
+{
+  "id": "harness-validation:fixture-v13-negative-controls",
+  "path": "harness-validation--fixture-v13-negative-controls",
+  "argv": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "scripts/harbor-activation/fixtures",
+    "-p",
+    "test_*.py",
+    "-v"
+  ],
+  "start": "2026-11-15T01:55:45.413234+00:00",
+  "end": "2026-11-15T01:55:51.297703+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "harness-validation"
+}

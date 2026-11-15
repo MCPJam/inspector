@@ -1,0 +1,22 @@
+{
+  "event_id": "e782b2a8f9c24055bbd6d5a6907347f5",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mkdir -p /workspace/mcp-evaluation\ncat > /workspace/mcp-evaluation/api.py <<'PY'\nimport os,json,urllib.request,urllib.error,pathlib,sys,time\nROOT=pathlib.Path(__file__).parent\nBASE=os.environ['MCPJAM_API_URL'].rstrip('/')\ndef call(method,path,body=None,label=None):\n data=None if body is None else json.dumps(body).encode()\n req=urllib.request.Request(BASE+path,data=data,method=method,headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'})\n try:\n  r=urllib.request.urlopen(req,timeout=20);status=r.status;raw=r.read().decode()\n except urllib.error.HTTPError as e:status=e.code;raw=e.read().decode()\n try:result=json.loads(raw)\n except:result={'raw':raw}\n record={'method':method,'path':path,'request':body,'status':status,'response':result}\n with (ROOT/'requests.jsonl').open('a') as f:f.write(json.dumps(record)+'\\n')\n if label:(ROOT/(label+'.json')).write_text(json.dumps(record,indent=2))\n print(json.dumps(record));return result\nif __name__=='__main__':call(sys.argv[1],sys.argv[2],json.loads(sys.argv[3]) if len(sys.argv)>3 else None)\nPY\npython3 /workspace/mcp-evaluation/api.py GET /me\npython3 /workspace/mcp-evaluation/api.py GET /organizations\npython3 /workspace/mcp-evaluation/api.py GET /projects/project_fixture/servers\npython3 /workspace/mcp-evaluation/api.py GET /projects/project_fixture/eval-suites"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:12:03.621554+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.09629011154174805,
+  "end": "2026-11-15T02:12:03.717799+00:00"
+}

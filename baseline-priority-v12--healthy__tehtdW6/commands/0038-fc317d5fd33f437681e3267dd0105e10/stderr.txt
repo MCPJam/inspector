@@ -1,0 +1,1 @@
+/bin/bash.real: line 9: rg: command not found

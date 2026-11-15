@@ -1,0 +1,22 @@
+{
+  "event_id": "bf46dace27a24451a8478957acf2a5b6",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "node <<'JS'\nconst fs=require('fs');\nconst run=JSON.parse(fs.readFileSync('artifacts/run.json'));\nconsole.log(JSON.stringify({runId:run.runs[0].id,status:run.runs[0].status,result:run.runs[0].result}));\nfs.writeFileSync('README.md',`# MCPJam arithmetic validation\\n\\nInstalled from npm in a clean Node.js environment. Dependencies are pinned by package-lock.json.\\n\\n## Reproduce\\n\\nKeep MCPJAM_API_URL and MCPJAM_API_KEY set to this isolated account.\\n\\n\\`\\`\\`sh\\nnpm ci\\nnpm run eval\\n\\`\\`\\`\\n\\nThe script validates the versioned suite against project_fixture, runs it to completion, and writes artifacts/eval-report.json. A completed passing run exits 0; a measured evaluation failure exits 1. Each invocation starts a new run. If a launch response is lost, use its recorded idempotency key from artifacts/run.stderr to retry that launch rather than starting another.\\n\\n## Evidence\\n\\n- artifacts/doctor.json: Streamable HTTP connection ready; arithmetic-fixture 1.0.0 exposes add with numeric a and b.\\n- artifacts/add.json: direct call add(2,3) returned structuredContent.sum = 5 and isError = false.\\n- .mcpjam/evals/arithmetic.json: direct tool call followed by toolResultContains requiring the full text fragment {\"sum\": 5}. This is a text-content assertion, not structural equality.\\n- artifacts/eval-report.json: latest completed passing run, ${run.runs[0].id}.\\n- artifacts/negative-report.json: wrong-answer control requiring {\"sum\": 999} failed, with CLI exit 1.\\n- artifacts/iterations.json: initial run's recorded tool arguments and result.\\n\\nThe isolated service labels these runs SIMULATED: deterministic fixture execution; no hosted model or live billing. This checks the authored tool case and assertion path; it does not establish LLM tool-selection accuracy or full MCP protocol conformance.\\n\\n## Setup concerns resolved\\n\\nCloud servers are listed through mcpjam cloud projects servers, rather than cloud servers. Schema version 2 requires mode agentWorkflow and a model field even for this direct tool case. The platform refused toolResultMatchesSchema as outside its supported subset; toolResultContains succeeded. The local runner documentation says direct toolCall steps and gating tool-result assertions require the hosted runner, so this workflow uses cloud eval run.\\n\\n## Public documentation\\n\\n- https://docs.mcpjam.com/cli/overview\\n- https://docs.mcpjam.com/cli/local-evals\\n- https://docs.mcpjam.com/cli/reference\\n- https://docs.mcpjam.com/api-reference/eval-runs/create-an-eval-case\\n\\nDownloaded public documentation snapshots are in docs/ and docs-index.txt. No credentials are stored in these artifacts.\\n`);\nJS"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:11:00.403755+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0147857666015625,
+  "end": "2026-11-15T02:11:00.418486+00:00"
+}

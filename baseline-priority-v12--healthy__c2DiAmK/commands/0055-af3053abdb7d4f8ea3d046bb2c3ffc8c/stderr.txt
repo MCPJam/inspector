@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/workspace/run-eval.py", line 31, in <module>
+    data = api('/eval-runs/' + run_id + '/' + suffix)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/run-eval.py", line 11, in api
+    raise RuntimeError(f'{error.code}: {error.read().decode()}') from None
+RuntimeError: 404: {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

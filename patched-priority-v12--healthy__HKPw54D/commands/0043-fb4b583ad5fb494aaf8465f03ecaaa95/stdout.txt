@@ -1,0 +1,184 @@
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"items":[{"id":"server_fixture","name":"Arithmetic","projectId":"project_fixture","transportType":"http","url":"http://fixture:8765/mcp","enabled":true,"useOAuth":false,"hasClientSecret":false}],"otherProjects":[]}
+Usage: mcpjam cloud projects servers create|add [options]
+
+Create a saved MCP server
+
+Options:
+  --project <id-or-name>  Project name or ID
+  --body <json>           Server JSON body
+  -h, --help              display help for command
+7:> Author test cases for your MCP server, run them across models, and gate pass/fail on deterministic assertions plus optional LLM-as-judge.
+23:A group of cases plus the defaults they share: attached servers, models to run against, default assertions, judge config, and argument-matching mode.
+27:One scenario you want to verify — a prompt (or a sequence of prompts), the tools you expect to fire, an optional expected output, and the assertions that decide pass/fail.
+45:* **Prompt** — a user turn the model receives. The first prompt is always present; use **Add assertion or action** to add a second prompt for multi-turn cases.
+47:* **Assert** — an assertion that grades the case.
+53:Use **Add assertion or action** to add an assertion, a second prompt, or an interact step. Each assertion row says what it checks, who wrote it, and what a miss does:
+56:* **Step N** — an assertion written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level assertion.
+57:* **This case** — an assertion you added here. It is graded once, over the finished transcript.
+60:The list reads as a checklist with progressive disclosure. An off row shows only its short name. Once on, clicking the name opens an inline editor showing the full criterion, the **Required / Advisory** role control, and any editable fields (thresholds, match criteria). Multiple editors can stay open at once. An assertion that carries a number (such as a latency budget) shows it under the name at rest.
+62:A row's **role** says what a miss does: **Required** fails the trial, **Advisory** shows the miss without failing it. The control appears when your deployment supports assertion policy; otherwise the role chip shows read-only with a tooltip explaining why it cannot be changed — for example, when the assertion is inherited from the suite, or when the backend does not yet support assertion policy.
+64:Because a failing required assertion halts the run, an assertion written as a step can leave later assertions unrun. The trial column marks those **Skipped**.
+71:* **No tool should be called** — a negative case. It passes only if the model called nothing. An assertion that requires a tool call contradicts this, and the spine says so.
+72:* **Any route** — the case names no route and is graded by its assertions. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
+74:A brand-new case that asserts nothing at all must answer this question before it can be saved or run: without an assertion, a goal sentence, or a named tool, it would pass vacuously.
+81:* **No sentence, but a route** — the judge grades against the expected route.
+101:The other tabs are unchanged: **Chat**, **Tool Calls** and **Trace** show the transcript, and **Steps** shows execution order — now with the same assertion names the rest of the page uses and the reason under a failed step.
+114:> A **negative case** is one you marked **No tool should be called**. Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape. A case that simply names no tool is *not* negative — it is graded by its assertions.
+118:Click **History** in the trial header to open a list of past iterations. Selecting one freezes the left form on that trial's snapshot — the exact steps, assertions, and settings that were in effect when it ran — so you can compare what you see in the trace against what was authored at the time.
+161:Some widget interactions send a `ui/message` back to the host (for example, a cart button that says "Show my cart") rather than calling a tool directly. During eval execution, these follow-up messages automatically drive a continuation model turn — the same way Playground handles them live. The resulting tool call (e.g. `view-cart`) is attributed to the same `interact` step's turn, so a **Tool was called** assertion on that turn sees the call.
+163:This means an eval case can faithfully verify a full widget interaction sequence: prompt → widget renders → user clicks → model reacts → tool fires → assertion passes.
+210:When an assertion is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other assertions are turn-scopable.
+217:>   N` remains a valid assertion and keeps working wherever it is already authored,
+224:### Harness system tools in assertion dropdowns
+226:When a suite is configured to run under a harness host (such as Claude Code or Codex), the tool-name pickers in the case editor also offer the harness's native **system tools** — for example `bash`, `read`, `webSearch`, `WebFetch` — alongside your MCP server tools. This lets you write assertions like **Tool was never called** for `bash` or **Tool was called with…** for `read` without having to type the wire name by hand.
+228:System tools appear only in assertion pickers. They are not available in pinned tool-call steps or widget-assertion "View (tool)" selects, because those require a tool that MCPJam can invoke directly.
+236:* **partial** *(default)* — every expected key must be present and match; extra keys in the actual call are ignored. Best for "I care about `query` and `limit`, not what else the model put in."
+237:* **exact** — actual args must equal expected args, key-for-key.
+258:For cases where "did the right tools fire" isn't enough — anything graded on the quality of the final answer — the judge grades the run against your **expected output** if you set one, and against the user prompt otherwise. It's advisory: it produces a score and a rationale, but doesn't gate the run unless you ask it to.
+262:* When grading against the prompt rather than an expected output, scores are capped at 0.85 — you can't get a "perfect" without saying what perfect means.
+272:**Data sent for rubric checks:** when a suite has grading criteria or rubric-check questions, every trial the goal-completion judge grades is also sent to TypeSafe AI's Jev classifier through Vercel AI Gateway: the request, the expected outcome, the final answer and a clipped trajectory, with credentials redacted. If Jev can't be reached, the same questions go to a fallback model through Vercel AI Gateway or OpenRouter. Turn rubric checks off in suite settings if that isn't appropriate for your data.
+638:Click a **test case name** to open its definition — the user prompt, checks, and expected outcome. Click a **result cell** (pass/fail) to open a **case drawer** with per-pairing averages (passed count, P50, P95, tokens, calls) and a flat iteration list. Click an iteration row to open its full detail view — scorecard, transcript, tool calls, and trace — without leaving the run page. A **Back** breadcrumb returns to the iteration list. In the scorecard, each evaluator row shows an **Expected** field (the configured criterion) and an **Actual** field (what the run recorded). When the findings pipeline has produced a narrative for the iteration, the **Actual** field shows the AI-generated explanation; if the narrative predates the latest grade it is marked stale and the recorded evidence is shown instead. Evaluators are grouped by stage rather than split into default and added-assertion sections.
+644:  * **Missing** — expected tool calls that were never made
+645:  * **Extra** — actual calls that weren't expected (reported but non-fatal by default)
+676:The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the assertions, then save.
+745:3. Delete the ones that don't match real usage; tighten assertions on the rest.
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Create an eval suite (author-only, does not run)
+
+> Creates a runnable eval suite — the suite record plus its test cases — and responds `201` **synchronously**, WITHOUT executing anything. Use this to author a suite, then run it later with `POST /eval-runs` (passing the returned `suiteId`).
+
+This is distinct from `POST /eval-runs`, which creates a run and **detaches execution**, responding `202` with a `runId`. There is no concurrency cap here (no run is started).
+
+The body uses an ergonomic authoring shape: a suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it; `provider` is derived from a `provider/model` id when neither is supplied. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert).
+
+Guest callers are denied (suite creation is a write).
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json post /projects/{projectId}/eval-suites
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects — live
+    diagnostics (validate, inspect, export) and operations: call tools, render
+    prompts, run eval suites asynchronously and poll their results, and import
+    OAuth tokens.
+
+
+    **The API is in preview**: the surface may change while we finish the
+    design. Error `code` values are stable; error `message` strings are not.
+    Write clients that ignore unknown response fields.
+  contact:
+    name: MCPJam
+    url: https://github.com/MCPJam/inspector/issues
+servers:
+  - url: https://app.mcpjam.com/api/v1
+    description: Hosted MCPJam
+security:
+  - bearerAuth: []
+tags:
+  - name: Agent browsers
+    description: >-
+      Isolated cloud browser sessions for coding agents. Requires authenticated
+      project membership and a configured desktop runtime.
+  - name: Clients
+    description: >-
+      Clients — the named, reusable configurations that define how MCPJam
+      connects to and talks to your MCP servers. The original `/hosts` paths
+      remain as deprecated, ID-only compatibility aliases with their original
+      DTOs and their original (tokenless) write contracts; every alias response
+      carries `Deprecation: true`. New integrations should use `/clients`.
+  - name: Environments
+    description: >-
+      Project environments: named, live-editable execution bundles (one host, an
+      optional standalone server group, optionally pinned skills and plugin
+      versions) that eval suites and goals run against. Distinct from Sandbox
+      images, which are Computer base images. Reads require project membership;
+      every write requires project admin.
+  - name: Plugins
+    description: >-
+      Agent Plugins imported into a project — read-only inventory and version
+      detail.
+  - name: Skills
+    description: >-
+      Cloud Skills: authored SKILL.md files stored in a project. Read-only here.
+      Environments pin skills by id (`skillSelection.skillIds`) and eval runs
+      pin them with `--compose-skill`, so this surface exists to give an
+      unattended caller those ids; authoring is an app flow behind a beta gate.
+  - name: Sandbox images
+    description: >-
+      Custom Computer images: a digest-pinned Dockerfile built into an immutable
+      image your project's computers boot from.
+  - name: Server diagnostics
+    description: Connect-level health checks against a saved MCP server.
+  - name: Primitives
+    description: 'The server''s MCP primitives: tools, prompts, and resources.'
+  - name: Export
+    description: Full-server snapshots for diffing and CI.
+  - name: Execution
+    description: 'Run the server''s primitives: call tools, render prompts.'
+  - name: Eval runs
+    description: >-
+      Asynchronous eval suite runs: create with 202, poll status, iterations,
+      and traces.
+  - name: Conformance runs
+    description: >-
+      Ingest MCP spec-conformance results from the SDK/CLI into project-owned
+      history. Distinct from Eval runs (authored LLM cases) and from directory
+      readiness.
+  - name: Server connections
+    description: >-
+      Connect an MCP server URL to a project, authorizing in a browser when the
+      server requires it.
+  - name: Server accounts
+    description: >-
+      The accounts a saved server signs in with, addressed by id or by name.
+      Tokens are write-only: an upload takes them and no route returns one.
+  - name: OAuth
+    description: 'Bring-your-own OAuth: import externally obtained tokens for a server.'
+  - name: Studies
+    description: >-
+      Publish a project environment as a **study** for people outside the
+      project to talk to, read what they did, and control who can reach it.
+      Several of these NARROW access and take effect immediately.
+
+
+      The pre-rename paths — `/projects/{projectId}/scenarios`,
+      `/projects/{projectId}/scenarios/{scenarioId}`,
+      `/projects/{projectId}/environments/{environmentId}/scenario` and
+      `/projects/{projectId}/user-testing/scenarios/{scenarioId}/…` — keep
+      working and are deliberately not documented here. They return their
+      original bodies, which spell the owning id `scenarioId` and whose detail
+      read carries no execution settings, and every response answers with
+      `Deprecation: true` and a `Link` header naming its successor. They are
+      removed at general availability; a new integration should use the paths on
+      this page.
+  - name: Catalog
+    description: >-
+      Discover the resources the other routes operate on: your account,
+      projects, servers, eval suites, and chat sessions.
+  - name: Tunnels
+    description: >-
+      Relay tunnels that expose local MCP servers through a public URL,
+      registered as first-class project servers (the `mcpjam cloud tunnel` CLI
+      flow).
+  - name: Agent
+    description: >-
+      Headless agent turns over the public API: send a message history, the
+      server runs one assistant turn with project-scoped workspace tools (eval
+      reads + suite creation) on a pinned hosted model, and returns the reply
+      plus created-resource references.
+  - name: Swarms
+    description: >-
+      Personas, journeys and swarm containers — the authoring half of Swarms —
+      plus the model-backed generation that drafts them.
+  - name: Swarm runs
+    description: >-
+      Launching journeys and reading what they produced. Launching SPENDS — see

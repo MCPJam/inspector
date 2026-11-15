@@ -1,0 +1,18 @@
+{"id":"user_fixture","email":"[EMAIL REDACTED]","name":"Fixture user","plan":"team","credential":"api-key"}
+Usage: mcpjam cloud projects [options] [command]
+
+Operate the MCP servers saved in your hosted MCPJam projects
+
+Options:
+  -h, --help              display help for command
+
+Commands:
+  list [options]          List the projects you can access
+  create [options]        Create a hosted MCPJam project
+  update [options]        Update project metadata
+  delete [options]        Delete a project and its project-owned resources
+  capabilities [options]  Show what you may do in a project: your role, which
+                          betas the organization has, your plan's limits, and a
+                          can-block of booleans. Ask this before scripting
+Using MCPJam Cloud as sk_…etic · all projects · http://127.0.0.1:18765/api/v1
+{"items":[{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]","createdAt":1,"updatedAt":2}]}

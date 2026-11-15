@@ -1,0 +1,15 @@
+test_auth_recovery_after_refusal (test_service.FixtureTest.test_auth_recovery_after_refusal) ... ok
+test_authored_suite_runs_its_actual_tool_arguments (test_service.FixtureTest.test_authored_suite_runs_its_actual_tool_arguments) ... ok
+test_file_owned_suite_sync_keeps_identity_and_refuses_fake_model_pass (test_service.FixtureTest.test_file_owned_suite_sync_keeps_identity_and_refuses_fake_model_pass) ... ok
+test_healthy_first_value_requires_server_state (test_service.FixtureTest.test_healthy_first_value_requires_server_state) ... ok
+test_invalid_arguments_never_count_as_first_value (test_service.FixtureTest.test_invalid_arguments_never_count_as_first_value) ... ok
+test_private_control_is_not_http_surface (test_service.FixtureTest.test_private_control_is_not_http_surface) ... ok
+test_prompt_b_cannot_pass_discovery_only_or_missing_output (test_service.FixtureTest.test_prompt_b_cannot_pass_discovery_only_or_missing_output) ... ok
+test_registry_serves_only_actual_tarball_manifest (test_service.FixtureTest.test_registry_serves_only_actual_tarball_manifest) ... ok
+test_tool_reference_validation_server_cleanup_and_real_iterations (test_service.FixtureTest.test_tool_reference_validation_server_cleanup_and_real_iterations) ... ok
+test_zero_credits_recovery_and_idempotency (test_service.FixtureTest.test_zero_credits_recovery_and_idempotency) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 5.164s
+
+OK

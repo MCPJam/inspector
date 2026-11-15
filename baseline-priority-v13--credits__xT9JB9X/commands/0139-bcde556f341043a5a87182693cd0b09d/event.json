@@ -1,0 +1,22 @@
+{
+  "event_id": "bcde556f341043a5a87182693cd0b09d",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcpjam-eval/protocol-smoke.py <<'PY'\n#!/usr/bin/env python3\n\"\"\"Repeatable, read-only MCP arithmetic checks; no model inference.\"\"\"\nimport json,urllib.request\nfrom pathlib import Path\nroot=Path(__file__).resolve().parent\nsession=None\nframes=[]\ndef rpc(method,params=None,ident=None):\n global session\n body={'jsonrpc':'2.0','method':method}\n if params is not None: body['params']=params\n if ident is not None: body['id']=ident\n headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'}\n if session: headers['Mcp-Session-Id']=session\n req=urllib.request.Request('http://fixture:8765/mcp',data=json.dumps(body).encode(),headers=headers)\n with urllib.request.urlopen(req,timeout=10) as r:\n  session=r.headers.get('Mcp-Session-Id',session); text=r.read().decode()\n  if text.startswith('event:') or text.startswith('data:'): text=next(line[5:].strip() for line in text.splitlines() if line.startswith('data:'))\n  result=json.loads(text) if text else None\n frames.append({'request':body,'response':result}); return result\nrpc('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'repeatable-arithmetic-smoke','version':'1.0'}},1)\nrpc('notifications/initialized')\ntools=rpc('tools/list',{},2)['result']['tools']; assert any(t['name']=='add' for t in tools)\nresults=[]\nfor repeat in range(2):\n for a,b,expected in [(2,3,5),(0,0,0),(-2,3,1),(1.25,2.5,3.75)]:\n  result=rpc('tools/call',{'name':'add','arguments':{'a':a,'b':b}},len(frames)+1)['result']\n  actual=result.get('structuredContent',{}).get('sum')\n  if actual is None:\n   texts=[c['text'] for c in result.get('content',[]) if c.get('type')=='text']\n   for text in texts:\n    try:\n     parsed=json.loads(text); actual=parsed.get('sum') if isinstance(parsed,dict) else parsed\n     if actual is not None: break\n    except (ValueError,TypeError): pass\n  results.append({'repeat':repeat+1,'a':a,'b':b,'expected':expected,'actual':actual,'passed':actual==expected and not result.get('isError',False)})\nreport={'scope':'Direct MCP protocol/tool smoke; separate from blocked hosted eval','passed':sum(r['passed'] for r in results),'total':len(results),'cases':results,'frames':frames}\n(root/'protocol-smoke-results.json').write_text(json.dumps(report,indent=2)+'\\n')\nprint(json.dumps({k:v for k,v in report.items() if k!='frames'},indent=2))\nraise SystemExit(0 if report['passed']==report['total'] else 1)\nPY\npython3 /workspace/mcpjam-eval/protocol-smoke.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:01:40.155431+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.04098701477050781,
+  "end": "2026-11-15T02:01:40.196353+00:00"
+}

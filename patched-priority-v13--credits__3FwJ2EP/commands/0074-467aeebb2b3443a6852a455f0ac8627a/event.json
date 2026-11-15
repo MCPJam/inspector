@@ -1,0 +1,22 @@
+{
+  "event_id": "467aeebb2b3443a6852a455f0ac8627a",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcp-eval/smoke.py <<'PY'\n\"\"\"Direct deterministic MCP smoke check; separate from the hosted evaluation.\"\"\"\nimport json,urllib.request,pathlib\nurl='http://fixture:8765/mcp'\nsession=None\nrecords=[]\ndef rpc(method,params=None,ident=None):\n global session\n body={'jsonrpc':'2.0','method':method}\n if params is not None:body['params']=params\n if ident is not None:body['id']=ident\n headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'}\n if session:headers['Mcp-Session-Id']=session\n with urllib.request.urlopen(urllib.request.Request(url,json.dumps(body).encode(),headers),timeout=10) as response:\n  session=response.headers.get('Mcp-Session-Id',session)\n  raw=response.read().decode()\n  if not raw:return None\n  if raw.startswith('event:') or raw.startswith('data:'):\n   raw=next(line[5:].strip() for line in raw.splitlines() if line.startswith('data:'))\n  result=json.loads(raw)\n  records.append({'request':body,'response':result})\n  return result\nrpc('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'repeatable-evaluation','version':'1.0'}},1)\nrpc('notifications/initialized')\nrpc('tools/list',{},2)\nfor i in range(3):\n result=rpc('tools/call',{'name':'add','arguments':{'a':2,'b':3}},3+i)\n assert 'error' not in result,result\n data=result['result']\n assert not data.get('isError',False),data\n texts=[c['text'] for c in data.get('content',[]) if c.get('type')=='text']\n assert '5' in texts,data\npathlib.Path(__file__).with_name('direct-smoke-results.json').write_text(json.dumps({'passed':3,'total':3,'records':records},indent=2))\nprint('PASS: add(2, 3) returned 5 on 3 of 3 direct MCP calls.')\nPY\ncd /workspace/mcp-eval && python3 smoke.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:08:06.620585+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.031803131103515625,
+  "end": "2026-11-15T02:08:06.652324+00:00"
+}

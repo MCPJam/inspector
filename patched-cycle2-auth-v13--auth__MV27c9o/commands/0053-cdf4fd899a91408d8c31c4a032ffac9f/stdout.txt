@@ -1,0 +1,4 @@
+API base: http://fixture:8765/api/v1
+me 200 {"id": "user_fixture", "name": "Fixture user", "email": "[EMAIL REDACTED]", "plan": "team"}
+servers 200 {"items": [{"id": "server_fixture", "name": "Arithmetic", "projectId": "project_fixture", "transportType": "http", "url": "http://fixture:8765/mcp", "enabled": true, "useOAuth": false, "hasClientSecret": false}]}
+runs 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

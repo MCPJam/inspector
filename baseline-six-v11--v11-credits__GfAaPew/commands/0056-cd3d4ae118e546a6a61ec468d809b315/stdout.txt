@@ -1,0 +1,100 @@
+## Billing
+
+### Payment history
+
+The **Payment history** card on the org billing page lists your recent credit top-ups. Each row shows:
+
+| Column | Details |
+| - | - |
+| Date | When the top-up was processed |
+| Amount | Amount charged in USD |
+| Status | `Succeeded`, `Pending`, or `Failed` |
+| Receipt | Link to the Stripe-hosted receipt (opens in a new tab) |
+
+If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
+
+To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
+
+> [!NOTE]
+>
+> **Free plan organizations cannot purchase credits directly.** If your organization is on the Free plan, the Top up dialog shows a message that only an organization owner can upgrade the plan, with a **Compare plans** button. Clicking it closes the dialog and opens your organization's Plans settings so you can upgrade.
+
+> [!NOTE]
+>
+> **Desktop app:** When you confirm a top-up in the desktop app, checkout opens in your default system browser and the dialog closes automatically. Your credit balance updates in the app once the purchase completes — no redirect back into the app is required.
+
+### Spend budget
+
+### Pre-run credit estimate
+
+When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
+
+The estimate appears on:
+
+* **Run all** in the suite header — prices every case × model × iterations × run plans.
+* **Per-case Run** buttons in the cases list and case sidebar — prices that case's configured models for one quick run.
+* **Run / Run compare** in the template editor — prices the currently selected models and the current (possibly unsaved) prompt.
+* **Swarm journey cards** — prices the journey's next run across its live targets.
+
+The tooltip shows a headline figure and a per-model or per-component breakdown. Copy varies by how well-grounded the estimate is:
+
+| Copy | Meaning |
+| - | - |
+| Estimated: \~N credits — based on your recent runs | Full coverage, grounded in your own run history |
+| Estimated: \~N credits — partly based on recent runs | Full coverage, partially grounded in history |
+| Rough estimate: \~N credits — improves after first run | Full coverage, heuristic only (no history yet) |
+| At least \~N credits — part of this run is unpriced | Some models or run slices could not be priced |
+| Estimate unavailable for these models | No pricing data available |
+
+1 credit = \$0.01. Your free daily allowance and any BYOK keys change what is actually deducted. The estimate is informational only — it never blocks or gates a run.
+
+### Frozen execution snapshots
+
+### Cost
+
+Every iteration carries the MCPJam-billed cost of the model work it did,
+priced when the trial finished and stamped with the rates used — so a run's
+cost does not move later when prices change. It rolls up onto cases, runs and
+the metric strip.
+
+A dash (`—`) means **no cost was observed**, never that the trial was free:
+
+| Why | What you see |
+| - | - |
+| Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
+| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
+| No token usage reported | Nothing to price. |
+
+A cost your own SDK runner reported is shown but labelled **runner** — it is
+real, but MCPJam neither computed nor verified it.
+
+When only some of a run's trials were priced, the total says so. That
+distinction matters most in CI: a run that looks cheaper may simply be a run
+we priced less of, which is why the compare API reports coverage counts
+alongside the cost and a cost gate treats partial coverage as non-gateable
+rather than as a pass.
+
+### Run view
+
+While a run is in progress, the run header shows a **HOLD** or **SHIP** pill for each client/model pairing to indicate the current trajectory. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client not yet on track to pass, and a **SHIP** pill lists every client on track to pass. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. Once a run finishes, these pills are removed from the header. The **Compare runs** and **Run again** buttons are visible directly in the header.
+
+**Cancelling a run:** while a run is in progress (status `pending`, `running`, or `grading`), a **Cancel run** button replaces **Run again** in the run header. Clicking it stops every client-model pairing of that launch at once — runs that have already finished are skipped. A run still in `grading` (trials done, gating judge still running) can also be cancelled. Once cancelled, stopped trials are recorded as `cancelled` rather than as failures, so the run result reflects a deliberate stop rather than a test failure. The **Cancel run** button is also available in the suite header when any run in the suite is still going. On the **Evals** tab, where the run detail is folded into the suite body rather than shown with a full header, the **Cancel run** button appears in the run-level action row (alongside Share, Export, and Submission report) instead.
+HTTP/1.1 404 Not Found
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 01:35:45 GMT
+Content-Type: application/json
+Content-Length: 45
+
+{"code": "NOT_FOUND", "message": "Not found"}HTTP/1.1 404 Not Found
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 01:35:45 GMT
+Content-Type: application/json
+Content-Length: 45
+
+{"code": "NOT_FOUND", "message": "Not found"}HTTP/1.1 404 Not Found
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 01:35:45 GMT
+Content-Type: application/json
+Content-Length: 45
+
+{"code": "NOT_FOUND", "message": "Not found"}

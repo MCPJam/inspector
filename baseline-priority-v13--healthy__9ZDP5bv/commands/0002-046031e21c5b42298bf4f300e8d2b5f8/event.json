@@ -1,0 +1,22 @@
+{
+  "event_id": "046031e21c5b42298bf4f300e8d2b5f8",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707855395-v34qhk.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; cat > suite.json <<'\"'\"'E'\"'\"'\n{\"name\":\"Arithmetic add deterministic\",\"model\":\"anthropic/claude-haiku-4.5\",\"cases\":[{\"title\":\"add 2 and 3\",\"steps\":[{\"id\":\"s1\",\"kind\":\"toolCall\",\"toolName\":\"add\",\"arguments\":{\"a\":2,\"b\":3}},{\"id\":\"a1\",\"kind\":\"assert\",\"assertion\":{\"type\":\"toolCalledAtLeastOnce\",\"toolName\":\"add\"}}]}]}\nE\nM=\"npx -y @mcpjam/cli@latest --quiet\"; $M cloud eval create --project project_fixture --server Arithmetic --file suite.json 2>&1 | head -c 800; echo; $M cloud eval run --project project_fixture --suite \"Arithmetic add deterministic\" --wait --reporter json-summary --out report.json 2>&1 | head -c 1500; echo; head -c 1500 report.json' && pwd -P >| /tmp/claude-4ec0-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:58:33.828912+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 1.4144985675811768,
+  "end": "2026-11-15T01:58:35.243304+00:00"
+}

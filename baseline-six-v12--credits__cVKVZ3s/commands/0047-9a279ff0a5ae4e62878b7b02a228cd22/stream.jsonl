@@ -1,0 +1,4 @@
+{"seconds": 0.011492013931274414, "stream": "stdout", "data": "{\"runId\": \"run_fixture_1\", \"suiteId\": \"suite_fixture\", \"status\": \"running\", \"servers\": [{\"id\": \"server_fixture\", \"name\": \"Arithmetic\"}], \"environment\": null}"}
+{"seconds": 0.01210927963256836, "stream": "stdout", "data": "\n"}
+{"seconds": 0.03686833381652832, "stream": "stdout", "data": "{\"id\": \"run_fixture_1\", \"suiteId\": \"suite_fixture\", \"runNumber\": 1, \"status\": \"completed\", \"result\": \"passed\", \"summary\": {\"total\": 1, \"passed\": 1, \"failed\": 0, \"passRate\": 1.0}, \"source\": \"api\", \"notes\": \"SIMULATED: deterministic fixture execution; no hosted model or live billing.\", \"createdAt\": 1794707001214, \"completedAt\": 1794707001214}"}
+{"seconds": 0.03691363334655762, "stream": "stdout", "data": "\n"}

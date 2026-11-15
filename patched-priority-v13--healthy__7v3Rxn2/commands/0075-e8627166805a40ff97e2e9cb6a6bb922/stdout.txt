@@ -1,0 +1,20 @@
+29:      mode: "byok",
+49:| `inference.mode` | `"auto"` | `"auto"`, `"byok"` or `"mcpjam"`; see [Inference](https://docs.mcpjam.com/cli/local-evals.md#inference). |
+71:| `cases` | Per case: effective model and rail, configured iterations and threshold, the evaluator-config hash, judge state, import evidence, per-iteration evidence (lifecycle status, task verdict, evaluator error, attributed refusal, tool calls, policy blocks, scores, stage chain) and the case's row of the decision. |
+74:| `report` | The validated `eval-local-run` structured report; pass it to `renderStructuredRunJson`, `renderStructuredRunJUnitXml`, `renderStructuredRunHtml`, or `formatLocalEvalRunSummary`. |
+80:Input that cannot run and environments that cannot be set up throw `SuiteFileRunError` with a stable `code`, a `phase` (`validation`, `setup`, `execution`, `reporting`) and a `category`. Validation and setup refusals are thrown **before any model or tool call**. A refusal that found concrete problems also lists every one found at that stage in `details.problems`; other errors carry only their message, so treat `problems` as optional.
+82:One error comes after execution: `REPORT_INVALID` (phase `reporting`, category `integrity`) means the cases ran, model calls were made and may have been billed, but the run's own report failed validation, so no result is returned. Retrying repeats that inference.
+87:| `unsupported` | Direct `toolCall` steps, widget/render/discovery assertions, gating tool-result and latency assertions, gating judges; organization AI-key policy refused the model (`AI_POLICY_REFUSED`) |
+Usage: mcpjam cloud eval validate [options]
+
+Validate a local eval suite file offline — no auth, no network unless --project
+is passed (0 valid, 1 contract-invalid or unresolved reference, 2
+unreadable/oversize/malformed)
+
+Options:
+  --file <path>           Suite file to validate, .yaml or .json (or - for
+                          stdin)
+  --project <id-or-name>  Also resolve the file's deterministic tool references
+                          against this project's live servers. Opt-in: without
+                          it the command stays entirely offline.
+  -h, --help              display help for command

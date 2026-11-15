@@ -1,0 +1,4 @@
+{"seconds": 0.008290767669677734, "stream": "stdout", "data": "{\"suiteId\": \"suite_authored_2\", \"name\": \"Arithmetic deterministic\", \"servers\": [{\"id\": \"server_fixture\"}], \"hosts\": [], \"caseUpsert\": {\"committed\": [{\"id\": \"suite_authored_2_case_0\", \"name\": \"add 17+25\"}], \"failed\": []}}"}
+{"seconds": 0.008821725845336914, "stream": "stdout", "data": "\n"}
+{"seconds": 0.024323463439941406, "stream": "stdout", "data": "{\"code\": \"FEATURE_NOT_SUPPORTED\", \"message\": \"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\", \"details\": {\"reason\": \"fixture_unsupported_execution\"}}"}
+{"seconds": 0.024738073348999023, "stream": "stdout", "data": "\n"}

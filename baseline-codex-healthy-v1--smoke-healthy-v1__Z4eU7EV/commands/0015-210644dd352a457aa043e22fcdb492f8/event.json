@@ -1,0 +1,22 @@
+{
+  "event_id": "210644dd352a457aa043e22fcdb492f8",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "MCPJAM_API_URL=http://fixture:8765/api/v1 ./node_modules/.bin/mcpjam cloud eval run --file arithmetic.eval.yaml --project project_fixture --wait --wait-timeout 45000 --out cloud-eval-result.json --quiet --format json > cloud-eval-stdout.json 2> cloud-eval-stderr.log; cat cloud-eval-stderr.log cloud-eval-stdout.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:23:44.902751+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 3.9122018814086914,
+  "end": "2026-11-15T01:23:48.814227+00:00"
+}

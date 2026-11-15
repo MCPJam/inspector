@@ -1,0 +1,22 @@
+{
+  "event_id": "00d1d8b149c54a4b80d56c08ed11105f",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat >> /workspace/mcp-eval/README.md <<'EOF'\n\n## Resumed result\n\nAfter the environment reported the account issue resolved, the identical launch\nrequest succeeded with HTTP 202. Run `run_fixture_1` completed with result\n`passed`: total 1, passed 1, failed 0, pass rate 100%.\n\nThe iteration records `add({\"a\":2,\"b\":3})`, returning structuredContent\n`{\"sum\":5}`, isError=false, durationMs=1, with no iteration error.\nThe run explicitly reports:\n`SIMULATED: deterministic fixture execution; no hosted model or live billing.`\nThis is evidence for the isolated arithmetic case, not hosted model performance\nor broad server conformance. Token usage, remaining credits, and a numeric\ncharge were not returned. The decision-summary endpoint is unimplemented (404);\nthe terminal status and iteration evidence establish the reported pass.\n\nEvidence:\n- results/run_fixture_1-status.json\n- results/run_fixture_1-iterations.json\n- results/run_fixture_1-decision.json\n- results/launch-1794707052022014892.json\n\nNo production billing was contacted and no credits were purchased.\nEOF"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:44:24.962287+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0013442039489746094,
+  "end": "2026-11-15T01:44:24.963555+00:00"
+}

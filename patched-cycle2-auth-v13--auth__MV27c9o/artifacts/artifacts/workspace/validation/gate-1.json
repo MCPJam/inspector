@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/projects/project_fixture/eval-runs/run_fixture_1/gate",
+  "status": 404,
+  "response": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

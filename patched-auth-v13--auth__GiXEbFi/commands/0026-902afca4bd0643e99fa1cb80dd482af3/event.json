@@ -1,0 +1,22 @@
+{
+  "event_id": "902afca4bd0643e99fa1cb80dd482af3",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "npx --yes @mcpjam/cli --no-telemetry cloud eval status --run run_fixture_1 --project project_fixture > /workspace/validation/run-status-1.json 2>/workspace/validation/run-status-1.stderr; cat /workspace/validation/run-status-1.json; npx --yes @mcpjam/cli --no-telemetry tools call --url http://fixture:8765/mcp --access-token \"$MCP_SERVER_TOKEN\" --tool-name add --tool-args '{\"a\":2,\"b\":3}' --validate-response --expect-success > /workspace/validation/add-smoke.json; cat /workspace/validation/add-smoke.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:17:15.939262+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.3316974639892578,
+  "end": "2026-11-15T02:17:17.270903+00:00"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "bootstrap:docker-node-pull",
+  "path": "bootstrap--docker-node-pull",
+  "argv": [
+    "env",
+    "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+    "docker",
+    "pull",
+    "node:24.22.1-bookworm-slim"
+  ],
+  "start": "2026-11-15T01:16:03.861420+00:00",
+  "end": "2026-11-15T01:16:14.941114+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

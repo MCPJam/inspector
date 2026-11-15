@@ -1,0 +1,22 @@
+{
+  "event_id": "3c5c903ad8b847c8a529101b13cfe1bd",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "if [ -L /logs/agent ] || { [ -e /logs/agent ] && [ ! -d /logs/agent ]; }; then rm -rf /logs/agent; fi && mkdir -p /logs/agent && find /logs/agent -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && chmod 777 /logs/agent"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:05:22.499249+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0015490055084228516,
+  "end": "2026-11-15T02:05:22.500739+00:00"
+}

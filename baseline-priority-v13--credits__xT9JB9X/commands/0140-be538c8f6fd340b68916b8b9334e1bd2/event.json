@@ -1,0 +1,22 @@
+{
+  "event_id": "be538c8f6fd340b68916b8b9334e1bd2",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json\ns=json.load(open('/workspace/mcpjam-eval/openapi.json'))\np='/projects/{projectId}/eval-suites/{suiteId}/run-disclosure'\nprint(json.dumps(s['paths'][p]))\nPY\ncurl -sS --max-time 15 -H \"Authorization: Bearer $MCPJAM_API_KEY\" \"$MCPJAM_API_URL/projects/project_fixture/eval-suites/suite_fixture/run-disclosure\" -o /workspace/mcpjam-eval/disclosure-before.json; cat /workspace/mcpjam-eval/disclosure-before.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:00:43.850388+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.062150001525878906,
+  "end": "2026-11-15T02:00:43.912441+00:00"
+}

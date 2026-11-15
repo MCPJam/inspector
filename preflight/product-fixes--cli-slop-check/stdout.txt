@@ -1,0 +1,22 @@
+
+> slop:check
+> node scripts/slop/ratchet.mjs
+
+## Slop ratchet
+
+| Rule | Net change |
+|---|---|
+| `as any` casts | 0 |
+| `: any` annotations | 0 |
+| `as unknown as` double casts | 0 |
+| `@ts-ignore` / `@ts-nocheck` / `@ts-expect-error` | 0 |
+| `.catch(() => {})` with no body | 0 |
+| empty `catch {}` with no reason comment | 0 |
+| `eslint-disable` directives | 0 |
+| raw `console.*` in the inspector server | 0 |
+| comments citing a PR number or a date | 0 |
+| em or en dashes in user-facing copy | 0 |
+| marketing filler in user-facing copy | 0 |
+| errors that open with a vague phrase (Oops, Something went wrong) | 0 |
+
+No rule went up.

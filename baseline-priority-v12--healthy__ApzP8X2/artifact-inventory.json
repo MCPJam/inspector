@@ -1,0 +1,8 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "72c7e3450e4d0e2e209ff7b760560eb563605ab871bbfcc794a683000c2d35df"
+  }
+]

@@ -1,0 +1,2 @@
+{"seconds": 0.10345768928527832, "stream": "stdout", "data": "\n> workspace@1.0.0 eval\n> node evaluate.cjs\n\n"}
+{"seconds": 0.23038840293884277, "stream": "stdout", "data": "{\n  \"runId\": \"run_fixture_3\",\n  \"passed\": true,\n  \"checks\": {\n    \"completed\": true,\n    \"platformPassed\": true,\n    \"evidencePresent\": true,\n    \"allTrialsCorrect\": true\n  },\n  \"trials\": 1\n}\n"}

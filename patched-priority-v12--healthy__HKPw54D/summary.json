@@ -1,0 +1,64 @@
+{
+  "run_id": "patched-priority-v12--healthy__HKPw54D",
+  "job": "patched-priority-v12",
+  "scenario": "mcpjam/healthy",
+  "agent": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "outcome": "harness-invalid",
+  "rewards": null,
+  "usage": {
+    "n_input_tokens": 487862,
+    "n_cache_tokens": 436096,
+    "n_output_tokens": 1960,
+    "cost_usd": 0.16674159999999996,
+    "model_usage": {
+      "gpt-6.1-sol": {
+        "n_input_tokens": 487862,
+        "n_cache_tokens": 436096,
+        "n_output_tokens": 1960,
+        "cost_usd": 0.16674159999999996
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "exception": {
+    "exception_type": "CancelledError",
+    "exception_message": "",
+    "exception_traceback": "Traceback (most recent call last):\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 616, in run\n    await self._run()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/single_step.py\", line 41, in _run\n    await self._run_agent()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/single_step.py\", line 77, in _run_agent\n    await self._run_agent_phase(\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 780, in _run_agent_phase\n    await asyncio.wait_for(\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/agents/installed/base.py\", line 194, in wrapper\n    return await fn(self, instruction, *args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/agents/installed/codex.py\", line 2209, in run\n    await self.exec_as_agent(\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/agents/installed/base.py\", line 1114, in exec_as_agent\n    return await self._exec(\n           ^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/agents/installed/base.py\", line 1065, in _exec\n    result = await environment.exec(\n             ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 1407, in exec\n    return await self._compose_exec(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 1484, in _compose_exec\n    return await self._run_docker_compose_command(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 801, in _run_docker_compose_command\n    result = await self._collect_buffered_output(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 831, in _collect_buffered_output\n    stdout_bytes, stderr_bytes = await process.communicate(input=stdin_data)\n                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/subprocess.py\", line 201, in communicate\n    stdin, stdout, stderr = await tasks.gather(stdin, stdout, stderr)\n                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/subprocess.py\", line 181, in _read_stream\n    output = await stream.read()\n             ^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/streams.py\", line 706, in read\n    block = await self.read(self._limit)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/streams.py\", line 713, in read\n    await self._wait_for_data('read')\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/streams.py\", line 545, in _wait_for_data\n    await self._waiter\nasyncio.exceptions.CancelledError\n",
+    "occurred_at": "2026-11-15T01:52:26.185584Z",
+    "policy": {
+      "should_retry": false,
+      "should_grade": false,
+      "has_valid_reward": false
+    }
+  },
+  "capture_event_count": 44,
+  "unique_capture_event_count": 44,
+  "agent_tool_invocation_count": 15,
+  "agent_shell_invocation_count": 13,
+  "incomplete_events": 1,
+  "concern_count": 1,
+  "metrics": [],
+  "assessment_flags": [],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T01:52:47.831220Z",
+    "explicitly_harness_invalid": true,
+    "comparison_eligible": false,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": false,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": null,
+    "reason": "No unique native shell output with successful structuredContent.sum exactly matched a verifier-confirmed capture."
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once."
+}

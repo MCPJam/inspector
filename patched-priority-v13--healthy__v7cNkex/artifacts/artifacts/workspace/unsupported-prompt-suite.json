@@ -1,0 +1,17 @@
+{
+  "name": "Arithmetic addition smoke",
+  "description": "Reproduce the first successful MCPJam tool call: add(2,3) returns sum 5.",
+  "serverIds": ["server_fixture"],
+  "model": "anthropic/claude-haiku-4.5",
+  "passCriteria": {"minimumPassRatePercent": 100},
+  "tests": [{
+    "title": "Add two and three",
+    "runs": 1,
+    "steps": [
+      {"id":"ask","kind":"prompt","prompt":"Use the add tool exactly once with a=2 and b=3. Report the returned sum."},
+      {"id":"arguments","kind":"assert","assertion":{"type":"toolCalledWith","toolName":"add","args":{"args":{"a":2,"b":3},"argumentMatching":"exact"}}},
+      {"id":"no-errors","kind":"assert","assertion":{"type":"noToolErrors"}},
+      {"id":"sum","kind":"assert","assertion":{"type":"toolResultMatches","toolName":"add","path":"/sum","patterns":["^5$"]}}
+    ]
+  }]
+}

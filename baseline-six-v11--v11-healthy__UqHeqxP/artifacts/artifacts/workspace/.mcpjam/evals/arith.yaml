@@ -1,0 +1,28 @@
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_arith_fixture
+  name: Arithmetic fixture
+target:
+  servers:
+    - name: arith
+defaults:
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5
+  iterations: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_adds
+    title: uses add for 2+3
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: What is 2 plus 3? Use the add tool.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: add

@@ -1,0 +1,22 @@
+{
+  "event_id": "ae5a20f514584ea4b7bf2967160686ea",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport sys\nsys.path.insert(0,'/workspace/mcp-evaluation')\nfrom api import call\ncall('GET','/projects/project_fixture/capabilities')\ncall('GET','/projects/project_fixture/eval-suites/suite_fixture/cases')\ncall('GET','/billing/usage')\ncall('GET','/billing/credits')\ncall('POST','/projects/project_fixture/eval-runs/estimate',{'suiteId':'suite_fixture','serverIds':['server_fixture']})\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:12:17.037396+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.031250715255737305,
+  "end": "2026-11-15T02:12:17.068592+00:00"
+}

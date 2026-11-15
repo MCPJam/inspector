@@ -1,0 +1,22 @@
+{"code": "NOT_FOUND", "message": "Not found"}34:4. Start inspecting tools, resources, and prompts
+36:## Usage limits
+38:The hosted app uses a daily credit system to power AI features like chat.
+40:* **Guests** get a free daily usage allowance. Higher-priced models are greyed out in the model picker with a "Sign in to use this model" tooltip — sign in to unlock them. The sidebar shows a progress bar with how much of your daily limit you've used and when it resets. When you reach the limit, you'll be prompted to sign in.
+42:* **Signed-in users** get **10×** the daily usage of a guest. Your daily usage and any paid credit balance are visible in the account menu at the bottom of the sidebar.
+43:* **Paid credits** can be topped up from the billing page and are shown alongside your daily limit in the account menu.
+44:* **Low credits warning** — when your credit balance drops to 10% or below, the sidebar credit meter turns red and shows a **Low credits** label.
+45:* **When credits run out**, only the free hosted models are locked. Models you access with your own API key (BYOK) remain available regardless of your credit balance.
+47:When your credit balance reaches zero, free models are grayed out in the model picker so you can see the limit before sending a message. Models from your own API keys remain available. If you have paid top-up credits, free models stay enabled even after your daily free allowance is exhausted.
+51:Open the **account menu** at the bottom of the sidebar (click your avatar or email) and choose **Sign out**. You'll be returned to the public app as a guest, and any signed-in usage allowance is replaced by the guest allowance until you sign back in.
+106:## Billing
+110:The **Payment history** card on the org billing page lists your recent credit top-ups. Each row shows:
+121:To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
+125:> **Free plan organizations cannot purchase credits directly.** If your organization is on the Free plan, the Top up dialog shows a message that only an organization owner can upgrade the plan, with a **Compare plans** button. Clicking it closes the dialog and opens your organization's Plans settings so you can upgrade.
+129:> **Desktop app:** When you confirm a top-up in the desktop app, checkout opens in your default system browser and the dialog closes automatically. Your credit balance updates in the app once the purchase completes — no redirect back into the app is required.
+134:work — chat, evals, judges and computer time — for each billing period, from
+144:  reached and that an owner or admin can raise it — buying credits does not
+152:  credits.
+153:* The window is your organization's own billing period: the subscription cycle
+164:### Managing billing details
+166:Organization owners on a paid plan see a **Manage billing** button on the billing page. Clicking it opens the Stripe portal where you can update payment methods, download invoices, add tax IDs, and review billing details. Only organization owners can access this portal.
+170:When someone you invited to a paid-seat organization signs up and the automatic seat charge fails or is cancelled, the org billing page shows a **Seat payment didn't go through** notice. As the org owner you can:

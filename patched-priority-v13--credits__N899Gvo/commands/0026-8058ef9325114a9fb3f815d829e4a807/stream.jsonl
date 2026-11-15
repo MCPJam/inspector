@@ -1,0 +1,1 @@
+{"seconds": 0.03970050811767578, "stream": "stdout", "data": "/projects/project_fixture/eval-runs {\"status\": 403, \"response\": {\"code\": \"FORBIDDEN\", \"message\": \"This work requires platform credits. Add credits or contact your organization administrator.\", \"details\": {\"reason\": \"PLATFORM_FEE_REQUIRED\"}}}\n"}

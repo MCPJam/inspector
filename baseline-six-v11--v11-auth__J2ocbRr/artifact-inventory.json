@@ -1,0 +1,38 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "aee84f44b2f11b56bc5133ed6e8e2d8adf313b545d6e9fbb5f8ccdc9cdcaff7b"
+  },
+  {
+    "source": "artifacts/workspace/validate.sh",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validate.sh",
+    "sha256": "7c8bc62d6872227258b15588b172a2e9ed26fc7d488569f700f3b9bb922f69ef"
+  },
+  {
+    "source": "artifacts/workspace/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/doctor.json",
+    "sha256": "917e547d9f2cd2ab7b63f6c37fb2f3f4aadcd6f523339c107157513949ca0508"
+  },
+  {
+    "source": "artifacts/workspace/call_bad.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/call_bad.json",
+    "sha256": "3474b23af8cd99ff83336f162aa2da55302b419977fb79a254a1f9e9ac8a3390"
+  },
+  {
+    "source": "artifacts/workspace/call_ok.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/call_ok.json",
+    "sha256": "c7863cb601f44dc60f280dd40bc2af4c800c3341fe25e4c6939ce461c6b2b9e8"
+  },
+  {
+    "source": "artifacts/workspace/mcp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp.json",
+    "sha256": "456d6b3be6247453de792129da311cb725e22bd18a67fdcff4fa856a73e50f93"
+  }
+]

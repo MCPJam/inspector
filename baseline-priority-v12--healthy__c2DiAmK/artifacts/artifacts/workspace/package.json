@@ -1,0 +1,17 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "validate": "mcpjam server doctor --url http://fixture:8765/mcp --quiet --format json",
+    "eval": "python3 run-eval.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@mcpjam/cli": "6.2.2"
+  }
+}

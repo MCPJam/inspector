@@ -1,0 +1,150 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Local Evals
+
+> Run an MCPJam eval suite file on your machine with mcpjam test with local results and an MCPJam identity
+
+> [!NOTE]
+>
+> The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+
+`mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and authenticate the run with MCPJam. With MCPJam-hosted inference it uses your existing CLI login and billing.
+
+Results are **never uploaded**. The command writes results to your terminal and, if you ask, to a report file. It records the run start with MCPJam. Like every command, it sends the CLI's single anonymous [telemetry](https://docs.mcpjam.com/cli/telemetry.md) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
+
+## Eval identity and local data
+
+Run `mcpjam cloud login` locally, or set `MCPJAM_API_KEY` to an organization `sk_` key in CI. The SDK also accepts `apiKey` or `mcpjamAuth` in run options. Explicit credentials take precedence over `MCPJAM_API_KEY`, which takes precedence over the saved CLI login. An invalid explicit credential never falls back to another account. CI never starts an interactive login. Ask an organization admin for a key if you cannot create one.
+
+Every logical run needs an online start response. MCPJam retries transient failures within ten seconds, then stops before execution. A prior successful run does not enable offline execution. The CLI resolves the project using its existing `--project`, environment, and linked-project settings; a key can only access its own organization.
+
+With results uploads disabled, the start-run request sends only the credential in the authorization header, any MCPJam API headers you configure through the SDK's `inference.resolveMcpjam`, project selection, a new run-start ID, client version and surface (SDK, CLI, or Vitest), planned iteration count, provider names, and whether a client profile is used (`unknown` for custom executors). The server resolves the organization and account. The start-run request sends no prompts, outputs, tool calls, or server URLs. MCPJam-hosted inference still sends prompts through MCPJam to the model, as before. Retries reuse the same ID. Planned iterations are intent, not completed usage or a charge. This release adds no debit, quota draw, or balance refusal.
+
+`DO_NOT_TRACK`, `MCPJAM_TELEMETRY_DISABLED`, and CLI telemetry settings disable analytics, not the required run-start request. Results remain local unless result uploading is enabled separately.
+
+## Quick start
+
+### 1. Write a suite
+
+Save this as `.mcpjam/evals/example.yaml`:
+
+```yaml theme={"theme":"css-variables"}
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_notes_example
+  name: Notes server
+target:
+  servers:
+    - name: notes
+defaults:
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5
+  iterations: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_reads_a_note
+    title: reads the note it was asked about
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: What does note 7 say?
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: read_note
+  - id: c_never_deletes
+    title: never deletes when only asked to read
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: Summarize note 7.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: delete_note
+```
+
+`mcpjam cloud eval validate --file .mcpjam/evals/example.yaml` checks the file offline, with no account.
+
+### 2. Configure the server
+
+`mcpjam test` binds each `target.servers[].name` to a local MCP config. The simplest is a `.mcp.json` next to where you run the command:
+
+```json theme={"theme":"css-variables"}
+{
+  "mcpServers": {
+    "notes": {
+      "command": "node",
+      "args": ["./notes-server.js"],
+      "env": { "NOTES_DB": "${NOTES_DB:-./notes.db}" }
+    }
+  }
+}
+```
+
+### 3. Supply a key and run
+
+```bash theme={"theme":"css-variables"}
+export ANTHROPIC_API_KEY=[REDACTED]
+mcpjam test .mcpjam/evals/example.yaml
+```
+
+### 4. Fail one on purpose, then rerun it
+
+Change `toolName: read_note` to `toolName: echo` in the first case and run again: the command exits `1` and names the failing assertion. Fix it, then rerun just that case and keep a report:
+
+```bash theme={"theme":"css-variables"}
+mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xml --out reports/local.xml
+```
+
+`--case` takes the exact authored id and is repeatable.
+
+## Server bindings
+
+For each target server name, the first source with an entry wins — the whole entry, never a field-level merge:
+
+1. `--server <name>=<url>` (repeatable; HTTP(S) only). For a suite with exactly one target, `--url` / `--command` and their auth flags bind it instead.
+2. `--mcp-config <path>` — an explicit MCP JSON config. A missing or invalid explicit file fails setup.
+3. `./.mcp.json`
+4. `./.mcpjam/mcp.json`
+
+Paths are relative to the directory you run the command in, not to the suite file. An explicit `--mcp-config` can bind some servers while the two conventional files still supply the rest. A lower-precedence file is read only while names remain unbound, and entries for servers the suite does not target are ignored — their processes are never started. Every name still unbound is reported together (exit `4`).
+
+```bash theme={"theme":"css-variables"}
+# One command does everything: probe, connect, sweep tools/resources/prompts
+mcpjam server doctor --url https://your-server.com/mcp
+```
+
+If the server requires OAuth, doctor reports `oauth_required` with the discovery metadata. See [OAuth login](https://docs.mcpjam.com/cli/oauth-login.md) to obtain a token, then re-run with `--oauth-access-token`.
+
+## Commands
+
+### `server probe`
+--
+```bash theme={"theme":"css-variables"}
+mcpjam server probe --url https://your-server.com/mcp
+```
+
+Use this when you want to check reachability and OAuth metadata without triggering a full MCP initialize handshake. The probe sends an unauthenticated `initialize` request and inspects the response.
+
+**What it returns:**
+
+* Transport type (streamable-http, SSE, or failed)
+--
+```bash theme={"theme":"css-variables"}
+# Human-readable summary
+mcpjam server doctor --url https://your-server.com/mcp
+
+# Full JSON artifact with RPC logs
+mcpjam server doctor --url https://your-server.com/mcp --rpc --out doctor.json
+
+--
+```

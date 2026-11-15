@@ -1,0 +1,79 @@
+Usage: mcpjam cloud link [options] [project]
+
+Pin this directory to a Cloud project by writing .mcpjam/project.json. The file
+contains no secrets and is committed by default; per-developer setups may
+gitignore it.
+
+Arguments:
+  project     Project name or ID to pin
+
+Options:
+  --here      Write .mcpjam/project.json in the current directory instead of the
+              Git worktree root
+  --remove    Remove the nearest project link (current directory with --here)
+  -h, --help  display help for command
+Usage: mcpjam cloud projects [options] [command]
+
+Operate the MCP servers saved in your hosted MCPJam projects
+
+Options:
+  -h, --help              display help for command
+
+Commands:
+  list [options]          List the projects you can access
+  create [options]        Create a hosted MCPJam project
+  update [options]        Update project metadata
+  delete [options]        Delete a project and its project-owned resources
+  capabilities [options]  Show what you may do in a project: your role, which
+                          betas the organization has, your plan's limits, and a
+                          can-block of booleans. Ask this before scripting
+                          anything that authors, launches or publishes.
+  servers [options]       List and manage the servers saved in a project
+  status [options]        Health-check every server in a project (hosted doctor
+                          per server)
+  help [command]          display help for command
+## `cloud projects servers` commands
+
+Manage the MCP servers saved in a project and connect new ones. All `projects servers` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud projects servers connect`
+
+Start a connection request for an MCP server URL. Discovery, browser consent, and validation happen asynchronously. When the server requires OAuth, the command prints a private authorization link and (by default) opens it in a browser. The command then polls until the request reaches a terminal status.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--url <url>` | Yes | MCP server URL to connect |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--server <id>` | No | Existing server ID, when the project has several on this URL |
+| `--name <name>` | No | Name for the server, if one is created |
+| `--reauthorize` | No | Force a fresh authorization |
+| `--no-browser` | No | Print the authorization link instead of opening it |
+| `--no-wait` | No | Return as soon as the request is created |
+
+With `--no-wait`, the command prints the request id and exits immediately. The request continues in the cloud; use `connect-status` to check it and `connect-cancel` to stop it.
+
+Each pending request holds one of the account's five concurrent-connection slots for up to an hour. If `connect` reports `ACTIVE_REQUEST_LIMIT`, the error details include the ids of the open requests — cancel the abandoned ones with `connect-cancel` to free slots.
+
+### `cloud projects servers connect-status`
+
+Check the current state of a connection request started by `connect`.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--request <id>` | Yes | Connection request id (`scr_…`) |
+
+### `cloud projects servers connect-cancel`
+
+Cancel a pending connection request, releasing the concurrent-connection slot it holds. Cancelling an already-terminal request is a no-op.
+302:| `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert); per-test `model`/`provider`/`runs` are optional and fall back to suite defaults |
+332:| `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and billed to the project. The turn can read project servers/suites/runs and **create eval suites**; it can NOT start runs — kick those off yourself with `POST .../eval-runs`. Responds synchronously with `reply`, the `toolCalls` it made, `createdResources` (ids + app links), and token `usage`. Capped at 4 concurrent turns per organization and \~90 s wall clock. **Not idempotent — never blind-retry**: dedupe on your own trigger identity, and on an error response check `details.createdResources` (and, after a lost response, list suites) before retrying, or you'll create duplicates |
+745:          "assertion": {
+746:            "type": "toolCalledWith",

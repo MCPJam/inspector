@@ -1,0 +1,53 @@
+{
+  "services": {
+    "main": {
+      "environment": {
+        "MCPJAM_API_URL": "http://fixture:8765",
+        "MCPJAM_API_KEY": "[REDACTED]",
+        "MCP_SERVER_TOKEN": "[REDACTED]",
+        "XDG_CONFIG_HOME": "/root/.config",
+        "XDG_CACHE_HOME": "/root/.cache"
+      },
+      "depends_on": {
+        "fixture": {
+          "condition": "service_healthy"
+        }
+      }
+    },
+    "fixture": {
+      "image": "mcpjam-harbor-agent:v1",
+      "working_dir": "/fixture",
+      "entrypoint": [
+        "python3",
+        "/fixture/service.py"
+      ],
+      "command": [
+        "--state",
+        "/private/state.json",
+        "--scenario",
+        "healthy",
+        "--seed",
+        "42",
+        "--port",
+        "8765",
+        "--public-url",
+        "http://fixture:8765"
+      ],
+      "volumes": [
+        "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/scripts/harbor-activation/fixtures:/fixture:ro",
+        "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/packages/baseline:/packages:ro"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "curl",
+          "-fsS",
+          "http://localhost:8765/health"
+        ],
+        "interval": "1s",
+        "timeout": "2s",
+        "retries": 20
+      }
+    }
+  }
+}

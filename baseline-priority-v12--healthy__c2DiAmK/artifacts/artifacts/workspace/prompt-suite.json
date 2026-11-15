@@ -1,0 +1,59 @@
+{
+  "name": "Arithmetic repeatable smoke",
+  "serverIds": [
+    "server_fixture"
+  ],
+  "serverNames": [
+    "Arithmetic"
+  ],
+  "model": "anthropic/claude-haiku-4.5",
+  "passCriteria": {
+    "minimumPassRatePercent": 100
+  },
+  "tests": [
+    {
+      "title": "add 2 and 3 returns 5",
+      "runs": 1,
+      "steps": [
+        {
+          "id": "prompt",
+          "kind": "prompt",
+          "prompt": "Use the add tool to add 2 and 3. Report the sum."
+        },
+        {
+          "id": "call",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolCalledWith",
+            "toolName": "add",
+            "args": {
+              "args": {
+                "a": 2,
+                "b": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "output",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultMatches",
+            "toolName": "add",
+            "path": "/sum",
+            "patterns": [
+              "^5$"
+            ]
+          }
+        },
+        {
+          "id": "errors",
+          "kind": "assert",
+          "assertion": {
+            "type": "noToolErrors"
+          }
+        }
+      ]
+    }
+  ]
+}

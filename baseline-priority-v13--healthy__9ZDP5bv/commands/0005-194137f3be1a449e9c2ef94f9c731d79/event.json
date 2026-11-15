@@ -1,0 +1,22 @@
+{
+  "event_id": "194137f3be1a449e9c2ef94f9c731d79",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707855395-v34qhk.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; M=\"npx -y @mcpjam/cli@latest --quiet\"; $M cloud projects servers list --project project_fixture 2>&1 | head -c 1200; echo; $M cloud eval list --project project_fixture 2>&1 | head -c 800; echo; $M cloud projects servers connect --help | head -30' < /dev/null && pwd -P >| /tmp/claude-323c-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:58:05.617428+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 2.79225754737854,
+  "end": "2026-11-15T01:58:08.409616+00:00"
+}

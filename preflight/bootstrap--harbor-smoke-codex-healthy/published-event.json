@@ -1,0 +1,48 @@
+{
+  "id": "bootstrap:harbor-smoke-codex-healthy",
+  "path": "bootstrap--harbor-smoke-codex-healthy",
+  "argv": [
+    "env",
+    "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+    "work/venv/bin/harbor",
+    "run",
+    "--path",
+    "work/tasks/smoke-healthy",
+    "--agent",
+    "codex",
+    "--model",
+    "openai/gpt-6.1-sol",
+    "--ak",
+    "version=0.160.0",
+    "--ak",
+    "reasoning_effort=medium",
+    "--ak",
+    "reasoning_summary=none",
+    "--ae",
+    "CODEX_FORCE_AUTH_JSON=1",
+    "--n-concurrent",
+    "1",
+    "--n-attempts",
+    "1",
+    "--max-retries",
+    "0",
+    "--job-name",
+    "baseline-codex-healthy-smoke",
+    "--jobs-dir",
+    "work/jobs"
+  ],
+  "start": "2026-11-15T01:19:45.638819+00:00",
+  "end": "2026-11-15T01:19:50.469888+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

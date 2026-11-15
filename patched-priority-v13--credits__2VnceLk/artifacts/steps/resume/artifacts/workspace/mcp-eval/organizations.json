@@ -1,0 +1,16 @@
+{
+  "http_status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "org_fixture",
+        "name": "Fixture organization",
+        "plan": "team",
+        "myRole": "owner",
+        "isCreator": true,
+        "logoUrl": null,
+        "createdAt": 1
+      }
+    ]
+  }
+}

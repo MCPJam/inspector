@@ -1,0 +1,2 @@
+Final: 7 / 8
+Failure: extra_property {'content': [{'type': 'text', 'text': '{"sum": 5}'}], 'structuredContent': {'sum': 5}, 'isError': False, '_durationMs': 7}

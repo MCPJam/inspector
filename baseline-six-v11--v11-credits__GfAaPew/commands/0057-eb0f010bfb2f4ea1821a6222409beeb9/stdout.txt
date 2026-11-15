@@ -1,0 +1,116 @@
+795-* Wait for the limit window to reset, then retry.
+796-* Switch the host to a different model or provider.
+797-* Upgrade your plan on the provider's own dashboard.
+798-
+799:> **MCPJam account limit vs. provider throttle** — If the session pane shows a billing or credit message instead of this card, the limit is on your MCPJam account, not your provider key. Adding credits or switching to BYOK resolves that case; the steps above do not apply.
+800-
+801-### Frontier model sign-in required
+802-
+803-`provider/guest_model_not_allowed`
+--
+810-
+811-**Next steps**
+812-
+813-* A sign-in prompt appears automatically. Click **Sign in** to authenticate and get access to frontier models.
+814:* Click **Not now** to dismiss and continue with a standard model. Your credit balance is not affected.
+815-
+816:### Out of MCPJam credits
+817-
+818-`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit` · `provider/mcpjam_limit_insufficient`
+819-
+820-MCPJam refused the call before it reached a provider. For the daily, monthly,
+--
+830-not.
+831-
+832-**Next steps**
+833-
+834:* **Free plan (owner)** — The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
+835-* **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
+836:* **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
+837:* **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+838-* Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+839-* If your organization uses its own keys for all AI features, model tokens are billed by its providers instead; see [Organization AI key policy](#organization-ai-key-policy).
+840-
+841-**Swarm and Eval runs**
+842-
+843:When credits run out during a Swarm or Eval run, blocked work stops and you receive one credit-exhaustion prompt per run, or one per swarm when a swarm launches several runs at once. Completed results are preserved. Buying credits does not automatically restart the run — start a new run once credits are available.
+844-
+845-> [!WARNING]
+846->
+847-> Bring-your-own-key covers chat. Swarm persona generation and persona-driver
+--
+850-> for all AI features runs those turns on its default AI model instead, and its
+851-> providers bill their tokens; see
+852-> [Organization AI key policy](#organization-ai-key-policy).
+853-
+854:### Credits temporarily held
+855-
+856:A swarm session can stop with **Credits temporarily held**. The balance is not
+857-empty: other requests from your organization were in flight and held the
+858:remaining credits until they finish. No credit prompt opens for it and nothing
+859-needs buying.
+860-
+861-**Next steps**
+862-
+--
+885-
+886-**Next steps**
+887-
+888-* Wait until the reset time shown in the error, if one is present.
+889:* Use purchased credits, or add your own API key under **Settings → LLM Providers** for chat.
+890-
+891-### Account suspended
+892-
+893-`account/suspended`
+--
+984-  while the setting is on. Today that includes the session map,
+985-  transcription and Ask MCPJam. When an eligible provider exists, the card
+986-  names choosing the default model as the fix for work that waits on it.
+987-* **Billing.** Model tokens are billed by the organization's providers.
+988:  MCPJam's fixed product fees and usage limits still apply.
+989-
+990-Only organization owners and admins can change the setting. Any of them can
+991-turn it off at any time, including after the organization leaves Enterprise;
+992-leaving Enterprise never turns it off. Turning it off is recorded in the audit
+--
+998-## Organization provider refusals
+999-
+1000-These codes mean an AI request was refused because it could not run on one of
+1001-the organization's own model providers. None of them count against MCPJam
+1002:credits.
+1003-
+1004-Most are configuration: the request won't run until someone changes its model
+1005-or the organization's providers, so trying again doesn't help. Two are
+1006-temporary: `org/key_policy_unavailable` (MCPJam couldn't read the
+[
+  {
+    "$ref": "#/components/parameters/evalVocabularyHeader"
+  },
+  {
+    "$ref": "#/components/parameters/projectId"
+  },
+  {
+    "$ref": "#/components/parameters/runId"
+  },
+  {
+    "name": "limit",
+    "in": "query",
+    "required": false,
+    "description": "Page size, 1\u2013200. Defaults to 50.",
+    "schema": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "default": 50
+    }
+  },
+  {
+    "name": "cursor",
+    "in": "query",
+    "required": false,
+    "description": "Opaque cursor from a previous response's `nextCursor`.",
+    "schema": {
+      "type": "string"
+    }
+  }
+]

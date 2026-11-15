@@ -1,0 +1,2 @@
+{"seconds": 0.024746417999267578, "stream": "stdout", "data": "Saved artifacts contain neither credential value.\n"}
+{"seconds": 0.03252220153808594, "stream": "stdout", "data": "-rw-r--r-- 1 root root 3.5K Nov 15 01:41 /workspace/validation/REPORT.md\n-rw-r--r-- 1 root root  41K Nov 15 01:40 /workspace/validation/conformance.json\n-rwxr-xr-x 1 root root 1.2K Nov 15 01:41 /workspace/validation/reproduce.sh\n"}

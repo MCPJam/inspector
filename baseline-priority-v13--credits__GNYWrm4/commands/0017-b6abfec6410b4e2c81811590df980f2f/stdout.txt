@@ -1,0 +1,2 @@
+{"error":{"code":"USAGE_ERROR","message":"error: unknown option '--project'"}}
+{"id":"user_fixture","email":"[EMAIL REDACTED]","name":"Fixture user","plan":"team","credential":"api-key"}

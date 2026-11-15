@@ -1,0 +1,22 @@
+{
+  "event_id": "25ae3a707cb0483fafac8a47e4963ff7",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > README.md <<'EOF'\n# MCPJam validation trial\n\nReproduce from this directory with `MCPJAM_API_URL` and `MCPJAM_API_KEY` set:\n\n```bash\ncd /workspace\nnpm ci\nnpx mcpjam server doctor --url http://fixture:8765/mcp --quiet --format json > doctor.json\nnpx mcpjam tools call --url http://fixture:8765/mcp --tool-name add --tool-args '{\"a\":2,\"b\":3}' --quiet --format json > first-result.json\npython3 run-eval.py\n```\n\nThe CLI is pinned to 6.2.2 in package-lock.json. Python uses only the standard library. No credentials are saved in these files. The runner reuses suite-created.json; remove that file to author a new suite from suite.json in another compatible account. Each invocation starts a new run and saves its status and iteration evidence. It exits nonzero on a platform failure or an incorrect/missing arithmetic result.\n\n## Results\n\n- MCPJam doctor: ready; Streamable HTTP; protocol 2025-11-25; arithmetic-fixture 1.0.0; no OAuth required; one tool, add.\n- First direct call: add({\"a\":2,\"b\":3}) returned structuredContent {\"sum\":5}, isError false.\n- Saved suite: suite_authored_5. Latest verified run: run_fixture_5. Completed, platform passed 1/1.\n- Independent exact evaluation: evaluation.json passed. It requires exactly one add call, exact input arguments, exact structured output {\"sum\":5}, and isError false.\n- Local negative control: `python3 check-result.py 999 iterations.json local-negative-control.json` exits 1 as expected.\n\n## Important observed limitations\n\nThis isolated API labels runs SIMULATED: deterministic execution, no hosted model or live billing. These results establish the deterministic arithmetic path, not model tool selection or full protocol conformance.\n\nThe documented server validate route returned 404. Direct CLI doctor worked. Prompt execution and several documented assertions returned 422 FEATURE_NOT_SUPPORTED; the message did not identify the unsupported assertion. A toolCall followed by responseContains was accepted.\n\n**The hosted assertion verdict is unreliable in this environment.** A separate saved negative-control suite (suite_authored_6, run_fixture_4) expected responseContains needle 999, yet the API reported passed while the actual sum was 5. See negative-control.json. Accordingly, the repeatable runner grades actual iteration evidence with check-result.py instead of relying on the platform verdict alone. The local grading check rejects 999 correctly. No report was sent externally.\n\nThe decision-summary route also returned 404; iteration evidence remains available. Earlier exploratory suites are retained in the isolated account for audit; the canonical runnable suite is suite.json / suite_authored_5.\n\n## Public documentation consulted\n\n- https://docs.mcpjam.com\n- https://docs.mcpjam.com/cli/overview\n- https://docs.mcpjam.com/reference/public-api\n- https://docs.mcpjam.com/reference/openapi.json\n- https://docs.mcpjam.com/cli/local-evals\n\nDownloaded documentation snapshots are included. Only public documentation, CLI commands, MCP requests, and authenticated public API routes were used.\nEOF\nnode -e 'const fs=require(\"fs\"); const p=JSON.parse(fs.readFileSync(\"package.json\")); p.scripts={\"validate\":\"mcpjam server doctor --url http://fixture:8765/mcp --quiet --format json\",\"eval\":\"python3 run-eval.py\"}; fs.writeFileSync(\"package.json\",JSON.stringify(p,null,2)+\"\\n\")'\ncat evaluation.json && cat local-negative-control.json && ls -lh README.md suite.json run-eval.py check-result.py package-lock.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:48:51.106753+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.024214744567871094,
+  "end": "2026-11-15T01:48:51.130895+00:00"
+}

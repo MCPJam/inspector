@@ -1,0 +1,64 @@
+{
+  "run_id": "baseline-six-v11--v11-auth__VnurQ2L",
+  "job": "baseline-six-v11",
+  "scenario": "mcpjam/auth",
+  "agent": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "outcome": "harness-invalid",
+  "rewards": null,
+  "usage": {
+    "n_input_tokens": 882140,
+    "n_cache_tokens": 828672,
+    "n_output_tokens": 5261,
+    "cost_usd": 0.2424132,
+    "model_usage": {
+      "gpt-6.1-sol": {
+        "n_input_tokens": 882140,
+        "n_cache_tokens": 828672,
+        "n_output_tokens": 5261,
+        "cost_usd": 0.2424132
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "exception": {
+    "exception_type": "RewardFileNotFoundError",
+    "exception_message": "No reward file found at work/jobs/baseline-six-v11/v11-auth__VnurQ2L/verifier/reward.txt or work/jobs/baseline-six-v11/v11-auth__VnurQ2L/verifier/reward.json",
+    "exception_traceback": "Traceback (most recent call last):\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 616, in run\n    await self._run()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/single_step.py\", line 52, in _run\n    await self._run_verifier()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/single_step.py\", line 102, in _run_verifier\n    self.result.verifier_result = await self._run_separate_verifier(\n                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1097, in _run_separate_verifier\n    return await self._verify_with_timeout(verifier, timeout_sec)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 990, in _verify_with_timeout\n    return await asyncio.wait_for(verifier.verify(), timeout=timeout_sec)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/verifier/verifier.py\", line 304, in verify\n    raise RewardFileNotFoundError(\nharbor.verifier.verifier.RewardFileNotFoundError: No reward file found at work/jobs/baseline-six-v11/v11-auth__VnurQ2L/verifier/reward.txt or work/jobs/baseline-six-v11/v11-auth__VnurQ2L/verifier/reward.json\n",
+    "occurred_at": "2026-11-15T01:34:25.082398Z",
+    "policy": {
+      "should_retry": false,
+      "should_grade": true,
+      "has_valid_reward": false
+    }
+  },
+  "capture_event_count": 68,
+  "unique_capture_event_count": 68,
+  "agent_tool_invocation_count": 31,
+  "agent_shell_invocation_count": 25,
+  "incomplete_events": 0,
+  "concern_count": 0,
+  "metrics": [],
+  "assessment_flags": [],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T01:34:25.083120Z",
+    "explicitly_harness_invalid": true,
+    "comparison_eligible": false,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": false,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": null,
+    "reason": "No unique native shell output with successful structuredContent.sum exactly matched a verifier-confirmed capture."
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once."
+}

@@ -1,0 +1,202 @@
+195:                    type: toolCalledWith
+351:        expectedOutput:
+426:            (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`)
+427:            or internal (`toolCallOrder: ignore|superset|strict`,
+496:            model-free `toolCall` step is a render-check; `assert` steps hold
+498:        expectedOutput:
+585:            In the public vocabulary (`toolCallOrder: any|in-order|exact`,
+625:        `prompt` is a user message (model turn); `toolCall` is a deterministic,
+627:        an assertion (a `Predicate` like `toolCalledWith` / `widgetRendered`, or
+640:            - toolCall
+648:          description: 'Server that owns the tool (`kind: toolCall`).'
+651:          description: 'Tool name (`kind: toolCall` / `interact`).'
+654:          description: 'Tool-call arguments (`kind: toolCall`).'
+799:              const: toolCalledWith
+840:              const: toolCalledAtLeastOnce
+964:              const: noToolErrors
+1140:              const: toolResultContains
+1166:              const: toolResultMatchesSchema
+1323:              const: toolResultMatches
+1412:              const: toolCallCountUnder
+1436:              const: toolCalledBefore
+                  old-data backfill) chose `selection` rather than a person.
+                  Absent when a person chose it, and on rows with no selection.
+        matchOptions:
+          type: object
+          description: >-
+            In the public vocabulary (`toolCallOrder: any|in-order|exact`,
+            `extraToolCalls`, `arguments`). Absent when the case sets none —
+            omitted from the response rather than sent as `null`.
+        checks:
+          type: object
+          description: >-
+            Absent when the case sets none — omitted from the response rather
+            than sent as `null`.
+          properties:
+            mode:
+              type: string
+              enum:
+                - inherit
+                - replace
+                - extend
+            list:
+              type: array
+              items:
+                $ref: '#/components/schemas/EvalAssertion'
+        import:
+          $ref: '#/components/schemas/EvalCaseImportClaim'
+        source:
+          $ref: '#/components/schemas/EvalCaseSource'
+        createdAt:
+          type:
+            - number
+            - 'null'
+        updatedAt:
+          type:
+            - number
+            - 'null'
+        suppressedSuiteStandardCheckIds:
+          $ref: '#/components/schemas/SuppressedSuiteStandardCheckIds'
+          type: array
+          items:
+            type: string
+    EvalTestStep:
+      type: object
+      description: >-
+        One authored test step (the unified test model). `kind` discriminates:
+        `prompt` is a user message (model turn); `toolCall` is a deterministic,
+        model-free tool call; `interact` is one pure widget action; `assert` is
+        an assertion (a `Predicate` like `toolCalledWith` / `widgetRendered`, or
+        a DOM `WidgetAssertion`).
+      required:
+        - id
+        - kind
+      properties:
+        id:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          enum:
+            - prompt
+            - toolCall
+            - interact
+            - assert
+        prompt:
+          type: string
+          description: 'User message (`kind: prompt`).'
+        serverName:
+          type: string
+          description: 'Server that owns the tool (`kind: toolCall`).'
+        toolName:
+          type: string
+          description: 'Tool name (`kind: toolCall` / `interact`).'
+        arguments:
+          type: object
+          description: 'Tool-call arguments (`kind: toolCall`).'
+          additionalProperties: true
+        action:
+          type: object
+          description: 'Widget action (`kind: interact`).'
+          additionalProperties: true
+        assertion:
+          type: object
+          description: >-
+            The rule an `assert` step checks (`kind: assert`). NOT a narrower
+            spelling of a case's `checks`: this is `WidgetAssertion |
+            Predicate`, and that union is why the field is called an assertion
+            rather than a check. A `Predicate` is evaluated against the
+            PERSISTED transcript, so a stored run can be re-graded against it
+            months later; a `WidgetAssertion` is evaluated against a LIVE DOM
+            and can never be replayed. Calling this a check would promise the
+            replayability only one half of it has.
+          additionalProperties: true
+      additionalProperties: true
+    RequestedModelSelection:
+      description: >-
+        What a store-once row holds as its ONLY copy of the model: a full
+        `ModelSelection` (`hosted` runs on MCPJam credits, `org` on an
+        organization connection, `local` on a key on the caller's machine) or a
+        STORED `LegacyModelSelection` (own key only). Wherever one sits beside a
+        model id (`modelId`, `model`), that id is COMPUTED from it on reads, and
+        accepted on writes as a shorthand the platform converts. A row with
+        neither is an unlabelled old row and runs exactly as it always has.
+      oneOf:
+        - $ref: '#/components/schemas/ModelSelection'
+        - $ref: '#/components/schemas/LegacyModelSelection'
+    EvalAssertion:
+      oneOf:
+        - type: object
+          properties:
+            type:
+              type: string
+              const: toolDescriptionsPresent
+            minLength:
+              type: integer
+              exclusiveMinimum: 0
+              maximum: 9007199254740991
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              const: toolAnnotationsPresent
+            require:
+              maxItems: 2
+              type: array
+              items:
+                type: string
+                enum:
+                  - readOnlyHint
+                  - destructiveHint
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              const: toolNamesUnique
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              const: noDeprecatedToolExposed
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn

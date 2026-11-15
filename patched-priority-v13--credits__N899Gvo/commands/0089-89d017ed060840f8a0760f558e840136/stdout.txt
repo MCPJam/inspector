@@ -1,0 +1,3 @@
+/workspace
+http://fixture:8765/api/v1
+MCPJAM_API_KEY_is_set

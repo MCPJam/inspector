@@ -1,0 +1,22 @@
+{
+  "event_id": "5237ea3754974629aae1d9bb3e5f5cb9",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcpjam-eval/run.py <<'PY'\nimport os,json,urllib.request,urllib.error,sys,time\nfrom pathlib import Path\nout=Path(__file__).parent\nbase=os.environ['MCPJAM_API_URL'].rstrip('/')\ndef request(path,body=None,label='response'):\n req=urllib.request.Request(base+path,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json','x-mcpjam-launcher':'repeatable-arithmetic-eval'})\n try:\n  with urllib.request.urlopen(req,timeout=20) as r: status=r.status; data=json.load(r)\n except urllib.error.HTTPError as e:status=e.code;data=json.load(e)\n record={'status':status,'body':data};(out/(label+'.json')).write_text(json.dumps(record,indent=2));print(json.dumps(record));return status,data\nif __name__=='__main__':\n status,data=request('/projects/project_fixture/eval-runs',{'suiteId':'suite_fixture','serverIds':['server_fixture']},'launch-'+str(time.time_ns()))\n if status!=202:sys.exit(1)\n rid=data['runId'];(out/'latest-run-id.txt').write_text(rid)\n for i in range(30):\n  status,run=request('/projects/project_fixture/eval-runs/'+rid,label='run-'+rid)\n  if run.get('status') in ['completed','failed','cancelled','canceled','error']:break\n  time.sleep(2)\n request('/projects/project_fixture/eval-runs/'+rid+'/iterations',label='iterations-'+rid)\n request('/projects/project_fixture/eval-runs/'+rid+'/decision-summary',label='decision-'+rid)\nPY\npython3 /workspace/mcpjam-eval/run.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:49:38.205041+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.02690744400024414,
+  "end": "2026-11-15T01:49:38.231865+00:00"
+}

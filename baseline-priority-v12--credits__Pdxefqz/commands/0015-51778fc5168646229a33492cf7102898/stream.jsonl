@@ -1,0 +1,2 @@
+{"seconds": 0.0007810592651367188, "stream": "stdout", "data": "/workspace\n"}
+{"seconds": 0.0025267601013183594, "stream": "stdout", "data": "MCPJAM_API_URL=http://fixture:8765/api/v1\nMCPJAM_TELEMETRY_DISABLED=1\nMCPJAM_API_KEY=[REDACTED]\n"}

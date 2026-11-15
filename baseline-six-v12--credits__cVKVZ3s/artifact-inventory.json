@@ -1,0 +1,74 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.control.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.control.json",
+    "sha256": "dd368d1a61417e9f8b7ff0b8eef0f1cb47b2563614dc99a09cdb6145fd48c477"
+  },
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "27e000bbc087227fb541b41e32c411b9b66d5ba4576504af9e94ee4aaf588e7b"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/orgs.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/orgs.json",
+    "sha256": "db8032ac20fc758e1ac93110f88ea09a8351b5953fdc5d0a6560cdfd1d4a4c86"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run_eval.sh",
+    "sha256": "7d8b99386dc88a477904547244de2541ede4a855da372029d8d96b76a28501e4"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run_create.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run_create.json",
+    "sha256": "e13909d1428d0546659da3ad3ee1abdf610ccf32f4c18040a01a71b3edefa45f"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/openapi.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/openapi.json",
+    "sha256": "53d45b9b1bf44189b5c9eded3d5600221298c49c9375f8d34fb76944235f7d28"
+  },
+  {
+    "source": "steps/resume/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/fixture/state.json",
+    "sha256": "f933a7e2e22257bb089841d17b16c570c4cb3ca95753e05ec0564b1ee1133983"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/orgs.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/orgs.json",
+    "sha256": "db8032ac20fc758e1ac93110f88ea09a8351b5953fdc5d0a6560cdfd1d4a4c86"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run_eval.sh",
+    "sha256": "7d8b99386dc88a477904547244de2541ede4a855da372029d8d96b76a28501e4"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run_create.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run_create.json",
+    "sha256": "51c9bc2954822c52ab8d3f9cb261d5f83836beb5ac19cde1b8f61b595f8b5d6e"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run_status.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run_status.json",
+    "sha256": "87e9ce18c5590264d8d43d895f8e7afeab59afb7f6a3c44187f45f94d23a645a"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/openapi.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/openapi.json",
+    "sha256": "53d45b9b1bf44189b5c9eded3d5600221298c49c9375f8d34fb76944235f7d28"
+  }
+]

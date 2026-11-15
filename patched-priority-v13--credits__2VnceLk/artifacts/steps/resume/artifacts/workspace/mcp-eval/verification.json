@@ -1,0 +1,10 @@
+{
+  "runs": [
+    "run_fixture_1",
+    "run_fixture_2"
+  ],
+  "passedCases": 2,
+  "totalCases": 2,
+  "matchingToolEvidence": true,
+  "scope": "simulated arithmetic smoke; no hosted model or live billing"
+}

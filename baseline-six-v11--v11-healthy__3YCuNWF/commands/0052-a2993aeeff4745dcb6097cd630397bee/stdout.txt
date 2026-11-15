@@ -1,0 +1,42 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"FEATURE_NOT_SUPPORTED","message":"Synthetic fixture executes deterministic toolCall steps and simple assertions only; hosted prompt/model execution is not implemented.","details":{"reason":"fixture_unsupported_execution"}}}
+205:        required: true
+211:              suiteName: smoke
+240:                suiteId: suite_def456
+268:      required: false
+296:      required: true
+303:      required: false
+324:      required: false
+355:        - required:
+357:        - required:
+365:        suiteId:
+379:            required:
+390:        suiteName:
+478:            - required:
+480:            - required:
+657:            required:
+674:      required:
+682:        suiteId:
+712:            required:
+763:      required:
+769:        - required:
+771:        - required:
+775:            required:
+779:            required:
+862:        iterations:
+902:      required:
+918:      required:
+958:      required:
+1022:          required:
+1046:          required:
+1062:          required:
+1078:          required:
+1094:          required:
+1110:          required:
+1134:              required:
+1149:          required:
+1170:          required:
+1190:          required:
+1212:          required:
+1232:          required:
+1254:          required:

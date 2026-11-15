@@ -1,0 +1,48 @@
+Usage: mcpjam cloud projects [options] [command]
+
+Operate the MCP servers saved in your hosted MCPJam projects
+
+Options:
+  -h, --help              display help for command
+
+Commands:
+  list [options]          List the projects you can access
+  create [options]        Create a hosted MCPJam project
+  update [options]        Update project metadata
+  delete [options]        Delete a project and its project-owned resources
+  capabilities [options]  Show what you may do in a project: your role, which
+                          betas the organization has, your plan's limits, and a
+                          can-block of booleans. Ask this before scripting
+                          anything that authors, launches or publishes.
+  servers [options]       List and manage the servers saved in a project
+  status [options]        Health-check every server in a project (hosted doctor
+                          per server)
+  help [command]          display help for command
+{"id":"user_fixture","email":"[EMAIL REDACTED]","name":"Fixture user","plan":"team","credential":"api-key"}
+Usage: mcpjam cloud projects servers [options] [command]
+
+List and manage the servers saved in a project
+
+Options:
+  --project <id-or-name>    Project name or ID (defaults to the most recently
+                            updated project)
+  -h, --help                display help for command
+
+Commands:
+  create|add [options]      Create a saved MCP server
+  get [options]             Get one saved MCP server
+  revisions [options]       List a saved server's stored revisions, newest
+                            first: captures of its tools and server info
+  revision [options]        Read one stored revision of a saved server: its
+                            tools and server info
+  revision-diff [options]   Compare two stored revisions of a saved server:
+                            tools added, removed and changed, and server info
+                            changes
+  update [options]          Update one saved MCP server
+  delete|remove [options]   Delete one saved MCP server
+  connect [options]         Connect an MCP server URL to a project, authorizing
+                            in a browser if needed
+  connect-status [options]  Check a connection request started by `server
+                            connect`
+  connect-cancel [options]  Cancel a pending connection request started by
+                            `server connect`

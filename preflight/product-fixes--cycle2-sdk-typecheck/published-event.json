@@ -1,0 +1,23 @@
+{
+  "id": "product-fixes:cycle2-sdk-typecheck",
+  "path": "product-fixes--cycle2-sdk-typecheck",
+  "argv": [
+    "npm",
+    "run",
+    "typecheck",
+    "-w",
+    "@mcpjam/sdk"
+  ],
+  "start": "2026-11-15T02:24:00.571796+00:00",
+  "end": "2026-11-15T02:24:10.121957+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

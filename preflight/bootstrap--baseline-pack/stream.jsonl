@@ -1,0 +1,6 @@
+{"seconds": 0.8131420612335205, "stream": "stderr", "data": "npm error code EPERM\n"}
+{"seconds": 0.8132681846618652, "stream": "stderr", "data": "npm error syscall open\n"}
+{"seconds": 0.8132760524749756, "stream": "stderr", "data": "npm error path $USER_HOME/.npm/_cacache/tmp/***\n"}
+{"seconds": 0.8133149147033691, "stream": "stderr", "data": "npm error errno -1\n"}
+{"seconds": 0.8134109973907471, "stream": "stderr", "data": "npm error\nnpm error Your cache folder contains root-owned files, due to a bug in previous versions of npm which has since been addressed.\nnpm error\nnpm error To permanently fix this problem, please run:\nnpm error   sudo chown -R 501:20 \"$USER_HOME/.npm\"\n"}
+{"seconds": 0.8141930103302002, "stream": "stderr", "data": "npm error Log files were not written due to an error writing to the directory: $USER_HOME/.npm/_logs\nnpm error You can rerun the command with `--loglevel=verbose` to see the logs in your terminal\n"}

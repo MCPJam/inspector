@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "id": "3262f9a1-a145-4c95-80fc-05ab73ed36b7",
+  "task_name": "mcpjam/credits",
+  "trial_name": "packaging-nop-credits-v13__snChW8G",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/packaging-nop-credits-v13/packaging-nop-credits-v13__snChW8G",
+  "task_id": {
+    "path": "work/tasks/packaging-nop-credits-v13"
+  },
+  "source": null,
+  "task_checksum": "8c67cdc43a8a5f6ac16468ead74107205389695e81ed7a71644bdc0d9183e9b4",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "work/tasks/packaging-nop-credits-v13",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "packaging-nop-credits-v13__snChW8G",
+    "trials_dir": "work/jobs/packaging-nop-credits-v13",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "nop",
+      "import_path": null,
+      "model_name": null,
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": false,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {},
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "41b7a96d-c643-4bff-a32a-d83d912a8e70",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "nop",
+    "version": "1.0.0",
+    "model_info": null
+  },
+  "agent_result": null,
+  "verifier_result": {
+    "rewards": {
+      "reward": 0.0
+    }
+  },
+  "verifier_environment_mode": null,
+  "exception_info": null,
+  "started_at": "2026-11-15T01:56:01.356379Z",
+  "finished_at": "2026-11-15T01:56:52.614558Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T01:56:01.394211Z",
+    "finished_at": "2026-11-15T01:56:04.472774Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-15T01:56:04.472904Z",
+    "finished_at": "2026-11-15T01:56:04.472964Z"
+  },
+  "agent_execution": null,
+  "verifier": null,
+  "step_results": [
+    {
+      "step_name": "blocked",
+      "agent_result": {
+        "n_input_tokens": null,
+        "n_cache_tokens": null,
+        "n_output_tokens": null,
+        "cost_usd": null,
+        "model_usage": null,
+        "rollout_details": null,
+        "metadata": null
+      },
+      "verifier_result": {
+        "rewards": {
+          "reward": 0.0
+        }
+      },
+      "exception_info": null,
+      "agent_execution": {
+        "started_at": "2026-11-15T01:56:04.646473Z",
+        "finished_at": "2026-11-15T01:56:04.647687Z"
+      },
+      "verifier": {
+        "started_at": "2026-11-15T01:56:05.492030Z",
+        "finished_at": "2026-11-15T01:56:18.194789Z"
+      }
+    },
+    {
+      "step_name": "resume",
+      "agent_result": {
+        "n_input_tokens": null,
+        "n_cache_tokens": null,
+        "n_output_tokens": null,
+        "cost_usd": null,
+        "model_usage": null,
+        "rollout_details": null,
+        "metadata": null
+      },
+      "verifier_result": {
+        "rewards": {
+          "reward": 0.0
+        }
+      },
+      "exception_info": null,
+      "agent_execution": {
+        "started_at": "2026-11-15T01:56:18.368278Z",
+        "finished_at": "2026-11-15T01:56:18.368596Z"
+      },
+      "verifier": {
+        "started_at": "2026-11-15T01:56:39.536274Z",
+        "finished_at": "2026-11-15T01:56:52.604275Z"
+      }
+    }
+  ],
+  "reward_valid": true
+}

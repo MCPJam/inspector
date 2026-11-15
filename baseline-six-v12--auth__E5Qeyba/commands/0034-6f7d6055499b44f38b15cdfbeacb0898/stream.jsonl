@@ -1,0 +1,3 @@
+{"seconds": 5.378420829772949, "stream": "stdout", "data": "negative: passed\n"}
+{"seconds": 6.63508152961731, "stream": "stdout", "data": "decimal: passed\n"}
+{"seconds": 8.850629329681396, "stream": "stdout", "data": "zero: passed\n"}

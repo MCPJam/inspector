@@ -1,0 +1,1559 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# CLI Overview
+
+> Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal
+
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths — see [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md).
+
+## Recommended: Use with Agent Skills
+
+The easiest way to use the CLI is through the [MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector), which gives your agent full context on every command and workflow.
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill mcp-inspector
+```
+
+To convert existing promptfoo, pytest, Jest, or CSV tests, use the [MCP eval import skill](https://github.com/MCPJam/inspector/tree/main/skills/mcpjam-eval-import).
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill mcpjam-eval-import
+```
+
+To drive MCPJam's hosted eval tools — launch a run, poll it to a verdict, and triage a failure down to the step — use the [run MCPJam evals skill](https://github.com/MCPJam/inspector/tree/main/skills/run-mcpjam-evals). This one is about running suites that already exist, not writing them.
+
+```bash theme={"theme":"css-variables"}
+npx skills add mcpjam/inspector --skill run-mcpjam-evals
+```
+
+Once installed, your agent will know how and when to invoke `mcpjam` commands automatically.
+
+## Install
+
+```bash theme={"theme":"css-variables"}
+# Global (gives you the mcpjam command)
+npm i -g @mcpjam/cli
+
+# Or run without installing
+npx -y @mcpjam/cli@latest --help
+```
+
+> [!NOTE]
+>
+> All examples in these docs use `mcpjam` directly. If you installed via `npx`,
+> replace `mcpjam` with `npx -y @mcpjam/cli@latest`.
+
+## Command groups
+
+### Local MCP testing
+
+These stay at the program root. They reject `--api-key` / `--api-url` / `--project` — except `test`, which accepts them only to reach MCPJam-hosted inference.
+
+| Group | Purpose | Key commands |
+| - | - | - |
+| [`test`](https://docs.mcpjam.com/cli/local-evals) | Run an eval suite file locally (BYOK or MCPJam-hosted inference); never uploads | `test <file>` |
+| [`server`](https://docs.mcpjam.com/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
+| [`tools`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
+| [`resources`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
+| [`prompts`](https://docs.mcpjam.com/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
+| [`subscriptions`](https://docs.mcpjam.com/cli/reference) | Open a long-lived MCP subscription and stream notifications | `listen` |
+| [`tasks`](https://docs.mcpjam.com/cli/tasks) | Drive MCP Tasks and validate the tasks wire | `list`, `get`, `cancel`, `conformance` |
+| [`events`](https://docs.mcpjam.com/cli/events) | List, poll, watch and subscribe to MCP Events (triggers), and check their conformance | `list`, `poll`, `watch`, `subscribe`, `unsubscribe`, `conformance` |
+| [`apps`](https://docs.mcpjam.com/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
+| [`oauth`](https://docs.mcpjam.com/cli/oauth-conformance) | Test OAuth flows and conformance against an MCP server | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
+| [`protocol`](https://docs.mcpjam.com/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
+| [`readiness`](https://docs.mcpjam.com/cli/reference#readiness-hosted-commands) | Grade a server against a publisher's directory. Hosted `start` / `status` / `list` / `cancel` / `report` stay here (leaf `--api-key`; no Cloud project link) | `check`, `start claude`, `start openai`, `start muse`, `status`, `list`, `cancel`, `report` |
+| [`xaa`](https://docs.mcpjam.com/cli/xaa) | Run the Cross-App Access (ID-JAG) debugger against an MCP server | `run` |
+| [`compat`](https://docs.mcpjam.com/cli/reference#compat-command) | Check whether a server's tools and widgets work on each AI host | `compat` |
+| [`inspector`](https://docs.mcpjam.com/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
+| [`mcp`](https://docs.mcpjam.com/cli/mcp-server) | Run MCPJam as a stdio MCP server for agents (Claude Desktop, Claude Code, Cursor, ...) | `mcp` |
+| [`telemetry`](https://docs.mcpjam.com/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
+
+### MCPJam Cloud
+
+Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (before or after descendants). `mcpjam oauth login` is MCP-server OAuth; `mcpjam cloud login` is your MCPJam account.
+
+| Group | Purpose | Key commands |
+| - | - | - |
+| [`cloud`](https://docs.mcpjam.com/cli/reference#cloud-workspace) | Account, project link, and workspace | `login`, `logout`, `whoami`, `link`, `status`, `organizations`, `projects`, `sessions` |
+| [`cloud eval`](https://docs.mcpjam.com/cli/reference#cloud-eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
+| [`cloud tunnel`](https://docs.mcpjam.com/cli/reference#cloud-tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel --server <name> <url>`, `tunnel --server <name> -- <command>` |
+| [`cloud clients`](https://docs.mcpjam.com/cli/reference#cloud-clients-commands) | Manage clients in your hosted MCPJam projects (`cloud hosts` is a deprecated alias) | `list`, `get`, `create`, `update`, `servers`, `duplicate`, `delete`, `templates` |
+| [`cloud environments`](https://docs.mcpjam.com/cli/reference#cloud-environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and goals run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
+| [`cloud images`](https://docs.mcpjam.com/cli/reference#cloud-images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
+| [`cloud skills`](https://docs.mcpjam.com/cli/reference#cloud-skills-commands) | List and read Cloud Skills in your hosted MCPJam projects — discover the skill IDs that `--compose-skill` and `--skill` require (read-only; authoring is in the app) | `list`, `get` |
+| [`cloud projects servers`](https://docs.mcpjam.com/cli/reference#cloud-projects-servers-commands) | Connect MCP servers to a project and manage pending connection requests | `connect`, `connect-status`, `connect-cancel` |
+
+Also under `mcpjam cloud`: `goals` (`journeys` is a deprecated alias), `personas`, `swarms`, and `studies` (which publishes an environment for outside testers and reads what they did; `scenarios` and `user-testing` are deprecated aliases for it). Full flag tables are in the [command reference](https://docs.mcpjam.com/cli/reference.md).
+
+## Cloud credentials and API URL
+
+`--api-key` and `--api-url` are declared on `mcpjam cloud` and work before or after descendants (`mcpjam cloud --api-key sk_… eval list` and `mcpjam cloud eval list --api-key sk_…` are the same). Local commands, including hosted `readiness`, reject those flags at the program root. Hosted `readiness` still takes leaf `--api-key`.
+
+Credential precedence for Cloud commands:
+
+1. `--api-key` — must be an `sk_` key. A `mcpjam_…` legacy key is a usage error.
+2. `MCPJAM_API_KEY` — same `sk_` rule. A legacy value in this env var is ignored (with a warning) so SDK eval reporting can still use it.
+3. Stored OAuth from `mcpjam cloud login`
+4. Missing — Cloud commands fail with login guidance before they hit the network (`mcpjam cloud status` reports `missing` instead)
+
+API URL precedence:
+
+1. `--api-url`
+2. `MCPJAM_API_URL`, or `MCPJAM_BASE_URL` (the same server without `/api/v1`)
+3. The server saved with the OAuth login (only when that login is the credential; a login saved before logins recorded their server counts as MCPJam Cloud, and one whose recorded server is not a usable address is refused with exit `3`)
+4. `https://app.mcpjam.com/api/v1`
+
+Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) decides its server when it starts, before it contacts anything. An explicit `--api-url`, `MCPJAM_API_URL` or `MCPJAM_BASE_URL` that is not an `http(s)` URL, or that carries credentials, a query or a fragment, is a usage error (exit `2`), and so are the two variables naming different servers. The error masks credentials, a query and a fragment, and does not repeat a value that is not a URL. A saved login is only sent to its own server: when it is the credential and the order picks another server, the command exits `3` before any request. `mcpjam cloud status` uses the same checks but stays network-free: it still emits the complete JSON report, sets `ok: false`, includes `credential.valid` / `deployment.valid` plus an `error` string, and exits `1`. Missing credentials are informational (`credential.valid: null`) and successful.
+
+Successful Cloud commands print an audience line to stderr (`Using MCPJam Cloud as … · project: … · <apiUrl>`). `--quiet` suppresses it. Machine-readable JSON stays on stdout. `cloud status` redacts API keys.
+
+## Cloud project scope
+
+Most Cloud commands pick one project:
+
+1. `--project <id-or-name>`
+2. An explicit `project` field in `--file` / `--json`
+3. `MCPJAM_PROJECT`
+4. The nearest valid `.mcpjam/project.json`
+5. Automatic — the most recently updated project you can see
+
+Empty `--project` or `MCPJAM_PROJECT` is a usage error. `MCPJAM_PROJECT_ID` does **not** select a Cloud CLI project (it is SDK eval reporting only).
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud login
+mcpjam cloud link                  # writes .mcpjam/project.json (no secrets)
+mcpjam cloud status                # zero-network: credential, deployment, selector
+mcpjam cloud eval list             # uses the link
+mcpjam cloud link --remove
+```
+
+`mcpjam cloud eval` run-inspection commands (`status`, `cancel`, `judge`, `iterations`, `gate`, `compare`, `trace`, `steps`, `screenshot`, `video`) follow the same rule — `--project` is optional. `mcpjam cloud sessions list` does too; `--all-projects` restores a cross-project listing and cannot be combined with `--project`. Hosted `readiness` never reads the project link.
+
+## What `--host` means
+
+`--host` is not one flag. The meaning depends on the command:
+
+| Where | What it selects |
+| - | - |
+| `server`, `tools`, `resources`, `prompts` | An **AI client** (`claude`, `chatgpt`, `cursor`, …). The CLI sends that host's `clientInfo`, capabilities, and protocol version in `initialize`. |
+| `test --host` | One host **template** to emulate for a local suite run: its handshake, tool visibility and model settings. Never the real client. |
+| `compat --host` | Which AI clients to report. Repeatable; default is all. |
+| `cloud eval --host`, `cloud goals`, `cloud studies` | A **saved project Host** (`<id-or-name>`), the client config an eval or goal run is stamped with. |
+| `cloud environments --host-id` | The project Host id the environment runs as. Distinct from eval's `--host`. |
+
+`--host` on a local command is mutually exclusive with `--client-capabilities`. A Cloud `--host` is mutually exclusive with `--server` / `--environment` when those already supply a closed server set.
+
+## Global flags
+
+These flags apply to every command. Cloud credentials `--api-key` / `--api-url` are declared on `mcpjam cloud`, not the program root.
+
+| Flag | Default | Description |
+| - | - | - |
+| `--timeout <ms>` | `30000` | Request timeout in milliseconds |
+| `--rpc` | off | Include raw JSON-RPC request/response logs in JSON output under `_rpcLogs` |
+| `--quiet` | off | Suppress non-result progress output on stderr |
+| `--no-telemetry` | off | Disable anonymous telemetry for this invocation |
+| `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
+| `-v, --version` | | Print the CLI version |
+
+## Output formats
+
+The CLI auto-detects whether stdout is a terminal:
+
+* **Interactive terminal** — defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
+* **Piped or redirected** (CI, `| jq`, agent invocation) — defaults to `--format json`, the full structured result.
+* **Conformance in CI** — `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` support `--reporter junit-xml` and `--reporter json-summary`.
+* **Explicit `--format`** always wins over the auto-detected default.
+
+**For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, pass `--quiet --format json`.
+
+JSON-valued flags accept inline JSON, `@path`, or `-` for stdin. `tools call` also accepts `--tool-args-stdin` as a shorthand for `--tool-args -`. Use files or stdin for large payloads to avoid shell escaping issues:
+
+```bash theme={"theme":"css-variables"}
+echo '{"key":"value"}' | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name my_tool --tool-args - --quiet --format json
+```
+
+## Connecting to servers
+
+The CLI supports two transport modes, selected by which flags you pass:
+
+* `--url ...` selects HTTP.
+* `--command ...` selects stdio.
+* `--transport http|stdio` is optional and acts as an explicit override/validator when you want the CLI to reject mismatched flags early.
+
+### HTTP (Streamable HTTP / SSE)
+
+```bash theme={"theme":"css-variables"}
+mcpjam server doctor --url https://your-server.com/mcp
+```
+
+Add auth when needed:
+
+```bash theme={"theme":"css-variables"}
+# Static bearer token
+mcpjam server doctor --url https://your-server.com/mcp --access-token $TOKEN
+
+# OAuth tokens from a prior login
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token $TOKEN
+
+# Custom headers
+mcpjam server doctor --url https://your-server.com/mcp --header "X-API-Key: $KEY"
+```
+
+### Stdio (local subprocess)
+
+```bash theme={"theme":"css-variables"}
+mcpjam server doctor --command node --args server.js --cwd /path/to/project -e API_KEY=[REDACTED]
+```
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones for the spawned server.
+Structured debug artifacts only record the explicit env keys you pass through
+`-e/--env`; inherited shell variables are not enumerated.
+
+> [!NOTE]
+>
+> `oauth ...` and `protocol ...` are HTTP-only command groups. They do
+> not accept stdio targets.
+
+## Update notifications
+
+After a successful command, the CLI checks whether a newer version of `@mcpjam/cli` is available and prints a notice to stderr when one is found:
+
+```
+Update available: @mcpjam/cli 1.2.0 -> 1.3.0
+Run npm install -g @mcpjam/cli to update
+```
+
+The check is non-blocking: version data is fetched in a detached background process and cached locally for 24 hours, so it never slows down your commands. The notice is written to stderr only and never touches stdout or JSON output, so it is safe for both interactive terminals and AI agents (Claude Code, Cursor, etc.) that capture stderr. It is suppressed automatically in CI.
+
+To opt out, set one of these environment variables before running any command:
+
+| Variable | Effect |
+| - | - |
+| `MCPJAM_NO_UPDATE_CHECK=1` | Disable update checks for `@mcpjam/cli` |
+| `NO_UPDATE_NOTIFIER=1` | Disable update checks (conventional npm opt-out) |
+| `CI=true` | Automatically suppressed in CI environments |
+
+## Exit codes
+
+| Code | Meaning |
+| - | - |
+| `0` | Success / all checks passed |
+| `1` | Command ran but reported a failure (e.g., server unhealthy, conformance failed) |
+| `2` | Invalid arguments or configuration |
+
+## Quick triage workflow
+
+The fastest path from "I have a server URL" to "I know what's wrong":
+
+```bash theme={"theme":"css-variables"}
+# 1. One-shot health check (probe + connect + sweep)
+mcpjam server doctor --url https://your-server.com/mcp
+
+# 2. If oauth_required: get a token
+mcpjam oauth login --url https://your-server.com/mcp \
+  --protocol-version 2025-11-25 --registration dcr
+
+# 3. Re-run doctor with the token
+mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token $TOKEN
+
+# 4. Exercise tools directly
+mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name my_tool --tool-args @params.json --quiet --format json
+
+# 5. If the server exposes MCP Apps, validate the ui:// surface
+mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
+
+# 6. Render one UI-capable tool result in Inspector's App Builder.
+# --ui opens Inspector by default in a TTY; add --no-open if browser automation already opened it.
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name my_app_tool --tool-args @params.json --ui --quiet --format json
+```
+
+## Use from an MCP client instead of a shell
+
+If your agent speaks MCP but can't run shell commands (Claude Desktop, chat clients), run the same testing engine as a stdio MCP server:
+
+```bash theme={"theme":"css-variables"}
+npx -y @mcpjam/cli@latest mcp
+```
+
+Connections to servers under test stay open between tool calls, so agents can also observe notifications and session behavior that one-shot CLI commands can't. See [MCPJam as an MCP server](https://docs.mcpjam.com/cli/mcp-server.md).
+
+## What's next
+
+* [MCPJam as an MCP server](https://docs.mcpjam.com/cli/mcp-server.md) — give MCP clients the testing engine over stdio
+* [Server inspection](https://docs.mcpjam.com/cli/server-inspection.md) — probe, doctor, and diagnostics
+* [OAuth conformance](https://docs.mcpjam.com/cli/oauth-conformance.md) — test your OAuth implementation
+* [OAuth login](https://docs.mcpjam.com/cli/oauth-login.md) — authenticate and debug OAuth flows
+* [MCP Apps conformance](https://docs.mcpjam.com/cli/apps-conformance.md) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
+* [Tools, resources & prompts](https://docs.mcpjam.com/cli/tools-resources-prompts.md) — exercise the connected surface
+* [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md) — command-path and flag changes under `mcpjam cloud`
+* [Full command reference](https://docs.mcpjam.com/cli/reference.md) — every flag for every command
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# MCPJam API
+
+> Programmatic access to the MCP servers in your MCPJam projects — diagnostics, tool calls, prompt rendering, and asynchronous eval runs.
+
+> [!WARNING]
+>
+> **The MCPJam API is in preview.** It works today and we use it ourselves, but
+> it has not been generally announced and the surface may change — including in
+> breaking ways — while we finish the design. Pin your integration to the
+> behaviors documented on this page, build a [tolerant
+> reader](#versioning--stability), and expect to revisit it. Feedback is very
+> welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
+> [GitHub](https://github.com/MCPJam/inspector/issues).
+
+> [card] [Create an API key](https://app.mcpjam.com/settings/api-keys)
+>
+> Go straight to key management in the hosted app. If you're signed out,
+> you'll be asked to sign in and then land right back on the API keys page.
+
+The MCPJam API lets you operate the MCP servers saved in your
+[hosted](https://docs.mcpjam.com/hosted/overview.md) projects — from CI, scripts, or your own agents —
+without opening the UI.
+
+What you can do with it today:
+
+* **Discover your resources** — list your projects, their servers, eval
+  suites, and chat sessions, so every ID the other routes need is
+  self-serve
+* **Validate a server** — connect, initialize, and capture a capability snapshot
+* **Run the doctor** — the probe → connect → initialize → capabilities workflow
+* **Check OAuth requirements** — does this server need an OAuth grant?
+* **List tools, prompts, and resources** — the server's MCP primitives
+* **Call a tool / render a prompt** — execute primitives and get the MCP result back verbatim
+* **Read a resource** by URI
+* **Export a full snapshot** — tools, resources, and prompts as one JSON document
+* **Manage a project's clients** — list, read, **create** (from a built-in
+  template like `claude`/`chatgpt`/`cursor`, or from a full config), edit,
+  duplicate, and delete the named, reusable configurations that define how
+  MCPJam connects to and talks to your MCP servers. Edits are compare-and-set:
+  read the client, then send its `configId` back as `expectedConfigId` for a
+  config change and its `name` back as `expectedName` for a rename — a rename
+  does not rotate the config, so the config token cannot detect a concurrent
+  one — and a concurrent edit is rejected rather than silently reverted
+* **Manage a project's environments** — list, read, create, edit, archive, and
+  restore the named execution bundles (host + optional server group + optional
+  pinned skills and plugin versions) that eval suites and goals run against,
+  and **preview** what one resolves to before launching it
+* **List a project's studies** — name, access mode, attached servers, and
+  share link — and **read one study's settings**: model, system prompt,
+  tool-approval policy, and resolved servers
+* **Author eval suites** — create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+* **Run eval suites asynchronously** — create a run from a saved suite, get a `202` + `runId`
+  immediately, then poll status, per-iteration results (tool calls, token
+  usage, latency), and full traces. Runs appear live in the hosted UI,
+  tagged `source: "api"`
+* **Manage a server's accounts** — complete OAuth yourself (e.g. the SDK's
+  `runOAuthLogin`, or your CI's own sign-in) and upload the token to a named
+  account; list, rename, choose the default, and delete accounts. Tokens are
+  write-only: no route returns one
+* **Run a headless agent turn** — send a message history, get back the
+  assistant reply, the platform operations it invoked, references to any
+  resources it created (eval suites), and token usage; the model is pinned
+  server-side and billed to the project
+* **Send feedback** — report a bug, a missing capability, or something
+  confusing to the MCPJam team at the moment you hit it; the same endpoint the
+  `send_feedback` MCP tool calls
+
+All endpoints operate on servers you have already added to a project in the
+hosted inspector. Managing API keys remains UI-only — see
+[Not in the API yet](#not-in-the-api-yet).
+
+## Base URL
+
+```text theme={"theme":"css-variables"}
+https://app.mcpjam.com/api/v1
+```
+
+The API is path-versioned. All routes on this page are relative to the base
+URL above.
+
+## Authentication
+
+Every request needs an MCPJam API key in the `Authorization` header:
+
+```bash theme={"theme":"css-variables"}
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/tools" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### Creating a key
+
+1. Open [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys)
+   in the hosted app (the card at the top of this page takes you there
+   directly).
+2. Click **Create API key**, name it, and pick the **organization** it will act in.
+3. Copy the key (`sk_…`) immediately — **it is shown exactly once** and never
+   stored by MCPJam in retrievable form.
+
+Keys can be revoked from the same page at any time. Revocation takes effect
+immediately.
+
+### Scope
+
+A key is bound to one MCPJam organization at creation and acts **as you,
+inside that organization**. Per-request authorization still applies: a call
+only succeeds if the key's owner can access that project and server. A key
+can never reach projects outside its organization.
+
+> [!NOTE]
+>
+> Two deliberate restrictions while in preview:
+>
+> * **API keys cannot manage API keys.** Requests to the key-management surface
+>   with an `sk_…` bearer fail with `403 FORBIDDEN`. Create and revoke keys in
+>   the UI.
+> * **Guest sessions cannot use the API.** Sign in to create keys.
+
+### Keep keys secret
+
+Treat an API key like a password:
+
+* Load it from an environment variable or secret manager — never commit it to
+  source control or ship it in client-side code.
+* Scope keys narrowly: one key per integration, named so you can tell them apart.
+* Rotate by creating a replacement key, switching traffic, then revoking the old one.
+* If a key leaks, revoke it immediately in
+  [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys).
+
+If you see `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"`, the key
+is no longer bound to an organization and cannot be used — create a new key
+from [Settings](https://app.mcpjam.com/settings/api-keys).
+
+## Conventions
+
+**Requests.** Operations on servers are `POST` with a JSON body (most accept
+an empty `{}`). **Reads** — the catalog listings and eval-run polling — are
+`GET` and take their options (`cursor`, `limit`, filters) as query
+parameters.
+
+**Responses.** Three envelope shapes, used consistently:
+
+| Kind | Shape |
+| - | - |
+| Single resource | The resource object directly |
+| Collection | `{ "items": [...], "nextCursor": "..." }` — `nextCursor` omitted on the last page |
+| Error | `{ "code": "...", "message": "...", "details": {...} }` with a matching HTTP status |
+
+**Pagination.** Collections are cursor-based. Pass the previous response's
+`nextCursor` as `cursor` in the next request (body field on `POST` lists,
+query parameter on `GET` lists). Cursors are opaque — don't parse them.
+
+**Authoring vs running suites.** `POST /eval-suites` creates a runnable suite
+(the suite plus its test cases) **synchronously** and responds `201` with the
+`suiteId`, WITHOUT running anything — author once, run later. `POST /eval-runs`
+is the async counterpart: it validates and creates a run synchronously, then
+detaches execution and responds `202` with a `runId`. Poll
+`GET /eval-runs/{runId}` until `status` is `completed`, `failed`,
+`cancelled`, or `timed_out`.
+
+**IDs.** Every identifier the API takes is discoverable through the API
+itself: `GET /projects` lists your projects, `GET /projects/{projectId}/servers`
+lists each project's servers, and `GET /projects/{projectId}/eval-suites`
+lists its eval suites. Start from `GET /me` to confirm which account a key
+acts as.
+
+## Errors
+
+Errors always use the canonical body `{ code, message, details? }`. The `code`
+is stable and machine-readable; `message` is human-readable and may change;
+`details` is an optional, unstructured bag.
+
+| Code | HTTP | Meaning |
+| - | - | - |
+| `UNAUTHORIZED` | 401 | Missing, invalid, revoked, or orphaned key |
+| `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant — distinct from a bad key |
+| `AUTH_REQUIRED` | 403 | The **target MCP server** allowed the connection and asked for sign-in on this call. `details.authChallenge` carries the parsed challenge. Your key is fine — see [Sign-in challenges](#sign-in-challenges) |
+| `FORBIDDEN` | 403 | Key is valid but not allowed to do this — or the **target MCP server** rejected the credentials MCPJam presented (retrying with a different MCPJam key will not help; reconnect or re-authorize the server) |
+| `VALIDATION_ERROR` | 400 | Malformed body or parameters |
+| `NOT_FOUND` | 404 | Unknown project, server, or resource |
+| `CONFLICT` | 409 | The resource isn't in a state that accepts this write — a stale `expectedRevision`, a duplicate name, or an environment that can't currently be launched. Re-read and retry |
+| `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
+| `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
+| `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
+| `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
+| `INTERNAL_ERROR` | 500 | Something failed on our side |
+
+New error codes may be **added** over time; treat unknown codes as
+non-retryable failures unless the HTTP status says otherwise.
+
+### Sign-in challenges
+
+Some MCP servers allow the connection and ask for sign-in only on a protected
+call. The API never starts a sign-in. It reports the challenge instead:
+
+* **HTTP 401 from the MCP server** on `tools/call`: the API answers
+  `403 AUTH_REQUIRED`. `details.authChallenge` carries the parsed challenge:
+  its `source` (`http_401`), and the `error`, `requiredScope`, and
+  `resourceMetadataUrl` the server sent, when present.
+* **An `isError` result carrying `_meta["mcp/www_authenticate"]`** (the
+  ChatGPT convention): the call succeeds, and the `CallToolResult` is returned
+  unchanged with an additive `authChallenge` field (`source:
+  "tool_result_meta"`). A field the server already set under that name is never
+  overwritten.
+
+`AUTH_REQUIRED` is not `UNAUTHORIZED`: your MCPJam key is fine, so a different
+key will not help. Complete the OAuth flow for that server yourself, upload the
+token to one of its [accounts](#server-accounts), and call again. See
+[Mid-session sign-in](https://docs.mcpjam.com/inspector/lazy-authentication.md).
+
+## Rate limits
+
+Each key gets **60 requests per minute** sustained, with bursts up to **10**.
+Exceeding it returns `429 RATE_LIMITED` with a `Retry-After` header (in
+seconds):
+
+```http theme={"theme":"css-variables"}
+HTTP/1.1 429 Too Many Requests
+Retry-After: 7
+
+{ "code": "RATE_LIMITED", "message": "API key rate limit exceeded. Slow down and retry." }
+```
+
+Honor `Retry-After`, add jittered exponential backoff, and expect these limits
+to be tuned during the preview.
+
+Other `429`s — the per-minute brakes and daily budgets described with the
+endpoints below — carry `Retry-After` whenever the refusal knows when it
+lifts, which is the ordinary case. Treat it as a hint that is usually there
+rather than a guarantee: a refusal that reaches you without one still needs
+your backoff, so **never** block waiting for a header that may not come.
+
+## Endpoints
+
+Each endpoint is fully documented — request and response schemas, examples,
+and an interactive playground — under **Endpoints** in the sidebar.
+
+**Catalog** — discover the IDs everything else takes:
+
+| Endpoint | What it does |
+| - | - |
+| `GET /me` | The account behind the key |
+| `GET /organizations` | The organizations the caller belongs to — where `organizationId` comes from. A key is bound to one organization and only ever sees that one |
+| `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
+| `GET /projects/{projectId}/servers` | The project's saved MCP servers |
+| `GET /projects/{projectId}/servers/{serverId}/revisions` | A server's stored revisions, newest first: captures of its tools and server info, recorded whenever they change (`?limit=&cursor=`) |
+| `GET /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}` | One revision: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent |
+| `GET /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff` | What changed since the revision before, or since `?from=`: tools added, removed and changed, and server info changes with both values. A field listed in `droppedFields.from` or `droppedFields.to` was not stored on that side, so a change to it is unknown |
+| `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |
+| `GET`, `POST /projects/{projectId}/clients` | List clients, or create one from a template or full config |
+| `GET`, `PATCH`, `DELETE /projects/{projectId}/clients/{client}` | Read, edit, or delete a client. The path segment takes a client **name or ID** |
+| `POST /projects/{projectId}/clients/{client}/servers` | Replace the client's server attachments (a replacement — omitted servers are detached) |
+| `POST /projects/{projectId}/clients/{client}/duplicate` | Copy a client's current config into a new client |
+| `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
+
+**Project environments** — the named execution bundles (one host, optionally a
+standalone server group, optionally pinned skills and plugin versions) that eval
+suites and goals run against. Reads need project membership; **every write
+needs project admin**. Writes are revisioned: pass the `revision` you last read
+back as `expectedRevision`, and a stale value returns `CONFLICT` (409) instead
+of overwriting a concurrent edit.
+
+| Endpoint | What it does |
+| - | - |
+| `GET`, `POST /projects/{projectId}/environments` | List environments (`?includeArchived=true` to include archived ones), or create one |
+| `GET`, `PATCH /projects/{projectId}/environments/{environmentId}` | Read one environment, or edit it (send `null` to clear `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`) |
+| `GET /projects/{projectId}/environments/{environmentId}/resolve` | Preview the host config, closed server set, and pinned plugin versions this environment resolves to right now |
+| `POST /projects/{projectId}/environments/{environmentId}/archive` | Archive it — reversible, and frees the name for a new one |
+| `POST /projects/{projectId}/environments/{environmentId}/restore` | Restore an archived environment |
+
+Archive and restore are explicit sub-actions rather than a `DELETE` because the
+row is kept and restore has real semantics: it re-checks the name and drops
+plugin pins whose version no longer exists.
+
+**Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
+
+| Endpoint | What it does |
+| - | - |
+| `POST .../validate` | Connect, initialize, and capture a capability snapshot |
+| `POST .../doctor` | Full health workflow: probe → connect → initialize → capabilities |
+| `POST .../check-oauth` | Does this server require an OAuth grant? |
+| `POST .../tools` | List the server's tools |
+| `POST .../tools/call` | Execute a tool; returns the MCP `CallToolResult` plus additive `durationMs`, and `authChallenge` when the result asks for sign-in (see [Sign-in challenges](#sign-in-challenges)) |
+| `POST .../prompts` | List the server's prompts |
+| `POST .../prompts/get` | Render a prompt; returns the MCP `GetPromptResult` verbatim |
+| `POST .../resources` | List the server's resources |
+| `POST .../resources/read` | Read one resource by URI |
+| `POST .../export` | One JSON snapshot of tools, resources, and prompts |
+| `GET`, `PUT`, `PATCH`, `DELETE .../accounts[/{account}]` | The server's accounts. See [Server accounts](#server-accounts) |
+| `POST .../oauth/import-tokens` | **Deprecated.** Uploads to your default account; use `PUT .../accounts/{account}`. See [The deprecated import route](#the-deprecated-import-route) |
+
+**Eval runs** (`/projects/{projectId}/...`):
+
+| Endpoint | What it does |
+| - | - |
+| `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert); per-test `model`/`provider`/`runs` are optional and fall back to suite defaults |
+| `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional — defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite). `environmentId` (requires `suiteId`) runs against one of the suite's attached environments instead. Responds `202` + `runId` |
+| `PATCH .../eval-suites/{suiteId}` | Edit suite settings, including `environmentIds` — the project environments the suite runs against (non-empty array sets/replaces, `null` clears) |
+| `PATCH .../eval-suites/{suiteId}/schedule` | Enable/disable scheduled runs; `environmentId` pins which environment they launch |
+| `GET .../eval-runs/{runId}` | Run status, result, and summary — poll until terminal. Carries `gateWaiver`: the audited override in force over this run's gate, or `null` |
+| `GET .../eval-runs/{runId}/gate` | The stored suite quality-gate report for this run (`passed` / `failed` / `non_gateable` / `not_configured`). `not_configured` is a 200 report, never a missing route. A deployment that predates the evaluator answers `422 FEATURE_NOT_SUPPORTED` |
+| `GET .../eval-runs/{runId}/decision-summary` | **Start here when a run did not pass.** The canonical run decision contract: the verdict and where it came from, counts labelled with the population they count, the run's own verdict decision, and per-trial diagnostics with the user-value chain, the first failed stage, the failure category, evidence scoped to that stage, and one next action (paginated) |
+| `POST .../eval-runs/{runId}/gate-waivers` | Override a **failing** run's release gate until `expiresAt` (required, future, max 30 days out), with a `reason` (required, max 500 chars). Manage tier. Does NOT change the run's `result` — the run keeps its verdict and the waiver is reported alongside it. `409` when one is already in force, returning the existing waiver |
+| `GET .../eval-runs/{runId}/gate-waivers` | The waiver in force over a run, or `null`. Readable by anyone who can view the run |
+| `DELETE .../eval-runs/{runId}/gate-waivers/{waiverId}` | Revoke a waiver, putting the gate back. Idempotent — a second call reports the original revocation rather than restamping it |
+| `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
+| `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
+| `GET .../eval-suites/{suiteId}/runs` | Recent runs for a suite, newest first |
+
+**Eval result ingestion** (`/projects/{projectId}/eval-ingest/...`) — how `@mcpjam/sdk` saves results from eval runs executed outside the platform (local dev, CI). The `{projectId}` segment accepts the literal `default` for the key org's Default project. Most users never call these directly — set `MCPJAM_API_KEY` and the [SDK reporter](https://docs.mcpjam.com/sdk/concepts/saving-results.md) does:
+
+| Endpoint | What it does |
+| - | - |
+| `POST .../eval-ingest/report` | One-shot: create a run from finished results and finalize it |
+| `POST .../eval-ingest/runs/start` | Chunked flow: create (or idempotently reuse) a run by `externalRunId` |
+| `POST .../eval-ingest/runs/iterations` | Append an iteration batch to a started run |
+| `POST .../eval-ingest/runs/finalize` | Finalize a chunked run (idempotent) |
+| `POST .../eval-ingest/artifacts` | Store one artifact's raw bytes (widget HTML too large to send inline) and return its `storageId` |
+| `POST .../eval-ingest/artifacts/upload-url` | Retired. Answers `410 Gone` with `details.code: "SDK_UPGRADE_REQUIRED"`. `@mcpjam/sdk` 8.17.0 and later upload artifacts with `POST .../eval-ingest/artifacts` instead |
+
+**Agent** (`/projects/{projectId}/agent`) — a headless assistant turn for
+building conversational surfaces (the MCPJam Slack app is the first consumer):
+
+| Endpoint | What it does |
+| - | - |
+| `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and billed to the project. The turn can read project servers/suites/runs and **create eval suites**; it can NOT start runs — kick those off yourself with `POST .../eval-runs`. Responds synchronously with `reply`, the `toolCalls` it made, `createdResources` (ids + app links), and token `usage`. Capped at 4 concurrent turns per organization and \~90 s wall clock. **Not idempotent — never blind-retry**: dedupe on your own trigger identity, and on an error response check `details.createdResources` (and, after a lost response, list suites) before retrying, or you'll create duplicates |
+
+**Studies** (`/projects/{projectId}/studies...`):
+
+| Endpoint | What it does |
+| - | - |
+| `GET .../studies` | List the project's published studies: name, access mode, attached servers, share link |
+| `GET .../studies/{studyId}` | One study's full read: model, system prompt, tool-approval policy, resolved servers, the environment it publishes, and its insights envelope. The last two need workspace membership and are **absent** for a share-link visitor, never null |
+
+> [!NOTE]
+>
+> **Swarms and User Testing are enabled per organization.** Everything in the
+> four sections below is behind that gate, enforced server-side. If it is not
+> on for your organization, the reads generally return empty and every **write**
+> — creating a persona or goal, launching a run, publishing a study,
+> requesting insights — answers `403` with a message naming the feature, not a
+> `404` and not a validation error.
+>
+> Five operations are deliberately outside the gate, because every one of them
+> *reduces* exposure and spend: cancelling a goal run, unpublishing a
+> study, and archiving a persona, goal or swarm (each one's `DELETE`). An
+> organization that loses access can still stop what is running and clean up
+> what it authored.
+>
+> Ask us on [Discord](https://discord.gg/JEnDtz8X6z) if you want it turned on.
+
+**Swarms — authoring** (`/projects/{projectId}/personas...`, `.../goals...`,
+`.../swarms...`) — the definitions a swarm run executes. A **persona** is a
+reusable synthetic character; a **goal** is the task you point one at; a
+**swarm** is an authoring container holding defaults for the goals made
+under it. Nothing here starts anything — launching is
+`POST .../goals/{goalId}/runs`.
+
+| Endpoint | What it does |
+| - | - |
+| `GET .../personas` | List the project's personas |
+| `POST .../personas` | Create a persona (accepts `Idempotency-Key`) |
+| `GET .../personas/{personaId}` | One persona |
+| `PATCH .../personas/{personaId}` | Update a persona. Goals reference it by id, so renaming is safe |
+| `DELETE .../personas/{personaId}` | Delete a persona. **409** while goals still reference it |
+| `GET .../goals` | List the project's goals |
+| `POST .../goals` | Create a goal (accepts `Idempotency-Key`). `personaId` and `swarmId` must be in this project |
+| `GET .../goals/{goalId}` | One goal |
+| `PATCH .../goals/{goalId}` | Update a goal. `null` CLEARS `environmentIds`; `iterations` and `maxTurns` must be sent together |
+| `DELETE .../goals/{goalId}` | **Archive** a goal — existing runs keep pointing at the definition they executed |
+| `GET .../swarms` | List swarm containers |
+| `POST .../swarms` | Create a swarm container (accepts `Idempotency-Key`) |
+| `GET .../swarms/{swarmId}` | One swarm |
+| `PATCH .../swarms/{swarmId}` | Update the container's defaults. Not a cascade — existing goals keep their own values |
+| `DELETE .../swarms/{swarmId}` | **Archive** a swarm. The goals under it stay launchable |
+
+**Swarms — generation** — drafts a model writes for you. Both routes return
+candidates and **persist nothing**: feed what you want to keep to the create
+routes above. That is also why neither accepts an `Idempotency-Key` — a call
+with no effect has nothing to de-duplicate, and offering one would imply the
+drafts are stable across retries when they are not.
+
+| Endpoint | What it does |
+| - | - |
+| `POST .../personas/generate` | Draft a slate of personas (and goals for each) grounded in a server attachment or an environment |
+| `POST .../goals/generate` | Draft goals for a persona passed **by value**, so you can draft before you save |
+
+> [!WARNING]
+>
+> The generation routes consume **no customer credits** — the model cost is on
+> MCPJam. They are still subject to usage limits, and each limit means a
+> different wait: a per-minute burst brake (`429`, retry in seconds), your
+> organization's daily generation quota (`429`, resets at UTC midnight), and
+> MCPJam's own daily budget for the feature (`429` with
+> `details.code: "platform_capacity"`, resets at UTC midnight). All three carry
+> `Retry-After` — honor it rather than guessing. `details.canTopUp` is `false`
+> on every one: buying credits does not lift them, so do not retry in a loop
+> or switch identities to get around them.
+
+**Swarms — runs** (`/projects/{projectId}/goals/{goalId}/runs`,
+`.../goal-runs/...`) — launching a goal and reading what it produced:
+
+| Endpoint | What it does |
+| - | - |
+| `GET .../goals/{goalId}/runs` | That goal's runs, newest first |
+| `POST .../goals/{goalId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key`. Optional `expectedSponsored` is how many conversations you expect MCPJam to sponsor; a different actual split is a `409` (`details.code: swarm_funding_changed`) and nothing is created. The response can report `funding` (`sponsored`, `credits`, `total`) |
+| `GET .../goal-runs/{runId}` | The full run: counts, per-target breakdown, per-session `attempts` |
+| `GET .../goal-runs/{runId}/sessions` | The chat sessions the run produced (summaries, not transcripts) |
+| `POST .../goal-runs/{runId}/cancel` | Stop a run. Idempotent — a second cancel is `200` with `alreadyCanceled: true`, not a `409` |
+
+Three things worth knowing before you write the client:
+
+* **Always send `Idempotency-Key` on a launch.** It spends model credits, so a
+  retry of a dropped response must not run the goal twice. Replaying a key
+  returns the original run with `deduped: true` and starts no second runner —
+  and consumes no quota. Omitting the header is read as a request that declined
+  to identify itself, and gets a fresh run every time.
+* **Check `canceled` before reporting a failure.** A stopped run carries
+  `status: "failed"`, because cancellation is recorded as a marker rather than
+  a status of its own. `stale: true` is the third case: the runner went silent
+  and the watchdog settled the run.
+* **`targetId`, not `hostId`, identifies a target.** Two environments can
+  resolve to the same host with different servers, so a run can hold two
+  targets that share a `hostId`.
+
+> [!WARNING]
+>
+> Launching **spends**: a run fans out into `targets × iterations`
+> sessions. Two different `429`s can come back — the per-minute burst brake
+> (retry in seconds) and your plan's daily launch cap (resets at UTC midnight).
+> Both normally carry `Retry-After`; back off on your own when one does not.
+
+**Swarms — insights** — what a run revealed. Read these in order of cost: the
+roll-up and the scorecard are deterministic and free, the findings registry
+aggregates them, and swarm run insights run a model.
+
+| Endpoint | What it does |
+| - | - |
+| `GET .../goals-overview` | Project roll-up: recent runs, goal-completion rates, repeat failures, trend |
+| `GET .../goal-runs/{runId}/scorecard` | One run's deterministic rubric result. No model, no spend |
+| `GET .../goal-findings` | Criteria that keep failing, tracked across swarm runs |
+| `POST .../goal-findings/{findingId}/dismiss` | Hide a finding |
+| `POST .../goal-findings/{findingId}/undismiss` | Un-hide it |
+| `GET .../swarm-runs/{swarmRunId}/insights` | Poll a swarm run's generated insights. **404 = nobody asked** |
+| `POST .../swarm-runs/{swarmRunId}/insights` | Request them. `202` — scheduled, not done |
+| `DELETE .../swarm-runs/{swarmRunId}/insights` | Cancel a generation still `pending` |
+
+Two arithmetic traps worth naming, because both produce numbers that look
+plausible and are wrong:
+
+* **Divide by `sessionsGraded`, never by the session total.** Three failures
+  out of four graded sessions, in a run that attempted forty, is 75% — not
+  7.5%.
+* **`failedGradingCount` is not `failCount`.** A crashed judge is not a
+  regression, and folding the two together makes one look like the other.
+
+And one modelling note: a finding's `status` is a lifecycle —
+`new | recurring | regressed | resolved`. `dismissed` is *not* one of them.
+Dismissal is the orthogonal `dismissedAt`, so a finding can be both recurring
+and dismissed, and hiding one never claims it stopped happening.
+
+> [!WARNING]
+>
+> Requesting swarm run insights consumes **no credits** — the model cost is on
+> MCPJam. It still counts against the `insightsPerDay` ledger, which counts
+> REQUESTS and is **shared** with eval-run and user-testing insights, so a
+> request here takes one from there too. Poll the `GET` rather than
+> re-requesting; `force: true` deliberately takes a second slice.
+>
+> Three refusals, three different meanings: a short `429` is the per-minute
+> brake (wait seconds), a `429` naming `insightsPerDay` is the daily ledger
+> (its `Retry-After`, when present, counts to UTC midnight), and a `403` means
+> the feature is not available to your organization — waiting will never help.
+
+**User testing** (`/projects/{projectId}/environments/{environmentId}/study`,
+`.../studies/...`) — publishing an environment for real visitors, reading what
+they did, and controlling who can reach it. A **study** is a published
+environment: one per environment, addressed by its own id once it exists.
+
+| Endpoint | What it does |
+| - | - |
+| `PUT .../environments/{environmentId}/study` | **Publish.** Idempotent — republishing returns the existing study, and `created: false` says so. Project **admin** |
+| `DELETE .../environments/{environmentId}/study` | **Unpublish.** The link dies and live sessions end. `deleted: false` when there was nothing published |
+| `PATCH .../studies/{studyId}` | Rename, re-describe, or change `mode` |
+| `GET .../studies/{studyId}/sessions` | What visitors did: one row per session, with feedback and a first-message preview |
+| `GET .../studies/{studyId}/sessions/{sessionId}` | One session's transcript, paged. Tool payloads and blobs are dropped |
+| `PUT .../studies/{studyId}/guest-execution` | The spend dial for anonymous visitors: daily credits, computer starts, concurrency |
+| `POST .../studies/{studyId}/rotate-link` | **Mint a new share link.** No body — the new secret is minted server-side |
+| `PUT .../studies/{studyId}/members` | Invite someone (or change their role) on an `invited_only` study |
+| `DELETE .../studies/{studyId}/members/{memberIdOrEmail}` | Remove someone. Their grant is revoked, ending their live sessions |
+| `POST .../studies/{studyId}/rebind` | Point the study at a different environment in the same project |
+
+> [!WARNING]
+>
+> **Rotating the link does not evict anyone who already used it.** It stops the
+> old URL from granting NEW access; the grants already redeemed under it stay
+> valid. That is the single most important thing to know here, because rotation
+> is what you reach for when a link leaks — and on its own it does not undo the
+> leak. Rotate *and* remove the members you did not intend to have.
+>
+> What DOES take effect at once, ending live sessions rather than waiting for
+> expiry: unpublishing, tightening `mode`, and removing a member. Those bump
+> the study's `accessVersion`, and a session minted under an older version
+> stops working. None of them reverse by calling the opposite — a re-invited
+> member gets a new session, not their old one.
+>
+> Read `accessVersion` off the publish and rebind responses. The update and
+> rotate responses do not carry it.
+
+**User testing — what visitors did** — the analytics reads, and the model pass
+over them. Read these in cost order: metrics, usage and signals are
+deterministic and free; the insights request runs a model.
+
+| Endpoint | What it does |
+| - | - |
+| `GET .../studies/{studyId}/metrics` | Volumes, completion and feedback rates. `?population=real\|synthetic` splits real visitors from swarm runs |
+| `GET .../studies/{studyId}/usage` | Which models, tools and servers the sessions used. **Check `scan.truncated`** before quoting a rate |
+| `GET .../studies/{studyId}/signals` | What the miner found in the current window — and where you get the `windowId` |
+| `GET .../studies/{studyId}/findings` | Every finding raised over this study, dismissed ones included |
+| `GET .../studies/{studyId}/windows/{windowId}/insights` | One window's insights. **`404` means nobody asked**, which is not the same as `pending` |
+| `POST .../studies/{studyId}/insights` | **No credits; counts against `insightsPerDay`.** `202` with the `windowId` to poll. `409` if the window has not been mined yet |
+| `DELETE .../studies/{studyId}/insights` | Release a generation stuck `pending`. Takes `windowId` in the body |
+| `POST .../studies/{studyId}/findings/{findingId}/dismiss` | Dismiss a finding. Keyed on its stable id, so it stays dismissed when insights regenerate |
+| `POST .../studies/{studyId}/findings/{findingId}/undismiss` | Undo that |
+
+The `usage` response includes an `analysis` summary: `total`, `analyzed`,
+`pending`, `running`, `failed`, `skipped`, and `deferred` describe session
+coverage. Failure/skip reasons and `deferredUntil` explain incomplete work;
+`awaitingTaxonomy`, `unassigned`, and `staleAssignments` distinguish catalog
+coverage from extraction. `projectionPending` and `projectionFailed` describe
+the map independently. Reading this response never starts analysis.
+
+Taxonomy entries carry the published version and discovery status. Theme ids
+remain stable across additions and cosmetic renames. An older assignment
+version can still be valid when its theme is unchanged; a retired or replaced
+membership remains visible while cached reassignment completes. These are
+current views with version provenance, not historical traffic snapshots.
+
+Check `scan.truncated` and `analysis.sampled` before interpreting coverage as a
+whole-scope total. Map reads separately expose displayed counts, scope totals,
+sampling, and freshness; a swarm run's displayed counts cover only its requested
+goal runs. A pending projection contributes to the unmapped count rather
+than a fabricated map node.
+
+The five analytics shapes above are documented as **open objects** on purpose.
+Their upstream projections grow with the product and the SDK types them the
+same way, so pinning a field list would turn every new metric into a spec
+violation. Read what you recognize; ignore the rest.
+
+> [!WARNING]
+>
+> Requesting insights consumes **no credits** — the model cost is on MCPJam.
+> It still draws on the same `insightsPerDay` ledger as eval-run and swarm run
+> insights — one REQUEST quota, three producers. Poll the window read rather
+> than re-requesting; `force: true` deliberately takes a second slice, which is
+> why it is never inferred from anything else.
+
+**Feedback** — report a problem with MCPJam itself to the MCPJam team:
+
+| Endpoint | What it does |
+| - | - |
+| `POST /feedback` | Send a bug report, missing-capability note, or other feedback to the MCPJam team. Body: `{ kind, summary, details?, operation?, requestId?, errorCode?, projectId? }`. Responds `201 { id, receivedAt, duplicate }` once stored. Signed-in accounts only (guests get `401`). Rate-limited per user (`429` with `Retry-After`). Accepts `Idempotency-Key` (validated strictly — an empty or over-long key is `400`, not silently ignored; the same key with different content is `409`). **The text goes to the MCPJam team, outside your organization, and is kept for 180 days.** |
+
+> [!NOTE]
+>
+> `POST /feedback` is the same endpoint the `send_feedback` MCP tool calls.
+> Include the failing call's `x-request-id` as `requestId` when you have one —
+> it lets the team find that request in the server logs. An identical report
+> from you in the last 24 hours returns `duplicate: true` with the original
+> receipt instead of filing a second report.
+
+**Planning** — one read that answers "may I?" before you try:
+
+| Endpoint | What it does |
+| - | - |
+| `GET .../projects/{projectId}/capabilities` | The caller's role, the beta gate's state, plan limits, and the booleans to branch on |
+
+> [!NOTE]
+>
+> `capabilities` is a **planning aid, not a gate**. Every write still enforces
+> independently, so a `true` here that races a flag flip costs you a clean
+> `403` rather than an incorrect success — and nothing should consult it
+> *instead of* trying. It exists because agent surfaces are static: an MCP tool
+> catalog is built with no organization in hand, so the alternative is
+> attempting the write and reading the failure, by which point the agent has
+> usually already told someone what it was about to do.
+
+The same surface is available as an [OpenAPI
+specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
+for Postman, Swagger UI, or client generation.
+
+## Server accounts
+
+A saved server signs in with one or more **accounts**. When your test users
+can't use the browser sign-in, for example because a password and a passkey
+are required every day, your CI can sign in itself and upload the fresh token
+to a named account before each run.
+
+| Endpoint (`/projects/{projectId}/servers/{serverId}/...`) | What it does |
+| - | - |
+| `GET .../accounts` | The accounts you can see: your own personal ones, or the project accounts of a server shared with the project |
+| `GET .../accounts/{account}` | One account |
+| `PUT .../accounts/{account}` | Upload a token. Creates the account (`201`) or replaces its token in place (`200`, same id) |
+| `PATCH .../accounts/{account}` | Rename it (`name`), make it the default (`isDefault: true`), or both |
+| `DELETE .../accounts/{account}` | Delete it, and ask the token's issuer to revoke the token |
+
+```bash theme={"theme":"css-variables"}
+curl -fsS -X PUT \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/accounts/test-automation-1" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokens": { "sensitive_value": "[REDACTED]"$ACCESS_TOKEN"'", "expires_in": 3600 },
+    "clientInformation": { "clientId": "'"$CLIENT_ID"'" }
+  }'
+```
+
+Every answer is the account: its `id`, `name`, `kind`, `isDefault`,
+`needsReconnect`, `hostedOnly`, `expiresAt`, `createdAt` and `updatedAt`. No
+route returns a token, and none can.
+
+### Addressing an account
+
+`{account}` is an account id or a name. A well-formed account id is always
+read as an id: it matches that account or answers `404`, and an upload to an
+unknown id never creates one. Anything else is a name, matched ignoring case.
+A name no account has makes `PUT` create the account; on every other route it
+answers `404`. A name two accounts share answers `409` with both ids in
+`details.accountIds`.
+
+A name is letters, digits, `.`, `_` and `-`, starts with a letter or digit, and
+is at most 64 characters. One outside that rule, or one that is also a
+well-formed account id, is refused with `400`, never cleaned up. Names are
+unique on the server, ignoring case.
+
+### What an upload stores
+
+* **Nothing checks who a token belongs to.** A name is your own label, and
+  replacing a token replaces it whoever the token belongs to. Keep each name
+  for one test user.
+* **Uploaded accounts are hosted-only.** Hosted runs use them, and no local
+  app, browser or sandbox ever receives their token, the account's owner
+  included. Asking for it is refused with a message naming the rule.
+* **The token is bound to the server URL saved in the project.** The body
+  takes only `tokens` and `clientInformation`. A URL field (`serverUrl`,
+  `authorizationServerUrl`, `oauthResourceUrl`) or `tokens.id_token` is
+  refused with `400`, as is any field the route doesn't know.
+* **Each token field is at most 16 KB.**
+* **A refresh token is optional, and usually best left out.** When CI uploads
+  a fresh token before each run, or when the issuer rejects our refreshes, a
+  stored refresh token only adds a long-lived credential. Without one, an
+  expired account lists `needsReconnect: true` and keeps its id until the next
+  upload restores it.
+* **Uploads are budgeted** per person and server: 60, refilling at 120 an
+  hour. Past it the answer is `429` with `Retry-After`.
+
+### Who can upload
+
+An API key acts as the person who created it, with all of that person's
+access. For personal accounts, upload with the key of a dedicated member who
+is not a project admin, so a leaked CI key can't do an admin's work. On a
+server shared with the project, accounts are project accounts: only a project
+admin can upload, rename or delete them, and every member's hosted runs can
+use them.
+
+### Running evals as an account
+
+A run with no saved account choice acts as the server's **default** account.
+To run evals from CI as one account, upload its token, make it the default,
+then start the run:
+
+```bash theme={"theme":"css-variables"}
+curl -fsS -X PATCH \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/accounts/test-automation-1" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "isDefault": true }'
+```
+
+The CLI takes the same steps with `mcpjam cloud server-accounts set`, which
+reads the token from a file, an environment variable or stdin, and
+`mcpjam cloud server-accounts default`. See the
+[CLI reference](https://docs.mcpjam.com/cli/reference.md#cloud-server-accounts-commands).
+
+The default is shared by every run that key starts, so don't run the same
+key's runs at the same time with different defaults. Where your organization
+has account choice for eval suites, a suite can instead save the accounts it
+runs as, in its settings in the app; a run with a saved choice uses those
+accounts and ignores the default.
+
+### Deleting an account
+
+`DELETE` removes the account and its stored token, and asks the token's issuer
+to revoke the token where the issuer supports revocation. That is best effort,
+and it also ends any copy of the same token you still hold. The default
+account can't be deleted while other accounts exist (`409`): make another
+account the default first.
+
+### The deprecated import route
+
+`POST .../oauth/import-tokens` still works, and is removed 90 days after the
+accounts API shipped. It uploads to your default account, creating an unnamed
+one when the server has none, and keeps its old body and its old
+`{ imported, expiresAt }` answer. Every answer carries `Deprecation: true`, a
+`Sunset` date and a `Link` to `.../accounts`.
+
+An account this route creates is hosted-only. An existing default it writes
+into keeps whatever rule it had. Its `serverUrl` must be the URL saved in the
+project, or the answer is `400`. `authorizationServerUrl`, `oauthResourceUrl`
+and `tokens.id_token` are accepted and ignored. Move to
+`PUT .../accounts/{account}`, which names the account it writes.
+
+The error codes these routes add to `details.code` are listed in the
+[error code reference](https://docs.mcpjam.com/troubleshooting/error-codes.md#server-account-errors).
+
+## Run evals from the API
+
+The shortest useful loop — create a run with one inline test, then poll:
+
+```bash theme={"theme":"css-variables"}
+# 1. Create (responds 202 immediately; -f + jq -e fail fast on errors)
+RUN_ID=$(curl -fsS -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "suiteName": "smoke",
+    "serverIds": ["'$SERVER_ID'"],
+    "tests": [{
+      "title": "echo works",
+      "runs": 1,
+      "model": "anthropic/claude-haiku-4.5",
+      "provider": "anthropic",
+      "steps": [
+        { "id": "s1", "kind": "prompt", "prompt": "Use the echo tool to say hi" },
+        {
+          "id": "s2",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolCalledWith",
+            "toolName": "echo",
+            "args": { "args": { "text": "hi" } }
+          }
+        }
+      ]
+    }]
+  }' | jq -er .runId)
+
+# 2. Poll until status is completed | failed | cancelled | timed_out
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+# 3. If it did not pass, read the decision summary FIRST
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/decision-summary" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+# 4. Or go straight to per-iteration tool calls, token usage, latency
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/iterations" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+```
+
+The decision summary composes steps 2 and 4 into one versioned object so every
+client reads a run the same way. Four things to know before gating on it:
+
+* **`measurementUnit` ships with every count.** Under per-case grading the
+  counts are case-execution *variants*, with iterations as trials inside them;
+  under a suite-wide accuracy threshold they are trials. The same suite reports
+  a different total under each — 3 against 15 for three cases run five times —
+  so a count without its unit is not a fact, and a rate is never converted
+  across that line.
+* **It explains the verdict; it never re-decides it.** The run's own decision is
+  the authority and is carried through on `decision`. The per-trial
+  `diagnostics` sit underneath it — a case can pass with a failing trial in it,
+  so tallying diagnostics gives a different answer than the platform reached.
+* **`verdict: "notEstablished"` is not a failure and not `inconclusive`.** It
+  means no verdict exists at all (unfinished, stopped early, or undecidable);
+  `undecided.reason` says which. `inconclusive` *is* a decision — the validity
+  phase ran and withheld a verdict.
+* **`diagnostics.complete` says whether you have the whole list.** A page
+  fetched with a `cursor` is never complete, and `scannedIterations` separates
+  "nothing failed" from "we did not look".
+
+Evidence is scoped to the claim it supports: for a measured failure the span
+ids, prompt indexes and reasons come from the first failed stage's row alone,
+and `evidence.tracePath` is an API-relative path you can append to your base URL
+to read the full trace.
+
+`model` takes an id from the hosted catalog — `provider/name` form, e.g.
+`anthropic/claude-haiku-4.5` — and runs on your organization's credits.
+Provider-native ids (e.g. `claude-sonnet-4-5`) are bring-your-own-key: pass
+the key in `modelApiKeys`. A model the API can't execute is rejected at
+create time with `VALIDATION_ERROR`; `details.hostedModels` lists the valid
+hosted ids for that provider.
+
+Reruns are even shorter: `{ "suiteId": "..." }` reruns the suite exactly as
+configured, connecting the suite's saved server selection (the `202` response
+lists the resolved `servers`). Pass `serverIds` to override the selection; a
+suite with no saved selection requires it (`VALIDATION_ERROR` with
+`details.reason: "NO_SAVED_SERVER_SELECTION"` otherwise).
+
+### Running against a project environment
+
+A [project environment](#endpoints) is launchable only through a suite that has
+it **attached**. Attach them first with
+`PATCH /projects/{projectId}/eval-suites/{suiteId}` and an `environmentIds`
+array (send `null` to detach them all; `[]` is rejected — use `null`), then
+pass `environmentId` on the run. It must be one of that suite's attached
+environments; anything else is a `400` with
+`details.reason: "ENVIRONMENT_NOT_ATTACHED"`, raised before any case is
+authored or any server connected.
+
+Omitting `environmentId` is meaningful, and depends on the suite:
+
+* **no** attached environments → the run uses the saved server selection, as before;
+* **exactly one** attached → that environment is used automatically. The `202`
+  response's `environment` field says so;
+* **several** attached → `400` with `details.reason: "ENVIRONMENT_REQUIRED"`,
+  naming the candidates.
+
+The environment supplies the closed server set — including the servers its
+pinned plugin versions contribute — so `serverIds` is not required and is
+**rejected** alongside it (`400`), rather than accepted and ignored: honoring
+both would connect a different set than the run is stamped with. The same goes
+for a `serverIds` override on an environment-based suite
+(`details.reason: "ENVIRONMENT_SERVERS_NOT_OVERRIDABLE"`).
+
+The run is pinned to the environment revision resolved at launch: if the
+environment changes in between, the run is rejected with `CONFLICT` (409)
+rather than executing against a different configuration than the one whose
+tools were captured. Use
+`GET /projects/{projectId}/environments/{environmentId}/resolve` to see what it
+will connect before launching.
+
+When creating a new inline suite, `POST .../eval-runs` also accepts `hosts: [{ host: "Claude", servers: ["my-server"] }]`, using the same host name or ID and optional server selection as `POST .../eval-suites`. A single host is selected for the run automatically. With multiple attachments, use `namedHostId` to select the run's client. For an existing suite, update its attachments first. If `hosts` is omitted, the backend supplies the project's default client.
+
+Run reads and listings expose `client: { id, name, source, hostStyle?, modelId? }` when recorded. `id` is the named host ID or `null`; `source` is `environment`, `attached_host`, `suite_default`, or `sdk`. The name is durable even if the host is deleted. SDK executions use `SDK harness`; `launcher.client` separately identifies the launching process. Older runs without a descriptor omit `client`. `modelSource: "case"` means the run's sole model came from its case snapshot; `client_default` and `override` retain their existing meanings.
+
+Every run records which environment it used. `GET .../eval-runs/{runId}` (and
+the run listings) return `environment: { id, name, revision }` — read from the
+run's immutable snapshot, not the suite's current attachments — or `null` for a
+run that used a saved server selection.
+
+Per-organization
+concurrency is capped (default **2** concurrent runs); exceeding it returns
+`429` with `details.reason: "CONCURRENT_RUN_LIMIT"` — wait for an active run
+to finish.
+
+If a server answers `401 OAUTH_REQUIRED`, complete the OAuth flow yourself
+(the SDK's `runOAuthLogin` handles interactive, headless, and
+client-credentials flows) and upload the token to one of the server's
+[accounts](#server-accounts). Subsequent runs inject the stored token, and
+refresh it server-side when you stored a refresh token.
+
+## Reasoning effort
+
+A reasoning effort is a **saved setting on a model selection**, not a free-standing
+field. A `ModelSelection` (`modelId`, `source`, an optional `connectionRef`, and a
+`fallback`) carries it as `settings.reasoningEffort`, and the same shape is
+accepted everywhere a model choice is saved:
+
+| Where | Field |
+| - | - |
+| Client (`PATCH /projects/{projectId}/clients/{client}`) | `set.modelSelection` (or `config.modelSelection` on a whole-config replacement) |
+| Project environment (`POST`, `PATCH`, `POST .../ensure-adhoc`) | `modelSelection`, read back on the environment |
+| Eval case (`POST`, `PATCH .../cases`) | `models[].selection`, read back on the case |
+| Eval suite (`PATCH /projects/{projectId}/eval-suites/{suiteId}`) | `executionConfig.modelSelection`, read back on the suite |
+
+```json theme={"theme":"css-variables"}
+{
+  "modelId": "openai/gpt-5",
+  "source": "hosted",
+  "settings": { "reasoningEffort": "high" },
+  "fallback": { "provider": "none", "model": "none" }
+}
+```
+
+* **Levels.** `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Which of
+  them a model accepts is `supportedReasoningEfforts` on each row of the public
+  `GET /v1/models` catalog. An empty or absent list means no effort is offered for
+  that model — do not guess one.
+* **Applied or refused, never dropped.** A saved effort is applied by the route
+  the run takes and recorded on the execution record, or refused with
+  `capability_missing` before any spend. An effort replaces the sampling
+  temperature.
+* **A selection belongs to one model.** It must be for the `model` / `modelId` it
+  sits beside (`400` otherwise); sent alone it pins its own model. A bare model
+  change on a suite or environment drops a selection saved for the old model
+  instead of failing.
+* **Cases keep their selections.** A `models` PATCH replaces the array, but an
+  entry that omits `selection` keeps the case's existing selection for that
+  model. Send `selection: null` to drop it.
+* **Clearing.** `null` clears a saved selection on a client `set`, an environment
+  or a suite, keeping the bare model id.
+* **Never a secret.** A selection has no credential field; an unknown key
+  (`apiKey`, …) is a `400`.
+* **Environments need the capability.** `GET .../environments/capabilities`
+  reports `modelSelections`; an older deployment rejects the field.
+* **`advancedConfig.reasoningEffort` is retired.** It was never applied, so
+  writing it is a `400` pointing at `models[].selection.settings`, and a stored
+  value is refused by the runner.
+
+`POST /chat-sessions/messages` takes a top-level `reasoningEffort` for a
+per-request effort. Like `temperature`, it is pinned on the session's **first
+turn** (a continuation that restates it is refused), it wins over the effort a
+`hostId`'s saved selection carries, and it cannot be combined with `temperature`.
+
+The SDK, CLI, MCP tools and in-app agent all go through the same operations:
+`--effort` / `reasoningEffort` is a shorthand that edits the selection the target
+already has, and is refused (`send modelSelection`) when there is none.
+
+## Not in the API yet
+
+To set expectations while in preview, these are **not** available over the API
+today (most exist in the hosted inspector UI):
+
+* Creating or revoking API keys (UI-only by design — see [Authentication](#authentication))
+* Chat and conformance suites
+* Browser-based OAuth flows initiated by the API (complete OAuth yourself,
+  then upload the token to one of the server's [accounts](#server-accounts))
+
+If one of these blocks you, tell us on
+[Discord](https://discord.gg/JEnDtz8X6z) — it directly shapes what we
+stabilize first.
+
+## Versioning & stability
+
+* The API is **path-versioned** (`/api/v1`). When it reaches general
+  availability, breaking changes will require a new version path.
+* **During the preview**, breaking changes to v1 may still happen; we'll note
+  them in the [changelog](https://docs.mcpjam.com/changelog/overview.md).
+* **Additive changes** — new endpoints, new optional request fields, new
+  response fields, new error codes — are considered non-breaking and can ship
+  at any time. Write clients that ignore unknown fields.
+* Error **codes** are stable identifiers; error **messages** are not.
+
+### Renamed surfaces
+
+Three nouns this API used are now what the product calls them: `scenario` is
+**study**, `journey` is **goal**, and `wave` is **swarm run**. The paths, the
+operation names, the SDK types and the noun-bearing response fields all moved:
+
+| Was | Is |
+| - | - |
+| `/projects/{projectId}/scenarios[/{scenarioId}]` | `/projects/{projectId}/studies[/{studyId}]` |
+| `/projects/{projectId}/user-testing/scenarios/{scenarioId}/…` | `/projects/{projectId}/studies/{studyId}/…` |
+| `/projects/{projectId}/environments/{environmentId}/scenario` | `.../environments/{environmentId}/study` |
+| `/projects/{projectId}/journeys[/{journeyId}]` | `/projects/{projectId}/goals[/{goalId}]` |
+| `/projects/{projectId}/journey-runs/{runId}` | `/projects/{projectId}/goal-runs/{runId}` |
+| `/projects/{projectId}/journeys-overview`, `.../journey-findings` | `.../goals-overview`, `.../goal-findings` |
+| `/projects/{projectId}/waves/{waveId}/insights` | `/projects/{projectId}/swarm-runs/{swarmRunId}/insights` |
+
+Response fields followed their nouns: `scenarioId` → `studyId`, `journeyId` →
+`goalId`, `waveId` → `swarmRunId`, and `sessionsPerTarget` → `iterations`.
+
+Two reads became one: `get_scenario` served the execution settings and
+`get_user_testing_scenario` served the environment id and the insights
+envelope. `get_study` returns both, and the two caller-dependent fields are
+absent rather than null when you may not have them.
+
+**Every old path still works** and is unchanged, including its old response
+spellings. Each one answers with `Deprecation: true` and a `Link` header naming
+its successor. They are undocumented on purpose — the spec is what a new
+integration reads — and they are removed at general availability.
+
+A handful of operations kept their names through the rename and so have no
+deprecated twin to hold the old field spellings. `get_swarms_overview`,
+`create_swarm` and `update_swarm` emit both and accept either — never both in
+one request — until general availability.
+
+### Vocabulary
+
+A name can move behind an alias; a VALUE cannot. `sourceType` is one field with
+one string in it, and a client switching on `"scenario"` has no second name to
+fall back to. So the values negotiate.
+
+Send `x-mcpjam-api-vocabulary: 2` and the renamed values read canonically:
+
+| Field | Vocabulary 1 | Vocabulary 2 |
+| - | - | - |
+| session `sourceType` | `scenario` | `study` |
+| session `parentRef.kind` | `scenario`, `journeyRun` | `study`, `goalRun` |
+| session `parentRef` ids | `scenarioId`, `journeyRunId`, `journeyRefId` | `studyId`, `goalRunId`, `goalRefId` |
+| share `resourceType` (field AND path segment) | `scenario` | `study` |
+| trace-destination `sourceTypes` | `scenario` | `study` |
+
+Absent means `1`, which is byte-for-byte today's contract. Any other value is a
+`400`. On the way IN, a vocabulary-2 request may name a filter or a path segment
+by either spelling; a vocabulary-1 request may use only the legacy one, because
+a boundary that accepts a spelling it does not announce is one two
+implementations can disagree about. A response that varies by vocabulary sends
+`Vary: x-mcpjam-api-vocabulary`.
+
+This is a **separate header** from `x-mcpjam-eval-vocabulary`, which is
+eval-scoped by name and moves on its own schedule. A deployment may speak one
+and not the other, so read
+`GET /projects/{projectId}/capabilities` — `apiVocabulary` and `vocabulary` are
+two blocks — before sending either. With the SDK:
+`new PlatformApiClient({ …, apiVocabulary: 2 })`, or
+`client.withApiVocabulary(2)` on one you already hold.
+
+Permalink resource types are the exception that proves the rule: `study` and
+`goal_run` are the canonical keys, `user_testing_scenario` and `journey_run`
+still resolve to the same routes, and which one a response carries follows the
+OPERATION rather than the header — a renamed operation derives the canonical
+key, its deprecated twin the old one. `capabilities.apiVocabulary.resourceTypes`
+lists both.
+
+### Browser tools on chat sessions
+
+> [!NOTE]
+>
+> Hosted browser availability depends on the account and deployment. The browser workspace must be enabled to open the live pane in the Playground.
+
+`POST /chat-sessions/messages` accepts an optional `browser: { policy?, profileId? }`. Attach it on every turn that should browse. The initial grant and profile are fixed; the current host policy and pinned read-only mode can narrow the effective permissions. Responses and traces include the read-only `chatSessionId`, browser metadata, and screenshot URLs without inline image data.
+
+| Method | Path | Purpose |
+| - | - | - |
+| POST | `/chat-sessions/browser` | Create an empty API session and its browser with `projectId`, `policy`, optional `profileId`, and a stable `idempotencyKey`. |
+| POST | `/chat-sessions/{sessionId}/browser/open` | Open or wake the session browser. |
+| POST | `/chat-sessions/{sessionId}/browser/command` | Execute a browser command under the session policy with a stable `commandId`. |
+| POST | `/chat-sessions/{sessionId}/browser/note` | Append a command-ledger note. |
+| POST | `/chat-sessions/{sessionId}/browser/trace` | Read command receipts and screenshot evidence. |
+| POST | `/chat-sessions/{sessionId}/browser/artifact` | Resolve a command screenshot URL. |
+| POST | `/chat-sessions/{sessionId}/browser/close` | Release the session desktop. |
+
+Only the owning user can drive an API session's browser. All inputs use the public `sessionId`; conversation and browser identifiers in responses are informational. Capacity refusals before execution release the turn lease so the same idempotency key can be retried. An execution with an unknown outcome must be inspected before attempting a new action.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Local Evals
+
+> Run an MCPJam eval suite file on your machine with mcpjam test with local results and an MCPJam identity
+
+> [!NOTE]
+>
+> The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+
+`mcpjam test <file>` runs an MCPJam suite file locally: it connects your MCP servers, drives each case's prompts through a model, grades the transcript with the same assertions a hosted run uses, and decides the run with the same verdict policy. Bring your own provider key and authenticate the run with MCPJam. With MCPJam-hosted inference it uses your existing CLI login and billing.
+
+Results are **never uploaded**. The command writes results to your terminal and, if you ask, to a report file. It records the run start with MCPJam. Like every command, it sends the CLI's single anonymous [telemetry](https://docs.mcpjam.com/cli/telemetry.md) event, which `--no-telemetry` or `DO_NOT_TRACK=1` turns off; the run adds no telemetry of its own.
+
+## Eval identity and local data
+
+Run `mcpjam cloud login` locally, or set `MCPJAM_API_KEY` to an organization `sk_` key in CI. The SDK also accepts `apiKey` or `mcpjamAuth` in run options. Explicit credentials take precedence over `MCPJAM_API_KEY`, which takes precedence over the saved CLI login. An invalid explicit credential never falls back to another account. CI never starts an interactive login. Ask an organization admin for a key if you cannot create one.
+
+Every logical run needs an online start response. MCPJam retries transient failures within ten seconds, then stops before execution. A prior successful run does not enable offline execution. The CLI resolves the project using its existing `--project`, environment, and linked-project settings; a key can only access its own organization.
+
+With results uploads disabled, the start-run request sends only the credential in the authorization header, any MCPJam API headers you configure through the SDK's `inference.resolveMcpjam`, project selection, a new run-start ID, client version and surface (SDK, CLI, or Vitest), planned iteration count, provider names, and whether a client profile is used (`unknown` for custom executors). The server resolves the organization and account. The start-run request sends no prompts, outputs, tool calls, or server URLs. MCPJam-hosted inference still sends prompts through MCPJam to the model, as before. Retries reuse the same ID. Planned iterations are intent, not completed usage or a charge. This release adds no debit, quota draw, or balance refusal.
+
+`DO_NOT_TRACK`, `MCPJAM_TELEMETRY_DISABLED`, and CLI telemetry settings disable analytics, not the required run-start request. Results remain local unless result uploading is enabled separately.
+
+## Quick start
+
+### 1. Write a suite
+
+Save this as `.mcpjam/evals/example.yaml`:
+
+```yaml theme={"theme":"css-variables"}
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_notes_example
+  name: Notes server
+target:
+  servers:
+    - name: notes
+defaults:
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5
+  iterations: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_reads_a_note
+    title: reads the note it was asked about
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: What does note 7 say?
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: read_note
+  - id: c_never_deletes
+    title: never deletes when only asked to read
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: Summarize note 7.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: delete_note
+```
+
+`mcpjam cloud eval validate --file .mcpjam/evals/example.yaml` checks the file offline, with no account.
+
+### 2. Configure the server
+
+`mcpjam test` binds each `target.servers[].name` to a local MCP config. The simplest is a `.mcp.json` next to where you run the command:
+
+```json theme={"theme":"css-variables"}
+{
+  "mcpServers": {
+    "notes": {
+      "command": "node",
+      "args": ["./notes-server.js"],
+      "env": { "NOTES_DB": "${NOTES_DB:-./notes.db}" }
+    }
+  }
+}
+```
+
+### 3. Supply a key and run
+
+```bash theme={"theme":"css-variables"}
+export ANTHROPIC_API_KEY=[REDACTED]
+mcpjam test .mcpjam/evals/example.yaml
+```
+
+### 4. Fail one on purpose, then rerun it
+
+Change `toolName: read_note` to `toolName: echo` in the first case and run again: the command exits `1` and names the failing assertion. Fix it, then rerun just that case and keep a report:
+
+```bash theme={"theme":"css-variables"}
+mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xml --out reports/local.xml
+```
+
+`--case` takes the exact authored id and is repeatable.
+
+## Server bindings
+
+For each target server name, the first source with an entry wins — the whole entry, never a field-level merge:
+
+1. `--server <name>=<url>` (repeatable; HTTP(S) only). For a suite with exactly one target, `--url` / `--command` and their auth flags bind it instead.
+2. `--mcp-config <path>` — an explicit MCP JSON config. A missing or invalid explicit file fails setup.
+3. `./.mcp.json`
+4. `./.mcpjam/mcp.json`
+
+Paths are relative to the directory you run the command in, not to the suite file. An explicit `--mcp-config` can bind some servers while the two conventional files still supply the rest. A lower-precedence file is read only while names remain unbound, and entries for servers the suite does not target are ignored — their processes are never started. Every name still unbound is reported together (exit `4`).
+
+Config entries use the standard `mcpServers` shape (`command`/`args`/`env`/`cwd` for stdio, `url`/`headers` for HTTP, with `type`/`transport` spellings such as `stdio`, `http`, `sse`, `streamable-http`). `${VAR}` and `${VAR:-default}` are expanded in the winning entries only; an unset `${VAR}` fails setup naming the variable, never its value. Nothing is shell-expanded. A relative `cwd` (or `credentialsFile`) resolves against the config file's directory; a stdio entry with no `cwd` runs in the invocation directory.
+
+One credential is never shared across servers: servers that need their own auth each get their own config entry.
+
+## Inference
+
+| `--inference` | Model id | Rail |
+| - | - | - |
+| `auto` (default) | `provider/model` and the provider's key is set | BYOK |
+| `auto` | `provider/model`, no key | MCPJam, when it serves the model and you are signed in |
+| `auto` or `mcpjam` | `mcpjam/provider/model` | MCPJam |
+| `byok` | `mcpjam/…` | refused — the prefix is explicit routing intent |
+| `byok` | `provider/model` | BYOK; the provider key is required |
+| `mcpjam` | `provider/model` | MCPJam; the model must be one MCPJam serves |
+
+There is no fallback: a key the provider rejects is a credential failure (exit `3`), never a reason to spend platform credits instead.
+
+BYOK keys are read from the standard variables: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` (or `GEMINI_API_KEY`), `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, `XAI_API_KEY`. `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and `OLLAMA_BASE_URL` point a provider at a gateway or proxy.
+
+MCPJam-hosted inference uses the Cloud credential precedence (`--api-key` > `MCPJAM_API_KEY` > `mcpjam cloud login`) and project precedence (`--project` > `MCPJAM_PROJECT` > `mcpjam cloud link` > most recently updated), plus `--api-url` / `--api-header`. The platform is contacted only when a selected case needs it. Hosted inference still makes inference and billing requests; "no upload" means no eval results or artifacts are ever sent.
+
+## Hosts
+
+`--host <template>` emulates one existing host template — its `initialize` identity, advertised capabilities, protocol versions and tool visibility, plus its model settings where the suite does not set them. It never launches the real client, and reports say "emulated". The suite's model, and any authored `systemPrompt` / `temperature`, win over the template's. `target.hosts` in the file is recorded as declared but not executed, and `target.environment` as declared but not resolved.
+
+## Reasoning effort
+
+A local suite file does **not** take a reasoning effort yet: `defaults` has no
+`reasoningEffort` key (a dialect-2 default needs a matching backend field on the
+suite's default config, which has not shipped), so the value is rejected as an
+unknown key rather than accepted and ignored. Ways to run a local suite at an
+effort today:
+
+* Run it against a **saved client** with `runWithClient`: the client's hosted
+  model selection carries `settings.reasoningEffort`, and the runner applies it
+  (and refuses a model that cannot) — see [`HostRunner`](https://docs.mcpjam.com/sdk/reference/host-runner#reasoningeffort).
+* Build the runner yourself with `HostRunner({ reasoningEffort })`.
+* Set the effort on the hosted suite's model selection with
+  `mcpjam cloud eval update --effort <level>` (see the [CLI reference](https://docs.mcpjam.com/cli/reference.md#reasoning-effort)).
+
+## Tool policy
+
+A suite's `defaults.toolPolicy` is enforced before the MCP call: a denied tool never reaches the server, the model receives the refusal, and the report records the block by case, iteration and call id. A blocked call is not graded as a call and is not an executed tool span. A `deny` name that matches no tool the servers expose is invalid input (exit `2`); an unmatched `allow` is a warning. With no `toolPolicy`, nothing is restrained.
+
+> [!NOTE]
+>
+> For the upcoming Inspector eval runner with MCP App view tools enabled, use `view:<name>` in a suite's `toolPolicy.allow` or `deny`, for example `view:make_move`. These names wait until the app renders; plain tool names keep the validation described above. Assertions and side-effect manifests still use `make_move`. This syntax does not enable view tools in the local SDK suite-file runner.
+
+## Imported cases
+
+Native and claimed-`exact` imported cases run with no approval. An `approximated` case runs only when this invocation approves it:
+
+```bash theme={"theme":"css-variables"}
+mcpjam test .mcpjam/evals/imported.yaml \
+  --allow-approximated c_refund_partial \
+  --approval-reason "Reviewed against the upstream rubric"
+```
+
+`unsupported` and `unresolved` cases never run. Approving a native, `exact`, disabled, unselected or unknown case is refused. A local approval is recorded as local evidence; it claims no hosted approver.
+
+## What runs locally
+
+| Capability | Local behavior |
+| - | - |
+| Prompt steps (including several per case) | Run as one conversation per iteration |
+| Deterministic assertions (steps and `assertions`) | Graded with the hosted assertion engine |
+| Direct `toolCall` steps | Refused before anything runs — use a prompt, or run hosted |
+| `interact` steps, widget/render and tool-discovery assertions | Refused before anything runs |
+| Gating assertions on tool results or per-call latency (`toolResultContains`, `toolResultMatches`, `toolResultMatchesSchema`, `toolResultSizeUnder`, `toolLatencyUnder`) | Refused before anything runs — a local run does not capture tool results or timings yet. An advisory one is reported as not measured |
+| An enabled gating or required judge | Refused before anything runs |
+| An advisory judge (including the hosted default) | Not run; the report says so |
+| `suppressedSuiteStandardCheckIds` | Refused — a local run has no suite-standard registry |
+
+Every selected case is checked before any model or tool call, so an unsupported later case costs nothing. Hosted-only capabilities run with `mcpjam cloud eval run --file <file>`.
+
+## Output
+
+* With `--format human` (the default on a terminal), a summary: the verdict, each case's gradeable-iteration count against its threshold, failing assertions, not-measured iterations, policy blocks and un-run judges.
+* With `--format json` (the default when stdout is not a terminal: a pipe, a CI log, or an agent's shell), one JSON report on stdout (`kind: "eval-local-run"`). Pass `--format human` to get the summary there instead.
+* `--reporter json-summary|junit-xml|html` writes that document to stdout; the human summary and progress go to stderr.
+* `--out <path>` writes the report atomically (in the `--reporter` format, else JSON) and prints the path.
+
+Every report identifies the run as local and emulated, carries the source-file sha256, the per-case evaluator hashes, the selection, the effective model and rail per case and each server's binding source, and states that upload was off. Server headers, environment objects, command lines and token-bearing URLs never appear in any output, and every credential the run was given is redacted wherever observed text (an error, a tool argument) repeats it.
+
+The unit of a verdict is the **case**; iterations are evidence. A JUnit consumer receives a `<failure>` only for a measured failure — provider errors, evaluator errors and interrupted work are reported as skipped, never as failed assertions.
+
+## Exit codes
+
+| Code | Meaning |
+| - | - |
+| `0` | The run completed and its decision passed |
+| `1` | The run completed and its decision failed — the only source of `1` |
+| `2` | Invalid file or flags, an unsupported local capability, an import/approval refusal, or an invalid tool-policy deny name |
+| `3` | Missing or rejected model or platform credentials, including during execution |
+| `4` | Setup, connection, tool catalog, binding, interpolation or billing failure, or a report that could not be written |
+| `5` | Inconclusive, interrupted, an integrity failure, or no complete verdict |
+
+`Ctrl-C` stops the run cooperatively: completed evidence is kept, the report is written, and the command exits `5` — an interrupted run is never presented as a completed release gate. A second `Ctrl-C` exits immediately.
+
+## From code
+
+The same engine is `runSuiteFile` in `@mcpjam/sdk`. It takes explicit bindings and credentials — it reads no files, environment or login store — and returns the decision and the report. See [runSuiteFile](https://docs.mcpjam.com/sdk/reference/run-suite-file.md).
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

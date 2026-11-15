@@ -1,0 +1,15 @@
+
+⎯⎯⎯⎯⎯⎯⎯ Startup Error ⎯⎯⎯⎯⎯⎯⎯⎯
+Error: No projects matched the filter "sdk".
+    at Vitest._setServer (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vitest/dist/chunks/cli-api.B0Pz1_R7.js:13232:22)
+    at BasicMinimalPluginContext.handler (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vitest/dist/chunks/cli-api.B0Pz1_R7.js:14258:5)
+    at _createServer (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vite/dist/node/chunks/config.js:25853:86)
+    at createViteServer (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vitest/dist/chunks/cli-api.B0Pz1_R7.js:8902:17)
+    at createVitest (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vitest/dist/chunks/cli-api.B0Pz1_R7.js:14288:18)
+    at prepareVitest (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vitest/dist/chunks/cli-api.B0Pz1_R7.js:14655:14)
+    at startVitest (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vitest/dist/chunks/cli-api.B0Pz1_R7.js:14598:14)
+    at start (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vitest/dist/chunks/cac.DzDtg8hz.js:2340:15)
+    at CAC.run (file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/vitest/dist/chunks/cac.DzDtg8hz.js:2318:2)
+
+
+

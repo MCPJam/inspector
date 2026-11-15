@@ -1,0 +1,7 @@
+{
+  "suiteId": "suite_fixture",
+  "serverIds": ["server_fixture"],
+  "iterationOverride": 1,
+  "passCriteria": {"minimumPassRatePercent": 100},
+  "notes": "Repeatable arithmetic smoke: add 2 and 3; expected output 5."
+}

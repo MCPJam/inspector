@@ -1,0 +1,82 @@
+{"id": "user_fixture", "name": "Fixture user", "email": "[EMAIL REDACTED]", "plan": "team"}661-
+662-On a conflict, re-run `get` and retry with the fresh value.
+663-
+664:### Shared platform flags
+665-
+666-| Flag | Description |
+667-| - | - |
+--
+740-| `systemPrompt` | string | Resets to `""` |
+741-| `temperature` | number | Resets to `0.7` |
+742-| `requireToolApproval` | `true` \| `false` | Resets to `false` |
+743:| `connectionDefaults` | JSON object | Resets to the platform defaults |
+744-| `respectToolVisibility` | `true` \| `false` | Clears |
+745-| `progressiveToolDiscovery` | `true` \| `false` | Clears |
+746-| `harness` | string (`claude-code` \| `codex` \| `cursor`) | Clears |
+--
+795-
+796-All `environments` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`. Reading requires project membership; **creating, updating, archiving, and restoring require project admin** — a key bound to a non-admin gets a `FORBIDDEN` error on those.
+797-
+798:### Shared platform flags
+799-
+800-| Flag | Description |
+801-| - | - |
+--
+1034-
+1035-All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+1036-
+1037:### Shared platform flags
+1038-
+1039-| Flag | Description |
+1040-| - | - |
+--
+1142-
+1143-All `skills` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+1144-
+1145:### Shared platform flags
+1146-
+1147-| Flag | Description |
+1148-| - | - |
+--
+1173-
+1174-Launch and manage swarm goals (persona-driven conversation runs). All `goals` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`. `cloud journeys` is a deprecated alias for `cloud goals`.
+1175-
+1176:### Shared platform flags
+1177-
+1178-| Flag | Description |
+1179-| - | - |
+--
+1198-
+1199-Manage the MCP servers saved in a project and connect new ones. All `projects servers` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+1200-
+1201:### Shared platform flags
+1202-
+1203-| Flag | Description |
+1204-| - | - |
+--
+1395-> [!WARNING]
+1396->
+1397-> The public tunnel URL embeds a bearer secret and is stored on the project
+1398:> server record so the platform can call it. Every re-run rotates the secret
+1399-> and disconnects any previous tunnel session for the same server.
+1400-
+1401-***
+--
+1438-
+1439-## `readiness` hosted commands
+1440-
+1441:Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam — no credits are consumed), and leaves a persistent record.
+1442-
+1443-All `readiness` hosted commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+- [Slack](https://docs.mcpjam.com/hosted/slack.md): Run MCPJam from Slack — mention the bot to ask about your projects, and approve the actions that spend credits
+- [host-compat](https://docs.mcpjam.com/sdk/reference/host-compat.md): API reference for @mcpjam/sdk/host-compat — derive server requirements, evaluate host compatibility, and scan widget bridge usage.
+- [List run iterations](https://docs.mcpjam.com/api-reference/eval-runs/list-run-iterations.md): Per-iteration results: actual tool calls, structured token usage, and latency. Cursor-paginated.
+- [Mint a model lease for MCPJam-hosted inference](https://docs.mcpjam.com/api-reference/eval-runs/mint-a-model-lease-for-mcpjam-hosted-inference.md): How an SDK eval running OUTSIDE the platform (local dev, CI) uses MCPJam-hosted inference on the organization's credits, with no provider key of its own. Authenticate like any other `/api/v1` route (typically an `sk_` key).
+- [Authenticate and record an eval start](https://docs.mcpjam.com/api-reference/eval-runs/authenticate-and-record-an-eval-start.md): Called by official SDK, CLI and Vitest runners before executing an eval. Requires an organization API key or saved-login bearer. Records only start metadata, creates no dashboard run, and applies no debit or quota draw. Planned iterations are intent, not completed usage. Reuse the runStartId for ret…
+- [Read the organization's spend budget](https://docs.mcpjam.com/api-reference/catalog/read-the-organizations-spend-budget.md): The ceiling on what this organization may spend on MCPJam-billed work — chat, evals, judges and computer time — in the current billing window, and how much of it has been spent.
+- [List organizations](https://docs.mcpjam.com/api-reference/catalog/list-organizations.md): The organizations the caller belongs to — the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.
+- [Request insights for an eval run](https://docs.mcpjam.com/api-reference/evals/request-insights-for-an-eval-run.md): **No credits are consumed** — the model cost is on MCPJam. Runs a model over the finished run and draws on the same shared `insightsPerDay` request ledger as swarm and user-testing insights.
+- [Usage breakdown](https://docs.mcpjam.com/api-reference/studies/usage-breakdown.md): Which models, tools and servers the study's sessions used.
+- [Request insights for the current window](https://docs.mcpjam.com/api-reference/studies/request-insights-for-the-current-window.md): **No credits are consumed** — the model cost is on MCPJam. Runs a model over the study's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm run insights, so a request here takes one from there.
+- [Send one agent Playground message](https://docs.mcpjam.com/api-reference/chat-sessions/send-one-agent-playground-message.md): Send one message to a project's MCP servers and get the model's reply plus the telemetry a participant in the conversation could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage.
+- [Read a chat session's execution trace](https://docs.mcpjam.com/api-reference/chat-sessions/read-a-chat-sessions-execution-trace.md): Per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript. Same span shape as the eval iteration trace.

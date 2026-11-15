@@ -1,0 +1,22 @@
+{
+  "event_id": "ebe212c1061745948b3300c896189e4f",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794706944283-47wuqx.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; cat > run_eval.sh <<'\"'\"'EOF'\"'\"'\n#!/bin/bash\n# Repeatable: rerun suite_fixture, poll to verdict. Output in /workspace/run_*.json\nH=\"Authorization: Bearer $MCPJAM_API_KEY\"; B=$MCPJAM_API_URL; P=project_fixture\ncurl -s -m 20 -X POST -H \"$H\" -H \"Content-Type: application/json\" -H \"x-mcpjam-launcher: workspace-script\" \\\n  -d '\"'\"'{\"suiteId\":\"suite_fixture\"}'\"'\"' $B/projects/$P/eval-runs | tee run_create.json; echo\nRID=$(python3 -I -c \"import json;print(json.load(open('\"'\"'run_create.json'\"'\"')).get('\"'\"'runId'\"'\"','\"'\"''\"'\"'))\")\n[ -z \"$RID\" ] && exit 2\nfor i in $(seq 1 10); do curl -s -H \"$H\" $B/projects/$P/eval-runs/$RID > run_status.json; cat run_status.json; echo; grep -qE '\"'\"'\"status\": ?\"(running|queued|pending)\"'\"'\"' run_status.json || break; sleep 5; done\nEOF\nchmod +x run_eval.sh; ./run_eval.sh' && pwd -P >| /tmp/claude-4477-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:42:48.612716+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 2,
+  "signal": null,
+  "duration_seconds": 0.07136178016662598,
+  "end": "2026-11-15T01:42:48.683949+00:00"
+}

@@ -1,0 +1,4 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Eval idempotency key: dc3f34aa-7e00-4acf-baac-411f56d33350
+{"error":{"code":"INTERNAL_ERROR","message":"Synthetic fixture executes deterministic toolCall steps and simple assertions only; hosted prompt/model execution is not implemented.\nRetry this launch with --idempotency-key dc3f34aa-7e00-4acf-baac-411f56d33350.","details":{"idempotencyKey":"dc3f34aa-7e00-4acf-baac-411f56d33350"}}}

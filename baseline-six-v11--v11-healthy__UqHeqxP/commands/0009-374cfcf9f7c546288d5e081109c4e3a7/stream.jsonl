@@ -1,0 +1,3 @@
+{"seconds": 1.1503937244415283, "stream": "stdout", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"error: too many arguments for 'servers'. Expected 0 arguments but got 1.\"}}\n"}
+{"seconds": 1.1506142616271973, "stream": "stdout", "data": "\n"}
+{"seconds": 2.203815221786499, "stream": "stdout", "data": "Usage: mcpjam cloud projects servers create|add [options]\n\nCreate a saved MCP server\n\nOptions:\n  --project <id-or-name>  Project name or ID\n  --body <json>           Server JSON body\n  -h, --help              display help for command\n"}

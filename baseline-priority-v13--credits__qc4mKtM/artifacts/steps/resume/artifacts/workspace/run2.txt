@@ -1,0 +1,7 @@
+HTTP/1.1 202 Accepted
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 02:12:32 GMT
+Content-Type: application/json
+Content-Length: 157
+
+{"runId": "run_fixture_1", "suiteId": "suite_fixture", "status": "running", "servers": [{"id": "server_fixture", "name": "Arithmetic"}], "environment": null}

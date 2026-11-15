@@ -1,0 +1,119 @@
+{
+  "run_id": "baseline-priority-v13--credits__BkqRPJ9",
+  "job": "baseline-priority-v13",
+  "scenario": "mcpjam/credits",
+  "agent": {
+    "name": "claude-code",
+    "version": "2.1.323",
+    "model_info": {
+      "name": "claude-sonnet-5-5",
+      "provider": "anthropic"
+    }
+  },
+  "outcome": "failed",
+  "rewards": {
+    "reward": 0.0
+  },
+  "usage": null,
+  "exception": null,
+  "capture_event_count": 63,
+  "unique_capture_event_count": 38,
+  "agent_tool_invocation_count": 14,
+  "agent_shell_invocation_count": 14,
+  "incomplete_events": 0,
+  "concern_count": 2,
+  "metrics": [
+    {
+      "source": "steps/blocked/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": false,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 2,
+        "repeated_ineffective_requests": 1,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 0,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [],
+        "command_count": 25,
+        "reward": 0.0,
+        "request_count": 45,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      }
+    },
+    {
+      "source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": false,
+        "time_to_first_result_seconds": null,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 2,
+        "repeated_ineffective_requests": 1,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 1,
+        "synthetic_credits_remaining": 19,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [],
+        "command_count": 38,
+        "reward": 0.0,
+        "request_count": 120,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      }
+    }
+  ],
+  "assessment_flags": [
+    "simulated_eval_observed_but_strict_command_match_missing"
+  ],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T02:03:25.608929Z",
+    "explicitly_harness_invalid": false,
+    "comparison_eligible": true,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": true,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": null,
+    "reason": "No unique native shell output with successful structuredContent.sum exactly matched a verifier-confirmed capture."
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once.",
+  "collection_timing_note": "Step artifacts are collected after the orchestrator account-resolution hook. A blocked-step snapshot may already contain account resolution applied after the agent stopped. Use refusal/request timestamps and captured output for temporal attribution, not snapshot presence alone."
+}

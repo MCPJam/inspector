@@ -1,0 +1,22 @@
+{
+  "event_id": "4803f729cde248b3ba1d27195cba7018",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "MCPJAM_API_URL=http://fixture:8765/api/v1 ./node_modules/.bin/mcpjam cloud projects servers create --project project_fixture --body '{\"name\":\"arithmetic\",\"enabled\":true,\"transportType\":\"http\",\"url\":\"http://fixture:8765/mcp\"}' --quiet --format json > saved-server.json; cat saved-server.json; node - <<'JS'\nconst s=require('./openapi.json');console.log(JSON.stringify(s.components.schemas.EvalTestCase,null,2));\nJS"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:22:19.649137+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.94525146484375,
+  "end": "2026-11-15T01:22:20.594295+00:00"
+}

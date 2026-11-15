@@ -1,0 +1,22 @@
+{
+  "event_id": "fb3be9916e2f4f5da0f39c5b71b57573",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708594935-jszotp.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; env | grep -ciE \"ANTHROPIC|OPENAI\"; export MCPJAM_TELEMETRY_DISABLED=1; npx -y @mcpjam/cli@latest cloud whoami 2>&1 | head -5' < /dev/null && pwd -P >| /tmp/claude-1648-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:10:27.134261+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.6011383533477783,
+  "end": "2026-11-15T02:10:27.735357+00:00"
+}

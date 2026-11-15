@@ -1,0 +1,26 @@
+{
+  "id": "product-fixes:after-eval-help",
+  "path": "product-fixes--after-eval-help",
+  "argv": [
+    "../node-v24.22.1-darwin-arm64/bin/node",
+    "cli/dist/index.js",
+    "cloud",
+    "eval",
+    "run",
+    "--help"
+  ],
+  "start": "2026-11-15T01:39:43.258026+00:00",
+  "end": "2026-11-15T01:39:44.779032+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-001-002.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

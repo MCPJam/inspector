@@ -1,0 +1,115 @@
+## Billing
+
+### Payment history
+
+The **Payment history** card on the org billing page lists your recent credit top-ups. Each row shows:
+
+| Column | Details |
+| - | - |
+| Date | When the top-up was processed |
+| Amount | Amount charged in USD |
+| Status | `Succeeded`, `Pending`, or `Failed` |
+| Receipt | Link to the Stripe-hosted receipt (opens in a new tab) |
+
+If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
+
+To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
+
+> [!NOTE]
+>
+> **Free plan organizations cannot purchase credits directly.** If your organization is on the Free plan, the Top up dialog shows a message that only an organization owner can upgrade the plan, with a **Compare plans** button. Clicking it closes the dialog and opens your organization's Plans settings so you can upgrade.
+
+> [!NOTE]
+>
+> **Desktop app:** When you confirm a top-up in the desktop app, checkout opens in your default system browser and the dialog closes automatically. Your credit balance updates in the app once the purchase completes — no redirect back into the app is required.
+
+### Spend budget
+
+An owner or admin can cap what the whole organization spends on MCPJam-billed
+work — chat, evals, judges and computer time — for each billing period, from
+**Organization → Budget**.
+
+* Set the cap in dollars, and choose the percentages to be warned at. The
+  default warns at 80%; reaching the cap always notifies, whether or not you
+  list it.
+* Warnings go to the organization's owners and admins in the notifications
+  bell, and to the owner by email.
+* **When the budget is reached**, new chat turns, eval runs and computer starts
+  are refused for the whole organization. The refusal says the budget is
+  reached and that an owner or admin can raise it — buying credits does not
+  clear it. Work already in flight finishes, and running computers keep going
+  until they hibernate.
+* A scheduled eval that hits the budget pauses its schedule rather than
+  retrying into the same cap every window; it resumes once you raise the cap or
+  the period rolls over.
+* Runs that use **your own API keys** are never counted against the budget and
+  never blocked by it. Neither is the free daily allowance, which is not
+  credits.
+* The window is your organization's own billing period: the subscription cycle
+  for team and enterprise plans, and the calendar month otherwise. Raising or
+  lowering the cap mid-period does not reset what has already been spent.
+
+Any member can see the budget and how much of it is left; only owners and
+admins can change it. Every change is recorded in the organization's audit log
+with who made it and what it was before.
+
+The same budget is readable and writable from the API at
+`/v1/organizations/{organizationId}/spend-budget`.
+
+### Managing billing details
+### Out of MCPJam credits
+
+`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit` · `provider/mcpjam_limit_insufficient`
+
+MCPJam refused the call before it reached a provider. For the daily, monthly,
+and general codes, the account's own allowance is spent.
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. Which allowance depends on the plan: free accounts
+share a daily bucket per organization, paid plans spend a monthly allowance that
+renews with the billing period.
+
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. MCPJam reserves a request's worst-case cost before
+it runs, so a cheaper model or a shorter conversation can fit where this one did
+not.
+
+**Next steps**
+
+* **Free plan (owner)** — The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
+* **Free plan (admin or member)** — The dialog shows a **Request upgrade** link to email an organization owner.
+* **Paid plan (owner or admin)** — The dialog shows **Buy credits** to add shared credits to your organization.
+* **Paid plan (member)** — The dialog shows a **Request credits** link to email an organization owner.
+* Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+* If your organization uses its own keys for all AI features, model tokens are billed by its providers instead; see [Organization AI key policy](#organization-ai-key-policy).
+
+**Swarm and Eval runs**
+
+When credits run out during a Swarm or Eval run, blocked work stops and you receive one credit-exhaustion prompt per run, or one per swarm when a swarm launches several runs at once. Completed results are preserved. Buying credits does not automatically restart the run — start a new run once credits are available.
+
+> [!WARNING]
+>
+> Bring-your-own-key covers chat. Swarm persona generation and persona-driver
+> turns are billed to MCPJam and have no personal BYOK path, so adding a key
+> does not lift this limit for a swarm. An organization that uses its own keys
+> for all AI features runs those turns on its default AI model instead, and its
+> providers bill their tokens; see
+> [Organization AI key policy](#organization-ai-key-policy).
+
+### Credits temporarily held
+
+A swarm session can stop with **Credits temporarily held**. The balance is not
+empty: other requests from your organization were in flight and held the
+remaining credits until they finish. No credit prompt opens for it and nothing
+needs buying.
+
+**Next steps**
+
+* Run the session again once your other sessions have finished.
+* Start fewer sessions at once if it keeps happening.
+
+### Provider failed fallback not permitted
+
+`provider/fallback_prohibited`
+
+The model's provider failed and the saved model selection does not allow a
+{"code": "NOT_FOUND", "message": "Not found"}{"code": "NOT_FOUND", "message": "Not found"}{"code": "NOT_FOUND", "message": "Not found"}

@@ -1,0 +1,22 @@
+{
+  "event_id": "641ff43095804dce8633952b66f45b12",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708396833-6sa1vl.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; cat > run_eval.sh <<'\"'\"'EOF'\"'\"'\n#!/bin/bash\n# Repeatable eval: runs existing suite against saved server. Needs MCPJAM_API_URL/KEY.\nnpx -y @mcpjam/cli cloud eval run --suite suite_fixture --server server_fixture\nEOF\nchmod +x run_eval.sh; cat > NOTES.md <<'\"'\"'EOF'\"'\"'\n- Account: user_fixture, plan team, org_fixture, project_fixture.\n- Usage/credits/billing REST routes: NOT_FOUND on this API; no CLI command for balance found.\n- Suite suite_fixture (Arithmetic smoke), server server_fixture (Arithmetic).\n- Run blocked: FORBIDDEN PLATFORM_FEE_REQUIRED (needs platform credits). Cost estimate not available.\n- Next: org admin/team owner adds credits in the hosted app billing settings, then rerun ./run_eval.sh\nEOF' && pwd -P >| /tmp/claude-7cfd-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:07:11.025462+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0020918846130371094,
+  "end": "2026-11-15T02:07:11.027487+00:00"
+}

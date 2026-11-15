@@ -1,0 +1,3 @@
+Traceback (most recent call last):
+  File "<stdin>", line 7, in <module>
+AssertionError: Negative control did not fail as expected

@@ -1,0 +1,4 @@
+mcp.json
+{"mcpServers":{"arithmetic":{"url":"http://fixture:8765/mcp"}}}
+npm error npx canceled due to missing packages and no YES option: ["@mcpjam/cli@6.2.2"]
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-11-15T02_19_30_853Z-debug-0.log

@@ -1,0 +1,404 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Read the organization's spend budget
+
+> The ceiling on what this organization may spend on MCPJam-billed work — chat, evals, judges and computer time — in the current billing window, and how much of it has been spent.
+
+Any member may read it: a member who cannot raise the ceiling still needs to know it exists, because it is what refused their run. `capUsd: null` means the organization is uncapped, which is the default.
+
+Runs that use your own provider keys are never counted against the budget and never blocked by it. Neither is the free daily allowance — it is not credits.
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json get /organizations/{organizationId}/spend-budget
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects — live
+    diagnostics (validate, inspect, export) and operations: call tools, render
+    prompts, run eval suites asynchronously and poll their results, and import
+    OAuth tokens.
+
+
+    **The API is in preview**: the surface may change while we finish the
+    design. Error `code` values are stable; error `message` strings are not.
+    Write clients that ignore unknown response fields.
+  contact:
+    name: MCPJam
+    url: https://github.com/MCPJam/inspector/issues
+servers:
+  - url: https://app.mcpjam.com/api/v1
+    description: Hosted MCPJam
+security:
+  - bearerAuth: []
+tags:
+  - name: Agent browsers
+    description: >-
+      Isolated cloud browser sessions for coding agents. Requires authenticated
+      project membership and a configured desktop runtime.
+  - name: Clients
+    description: >-
+      Clients — the named, reusable configurations that define how MCPJam
+      connects to and talks to your MCP servers. The original `/hosts` paths
+      remain as deprecated, ID-only compatibility aliases with their original
+      DTOs and their original (tokenless) write contracts; every alias response
+      carries `Deprecation: true`. New integrations should use `/clients`.
+  - name: Environments
+    description: >-
+      Project environments: named, live-editable execution bundles (one host, an
+      optional standalone server group, optionally pinned skills and plugin
+      versions) that eval suites and goals run against. Distinct from Sandbox
+      images, which are Computer base images. Reads require project membership;
+      every write requires project admin.
+  - name: Plugins
+    description: >-
+      Agent Plugins imported into a project — read-only inventory and version
+      detail.
+  - name: Skills
+    description: >-
+      Cloud Skills: authored SKILL.md files stored in a project. Read-only here.
+      Environments pin skills by id (`skillSelection.skillIds`) and eval runs
+      pin them with `--compose-skill`, so this surface exists to give an
+      unattended caller those ids; authoring is an app flow behind a beta gate.
+  - name: Sandbox images
+    description: >-
+      Custom Computer images: a digest-pinned Dockerfile built into an immutable
+      image your project's computers boot from.
+  - name: Server diagnostics
+    description: Connect-level health checks against a saved MCP server.
+  - name: Primitives
+    description: 'The server''s MCP primitives: tools, prompts, and resources.'
+  - name: Export
+    description: Full-server snapshots for diffing and CI.
+  - name: Execution
+    description: 'Run the server''s primitives: call tools, render prompts.'
+  - name: Eval runs
+    description: >-
+      Asynchronous eval suite runs: create with 202, poll status, iterations,
+      and traces.
+  - name: Conformance runs
+    description: >-
+      Ingest MCP spec-conformance results from the SDK/CLI into project-owned
+      history. Distinct from Eval runs (authored LLM cases) and from directory
+      readiness.
+  - name: Server connections
+    description: >-
+      Connect an MCP server URL to a project, authorizing in a browser when the
+      server requires it.
+  - name: Server accounts
+    description: >-
+      The accounts a saved server signs in with, addressed by id or by name.
+      Tokens are write-only: an upload takes them and no route returns one.
+  - name: OAuth
+    description: 'Bring-your-own OAuth: import externally obtained tokens for a server.'
+  - name: Studies
+    description: >-
+      Publish a project environment as a **study** for people outside the
+      project to talk to, read what they did, and control who can reach it.
+      Several of these NARROW access and take effect immediately.
+
+
+      The pre-rename paths — `/projects/{projectId}/scenarios`,
+      `/projects/{projectId}/scenarios/{scenarioId}`,
+      `/projects/{projectId}/environments/{environmentId}/scenario` and
+      `/projects/{projectId}/user-testing/scenarios/{scenarioId}/…` — keep
+      working and are deliberately not documented here. They return their
+      original bodies, which spell the owning id `scenarioId` and whose detail
+      read carries no execution settings, and every response answers with
+      `Deprecation: true` and a `Link` header naming its successor. They are
+      removed at general availability; a new integration should use the paths on
+      this page.
+  - name: Catalog
+    description: >-
+      Discover the resources the other routes operate on: your account,
+      projects, servers, eval suites, and chat sessions.
+  - name: Tunnels
+    description: >-
+      Relay tunnels that expose local MCP servers through a public URL,
+      registered as first-class project servers (the `mcpjam cloud tunnel` CLI
+      flow).
+  - name: Agent
+    description: >-
+      Headless agent turns over the public API: send a message history, the
+      server runs one assistant turn with project-scoped workspace tools (eval
+      reads + suite creation) on a pinned hosted model, and returns the reply
+      plus created-resource references.
+  - name: Swarms
+    description: >-
+      Personas, journeys and swarm containers — the authoring half of Swarms —
+      plus the model-backed generation that drafts them.
+  - name: Swarm runs
+    description: >-
+      Launching journeys and reading what they produced. Launching SPENDS — see
+      the per-operation notes.
+  - name: Swarm insights
+    description: >-
+      What a swarm run revealed. The scorecard and findings are deterministic
+      and free; requesting wave insights runs models and draws on your shared
+      daily ledger.
+  - name: Directory readiness
+    description: >-
+      Grade a saved server against a publisher's listing requirements:
+      Anthropic's connector directory or OpenAI's plugin directory. Reported as
+      lane status and coverage, never as a numeric score, and excluded from
+      `pooledConformanceScore`. Deterministic grading is free; model-backed
+      experience observations are an explicit opt-in whose model cost is on
+      MCPJam — no credits are consumed — and they can never decide a verdict.
+  - name: Registry
+    description: >-
+      Search the scraped MCP directories (Claude, ChatGPT, and any future
+      source), list curated/org registry cards, and install them into a project.
+      Install writes a `servers` row and provenance — it does not open a live
+      session. There is no catalog-uninstall route: delete the project server
+      instead. Directory reads require a bearer (including minted guest tokens)
+      but do not materialize a user. Card/connection reads and all writes are
+      authed-non-guest.
+  - name: Feedback
+    description: >-
+      Feedback about MCPJam itself (bugs, missing capabilities, confusing
+      behavior), sent to the MCPJam team and kept for 180 days. The
+      `send_feedback` MCP tool calls the same endpoint.
+paths:
+  /organizations/{organizationId}/spend-budget:
+    parameters:
+      - $ref: '#/components/parameters/organizationId'
+    get:
+      tags:
+        - Catalog
+      summary: Read the organization's spend budget
+      description: >-
+        The ceiling on what this organization may spend on MCPJam-billed work —
+        chat, evals, judges and computer time — in the current billing window,
+        and how much of it has been spent.
+
+
+        Any member may read it: a member who cannot raise the ceiling still
+        needs to know it exists, because it is what refused their run. `capUsd:
+        null` means the organization is uncapped, which is the default.
+
+
+        Runs that use your own provider keys are never counted against the
+        budget and never blocked by it. Neither is the free daily allowance — it
+        is not credits.
+      operationId: getSpendBudget
+      responses:
+        '200':
+          description: The organization's spend budget.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpendBudget'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    organizationId:
+      name: organizationId
+      in: path
+      required: true
+      description: ID of the organization, from `GET /organizations`.
+      schema:
+        type: string
+  schemas:
+    SpendBudget:
+      type: object
+      description: >-
+        An organization's ceiling on MCPJam-billed spend for the current billing
+        window. Amounts appear in both USD and credits (1 credit = 1 cent); the
+        credit figures are what the ledger actually stores.
+      required:
+        - capUsd
+        - capCredits
+        - alertPercents
+        - spentUsd
+        - spentCredits
+        - windowStartAt
+        - windowEndsAt
+        - alertedPercents
+        - capReachedAt
+        - updatedAt
+        - minCapUsd
+        - maxCapUsd
+        - supported
+      properties:
+        capUsd:
+          type:
+            - number
+            - 'null'
+          description: The ceiling in USD. `null` means uncapped.
+        capCredits:
+          type:
+            - integer
+            - 'null'
+          description: The same ceiling as the ledger stores it.
+        alertPercents:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Whole percents of the cap that notify owners and admins. Reaching
+            the cap always notifies, whether or not 100 is listed.
+        spentUsd:
+          type: number
+          description: MCPJam-billed spend so far in this window, in USD.
+        spentCredits:
+          type: integer
+          description: The same spend as the ledger counted it.
+        windowStartAt:
+          type: integer
+          description: >-
+            Start of the current billing window (epoch ms). Team and enterprise
+            organizations run on their own subscription cycle; everyone else on
+            the UTC month.
+        windowEndsAt:
+          type: integer
+          description: When the window resets and the counter returns to zero (epoch ms).
+        alertedPercents:
+          type: array
+          items:
+            type: integer
+          description: >-
+            Thresholds already announced this window. Each fires once per
+            window.
+        capReachedAt:
+          type:
+            - integer
+            - 'null'
+          description: When the cap was reached this window, or `null`.
+        updatedAt:
+          type:
+            - integer
+            - 'null'
+          description: When the budget was last changed (epoch ms).
+        minCapUsd:
+          type: number
+          description: The smallest budget the platform accepts.
+        maxCapUsd:
+          type: number
+          description: The largest budget the platform accepts.
+        supported:
+          type: boolean
+          description: False for a personal organization, which cannot have a budget.
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: >-
+            Stable, machine-readable error code. New codes may be added over
+            time; treat unknown codes as non-retryable failures unless the HTTP
+            status says otherwise.
+          enum:
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - NOT_FOUND
+            - CONFLICT
+            - VALIDATION_ERROR
+            - RATE_LIMITED
+            - FEATURE_NOT_SUPPORTED
+            - SERVER_UNREACHABLE
+            - TIMEOUT
+            - OAUTH_REQUIRED
+            - AUTH_REQUIRED
+            - INTERNAL_ERROR
+        message:
+          type: string
+          description: >-
+            Human-readable description. May change between releases — don't
+            match on it.
+        details:
+          type: object
+          description: Optional, unstructured context bag.
+          additionalProperties: true
+  responses:
+    Unauthorized:
+      description: >-
+        Missing, invalid, revoked, or orphaned key (`UNAUTHORIZED`) — or the
+        **target MCP server** needs an OAuth grant (`OAUTH_REQUIRED`), which is
+        a property of the server, not your key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            badKey:
+              summary: Invalid or revoked key
+              value:
+                code: UNAUTHORIZED
+                message: Invalid API key
+            oauthRequired:
+              summary: Target server needs an OAuth grant
+              value:
+                code: OAUTH_REQUIRED
+                message: Server requires OAuth authorization
+    Forbidden:
+      description: Key is valid but not allowed to do this.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: FORBIDDEN
+            message: You do not have access to this project
+    NotFound:
+      description: Unknown project, server, or resource.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: NOT_FOUND
+            message: Server not found
+    RateLimited:
+      description: >-
+        Per-key rate limit exceeded (60 requests/minute sustained, bursts up to
+        10). Honor `Retry-After` and back off with jitter.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: RATE_LIMITED
+            message: API key rate limit exceeded. Slow down and retry.
+    InternalError:
+      description: Something failed on MCPJam's side.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: INTERNAL_ERROR
+            message: Unexpected internal error
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: Bearer [REDACTED]: >-
+        MCPJam API key (`sk_…`). Create one at [Settings → API
+        keys](https://app.mcpjam.com/settings/api-keys). Guest sessions cannot
+        use the API, and API keys cannot manage other API keys.
+
+````
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

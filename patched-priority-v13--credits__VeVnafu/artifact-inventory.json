@@ -1,0 +1,56 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.control.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.control.json",
+    "sha256": "dd368d1a61417e9f8b7ff0b8eef0f1cb47b2563614dc99a09cdb6145fd48c477"
+  },
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "6ba0c015464c795f2dd9b07c62e4f2ec2fbe41192716c4572896573fe45f1cef"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run-request.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run-request.json",
+    "sha256": "9480965bfb3bc3b0bdf10d47a1484c7505bf2f45d16118b337c7cbd712be0eb1"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run-response.txt",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run-response.txt",
+    "sha256": "8f1cc1194197638b883aa2f77afe2d6d86c53ecd65003ab6eb410d4b21f3a8c8"
+  },
+  {
+    "source": "steps/resume/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/fixture/state.json",
+    "sha256": "8153f0da0ef6bad5ec26054e1dcf670607fde30f4cad2577f45645620684125d"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run-status.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run-status.json",
+    "sha256": "e610fc30fc19cbec892318dd0f5414e8645638f44141a17795ad0e542acd637e"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run-request.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run-request.json",
+    "sha256": "9480965bfb3bc3b0bdf10d47a1484c7505bf2f45d16118b337c7cbd712be0eb1"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run-response.txt",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run-response.txt",
+    "sha256": "8f1cc1194197638b883aa2f77afe2d6d86c53ecd65003ab6eb410d4b21f3a8c8"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run-response2.txt",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run-response2.txt",
+    "sha256": "e3ccceaf37f4fa5a00d2b235be8fb118e5c16524348036bf04518f515e2a1a68"
+  }
+]

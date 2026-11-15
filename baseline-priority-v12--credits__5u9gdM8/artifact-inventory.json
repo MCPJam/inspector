@@ -1,0 +1,62 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.control.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.control.json",
+    "sha256": "dd368d1a61417e9f8b7ff0b8eef0f1cb47b2563614dc99a09cdb6145fd48c477"
+  },
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "8d398b9a642411cf4cebbe9c8c607b3725243a703e6a36d7ec4a68c4b31f90e3"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/ref.md",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/ref.md",
+    "sha256": "a28de1090411ef1cad67b701ad9e4906a13be470376157de11ed8ee8918dcc2b"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run1.log",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run1.log",
+    "sha256": "2cbf6cd1a866a7947c1f618e6166a9df7e979630c756351ad40300df63436070"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run2.log",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run2.log",
+    "sha256": "80e745365c32075e3a07d2d5300eaa1247b12bec1213cc6494ba718adbdba262"
+  },
+  {
+    "source": "steps/resume/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/fixture/state.json",
+    "sha256": "ed9087d490ccacea443d818fa22f189984e333e07eeef24cbe3b26032c7a88ae"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/ref.md",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/ref.md",
+    "sha256": "a28de1090411ef1cad67b701ad9e4906a13be470376157de11ed8ee8918dcc2b"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run1.log",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run1.log",
+    "sha256": "2cbf6cd1a866a7947c1f618e6166a9df7e979630c756351ad40300df63436070"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run2.log",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run2.log",
+    "sha256": "80e745365c32075e3a07d2d5300eaa1247b12bec1213cc6494ba718adbdba262"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run3.log",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run3.log",
+    "sha256": "8a55452d0b07ef51dcb50a2d391525e039c831e8220a74ac21600e359b681fd8"
+  }
+]

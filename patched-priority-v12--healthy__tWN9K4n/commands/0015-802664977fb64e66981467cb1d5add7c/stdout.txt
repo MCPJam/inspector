@@ -1,0 +1,150 @@
+1554:## `cloud eval` commands
+1555-
+1556-All `eval` commands accept the shared platform flags below.
+1557-
+1558-### Shared platform flags
+1559-
+1560-| Flag | Description |
+1561-| - | - |
+1562-| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+1563-| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1564-| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+1565-
+1566:### `cloud eval create`
+1567-
+1568-Create a runnable eval suite from authored test cases (does not run it).
+1569-
+1570-| Flag | Required | Description |
+1571-| - | - | - |
+1572-| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+1573-| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"`) belongs on `eval run --file` |
+1574-| `--json <json>` | No | Inline suite definition JSON (or `@file`, or `-` for stdin) |
+1575-| `--name <name>` | No | Suite name (overrides the file) |
+1576-| `--model <model>` | No | Suite-level default model (overrides the file) |
+1577-| `--provider <provider>` | No | Suite-level default provider (overrides the file) |
+1578-| `--server <id-or-name...>` | No | Project HTTP server names or IDs (overrides the file) |
+1579-| `--client <id-or-name...>` | No | Clients to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --client` has nothing to select |
+1580-| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
+1581-
+1582:### `cloud eval list`
+1583-
+1584-List the eval suites saved in a project.
+1585-
+1586-| Flag | Required | Description |
+1587-| - | - | - |
+1588-| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+1589-
+1590:### `cloud eval run`
+1591-
+1592-Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
+1593-
+1594-By default the command prints a launch receipt and returns immediately. `--wait` polls every launched run to a terminal state.
+1595-
+1596-**Exit codes (`--wait` only).** Without `--wait` this command's exit code is unchanged: `0` on any launch, `1` on a partial or wholly failed fan-out. `--wait` owns a separate six-code contract — a caller who asked this process to sit and watch a run to completion is asking it to say how the run went:
+1597-
+1598-| Code | Meaning |
+1599-| - | - |
+1600-| `0` | Every waited run passed, unanimously, and (when a report was requested) every report was assembled |
+1601-| `1` | A run **completed** with a **failed** verdict. The only condition that produces this code |
+1602-| `2` | Usage error — bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file (after auth, before any server/model work) |
+1603-| `3` | Auth failed — no credential, or the platform rejected it, at launch or mid-wait (a token that expired during a long poll). Zero credits spent if it happened before launch |
+1604-| `4` | Connection/setup failed before evaluation — a launch failure this CLI itself observed (network, timeout, rate limit, a partial or failed fan-out, an unrecognized launch error), or a local `--out` write failure — unless a more severe outcome (`1` or `3`) already applies to the same run, per the merge order above |
+1605-| `5` | No valid verdict — `inconclusive`, a null/unrecognized result, a run whose own status is failed/cancelled/timed-out, a wait that hit its deadline, a mid-wait failure that was not auth-shaped, or a report that could not be assembled |
+1606-
+1607-No infrastructure condition ever maps to `1` — see the same rule under `eval gate` below. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`: a real verdict failure is never masked by a sibling's infrastructure noise, and a credential failure (which may be *why* other targets show no verdict) outranks a plain connection failure.
+1608-
+1609-This six-code contract is new and deliberately **different** from `eval gate`'s four codes below — see that command's own doc for why the two are not unified. An invalid suite file exits **2** either way — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+1610-
+1611-| Flag | Required | Description |
+1612-| - | - | - |
+1613-| `--suite <id-or-name>` | Yes, unless `--file` | Eval suite name or ID |
+1614-| `--file <path>` | Yes, unless `--suite` | Versioned suite file to upload and run (`.yaml` or `.json`, or `-` for stdin) |
+1615-| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+1616-| `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
+1617-| `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
+1618-| `--client <id-or-name...>` | No | Attached client(s) to run, so the run is stamped with that client's config. Several values start one **paid run each**. |
+1619-| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. Not the host-compat catalog id `mcpjam compat --host` / `mcpjam tools --host` take — see [Two different `--host` flags](#two-different---host-flags). |
+1620-| `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
+1621-| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
+1622-| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
+1623-| `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
+1624-| `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
+1625-| `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
+1626-| `--notes <text>` | No | Free-text note stored on the run |
+1627-| `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
+1628-| `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
+1629-| `--idempotency-key <key>` | No | Retry key for a lost launch response. For `--file`, a fresh key is minted and printed on every invocation when this flag is omitted; supply the printed key to replay the same run instead of starting a new one |
+1630-| `--wait` | No | Wait for every launched run to reach a terminal status |
+--
+1680:under `cloud eval`.
+1681-
+1682-| Command | `--host` names |
+1683-| - | - |
+1684-| `mcpjam tools` / `resources` / `prompts` / `probe` / `compat` | A **host-compat catalog id** — which AI host to emulate. `claude`, `chatgpt`, `cursor`, `copilot`, `codex`, `goose`, and the rest of the catalog. |
+1685:| `mcpjam cloud eval run` / `cases run` / `update` / `create` | A **client saved in your project** (`mcpjam cloud clients list`). |
+1686-
+1687-The catalog sense keeps `--host`: it genuinely means "which AI host am I
+1688:emulating". Under `cloud eval`, **`--client` is canonical** and `--host` is a
+1689:deprecated alias for it — so `mcpjam cloud eval run --host claude` looks for a
+1690-saved client named `claude` and fails if you do not have one. When the value
+1691-you pass is a catalog id, the error says so and points at `--client`.
+1692-
+1693-#### Which target runs
+1694-
+1695-**Fan-out is explicit and never inferred.** Choosing for you would be choosing
+1696-how much to spend, so:
+1697-
+1698-* **nothing attached** → the suite's saved server selection runs (unchanged);
+1699-* **exactly one** attached environment or client → that one runs
+1700-  automatically, and the run is stamped with its configuration;
+1701-* **several attached** → the run fails with `TARGET_REQUIRED`, listing every
+1702-  choice. Name one with `--environment` / `--client`, several by repeating the
+1703-  flag, or run all of them with `--all-targets`.
+1704-
+1705-`--all-targets` expands **one axis**: attached environments if the suite has
+1706-any, otherwise attached clients — never a cross product, because an environment
+1707-already resolves a client. It starts **one paid run per target**, launched as a
+1708-single group that occupies one concurrency slot rather than N.
+1709-
+1710-`--environment` / `--client` and `--server` are mutually exclusive: an
+1711-environment or client supplies a closed server set that an override cannot
+1712-change.
+1713-
+1714-> [!WARNING]
+1715->
+1716-> `--refresh-snapshot` **changes the suite**, not just this run: it re-derives
+1717-> and stores the suite's host-config snapshot, so every future run uses the new
+1718-> one. It is rejected on any multi-target launch — several runs racing to write
+1719-> one snapshot would leave the suite pinned to whichever finished last.
+1720-
+1721-#### Output and exit codes
+1722-
+1723-With `--format json`, stdout is **exactly one JSON document** — the launch
+1724-receipt, with nothing appended — so CI can parse it directly. In human format
+1725-the CLI prints a `View:` link per started run, a `Started N/M runs (group …)`
+1726-summary when several launched, and a `Failed: <target> — <code>: <message>`
+1727-line per failure.
+1728-
+1729-With `--wait`, the default output contains the launch receipt and completed
+--
+1851:mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+1852-  --allow-approximated c_refund_partial \
+1853-  --approval-reason "Reviewed against the upstream rubric; ENG-4821"
+1854-```
+1855-
+1856-Checked before anything is billed, each with its own message: approving a
+1857-**native** case (nothing to approve), a **claimed-exact** one (needs no
+1858-approval), an **unsupported** or **unresolved** one (approval covers a case
+1859-whose behaviour was approximated, not one whose behaviour is missing), a
+1860-**disabled** or **unselected** one (the run will not execute it), an unknown
+1861-id, or the same id twice. The flags are refused outright with `--suite`: a
+1862-hosted suite's cases are not the ones this invocation authored, so an
+1863-authored-id selector has nothing to resolve against.
+1864-
+1865-**The approval belongs to the run, never to the case.** You supply an id and a
+1866-reason and nothing else — the approver and the timestamp are derived by the
+1867-server and frozen into that run's own snapshot, because a caller-supplied
+1868-approver would file one person's approval under another's name and a
+1869-caller-supplied timestamp could be backdated past the edit that invalidated the
+1870-claim. Nothing persists: edit the suite, re-sync, or launch again, and the flags
+1871-are required again.

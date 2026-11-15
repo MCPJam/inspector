@@ -1,0 +1,52 @@
+{
+  "name": "Arithmetic smoke",
+  "serverIds": [
+    "server_fixture"
+  ],
+  "model": "anthropic/claude-haiku-4.5",
+  "passCriteria": {
+    "minimumPassRatePercent": 100
+  },
+  "tests": [
+    {
+      "title": "Add two numbers and return five",
+      "runs": 3,
+      "steps": [
+        {
+          "id": "s1",
+          "kind": "toolCall",
+          "serverName": "Arithmetic",
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        {
+          "id": "a1",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolCalledWith",
+            "toolName": "add",
+            "args": {
+              "args": {
+                "a": 2,
+                "b": 3
+              },
+              "argumentMatching": "exact"
+            }
+          }
+        },
+        {
+          "id": "a2",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultContains",
+            "toolName": "add",
+            "needle": "5"
+          }
+        }
+      ]
+    }
+  ]
+}

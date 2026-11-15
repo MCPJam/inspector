@@ -1,0 +1,3 @@
+{"seconds": 0.6222641468048096, "stream": "stdout", "data": "Using MCPJam Cloud as sk_…etic · account · http://fixture:8765/api/v1\n{\"items\":[{\"id\":\"org_fixture\",\"name\":\"Fixture organization\",\"plan\":\"team\",\"myRole\":\"owner\",\"isCreator\":true,\"logoUrl\":null,\"createdAt\":1}]}\n"}
+{"seconds": 1.271285057067871, "stream": "stdout", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Server \\\"http://fixture:8765/mcp\\\" was not found in project \\\"Fixture\\\". Available: Arithmetic (id: server_fixture).\"}}\n"}
+{"seconds": 1.271336555480957, "stream": "stdout", "data": "exit 2\n"}

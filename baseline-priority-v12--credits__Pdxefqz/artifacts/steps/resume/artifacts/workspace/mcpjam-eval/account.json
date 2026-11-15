@@ -1,0 +1,9 @@
+{
+  "status": 200,
+  "body": {
+    "id": "user_fixture",
+    "name": "Fixture user",
+    "email": "[EMAIL REDACTED]",
+    "plan": "team"
+  }
+}

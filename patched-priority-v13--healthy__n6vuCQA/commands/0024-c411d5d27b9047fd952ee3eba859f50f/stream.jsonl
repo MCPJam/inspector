@@ -1,0 +1,6 @@
+{"seconds": 0.017236709594726562, "stream": "stdout", "data": "suite suite_authored_3\n"}
+{"seconds": 0.0233457088470459, "stream": "stdout", "data": "{\"runId\": \"run_fixture_1\", \"suiteId\": \"suite_authored_3\", \"status\": \"running\", \"servers\": [{\"id\": \"server_fixture\", \"name\": \"Arithmetic\"}], \"environment\": null}"}
+{"seconds": 0.023870468139648438, "stream": "stdout", "data": "\n"}
+{"seconds": 0.03840827941894531, "stream": "stdout", "data": "suite suite_authored_4\n"}
+{"seconds": 0.043808937072753906, "stream": "stdout", "data": "{\"code\": \"FEATURE_NOT_SUPPORTED\", \"message\": \"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\", \"details\": {\"reason\": \"fixture_unsupported_execution\"}}"}
+{"seconds": 0.04414701461791992, "stream": "stdout", "data": "\n"}

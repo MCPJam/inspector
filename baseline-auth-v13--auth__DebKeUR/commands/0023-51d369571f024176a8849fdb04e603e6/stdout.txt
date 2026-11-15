@@ -1,0 +1,3 @@
+{"method": "POST", "path": "/projects/project_fixture/servers/server_fixture/doctor", "status": 404, "response": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+{"method": "GET", "path": "/projects/project_fixture/eval-suites/suite_fixture", "status": 200, "response": {"id": "suite_fixture", "name": "Arithmetic smoke", "projectId": "project_fixture", "description": "Synthetic fixture: add 2 and 3 and assert 5.", "environment": {"servers": []}, "executionConfig": null, "hosts": [], "environmentIds": [], "settings": {"policy": "legacy", "minimumIterations": 1}, "schedule": {}, "createdAt": 1, "updatedAt": 2}}
+{"method": "GET", "path": "/projects/project_fixture/eval-suites/suite_fixture/runs", "status": 200, "response": {"items": []}}

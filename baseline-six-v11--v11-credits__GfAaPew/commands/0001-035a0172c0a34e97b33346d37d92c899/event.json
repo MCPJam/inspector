@@ -1,0 +1,22 @@
+{
+  "event_id": "035a0172c0a34e97b33346d37d92c899",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json\ns=json.load(open('/workspace/mcpjam-eval/docs/openapi.json'))\nfor p,v in s['paths'].items():\n if any(o.get('operationId')=='getMe' or 'authenticated account' in o.get('summary','') for o in v.values() if isinstance(o,dict)): print(p)\nPY\ncurl -sS https://docs.mcpjam.com/api-reference/catalog/get-the-authenticated-account.md\ncurl -sS https://docs.mcpjam.com/reference/public-api.md -o /workspace/mcpjam-eval/docs/api.md\nrg -n -i 'credit|usage|cost|billing' /workspace/mcpjam-eval/docs/api.md /workspace/mcpjam-eval/docs/cli.md | head -45"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:34:57.425391+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.5133512020111084,
+  "end": "2026-11-15T01:34:57.938567+00:00"
+}

@@ -1,0 +1,71 @@
+{
+  "status": 200,
+  "body": {
+    "projectId": "project_fixture",
+    "sensitive_value": "[REDACTED]",
+    "role": "owner",
+    "projectRole": "owner",
+    "surface": "cli",
+    "features": {
+      "sandboxes": {
+        "enabled": false,
+        "mode": "off",
+        "enforced": false
+      }
+    },
+    "plan": {
+      "name": "team",
+      "limits": {},
+      "features": {}
+    },
+    "can": {}
+  }
+}
+## Billing
+
+### Payment history
+
+The **Payment history** card on the org billing page lists your recent credit top-ups. Each row shows:
+
+| Column | Details |
+| - | - |
+| Date | When the top-up was processed |
+| Amount | Amount charged in USD |
+| Status | `Succeeded`, `Pending`, or `Failed` |
+| Receipt | Link to the Stripe-hosted receipt (opens in a new tab) |
+
+If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
+
+To add credits, click **Top up**, either from the empty state when you have no history, or from the credit balance card above.
+
+> [!NOTE]
+>
+> **Free plan organizations cannot purchase credits directly.** If your organization is on the Free plan, the Top up dialog shows a message that only an organization owner can upgrade the plan, with a **Compare plans** button. Clicking it closes the dialog and opens your organization's Plans settings so you can upgrade.
+
+> [!NOTE]
+>
+> **Desktop app:** When you confirm a top-up in the desktop app, checkout opens in your default system browser and the dialog closes automatically. Your credit balance updates in the app once the purchase completes, so no redirect back into the app is required.
+
+### Cost
+
+Every iteration carries the MCPJam-billed cost of the model work it did,
+priced when the trial finished and stamped with the rates used, so a run's
+cost does not move later when prices change. It rolls up onto cases, runs and
+the metric strip.
+
+A dash (`—`) means **no cost was observed**, never that the trial was free:
+
+| Why | What you see |
+| - | - |
+| Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
+| No token usage reported | Nothing to price. |
+
+A cost your own SDK runner reported is shown but labelled **runner**: it is
+real, but MCPJam neither computed nor verified it.
+
+When only some of a run's trials were priced, the total says so. That
+distinction matters most in CI: a run that looks cheaper may simply be a run
+we priced less of, which is why the compare API reports coverage counts
+alongside the cost and a cost gate treats partial coverage as non-gateable
+rather than as a pass.
+

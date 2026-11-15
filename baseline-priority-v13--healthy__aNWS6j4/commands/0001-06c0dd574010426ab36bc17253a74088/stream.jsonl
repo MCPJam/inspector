@@ -1,0 +1,2 @@
+{"seconds": 0.01576542854309082, "stream": "stderr", "data": "/bin/bash.real: line 1: python: command not found\n"}
+{"seconds": 0.48883891105651855, "stream": "stderr", "data": "cat: artifacts/run.json: No such file or directory\n"}

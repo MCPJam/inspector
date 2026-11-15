@@ -1,0 +1,1 @@
+{"seconds": 0.03166055679321289, "stream": "stdout", "data": "{\"suiteId\": \"suite_authored_3\", \"name\": \"Arithmetic model-free smoke\", \"servers\": [{\"id\": \"server_fixture\"}], \"hosts\": [], \"caseUpsert\": {\"committed\": [{\"id\": \"suite_authored_3_case_0\", \"name\": \"Add two and three\"}], \"failed\": []}}"}

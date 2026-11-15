@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "id": "3262c7ff-8d8f-4750-9d22-1cd4e4e0357f",
+  "task_name": "mcpjam/healthy",
+  "trial_name": "smoke-healthy-v1__Z4eU7EV",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/baseline-codex-healthy-v1/smoke-healthy-v1__Z4eU7EV",
+  "task_id": {
+    "path": "work/tasks/smoke-healthy-v1"
+  },
+  "source": null,
+  "task_checksum": "d78167438ca644161f81e394dd70abbe432bf40dda563ae59bf0dbdc5147756e",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "work/tasks/smoke-healthy-v1",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "smoke-healthy-v1__Z4eU7EV",
+    "trials_dir": "work/jobs/baseline-codex-healthy-v1",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "codex",
+      "import_path": null,
+      "model_name": "openai/gpt-6.1-sol",
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": false,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {
+        "version": "0.160.0",
+        "reasoning_effort": "medium",
+        "reasoning_summary": "none"
+      },
+      "env": {
+        "CODEX_FORCE_AUTH_JSON": "****"
+      },
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "a5caa333-d50b-4fce-a24f-1a8563ab781e",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 1474958,
+    "n_cache_tokens": 1412096,
+    "n_output_tokens": 6536,
+    "cost_usd": 0.3322936,
+    "model_usage": {
+      "gpt-6.1-sol": {
+        "n_input_tokens": 1474958,
+        "n_cache_tokens": 1412096,
+        "n_output_tokens": 6536,
+        "cost_usd": 0.3322936
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "verifier_result": null,
+  "verifier_environment_mode": "separate",
+  "exception_info": {
+    "exception_type": "RewardFileNotFoundError",
+    "exception_message": "No reward file found at work/jobs/baseline-codex-healthy-v1/smoke-healthy-v1__Z4eU7EV/verifier/reward.txt or work/jobs/baseline-codex-healthy-v1/smoke-healthy-v1__Z4eU7EV/verifier/reward.json",
+    "exception_traceback": "Traceback (most recent call last):\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 616, in run\n    await self._run()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/single_step.py\", line 52, in _run\n    await self._run_verifier()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/single_step.py\", line 102, in _run_verifier\n    self.result.verifier_result = await self._run_separate_verifier(\n                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1097, in _run_separate_verifier\n    return await self._verify_with_timeout(verifier, timeout_sec)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 990, in _verify_with_timeout\n    return await asyncio.wait_for(verifier.verify(), timeout=timeout_sec)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/verifier/verifier.py\", line 304, in verify\n    raise RewardFileNotFoundError(\nharbor.verifier.verifier.RewardFileNotFoundError: No reward file found at work/jobs/baseline-codex-healthy-v1/smoke-healthy-v1__Z4eU7EV/verifier/reward.txt or work/jobs/baseline-codex-healthy-v1/smoke-healthy-v1__Z4eU7EV/verifier/reward.json\n",
+    "occurred_at": "2026-11-15T01:27:36.836931Z",
+    "policy": {
+      "should_retry": false,
+      "should_grade": true,
+      "has_valid_reward": false
+    }
+  },
+  "started_at": "2026-11-15T01:20:58.022303Z",
+  "finished_at": "2026-11-15T01:27:36.838428Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T01:20:58.081819Z",
+    "finished_at": "2026-11-15T01:21:03.516165Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-15T01:21:03.516380Z",
+    "finished_at": "2026-11-15T01:21:03.710736Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-11-15T01:21:03.711260Z",
+    "finished_at": "2026-11-15T01:24:38.151219Z"
+  },
+  "verifier": {
+    "started_at": "2026-11-15T01:25:16.207614Z",
+    "finished_at": "2026-11-15T01:27:36.821973Z"
+  },
+  "step_results": null,
+  "reward_valid": false
+}

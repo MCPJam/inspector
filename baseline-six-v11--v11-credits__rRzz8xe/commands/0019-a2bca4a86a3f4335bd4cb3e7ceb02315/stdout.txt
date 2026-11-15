@@ -1,0 +1,14 @@
+{"id":"user_fixture","email":"[EMAIL REDACTED]","name":"Fixture user","plan":"team","credential":"api-key"}
+Usage: mcpjam cloud organizations|orgs [options] [command]
+
+Inspect the MCPJam organizations you belong to
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  list            List your organizations and their ids (an sk_ key sees only
+                  its own)
+  help [command]  display help for command
+{"error":{"code":"USAGE_ERROR","message":"error: unknown command 'tools'"}}
+{"tools":[{"name":"add","description":"Add two finite numbers and return their sum.","inputSchema":{"type":"object","properties":{"a":{"type":"number"},"b":{"type":"number"}},"required":["a","b"],"additionalProperties":false},"outputSchema":{"type":"object","properties":{"sum":{"type":"number"}},"required":["sum"]},"annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}],"toolsMetadata":{}}

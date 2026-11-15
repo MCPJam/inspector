@@ -1,0 +1,22 @@
+{
+  "event_id": "2da1501969214eb2b999cc289b2f9c1d",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "npx mcpjam cloud eval run --project project_fixture --suite suite_authored_2 --iterations 3 --wait --wait-timeout 60000 --out reports/eval.json --format json > reports/launch.json 2> reports/run-stderr.txt"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:30:10.239304+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 4,
+  "signal": null,
+  "duration_seconds": 0.7571535110473633,
+  "end": "2026-11-15T01:30:10.996387+00:00"
+}

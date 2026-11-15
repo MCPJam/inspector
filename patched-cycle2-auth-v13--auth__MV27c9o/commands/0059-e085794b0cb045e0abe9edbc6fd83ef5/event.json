@@ -1,0 +1,22 @@
+{
+  "event_id": "e085794b0cb045e0abe9edbc6fd83ef5",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "npm exec --yes --package=@mcpjam/cli -- mcpjam protocol conformance --help"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:28:38.396554+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.5576245784759521,
+  "end": "2026-11-15T02:28:38.954112+00:00"
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "547d3971e5e94f2d9d186ec5274ba6ba",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "npx mcpjam cloud eval list --project project_fixture --format json && python3 - <<'PY'\nimport json\ns=json.load(open('openapi.json'))['components']['schemas']\nfor n in ['EvalAssertion']:\n for v in s[n]['oneOf']:\n  if v.get('properties',{}).get('type',{}).get('const') in ['toolResultMatches','toolCalledWith']: print(json.dumps(v,indent=2))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:10:11.719029+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.5600647926330566,
+  "end": "2026-11-15T02:10:12.279028+00:00"
+}

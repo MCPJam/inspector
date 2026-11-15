@@ -1,0 +1,22 @@
+{
+  "event_id": "732a9725158a40dcb2f6d9167dae52d6",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "node - <<'JS'\nconst s=require('./openapi.json');for(const k of ['ProjectServerCreateRequest','EvalRunCreateRequest'])console.log(k,JSON.stringify(s.components.schemas[k],null,2));\nJS"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:22:08.897037+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.04757523536682129,
+  "end": "2026-11-15T01:22:08.944518+00:00"
+}

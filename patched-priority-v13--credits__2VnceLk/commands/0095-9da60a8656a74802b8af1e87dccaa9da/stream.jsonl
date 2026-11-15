@@ -1,0 +1,7 @@
+{"seconds": 0.1087803840637207, "stream": "stdout", "data": "API URL: http://fixture:8765/api/v1\n"}
+{"seconds": 0.1088106632232666, "stream": "stderr", "data": "Traceback (most recent call last):\n  File \"<stdin>\", line 3, in <module>\n  File \"/usr/lib/python3.11/urllib/request.py\", line 216, in urlopen\n    return opener.open(url, data, timeout)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/urllib/request.py\", line 525, in open\n"}
+{"seconds": 0.10888504981994629, "stream": "stderr", "data": "    response = meth(req, response)\n               ^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/urllib/request.py\", line 634, in http_response\n"}
+{"seconds": 0.10892748832702637, "stream": "stderr", "data": "    response = self.parent.error(\n               ^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/urllib/request.py\", line 563, in error\n"}
+{"seconds": 0.10898208618164062, "stream": "stderr", "data": "    return self._call_chain(*args)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/urllib/request.py\", line 496, in _call_chain\n"}
+{"seconds": 0.10902070999145508, "stream": "stderr", "data": "    result = func(*args)\n             ^^^^^^^^^^^\n  File \"/usr/lib/python3.11/urllib/request.py\", line 643, in http_error_default\n"}
+{"seconds": 0.10907673835754395, "stream": "stderr", "data": "    raise HTTPError(req.full_url, code, msg, hdrs, fp)\nurllib.error.HTTPError: HTTP Error 403: Forbidden\n"}

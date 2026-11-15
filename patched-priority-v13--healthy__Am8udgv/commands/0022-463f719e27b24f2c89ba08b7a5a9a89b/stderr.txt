@@ -1,0 +1,5 @@
+/bin/bash.real: line 1: python: command not found
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Eval idempotency key: 54711a2a-285d-4624-8c7e-900c17eac10c
+{"error":{"code":"INTERNAL_ERROR","message":"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\nRetry this launch with --idempotency-key 54711a2a-285d-4624-8c7e-900c17eac10c.","details":{"idempotencyKey":"54711a2a-285d-4624-8c7e-900c17eac10c"}}}

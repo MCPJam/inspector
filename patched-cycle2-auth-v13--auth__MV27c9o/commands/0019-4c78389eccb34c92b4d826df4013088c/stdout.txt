@@ -1,0 +1,15 @@
+Usage: mcpjam protocol [options] [command]
+
+MCP protocol inspection and conformance checks
+
+Options:
+  -h, --help                   display help for command
+
+Commands:
+  conformance [options]        Run MCP protocol conformance checks against an
+                               HTTP server
+  conformance-suite [options]  Run a matrix of MCP protocol conformance checks
+                               from a JSON config file
+  help [command]               display help for command
+6.2.2
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":16}

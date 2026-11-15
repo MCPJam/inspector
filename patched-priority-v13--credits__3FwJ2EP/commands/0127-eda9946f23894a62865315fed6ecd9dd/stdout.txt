@@ -1,0 +1,349 @@
+55:* **Author eval suites** — create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+58:  usage, latency), and full traces. Runs appear live in the hosted UI,
+60:* **Manage a server's accounts** — complete OAuth yourself (e.g. the SDK's
+62:  account; list, rename, choose the default, and delete accounts. Tokens are
+66:  resources it created (eval suites), and token usage; the model is pinned
+170:lists its eval suites. Start from `GET /me` to confirm which account a key
+214:token to one of its [accounts](#server-accounts), and call again. See
+248:| `GET /me` | The account behind the key |
+295:| `GET`, `PUT`, `PATCH`, `DELETE .../accounts[/{account}]` | The server's accounts. See [Server accounts](#server-accounts) |
+296:| `POST .../oauth/import-tokens` | **Deprecated.** Uploads to your default account; use `PUT .../accounts/{account}`. See [The deprecated import route](#the-deprecated-import-route) |
+312:| `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
+332:| `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and billed to the project. The turn can read project servers/suites/runs and **create eval suites**; it can NOT start runs — kick those off yourself with `POST .../eval-runs`. Responds synchronously with `reply`, the `toolCalls` it made, `createdResources` (ids + app links), and token `usage`. Capped at 4 concurrent turns per organization and \~90 s wall clock. **Not idempotent — never blind-retry**: dedupe on your own trigger identity, and on an error response check `details.createdResources` (and, after a lost response, list suites) before retrying, or you'll create duplicates |
+396:> The generation routes consume **no customer credits** — the model cost is on
+397:> MCPJam. They are still subject to usage limits, and each limit means a
+403:> on every one: buying credits does not lift them, so do not retry in a loop
+412:| `POST .../goals/{goalId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key`. Optional `expectedSponsored` is how many conversations you expect MCPJam to sponsor; a different actual split is a `409` (`details.code: swarm_funding_changed`) and nothing is created. The response can report `funding` (`sponsored`, `credits`, `total`) |
+419:* **Always send `Idempotency-Key` on a launch.** It spends model credits, so a
+439:**Swarms — insights** — what a run revealed. Read these in order of cost: the
+470:> Requesting swarm run insights consumes **no credits** — the model cost is on
+493:| `PUT .../studies/{studyId}/guest-execution` | The spend dial for anonymous visitors: daily credits, computer starts, concurrency |
+517:over them. Read these in cost order: metrics, usage and signals are
+523:| `GET .../studies/{studyId}/usage` | Which models, tools and servers the sessions used. **Check `scan.truncated`** before quoting a rate |
+527:| `POST .../studies/{studyId}/insights` | **No credits; counts against `insightsPerDay`.** `202` with the `windowId` to poll. `409` if the window has not been mined yet |
+532:The `usage` response includes an `analysis` summary: `total`, `analyzed`,
+558:> Requesting insights consumes **no credits** — the model cost is on MCPJam.
+568:| `POST /feedback` | Send a bug report, missing-capability note, or other feedback to the MCPJam team. Body: `{ kind, summary, details?, operation?, requestId?, errorCode?, projectId? }`. Responds `201 { id, receivedAt, duplicate }` once stored. Signed-in accounts only (guests get `401`). Rate-limited per user (`429` with `Retry-After`). Accepts `Idempotency-Key` (validated strictly — an empty or over-long key is `400`, not silently ignored; the same key with different content is `409`). **The text goes to the MCPJam team, outside your organization, and is kept for 180 days.** |
+587:> independently, so a `true` here that races a flag flip costs you a clean
+598:## Server accounts
+600:A saved server signs in with one or more **accounts**. When your test users
+603:to a named account before each run.
+607:| `GET .../accounts` | The accounts you can see: your own personal ones, or the project accounts of a server shared with the project |
+608:| `GET .../accounts/{account}` | One account |
+609:| `PUT .../accounts/{account}` | Upload a token. Creates the account (`201`) or replaces its token in place (`200`, same id) |
+610:| `PATCH .../accounts/{account}` | Rename it (`name`), make it the default (`isDefault: true`), or both |
+611:| `DELETE .../accounts/{account}` | Delete it, and ask the token's issuer to revoke the token |
+615:  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/accounts/test-automation-1" \
+624:Every answer is the account: its `id`, `name`, `kind`, `isDefault`,
+628:### Addressing an account
+630:`{account}` is an account id or a name. A well-formed account id is always
+631:read as an id: it matches that account or answers `404`, and an upload to an
+633:A name no account has makes `PUT` create the account; on every other route it
+634:answers `404`. A name two accounts share answers `409` with both ids in
+635:`details.accountIds`.
+639:well-formed account id, is refused with `400`, never cleaned up. Names are
+647:* **Uploaded accounts are hosted-only.** Hosted runs use them, and no local
+/projects/{projectId}/servers/{serverId}/accounts
+/projects/{projectId}/servers/{serverId}/accounts/{account}
+/organizations/{organizationId}/spend-budget
+/organizations
+/organizations/{organizationId}/eval-check-repos
+/projects/{projectId}/eval-runs {
+  "post": {
+    "operationId": "createEvalRun",
+    "tags": [
+      "Eval runs"
+    ],
+    "summary": "Create an eval run (async)",
+    "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
+    "parameters": [
+      {
+        "$ref": "#/components/parameters/evalVocabularyHeader"
+      },
+      {
+        "$ref": "#/components/parameters/projectId"
+      },
+      {
+        "$ref": "#/components/parameters/launcherHeader"
+      },
+      {
+        "$ref": "#/components/parameters/ciHeader"
+      }
+    ],
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/EvalRunCreateRequest"
+          },
+          "example": {
+            "suiteName": "smoke",
+            "serverIds": [
+              "srv_abc123"
+            ],
+            "tests": [
+              {
+                "title": "echo works",
+                "runs": 1,
+                "model": "anthropic/claude-haiku-4.5",
+                "provider": "anthropic",
+                "steps": [
+                  {
+                    "id": "s1",
+                    "kind": "prompt",
+                    "prompt": "Use the echo tool to say hi"
+                  },
+                  {
+                    "id": "s2",
+                    "kind": "assert",
+                    "assertion": {
+                      "type": "toolCalledWith",
+                      "toolName": "echo",
+                      "args": {
+                        "args": {
+                          "text": "hi"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "responses": {
+      "202": {
+        "description": "Run created; execution continues in the background.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EvalRunCreated"
+            },
+            "example": {
+              "runId": "run_abc123",
+              "suiteId": "suite_def456",
+              "status": "running",
+              "caseUpsert": {
+                "committed": [
+                  {
+                    "name": "echo works"
+                  }
+                ],
+                "failed": []
+              },
+              "environment": null
+            }
+          }
+        }
+      },
+      "400": {
+        "$ref": "#/components/responses/ValidationError"
+      },
+      "401": {
+        "$ref": "#/components/responses/Unauthorized"
+      },
+      "403": {
+        "$ref": "#/components/responses/Forbidden"
+      },
+      "404": {
+        "$ref": "#/components/responses/NotFound"
+      },
+      "429": {
+        "$ref": "#/components/responses/RateLimited"
+      },
+      "500": {
+        "$ref": "#/components/responses/InternalError"
+      },
+      "502": {
+        "$ref": "#/components/responses/ServerUnreachable"
+      },
+      "504": {
+        "$ref": "#/components/responses/Timeout"
+      }
+    }
+  }
+}
+/projects/{projectId}/eval-suites {
+  "get": {
+    "operationId": "listEvalSuites",
+    "tags": [
+      "Catalog"
+    ],
+    "summary": "List a project's eval suites",
+    "description": "Eval suites in the project with latest-run summaries and pass-rate trends \u2014 the `suiteId`s the eval-run routes take.",
+    "parameters": [
+      {
+        "$ref": "#/components/parameters/evalVocabularyHeader"
+      },
+      {
+        "$ref": "#/components/parameters/projectId"
+      }
+    ],
+    "responses": {
+      "200": {
+        "description": "The project's eval suites.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EvalSuitePage"
+            }
+          }
+        }
+      },
+      "401": {
+        "$ref": "#/components/responses/Unauthorized"
+      },
+      "403": {
+        "$ref": "#/components/responses/Forbidden"
+      },
+      "404": {
+        "$ref": "#/components/responses/NotFound"
+      },
+      "429": {
+        "$ref": "#/components/responses/RateLimited"
+      },
+      "500": {
+        "$ref": "#/components/responses/InternalError"
+      },
+      "502": {
+        "$ref": "#/components/responses/ServerUnreachable"
+      }
+    }
+  },
+  "post": {
+    "operationId": "createEvalSuite",
+    "tags": [
+      "Eval runs"
+    ],
+    "summary": "Create an eval suite (author-only, does not run)",
+    "description": "Creates a runnable eval suite \u2014 the suite record plus its test cases \u2014 and responds `201` **synchronously**, WITHOUT executing anything. Use this to author a suite, then run it later with `POST /eval-runs` (passing the returned `suiteId`).\n\nThis is distinct from `POST /eval-runs`, which creates a run and **detaches execution**, responding `202` with a `runId`. There is no concurrency cap here (no run is started).\n\nThe body uses an ergonomic authoring shape: a suite-level default `model` (and optional `provider`) applies to every test unless the test overrides it; `provider` is derived from a `provider/model` id when neither is supplied. Each test's case body is an ordered `steps` array (prompt / toolCall / interact / assert).\n\nGuest callers are denied (suite creation is a write).",
+    "parameters": [
+      {
+        "$ref": "#/components/parameters/evalVocabularyHeader"
+      },
+      {
+        "$ref": "#/components/parameters/projectId"
+      }
+    ],
+    "requestBody": {
+      "required": true,
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/EvalSuiteCreateRequest"
+          },
+          "example": {
+            "name": "smoke",
+            "serverIds": [
+              "srv_abc123"
+            ],
+            "model": "anthropic/claude-haiku-4.5",
+            "tests": [
+              {
+                "title": "lists files",
+                "steps": [
+                  {
+                    "id": "s1",
+                    "kind": "prompt",
+                    "prompt": "List the files in the project root."
+                  },
+                  {
+                    "id": "s2",
+                    "kind": "assert",
+                    "assertion": {
+                      "type": "toolCalledWith",
+                      "toolName": "list_files",
+                      "args": {
+                        "args": {}
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "responses": {
+      "201": {
+        "description": "The suite was created.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EvalSuiteCreated"
+            }
+          }
+        }
+      },
+      "400": {
+        "$ref": "#/components/responses/ValidationError"
+      },
+      "401": {
+        "$ref": "#/components/responses/Unauthorized"
+      },
+      "403": {
+        "$ref": "#/components/responses/Forbidden"
+      },
+      "404": {
+        "$ref": "#/components/responses/NotFound"
+      },
+      "429": {
+        "$ref": "#/components/responses/RateLimited"
+      },
+      "500": {
+        "$ref": "#/components/responses/InternalError"
+      },
+      "502": {
+        "$ref": "#/components/responses/ServerUnreachable"
+      }
+    }
+  }
+}
+/models {
+  "get": {
+    "operationId": "listModels",
+    "tags": [
+      "Catalog"
+    ],
+    "summary": "The MCPJam-provided model catalog",
+    "description": "PUBLIC: this route carries no user or project data and requires no bearer token, matching the upstream catalog it proxies. Mounted before authentication for that reason.\n\nEach model row (see `CatalogModel`) carries `supportedReasoningEfforts`: the reasoning-effort levels the model accepts (`settings.reasoningEffort` on a `ModelSelection`, or a chat turn's `reasoningEffort`). An empty or absent list means the model takes no effort, or the catalog does not know \u2014 never guess a level for it.",
+    "security": [],
+    "responses": {
+      "200": {
+        "description": "The model catalog.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "400": {
+        "$ref": "#/components/responses/ValidationError"
+      },
+      "401": {
+        "$ref": "#/components/responses/Unauthorized"
+      },
+      "403": {
+        "$ref": "#/components/responses/Forbidden"
+      },
+      "404": {
+        "$ref": "#/components/responses/NotFound"
+      },
+      "429": {
+        "$ref": "#/components/responses/RateLimited"
+      },
+      "500": {
+        "$ref": "#/components/responses/InternalError"
+      },
+      "502": {
+        "$ref": "#/components/responses/ServerUnreachable"
+      }
+    }
+  }
+}

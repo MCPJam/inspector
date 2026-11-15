@@ -1,0 +1,2 @@
+{"seconds": 0.03475761413574219, "stream": "stdout", "data": "/usr/local/bin/node\n/usr/local/bin/npx\n"}
+{"seconds": 0.035991668701171875, "stream": "stdout", "data": "total 12\ndrwxr-xr-x 1 root root 4096 Nov 15 01:25 .\ndrwxr-xr-x 1 root root 4096 Nov 15 01:30 ..\n-rw-r--r-- 1 root root   64 Nov 15 01:25 mcp.json\n"}

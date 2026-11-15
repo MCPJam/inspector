@@ -1,0 +1,8 @@
+{"seconds": 0.5398309230804443, "stream": "stdout", "data": "\n RUN  v4.1.12 $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/sdk\n"}
+{"seconds": 0.5398561954498291, "stream": "stdout", "data": "\n"}
+{"seconds": 1.7589800357818604, "stream": "stdout", "data": "\n"}
+{"seconds": 1.759080171585083, "stream": "stdout", "data": " Test Files  4 passed (4)\n"}
+{"seconds": 1.7590980529785156, "stream": "stdout", "data": "      Tests  54 passed (54)\n"}
+{"seconds": 1.7591049671173096, "stream": "stdout", "data": "   Start at  18:23:43\n"}
+{"seconds": 1.759153127670288, "stream": "stdout", "data": "   Duration  1.20s (transform 655ms, setup 63ms, import 1.22s, tests 367ms, environment 0ms)\n"}
+{"seconds": 1.7592239379882812, "stream": "stdout", "data": "\n"}

@@ -1,0 +1,18 @@
+{
+  "id": "bootstrap:claude-version",
+  "path": "bootstrap--claude-version",
+  "argv": [
+    "claude",
+    "--version"
+  ],
+  "start": "2026-11-15T01:12:47.945426+00:00",
+  "end": "2026-11-15T01:12:48.218914+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

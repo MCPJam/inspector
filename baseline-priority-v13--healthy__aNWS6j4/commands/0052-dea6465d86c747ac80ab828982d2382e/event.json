@@ -1,0 +1,22 @@
+{
+  "event_id": "dea6465d86c747ac80ab828982d2382e",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mkdir -p .mcpjam/evals && cat > .mcpjam/evals/arithmetic.json <<'EOF'\n{\n  \"schemaVersion\": \"2\",\n  \"mode\": \"toolWorkflow\",\n  \"reportingMode\": \"standard\",\n  \"suite\": {\"id\": \"s_arithmetic_smoke\", \"name\": \"Arithmetic result regression\"},\n  \"target\": {\"servers\": [{\"name\": \"Arithmetic\"}]},\n  \"defaults\": {\"judge\": {\"enabled\": false}, \"iterations\": 1, \"passThreshold\": 1, \"validity\": {}},\n  \"cases\": [{\"id\": \"c_add_2_3\", \"title\": \"2 plus 3 returns sum 5\", \"steps\": [\n    {\"id\": \"call_add\", \"kind\": \"toolCall\", \"serverName\": \"Arithmetic\", \"toolName\": \"add\", \"arguments\": {\"a\": 2, \"b\": 3}},\n    {\"id\": \"assert_sum\", \"kind\": \"assert\", \"assertion\": {\"type\": \"toolResultMatchesSchema\", \"toolName\": \"add\", \"schema\": {\"type\": \"object\", \"properties\": {\"sum\": {\"const\": 5}}, \"required\": [\"sum\"]}}}\n  ]}]\n}\nEOF\nnpx mcpjam cloud eval validate --file .mcpjam/evals/arithmetic.json --project project_fixture --no-telemetry --format json > artifacts/validation.json; cat artifacts/validation.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:09:44.970962+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.4472770690917969,
+  "end": "2026-11-15T02:09:45.418176+00:00"
+}

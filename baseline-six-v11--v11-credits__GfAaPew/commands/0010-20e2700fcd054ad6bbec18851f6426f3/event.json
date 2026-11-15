@@ -1,0 +1,22 @@
+{
+  "event_id": "20e2700fcd054ad6bbec18851f6426f3",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python - <<'PY'\nimport urllib.request,os\nfor u in ['https://docs.mcpjam.com/llms.txt',os.environ['MCPJAM_API_URL']]:\n print('URL',u)\n try: print(urllib.request.urlopen(u,timeout=15).read().decode()[:24000])\n except Exception as e: print(e)\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:34:14.161353+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 127,
+  "signal": null,
+  "duration_seconds": 0.0010883808135986328,
+  "end": "2026-11-15T01:34:14.162373+00:00"
+}

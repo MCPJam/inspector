@@ -1,0 +1,225 @@
+{
+  "type": "object",
+  "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model). Exactly one of `runs` / `iterations` is required \u2014 an inline test on a run has no suite default to inherit. The object is CLOSED: an unknown key is a VALIDATION_ERROR, never a silently dropped field. `repetitions`, `passThreshold` and `kind` are per-case policy fields this surface cannot author \u2014 set them through `POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.",
+  "required": [
+    "title",
+    "model",
+    "provider",
+    "steps"
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "runs"
+      ]
+    },
+    {
+      "required": [
+        "iterations"
+      ]
+    }
+  ],
+  "allOf": [
+    {
+      "not": {
+        "required": [
+          "isNegative",
+          "isNegativeTest"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "checks",
+          "predicates"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered test steps. The first `prompt` step is the case query; `toolCalledWith` asserts are the expected tool calls; a single model-free `toolCall` step is a render-check.",
+      "items": {
+        "$ref": "#/components/schemas/EvalTestStep"
+      }
+    },
+    "runs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Iterations to execute for this case."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model ID. Hosted-catalog ids use `provider/name` form (e.g. `anthropic/claude-haiku-4.5`) and run on org credits; provider-native ids require a matching `modelApiKeys` entry (BYOK). Unknown models are rejected with VALIDATION_ERROR at create time."
+    },
+    "provider": {
+      "type": "string",
+      "description": "Model provider, e.g. `anthropic`, `openai`."
+    },
+    "isNegativeTest": {
+      "type": "boolean",
+      "description": "When `true`, the case passes if NO tools are called."
+    },
+    "expectedOutput": {
+      "type": "string"
+    },
+    "advancedConfig": {
+      "type": "object",
+      "description": "Optional `system`, `temperature`, `toolChoice` overrides. `reasoningEffort` is NOT accepted (`400`): nothing ever applied it. Save an effort as `models[].selection.settings.reasoningEffort` instead.",
+      "additionalProperties": true
+    },
+    "scenario": {
+      "type": "string"
+    },
+    "intent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Optional authored analytics grouping label."
+    },
+    "matchOptions": {
+      "type": "object",
+      "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
+      "additionalProperties": true
+    },
+    "predicates": {
+      "type": "object",
+      "deprecated": true,
+      "description": "DEPRECATED spelling of `checks`, which means exactly this. It was accepted here all along and never written down, passing only because this schema allowed unknown properties; documented rather than removed so no caller already sending it breaks. Send one or the other, never both.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "inherit",
+            "replace",
+            "extend"
+          ]
+        },
+        "list": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "isNegative": {
+      "type": "boolean",
+      "description": "Alias for `isNegativeTest` \u2014 the public case-authoring spelling this API returns on a read. Send one or the other, never both."
+    },
+    "iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Alias for `runs`. Send one or the other, never both."
+    },
+    "checks": {
+      "type": "object",
+      "description": "Per-case CHECK gate \u2014 the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "inherit",
+            "replace",
+            "extend"
+          ]
+        },
+        "list": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/EvalAssertion"
+          }
+        }
+      }
+    },
+    "suppressedSuiteStandardCheckIds": {
+      "$ref": "#/components/schemas/SuppressedSuiteStandardCheckIds",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}
+toolDescriptionsPresent
+toolAnnotationsPresent
+toolNamesUnique
+noDeprecatedToolExposed
+toolInputSchemasWellFormed
+toolOutputSchemasPresent
+toolCalledWith
+toolCalledAtLeastOnce
+toolNeverCalled
+onlyToolsCalled
+firstToolWas
+responseContains
+responseMatches
+noToolErrors
+finalAssistantMessageNonEmpty
+tokenBudgetUnder
+widgetRendered
+widgetRenderLatencyUnder
+widgetNoConsoleErrors
+turnCountUnder
+noEndingQuestion
+toolLatencyUnder
+toolResultContains
+{
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "toolResultContains"
+    },
+    "needle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "caseSensitive": {
+      "type": "boolean"
+    },
+    "toolName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "gating",
+        "advisory",
+        "required"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "const": "warn"
+    }
+  },
+  "required": [
+    "type",
+    "needle"
+  ]
+}
+toolResultMatchesSchema
+toolResultSizeUnder
+argumentsMatchToolSchema
+toolInputMatches
+toolResultMatches
+noRepeatedIdenticalCall
+toolCallCountUnder
+toolCalledBefore
+noDeprecatedToolCalled
+noDestructiveToolCalled
+toolErrorNamesInput
+fullPageHasContinuation
+{"code": "FEATURE_NOT_SUPPORTED", "message": "Synthetic fixture executes deterministic toolCall steps and simple assertions only; hosted prompt/model execution is not implemented.", "details": {"reason": "fixture_unsupported_execution"}}

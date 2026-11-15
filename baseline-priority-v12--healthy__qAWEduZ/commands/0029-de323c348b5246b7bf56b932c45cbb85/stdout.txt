@@ -1,0 +1,11 @@
+214-| `noEndingQuestion` | User value | **Observation.** The final message does not end with a question. Advisory only |
+215-| `toolLatencyUnder` | Response | Every observed call settled under a millisecond ceiling |
+216:| `toolResultContains` | Response | A tool result contains a substring |
+217-| `toolResultMatches` | Response | One result's content matches every pattern; `min`/`max` count matching results, not all results |
+218-| `toolResultMatchesSchema` | Response | Every tool result matches an authored JSON Schema (any JSON root) |
+219-| `toolResultSizeUnder` | Response | Every tool result is under a byte ceiling, measured before our storage cap |
+220-| `argumentsMatchToolSchema` | Tool call | Every call's arguments validate against the tool's declared inputSchema |
+221-| `noRepeatedIdenticalCall` | Tool call | **Observation.** No identical call repeated back-to-back. Advisory only |
+222-| `toolInputMatches` | Tool call | One call's input matches every pattern; `min`/`max` count matching calls, not all calls |
+223-| `toolCallCountUnder` | Selection | Strictly fewer than N tool calls |
+224-| `toolCalledBefore` | Selection | Every call to one tool was preceded by a call to another |

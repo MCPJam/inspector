@@ -1,0 +1,1 @@
+{"suiteId": "suite_authored_4", "name": "Arithmetic model-free smoke", "servers": [{"id": "server_fixture"}], "hosts": [], "caseUpsert": {"committed": [{"id": "suite_authored_4_case_0", "name": "Add two and three"}], "failed": []}}

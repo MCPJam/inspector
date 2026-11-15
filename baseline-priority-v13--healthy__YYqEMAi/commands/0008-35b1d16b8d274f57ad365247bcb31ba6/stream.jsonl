@@ -1,0 +1,3 @@
+{"seconds": 9.197335243225098, "stream": "stdout", "data": "\nadded 153 packages, and audited 154 packages in 9s\n\n"}
+{"seconds": 9.19738221168518, "stream": "stdout", "data": "39 packages are looking for funding\n  run `npm fund` for details\n"}
+{"seconds": 9.197709083557129, "stream": "stdout", "data": "\nfound 0 vulnerabilities\n"}

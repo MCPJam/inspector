@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "id": "25e6f14a-9eed-4310-b79f-fdd11b6aad18",
+  "task_name": "mcpjam/healthy",
+  "trial_name": "smoke-healthy__esC2H66",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/baseline-codex-healthy-smoke/smoke-healthy__esC2H66",
+  "task_id": {
+    "path": "work/tasks/smoke-healthy"
+  },
+  "source": null,
+  "task_checksum": "bd19381362e1b90ceb015908adb7a89e9444cdaf28ca504ff37e03c1fa4de07b",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "work/tasks/smoke-healthy",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "smoke-healthy__esC2H66",
+    "trials_dir": "work/jobs/baseline-codex-healthy-smoke",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "codex",
+      "import_path": null,
+      "model_name": "openai/gpt-6.1-sol",
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": false,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {
+        "version": "0.160.0",
+        "reasoning_effort": "medium",
+        "reasoning_summary": "none"
+      },
+      "env": {
+        "CODEX_FORCE_AUTH_JSON": "****"
+      },
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "f44fa48a-a7f3-4f2b-b26e-96552a6bc047",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "agent_result": null,
+  "verifier_result": null,
+  "verifier_environment_mode": "separate",
+  "exception_info": {
+    "exception_type": "RuntimeError",
+    "exception_message": "Docker compose command failed for environment healthy. Command: docker compose --project-name smoke-healthy__esc2h66__env --project-directory $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/smoke-healthy/environment -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmp8x_pj15e/smoke-healthy__esC2H66__env-docker-compose-resources.json -f $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker-compose-build.yaml -f $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/smoke-healthy/environment/docker-compose.yaml -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmplq8pafen/docker-compose-environment.json -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmps2dekjks/docker-compose-mounts.json build. Return code: 125. Stdout: unknown flag: --project-name\n\nUsage:  docker [OPTIONS] COMMAND [ARG...]\n\nRun 'docker --help' for more information\n. Stderr: None. ",
+    "exception_traceback": "Traceback (most recent call last):\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 613, in run\n    await self._prepare()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 652, in _prepare\n    await self._setup_agent_environment()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1875, in _setup_agent_environment\n    await self._start_agent_environment()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1881, in _start_agent_environment\n    await asyncio.wait_for(\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 1108, in start\n    await self._run_docker_compose_command([\"build\"])\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 808, in _run_docker_compose_command\n    raise RuntimeError(\nRuntimeError: Docker compose command failed for environment healthy. Command: docker compose --project-name smoke-healthy__esc2h66__env --project-directory $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/smoke-healthy/environment -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmp8x_pj15e/smoke-healthy__esC2H66__env-docker-compose-resources.json -f $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker-compose-build.yaml -f $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/smoke-healthy/environment/docker-compose.yaml -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmplq8pafen/docker-compose-environment.json -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmps2dekjks/docker-compose-mounts.json build. Return code: 125. Stdout: unknown flag: --project-name\n\nUsage:  docker [OPTIONS] COMMAND [ARG...]\n\nRun 'docker --help' for more information\n. Stderr: None. \n",
+    "occurred_at": "2026-11-15T01:19:49.238949Z",
+    "policy": {
+      "should_retry": true,
+      "should_grade": true,
+      "has_valid_reward": true
+    }
+  },
+  "started_at": "2026-11-15T01:19:49.136685Z",
+  "finished_at": "2026-11-15T01:19:49.677312Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T01:19:49.185886Z",
+    "finished_at": "2026-11-15T01:19:49.236669Z"
+  },
+  "agent_setup": null,
+  "agent_execution": null,
+  "verifier": null,
+  "step_results": null,
+  "reward_valid": false
+}

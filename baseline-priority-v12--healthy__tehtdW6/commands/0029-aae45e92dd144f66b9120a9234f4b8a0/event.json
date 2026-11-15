@@ -1,0 +1,22 @@
+{
+  "event_id": "aae45e92dd144f66b9120a9234f4b8a0",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "if [ -s ~/.nvm/nvm.sh ]; then . ~/.nvm/nvm.sh; fi; codex --version"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:51:24.022427+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.08044862747192383,
+  "end": "2026-11-15T01:51:24.102837+00:00"
+}

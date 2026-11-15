@@ -1,0 +1,36 @@
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":4}
+Usage: mcpjam cloud link [options] [project]
+
+Pin this directory to a Cloud project by writing .mcpjam/project.json. The file
+contains no secrets and is committed by default; per-developer setups may
+gitignore it.
+
+Arguments:
+  project     Project name or ID to pin
+
+Options:
+  --here      Write .mcpjam/project.json in the current directory instead of the
+              Git worktree root
+  --remove    Remove the nearest project link (current directory with --here)
+  -h, --help  display help for command
+Usage: mcpjam cloud projects [options] [command]
+
+Operate the MCP servers saved in your hosted MCPJam projects
+
+Options:
+  -h, --help              display help for command
+
+Commands:
+  list [options]          List the projects you can access
+  create [options]        Create a hosted MCPJam project
+  update [options]        Update project metadata
+  delete [options]        Delete a project and its project-owned resources
+  capabilities [options]  Show what you may do in a project: your role, which
+                          betas the organization has, your plan's limits, and a
+                          can-block of booleans. Ask this before scripting
+                          anything that authors, launches or publishes.
+  servers [options]       List and manage the servers saved in a project
+  status [options]        Health-check every server in a project (hosted doctor
+                          per server)
+  help [command]          display help for command
+6.2.2

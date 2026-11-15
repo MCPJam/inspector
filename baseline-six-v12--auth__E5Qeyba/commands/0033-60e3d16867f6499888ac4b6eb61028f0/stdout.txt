@@ -1,0 +1,73 @@
+HTTP/1.1 405 Method Not Allowed
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 01:40:37 GMT
+Content-Type: application/json
+Content-Length: 21
+Allow: POST, DELETE
+
+{"error": "Use POST"}Usage: mcpjam protocol conformance [options]
+
+Run MCP protocol conformance checks against an HTTP server
+
+Options:
+  --url <url>                   MCP server URL
+  --access-token <token>        Bearer access token for HTTP servers
+  --credentials-file <path>     Load OAuth access token from a file created by
+                                oauth login or oauth conformance
+                                --credentials-out
+  --header <header>             HTTP header in "Key: Value" format. Repeat to
+                                send multiple headers. (default: [])
+  --check-timeout <ms>          Per-check timeout in milliseconds (default:
+                                15000)
+  --category <category>         Check category to run. Repeat for multiple.
+                                Default: all. (default: [])
+  --check-id <id>               Specific check ID to run. Repeat for multiple.
+                                Default: all. (default: [])
+  --advice-id <id>              Specific advice ID to run. Repeat for multiple.
+                                Default: all. (default: [])
+  --protocol-version <version>  Pin the MCP protocol version to conform against.
+                                Default: legacy (2025-era) behavior.
+  --fixtures-file <path>        JSON file naming primitives that are SAFE TO
+                                EXECUTE, so checks that need a real result can
+                                run:
+                                {"toolCalls":[{"toolName":"echo","arguments":{}}],"promptGets":[{"promptName":"welcome"}]}.
+                                Nothing is ever called without this.
+  --fixture-tool <name>         Name of a tool that is safe to call with no
+                                arguments. Repeat for multiple. For tools that
+                                need arguments, use --fixtures-file. (default:
+                                [])
+  --fixture-prompt <name>       Name of a prompt that is safe to render with no
+                                arguments. Repeat for multiple. For prompts that
+                                need arguments, use --fixtures-file. (default:
+                                [])
+  --log-probe-tool <name>       Name of a tool that writes logs and is safe to
+                                call a few times. Lets the 2026-07-28 logging
+                                check and log level advice run. Nothing is
+                                called without this.
+  --log-probe-args <json>       Arguments for --log-probe-tool, as a JSON
+                                object. Default: {}.
+  --log-probe-level <level>     Log level the advice asks --log-probe-tool for:
+                                debug, info, notice, warning, error, critical,
+                                alert, emergency. Default: warning.
+  --log-filter-tool <name>      Name of a tool the log level advice calls
+                                instead of --log-probe-tool. Same rules: it
+                                writes logs and is safe to call. Default:
+                                --log-probe-tool.
+  --log-filter-args <json>      Arguments for --log-filter-tool, as a JSON
+                                object. Default: {}.
+  --log-filter-level <level>    Log level the advice asks --log-filter-tool for:
+                                debug, info, notice, warning, error, critical,
+                                alert, emergency. Default: warning.
+  --input-required-tool <name>  Name of a tool that asks the client for input
+                                and is safe to call. Lets the 2026-07-28
+                                undeclared capability check run. Nothing is
+                                called without this.
+  --input-required-args <json>  Arguments for --input-required-tool, as a JSON
+                                object. Default: {}.
+  --reporter <reporter>         Structured reporter output: json-summary or
+                                junit-xml
+  --upload                      Upload this suite's result into MCPJam run
+                                history
+  --require-upload              Fail if reporting is configured but the UI
+                                record cannot be written
+  -h, --help                    display help for command

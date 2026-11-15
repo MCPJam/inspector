@@ -1,0 +1,3 @@
+mcpjam-cli-6.2.2.tgz
+mcpjam-sdk-10.7.0.tgz
+mcpjam-evaluators-0.6.0.tgz

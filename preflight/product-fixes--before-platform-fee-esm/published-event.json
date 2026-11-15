@@ -1,0 +1,25 @@
+{
+  "id": "product-fixes:before-platform-fee-esm",
+  "path": "product-fixes--before-platform-fee-esm",
+  "argv": [
+    "../node-v24.22.1-darwin-arm64/bin/node",
+    "--import",
+    "tsx",
+    "../fee-repro.mts"
+  ],
+  "start": "2026-11-15T01:37:47.347190+00:00",
+  "end": "2026-11-15T01:37:48.384686+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg"
+  ],
+  "output_classes": [
+    "FORBIDDEN",
+    "PLATFORM_FEE_REQUIRED"
+  ],
+  "source_group": "product-fixes"
+}

@@ -1,0 +1,3 @@
+{"seconds": 0.0013666152954101562, "stream": "stdout", "data": "mcp.json\n"}
+{"seconds": 0.0018134117126464844, "stream": "stdout", "data": "{\"mcpServers\":{\"arithmetic\":{\"url\":\"http://fixture:8765/mcp\"}}}\n"}
+{"seconds": 0.44344305992126465, "stream": "stdout", "data": "npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/mcpjam - Not found\nnpm error 404\nnpm error 404  The requested resource 'mcpjam@*' could not be found or you do not have permission to access it.\nnpm error 404\nnpm error 404 Note that you can also install from a\nnpm error 404 tarball, folder, http url, or git url.\nnpm error A complete log of this run can be found in: /root/.npm/_logs/2026-11-15T02_26_55_858Z-debug-0.log\n"}

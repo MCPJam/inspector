@@ -1,0 +1,42 @@
+Usage: mcpjam cloud [options] [command]
+
+MCPJam Cloud account commands (login, projects, evals, tunnels). Local MCP
+testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam
+cloud login` is your MCPJam account.
+
+Options:
+  --api-key <key>               MCPJam sk_ API key (overrides MCPJAM_API_KEY)
+  --api-url <url>               MCPJam API base URL (defaults to your
+                                organization's server or
+                                https://app.mcpjam.com/api/v1)
+  --api-header <header...>      Extra request header for a deployment behind an
+                                edge authenticator, as "Name: value"
+                                (repeatable; also MCPJAM_API_HEADERS,
+                                newline-separated)
+  -h, --help                    display help for command
+
+Account:
+  login [options]               Log in to MCPJam Cloud. Opens your browser for
+                                OAuth and stores the session locally.
+  logout                        Remove the stored MCPJam Cloud login.
+  whoami                        Show the MCPJam Cloud account behind the current
+                                credentials.
+  status                        Show how this CLI would authenticate and which
+                                Cloud project it would use, without calling the
+                                network.
+  link [options] [project]      Pin this directory to a Cloud project by writing
+                                .mcpjam/project.json. The file contains no
+                                secrets and is committed by default;
+                                per-developer setups may gitignore it.
+
+Workspace:
+  organizations|orgs            Inspect the MCPJam organizations you belong to
+  projects                      Operate the MCP servers saved in your hosted
+                                MCPJam projects
+  sessions                      List Playground chat sessions, or search
+                                conversations across Playground, user testing,
+                                evals and swarms.
+  tunnel [options] [target...]  Expose a local MCP server through an MCPJam
+                                tunnel and register it as a server in your
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"items":[{"id":"suite_fixture","name":"Arithmetic smoke","projectId":"project_fixture","description":"Synthetic fixture: add 2 and 3 and assert 5.","environment":{"servers":[]},"executionConfig":null,"hosts":[],"environmentIds":[],"settings":{"policy":"legacy","minimumIterations":1},"schedule":{},"createdAt":1,"updatedAt":2}],"otherProjects":[]}

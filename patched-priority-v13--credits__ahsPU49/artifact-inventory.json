@@ -1,0 +1,32 @@
+[
+  {
+    "source": "steps/blocked/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/fixture/state.json",
+    "sha256": "66fb2ac73a3d6b0d30ff651818d0613cdc9c55c79c7893abf0ebc1e17acc2991"
+  },
+  {
+    "source": "steps/blocked/artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/steps/blocked/artifacts/workspace/run_eval.sh",
+    "sha256": "18cf1ebed3192b58252dbfb93fc964a1459034d12c6fad98acd5b4a4744d4ef0"
+  },
+  {
+    "source": "steps/resume/artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/fixture/state.json",
+    "sha256": "aa16fac451c39ccdc963ca73b42590c9dfbc92dc204e14a62553a5857b17f5ee"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run_eval.sh",
+    "sha256": "18cf1ebed3192b58252dbfb93fc964a1459034d12c6fad98acd5b4a4744d4ef0"
+  },
+  {
+    "source": "steps/resume/artifacts/workspace/run1.json",
+    "published": true,
+    "path": "artifacts/steps/resume/artifacts/workspace/run1.json",
+    "sha256": "d0b777ea82a3d40db1af3d436295e0355318e4a6d0b8595768d64a95f1fc0c23"
+  }
+]

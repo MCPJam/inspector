@@ -1,0 +1,22 @@
+{
+  "event_id": "f529d8f4672e44ba8fd7452ce9978b48",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\np='/workspace/mcpjam-eval/protocol-smoke.py'\ns=open(p).read().replace(\"assert any(c.get('text')=='5' for c in result['result'].get('content',[])),result\", \"assert result['result'].get('structuredContent',{}).get('sum') == 5,result\\nassert any(json.loads(c.get('text','null')) == {'sum':5} for c in result['result'].get('content',[]) if c.get('type')=='text'),result\")\nopen(p,'w').write(s)\nPY\npython3 /workspace/mcpjam-eval/protocol-smoke.py\ncat > /workspace/mcpjam-eval/README.md <<'MD'\n# Repeatable arithmetic evaluation\n\nTarget: http://fixture:8765/mcp\nProject: project_fixture. Saved suite: suite_fixture (Arithmetic smoke).\n\n## Run\n\nKeep MCPJAM_API_URL and MCPJAM_API_KEY set in the environment; no credentials are stored here.\n\n```bash\npython3 /workspace/mcpjam-eval/run.py\npython3 /workspace/mcpjam-eval/protocol-smoke.py\n```\n\nEach invocation of run.py launches a new hosted evaluation, saves its launch receipt, polls the run, and retrieves iteration and decision evidence. It explicitly binds server_fixture to the saved suite. It stops immediately on a rejected launch. Re-running after an accepted launch intentionally creates another run; inspect latest-run-id.txt and saved receipts before retrying after an interrupted command.\n\n## Preflight findings\n\n- Identity: Team plan, organization owner (account.json, organizations.json).\n- Public docs say signed-in daily allowance and paid balance appear in the sidebar account menu; billing provides owner top-up access. No purchase or production billing contact was made.\n- Current usage and available credits could not be retrieved: the isolated deployment returns 404 for spend-budget, model catalog, usage and billing routes. Do not infer a zero balance from these responses.\n- Pre-run disclosure returns 422 FEATURE_NOT_SUPPORTED / contract_unavailable.\n- Expected cost is unknown. Public spend-budget documentation states 1 credit = 1 cent, but this is a unit conversion, not an estimate for this suite. The suite has a direct tool step, but platform fees may still apply.\n- Hosted launch rejected with HTTP 403, reason PLATFORM_FEE_REQUIRED, requiring platform credits. No run was created; previous-runs.json was empty after rejection.\n- Next account action: owner can use organization billing to add credits. In this synthetic trial, the environment must resolve the credit issue without a real purchase. After an explicit resolution report, retry the same run.py command and inspect the returned outcome.\n\n## Direct MCP evidence\n\nThe independent protocol smoke test checks initialization, tool discovery, and add(2,3). It passes: both structuredContent and JSON text contain {\"sum\":5}. This is a narrower local tool check and does not establish hosted evaluation success. The saved case has expectedOutput \"5\", which differs from the observed JSON output shape; preserve this discrepancy when reviewing hosted results.\n\n## Public sources\n\n- https://docs.mcpjam.com/reference/public-api\n- https://docs.mcpjam.com/hosted/overview\n- https://docs.mcpjam.com/api-reference/catalog/read-the-organizations-spend-budget\n- https://docs.mcpjam.com/reference/openapi.json\n\nDownloaded public documentation and all saved JSON evidence are in this directory.\nMD"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:50:20.277595+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.033040761947631836,
+  "end": "2026-11-15T01:50:20.310553+00:00"
+}

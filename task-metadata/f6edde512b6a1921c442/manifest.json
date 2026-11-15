@@ -1,0 +1,16 @@
+{
+  "instruction.md": "74a3e6026bfc468b606ea92af8ba6045c1c20c7c6335fee49c02ebb314ed7de8",
+  "task.toml": "d2d1923b70ce9e0bd58211a2738ee624b105a4f9088262fdad1b8723ea585b32",
+  "private-fixture/service.py": "b362535f035dae29798d8c6e6ef91675e15a2c120e575867c72053b8db73fa2a",
+  "private-fixture/test_service.py": "28bdedc198232a224736f77f8bb5fd7c5e0333d543d1981cda3b4d945d15a912",
+  "private-fixture/control.py": "f4056a6cb24f981a0914d407cdffc041ea3362ca742eb4815516ddf00d08ea37",
+  "private-fixture/platform_fixture.py": "f36f9531d1e8a9e3ed1a2ade8269fd04c09570eae37358bd2ad8a590f8e16106",
+  "tests/Dockerfile": "9b57a9e793b9984a526693994a338ebba404258e60027b30b70a18a6d0a61f4a",
+  "tests/prompt.txt": "7c447aa2524264a3e24df73a6fddd8db360840f895bcb5e54d643c18de26a8ae",
+  "tests/verify.py": "5be12325e78d3bf1aea74023e9686a14a0cef499ae1ce71a3dbac79c3311e75a",
+  "tests/test.sh": "1ead2e3e5b50a3721f75fd501b18841f6d93623520739b8af4300ffe28a94dcb",
+  "environment/docker-compose.yaml": "bee80cedf5d288252ed7efb432d542b591dcc61129da0ea912c63dd260a4fcd1",
+  "environment/Dockerfile": "e46da6827b1109afa1056498a90c138e401c8acc359d3b076dc72a36b3f5a349",
+  "steps/resume/instruction.md": "cfbb9d266145aa619fe02633feb72e8add14ae8a098c4751c2701361e58e6e1b",
+  "steps/blocked/instruction.md": "74a3e6026bfc468b606ea92af8ba6045c1c20c7c6335fee49c02ebb314ed7de8"
+}

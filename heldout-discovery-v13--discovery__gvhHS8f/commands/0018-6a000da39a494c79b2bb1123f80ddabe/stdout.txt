@@ -1,0 +1,276 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Tools, Resources & Prompts
+
+> List, read, and call MCP server tools, resources, and prompts
+
+Once connected (with or without auth), the `tools`, `resources`, and `prompts` command groups let you explore and exercise what the server exposes.
+
+## Running commands as a host
+
+Add `--host <id>` to any `tools`, `resources`, or `prompts` command to connect the way a real host would, sending that host's `clientInfo`, advertised `clientCapabilities`, and protocol version in the MCP `initialize` handshake, exactly as the Inspector Playground does.
+
+```bash theme={"theme":"css-variables"}
+mcpjam tools list --url https://your-server.com/mcp --host claude
+```
+
+Valid host IDs match the presets in the Inspector: `claude`, `chatgpt`, `cursor`, `copilot`, `codex`, `mcpjam`.
+
+**Tool visibility with `--host`:** `tools list --host` hides tools whose `_meta.ui.visibility` is `["app"]`; those are app-only tools the host's model cannot see. The output includes a `host` field and a `toolsDroppedVisibility` count. `tools call --host` rejects app-only tools with a usage error; omit `--host` to call them as an operator. Hosts that opt out of visibility filtering (such as `cursor`) keep all tools in the list and can call app-only tools.
+
+**Conflict with `--client-capabilities`:** `--host` and `--client-capabilities` both set the exact advertised capabilities and cannot be combined. The CLI exits with a usage error if both are passed.
+
+## Interactive multi-round-trip (`input_required`)
+
+Add `--interactive` to `tools call`, `prompts get`, or `resources read` to handle servers that return an `input_required` result. When the server embeds an elicitation request, the CLI renders it to the terminal and collects your response from stdin, then retries the original operation, repeating for as many rounds as the server needs.
+
+```bash theme={"theme":"css-variables"}
+mcpjam tools call --url https://your-server.com/mcp \
+  --tool-name book_flight \
+  --tool-args '{}' \
+  --interactive
+```
+
+**How prompts appear:** The server's message is printed to stderr, followed by a consent prompt (`[a]ccept / [d]ecline / [c]ancel`). For form fields, each field is prompted in turn with its type shown in brackets. For URL-mode elicitations, the URL is printed as plain text and you are asked for consent; the CLI never opens a browser automatically.
+
+**Non-interactive fallback (`--yes`):** Pass `--yes` alongside `--interactive` to decline every embedded input request without prompting. This is also the automatic behavior when stdin is not a TTY or the `CI` environment variable is set; the CLI declines cleanly rather than blocking.
+
+**Stdin conflict:** `--interactive` reads answers from stdin, so it cannot be combined with `--tool-args -`, `--tool-args-stdin`, or `--prompt-args -`. Pass arguments as inline JSON or `@path` instead.
+
+**Capability advertisement:** `--interactive` advertises `elicitation: { form, url }` in the MCP `initialize` handshake. If you also pass `--client-capabilities` or `--host` and that exact set omits `elicitation`, the CLI exits with a usage error; add `"elicitation": { "form": {}, "url": {} }` to the pinned set or drop `--interactive`.
+
+## Tools
+
+### List tools
+
+```bash theme={"theme":"css-variables"}
+mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+Returns every tool the server exposes, including names, descriptions, and input schemas.
+
+### Call a tool
+
+```bash theme={"theme":"css-variables"}
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name search_docs \
+  --tool-args @params.json --quiet --format json
+```
+
+Tool arguments can be inline JSON, `@path`, `-` for stdin, or `--tool-args-stdin` as a shorthand for stdin. The result includes the tool's response content.
+
+> [!NOTE]
+>
+> `tools call` supports `--debug-out <path>` to capture the full request/response
+> trace for debugging. For stdio targets, the artifact records only the
+> explicit env keys passed through `-e/--env`; inherited shell variables are
+> not enumerated.
+
+### Calling as a less-capable client
+
+Real MCP clients differ from each other, and from the spec. Two flags let you
+call a server as one of those clients, without authoring a host first, the
+same behaviors a `--host` carries via its `mcpProfile`:
+
+```bash theme={"theme":"css-variables"}
+# Read only the first page of tools/list, like the hosts that never follow
+# nextCursor. Tools past page one are invisible to the call.
+mcpjam tools list --url https://your-server.com/mcp --first-page-only
+
+# Call as a client that never implemented MRTR. On 2026-07-28 this stops
+# advertising `elicitation`, so a server that would have elicited answers
+# -32021 instead of starting a round.
+mcpjam tools call --url https://your-server.com/mcp \
+  --tool-name confirm_delete --tool-args '{"id":"42"}' --no-mrtr
+```
+
+Unlike the header flags below, neither is HTTP-only, pagination truncation and
+the MRTR knob both work over stdio, so they mean the same thing with
+`--command`.
+
+`--first-page-only` has a second-order effect worth knowing on `2026-07-28`:
+the SEP-2243 mirroring source is the aggregated tool list the client cached, so
+a tool from page two is called with **no** `Mcp-Param-*` headers and a strict
+server answers `-32020`. That is not a bug in the flag; it is exactly how a
+real first-page-only client fails, and it is often the reason a tool "works in
+the inspector but not in that host".
+
+### Debugging `Mcp-Param-*` headers (SEP-2243)
+
+On a `2026-07-28` HTTP connection, a tool argument annotated with `x-mcp-header`
+is mirrored into an `Mcp-Param-{Name}` request header, and a conforming server
+cross-checks the two. Two flags let you exercise the failure paths on purpose:
+
+```bash theme={"theme":"css-variables"}
+# Call as a client that has NOT implemented the mirroring. A conforming server
+# should answer -32020 HeaderMismatch; the CLI surfaces that as-is.
+mcpjam tools call --url https://your-server.com/mcp   --tool-name execute_sql --tool-args '{"region":"us-east"}'   --no-param-headers
+
+# Send a deliberately WRONG value, reproducing a header/body mismatch exactly.
+mcpjam tools call --url https://your-server.com/mcp   --tool-name execute_sql --tool-args '{"region":"us-east"}'   --mcp-header Mcp-Param-Region=eu-west
+```
+
+`--mcp-header` uses `Name=Value` (not `--header`'s `Key: Value`) because a
+mirrored value routinely contains `:`. Repeat it for several headers; the last
+occurrence of a name wins.
+
+Supplying any `Mcp-Param-*` header turns the automatic mirroring **off** for
+that call, so the headers you pass are the only `Mcp-Param-*` ones sent. This
+is not a convenience; it is what makes the override work at all: the MCP
+client merges the mirrored values *over* caller-supplied headers, so with
+mirroring left on your deliberately wrong value would be silently replaced by
+the correct one and no `-32020` would ever occur. Headers outside the
+`Mcp-Param-*` family (`Mcp-Method`, `Mcp-Name`, …) are unaffected and do not
+change mirroring.
+
+When either flag is in play, or with `--rpc`, the CLI prints the headers that
+actually went out to **stderr**, including on the failure path, so stdout stays
+a clean machine-readable result:
+
+```
+Mcp-Param-*: Mcp-Param-Region=us-east
+```
+
+Both flags are HTTP-only: SEP-2243 mirroring is a Streamable HTTP concern, so
+using them with `--command` is a usage error rather than a silent no-op.
+
+### Render a tool result in Inspector
+
+If `tools list` shows `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata`, the tool has interactive UI. Add `--ui` to execute it once and render the completed result in Inspector's Playground:
+
+```bash theme={"theme":"css-variables"}
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name create_view \
+  --tool-args @params.json \
+  --ui \
+  --quiet --format json
+```
+
+Without `--ui`, `tools call` returns the raw tool result. With `--ui`, it opens Inspector by default in a TTY and returns an envelope containing the raw `result`, `inspectorBrowserUrl`, and compact `inspectorRender` evidence. `inspectorRender.status` is the UI signal: `rendered` means Inspector accepted the render, `skipped` means the tool succeeded but the active browser client, a render precondition, or the render wait was missing, and `error` means a non-recoverable Inspector render command failed. `inspectorRender.remediation` is always present and is one of `open_browser`, `retry`, `reconnect_server`, or `none`. Skipped renders emit a stable root `warning` plus `inspectorRender.warning` with `code`, `message`, `remediation`, and optional `browserUrl`, `hasActiveClient`, and `inspectorStarted` fields. Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`. Pass `--require-render` when a skipped render should become a hard error instead of a warning. Browser automation can open `inspectorBrowserUrl` itself and pass `--no-open`; `--inspector-url` is the local Inspector backend/API base URL. If you already know the Inspector browser/client URL, pass `--frontend-url <url>` to use it directly and skip health-advertised frontend checks and local dev port discovery.
+
+For agent/browser automation, either let `--ui` open Inspector automatically in a TTY, or open `http://127.0.0.1:6274/#playground` in the automation browser first and run `tools call --ui --no-open --quiet --format json`. Add `--attach-only` when startup, browser opening, and discovery should be disallowed. Agents should confirm `inspectorRender.status === "rendered"` before assuming the UI is visible, and use `inspectorRender.remediation` to recover from skipped renders. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. TTY stderr runs print the Playground URL and initial wait message unless `--quiet` is set; the elapsed-seconds heartbeat only appears when stderr is a TTY. The normal JSON output is compact; pass `--debug-out <path>` for the full render envelope.
+
+For a local stdio server:
+
+```bash theme={"theme":"css-variables"}
+mcpjam tools list \
+  --command npx \
+  --args -y @modelcontextprotocol/server-everything \
+  --cwd $PWD \
+  -e DEBUG=1
+```
+
+## Resources
+
+### List resources
+
+```bash theme={"theme":"css-variables"}
+mcpjam resources list --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+### Read a resource
+
+```bash theme={"theme":"css-variables"}
+mcpjam resources read --url https://your-server.com/mcp --access-token $TOKEN \
+  --resource-uri "file:///docs/readme.md"
+```
+
+Use `resources read --resource-uri ui://...` when you need to inspect raw widget HTML or other UI resources directly.
+
+### List resource templates
+
+```bash theme={"theme":"css-variables"}
+mcpjam resources templates --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+## Prompts
+
+### List prompts
+
+```bash theme={"theme":"css-variables"}
+mcpjam prompts list --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+### Get a prompt
+
+```bash theme={"theme":"css-variables"}
+mcpjam prompts get --url https://your-server.com/mcp --access-token $TOKEN \
+  --prompt-name summarize \
+  --prompt-args '{"text": "Hello world"}'
+```
+
+## Common patterns
+
+### Enumerate the full server surface
+
+```bash theme={"theme":"css-variables"}
+# One-shot: doctor already sweeps everything
+mcpjam server doctor --url https://your-server.com/mcp --access-token $TOKEN
+
+# Or individually for focused output
+mcpjam tools list --url $URL --access-token $TOKEN --format json | jq '.tools[].name'
+mcpjam resources list --url $URL --access-token $TOKEN --format json | jq '.resources[].uri'
+mcpjam prompts list --url $URL --access-token $TOKEN --format json | jq '.prompts[].name'
+```
+
+### Test a specific tool end-to-end
+
+```bash theme={"theme":"css-variables"}
+# List to find the tool
+mcpjam tools list --url $URL --access-token $TOKEN --format json \
+  | jq '.tools[] | select(.name == "search_docs")'
+
+# Call it
+mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name search_docs \
+  --tool-args @params.json \
+  --quiet \
+  --format json
+```
+
+For generated payloads, pipe JSON through stdin:
+
+```bash theme={"theme":"css-variables"}
+echo '{"query":"setup guide"}' | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name search_docs --tool-args - --quiet --format json
+```
+
+`--tool-args-stdin` is equivalent to `--tool-args -` and cannot be combined with `--tool-args` or `--params` in the same command:
+
+```bash theme={"theme":"css-variables"}
+generate-params | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name search_docs --tool-args-stdin --quiet --format json
+```
+
+### Using a credentials file
+
+Instead of passing `--access-token` to every command, save credentials once and reuse the file:
+
+```bash theme={"theme":"css-variables"}
+# Login and save
+mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.json
+
+# Reuse everywhere
+mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam resources list --url https://your-server.com/mcp --credentials-file creds.json
+mcpjam tools call --url https://your-server.com/mcp --credentials-file creds.json \
+  --tool-name search_docs --tool-args @params.json --quiet --format json
+```
+
+### No-auth servers
+
+For servers that don't require authentication (like `mcp.excalidraw.com/mcp`), omit the auth flags:
+
+```bash theme={"theme":"css-variables"}
+mcpjam tools list --url https://mcp.excalidraw.com/mcp
+mcpjam tools call --url https://mcp.excalidraw.com/mcp \
+  --tool-name read_me
+```
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones for local subprocesses.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

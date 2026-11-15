@@ -1,0 +1,66 @@
+11:Account-bound Cloud commands live under `mcpjam cloud`. Local MCP testing stays at the top level (`mcpjam server`, `mcpjam oauth login`, …). Credential flags `--api-key` / `--api-url` / `--api-header` are declared on `mcpjam cloud` and work before or after descendants. Hosted `readiness` stays at the root and still takes leaf `--api-key`. See [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md).
+335:Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token. See the [XAA Debugger guide](https://docs.mcpjam.com/cli/xaa.md) for the trust setup, registration strategies, and CI usage.
+569:An unknown ID, or an ID or flag for a suite the run leaves out, is a usage error (exit code `2`) before anything runs.
+597:| `--server <name=url>` | | Bind a target server to an HTTP(S) URL. Repeatable. Split on the first `=`; duplicate or unknown names are usage errors. |
+611:Global `--timeout` bounds each setup operation and MCP request, not the whole run. Exit codes: `0` passed, `1` failed, `2` usage/unsupported/import/policy, `3` credentials, `4` setup/billing/artifact, `5` inconclusive or interrupted — see [Exit codes](https://docs.mcpjam.com/cli/local-evals.md#exit-codes).
+643:`--host` is a usage error rather than a silent precedence rule.
+948:> the deployment, not by your account: a self-hosted or older MCPJam whose
+1186:Launch a goal run. **Spends model credits** — fans out into `targets × iterations` chat sessions.
+1193:| `--expected-sponsored <n>` | No | How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` and nothing is created. Omit to accept whatever split applies. |
+1225:Each pending request holds one of the account's five concurrent-connection slots for up to an hour. If `connect` reports `ACTIVE_REQUEST_LIMIT`, the error details include the ids of the open requests — cancel the abandoned ones with `connect-cancel` to free slots.
+1279:## `cloud server-accounts` commands
+1281:The accounts a saved server signs in with for hosted runs, addressed by account ID or name. Every command takes `--server <id-or-name>` (required) and `--project <id-or-name>`. No command prints a token. See [Server accounts](https://docs.mcpjam.com/reference/public-api.md#server-accounts) for what an upload stores and how runs choose an account.
+1283:### `cloud server-accounts list`
+1285:List the server's accounts: each one's ID, name, whether runs use it by default, whether it needs reconnecting, and whether it is for hosted runs only.
+1287:### `cloud server-accounts show`
+1289:Show one account.
+1293:| `--account <id-or-name>` | Yes | Account ID or name |
+1295:### `cloud server-accounts set`
+1297:Upload an access token to an account. A name no account has creates the account; otherwise its token is replaced and its ID stays. Accounts uploaded this way are for hosted runs only. Nothing checks who a token belongs to: the name is your own label.
+1303:| `--account <id-or-name>` | Yes | Account ID or name |
+1312:./sign-in-test-user | mcpjam cloud server-accounts set --server my-server \
+1313:  --account test-automation-1 --client-id my-client --access-token -
+1316:### `cloud server-accounts rename`
+1318:Rename an account.
+1322:| `--account <id-or-name>` | Yes | Account ID or name |
+1325:### `cloud server-accounts default`
+1327:Make an account the default. Runs with no saved account choice sign in as the default, so set it before you start a run, and don't start runs that need different defaults at the same time.
+1331:| `--account <id-or-name>` | Yes | Account ID or name |
+1333:### `cloud server-accounts delete`
+1335:Delete an account and its stored token, and ask the token's issuer to revoke it where the issuer supports that. The default account can't be deleted while other accounts exist: make another account the default first.
+1339:| `--account <id-or-name>` | Yes | Account ID or name |
+1405:Grade a server locally — from your machine, against the URL you supply. No account required. Results are printed to stdout and never uploaded.
+1441:Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam — no credits are consumed), and leaves a persistent record.
+1461:| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+1477:| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+1490:| `--claim <feature>` | Declare a feature the server offers, so the report shows it as claimed. One of `lazy-authentication` or `enterprise-managed-auth`. Repeat to claim several (at most 10). An unknown value is a usage error. |
+1602:| `2` | Usage error — bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file (after auth, before any server/model work) |
+1603:| `3` | Auth failed — no credential, or the platform rejected it, at launch or mid-wait (a token that expired during a long poll). Zero credits spent if it happened before launch |
+1674:`--all-targets` is a usage error: compose builds the stack the run uses, so
+1851:mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+1878:`--file` pointing at create-API JSON (no `schemaVersion`) is a usage error
+2130:| `--max-cost-usd <usd>` | No | Fail if the run's MCPJam-billed cost exceeded this many dollars. Accepts decimals (`0.05`) |
+2131:| `--max-cost-increase-percent <percent>` | No | Fail if cost rose by more than this percentage of the baseline's; requires `--baseline` or `--baseline-sha`. Values above 100 are allowed — a run costing three times its baseline is a 200% increase |
+2137:Both cost gates report **non-gateable** (exit 3) rather than passing when the
+2138:cost is unknown or only partly measured. Cost is stamped per iteration and is
+2143:`--max-cost-increase-percent` gate is also non-gateable when the baseline cost
+2153:flags need a baseline to mean anything and are a usage error without one. A
+2160:The two are **mutually exclusive** — passing both is a usage error (exit `2`).
+2199:regressed is not consent to ship on an infrastructure failure. A `usage_error`
+2212:| `2` | Usage error — an unknown scorer, or a threshold out of range |
+2413:  "file": ".mcpjam/evals/s_billing.yaml",
+2414:  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+2421:  "file": ".mcpjam/evals/s_billing.yaml",
+2439:An unreadable or missing path is a usage error and goes to stderr in the CLI's
+2458:  "file": ".mcpjam/evals/s_billing.yaml",
+2459:  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+2473:        "serverName": "billing",
+2477:        "message": "Server \"billing\" in environment prod exposes no tool named \"render_gone\"."
+2557:| `2` | Usage: the output path exists and `--force` was not passed, or the suite's cases did not fit one page |
+2616:Passing both flags of a pair is a usage error. The CLI and MCP read the suite's
+2843:AI-generate test cases from the suite's tools. Included with MCPJam; no customer credits consumed; it counts against the organization's daily generation quota.
+2859:| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again |
+2863:Turn a document — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases with MCPJam's AI and add them to the suite. Any text document works (markdown, JSON, CSV, plain notes), up to 100 KiB; the model reads the shape itself. **Costs money:** each import consumes customer credits.
+2879:| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again |
+2917:`mcpjam cloud` is the account-bound namespace. Log in, link a project, then run evals, tunnels, and the rest of the Cloud groups.
+{"items": [{"id": "case_add", "title": "add 2 and 3 returns 5", "steps": [{"id": "add", "kind": "toolCall", "toolName": "add", "arguments": {"a": 2, "b": 3}}], "expectedOutput": "5"}]}{"items": [{"name": "add", "description": "Add two finite numbers.", "inputSchema": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}}]}

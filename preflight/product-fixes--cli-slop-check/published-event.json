@@ -1,0 +1,21 @@
+{
+  "id": "product-fixes:cli-slop-check",
+  "path": "product-fixes--cli-slop-check",
+  "argv": [
+    "npm",
+    "run",
+    "slop:check"
+  ],
+  "start": "2026-11-15T01:40:25.408968+00:00",
+  "end": "2026-11-15T01:40:26.308864+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

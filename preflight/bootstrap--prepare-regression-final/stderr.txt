@@ -1,0 +1,7 @@
+test_credit_resolution_runs_only_in_the_private_sidecar (test_prepare.PrepareTest.test_credit_resolution_runs_only_in_the_private_sidecar) ... ok
+test_separate_verifier_bundles_tests_and_uses_source_artifact_paths (test_prepare.PrepareTest.test_separate_verifier_bundles_tests_and_uses_source_artifact_paths) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.031s
+
+OK

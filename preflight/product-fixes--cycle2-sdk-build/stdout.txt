@@ -1,0 +1,237 @@
+
+> @mcpjam/sdk@10.7.0 build
+> npm run build -w @mcpjam/evaluators && npm run bundle:runtimes && cross-env NODE_OPTIONS=--max-old-space-size=8192 tsup
+
+
+> @mcpjam/evaluators@0.6.0 build
+> tsup
+
+CLI Building entry: src/eval-reporting-types.ts, src/eval-tool-execution.ts, src/index.ts, src/matchers.ts, src/types.ts, src/contract/adapters.ts, src/contract/canonical.ts, src/contract/derive.ts, src/contract/evaluator-derive.ts, src/contract/evaluator-types.ts, src/contract/policy-spelling.ts, src/contract/types.ts, src/evaluators/assertion.ts, src/evaluators/outcome.ts, src/evaluators/run.ts, src/evaluators/types.ts, src/predicates/argMatcher.ts, src/predicates/evaluate.ts, src/predicates/index.ts, src/predicates/policy.ts, src/predicates/schema-validation.ts, src/predicates/transcript.ts, src/predicates/types.ts, src/scorers/concurrency.ts, src/scorers/predicate-scorer.ts, src/scorers/run.ts, src/scorers/types.ts, src/tool-expectations/compile.ts, src/tool-expectations/evaluate.ts, src/tool-expectations/index.ts, src/tool-expectations/skill-tools.ts, src/tool-expectations/types.ts
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Using tsup config: $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/evaluators/tsup.config.ts
+CLI Target: es2022
+CLI Cleaning output folder
+ESM Build start
+ESM dist/tool-expectations/types.js       0 B
+ESM dist/eval-reporting-types.js          0 B
+ESM dist/chunk-XTHLBMYZ.js                0 B
+ESM dist/chunk-PF6RTX3X.js                0 B
+ESM dist/types.js                         0 B
+ESM dist/scorers/types.js                 168.00 B
+ESM dist/tool-expectations/compile.js     166.00 B
+ESM dist/scorers/run.js                   296.00 B
+ESM dist/tool-expectations/evaluate.js    286.00 B
+ESM dist/tool-expectations/skill-tools.js 128.00 B
+ESM dist/predicates/argMatcher.js         105.00 B
+ESM dist/tool-expectations/index.js       526.00 B
+ESM dist/predicates/evaluate.js           507.00 B
+ESM dist/predicates/index.js              2.56 KB
+ESM dist/predicates/schema-validation.js  100.00 B
+ESM dist/predicates/policy.js             330.00 B
+ESM dist/scorers/predicate-scorer.js      460.00 B
+ESM dist/scorers/concurrency.js           76.00 B
+ESM dist/predicates/transcript.js         444.00 B
+ESM dist/predicates/types.js              902.00 B
+ESM dist/evaluators/assertion.js          510.00 B
+ESM dist/contract/evaluator-derive.js     725.00 B
+ESM dist/contract/policy-spelling.js      310.00 B
+ESM dist/contract/evaluator-types.js      196.00 B
+ESM dist/contract/types.js                336.00 B
+ESM dist/evaluators/run.js                455.00 B
+ESM dist/evaluators/outcome.js            100.00 B
+ESM dist/eval-tool-execution.js           431.00 B
+ESM dist/chunk-ILLARFJD.js                2.90 KB
+ESM dist/chunk-JRM6LM5A.js                316.00 B
+ESM dist/index.js                         12.82 KB
+ESM dist/chunk-KAXUQNDG.js                7.72 KB
+ESM dist/evaluators/types.js              211.00 B
+ESM dist/chunk-CVM5YXXU.js                1.73 KB
+ESM dist/chunk-YQEGVQXJ.js                2.47 KB
+ESM dist/chunk-UYCSGDBV.js                3.93 KB
+ESM dist/chunk-PYTZA5U2.js                2.33 KB
+ESM dist/chunk-HCLNEORA.js                10.92 KB
+ESM dist/chunk-54U6UTRS.js                55.39 KB
+ESM dist/chunk-JZFHSOM3.js                774.00 B
+ESM dist/chunk-QVKDBSXS.js                5.09 KB
+ESM dist/chunk-ZQI2XLYE.js                1.22 KB
+ESM dist/chunk-NRZVABEW.js                3.83 KB
+ESM dist/matchers.js                      415.00 B
+ESM dist/chunk-DHLSKN3I.js                307.00 B
+ESM dist/chunk-T4RQYAM2.js                168.00 B
+ESM dist/chunk-PBPUQ6MC.js                328.00 B
+ESM dist/chunk-QGXTZUGY.js                625.00 B
+ESM dist/chunk-GSN2L4XW.js                5.95 KB
+ESM dist/chunk-XGPIJHH6.js                468.00 B
+ESM dist/chunk-O37HIDVN.js                10.31 KB
+ESM dist/contract/adapters.js             916.00 B
+ESM dist/chunk-5E4WULER.js                5.50 KB
+ESM dist/contract/canonical.js            240.00 B
+ESM dist/chunk-FJMB7JNJ.js                993.00 B
+ESM dist/contract/derive.js               711.00 B
+ESM dist/chunk-YDCS7DHF.js                14.82 KB
+ESM dist/chunk-KAI5M4KO.js                7.45 KB
+ESM dist/chunk-2QQ2KLES.js                370.00 B
+ESM dist/chunk-WVWKONJP.js                1008.00 B
+ESM dist/chunk-3KMKYC6O.js                5.54 KB
+ESM ⚡️ Build success in 18ms
+DTS Build start
+DTS ⚡️ Build success in 2417ms
+DTS dist/predicates/index.d.ts              2.26 KB
+DTS dist/tool-expectations/index.d.ts       609.00 B
+DTS dist/contract/adapters.d.ts             6.90 KB
+DTS dist/contract/canonical.d.ts            4.57 KB
+DTS dist/contract/evaluator-derive.d.ts     4.25 KB
+DTS dist/contract/derive.d.ts               9.93 KB
+DTS dist/contract/policy-spelling.d.ts      3.54 KB
+DTS dist/evaluators/assertion.d.ts          2.49 KB
+DTS dist/evaluators/outcome.d.ts            802.00 B
+DTS dist/evaluators/run.d.ts                2.08 KB
+DTS dist/evaluators/types.d.ts              1.70 KB
+DTS dist/contract/evaluator-types.d.ts      5.92 KB
+DTS dist/eval-tool-execution.d.ts           3.11 KB
+DTS dist/predicates/argMatcher.d.ts         738.00 B
+DTS dist/predicates/evaluate.d.ts           2.91 KB
+DTS dist/predicates/schema-validation.d.ts  2.81 KB
+DTS dist/predicates/transcript.d.ts         4.77 KB
+DTS dist/scorers/concurrency.d.ts           486.00 B
+DTS dist/scorers/predicate-scorer.d.ts      1.52 KB
+DTS dist/scorers/run.d.ts                   2.49 KB
+DTS dist/scorers/types.d.ts                 2.40 KB
+DTS dist/contract/types.d.ts                12.01 KB
+DTS dist/eval-reporting-types.d.ts          1.50 KB
+DTS dist/predicates/policy.d.ts             3.90 KB
+DTS dist/tool-expectations/compile.d.ts     987.00 B
+DTS dist/tool-expectations/evaluate.d.ts    5.83 KB
+DTS dist/tool-expectations/skill-tools.d.ts 802.00 B
+DTS dist/tool-expectations/types.d.ts       3.83 KB
+DTS dist/matchers.d.ts                      10.44 KB
+DTS dist/types.d.ts                         105.00 B
+DTS dist/index.d.ts                         6.58 KB
+DTS dist/predicates/types.d.ts              1.16 KB
+DTS dist/types-zPrzDmOA.d.ts                83.70 KB
+
+> @mcpjam/sdk@10.7.0 bundle:runtimes
+> node ../scripts/generate-telemetry-catalogs.mjs && npm run bundle:chatgpt-runtime && npm run bundle:mcp-apps-runtime
+
+
+> @mcpjam/sdk@10.7.0 bundle:chatgpt-runtime
+> node scripts/bundle-chatgpt-apps-runtime.mjs
+
+✅ Successfully bundled ChatGPT Apps runtime script
+
+> @mcpjam/sdk@10.7.0 bundle:mcp-apps-runtime
+> node scripts/bundle-mcp-apps-openai-compatible-runtime.mjs
+
+✅ Successfully bundled MCP Apps OpenAI compatible runtime script
+CLI Building entry: src/browser.ts, src/index.ts, src/matchers.ts, src/model-factory.ts, src/model-native-ids.ts, src/operations.ts, src/platform-auth.ts, src/skill-reference.ts, src/worker.ts, src/assertions/index.ts, src/contract/index.ts, src/events/index.ts, src/internal/deployment.ts, src/internal/network-proxy.ts, src/internal/plugin-host.ts, src/internal/telemetry.ts, src/host-config/index.ts, src/host-config/internal.ts, src/host-compat/index.ts, src/oauth/node.ts, src/predicates/index.ts, src/plugin-bundle/index.ts, src/public-api/index.ts, src/platform/index.ts, src/widget-runtime/index.ts, src/host-config/templates/index.ts
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Using tsup config: $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/sdk/tsup.config.ts
+CLI Target: node20
+CLI Cleaning output folder
+ESM Build start
+DTS Build start
+ESM dist/matchers.js                        127.00 B
+ESM dist/model-factory.js                   55.32 KB
+ESM dist/platform-auth.js                   6.04 KB
+ESM dist/skill-reference.js                 60.36 KB
+ESM dist/model-native-ids.js                6.61 KB
+ESM dist/assertions/index.js                5.31 KB
+ESM dist/internal/network-proxy.js          878.00 B
+ESM dist/worker.js                          75.89 KB
+ESM dist/internal/plugin-host.js            17.22 KB
+ESM dist/operations.js                      381.81 KB
+ESM dist/events/index.js                    94.23 KB
+ESM dist/internal/telemetry.js              16.53 KB
+ESM dist/host-config/internal.js            121.74 KB
+ESM dist/predicates/index.js                129.00 B
+ESM dist/internal/deployment.js             14.25 KB
+ESM dist/oauth/node.js                      49.62 KB
+ESM dist/public-api/index.js                6.31 KB
+ESM dist/host-config/index.js               311.13 KB
+ESM dist/widget-runtime/index.js            22.14 KB
+ESM dist/plugin-bundle/index.js             107.05 KB
+ESM dist/host-compat/index.js               288.33 KB
+ESM dist/host-config/templates/index.js     161.04 KB
+ESM dist/contract/index.js                  654.51 KB
+ESM dist/browser.js                         1.36 MB
+ESM dist/platform/index.js                  1.25 MB
+ESM dist/matchers.js.map                    92.00 B
+ESM dist/platform-auth.js.map               14.83 KB
+ESM dist/assertions/index.js.map            428.00 B
+ESM dist/model-factory.js.map               197.83 KB
+ESM dist/model-native-ids.js.map            15.31 KB
+ESM dist/internal/network-proxy.js.map      2.80 KB
+ESM dist/internal/plugin-host.js.map        44.01 KB
+ESM dist/skill-reference.js.map             60.13 KB
+ESM dist/internal/telemetry.js.map          39.60 KB
+ESM dist/predicates/index.js.map            89.00 B
+ESM dist/worker.js.map                      332.71 KB
+ESM dist/host-config/internal.js.map        424.74 KB
+ESM dist/internal/deployment.js.map         51.23 KB
+ESM dist/events/index.js.map                304.71 KB
+ESM dist/widget-runtime/index.js.map        79.81 KB
+ESM dist/public-api/index.js.map            19.89 KB
+ESM dist/oauth/node.js.map                  158.28 KB
+ESM dist/host-config/templates/index.js.map 316.56 KB
+ESM dist/plugin-bundle/index.js.map         493.42 KB
+ESM dist/host-compat/index.js.map           842.41 KB
+ESM dist/operations.js.map                  1.25 MB
+ESM dist/host-config/index.js.map           1.01 MB
+ESM dist/contract/index.js.map              1.57 MB
+ESM dist/index.js                           4.52 MB
+ESM dist/platform/index.js.map              3.45 MB
+ESM dist/browser.js.map                     3.86 MB
+ESM dist/index.js.map                       11.74 MB
+ESM ⚡️ Build success in 2455ms
+DTS ⚡️ Build success in 24479ms
+DTS dist/matchers.d.ts                       164.00 B
+DTS dist/model-factory.d.ts                  8.09 KB
+DTS dist/model-native-ids.d.ts               2.58 KB
+DTS dist/operations.d.ts                     22.22 KB
+DTS dist/skill-reference.d.ts                1.65 KB
+DTS dist/worker.d.ts                         2.00 KB
+DTS dist/internal/network-proxy.d.ts         778.00 B
+DTS dist/oauth/node.d.ts                     5.54 KB
+DTS dist/plugin-bundle/index.d.ts            2.52 KB
+DTS dist/public-api/index.d.ts               10.35 KB
+DTS dist/platform-auth.d.ts                  2.34 KB
+DTS dist/internal/telemetry.d.ts             3.48 KB
+DTS dist/internal/deployment.d.ts            5.05 KB
+DTS dist/internal/plugin-host.d.ts           8.34 KB
+DTS dist/host-config/templates/index.d.ts    10.90 KB
+DTS dist/events/index.d.ts                   27.65 KB
+DTS dist/host-compat/index.d.ts              31.52 KB
+DTS dist/host-config/internal.d.ts           28.53 KB
+DTS dist/browser.d.ts                        75.08 KB
+DTS dist/widget-runtime/index.d.ts           38.49 KB
+DTS dist/contract/index.d.ts                 177.07 KB
+DTS dist/platform/index.d.ts                 287.21 KB
+DTS dist/index.d.ts                          459.23 KB
+DTS dist/host-config/index.d.ts              8.61 KB
+DTS dist/predicates/index.d.ts               62.00 B
+DTS dist/assertions/index.d.ts               2.06 KB
+DTS dist/telemetry-redaction-DooVPae5.d.ts   99.00 B
+DTS dist/reasoning-effort-BUz6el00.d.ts      8.40 KB
+DTS dist/ssrf-guard-Dcd08pUi.d.ts            3.89 KB
+DTS dist/oauth-proxy-error-DwR3OVJu.d.ts     3.08 KB
+DTS dist/execution-record-DfH6jQfi.d.ts      7.69 KB
+DTS dist/errors-Bbsr6XNv.d.ts                1.29 KB
+DTS dist/public-types-zgdraeju.d.ts          10.10 KB
+DTS dist/empty-input-DVKgHKGo.d.ts           2.99 KB
+DTS dist/tool-visibility-BEyZ0vx2.d.ts       7.56 KB
+DTS dist/oauth-proxy-Lmk3ffgn.d.ts           6.42 KB
+DTS dist/types-3khaQgjc.d.ts                 10.67 KB
+DTS dist/verdict-policy-Ck5pG9sj.d.ts        468.15 KB
+DTS dist/memory-inbox-CAUBn8tB.d.ts          26.86 KB
+DTS dist/server-doctor-core-DcHub3Fm.d.ts    26.94 KB
+DTS dist/types-CCJnuwUw.d.ts                 63.68 KB
+DTS dist/execution-budgets-CKZjfiXK.d.ts     85.66 KB
+DTS dist/types-6hFBYdZS.d.ts                 28.37 KB
+DTS dist/types-Rrrll-jK.d.ts                 73.97 KB
+DTS dist/handoff-DvkWrkYN.d.ts               87.28 KB
+DTS dist/swarm-finding-9i_yrn1x.d.ts         552.45 KB
+DTS dist/eval-decision-summary-DwhuVmc8.d.ts 437.23 KB
+DTS dist/MCPClientManager-D_AgVdMB.d.ts      296.91 KB
+DTS dist/ai-request-headers-BusPUJNC.d.ts    376.74 KB

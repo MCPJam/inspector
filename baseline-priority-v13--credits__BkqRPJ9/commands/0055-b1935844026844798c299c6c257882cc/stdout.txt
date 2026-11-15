@@ -1,0 +1,12 @@
+````yaml /reference/openapi.json get /organizations/{organizationId}/spend-budget
+  /organizations/{organizationId}/spend-budget:
+    get:
+      description: ID of the organization, from `GET /organizations`.
+== organizations
+{"items": [{"id": "org_fixture", "name": "Fixture organization", "plan": "team", "myRole": "owner", "isCreator": true, "logoUrl": null, "createdAt": 1}]}
+== projects
+{"items": [{"id": "project_fixture", "name": "Fixture", "sensitive_value": "[REDACTED]", "createdAt": 1, "updatedAt": 2}]}
+== projects/project_fixture
+{"id": "project_fixture", "name": "Fixture", "organizationId": "[REDACTED]", "createdAt": 1, "updatedAt": 2}
+== projects/project_fixture/eval-suites
+{"items": [{"id": "suite_fixture", "name": "Arithmetic smoke", "projectId": "project_fixture", "description": "Synthetic fixture: add 2 and 3 and assert 5.", "environment": {"servers": []}, "executionConfig": null, "hosts": [], "environmentIds": [], "settings": {"policy": "legacy", "minimumIterations": 1}, "schedule": {}, "createdAt": 1, "updatedAt": 2}]}

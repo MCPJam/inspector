@@ -1,0 +1,3 @@
+{"method": "GET", "path": "/projects/project_fixture/eval-suites/suite_fixture/cases", "status": 200, "response": {"items": [{"id": "case_add", "title": "add 2 and 3 returns 5", "steps": [{"id": "add", "kind": "toolCall", "toolName": "add", "arguments": {"a": 2, "b": 3}}], "expectedOutput": "5"}]}}
+{"method": "POST", "path": "/projects/project_fixture/servers/server_fixture/tools/call", "status": 404, "response": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+{"method": "POST", "path": "/projects/project_fixture/eval-runs", "status": 202, "response": {"runId": "run_fixture_1", "suiteId": "suite_fixture", "status": "running", "servers": [{"id": "server_fixture", "name": "Arithmetic"}], "environment": null}}

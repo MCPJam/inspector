@@ -1,0 +1,22 @@
+{
+  "event_id": "da1caecea54745e0b4f5b9f0e6062d01",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/validation/check-arithmetic.py <<'PY'\nimport json,os,subprocess\nfrom pathlib import Path\nroot=Path(__file__).parent\ncases=[('positive',{'a':2,'b':3},5),('negative',{'a':-7,'b':2},-5),('zero',{'a':0,'b':0},0),('decimal',{'a':1.25,'b':2.5},3.75),('missing',{'a':2},None),('wrong-type',{'a':'2','b':3},None),('extra-field',{'a':2,'b':3,'c':4},None)]\nresults=[]\nfor name,args,expected in cases:\n cmd=['npx','--yes','@mcpjam/cli@6.2.2','tools','call','--url','http://fixture:8765/mcp','--access-token',os.environ['MCP_SERVER_TOKEN'],'--tool-name','add','--tool-args',json.dumps(args),'--quiet','--format','json']\n r=subprocess.run(cmd,capture_output=True,text=True,timeout=15)\n try: payload=json.loads(r.stdout)\n except ValueError: payload={'stdout':r.stdout,'stderr':r.stderr}\n good=(r.returncode==0 and payload.get('structuredContent',{}).get('sum')==expected and not payload.get('isError')) if expected is not None else (r.returncode!=0 or payload.get('isError',False))\n results.append({'case':name,'arguments':args,'expectedSum':expected,'exitCode':r.returncode,'passed':good,'response':payload})\n(root/'arithmetic-checks.json').write_text(json.dumps(results,indent=2))\nprint(json.dumps(results,indent=2))\nraise SystemExit(0 if all(x['passed'] for x in results) else 1)\nPY\npython3 /workspace/validation/check-arithmetic.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:17:23.674661+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 6.636737823486328,
+  "end": "2026-11-15T02:17:30.311348+00:00"
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "8be3d79db9d44c0098670868b544b328",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "rg -n -i 'credit|usage|billing|pricing|cost|quota|/account' /workspace/mcp-eval/docs/public-api.md | head -55\ncurl -fsSL https://docs.mcpjam.com/hosted/overview.md -o /workspace/mcp-eval/docs/hosted.md\ncurl -fsSL https://docs.mcpjam.com/troubleshooting/error-codes.md -o /workspace/mcp-eval/docs/errors.md\nrg -n -i 'credit|usage|billing|pricing|cost|quota|settings' /workspace/mcp-eval/docs/hosted.md /workspace/mcp-eval/docs/errors.md\npython3 - <<'PY'\nimport urllib.request,urllib.error,os,json\nfor name,path,body in [('budget','/organizations/org_fixture/spend-budget',None),('tools','/projects/project_fixture/servers/server_fixture/tools',{}),('suites','/projects/project_fixture/eval-suites',None)]:\n req=urllib.request.Request(os.environ['MCPJAM_API_URL']+path,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'})\n try:r=urllib.request.urlopen(req);d=r.read().decode()\n except urllib.error.HTTPError as e:d=e.read().decode()\n open('/workspace/mcp-eval/results/'+name+'.json','w').write(d);print(name,d)\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:42:35.841582+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.27438902854919434,
+  "end": "2026-11-15T01:42:36.115910+00:00"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "bootstrap:pack-patched",
+  "path": "bootstrap--pack-patched",
+  "argv": [
+    "npm",
+    "pack",
+    "--workspace",
+    "@mcpjam/cli",
+    "--workspace",
+    "@mcpjam/sdk",
+    "--workspace",
+    "@mcpjam/evaluators",
+    "--pack-destination",
+    "../packages/patched",
+    "--ignore-scripts"
+  ],
+  "start": "2026-11-15T01:43:35.078862+00:00",
+  "end": "2026-11-15T01:43:39.106614+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg",
+    "outcome-004.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-001-002.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

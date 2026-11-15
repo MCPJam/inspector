@@ -1,0 +1,22 @@
+{
+  "event_id": "010789e851d945cebfee1f1a533fc8d9",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -fsSL https://docs.mcpjam.com/reference/openapi.json -o /workspace/openapi.json; curl -fsSL https://docs.mcpjam.com/cli/reference.md -o /workspace/reference.md; python - <<'PY'\nimport json\ns=json.load(open('/workspace/openapi.json'))\nfor p,v in s['paths'].items():\n if ('servers' in p and 'post' in v and p.endswith('servers')) or ('eval-suites' in p and 'post' in v and p.endswith('eval-suites')):\n  print(p,json.dumps(v['post'].get('requestBody',{})))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:52:20.555872+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 127,
+  "signal": null,
+  "duration_seconds": 0.6282756328582764,
+  "end": "2026-11-15T01:52:21.184065+00:00"
+}

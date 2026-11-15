@@ -1,0 +1,39 @@
+{
+  "id": "product-fixes:cycle2-conformance-before",
+  "path": "product-fixes--before-conformance-get405",
+  "argv": [
+    "env",
+    "MCP_SERVER_TOKEN=[REDACTED]",
+    "work/node-v24.22.1-darwin-arm64/bin/node",
+    "work/inspector/cli/dist/index.js",
+    "--no-telemetry",
+    "protocol",
+    "conformance",
+    "--url",
+    "http://127.0.0.1:8875/mcp",
+    "--access-token",
+    "[REDACTED]",
+    "--protocol-version",
+    "2025-11-25",
+    "--check-timeout",
+    "2000",
+    "--reporter",
+    "json-summary"
+  ],
+  "start": "2026-11-15T02:22:29.421739+00:00",
+  "end": "2026-11-15T02:22:30.805881+00:00",
+  "exit_status": 1,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-001-002.svg",
+    "intermediate-001-003.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

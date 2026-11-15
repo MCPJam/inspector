@@ -1,0 +1,1 @@
+{"name":"Arithmetic deterministic","serverIds":["server_fixture"],"tests":[{"title":"add 17+25","steps":[{"kind":"toolCall","toolName":"add","arguments":{"a":17,"b":25}},{"kind":"assert","assertion":{"type":"toolCalledAtLeastOnce","toolName":"add"}}]}]}

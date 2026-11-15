@@ -1,0 +1,1 @@
+{"seconds": 0.019549846649169922, "stream": "stdout", "data": "{\"items\": [{\"name\": \"add\", \"description\": \"Add two finite numbers.\", \"inputSchema\": {\"type\": \"object\", \"properties\": {\"a\": {\"type\": \"number\"}, \"b\": {\"type\": \"number\"}}, \"required\": [\"a\", \"b\"]}}]}"}

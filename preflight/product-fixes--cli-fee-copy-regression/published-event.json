@@ -1,0 +1,30 @@
+{
+  "id": "product-fixes:cli-fee-copy-regression",
+  "path": "product-fixes--cli-fee-copy-regression",
+  "argv": [
+    "node",
+    "--import",
+    "tsx",
+    "--test",
+    "cli/tests/platform-client.test.ts"
+  ],
+  "start": "2026-11-15T01:46:04.876054+00:00",
+  "end": "2026-11-15T01:46:06.976047+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg",
+    "intermediate-003-001.svg",
+    "intermediate-004-001.svg",
+    "intermediate-005-001.svg",
+    "intermediate-006-001.svg",
+    "intermediate-007-001.svg",
+    "intermediate-008-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

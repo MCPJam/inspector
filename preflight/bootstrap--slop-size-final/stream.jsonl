@@ -1,0 +1,2 @@
+{"seconds": 0.2025899887084961, "stream": "stdout", "data": "\n> slop:size\n> node scripts/slop/pr-size.mjs\n\n"}
+{"seconds": 0.2867929935455322, "stream": "stdout", "data": "## PR size\n\n**63** changed lines of hand-written source (budget 800, hard limit 1500).\n\nWithin budget.\n\n| File | Lines |\n|---|---|\n| `cli/src/lib/activation-guidance.ts` | 41 |\n| `cli/src/lib/platform-client.ts` | 12 |\n| `cli/src/index.ts` | 5 |\n| `sdk/src/mcp-conformance/wire-observations.ts` | 3 |\n| `cli/src/commands/eval.ts` | 2 |\n"}

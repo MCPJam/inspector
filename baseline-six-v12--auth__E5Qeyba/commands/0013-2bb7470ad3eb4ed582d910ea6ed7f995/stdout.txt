@@ -1,0 +1,187 @@
+{"items": [{"id": "suite_fixture", "name": "Arithmetic smoke", "projectId": "project_fixture", "description": "Synthetic fixture: add 2 and 3 and assert 5.", "environment": {"servers": []}, "executionConfig": null, "hosts": [], "environmentIds": [], "settings": {"policy": "legacy", "minimumIterations": 1}, "schedule": {}, "createdAt": 1, "updatedAt": 2}]}> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Server Inspection
+
+> Probe, diagnose, and export MCP server connectivity and capabilities
+
+The `server` command group gives you a breadth-first view of any MCP server — connectivity, OAuth discovery, capabilities, tools, resources, and prompts — without writing code.
+
+## Quick start
+
+```bash theme={"theme":"css-variables"}
+# One command does everything: probe, connect, sweep tools/resources/prompts
+mcpjam server doctor --url https://your-server.com/mcp
+```
+
+If the server requires OAuth, doctor reports `oauth_required` with the discovery metadata. See [OAuth login](https://docs.mcpjam.com/cli/oauth-login.md) to obtain a token, then re-run with `--oauth-access-token`.
+
+## Commands
+
+### `server probe`
+
+Stateless HTTP probe — no full client connection. Tests transport selection, OAuth discovery, and `WWW-Authenticate` parsing.
+
+```bash theme={"theme":"css-variables"}
+mcpjam server probe --url https://your-server.com/mcp
+```
+
+Use this when you want to check reachability and OAuth metadata without triggering a full MCP initialize handshake. The probe sends an unauthenticated `initialize` request and inspects the response.
+
+**What it returns:**
+
+* Transport type (streamable-http, SSE, or failed)
+* OAuth metadata (resource metadata URL, authorization server metadata, registration strategies, scopes)
+* `WWW-Authenticate` header parsing
+
+Credential headers — `Authorization`, `X-Api-Key`, `X-Auth-Token`, and any other sensitive header names — are automatically redacted to `[REDACTED]` in the printed result. Header names are preserved so the request shape remains visible.
+
+### `server doctor`
+
+Combined triage — runs probe, then attempts a full client connection, then sweeps tools, resources, resource templates, and prompts. Returns a single JSON artifact.
+
+```bash theme={"theme":"css-variables"}
+# Human-readable summary
+mcpjam server doctor --url https://your-server.com/mcp
+
+# Full JSON artifact with RPC logs
+mcpjam server doctor --url https://your-server.com/mcp --rpc --out doctor.json
+
+# Stdio server
+mcpjam server doctor --command node --args server.js --cwd /path/to/project
+```
+
+**What it returns:**
+
+* `status`: `ready`, `oauth_required`, or `error`
+* Probe results (transport, OAuth discovery)
+* Initialization info and negotiated capabilities
+* Counts: tools, resources, resource templates, prompts
+
+From a run without credentials, `ready` means the server let MCPJam connect and list without a token. It does not mean every tool is public: a server can still ask for sign-in when a protected tool is called. To check, call that tool with `mcpjam tools call`. A 401 challenge fails the call with `AUTH_REQUIRED`, and its details name the `mcpjam oauth login` command to run. A ChatGPT-style challenge returns the tool result with `_authChallenge` next to it. See [Mid-session sign-in](https://docs.mcpjam.com/inspector/lazy-authentication.md#the-cli-tests-and-evals-never-sign-in).
+
+The `--out <path>` flag writes the full JSON artifact to a file — useful for handoff to another engineer or agent.
+For stdio targets, those artifacts only record the explicit env keys you passed
+via `-e/--env`; inherited shell variables are not enumerated.
+
+Credential headers — `Authorization`, `X-Api-Key`, `X-Auth-Token`, and any other sensitive header names — are automatically redacted to `[REDACTED]` in all printed output and written artifacts, including RPC logs attached via `--rpc`. Header names are preserved so the request shape remains visible.
+
+### `server info`
+
+Get initialization info for a connected server.
+
+```bash theme={"theme":"css-variables"}
+mcpjam server info --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+Returns the server's `serverInfo` (name, version) and `capabilities` from the MCP initialize response.
+
+### `server capabilities`
+
+Get resolved server capabilities.
+
+```bash theme={"theme":"css-variables"}
+mcpjam server capabilities --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+### `server validate`
+
+Connect to a server and verify the debugger surface works.
+
+```bash theme={"theme":"css-variables"}
+mcpjam server validate --url https://your-server.com/mcp --access-token $TOKEN
+```
+
+### `server ping`
+
+Simple connectivity check.
+
+```bash theme={"theme":"css-variables"}
+mcpjam server ping --url https://your-server.com/mcp
+```
+
+### `server export`
+
+Export a full snapshot of the server's tools, resources, prompts, and capabilities as JSON.
+
+```bash theme={"theme":"css-variables"}
+mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > snapshot.json
+```
+
+## Shared server flags
+
+Every `server` subcommand accepts these flags for specifying how to connect:
+
+| Flag | Description |
+| - | - |
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (used with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (used with `--refresh-token`) |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
+| `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
+| `--command <command>` | Command for a stdio server |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=[REDACTED] values |
+| `--cwd <path>` | Working directory for the stdio child process |
+
+Stdio child processes inherit the parent shell environment by default. Use
+`-e/--env` to add values or override inherited ones, and `--cwd` when the
+command must run from a project directory.
+If you pass `--transport`, the CLI validates that it matches the target flags
+you provided instead of silently inferring the transport.
+
+## Common patterns
+
+### Triage an unknown server
+
+```bash theme={"theme":"css-variables"}
+# Start with doctor
+mcpjam server doctor --url https://unknown-server.com/mcp
+
+# If it returns oauth_required, login first
+mcpjam oauth login --url https://unknown-server.com/mcp \
+  --protocol-version 2025-11-25 --registration dcr
+
+# Then re-run with the token
+mcpjam server doctor --url https://unknown-server.com/mcp --oauth-access-token $TOKEN
+```
+
+For multi-command sessions, save credentials to a file to avoid re-extracting the token:
+
+```bash theme={"theme":"css-variables"}
+mcpjam oauth login --url https://unknown-server.com/mcp --credentials-out creds.json
+mcpjam server doctor --url https://unknown-server.com/mcp --credentials-file creds.json
+mcpjam tools list --url https://unknown-server.com/mcp --credentials-file creds.json
+```
+
+### Compare before/after a deploy
+
+```bash theme={"theme":"css-variables"}
+# Capture a snapshot before
+mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > before.json
+
+# Deploy...
+
+# Capture after
+mcpjam server export --url https://your-server.com/mcp --access-token $TOKEN > after.json
+
+# Diff
+diff <(jq -S . before.json) <(jq -S . after.json)
+```
+
+### CI health check
+
+```bash theme={"theme":"css-variables"}
+mcpjam server doctor --url $MCP_SERVER_URL --access-token $TOKEN --format json | jq '.status'
+# exits 0 if ready, 1 if not
+```
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.6.2.2

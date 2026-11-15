@@ -1,0 +1,25 @@
+API=http://fixture:8765/api/v1
+--- /
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+--- /usage
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+--- /credits
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+--- /billing
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+---docs
+<!doctype html>
+<html
+  lang="en"
+  class="dark"
+  data-banner-state="visible"
+  data-assistant-state="closed"
+  data-page-mode="none"
+  data-current-path="/"
+>
+  <head>
+    <!-- AI agents: this page is available as Markdown at /index.md. Request it directly or send "Accept: text/markdown". The site index is at /llms.txt. -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>MCPJam Docs - MCPJam Inspector</title>
+    <script>(function(c){var P=c.primary,F=c.fallbacks,found,probes={},checks={},down,reported;window.__mintAssets=P;function owned(el){return !el.closest('#root')&&!el.hasAttribute('data-precedence')}function type(r){return (r.headers.get('content-type')||'').toLowerCase()}function fits(r,rest){v

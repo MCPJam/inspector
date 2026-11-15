@@ -1,0 +1,618 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-15T02:28:51.568Z",
+  "command": {
+    "name": "tools call",
+    "input": {
+      "toolName": "add",
+      "params": {
+        "a": 2,
+        "b": 3,
+        "c": 4
+      }
+    }
+  },
+  "target": {
+    "kind": "http",
+    "label": "http://fixture:8765/mcp",
+    "url": "http://fixture:8765/mcp",
+    "commandArgs": [],
+    "envKeys": [],
+    "headerNames": [],
+    "timeoutMs": 30000,
+    "hasAccessToken": false,
+    "hasRefreshToken": false,
+    "hasClientSecret": false
+  },
+  "outcome": {
+    "status": "success",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": 5}"
+        }
+      ],
+      "structuredContent": {
+        "sum": 5
+      },
+      "isError": false,
+      "_durationMs": 5
+    }
+  },
+  "snapshot": {
+    "target": {
+      "kind": "http",
+      "label": "http://fixture:8765/mcp",
+      "url": "http://fixture:8765/mcp",
+      "commandArgs": [],
+      "envKeys": [],
+      "headerNames": [],
+      "timeoutMs": 30000,
+      "hasAccessToken": false,
+      "hasRefreshToken": false,
+      "hasClientSecret": false
+    },
+    "generatedAt": "2026-11-15T02:28:51.421Z",
+    "status": "ready",
+    "probe": {
+      "url": "http://fixture:8765/mcp",
+      "protocolVersion": "2025-11-25",
+      "status": "ready",
+      "transport": {
+        "selected": "streamable-http",
+        "attempts": [
+          {
+            "name": "streamable_initialize",
+            "request": {
+              "method": "POST",
+              "url": "http://fixture:8765/mcp",
+              "headers": {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream"
+              },
+              "body": {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                  "protocolVersion": "2025-11-25",
+                  "capabilities": {},
+                  "clientInfo": {
+                    "name": "mcpjam-probe",
+                    "version": "1.0.0"
+                  }
+                }
+              }
+            },
+            "durationMs": 43,
+            "response": {
+              "status": 200,
+              "statusText": "OK",
+              "headers": {
+                "content-length": "189",
+                "content-type": "application/json",
+                "date": "Sun, 15 Nov 2026 02:28:51 GMT",
+                "server": "HarborSyntheticFixture/1 Python/3.11.2"
+              },
+              "body": {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                  "protocolVersion": "2025-11-25",
+                  "capabilities": {
+                    "tools": {
+                      "listChanged": false
+                    }
+                  },
+                  "serverInfo": {
+                    "name": "arithmetic-fixture",
+                    "version": "1.0.0"
+                  }
+                }
+              },
+              "contentType": "application/json"
+            }
+          },
+          {
+            "name": "resource_metadata",
+            "request": {
+              "method": "GET",
+              "url": "http://fixture:8765/.well-known/oauth-protected-resource/mcp",
+              "headers": {
+                "mcp-protocol-version": "2025-11-25"
+              }
+            },
+            "durationMs": 2,
+            "response": {
+              "status": 404,
+              "statusText": "Not Found",
+              "headers": {
+                "content-length": "45",
+                "content-type": "application/json",
+                "date": "Sun, 15 Nov 2026 02:28:51 GMT",
+                "server": "HarborSyntheticFixture/1 Python/3.11.2"
+              },
+              "body": {
+                "code": "NOT_FOUND",
+                "message": "Not found"
+              },
+              "contentType": "application/json"
+            }
+          },
+          {
+            "name": "resource_metadata",
+            "request": {
+              "method": "GET",
+              "url": "http://fixture:8765/.well-known/oauth-protected-resource",
+              "headers": {
+                "mcp-protocol-version": "2025-11-25"
+              }
+            },
+            "durationMs": 46,
+            "response": {
+              "status": 404,
+              "statusText": "Not Found",
+              "headers": {
+                "content-length": "45",
+                "content-type": "application/json",
+                "date": "Sun, 15 Nov 2026 02:28:51 GMT",
+                "server": "HarborSyntheticFixture/1 Python/3.11.2"
+              },
+              "body": {
+                "code": "NOT_FOUND",
+                "message": "Not found"
+              },
+              "contentType": "application/json"
+            }
+          }
+        ]
+      },
+      "initialize": {
+        "protocolVersion": "2025-11-25",
+        "serverInfo": {
+          "name": "arithmetic-fixture",
+          "version": "1.0.0"
+        },
+        "capabilities": {
+          "tools": {
+            "listChanged": false
+          }
+        },
+        "contentType": "application/json"
+      },
+      "oauth": {
+        "required": false,
+        "optional": false,
+        "resourceMetadataUrl": "http://fixture:8765/.well-known/oauth-protected-resource/mcp",
+        "registrationStrategies": []
+      }
+    },
+    "connection": {
+      "status": "connected",
+      "detail": "Connected and initialized successfully."
+    },
+    "initInfo": {
+      "protocolVersion": "2025-11-25",
+      "transport": "streamable-http",
+      "serverCapabilities": {
+        "tools": {
+          "listChanged": false
+        }
+      },
+      "serverVersion": {
+        "name": "arithmetic-fixture",
+        "version": "1.0.0"
+      },
+      "clientCapabilities": {
+        "extensions": {
+          "io.modelcontextprotocol/ui": {
+            "mimeTypes": [
+              "text/html;profile=mcp-app"
+            ]
+          },
+          "io.modelcontextprotocol/skills": {}
+        }
+      }
+    },
+    "capabilities": {
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "tools": [
+      {
+        "name": "add",
+        "description": "Add two finite numbers and return their sum.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "sum": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "sum"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      }
+    ],
+    "toolsMetadata": {},
+    "resources": [],
+    "resourceTemplates": [],
+    "prompts": [],
+    "skills": [],
+    "checks": {
+      "probe": {
+        "status": "ok",
+        "detail": "HTTP initialize probe succeeded via streamable-http."
+      },
+      "connection": {
+        "status": "ok",
+        "detail": "Connected and initialized successfully."
+      },
+      "initialization": {
+        "status": "ok",
+        "detail": "Initialization info captured."
+      },
+      "capabilities": {
+        "status": "ok",
+        "detail": "Server capabilities captured."
+      },
+      "tools": {
+        "status": "ok",
+        "detail": "1 tool discovered."
+      },
+      "resources": {
+        "status": "ok",
+        "detail": "0 resources discovered."
+      },
+      "resourceTemplates": {
+        "status": "ok",
+        "detail": "0 resource templates discovered."
+      },
+      "prompts": {
+        "status": "ok",
+        "detail": "0 prompts discovered."
+      },
+      "skills": {
+        "status": "skipped",
+        "detail": "The server does not declare the Skills over MCP extension (`io.modelcontextprotocol/skills`)."
+      }
+    },
+    "error": null
+  },
+  "_rpcLogs": [
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "send",
+      "timestamp": "2026-11-15T02:28:51.375Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": "server-discover-probe-1",
+        "method": "server/discover",
+        "params": {
+          "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {
+              "name": "mcpjam",
+              "version": "1.0.0"
+            },
+            "io.modelcontextprotocol/clientCapabilities": {
+              "extensions": {
+                "io.modelcontextprotocol/ui": {
+                  "mimeTypes": [
+                    "text/html;profile=mcp-app"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "receive",
+      "timestamp": "2026-11-15T02:28:51.403Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": "server-discover-probe-1",
+        "error": {
+          "code": -32601,
+          "message": "Method not found"
+        }
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "send",
+      "timestamp": "2026-11-15T02:28:51.406Z",
+      "message": {
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {
+            "extensions": {
+              "io.modelcontextprotocol/ui": {
+                "mimeTypes": [
+                  "text/html;profile=mcp-app"
+                ]
+              }
+            }
+          },
+          "clientInfo": {
+            "name": "mcpjam",
+            "version": "1.0.0"
+          }
+        },
+        "jsonrpc": "2.0",
+        "id": 0
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "receive",
+      "timestamp": "2026-11-15T02:28:51.409Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "result": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {
+            "tools": {
+              "listChanged": false
+            }
+          },
+          "serverInfo": {
+            "name": "arithmetic-fixture",
+            "version": "1.0.0"
+          }
+        }
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "send",
+      "timestamp": "2026-11-15T02:28:51.410Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "send",
+      "timestamp": "2026-11-15T02:28:51.414Z",
+      "message": {
+        "method": "tools/call",
+        "params": {
+          "name": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3,
+            "c": 4
+          }
+        },
+        "jsonrpc": "2.0",
+        "id": 1
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "receive",
+      "timestamp": "2026-11-15T02:28:51.418Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"sum\": 5}"
+            }
+          ],
+          "structuredContent": {
+            "sum": 5
+          },
+          "isError": false
+        }
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "send",
+      "timestamp": "2026-11-15T02:28:51.514Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": "server-discover-probe-1",
+        "method": "server/discover",
+        "params": {
+          "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {
+              "name": "mcpjam",
+              "version": "1.0.0"
+            },
+            "io.modelcontextprotocol/clientCapabilities": {
+              "extensions": {
+                "io.modelcontextprotocol/ui": {
+                  "mimeTypes": [
+                    "text/html;profile=mcp-app"
+                  ]
+                },
+                "io.modelcontextprotocol/skills": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "receive",
+      "timestamp": "2026-11-15T02:28:51.516Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": "server-discover-probe-1",
+        "error": {
+          "code": -32601,
+          "message": "Method not found"
+        }
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "send",
+      "timestamp": "2026-11-15T02:28:51.516Z",
+      "message": {
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {
+            "extensions": {
+              "io.modelcontextprotocol/ui": {
+                "mimeTypes": [
+                  "text/html;profile=mcp-app"
+                ]
+              },
+              "io.modelcontextprotocol/skills": {}
+            }
+          },
+          "clientInfo": {
+            "name": "mcpjam",
+            "version": "1.0.0"
+          }
+        },
+        "jsonrpc": "2.0",
+        "id": 0
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "receive",
+      "timestamp": "2026-11-15T02:28:51.560Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "result": {
+          "protocolVersion": "2025-11-25",
+          "capabilities": {
+            "tools": {
+              "listChanged": false
+            }
+          },
+          "serverInfo": {
+            "name": "arithmetic-fixture",
+            "version": "1.0.0"
+          }
+        }
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "send",
+      "timestamp": "2026-11-15T02:28:51.560Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "send",
+      "timestamp": "2026-11-15T02:28:51.564Z",
+      "message": {
+        "method": "tools/list",
+        "jsonrpc": "2.0",
+        "id": 1
+      }
+    },
+    {
+      "serverId": "__cli__",
+      "serverName": "http://fixture:8765/mcp",
+      "direction": "receive",
+      "timestamp": "2026-11-15T02:28:51.567Z",
+      "message": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "tools": [
+            {
+              "name": "add",
+              "description": "Add two finite numbers and return their sum.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "a": {
+                    "type": "number"
+                  },
+                  "b": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "a",
+                  "b"
+                ],
+                "additionalProperties": false
+              },
+              "outputSchema": {
+                "type": "object",
+                "properties": {
+                  "sum": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "sum"
+                ]
+              },
+              "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

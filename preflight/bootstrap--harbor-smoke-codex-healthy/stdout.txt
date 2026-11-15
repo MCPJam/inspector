@@ -1,0 +1,23 @@
+Tip: There are many benchmarks available in Harbor's registry.
+Run `harbor datasets list` to see all available datasets.
+
+  1/1 Running trials... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:00:00 0:00:00
+adhoc • codex • gpt-6.1-sol
+┏━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Trials ┃ Exceptions ┃
+┡━━━━━━━━╇━━━━━━━━━━━━┩
+│      0 │          1 │
+└────────┴────────────┘
+
+┏━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Exception    ┃ Count ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━┩
+│ RuntimeError │     1 │
+└──────────────┴───────┘
+
+Job Info
+Total runtime: 0s
+Results written to work/jobs/baseline-codex-healthy-smoke/result.json
+Inspect results by running `harbor view work/jobs`
+Share results by running `harbor upload work/jobs/baseline-codex-healthy-smoke`
+

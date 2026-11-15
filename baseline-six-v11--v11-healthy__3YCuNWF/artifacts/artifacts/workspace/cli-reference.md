@@ -1,0 +1,3141 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Command Reference
+
+> Complete flag reference for every mcpjam CLI command
+
+Complete flag tables for every `mcpjam` command. For guides and recipes, see the individual command pages.
+
+Account-bound Cloud commands live under `mcpjam cloud`. Local MCP testing stays at the top level (`mcpjam server`, `mcpjam oauth login`, …). Credential flags `--api-key` / `--api-url` / `--api-header` are declared on `mcpjam cloud` and work before or after descendants. Hosted `readiness` stays at the root and still takes leaf `--api-key`. See [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md).
+
+## Global flags
+
+| Flag | Default | Description |
+| - | - | - |
+| `--timeout <ms>` | `30000` | Request timeout in milliseconds |
+| `--rpc` | off | Include raw JSON-RPC logs in JSON output under `_rpcLogs` |
+| `--quiet` | off | Suppress non-result progress output on stderr |
+| `--no-telemetry` | off | Disable anonymous telemetry for this invocation |
+| `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
+| `-v, --version` | | Print the CLI version |
+
+***
+
+## `server` commands
+
+All server commands accept the shared connection flags below, plus command-specific options.
+
+### Shared connection flags
+
+| Flag | Description |
+| - | - |
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
+| `--header <header>` | HTTP header `Key: Value` (repeatable) |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
+| `--command <command>` | Stdio server command |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=[REDACTED] values |
+| `--cwd <path>` | Working directory for the stdio child process |
+
+Transport selection is inferred from `--url` vs `--command` when
+`--transport` is omitted. Use `--transport http|stdio` when you want an
+explicit validation step.
+
+For stdio targets, child processes inherit the parent shell environment by
+default. `-e/--env` adds or overrides child env values, and structured debug
+artifacts only record the explicit env keys you passed on the command line.
+
+`--credentials-file` cannot be combined with individual token flags
+(`--access-token`, `--oauth-access-token`, `--refresh-token`, `--client-id`,
+`--client-secret`). The CLI rejects conflicting auth sources upfront.
+
+### `server probe`
+
+No additional flags beyond shared connection flags.
+
+### `server doctor`
+
+| Flag | Description |
+| - | - |
+| `--out <path>` | Write the doctor JSON artifact to a file |
+
+### `server info`
+
+No additional flags.
+
+### `server validate`
+
+No additional flags.
+
+### `server ping`
+
+No additional flags.
+
+### `server capabilities`
+
+No additional flags.
+
+### `server export`
+
+No additional flags.
+
+***
+
+## `tools` commands
+
+### `tools list`
+
+Uses shared connection flags, plus:
+
+| Flag | Description |
+| - | - |
+| `--host <id>` | Connect as this host (e.g. `claude`, `chatgpt`, `cursor`) — sends its `clientInfo`, `clientCapabilities`, and protocol version in `initialize`, and hides app-only tools its model can't see. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
+| `--model-id <model>` | Model ID used for token counting |
+
+When `--host` is set, the output includes a `host` field and a `toolsDroppedVisibility` count. Hosts that opt out of visibility filtering (e.g. `cursor`) keep all tools.
+
+### `tools call`
+
+| Flag | Description |
+| - | - |
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`, and rejects app-only tools the host's model can't call. Mutually exclusive with `--client-capabilities`. |
+| `--tool-name <name>` | Name of the tool to call |
+| `--name <name>` | Legacy alias for `--tool-name` |
+| `--interactive` | Drive the `input_required` multi-round-trip loop: render embedded elicitations to the terminal and collect responses from stdin. Cannot be combined with `--tool-args -`, `--tool-args-stdin`, or `--params -`. |
+| `--yes` | With `--interactive`, decline every embedded input request without prompting (non-interactive mode). |
+| `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
+| `--params <json>` | Legacy alias for `--tool-args` |
+| `--tool-args-stdin` | Read tool arguments JSON from stdin |
+| `--validate-response` | Validate the MCP tool-call envelope returned by the server |
+| `--expect-success` | Fail when the tool result reports `isError` |
+| `--reporter <reporter>` | `json-summary`, `junit-xml`, or `html` validation report output |
+| `--debug-out <path>` | Write debug artifact to file |
+| `--ui` | Attach to Inspector and render the completed tool result in App Builder; opens a browser by default in a TTY |
+| `--require-render` | Treat skipped Inspector renders as errors (requires `--ui`) |
+| `--open` | Open Inspector in the system browser before rendering (default with `--ui` in a TTY) |
+| `--no-open` | Start/use Inspector without opening a system browser |
+| `--attach-only` | Require an already-running Inspector browser client; do not start or open Inspector |
+| `--inspector-url <url>` | Local Inspector backend/API base URL |
+| `--frontend-url <url>` | Inspector frontend/browser base URL; skips frontend discovery |
+| `--server-name <name>` | Server name to use inside Inspector |
+| `--protocol <protocol>` | Render protocol: `mcp-apps` or `openai-sdk` |
+| `--device <device>` | Render device: `mobile`, `tablet`, `desktop`, or `custom` |
+| `--theme <theme>` | Render theme: `light` or `dark` |
+| `--locale <locale>` | Render locale |
+| `--time-zone <iana>` | Render IANA timezone |
+
+Plus shared connection flags.
+
+Without `--ui`, `tools call` returns the raw tool result. When that result is a JSON object (the usual MCP `CallToolResult`), the default JSON output also includes `_durationMs` — wall-clock milliseconds spent in the tool call itself, excluding connection setup and the `--host` visibility probe, so it measures the same window as the `durationMs` returned by `POST /v1/projects/{projectId}/servers/{serverId}/tools/call`. Arrays and non-objects are left unchanged so a list-shaped payload is not rewritten. `--reporter` keeps its own `durationMs`, which is end-to-end (connection setup plus the call, stopped before validation, Inspector render, and debug I/O), and does not get `_durationMs`. With `--ui`, it opens Inspector by default in a TTY and returns a compact envelope with `result`, `inspectorBrowserUrl`, and `inspectorRender` status. Object-shaped `result` values carry `_durationMs`; the envelope root does not. `inspectorRender.status` is `rendered` when Inspector accepted the render, `skipped` when the tool succeeded but Inspector had no active browser client, an unsatisfied render precondition, or a render timeout, and `error` for non-recoverable render command failures. `inspectorRender.remediation` is always present and is one of `open_browser`, `retry`, `reconnect_server`, or `none`. Skipped renders are emitted as a stable root `warning` plus `inspectorRender.warning`, both with the shape `{ code, message, remediation, browserUrl?, hasActiveClient?, inspectorStarted? }`. Stable skipped-render codes are `no_active_client`, `timeout`, `disconnected_server`, and `unsupported_in_mode`. Skipped renders keep the tool-call exit code unless `--require-render` is set; tool failures, validation failures, non-skippable render command errors, and `--require-render` skipped renders all exit nonzero. `--attach-only` is an exception to the skipped-render rule for `no_active_client`: by default a missing browser client yields `inspectorRender.status = "skipped"` with `inspectorRender.remediation = "open_browser"`, but when `--attach-only` is set, `no_active_client` is treated as non-skippable, surfaces as a root `error` (not a downgraded `warning`), and exits nonzero like other non-skippable render failures. `--inspector-url` points to the Inspector backend/API; pass `--frontend-url` when you already know the browser/client URL and want to skip health-advertised frontend checks and local dev port discovery. Use `--no-open` when browser automation already opened `inspectorBrowserUrl`; use `--attach-only` when startup, browser opening, and discovery should all be disallowed. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. When `--open` is in effect (default in TTYs, opt-in elsewhere), the App Builder URL and the initial browser-client wait progress are emitted to stderr unless `--quiet` is set, regardless of whether stderr is a TTY; only the elapsed-seconds heartbeat is gated on stderr being a TTY. The Inspector path injects the completed tool result through `renderToolResult`; it does not call the tool a second time. Fresh tabs do not hydrate the injected render state; use the active Inspector client that received the render. Use `--debug-out` for the full render envelope including params and command responses. `--ui` cannot be combined with `--reporter`.
+
+### Reading `tools call --ui` output as an agent
+
+Treat the tool result and the Inspector render as separate outcomes. An exit code of `0` means the tool call succeeded and no hard render error occurred; it does not, by itself, prove the UI rendered. Confirm UI delivery with `inspectorRender.status === "rendered"`. If `inspectorRender.status === "skipped"`, branch on `inspectorRender.remediation` or the stable root `warning.code`. If `--require-render` is set, the same skipped-render issue moves from root `warning` to root `error` and the command exits with code `1`.
+
+```json theme={"theme":"css-variables"}
+{
+  "success": true,
+  "command": "tools call",
+  "inspectorUi": true,
+  "inspectorBrowserUrl": "http://127.0.0.1:6274/#app-builder",
+  "result": {
+    "content": [{ "type": "text", "text": "view created" }],
+    "_durationMs": 42
+  },
+  "inspectorRender": {
+    "status": "skipped",
+    "remediation": "open_browser",
+    "mode": "active-client",
+    "urlHydratesRender": false,
+    "browserUrl": "http://127.0.0.1:6274/#app-builder",
+    "hasActiveClient": false,
+    "inspectorStarted": false,
+    "warning": {
+      "code": "no_active_client",
+      "message": "Inspector has no active browser client. Open the Inspector App Builder URL in your browser, then rerun `tools call --ui`; or pass `--open` to let the CLI open a system browser.",
+      "remediation": "open_browser",
+      "browserUrl": "http://127.0.0.1:6274/#app-builder",
+      "hasActiveClient": false,
+      "inspectorStarted": false
+    }
+  },
+  "warning": {
+    "code": "no_active_client",
+    "message": "Inspector has no active browser client. Open the Inspector App Builder URL in your browser, then rerun `tools call --ui`; or pass `--open` to let the CLI open a system browser.",
+    "remediation": "open_browser",
+    "browserUrl": "http://127.0.0.1:6274/#app-builder",
+    "hasActiveClient": false,
+    "inspectorStarted": false
+  }
+}
+```
+
+***
+
+## `resources` commands
+
+### `resources list`
+
+Uses shared connection flags, plus:
+
+| Flag | Description |
+| - | - |
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
+
+### `resources read`
+
+| Flag | Description |
+| - | - |
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--resource-uri <uri>` | URI of the resource to read |
+| `--uri <uri>` | Legacy alias for `--resource-uri` |
+| `--interactive` | Drive the `input_required` multi-round-trip loop: render embedded elicitations to the terminal and collect responses from stdin. |
+| `--yes` | With `--interactive`, decline every embedded input request without prompting (non-interactive mode). |
+
+Plus shared connection flags.
+
+### `resources templates`
+
+Uses shared connection flags, plus:
+
+| Flag | Description |
+| - | - |
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
+
+***
+
+## `prompts` commands
+
+### `prompts list`
+
+Uses shared connection flags, plus:
+
+| Flag | Description |
+| - | - |
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--cursor <cursor>` | Pagination cursor |
+
+### `prompts get`
+
+| Flag | Description |
+| - | - |
+| `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`. Mutually exclusive with `--client-capabilities`. |
+| `--prompt-name <name>` | Name of the prompt |
+| `--name <name>` | Legacy alias for `--prompt-name` |
+| `--interactive` | Drive the `input_required` multi-round-trip loop: render embedded elicitations to the terminal and collect responses from stdin. Cannot be combined with `--prompt-args -`. |
+| `--yes` | With `--interactive`, decline every embedded input request without prompting (non-interactive mode). |
+| `--prompt-args <json>` | Prompt arguments as inline JSON, `@path`, or `-` for stdin |
+
+Plus shared connection flags.
+
+***
+
+## `events` commands
+
+MCP Events (triggers), pinned to the working-group draft `draft@28ec35e`. See [MCP Events](https://docs.mcpjam.com/cli/events.md) for the guide.
+
+Every `events` command uses the shared connection flags, plus:
+
+| Flag | Default | Description |
+| - | - | - |
+| `--profile <profile>` | `draft` | Rulebook the run is judged by: `draft` (`draft@28ec35e`) or `chatgpt` (`chatgpt@2026-11-05`). Decides the usable delivery modes and the default `ttlMs`. |
+| `--protocol-version <version>` | SDK default | Pin the MCP protocol version (e.g. `2026-07-28`). HTTP targets only; not with `--host`. |
+| `--force` | off | Send `events/*` even though the server did not declare `capabilities.events`. Without it such a server exits `2` with `EVENTS_NOT_DECLARED`. |
+| `--host <id>` | | Connect as this host. Mutually exclusive with `--client-capabilities`. |
+| `--retries <count>` / `--retry-delay-ms <ms>` | `0` | Retry transient connection failures |
+
+### `events list`
+
+No extra flags. Prints `{support, rawCapabilities, profile, events}` — `support` and `rawCapabilities` come from the raw handshake, and `events` holds every page of `events/list`.
+
+### `events poll <name>`
+
+| Flag | Description |
+| - | - |
+| `--event-args <json>` | Event arguments as inline JSON, `@path`, or `-` for stdin (default `{}`) |
+| `--cursor <cursor>` | Resume from this cursor. Default `null`: start from now, which returns no events, only the cursor to poll from next. |
+| `--max-events <n>` | `maxEvents` for the request |
+| `--max-age-ms <ms>` | `maxAgeMs` for the request |
+
+### `events watch <name>`
+
+Streams journal entries as NDJSON on stdout, one per line: `{seq, kind, origin, eventId, name, timestamp, data, cursor}`. Status goes to stderr. On Ctrl-C, `--duration` or `--max-events` the subscription is removed (webhook mode sends `events/unsubscribe`) and the command exits `0`.
+
+| Flag | Description |
+| - | - |
+| `--event-args <json>` | Event arguments as inline JSON, `@path`, or `-` for stdin (default `{}`) |
+| `--mode <mode>` | `push` (`events/stream`), `poll` or `webhook`. Default: `webhook` when a receiver flag (`--public-url`, `--listen`, `--insecure-local-receiver`) is given, otherwise `push` if the event offers it, otherwise `poll`. |
+| `--duration <seconds>` | Stop after this many seconds |
+| `--max-events <n>` | Stop after this many delivered events |
+| `--cursor <cursor>` | Start from this cursor (default `null`, start from now) |
+| `--max-age-ms <ms>` | `maxAgeMs` sent with the poll, stream or subscribe request |
+| `--listen <host:port>` | Webhook mode: where the local receiver listens (default `127.0.0.1:0`) |
+| `--public-url <url>` | Webhook mode: the `https` origin that forwards to the local receiver, such as a tunnel. Callback URLs are `<url>/i/<inbox>/s/<slot>`. |
+| `--insecure-local-receiver` | Webhook mode: accept a plain-`http` callback origin, defaulting to the receiver's own address. Non-conformant development mode that never counts as a conformance pass. |
+
+### `events subscribe <name>`
+
+Sends one `events/subscribe` for a receiver you run yourself and prints the result (`{id, refreshBefore, cursor, …}`).
+
+| Flag | Description |
+| - | - |
+| `--callback-url <url>` | Your receiver's `https` callback URL (required) |
+| `--event-args <json>` | Event arguments (default `{}`) |
+| `--secret-file <path>` | Read the webhook secret from this file. If the file is missing or empty, a new secret is generated and written there with mode `0600`. The secret is never printed. |
+| `--ttl-ms <ms>` | Requested lifetime. Default: the profile's (`draft`: one hour; `chatgpt`: omitted) |
+| `--no-expiry` | Request no expiry (`ttlMs: null`) |
+| `--cursor <cursor>` | Replay from this cursor (default `null`) |
+| `--max-age-ms <ms>` | `maxAgeMs` for the request |
+| `--insecure-callback` | Accept a plain-`http` `--callback-url`. Non-conformant development mode. |
+
+### `events unsubscribe <name>`
+
+| Flag | Description |
+| - | - |
+| `--callback-url <url>` | The callback URL the subscription was made with (required) |
+| `--event-args <json>` | The same event arguments the subscription used (default `{}`) |
+
+Prints `{"outcome": "removed"}`, or `{"outcome": "already-gone"}` when the server answers `NotFound`.
+
+### `events conformance`
+
+Runs the profile-aware conformance checks. The result JSON goes to stdout and a table to stderr. Exits `0` passed, `1` failed, `3` incomplete. Takes the shared connection flags, `--profile`, `--protocol-version`, `--host` and the retry flags, but not `--force`: a server that does not declare the capability is a failed check, not a refusal.
+
+| Flag | Description |
+| - | - |
+| `--event-args <name>=<json>` | Subscription arguments for one event type (repeatable). Required fields are never invented. |
+| `--tls-cert <path>` / `--tls-key <path>` | Serve the webhook receiver over https |
+| `--public-url <origin>` | https origin that forwards to the receiver |
+| `--listen <host:port>` | Receiver address (default `127.0.0.1:0`) |
+| `--insecure-local-receiver` | Plain-http receiver. The run is labelled `insecure-local-receiver` and can never pass. |
+| `--trigger-tool <name>` / `--trigger-args <json>` | Tool that makes the server emit an event. Without it the delivery checks are `could-not-run`. |
+| `--wait-ms <ms>` | Delivery wait after triggering (default `5000`) |
+| `--checks <ids>` | Comma-separated check ids (default: all except `events-push-heartbeat`) |
+| `--heartbeat-wait-ms <ms>` | `events-push-heartbeat` window (default `65000`) |
+
+***
+
+## `xaa` commands
+
+### `xaa run`
+
+Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token. See the [XAA Debugger guide](https://docs.mcpjam.com/cli/xaa.md) for the trust setup, registration strategies, and CI usage.
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--url <url>` | Yes | | Target MCP server URL (the protected resource) |
+| `--issuer-base-url <url>` | Yes | | Origin the local mock IdP issues from. It must publish the CLI's local signing key — typically a running [local inspector](https://docs.mcpjam.com/cli/xaa.md#before-you-run-make-the-issuer-reachable), not your real IdP |
+| `--sub <subject>` | Yes | | Simulated end-user subject identifier |
+| `--client-id <id>` | No | | OAuth client ID. Required for `preregistered`; rejected for `dcr`/`cimd` |
+| `--registration <method>` | No | `preregistered` | `preregistered`, `dcr`, or `cimd` |
+| `--client-metadata-url <url>` | No | | CIMD only: the Client ID Metadata Document URL to present as the `client_id` |
+| `--client-auth <method>` | No | `none` | CIMD only: `none` (public) or `private-key-jwt` (confidential — generates a local EC P-256 key, publishes it via the hosted reflector, and signs a `client_assertion`) |
+| `--cimd-metadata-origin <url>` | No | `https://app.mcpjam.com` | Confidential CIMD only: bare origin hosting the metadata-document reflector. An `http://` loopback origin is a dev-only opt-in; rejected when `--https-only` is set |
+| `--authz-server-issuer <issuer>` | No | | Target AS issuer. When set, protected-resource metadata discovery is skipped |
+| `--token-endpoint <url>` | No | | AS token endpoint. When set, AS-metadata discovery is skipped. Not valid with `dcr` or `cimd` |
+| `--email <email>` | No | | Simulated end-user email claim |
+| `--client-secret <secret>` | No | | OAuth client secret presented at redemption |
+| `--token-endpoint-auth-method <method>` | No | | `client_secret_basic`, `client_secret_post`, or `none`. Not valid with `dcr` or `cimd` |
+| `--assertion-format <format>` | No | `oidc` | Identity assertion format: `oidc` (ID token) or `saml` (SAML 2.0 assertion) |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--https-only` | No | | Reject non-HTTPS / private targets |
+
+#### Registration strategies
+
+| Strategy | Description |
+| - | - |
+| `preregistered` | Supply a pre-registered `--client-id` (and optional `--client-secret`) |
+| `dcr` | Dynamic Client Registration (RFC 7591) — the CLI registers a client at the RAS each run |
+| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL |
+
+#### Confidential CIMD (`--client-auth private-key-jwt`)
+
+When `--registration cimd --client-auth private-key-jwt` is used, the CLI loads or generates a local EC P-256 key pair (stored in `~/.mcpjam`). The public key is encoded into a reflector URL on `app.mcpjam.com`, which becomes the `client_id`. The CLI signs a `client_assertion` with the private key at token-redemption time; the private key never leaves the machine.
+
+```bash theme={"theme":"css-variables"}
+mcpjam inspector start   # serves the issuer at http://localhost:6274/api/mcp/xaa
+
+mcpjam xaa run \
+  --url http://localhost:8080/mcp \
+  --issuer-base-url http://localhost:6274/api/mcp \
+  --sub [EMAIL REDACTED] \
+  --registration cimd \
+  --client-auth private-key-jwt
+```
+
+For a cloud authorization server, expose the inspector origin through a tunnel and pass the public origin as `--issuer-base-url` — see [making the issuer reachable](https://docs.mcpjam.com/cli/xaa.md#before-you-run-make-the-issuer-reachable).
+
+**Key rotation:** the key is the identity. Deleting `~/.mcpjam/xaa-client-private.pem` or changing the `XAA_CLIENT_PRIVATE_KEY` environment variable generates a new `client_id`; any RAS-side allowlisting must be updated after rotation.
+
+***
+
+## `oauth` commands
+
+### `oauth login`
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--url <url>` | Yes | | MCP server URL |
+| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `--registration <s>` | Yes | | `cimd`, `dcr`, or `preregistered` |
+| `--auth-mode <m>` | No | `interactive` | `headless`, `interactive`, or `client_credentials` |
+| `--client-id <id>` | No | | OAuth client ID |
+| `--client-secret <s>` | No | | OAuth client secret |
+| `--client-metadata-url <url>` | No | | CIMD metadata document URL |
+| `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--verify-tools` | No | | After login, list tools |
+| `--verify-call-tool <name>` | No | | Also call the named tool |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
+| `--debug-out <path>` | No | | Write debug artifact to file |
+
+### `oauth conformance`
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--url <url>` | Yes | | MCP server URL |
+| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `--registration <s>` | Yes | | `cimd`, `dcr`, or `preregistered` |
+| `--auth-mode <m>` | No | `interactive` | `headless`, `interactive`, or `client_credentials` |
+| `--client-id <id>` | No | | OAuth client ID |
+| `--client-secret <s>` | No | | OAuth client secret |
+| `--client-metadata-url <url>` | No | | CIMD metadata document URL |
+| `--redirect-url <url>` | No | Auto-generated | OAuth redirect URL |
+| `--scopes <scopes>` | No | | Space-separated scope string |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--step-timeout <ms>` | No | `30000` | Per-step timeout |
+| `--verify-tools` | No | | After OAuth, list tools |
+| `--verify-call-tool <name>` | No | | Also call the named tool |
+| `--conformance-checks` | No | | Deprecated. The negative OAuth checks (DCR redirect URI policy, redirect-mismatch probes and more) now always run; this flag is accepted and ignored |
+| `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
+| `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
+| `--print-url` | No | | Print consent URL to stderr (interactive only) |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+### `oauth conformance-suite`
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--config <path>` | Yes | | Path to JSON config file |
+| `--verify-tools` | No | | Enable tool listing on all flows |
+| `--verify-call-tool <name>` | No | | Call the named tool after listing |
+| `--credentials-out <path>` | No | | Write OAuth credentials from the first flow that returns credentials to file (mode 0600) |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+### `oauth metadata`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--url <url>` | Yes | OAuth metadata URL to fetch |
+| `--https-only` | No | Apply the hosted policy: reject non-HTTPS and private targets |
+
+### `oauth proxy` / `oauth debug-proxy`
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--url <url>` | Yes | | OAuth request URL |
+| `--method <method>` | No | `GET` | HTTP method |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--body <value>` | No | | Request body as JSON, raw string, `@path`, or `-` for stdin |
+| `--https-only` | No | | Apply the hosted policy: reject non-HTTPS and private targets |
+
+These three commands reach private destinations by default — a server on
+loopback, on your LAN, or on a hostname that resolves to one — because the CLI
+runs on your own machine. `--https-only` opts in to the policy the hosted web
+app enforces, which is what you want when reproducing a hosted failure. Neither
+mode will dial a link-local or cloud-metadata address.
+
+***
+
+## `protocol` commands
+
+### `protocol conformance`
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--url <url>` | Yes | | MCP server URL |
+| `--access-token <token>` | No | | Bearer access token |
+| `--credentials-file <path>` | No | | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
+| `--category <category>` | No | all | Restrict checks to one or more categories |
+| `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
+| `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
+| `--log-filter-tool <name>` | No | `--log-probe-tool` | Tool the log level advice calls instead of `--log-probe-tool`. It must write logs and be safe to call |
+| `--log-filter-args <json>` | No | `{}` | Arguments for `--log-filter-tool`, as a JSON object |
+| `--log-filter-level <level>` | No | `warning` | Log level the advice asks `--log-filter-tool` for |
+| `--input-required-tool <name>` | No | | Tool that asks the client for input and is safe to call. Lets the 2026-07-28 undeclared capability check run |
+| `--input-required-args <json>` | No | `{}` | Arguments for `--input-required-tool`, as a JSON object |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
+
+### `protocol conformance-suite`
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--config <path>` | Yes | | Path to JSON config file |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+***
+
+## `apps` commands
+
+### Shared connection flags
+
+| Flag | Description |
+| - | - |
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--credentials-file <path>` | Load OAuth credentials from a file created by `oauth login --credentials-out` or `oauth conformance --credentials-out` |
+| `--header <header>` | HTTP header `Key: Value` (repeatable) |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
+| `--command <command>` | Stdio server command |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=[REDACTED] values |
+| `--cwd <path>` | Working directory for the stdio child process |
+
+Apps commands share the same transport inference rules as the rest of the CLI:
+`--url` implies HTTP, `--command` implies stdio, and `--transport` is an
+optional explicit override.
+
+### `apps conformance`
+
+MCP Apps server-side conformance checks. Uses shared connection flags plus:
+
+| Flag | Description |
+| - | - |
+| `--category <category>` | Check category to run (`tools`, `resources`). Repeatable |
+| `--check-id <id>` | Specific check id to run. Repeatable |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
+
+### `apps conformance-suite`
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--config <path>` | Yes | | Path to JSON config file |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+***
+
+## `conformance` commands
+
+### `conformance run`
+
+Runs Protocol, Apps and Tasks (the default) together and gives one score. OAuth runs only with `--suite oauth`. Uses the shared connection flags with an HTTP `--url`, plus:
+
+| Flag | Required | Default | Description |
+| - | - | - | - |
+| `--suite <suite>` | No | `protocol`, `apps`, `tasks` | Suite to run: `protocol`, `apps`, `tasks` or `oauth`. Repeatable |
+| `--protocol-version <version>` | No | negotiated | One MCP protocol version for every suite in the run, like the app |
+| `--check-id <id>` | No | all | Check to run. Repeatable. Each ID goes to the suite that owns it, and a suite with no ID runs all its checks |
+| `--advice-id <id>` | No | all | Advice to run. Repeatable. Each ID goes to the `protocol`, `tasks` or `oauth` suite that owns it |
+| `--check-timeout <ms>` | No | `30000` | Per-check timeout for the protocol suite |
+| `--oauth-strategy <strategy>` | No | `interactive` | How the OAuth suite signs in: `interactive` (opens a browser), `headless` or `client_credentials` |
+| `--registration <strategy>` | No | `auto` | How the OAuth suite registers its client: `auto`, `dcr`, `cimd` or `preregistered`. `auto` uses `--client-id` when you give one, else what the server supports at the run's protocol version (CIMD, then DCR) |
+| `--upload` | No | | Upload results to MCPJam run history |
+| `--require-upload` | No | | Fail if reporting is configured but the result cannot be uploaded |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+It also takes the tool flags of the single-suite commands, with the same meaning:
+
+* Protocol: `--fixtures-file`, `--fixture-tool`, `--fixture-prompt`, `--log-probe-tool` / `-args` / `-level`, `--log-filter-tool` / `-args` / `-level` and `--input-required-tool` / `-args`. See [`protocol conformance`](#protocol-conformance).
+* Tasks: `--tool-name`, `--tool-args`, `--check-overrides`, `--input-responses` and `--poll-timeout`. See [Tasks conformance](https://docs.mcpjam.com/cli/tasks-conformance.md).
+* OAuth: `--client-metadata-url`, `--redirect-url`, `--scopes`, `--step-timeout` and `--print-url`. See [`oauth conformance`](#oauth-conformance). With `--suite oauth` and no `--refresh-token`, `--client-id` and `--client-secret` are the OAuth suite's pre-registered client.
+
+An unknown ID, or an ID or flag for a suite the run leaves out, is a usage error (exit code `2`) before anything runs.
+
+The OAuth suite signs in on its own. When the server needs a sign-in for the other suites too, give them a token, for example from `oauth login --credentials-out`:
+
+```bash theme={"theme":"css-variables"}
+mcpjam oauth login --url https://mcp.example.com/mcp --credentials-out creds.json
+mcpjam conformance run --url https://mcp.example.com/mcp \
+  --suite protocol --suite apps --suite tasks --suite oauth \
+  --credentials-file creds.json --step-timeout 300000
+```
+
+`--step-timeout` is also how long the OAuth suite waits for you to finish signing in.
+
+***
+
+## `test` command
+
+Run a suite file locally — see [Local evals](https://docs.mcpjam.com/cli/local-evals.md). Results are never uploaded.
+
+```bash theme={"theme":"css-variables"}
+mcpjam test .mcpjam/evals/example.yaml
+mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xml --out reports/local.xml
+```
+
+| Flag | Default | Description |
+| - | - | - |
+| `<file>` | required | One suite file (YAML or JSON). No globs, directories or stdin. |
+| `--case <id>` | every enabled case | Run only this exact case id. Repeatable. |
+| `--server <name=url>` | | Bind a target server to an HTTP(S) URL. Repeatable. Split on the first `=`; duplicate or unknown names are usage errors. |
+| `--mcp-config <path>` | | Explicit MCP JSON config, consulted before `./.mcp.json` and `./.mcpjam/mcp.json`. A missing or invalid file fails setup. |
+| `--host <template>` | none | Emulate one host template's handshake and settings. Never launches the real client. |
+| `--inference <mode>` | `auto` | `auto`, `byok` or `mcpjam`. |
+| `--allow-approximated <case>` | | Approve an `approximated` imported case for this run. Repeatable; requires `--approval-reason`. |
+| `--approval-reason <text>` | | 1–500 characters. |
+| `--concurrency <n>` | `1` | Iterations of one case in flight at once. |
+| `--iteration-timeout <ms>` | `120000` | Per-iteration execution timeout. |
+| `--max-steps <n>` | `10` | Model steps per prompt. |
+| `--reporter <format>` | | `json-summary`, `junit-xml` or `html` document on stdout. |
+| `--out <path>` | | Write the report atomically (the `--reporter` format, else JSON). |
+| `--api-key`, `--api-url`, `--api-header`, `--project` | | MCPJam-hosted inference only; resolved only when a case needs it. |
+| `--url`, `--command`, … | | The shared connection flags (see [`server` commands](#server-commands)), for a suite with exactly one target server. Without `--url` or `--command`, the flags that configure that one server (`--header`, `--env`, `--cwd`, `--args`, `--transport`, `--client-capabilities` and the credential flags) are refused rather than ignored: configure a server bound with `--server` or an MCP config file in its config entry. |
+
+Global `--timeout` bounds each setup operation and MCP request, not the whole run. Exit codes: `0` passed, `1` failed, `2` usage/unsupported/import/policy, `3` credentials, `4` setup/billing/artifact, `5` inconclusive or interrupted — see [Exit codes](https://docs.mcpjam.com/cli/local-evals.md#exit-codes).
+
+***
+
+## `compat` command
+
+Check whether an MCP server's tools and widgets work on each AI host. Uses shared server connection flags (see [`server` commands](#server-commands)) plus:
+
+| Flag | Description |
+| - | - |
+| `--host <id>` | Only report this host ID. Repeat for several. Default: all. Valid IDs: `claude`, `chatgpt`, `cursor`, `copilot`, `codex`, `goose`, and others. |
+
+```bash theme={"theme":"css-variables"}
+mcpjam compat --url https://your-server.com/mcp
+mcpjam compat --url https://your-server.com/mcp --host claude --host chatgpt
+```
+
+The result includes a per-host `verdict` (`works`, `degraded`, `blocked`, or `unknown`), a `findings` list explaining each verdict, and a top-level `summary` count. When the tool list is truncated (more than 50 pages), verdicts that would otherwise be `works` are downgraded to `unknown`.
+
+***
+
+## `cloud clients` commands
+
+Manage the clients saved in your hosted MCPJam projects — the named, reusable
+configurations that define how MCPJam connects to and talks to your MCP servers.
+Every `clients` command that contacts Cloud requires an `sk_` API key (via
+`--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior
+`mcpjam cloud login`. `clients templates` is the exception: it prints the
+built-in template list from the bundled SDK and needs no credential.
+
+`mcpjam cloud hosts …` still works as a command alias, and every command accepts
+`--host` as a deprecated spelling of `--client`. Passing both `--client` and
+`--host` is a usage error rather than a silent precedence rule.
+
+### Editing safely: `configId` and `expectedConfigId`
+
+A client's config is immutable and content-addressed: `configId` identifies the
+exact settings, so the same id means byte-identical settings. Every config edit
+takes the `configId` you last read as `expectedConfigId`, and a rename takes the
+`name` you last read as `expectedName`. If someone else edited the client since
+you read it, the write is refused with a `409` naming the current value instead
+of silently reverting their edit.
+
+The loop is always the same:
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud clients get --client "Claude"        # note configId + name
+mcpjam cloud clients update --client "Claude" \
+  --set temperature=0.2 --expected-config-id hc_01J8...
+```
+
+On a conflict, re-run `get` and retry with the fresh value.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud clients templates`
+
+List the built-in templates usable with `mcpjam cloud clients create --template`. No additional flags.
+
+### `cloud clients list`
+
+| Flag | Description |
+| - | - |
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+Clients that exist only as the private backing of a study are
+omitted, matching the Clients tab.
+
+### `cloud clients get`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--project <id-or-name>` | No | Project name or ID |
+
+Returns the resolved config, the `configId` every edit takes, and `impact` — the
+live environments, study attachments and active goals a config edit
+would follow.
+
+### `cloud clients create`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--name <name>` | Yes | Display name for the new client |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--template <id>` | No | Built-in template ID (see `clients templates`), e.g. `claude`, `chatgpt`, `cursor` |
+| `--theme <theme>` | No | Theme for the seeded config: `light` or `dark` (template only) |
+| `--file <path>` | No | Client config v2 JSON file (or `-` for stdin) |
+| `--json <json>` | No | Inline client config v2 JSON (or `@file`, or `-`) |
+
+Provide either `--template` or `--file`/`--json`, not both.
+
+### `cloud clients update`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--name <name>` | No | New display name (requires `--expected-name`) |
+| `--expected-name <name>` | With `--name` | The `name` you last read |
+| `--expected-config-id <id>` | With any config edit | The `configId` you last read |
+| `--set <key=[REDACTED]>` | No | Set one field. Repeatable |
+| `--unset <key>` | No | Clear an optional field, or reset a required one to its default. Repeatable |
+| `--effort <level>` | No | Set the reasoning effort on the client's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the client's model selection |
+| `--file <path>` | No | Replacement client config v2 JSON (or `-` for stdin) |
+| `--json <json>` | No | Inline replacement client config v2 JSON (or `@file`, or `-`) |
+
+Use either `--set`/`--unset` or `--file`/`--json`, not both. Prefer `--set`: a
+whole-config replacement composed from a stale read reverts anything that landed
+in between.
+
+#### `--set` field types
+
+Values are parsed by the FIELD, never guessed from what the value looks like —
+so `--set systemPrompt='{"a":1}'` sets that literal string, and a
+`--set temperature=0.2x` typo fails locally instead of reaching the API as a
+string.
+
+| Field | Value | `--unset` |
+| - | - | - |
+| `modelId` | string | Not allowed — a client cannot be edited into one that pins no model |
+| `modelSelection` | JSON object | Drops the saved selection and keeps the bare `modelId` |
+| `systemPrompt` | string | Resets to `""` |
+| `temperature` | number | Resets to `0.7` |
+| `requireToolApproval` | `true` \| `false` | Resets to `false` |
+| `connectionDefaults` | JSON object | Resets to the platform defaults |
+| `respectToolVisibility` | `true` \| `false` | Clears |
+| `progressiveToolDiscovery` | `true` \| `false` | Clears |
+| `harness` | string (`claude-code` \| `codex` \| `cursor`) | Clears |
+| `computer` | JSON object | Clears |
+| `builtInToolIds` | JSON array | Clears |
+| `skillSelection` | JSON object | Clears |
+| `modelVisibleMcpToolResults` | JSON object | Clears |
+| `mcpToolResultImageRendering` | JSON object | Clears |
+| `mcpProfile` | JSON object | Clears |
+| `hostCapabilitiesOverride` | JSON object | Clears |
+| `chatUiOverride` | JSON object | Clears |
+
+Object-valued fields are whole-object replacements, not merges. To change a deep
+knob, read the client, overlay the sub-object, and send the whole object back.
+
+### `cloud clients servers`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--server-ids <id,...>` | Yes | Comma-separated required server IDs |
+| `--expected-config-id <id>` | Yes | The `configId` you last read |
+| `--optional-server-ids <id,...>` | No | Comma-separated optional server IDs |
+| `--project <id-or-name>` | No | Project name or ID |
+
+This REPLACES the server set: every server you leave out is detached.
+
+### `cloud clients duplicate`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--name <name>` | No | Name for the new client |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud clients delete`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--client <id-or-name>` | Yes | Client name or ID (`--host` is a deprecated alias) |
+| `--project <id-or-name>` | No | Project name or ID |
+
+***
+
+## `cloud environments` commands
+
+Manage **project environments** in your hosted MCPJam projects. A project environment is a named, live-editable execution bundle — one host, optionally a standalone server group, optionally a pinned skill selection and pinned plugin versions — that eval suites and goals run against.
+
+> [!NOTE]
+>
+> A project environment is not a Computer sandbox image (those are `mcpjam cloud images`), and not the STDIO environment variables you pass with `--env`.
+
+All `environments` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`. Reading requires project membership; **creating, updating, archiving, and restoring require project admin** — a key bound to a non-admin gets a `FORBIDDEN` error on those.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### The revision workflow
+
+Environments use optimistic concurrency. Every write takes `--expected-revision`, the `revision` you last read:
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud environments get --environment Staging          # note the "revision" field
+mcpjam cloud environments update --environment Staging --expected-revision 3 --name Prod
+```
+
+If someone else changed the environment in between, the write fails with a `CONFLICT` error (HTTP 409) instead of overwriting their edit — re-read it and retry. `CONFLICT` also covers a duplicate name and archive-state errors (archiving something already archived, editing something archived), so read the message.
+
+### `cloud environments list`
+
+| Flag | Description |
+| - | - |
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+| `--include-archived` | Include archived environments (needed to find one to restore) |
+
+### `cloud environments get`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud environments resolve`
+
+Preview what the environment resolves to right now: the host's current config, the closed server set, and the pinned plugin versions. Fails with `CONFLICT` when the environment can't currently produce a runnable configuration (for example a pinned plugin was disabled); `details.code` carries the specific reason.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud environments create`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--name <name>` | Yes\* | Display name; must be unique among the project's live environments |
+| `--host-id <id>` | Yes\* | ID of the host this environment runs against |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--description <text>` | No | Optional description |
+| `--model <id>` | No | Model to run instead of the host's |
+| `--model-selection <json>` | No | Whole saved model selection behind the override — source, connection and `settings.reasoningEffort` (see [Reasoning effort](#reasoning-effort)). Must be for the model named; sent alone it pins its own model |
+| `--file <path>` | No | Environment JSON file (or `-` for stdin) |
+| `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
+
+\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, `secretSelection`, and `pluginVersionIds`:
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud environments create --project Acme --json '{
+  "name": "Staging",
+  "hostId": "h_123",
+  "skillSelection": { "mode": "explicit", "skillIds": ["sk_1"] }
+}'
+```
+
+### `cloud environments update`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--expected-revision <n>` | Yes | The revision you last read (from `environments get`) |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--name <name>` | No | New display name |
+| `--host-id <id>` | No | New host |
+| `--description <text>` | No | New description (empty string clears it) |
+| `--model-selection <json>` | No | Whole saved model selection for the override, as JSON (or `@file`, or `-`) |
+| `--effort <level>` | No | Set the reasoning effort on the environment's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the environment's model selection |
+| `--file <path>` | No | Environment JSON with the fields to change (or `-` for stdin) |
+| `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
+
+Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, `secretSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud environments update --environment Staging --expected-revision 3 \
+  --json '{ "pluginVersionIds": null }'
+```
+
+### `cloud environments archive`
+
+Archiving is reversible and frees the name for a new environment; the row is kept.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--expected-revision <n>` | Yes | The revision you last read |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud environments restore`
+
+Fails with `CONFLICT` if another live environment took the name while this one was archived. Plugin pins whose version no longer exists at all are dropped on restore — compare the returned `pluginVersionIds` against what you archived.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--expected-revision <n>` | Yes | The revision you last read (use `environments list --include-archived`) |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud environments ensure-adhoc`
+
+Get or create an **unnamed** environment for a composed stack. Deduplicated by content: the same stack always returns the same environment, with `created: false` on the second call. Ad-hoc environments do not appear in `environments list` — they exist so a one-off combination can be run and reproduced without adding a name to the project's list.
+
+Requires project membership, not admin (pinning plugin versions still requires admin).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--host <id-or-name>` | Yes | Host the stack runs as — the client whose configuration a run is stamped with |
+| `--server-group <id>` | No | Standalone server group to pin (omit to use the host's own servers) |
+| `--model <id>` | No | Model to run instead of the host's pinned one |
+| `--model-selection <json>` | No | Whole saved model selection (source, connection, `settings.reasoningEffort`) as JSON. Stacks that differ only by effort are different environments |
+| `--computer <id-or-name>` | No | Project-shared sandbox image to pin, so runs boot a fresh computer from it |
+| `--skill <id...>` | No | Project-shared skill IDs to pin |
+| `--secret <id...>` | No | Project secret IDs the stack grants to its runs (`secrets list` shows them) |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud environments name`
+
+Promote an ad-hoc environment to a named one **in place** — the same id every existing run already points at, so history stays attached. Fails with `CONFLICT` if the environment already has a name.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--environment <id>` | Yes | The ad-hoc environment to promote, by ID (an unnamed environment has no name to select it by) |
+| `--name <name>` | Yes | Display name for the promoted environment |
+| `--expected-revision <n>` | Yes | The revision you last read |
+| `--description <text>` | No | Optional description |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### What can be pinned
+
+The pin fields are narrower than they look:
+
+* **`skillSelection`** accepts project-shared skills only. Personal skills, skills with supporting files or extra frontmatter, and plugin-component skills are all rejected.
+* **`pluginVersionIds`** accepts a plugin version only when its plugin is installed and enabled, the version is `ready`, at most one version per plugin is pinned, and none of the version's skills carry supporting files.
+* **`secretSelection`** is a GRANT, not a pin: the environment is the boundary, so a run receives the secrets it lists and nothing else. There is no "all of them" mode, an empty list is rejected (revoke with `"secretSelection": null` on update), and a `sharing: "user"` secret still reaches only sessions its owner started.
+
+### Deployment support for model overrides and secret grants
+
+> [!NOTE]
+>
+> `--model` / `"modelId"` and `--secret` / `"secretSelection"` are answered by
+> the deployment, not by your account: a self-hosted or older MCPJam whose
+> environment surface predates a field rejects it outright. The CLI asks first
+> — `GET /projects/:id/environments/capabilities` reports `modelOverrides` and
+> `secretGrants` — and refuses before sending, rather than letting the field
+> die in a validator. Absence reads as a no, so a deployment too old to answer
+> the probe at all is treated as not supporting either.
+>
+> The refusal opens with one of these two sentences:
+>
+> * **This MCPJam deployment does not support environment model overrides.**
+> * **This MCPJam deployment does not support environment secret grants.**
+> * **This MCPJam deployment does not support saved model selections (and so reasoning effort) on composed stacks.**
+> * **This MCPJam deployment does not support saved model selections (and so reasoning effort) on environments.**
+>
+> A second sentence then names what to drop, and it differs by surface —
+> `--model` / `--clear-model` / `"modelId"` on the environment writes,
+> `--compose-model` / `compose.models` on a composed launch, and the
+> `--secret` / `--compose-secret` equivalents, and
+> `--model-selection` / `--compose-model-selection` / `--effort` on an
+> environment for the two saved-selection sentences (the deployment publishes
+> `modelSelections` when it accepts them). Grep for the sentence above,
+> not for the whole message.
+>
+> Every other flag on these commands works regardless; only the calls that
+> actually carry a model or a grant are checked.
+
+### Reasoning effort
+
+A reasoning effort is saved on a **model selection** — `settings.reasoningEffort`
+inside the `modelSelection` a client, environment, eval case (`models[].selection`)
+or eval suite (`executionConfig.modelSelection`) carries. There is no other saved
+carrier, and `advancedConfig.reasoningEffort` is refused. Levels are `none`,
+`minimal`, `low`, `medium`, `high`, `xhigh` and `max`; which of them a model
+accepts is `supportedReasoningEfforts` on the public model catalog
+(`GET /v1/models`). Every route either applies a saved effort and records it or
+refuses it (`capability_missing`) before any spend — it is never dropped — and an
+effort replaces the sampling temperature.
+
+Three ways to set one:
+
+* **A whole selection** — `--set modelSelection='{…}'` (clients),
+  `--model-selection '{…}'` (environments, `eval update`),
+  `--compose-model-selection '{…}'` (composed launches). A selection holds
+  `source` and a connection that only you know, so it is always sent whole:
+
+  ```json theme={"theme":"css-variables"}
+  {
+    "modelId": "openai/gpt-5",
+    "source": "hosted",
+    "settings": { "reasoningEffort": "high" },
+    "fallback": { "provider": "none", "model": "none" }
+  }
+  ```
+
+* **`--effort <level>` / `--clear-effort`** on `clients update`,
+  `environments update` and `eval update` — a shorthand that edits the
+  selection the target **already has**. When there is none the command is
+  refused with a message telling you to send `modelSelection`, because inventing
+  one would mean guessing whose credentials pay. It cannot be combined with a
+  whole selection, or with a new model (a new model needs a new selection).
+
+* **`sessions send --effort <level>`** — a per-request effort, pinned on the
+  session's first turn like `--temperature`.
+
+Changing a target's model with a bare `--model` never keeps a selection saved for
+the old one: on a suite or environment it is dropped, so the write is not
+refused for naming two models.
+
+***
+
+## `cloud images` commands
+
+Manage custom Computer sandbox images in your hosted MCPJam projects. An image is defined by a **blueprint** — YAML with a digest-pinned `base` image, `initialize` steps baked into the image at build time, and `maintenance` / `knowledge` text delivered to the agent at runtime (never executed automatically):
+
+```yaml theme={"theme":"css-variables"}
+base: debian:bookworm-slim@sha256:<64-hex-digest>
+initialize:
+  - name: Install tooling
+    run: apt-get update && apt-get install -y git jq
+maintenance:
+  - name: Refresh deps
+    run: cd ~/app && npm install
+knowledge:
+  - name: Test notes
+    contents: Run `make test` before pushing.
+```
+
+All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud images list`
+
+| Flag | Description |
+| - | - |
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud images get`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud images validate`
+
+Lint a blueprint without saving it. Prints `ok` plus the resolved base digest, or structured errors with the YAML path of each violation.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--file <path>` | Yes | Blueprint YAML path, or `-` to read from stdin |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud images create`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--name <name>` | Yes | Display name for the new sandbox image |
+| `--file <path>` | Yes | Blueprint YAML path, or `-` to read from stdin |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud images edit`
+
+| Flag | Required | Description |
+| - | - | - |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--name <name>` | No | New display name |
+| `--file <path>` | No | Replacement blueprint YAML path (or `-` for stdin) |
+
+### `cloud images build`
+
+Trigger an image build for the sandbox image (async). Poll `images logs` to check build status.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud images logs`
+
+Show a sandbox image's builds (newest first) with their log preview.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud images use`
+
+Boot your computer from this sandbox image. This rebuilds the computer — installed files are wiped.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud images reset`
+
+Reset your computer to its current image, wiping mutable state.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud images promote`
+
+Share a personal-draft sandbox image with the whole project. Requires project admin permissions.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud images delete`
+
+Permanently delete a sandbox image from a project.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+***
+
+## `cloud skills` commands
+
+List and read the Cloud Skills in your hosted MCPJam projects. These commands exist to close a gap: three flags across the CLI take a skill ID (`eval run --compose-skill`, `eval cases run --compose-skill`, `environments ensure-adhoc --skill`) and until now there was no way to discover those IDs without opening the web app. Authoring stays in the app — these commands are read-only.
+
+All `skills` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud skills list`
+
+List the skills visible to you in a project — the project-shared ones plus your own personal drafts. Each row includes a `pinnability` field that says whether the skill's ID is usable with `--compose-skill` and environment `skillSelection`, and why not if it isn't.
+
+| Flag | Description |
+| - | - |
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud skills get`
+
+Show one skill, including its SKILL.md body.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--skill <id>` | Yes | Skill ID, from `cloud skills list` |
+| `--project <id-or-name>` | No | Project name or ID |
+
+***
+
+## `cloud goals` commands
+
+Launch and manage swarm goals (persona-driven conversation runs). All `goals` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`. `cloud journeys` is a deprecated alias for `cloud goals`.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable. Also `MCPJAM_API_HEADERS`, one per line. |
+
+### `cloud goals run`
+
+Launch a goal run. **Spends model credits** — fans out into `targets × iterations` chat sessions.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--goal <id-or-name>` | Yes | Goal name or ID (`--journey` is a deprecated alias) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started and starts no second runner |
+| `--expected-sponsored <n>` | No | How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` and nothing is created. Omit to accept whatever split applies. |
+
+***
+
+## `cloud projects servers` commands
+
+Manage the MCP servers saved in a project and connect new ones. All `projects servers` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud projects servers connect`
+
+Start a connection request for an MCP server URL. Discovery, browser consent, and validation happen asynchronously. When the server requires OAuth, the command prints a private authorization link and (by default) opens it in a browser. The command then polls until the request reaches a terminal status.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--url <url>` | Yes | MCP server URL to connect |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--server <id>` | No | Existing server ID, when the project has several on this URL |
+| `--name <name>` | No | Name for the server, if one is created |
+| `--reauthorize` | No | Force a fresh authorization |
+| `--no-browser` | No | Print the authorization link instead of opening it |
+| `--no-wait` | No | Return as soon as the request is created |
+
+With `--no-wait`, the command prints the request id and exits immediately. The request continues in the cloud; use `connect-status` to check it and `connect-cancel` to stop it.
+
+Each pending request holds one of the account's five concurrent-connection slots for up to an hour. If `connect` reports `ACTIVE_REQUEST_LIMIT`, the error details include the ids of the open requests — cancel the abandoned ones with `connect-cancel` to free slots.
+
+### `cloud projects servers connect-status`
+
+Check the current state of a connection request started by `connect`.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--request <id>` | Yes | Connection request id (`scr_…`) |
+
+### `cloud projects servers connect-cancel`
+
+Cancel a pending connection request, releasing the concurrent-connection slot it holds. Cancelling an already-terminal request is a no-op.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--request <id>` | Yes | Connection request id (`scr_…`) |
+
+Cancelling is idempotent — calling it twice on the same request is safe. Use this when an authorization was abandoned (link opened in the wrong browser, consent screen closed) and you want to free the slot before starting over.
+
+### `cloud projects servers revisions`
+
+List a saved server's stored revisions, newest first. A revision is a capture of the server's tools and server info, recorded whenever they change. These read stored data and never connect to the server, so they work for stdio servers too.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--limit <n>` | No | Revisions per page, 1 to 200 (default 50) |
+| `--cursor <cursor>` | No | `nextCursor` from the previous page |
+
+### `cloud projects servers revision`
+
+Read one stored revision: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--revision <number>` | Yes | Revision number |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud projects servers revision-diff`
+
+Compare two stored revisions: tools added, removed and changed with both definitions, and server info changes with both values. A field listed in `droppedFields.from` or `droppedFields.to` was not stored on that side, so a change to it is unknown.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--revision <number>` | Yes | The later revision |
+| `--from <number>` | No | The revision to compare against (default: the one before) |
+| `--project <id-or-name>` | No | Project name or ID |
+
+***
+
+## `cloud server-accounts` commands
+
+The accounts a saved server signs in with for hosted runs, addressed by account ID or name. Every command takes `--server <id-or-name>` (required) and `--project <id-or-name>`. No command prints a token. See [Server accounts](https://docs.mcpjam.com/reference/public-api.md#server-accounts) for what an upload stores and how runs choose an account.
+
+### `cloud server-accounts list`
+
+List the server's accounts: each one's ID, name, whether runs use it by default, whether it needs reconnecting, and whether it is for hosted runs only.
+
+### `cloud server-accounts show`
+
+Show one account.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--account <id-or-name>` | Yes | Account ID or name |
+
+### `cloud server-accounts set`
+
+Upload an access token to an account. A name no account has creates the account; otherwise its token is replaced and its ID stays. Accounts uploaded this way are for hosted runs only. Nothing checks who a token belongs to: the name is your own label.
+
+The token comes from a file, an environment variable or stdin. A token typed on the command line is refused, because shell history keeps it and other processes can see it. Whitespace around a token is dropped.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--account <id-or-name>` | Yes | Account ID or name |
+| `--client-id <id>` | Yes | The OAuth client the token was issued to |
+| `--access-token-file <path>` | One of three | Read the access token from a file |
+| `--access-token-env <VAR>` | One of three | Read the access token from an environment variable |
+| `--access-token -` | One of three | Read the access token from stdin |
+| `--refresh-token-file <path>` | No | Read a refresh token from a file, or `-` for stdin. Leave it out when you upload a fresh token before each run, or when the issuer rejects refreshes: stored, it only adds a long-lived credential |
+| `--expires-in <seconds>` | No | Seconds until the access token expires |
+
+```bash theme={"theme":"css-variables"}
+./sign-in-test-user | mcpjam cloud server-accounts set --server my-server \
+  --account test-automation-1 --client-id my-client --access-token -
+```
+
+### `cloud server-accounts rename`
+
+Rename an account.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--account <id-or-name>` | Yes | Account ID or name |
+| `--name <name>` | Yes | The new name: letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 64 characters |
+
+### `cloud server-accounts default`
+
+Make an account the default. Runs with no saved account choice sign in as the default, so set it before you start a run, and don't start runs that need different defaults at the same time.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--account <id-or-name>` | Yes | Account ID or name |
+
+### `cloud server-accounts delete`
+
+Delete an account and its stored token, and ask the token's issuer to revoke it where the issuer supports that. The default account can't be deleted while other accounts exist: make another account the default first.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--account <id-or-name>` | Yes | Account ID or name |
+
+***
+
+## `inspector` commands
+
+### `inspector open`
+
+Start or attach to the local Inspector and open the UI.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+| `--tab <tab>` | No | Open Inspector on a specific tab |
+
+### `inspector start`
+
+Start the local Inspector in the background without opening a browser.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
+### `inspector stop`
+
+Stop the local Inspector if it is running.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--inspector-url <url>` | No | Local Inspector base URL |
+
+***
+
+## `cloud tunnel`
+
+Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and studies can target it. Requires an `sk_` API key or a prior `mcpjam cloud login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
+
+```bash theme={"theme":"css-variables"}
+# HTTP target
+mcpjam cloud tunnel http://localhost:9090/mcp --server my-server --project acme
+
+# stdio target (command goes after --)
+mcpjam cloud tunnel --server everything --project acme -- npx -y @modelcontextprotocol/server-everything
+```
+
+| Flag | Required | Description |
+| - | - | - |
+| `--server <name>` | Yes | Server name to register in the project. An existing server with this name is pointed at the tunnel: its URL is overwritten, and stdio records are converted to HTTP. Hidden alias: `--id`. |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--api-key <key>` | No | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | No | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `-e, --env <env...>` | No | Stdio environment assignment in `KEY=[REDACTED] format (stdio targets only) |
+| `--cwd <path>` | No | Working directory for the stdio MCP server process (stdio targets only) |
+
+With `--format json`, a single machine-readable startup object (public URL, server ID, slug, project) is written to stdout; ongoing status goes to stderr in both formats.
+
+> [!WARNING]
+>
+> The public tunnel URL embeds a bearer secret and is stored on the project
+> server record so the platform can call it. Every re-run rotates the secret
+> and disconnects any previous tunnel session for the same server.
+
+***
+
+## `readiness check` commands
+
+Grade a server locally — from your machine, against the URL you supply. No account required. Results are printed to stdout and never uploaded.
+
+### `readiness check claude`
+
+Grade a server against Anthropic's connector-directory rules. Uses shared connection flags (see [`server` commands](#server-commands)) plus:
+
+| Flag | Description |
+| - | - |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+### `readiness check openai`
+
+Grade a server against OpenAI's app-directory rules. `--submission-mode` is required and never inferred.
+
+| Flag | Description |
+| - | - |
+| `--submission-mode <mode>` | Declared submission shape: `mcp-only`, `mcp-imported-skills`, `mcp-package`, or `mcp-imported-skills-package` |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Uses shared connection flags.
+
+### `readiness check muse`
+
+Grade a server against Meta's Muse connector guidelines. Free — no AI observations.
+
+| Flag | Description |
+| - | - |
+| `--submission-profile <path>` | JSON submission profile (overview, contacts, docs, credentials, tool classes). Without it the submission verdict stays `incomplete`. |
+| `--reporter <reporter>` | `json-summary` or `junit-xml` CI report output |
+
+Uses shared connection flags (see [`server` commands](#server-commands)).
+
+***
+
+## `readiness` hosted commands
+
+Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam — no credits are consumed), and leaves a persistent record.
+
+All `readiness` hosted commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `readiness start claude`
+
+Start a hosted readiness run that grades a saved server against Anthropic's connector-directory rules. Returns immediately with a run id; poll with `readiness status`.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
+| `--claim <feature>` | No | Declare a feature the server offers. Repeatable. See [Lazy authentication and feature claims](#lazy-authentication-and-feature-claims) |
+| `--lazy-auth-probe` | No | Opt in to the credential-free lazy-authentication probe |
+| `--lazy-auth-tool <name>` | No | The protected tool the probe calls. Implies `--lazy-auth-probe` |
+| `--lazy-auth-public-tool <name>` | No | The public tool the probe calls first. Implies `--lazy-auth-probe` |
+
+### `readiness start openai`
+
+Start a hosted readiness run that grades a saved server against OpenAI's app-directory rules. `--submission-mode` is required and never inferred — omitting it would silently report the package lane as not-applicable.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--submission-mode <mode>` | Yes | Declared submission shape: `mcp-only` or `mcp-imported-skills`. The two package shapes need a local package — use `readiness check openai` for those. |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+| `--idempotency-key <key>` | No | Replay guard |
+| `--claim <feature>` | No | Declare a feature the server offers. Repeatable. See [Lazy authentication and feature claims](#lazy-authentication-and-feature-claims) |
+| `--lazy-auth-probe` | No | Opt in to the credential-free lazy-authentication probe |
+| `--lazy-auth-tool <name>` | No | The protected tool the probe calls. Implies `--lazy-auth-probe` |
+| `--lazy-auth-public-tool <name>` | No | The public tool the probe calls first. Implies `--lazy-auth-probe` |
+
+### Lazy authentication and feature claims
+
+`readiness check claude`, `readiness check openai`, `readiness start claude`, and `readiness start openai` all take these flags. They let a readiness run grade a server that allows anonymous calls and asks for sign-in only on protected tools. See [Mid-session sign-in](https://docs.mcpjam.com/inspector/lazy-authentication.md) for the two challenge shapes.
+
+| Flag | Description |
+| - | - |
+| `--claim <feature>` | Declare a feature the server offers, so the report shows it as claimed. One of `lazy-authentication` or `enterprise-managed-auth`. Repeat to claim several (at most 10). An unknown value is a usage error. |
+| `--lazy-auth-probe` | Opt in to the lazy-authentication probe. The probe calls one public tool, then one protected tool, both **without credentials**. It makes at most two calls and calls only tools annotated `readOnlyHint: true`. Without the two flags below, it picks the tools from their `securitySchemes`. |
+| `--lazy-auth-tool <name>` | The protected tool the probe calls. Implies `--lazy-auth-probe`. Up to 128 characters. |
+| `--lazy-auth-public-tool <name>` | The public tool the probe calls first. Implies `--lazy-auth-probe`. Up to 128 characters, and it must name a different tool than `--lazy-auth-tool`. |
+
+The probe never sends credentials, not even an `--access-token` or `--credentials-file` passed to `readiness check`. Those still apply to the rest of the run.
+
+Readiness probes invoke tools on the target server with test inputs, which can be empty. `readOnlyHint` is a server-provided hint, not a guarantee against side effects. Use a trusted test server and disposable data; authenticated step-up probes may execute an operation when the supplied credential already grants its scope.
+
+```bash theme={"theme":"css-variables"}
+mcpjam readiness check claude https://your-server.com/mcp \
+  --claim lazy-authentication --lazy-auth-tool list_files
+```
+
+### `readiness start muse`
+
+Start a hosted readiness run that grades a saved server against Meta's Muse connector guidelines. Free — Muse has no AI observations. Returns immediately with a run id; poll with `readiness status`.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
+
+### `readiness status`
+
+Read one hosted readiness run. The response carries three independent axes: `status` (whether the run finished), `overallStatus` (the grade — a `completed` run can be `not-ready`), and `llmObservations` (whether the optional model pass ran).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Readiness run id |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `readiness list`
+
+List hosted readiness runs, newest first.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--kind <publisher>` | No | Narrow to `claude`, `openai`, or `muse` |
+| `--server <idOrName>` | No | Narrow to one saved server |
+| `--limit <n>` | No | Rows to return (1–100) |
+
+### `readiness cancel`
+
+Stop a hosted readiness run that is still going. The run's real terminal state arrives on a later `readiness status` — this response reports the request, not the outcome.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Readiness run id |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `readiness report`
+
+Read a finished run's findings, ordered most-consequential-first and capped. `truncated` and `totalFindings` indicate when you are seeing a subset.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Readiness run id |
+| `--project <id-or-name>` | No | Project name or ID |
+
+***
+
+## `cloud eval` commands
+
+All `eval` commands accept the shared platform flags below.
+
+### Shared platform flags
+
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud eval create`
+
+Create a runnable eval suite from authored test cases (does not run it).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"`) belongs on `eval run --file` |
+| `--json <json>` | No | Inline suite definition JSON (or `@file`, or `-` for stdin) |
+| `--name <name>` | No | Suite name (overrides the file) |
+| `--model <model>` | No | Suite-level default model (overrides the file) |
+| `--provider <provider>` | No | Suite-level default provider (overrides the file) |
+| `--server <id-or-name...>` | No | Project HTTP server names or IDs (overrides the file) |
+| `--client <id-or-name...>` | No | Clients to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --client` has nothing to select |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
+
+### `cloud eval list`
+
+List the eval suites saved in a project.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval run`
+
+Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
+
+By default the command prints a launch receipt and returns immediately. `--wait` polls every launched run to a terminal state.
+
+**Exit codes (`--wait` only).** Without `--wait` this command's exit code is unchanged: `0` on any launch, `1` on a partial or wholly failed fan-out. `--wait` owns a separate six-code contract — a caller who asked this process to sit and watch a run to completion is asking it to say how the run went:
+
+| Code | Meaning |
+| - | - |
+| `0` | Every waited run passed, unanimously, and (when a report was requested) every report was assembled |
+| `1` | A run **completed** with a **failed** verdict. The only condition that produces this code |
+| `2` | Usage error — bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file (after auth, before any server/model work) |
+| `3` | Auth failed — no credential, or the platform rejected it, at launch or mid-wait (a token that expired during a long poll). Zero credits spent if it happened before launch |
+| `4` | Connection/setup failed before evaluation — a launch failure this CLI itself observed (network, timeout, rate limit, a partial or failed fan-out, an unrecognized launch error), or a local `--out` write failure — unless a more severe outcome (`1` or `3`) already applies to the same run, per the merge order above |
+| `5` | No valid verdict — `inconclusive`, a null/unrecognized result, a run whose own status is failed/cancelled/timed-out, a wait that hit its deadline, a mid-wait failure that was not auth-shaped, or a report that could not be assembled |
+
+No infrastructure condition ever maps to `1` — see the same rule under `eval gate` below. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`: a real verdict failure is never masked by a sibling's infrastructure noise, and a credential failure (which may be *why* other targets show no verdict) outranks a plain connection failure.
+
+This six-code contract is new and deliberately **different** from `eval gate`'s four codes below — see that command's own doc for why the two are not unified. An invalid suite file exits **2** either way — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes, unless `--file` | Eval suite name or ID |
+| `--file <path>` | Yes, unless `--suite` | Versioned suite file to upload and run (`.yaml` or `.json`, or `-` for stdin) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
+| `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
+| `--client <id-or-name...>` | No | Attached client(s) to run, so the run is stamped with that client's config. Several values start one **paid run each**. |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. Not the host-compat catalog id `mcpjam compat --host` / `mcpjam tools --host` take — see [Two different `--host` flags](#two-different---host-flags). |
+| `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
+| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
+| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
+| `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
+| `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
+| `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
+| `--notes <text>` | No | Free-text note stored on the run |
+| `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
+| `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
+| `--idempotency-key <key>` | No | Retry key for a lost launch response. For `--file`, a fresh key is minted and printed on every invocation when this flag is omitted; supply the printed key to replay the same run instead of starting a new one |
+| `--wait` | No | Wait for every launched run to reach a terminal status |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 2100000); requires `--wait` |
+| `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
+| `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
+| `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Ephemeral by default** — pass `--save-targets` to attach it to the suite. |
+| `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
+| `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
+| `--compose-model <id...>` | No | Model(s) to run on the composed stack. Replaces the client's pinned model unless `--with-client-default` is set |
+| `--compose-model-selection <json...>` | No | Whole saved model selection(s) — source, connection, `settings.reasoningEffort` — as JSON: one cell per selection, for its model, at its effort. Repeat to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell |
+| `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
+| `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
+| `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-host-servers` | No | **No longer supported** — rejected. An eval run takes its servers from a server group alone; use `--compose-server` or `--compose-server-group` |
+| `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
+| `--save-targets` | No | Attach the composed environments to the suite (append, capped at 10). Without it the stack is ephemeral |
+
+#### Composing a target instead of naming one
+
+`--compose-client <id-or-name>` builds an execution stack for this run instead of
+naming a saved environment, refined by `--compose-computer`, `--compose-model`,
+`--compose-server-group`, `--compose-skill` and `--compose-secret`. The stack becomes an unnamed,
+content-addressed environment (the same one `environments ensure-adhoc`
+produces), so composing the same stack twice reuses one environment.
+`--compose-host` is the deprecated spelling of the same flag.
+
+`--compose-model` and `--compose-secret` carry the deployment requirement
+described under [Deployment support for model overrides and secret
+grants](#deployment-support-for-model-overrides-and-secret-grants): a launch that names
+either is refused before it composes anything if this deployment does not
+publish the capability.
+
+> [!WARNING]
+>
+> **With `--save-targets`, this edits the suite.** The composed environment is
+> appended to the suite's environment list — deliberately, because an
+> environment the suite does not list is one nobody can re-run from the app
+> afterwards. Without it the stack is ephemeral and the suite is untouched,
+> except on a deployment with no ephemeral-launch support, where a
+> single-target compose still attaches. The result reports both writes
+> (`composed.environment.created`, `composed.attachment.attached`) even when
+> the launch itself fails, so you always know what changed.
+
+Any `--compose-*` flag alongside `--environment`, `--client`, `--server` or
+`--all-targets` is a usage error: compose builds the stack the run uses, so
+naming a target alongside it describes two different runs.
+
+#### Two different `--host` flags
+
+`--host` means two unrelated things in this CLI, and only one of them lives
+under `cloud eval`.
+
+| Command | `--host` names |
+| - | - |
+| `mcpjam tools` / `resources` / `prompts` / `probe` / `compat` | A **host-compat catalog id** — which AI host to emulate. `claude`, `chatgpt`, `cursor`, `copilot`, `codex`, `goose`, and the rest of the catalog. |
+| `mcpjam cloud eval run` / `cases run` / `update` / `create` | A **client saved in your project** (`mcpjam cloud clients list`). |
+
+The catalog sense keeps `--host`: it genuinely means "which AI host am I
+emulating". Under `cloud eval`, **`--client` is canonical** and `--host` is a
+deprecated alias for it — so `mcpjam cloud eval run --host claude` looks for a
+saved client named `claude` and fails if you do not have one. When the value
+you pass is a catalog id, the error says so and points at `--client`.
+
+#### Which target runs
+
+**Fan-out is explicit and never inferred.** Choosing for you would be choosing
+how much to spend, so:
+
+* **nothing attached** → the suite's saved server selection runs (unchanged);
+* **exactly one** attached environment or client → that one runs
+  automatically, and the run is stamped with its configuration;
+* **several attached** → the run fails with `TARGET_REQUIRED`, listing every
+  choice. Name one with `--environment` / `--client`, several by repeating the
+  flag, or run all of them with `--all-targets`.
+
+`--all-targets` expands **one axis**: attached environments if the suite has
+any, otherwise attached clients — never a cross product, because an environment
+already resolves a client. It starts **one paid run per target**, launched as a
+single group that occupies one concurrency slot rather than N.
+
+`--environment` / `--client` and `--server` are mutually exclusive: an
+environment or client supplies a closed server set that an override cannot
+change.
+
+> [!WARNING]
+>
+> `--refresh-snapshot` **changes the suite**, not just this run: it re-derives
+> and stores the suite's host-config snapshot, so every future run uses the new
+> one. It is rejected on any multi-target launch — several runs racing to write
+> one snapshot would leave the suite pinned to whichever finished last.
+
+#### Output and exit codes
+
+With `--format json`, stdout is **exactly one JSON document** — the launch
+receipt, with nothing appended — so CI can parse it directly. In human format
+the CLI prints a `View:` link per started run, a `Started N/M runs (group …)`
+summary when several launched, and a `Failed: <target> — <code>: <message>`
+line per failure.
+
+With `--wait`, the default output contains the launch receipt and completed
+runs. `--reporter` replaces that output with the canonical structured report.
+`--out` writes the same report atomically, including on failed-run and
+post-completion reporting-error paths, before the command sets its exit code.
+
+Without `--wait`, a partial or wholly failed fan-out **exits 1**; with
+`--wait` it exits **4** (see the exit-code table above). A per-target failure
+does not abort its siblings, so exiting 0 would let a pipeline read "1 of 3
+runs never started" as a clean launch.
+
+#### `--file`: upload and run a suite file
+
+`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
+authenticates, then validates. A contract-invalid file exits **2** after the
+auth request — it does not start a run. `eval validate` on the same bytes
+still exits 1: that command is a verdict on the file; this one is not.
+
+The file's `suite.id` is the declared suite identity. The first run creates a
+file-owned suite stamped with that id; later runs of the same id in the same
+project update that suite rather than creating a second one. A UI-authored
+suite has no declared id, so no file can claim it. Resolve is never by name.
+
+File `passThreshold` is a fraction; the hosted suite grades on a percent. The
+conversion refuses rather than approximates. A file count above **10**
+(`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`) is
+refused by name (`REPETITIONS_CAP`) and is not clamped.
+
+**Which vocabulary the sync speaks is the deployment's call.** Before writing
+anything, the CLI reads `GET /capabilities` once. A deployment that advertises
+`vocabulary.version: 2` gets every request with `x-mcpjam-eval-vocabulary: 2`
+and case bodies spelled canonically — `iterations` (the exact count),
+`legacyIterations` (the legacy floor, the same number) and `assertions` —
+instead of `repetitions` / `iterations` / `checks`. A deployment without the
+capability block, or without the capabilities route at all, is spoken to in
+vocabulary 1, byte-for-byte as before. Nothing in the file changes either way:
+the dialect of the file and the vocabulary of the wire are independent.
+
+Cases are synced in batches of at most 100 (`create_eval_cases`). Every
+declared case is created or updated, including `disabled: true` rows. A case
+the file **no longer declares** is deleted from the hosted suite before
+launch. A case the file still declares but marks `disabled: true` is **kept,
+with its history** — it is simply left out of the launch, so parking a flaky
+test does not destroy its past results and re-enabling it later resumes the
+same case.
+The run is scoped to the enabled cases either way. A file with no enabled
+cases is refused (`NO_ENABLED_CASES`) rather than launching the whole
+persisted suite. `--case` may only name an enabled case. A later run updates
+existing cases by declared id and creates new ones. An enabled case that
+overrides `passThreshold` is refused: hosted grading is suite-wide. A
+disabled case with the same override is ignored, matching how repetitions
+are checked. Authored
+`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused at
+hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
+refusal). Hosted platform-authored suites do not currently have a backend
+tool-policy field or enforcement path, so the CLI does not upload a suite that
+would claim those guarantees. When supported by an eval runner, `toolPolicy`
+is enforced at execution time with denied tools kept visible but blocked;
+server annotations are advisory and **UNTRUSTED**. The file's default count
+(`defaults.repetitions`, or `defaults.iterations` in `schemaVersion: "2"`) is
+inherited per case and is not uploaded as a suite `minIterations` floor.
+Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
+execution defaults; omitted fields stay omitted so the platform applies its
+own defaults. `target.hosts` and `target.environment` are attached before
+launch. A file environment takes precedence over file hosts for that launch,
+while an explicit CLI target takes precedence over both. When an explicit CLI
+target is provided (for example `--host`), the file's `target.hosts` are
+**not** synchronized to the suite's persisted host attachments — the suite
+keeps whatever hosts it already has. Host attachment synchronization only
+runs when no explicit CLI target overrides the file. Environment attachment
+synchronization is unaffected and always runs.
+
+Without `--idempotency-key`, the CLI mints a fresh UUID for every invocation
+and prints it to stderr before launch (`Eval idempotency key: <key>`). Each
+invocation therefore starts and bills a new run. To retry a launch whose
+response was lost — without starting a second run — pass the key that was
+printed: `--idempotency-key <printed-key>`. A replay is marked `deduped` in
+the receipt and human output. `--notes` is not part of the key.
+
+##### Imported cases: live tool resolution, and per-run approval
+
+Every file run performs the same live check `eval validate --project` performs,
+**before it writes anything**. It is not opt-in and there is no flag to skip
+it. A file with no deterministic `toolCall` steps asks no question and pays no
+round trip.
+
+What happens when a deterministic reference does not resolve depends on the
+case:
+
+| Case | Outcome |
+| - | - |
+| Selected (enabled, and named by `--case` if you used it) | The launch **refuses before the suite is synced** — nothing is written and nothing is billed |
+| Imported, not selected | Its claim is rewritten to `unresolved` (keeping `sourceCaseKey`) and it is **still persisted**, so the hosted record says what MCPJam found rather than still asserting a claim about a missing tool |
+| Native, not selected | Left exactly as authored. A hand-written case never acquires an `import` block from this — "somebody wrote this" and "something converted this" are different facts |
+
+Each target is checked on **its own** server set. `--host` is checked against
+that host's configured servers rather than the file's, because that is the set
+the run connects — validating `target.servers` would approve a tool the host
+cannot reach. A host the FILE declares uses its own `servers` list when it
+declares one (those are attached to the host before launch) and the host's
+configured set when the field is omitted. An explicitly empty `servers: []`
+is a real, empty set — it clears the attachment before launch — and is
+validated as such, never as an omitted field. A step that pins `serverId` is resolved by id;
+`serverName` is a display fallback and never overrides it.
+
+If the run's target set cannot be enumerated before the suite exists
+(`--all-targets`, `--compose-*`), or a host does not report a server set, or a
+host pins a server the project no longer has, the launch refuses rather than
+assuming the references are fine.
+
+`--case` accepts a hosted row id, which does not exist yet when this check
+runs. A selector this stage cannot map is therefore treated as possibly naming
+any enabled case, so an unresolved reference still refuses; the launcher
+resolves the selector itself a moment later.
+
+A selected `approximated` case refuses unless this invocation approves it:
+
+| Flag | Required | Description |
+| - | - | - |
+| `--allow-approximated <case...>` | No | Approve an `approximated` imported case for **this run only**, by AUTHORED case id (`cases[].id`). Repeatable. `--file` runs only |
+| `--approval-reason <text>` | With the above | Why the approximations are acceptable for this run. 1–500 characters after trimming; one reason covers every approval in the invocation |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+  --allow-approximated c_refund_partial \
+  --approval-reason "Reviewed against the upstream rubric; ENG-4821"
+```
+
+Checked before anything is billed, each with its own message: approving a
+**native** case (nothing to approve), a **claimed-exact** one (needs no
+approval), an **unsupported** or **unresolved** one (approval covers a case
+whose behaviour was approximated, not one whose behaviour is missing), a
+**disabled** or **unselected** one (the run will not execute it), an unknown
+id, or the same id twice. The flags are refused outright with `--suite`: a
+hosted suite's cases are not the ones this invocation authored, so an
+authored-id selector has nothing to resolve against.
+
+**The approval belongs to the run, never to the case.** You supply an id and a
+reason and nothing else — the approver and the timestamp are derived by the
+server and frozen into that run's own snapshot, because a caller-supplied
+approver would file one person's approval under another's name and a
+caller-supplied timestamp could be backdated past the edit that invalidated the
+claim. Nothing persists: edit the suite, re-sync, or launch again, and the flags
+are required again.
+
+Scheduled runs and GitHub-App runs cannot approve anything. A scheduled suite
+containing a selected approximation is refused by platform policy, which is the
+intended behaviour — an unattended job is exactly the caller that must not be
+able to wave one through.
+
+`--file` pointing at create-API JSON (no `schemaVersion`) is a usage error
+that names `eval create --file`. The converse is also true: `eval create --file`
+on a versioned suite file names `eval run --file`.
+
+Export of a file-owned suite writes `declaredId` as `suite.id`. Export of a
+UI-owned suite derives a stable file identity (`s_export_<sourceSuiteId>`),
+so importing the exported file creates a file-owned clone rather than
+re-claiming the original UI suite.
+
+When the run targets an **attached project environment** (`eval environments
+set`), it executes against that environment's resolved host config, closed
+server set, and pinned plugin versions instead of the suite's saved selection.
+Every run records the environment and the exact revision it used, so `eval
+status` can answer "which configuration did this run actually execute against?"
+long after the environment has been edited.
+
+### `cloud eval server-facts`
+
+Read the server a run was taken against.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+Per server: the tool count, the catalog's measured size, annotation and
+output-schema coverage, and the deterministic tool-metadata prechecks — plus
+what connect and discovery observed, and any conformance or readiness runs for
+the same servers.
+
+**None of it is a verdict.** A large tool surface is not a defect and a slow
+connect is not a failure; only a precheck with `class: "spec_required"` names a
+violation, and a row marked `protocolDependent` is a rule that may not apply to
+this server's protocol version at all.
+
+**Payload size is three different numbers** and this reports two of them, each
+carrying its `payload.basis`: `aggregated_catalog_json` is the catalog as the
+client assembled it (measured at capture), `normalized_snapshot` is what was
+retained after redaction — smaller, and `payload.complete` says so. What the
+model actually saw is a host fact and is not here. Token figures are estimated
+as `json_chars_div_4` against a **reference** window, not measured against any
+model's real context.
+
+Server facts are computed on read, so there is no backfill window: a run that
+finished long ago still answers. A run with nothing to describe answers inside
+the document with `state: "unavailable"` and a reason — `snapshotMissing`,
+`snapshotPartial` (the servers that answered are still listed, and their numbers
+are real), or `setupNotObserved` (unmeasured, **not** failed).
+
+Related conformance and readiness runs are joined by **server id alone**, so a
+different server version, environment or auth context is not excluded by the
+match. Each carries its own timestamp, and none of them is this run's verdict.
+
+### `cloud eval status`
+
+Get the status and summary of an eval run.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--diagnostics-limit <n>` | No | Failure diagnostics per page (1–200; default 20) |
+| `--diagnostics-cursor <cursor>` | No | Cursor from a previous response's `decisionSummary.diagnostics.nextCursor` |
+| `--stages` | No | Print all six user-value chain rows for each failing trial (`--format human`) |
+
+The response carries a `judges` block with each advisory grader's state and
+per-case grades. `status: null` means that judge was never requested for the
+run — different from a judge that ran and graded nothing. In `--format human`,
+each judge that actually graded gets a one-line summary.
+
+Goal completion reports per-iteration `status`: `scored`, `error`, or `skipped`.
+Legacy scored rows are returned as `scored`. A failed job retains completed
+measurements alongside any unscored error or skipped rows; job failure does not
+mean every trial failed its goal. Use each row's `status` before interpreting
+`score` and `passed`, and join rows to trials using `iterationId`.
+Pending jobs return an empty `cases` array and may expose `progress`
+(`total`, `completed`, `errors`, `skipped`). Terminal jobs may include template
+version/hash; case rows may also include `gradingKey`, `errorCode`,
+`evidenceHash`, and `evidenceManifest` for provenance. Older results can omit
+these fields. Groundedness retains its existing per-case grade shape.
+
+The failure diagnostics inside `decisionSummary` are **paginated**, and a page
+that is not the whole set says so: `diagnostics.complete` is `false` and
+`diagnostics.nextCursor` carries the next page. Without `--diagnostics-cursor`
+a run with more failures than the page size reports only its first 20, so a
+script that concludes "only these failed" from one page is reading a sample.
+Walk the pages:
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval status --run "$RUN_ID" --diagnostics-limit 200 --format json
+# then, while .decisionSummary.diagnostics.complete is false:
+mcpjam cloud eval status --run "$RUN_ID" --diagnostics-limit 200 \
+  --diagnostics-cursor "$NEXT_CURSOR" --format json
+```
+
+`--stages` expands each failing trial from one first-failed-stage line to all
+six chain rows — connection, discovery, selection, tool call, response, user
+value — with each row's state and reason in words. It is off by default because
+six rows per trial is a lot of terminal on a run with twenty failures; the
+first-break line above the per-trial detail is printed either way.
+
+### `cloud eval rerun`
+
+Rerun a finished run's failed cases as a new run. The platform picks the cases:
+every case with a trial that did not complete and pass. Cancelled and skipped
+trials do not count. The new run records `rerunOfRunId` and `rerunScope`, and
+because it ran only what failed, it is never used as the suite's latest run, a
+trend point, or a comparison baseline.
+
+| Flag | Required | Description |
+| - | - | - |
+| `<run-id>` | Yes | Eval run ID to rerun (from `eval run`) |
+| `--failed` | Yes | Rerun only the cases that did not pass (the only rerun scope) |
+| `--dry-run` | No | Show which cases would rerun, and why, without starting anything. Exits 1 when nothing can rerun |
+| `--notes <text>` | No | Free-text note stored on the new run |
+| `--idempotency-key <key>` | No | Repeating the call returns the run it already started |
+| `--wait` | No | Wait for the rerun to reach a terminal status; exits on its verdict like `eval run --wait` |
+| `--wait-timeout <ms>` | No | Maximum time to wait (requires `--wait`) |
+| `--json` | No | Print machine-readable JSON (same as `--format json`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+A run that is still executing or grading, or one where nothing qualifies, is
+refused with `409` (`details.reason` is `RERUN_SOURCE_NOT_TERMINAL` or
+`RERUN_NOTHING_TO_RERUN`) before anything starts.
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval rerun "$RUN_ID" --failed --dry-run --json
+mcpjam cloud eval rerun "$RUN_ID" --failed --wait
+```
+
+### `cloud eval judge`
+
+Grade a finished eval run with LLM as Judge. **Spends your organization's model
+budget.** Returns a pending receipt; read the grades from `eval status`.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--force` | No | Re-grade a run that already has a judge result |
+| `--enable` | No | Grade this run even though the judge was off when it ran |
+| `--judge-model <id>` | No | Judge model for this run only |
+| `--judge-threshold <0-1>` | No | Pass threshold for this run only |
+
+A run's grading config is pinned when the run starts, so turning the judge on
+for the suite does not reach a run that was already recorded — `--enable` is
+what grades it, and it changes nothing beyond that run. Passing neither
+`--judge-model` nor `--judge-threshold` grades with the suite's own config,
+clearing any override a previous request left on the run.
+
+### `cloud eval judge-backtest`
+
+Preview a draft judge rubric against recorded evidence. **Spends your organization's model budget.** Leaves the run verdict unchanged. Supports paginated continuation for large runs.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Terminal eval run ID (from `eval run`) |
+| `--json <request>` | Yes | JSON or `@file` with `rubric` and optional `continuation`. Set `rubric` to an object with `instructions` and/or `criteria`, or `null` for objective-only grading |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+The response includes a `cases` array with per-case draft scores, a `summary` with `graded`, `flips`, and `storedMissing` counts, and pagination fields (`cursor`, `sourceHash`, `reservationId`, `isDone`). When `isDone` is `false`, pass the returned `cursor`, `sourceHash`, and `reservationId` back in `continuation` with the unchanged rubric to grade the next page. Completed page retries return cached results.
+
+```bash theme={"theme":"css-variables"}
+# First page
+mcpjam cloud eval judge-backtest --run run_123 \
+  --json '{"rubric":{"instructions":"Check every tool result"}}'
+
+# Continue with the next page
+mcpjam cloud eval judge-backtest --run run_123 \
+  --json '{"rubric":{"instructions":"Check every tool result"},"continuation":{"cursor":1,"sourceHash":"<hash>","reservationId":"<id>"}}'
+```
+
+### `cloud eval stage-analytics`
+
+Read the user-value chain funnel — how far value travelled through
+`connection → discovery → selection → call → response → userValue`, and how
+much of the run was measured at each stage.
+
+Address it two ways, and exactly one of them per invocation:
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | XOR `--suite` | One run's funnel, as a single document |
+| `--suite <id-or-name>` | XOR `--run` | One page of that suite's runs, newest completion first — one document per run |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous response (`--suite` only) |
+| `--limit <n>` | No | Documents per page, 1–100 (`--suite` only) |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval stage-analytics --run "$RUN_ID" --format json
+mcpjam cloud eval stage-analytics --suite checkout --limit 10 --format json
+```
+
+**Counts are returned; rates are not.** Every field is a count of trials, and
+the arithmetic is stated on the document: `passed + failed = measured`,
+`measured + notMeasured = reached`, `reached + notReached + reachUnknown =
+applicable`. Derive a rate only with its denominator in hand — **a zero
+denominator means not measured**, never 0% and never 100%.
+
+**Never sum across stages, and never merge across runs.** One trial is counted
+in every stage's tally, so adding the six counts the same trial six times. Each
+document describes one run's population; the `--suite` listing renders runs
+side by side as a trend series and never aggregates them.
+
+**A listing is only comparable within a partition.** Two funnels drawn beside
+each other *is* a comparability claim, and it holds only across runs that share
+`runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`
+and `measurementsSchemaVersion`, and whose `materializationState` is `final`.
+An **absent** `runGroupId`, `configRevision` or `caseSetFingerprint` blocks
+comparability rather than being assumed compatible — two runs that both record
+nothing compare equal while sharing nothing at all.
+
+**Three absences, three different answers.** A run that does not exist fails as
+a run-not-found error. A deployment that does not serve this route fails with a
+message saying so — that is a fact about the deployment, not about the run. Only
+a run that was retrieved and has no document reports `analyticsState:
+"unmeasured"` with `analytics: null`, and that state is permanent: there is no
+backfill, so a run that finished before stage measurement shipped will never
+gain a funnel.
+
+### `cloud eval iterations`
+
+List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
+
+`--project` is optional. Selection follows `--project` → input selector → `MCPJAM_PROJECT` → nearest project link → automatic newest accessible project.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous response |
+| `--limit <n>` | No | Max iterations per page (1–200) |
+
+### `cloud eval gate`
+
+Apply a pass/fail policy to an eval run. Add `--wait` to poll an in-progress
+run before evaluating it.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--min-pass-rate-percent <0-100>` | No | Minimum share of iterations that must pass |
+| `--no-gating-score-errors` | No | Fail if any required scorer errored |
+| `--min-scorer-pass-rate <scorerId=percent>` | No | Minimum pass rate for one scorer; repeatable |
+| `--min-mean-score <scorerId=0..1>` | No | Minimum mean score for one scorer; repeatable |
+| `--baseline <runId>` | No | Baseline run ID to gate a regression delta against, in addition to any threshold flags above. Mutually exclusive with `--baseline-sha` |
+| `--baseline-sha <sha>` | No | Baseline **source commit SHA**, resolved server-side to the completed run in this suite recorded against it. Mutually exclusive with `--baseline` |
+| `--min-sample-size <n>` | No | Iterations required on **each** side before a pass-rate regression is decidable (default 5); requires `--baseline` or `--baseline-sha` |
+| `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` or `--baseline-sha` |
+| `--gate-deterministic-regressions` | No | Fail if a deterministic required scorer flipped from passed to failed; requires `--baseline` or `--baseline-sha` |
+| `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` or `--baseline-sha` |
+| `--max-cost-usd <usd>` | No | Fail if the run's MCPJam-billed cost exceeded this many dollars. Accepts decimals (`0.05`) |
+| `--max-cost-increase-percent <percent>` | No | Fail if cost rose by more than this percentage of the baseline's; requires `--baseline` or `--baseline-sha`. Values above 100 are allowed — a run costing three times its baseline is a 200% increase |
+| `--wait` | No | Poll until the run reaches a terminal status |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 2100000) |
+| `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
+| `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
+
+Both cost gates report **non-gateable** (exit 3) rather than passing when the
+cost is unknown or only partly measured. Cost is stamped per iteration and is
+absent whenever the model was not MCPJam-billed (your own API key), the run
+used a harness (which mixes models within a turn), or the trial reported no
+tokens — so a total built from some of the run is smaller than the truth, and
+gating a ceiling against it would pass exactly the runs least understood. A
+`--max-cost-increase-percent` gate is also non-gateable when the baseline cost
+nothing, since a percentage of zero is undefined.
+
+Report files are flushed before gate exit codes are set, including failed and
+incomplete gate outcomes.
+
+**`--baseline` / `--baseline-sha`.** Either flag fetches the same run
+comparison `cloud eval compare` uses and folds a regression verdict into the
+same report and exit code as the threshold flags above — either one alone
+enables the pass-rate regression gate with its default tuning; the four tuning
+flags need a baseline to mean anything and are a usage error without one. A
+case set that changed, was added or removed, or ran an unequal iteration count
+between the two runs makes the whole-run pass-rate and p95-latency gates
+non-gateable (exit `3`) rather than a silent pass or a misread regression;
+the deterministic per-case regression gate is exempt and can still fail
+(exit `1`) on a matching case.
+
+The two are **mutually exclusive** — passing both is a usage error (exit `2`).
+There is deliberately no single flag that guesses which kind you meant: a
+Convex run ID is an opaque string with no documented format, and an
+abbreviated commit SHA is indistinguishable from one by construction, so the
+kind is named by the flag rather than inferred. A commit SHA passed to
+`--baseline` is rejected with a pointer to `--baseline-sha` instead of being
+sent as a doomed run lookup.
+
+A SHA that matches no completed run in the suite is **not** an error: it is the
+ordinary "no baseline" outcome, `incomplete` (exit `3`), which means the
+comparison established nothing — never a regression. When the SHA matched more
+than one eligible run, or the lookup was truncated before it could prove
+uniqueness, the gate report's baseline provenance records `baselineMatchCount`
+alongside `baselineMatchCountTruncated`; the count is a **floor**, not a total,
+so the two are always read together. An absent count means the match was
+unambiguous.
+
+Baseline provenance records both what was requested and what it resolved to —
+`requestedBaselineKind`, `requestedBaselineRunId` or
+`requestedBaselineCommitSha`, the backend-echoed `resolvedBaselineCommitSha`,
+and the resolved `baseRunId` — so an archived report can answer "which run did
+commit X compare against?" without the invocation that produced it. There is no
+automatic baseline selection: a baseline is compared only when one is pinned.
+
+**Gate waivers.** A run whose gate failed can be overridden by an authorized
+user, on the record, until an expiry they name — see
+[`cloud eval gate waive`](#cloud-eval-gate-waive) below. When a waiver is in
+force, `eval gate` reports the outcome as **`waived`** and exits `0`.
+
+`waived` is deliberately not the same as `passed`. The run keeps its own failed
+result, the failing verdicts stay in the report, and the waiver — **who** granted
+it, **why**, and **until when** — is named in every output format: the human
+report, `json-summary`, `junit-xml` (as a `<skipped>` element on the gate
+testcase, which does not fail the build and does not render as a clean green
+row), and `html` (its own badge and section, neither green nor red).
+
+Only a real verdict failure can be waived. An `incomplete` gate — a cancelled
+run, a `--wait` timeout, a network failure, non-gateable score evidence — keeps
+exit `3` no matter what waiver is on the run: a waiver granted because the evals
+regressed is not consent to ship on an infrastructure failure. A `usage_error`
+keeps exit `2` for the same reason.
+
+The CLI also re-derives the waiver's expiry itself rather than trusting the
+platform's `active` flag, so a lapsed waiver cannot keep a gate green.
+
+**Exit codes.** `eval gate` is the command that fails a build, so it is the one
+that maps a verdict onto an exit code. It keeps four:
+
+| Code | Meaning |
+| - | - |
+| `0` | Every requested gate passed, **or** a failed gate was waived |
+| `1` | An eval **verdict** failed. Reserved for exactly that |
+| `2` | Usage error — an unknown scorer, or a threshold out of range |
+| `3` | Incomplete: the run was cancelled, the wait timed out, the network failed, or the run is non-gateable — its score evidence did not verify, or its **import evidence is incomplete** |
+
+**Incomplete import evidence is exit `3`, decided first.** When the platform
+reports the run's `importEligibility` as `incomplete` (or `gateable: false`
+under any status), `eval gate` returns `3` **before** any verdict is computed
+and before a waiver is considered. That ordering is the point: import
+completeness is evidence ELIGIBILITY, not a measurement of the server, so it is
+never exit `1` — the run has not said the server regressed, it has said its own
+evidence cannot be relied on. A waiver cannot override it either, for the same
+reason it cannot override a cancelled run: a waiver granted because the evals
+regressed is not consent to ship on evidence nobody finished reviewing. Fix it
+by re-running with the approvals the cases need, or with the unsupported cases
+excluded.
+
+**The baseline is checked too.** A `--baseline` / `--baseline-sha` gate rests
+on two runs, so `eval gate` reads the resolved baseline run's own
+`importEligibility` and returns `3` when the baseline cannot gate — the compare
+response reports counters, not provenance, so the baseline is fetched by id
+rather than assumed sound. Without that, a baseline whose own approximations
+were never approved could still produce a confident "no regression". A baseline
+run that cannot be read at all is also `3`: "we could not look" is not "it is
+fine".
+
+A run whose eligibility is `legacy` (no imported cases at all — every native
+run) or `eligible` goes through the ordinary verdict logic unchanged. A server
+that reports no eligibility at all behaves exactly as it did before the field
+existed.
+
+No infrastructure condition ever maps to `1`. A job that fails a release because
+a network call flaked, and reports it as a regression, teaches people to ignore
+the gate — so retry on `3`, and treat `1` as a real finding about the server.
+
+These four are deliberately **not** the same set `eval run --wait` uses (see
+that command above): `gate`'s exit `3` means "incomplete / non-gateable", and
+remapping it to the six-code scheme would invert pipelines that already
+retry on `3`. This is a deliberate compatibility exception for v1 — a
+six-code migration for `gate` is deferred behind a future opt-in flag, kept
+here so the exception stays documented rather than silently diverging.
+
+### `cloud eval gate waive`
+
+Override a **failing** run's gate until an expiry you name. Requires the manage
+tier, enforced by the platform — whoever launched the run gets no exception for
+having launched it.
+
+This does **not** make the run pass. The run keeps its `result`, and the waiver
+is reported by both things that read the gate: the GitHub Check Run and
+`eval gate` itself.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (inherited from `eval gate`) |
+| `--project <id-or-name>` | No | Project name or ID (inherited from `eval gate`) |
+| `--reason <text>` | Yes | Why the gate is being overridden. Max 500 characters |
+| `--expires-in <duration>` | Yes | How long the waiver lasts: `30m`, `12h`, `7d`. Capped at 30 days |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval gate waive --run run_123 --reason "hotfix ships today; regression tracked in ENG-4821" --expires-in 3d
+```
+
+> [!WARNING]
+>
+> **The reason is stored unredacted, for the life of the suite.** It is readable
+> by anyone who can see the suite and has no independent retention window. Never
+> paste secrets, tokens, or customer data into it. The CLI prints this notice
+> before it accepts a reason.
+
+A bare number is rejected: `--expires-in 7` is ambiguous between seven minutes
+and seven days, and the difference is a gate that reopens before lunch or three
+weeks later. The 30-day cap is enforced by the platform, so the refusal names
+the cap and what to do instead.
+
+Waiving a run that already has a waiver in force is a **conflict**, not a second
+waiver: the existing one is reported back and is left untouched, because two
+active waivers would make "which reason is on the check" a race.
+
+### `cloud eval gate unwaive`
+
+Revoke a waiver, putting the gate and the GitHub Check Run back.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (inherited from `eval gate`) |
+| `--project <id-or-name>` | No | Project name or ID (inherited from `eval gate`) |
+| `--waiver <id>` | No | Waiver to revoke. Omit to revoke whichever is in force over `--run` |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval gate unwaive --run run_123
+```
+
+Idempotent. A second revoke reports the **original** revocation rather than
+restamping it — that is a success, not an error, and it preserves the record of
+who actually ended the waiver. An already-expired waiver can still be revoked;
+the audit trail distinguishes "this was wrong" from "this ran out".
+
+### `cloud eval trace`
+
+Fetch the full trace for one eval iteration (complete message history and spans). Can be large.
+
+`--project` is optional. Selection follows `--project` → input selector → `MCPJAM_PROJECT` → nearest project link → automatic newest accessible project.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval screenshots`
+
+Pull the rendered widget screenshots an eval iteration captured — printed
+inline when the terminal supports images, otherwise as URLs, or saved to disk
+with `--out`.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--out <path>` | No | Save the PNGs here instead of printing them. A directory — except without `--video`, where a single-screenshot iteration may name a file. Created if it does not exist |
+| `--index <n>` | No | Only the Nth screenshot (1-based) |
+| `--video` | No | With `--out`, also save the iteration's replay recording beside the screenshots, as `<iteration>.mp4` or `<iteration>.webm` |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval video`
+
+Get the replay recording an eval iteration made — prints the URL, or downloads
+it with `--out`.
+
+**Unattended runs on a hosted browser are recorded at 15 fps.** Idle time is
+held rather than dropped, so the file's duration matches the run's wall clock
+even when the page sat still for a minute. Recordings stop at 60 MiB and
+**say so**: a capped take is a complete, playable *beginning* of the run rather
+than a corrupt file, and both this command and the run page label it. Read
+`videoMeta.truncated` before treating a duration as the length of the run.
+
+A local widget-harness run records a `.webm` through Playwright and reports
+nothing else about it; a hosted run records an `.mp4` and reports its duration,
+rate, and distinct-frame count. `--format json` returns `videoMeta` when the
+recording carried one.
+
+Recording can be turned off for a deployment, in which case hosted runs simply
+have no recording to fetch.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--out <path>` | No | Download the recording to this file instead of printing the URL |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+```bash theme={"theme":"css-variables"}
+# The URL, plus what the recording says about itself
+mcpjam cloud eval video --run "$RUN_ID" --iteration "$ITERATION_ID"
+
+# Screenshots and the recording together, into one directory
+mcpjam cloud eval screenshots --run "$RUN_ID" --iteration "$ITERATION_ID" \
+  --out ./evidence/ --video
+```
+
+### `cloud eval get`
+
+Show an eval suite's full settings.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval validate`
+
+Validate a local eval **suite file** — the versioned declarative document that
+describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
+canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
+
+Offline by default: without `--project` this command builds no API client, reads
+no API key and never touches the network. Passing `--project` is the only thing
+that changes that, and it is keyed off the FLAG — a linked directory or an
+`MCPJAM_PROJECT` in the environment never turns the offline command into a
+networked one.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--file <path>` | Yes | Suite file to validate, `.yaml` or `.json` (or `-` for stdin) |
+| `--project <id-or-name>` | No | Also resolve the file's deterministic tool references against this project's live servers. Opt-in; authenticates and makes network calls |
+
+| Exit code | Meaning |
+| - | - |
+| `0` | Valid |
+| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first. `eval run --file` on the same bytes exits **2** — 1 is reserved there for a real verdict |
+| `2` | Nothing was validated: unreadable path, input over the 1 MiB limit, or malformed YAML |
+
+Input is capped at **1,048,576 bytes (1 MiB) of UTF-8** and is never truncated —
+a file over the cap is rejected outright.
+
+Under `--format json`, stdout carries this envelope whether the file is valid or
+not:
+
+```jsonc theme={"theme":"css-variables"}
+// exit 0
+{
+  "valid": true,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+  "findings": []
+}
+
+// exit 1 or 2
+{
+  "valid": false,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "stage": "contract",           // "contract" is exit 1; "input" and "parse" are exit 2
+  "findings": [
+    {
+      "code": "SUITE_FILE_INVALID",   // or SUITE_FILE_TOO_LARGE / _EMPTY / _YAML_INVALID / _MULTIPLE_DOCUMENTS
+      "path": ["cases", 1, "id"],      // field path as segments
+      "pointer": "cases[1].id",        // the same path, rendered
+      "message": "duplicate case id \"c_refund\""
+      // `location` accompanies SUITE_FILE_YAML_INVALID findings only, where the
+      // YAML parser reported a position: { "line": 24, "column": 9 }
+    }
+  ]
+}
+```
+
+Findings are deterministically ordered and carry no timestamps, so two runs over
+the same bytes produce byte-identical output.
+
+An unreadable or missing path is a usage error and goes to stderr in the CLI's
+standard error envelope rather than as findings — nothing was read, so there is
+nothing to report about.
+
+**What "valid" does not mean, without `--project`.** The offline check judges
+the file against the suite-file contract. It does **not** re-resolve tool names,
+server references or fixtures against a project's live discovery, so a file that
+validates here can still fail to run.
+
+#### `--project`: resolving the names against a real project
+
+With `--project`, the command authenticates, resolves the named project, and
+checks every deterministic `toolCall` step against the live tool inventory of
+the targets the file would run on. Structural findings are unchanged and the
+live half is additive, under its own key:
+
+```jsonc theme={"theme":"css-variables"}
+{
+  "valid": false,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+  "findings": [],
+  "projectValidation": {
+    "project": { "id": "proj_123", "name": "Alpha" },
+    "targets": ["environment prod"],
+    "valid": false,
+    "findings": [
+      {
+        "code": "TOOL_REFERENCE_UNRESOLVED",   // or TOOL_DISCOVERY_UNAVAILABLE
+        "path": ["cases", 1, "steps", 0, "toolName"],
+        "pointer": "cases[1].steps[0].toolName",
+        "caseId": "c_render_legacy",
+        "caseTitle": "Renders the legacy receipt",
+        "toolName": "render_gone",
+        "serverName": "billing",
+        "targetLabel": "environment prod",
+        "disabled": true,
+        "imported": true,
+        "message": "Server \"billing\" in environment prod exposes no tool named \"render_gone\"."
+      }
+    ]
+  }
+}
+```
+
+Three properties of the live check are worth knowing before you rely on it:
+
+* **Only `toolCall` steps count.** A tool named in prompt text is a hint the
+  model may or may not act on, and an `assert` step is an expectation a case may
+  legitimately fail at run time. Treating either as a deterministic reference
+  would make a negative test unwritable.
+* **Per target, never over their union.** A file that runs against several
+  targets must resolve in all of them; a union would green-light a case that
+  fails on two targets out of three.
+* **Auth and network failures are command errors, not findings.** "Your file
+  names a tool that does not exist" and "we could not look" send you to two
+  different places, so they are never reported as the same thing.
+
+A completed live check with unresolved references is a **verdict on the file**
+and exits `1`, like any other contract failure. A failure to authenticate,
+reach the project, or list a server's tools is a command error on stderr.
+
+### `cloud eval export`
+
+Write a hosted eval suite to a local suite file.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite to export (name or ID) |
+| `--project <id-or-name>` | No | Project the suite belongs to (defaults to the most recently updated project) |
+| `--out <path>` | No | Where to write (default `.mcpjam/evals/<suite-id>.yaml`) |
+| `--force` | No | Replace an existing file at the output path |
+| `--schema-version <1\|2>` | No | Suite-file dialect to write. `1` (the default) spells the count `repetitions` and the rules `checks`; `2` spells them `iterations` and `assertions`. Both dialects load. |
+
+The default path uses the suite's **id**, not its display name: an id is stable
+and path-safe, so a rename does not leave a second file behind.
+
+Like `eval run --file`, export reads `GET /capabilities` first and fetches the
+cases in the vocabulary the deployment advertises; the file it writes is the
+same either way. `--schema-version` chooses the file's dialect, the deployment
+chooses the wire's vocabulary, and neither decides the other.
+
+The dialect is the author's choice and is never inferred: a file has no
+handshake with whatever will read it later, so `eval export` keeps writing
+`schemaVersion: "1"` until you ask for `2`.
+
+**Fail-closed.** A suite file cannot express everything a hosted suite can, and
+this command refuses rather than writing a file that describes a different test
+than the dashboard runs. When any part of a suite is not representable it emits
+`UNSUPPORTED_SUITE_EXPORT` findings, exits `1`, and writes **no file at all** —
+not a partial one, not one with a warning comment. Every finding names the field
+it is about, so the command's output is the authoritative list; the constructs
+that refuse today include:
+
+* several attached project environments, or legacy servers combined with an
+  attached environment (the suite file can name one environment);
+* a pinned sandbox image;
+* automatic LLM-as-judge grading, non-default match options, and an iterations
+  floor that raises a case above its own count;
+* a compare-across-models case and cases that name **different model providers**
+  (a suite file carries one suite-level provider);
+* `replace`/`extend` check overrides, a case that inherits the suite's checks
+  while also carrying its own, and any suite check the predicate contract does
+  not recognise;
+* a suite with no execution model, no minimum accuracy, no name, no runnable
+  server or environment target, or no cases; a case with no steps; and a suite
+  or case id that is not an opaque id;
+* a suite that serializes past the 1 MiB suite-file limit — the size is a
+  property of the suite, and this never truncates.
+
+Case identity is never freshly minted: a case exports under its declared id, or
+under its platform row id, or it refuses. Exporting the same suite twice
+produces the same case ids.
+
+| Exit code | Meaning |
+| - | - |
+| `0` | Written |
+| `1` | The suite cannot be represented losslessly; nothing was written |
+| `2` | Usage: the output path exists and `--force` was not passed, or the suite's cases did not fit one page |
+
+The file is written through a sibling temp file and a rename, so an interrupted
+write leaves the previous file exactly as it was.
+
+### `cloud eval update`
+
+Edit an eval suite's settings (only the flags you pass change).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Suite-update JSON body (or `-` for stdin) |
+| `--json <json>` | No | Inline suite-update JSON (or `@file`, or `-`) |
+| `--name <name>` | No | Rename the suite |
+| `--description <text>` | No | Suite description |
+| `--server <id-or-name...>` | No | Replace the suite's server selection (project server names) |
+| `--computer-image <id-or-name\|off>` | No | Sandbox image eval runs boot a fresh computer from (list them with `mcpjam cloud images list`). `off` uses the provider's default base image |
+| `--client <name...>` | No | Replace client attachments (by name/ID) |
+| `--host <name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
+| `--model <id>` | No | Execution model ID |
+| `--model-selection <json>` | No | Whole saved model selection for the suite (source, connection, `settings.reasoningEffort`) as JSON. A bare `--model` change drops a selection saved for a different model |
+| `--effort <level>` | No | Set the reasoning effort on the suite's **existing** model selection (see [Reasoning effort](#reasoning-effort)) |
+| `--clear-effort` | No | Remove the reasoning effort from the suite's model selection |
+| `--system-prompt <text>` | No | Execution system prompt |
+| `--temperature <n>` | No | Execution temperature |
+| `--min-accuracy <pct>` | No | Suite accuracy threshold: one percentage, 0–100, over the whole run. Mutually exclusive with `--pass-threshold` |
+| `--pass-threshold <0-1>` | No | Pass threshold as a fraction, 0–1 (`0.9`, not `90`), preserving the suite’s criterion; suite-wide suites write a percentage. Mutually exclusive with `--min-accuracy` |
+| `--min-iterations <1-10\|off>` | No | Minimum iterations per case: a floor that RAISES a case's own count — every case runs at least this many times, and a case configured for more keeps its count. `off` removes the floor. Mutually exclusive with `--iterations` |
+| `--iterations <n>` | No | Iterations per case: the suite DEFAULT, 1–100, which a case can override. Mutually exclusive with `--min-iterations` |
+| `--tool-call-order <any\|in-order\|exact>` | No | Tool call order |
+| `--arguments <ignore\|partial\|exact>` | No | Argument matching |
+| `--extra-tool-calls <unlimited\|N>` | No | Allowed extra tool calls |
+| `--judge <on\|off>` | No | Turn LLM-as-judge grading on/off. `on` both enables the judge and sets it to grade every run as it completes; `off` stops both |
+| `--judge-model <id>` | No | Judge model ID |
+| `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
+
+#### Which grading flags a suite takes
+
+A suite has ONE pass criterion and ONE iteration rule, and
+`mcpjam cloud eval get` reports which under `settings.policy`:
+
+| `settings.policy` | Criterion flag | Iteration flag |
+| - | - | - |
+| `legacy` | `--min-accuracy <pct>` or `--pass-threshold <0-1>` | `--min-iterations <1-10\|off>` |
+| `v2` | `--pass-threshold <0-1>` | `--iterations <n>` |
+
+The two criteria are **not two units of one number.** A suite-wide accuracy
+threshold asks whether one rate across the whole run reaches a percentage; a
+per-case pass rate asks whether each case passes a fraction of its own
+iterations. Ten cases, nine always passing and one always failing, passes a 90%
+suite-wide bar and fails a 0.9 per-case one — so dividing a percentage by 100
+moves the bar for every suite with more than one case.
+
+The iteration flags differ the same way: `--min-iterations` RAISES a case's own
+count and `--iterations` REPLACES it, so a case configured for 7 runs 7 times
+under a floor of 3 and 3 times under a default of 3.
+
+Passing both flags of a pair is a usage error. The CLI and MCP read the suite's
+criterion first and refuse iteration fields that the suite does not use.
+The CLI's `--pass-threshold 0.9` preserves the criterion: on a suite-wide suite
+it writes `settings.minimumAccuracy: 90`; on a per-case suite it writes
+`settings.passThreshold: 0.9`. Grading flag edits carry the revision read from
+the suite, and unchanged edits skip the write.
+
+Changing the criterion is not offered by the app, CLI or MCP today. It requires
+a direct API `PATCH` with both `settings.repetitions` and `settings.passThreshold`.
+An explicit scope-change operation is a follow-up.
+
+### `cloud eval revisions`
+
+List a suite's settings history, newest first: one entry per committed edit,
+with who made it, which stored fields moved, the note they left, and how many
+runs were launched against it. Rows carry no configuration snapshots.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--limit <n>` | No | Maximum revisions to return, 1–100 (defaults to 25) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous page |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval revisions --suite "Asana MCP Evals" --format json
+```
+
+### `cloud eval github list`
+
+List the repositories whose pull requests run an eval suite, plus the
+repositories the MCPJam GitHub App can reach.
+
+> [!NOTE]
+>
+> This subgroup was `cloud eval checks`, and `mcpjam cloud eval checks
+>     list|connect` still works. It was renamed because `checks` under `cloud eval`
+> already meant a case's **grading rules** — the suite's checks, the app's
+> Checks section, `create_eval_case`'s `checks` — while these two commands
+> manage **GitHub** checks. Two resources under one noun.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID — only used to pick the organization (defaults to the most recently updated project) |
+
+`available: false` means GitHub Checks is not enabled for the organization at
+all, so connecting a repository will not help. `connectable: null` means the
+App could not be asked (GitHub unavailable, or no installation) — different
+from an empty list, which would mean it reaches nothing.
+
+### `cloud eval github connect`
+
+Run this suite on every pull request to a repository. **Affects everyone who
+opens a pull request on that repository**, and with `fail-closed` it can block
+their merges.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `eval github list` reports as connectable |
+| `--outage-policy <fail-open\|fail-closed>` | Yes | What the check reports when MCPJam cannot conclude |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+`--outage-policy` has no default on purpose: it decides what happens to other
+people's pull requests during an MCPJam outage, and it is not editable from
+this command afterwards. Retargeting a repository at a different suite, pausing
+it, and disconnecting all live in the app's Settings → Integrations, where every
+connected repository is visible at once.
+
+Connecting also turns on pull-request comments: MCPJam posts one comment on each
+pull request to the repository and keeps that same comment updated on every later
+push. Comments are on for every connected repository, and can be turned off per
+repository in the app's Settings → Integrations → GitHub.
+
+### `cloud eval delete`
+
+Permanently delete an eval suite (and its cases and runs).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval schedule`
+
+Enable or disable scheduled runs for a suite.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--enable` | No | Enable scheduled runs |
+| `--disable` | No | Disable scheduled runs |
+| `--interval <minutes>` | No | Run interval in minutes (5–10080) |
+| `--environment <id-or-name>` | No | Project environment the scheduled runs launch (only with `--enable`) |
+
+Pass either `--enable` or `--disable` (not both).
+
+A scheduled run launches exactly one run, so a suite with several attached environments
+must pin one with `--environment`; a suite with exactly one defaults to it. `--environment`
+is rejected with `--disable`: disabling preserves the existing pin, so accepting one there
+would silently do nothing.
+
+### `cloud eval environments` subcommands
+
+Attach or detach the project environments an eval suite runs against. Attaching is what
+makes `eval run --environment` available for the suite.
+
+#### `cloud eval environments set`
+
+Replace the suite's attached environments (this sets the whole list, in order).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--environment <id-or-name...>` | Yes | Project environments to attach, in order |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval environments set --suite "Checkout smoke" --environment Staging Prod
+```
+
+Rejected if it would strand an enabled schedule pinned to an environment being removed —
+repoint the schedule (`eval schedule --enable --environment ...`) or disable it first.
+
+#### `cloud eval environments clear`
+
+Detach every environment, reverting the suite to its saved server selection.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+Subject to the same schedule guard as `set`: rejected if the suite has an
+enabled schedule pinned to one of the environments being removed. Repoint the
+schedule or disable it first.
+
+### `cloud eval cases` subcommands
+
+#### `cloud eval cases list`
+
+List a suite's test cases.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `cloud eval cases get`
+
+Show one test case.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--case <id-or-title>` | Yes | Eval case title or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `cloud eval cases run`
+
+Run a single case as a persisted, fully-queryable run — inspect it with `eval iterations` /
+`eval steps` like any other run.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--case <id-or-title>` | Yes | Eval case title or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--server <id-or-name...>` | No | Override the suite's saved servers for this run |
+| `--environment <id-or-name>` | No | Project environment to run against (must be attached to the suite) |
+| `--client <id-or-name>` | No | Attached client to run against, so the run is stamped with that client's config |
+| `--host <id-or-name>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
+| `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment: the client it runs as. **Ephemeral** — this command has no `--save-targets` |
+| `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
+| `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
+| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-model-selection <json>` | No | One whole saved model selection to run this case on, at its effort |
+| `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
+| `--iterations <n>` | No | Run the case this many times (1-10) |
+| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
+| `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
+
+Every `--compose-*` flag behaves exactly as it does for `eval run` — see
+[Composing a target instead of naming one](#composing-a-target-instead-of-naming-one).
+Target selection follows the same rules ([Which target runs](#which-target-runs)),
+except that a single case run targets ONE thing — there is no `--all-targets` here.
+
+#### `cloud eval cases create`
+
+Add a test case to a suite (definition via `--file`/`--json`).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Case JSON body (or `-` for stdin) |
+| `--json <json>` | No | Inline case JSON (or `@file`, or `-`) |
+| `--title <title>` | No | Case title (overrides the body) |
+
+#### `cloud eval cases update`
+
+Edit a test case (definition via `--file`/`--json`).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--case <id-or-title>` | Yes | Eval case title or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Case JSON body (or `-` for stdin) |
+| `--json <json>` | No | Inline case JSON (or `@file`, or `-`) |
+| `--title <title>` | No | Rename the case |
+
+#### `cloud eval cases delete`
+
+Permanently delete a test case.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--case <id-or-title>` | Yes | Eval case title or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `cloud eval cases generate`
+
+AI-generate test cases from the suite's tools. Included with MCPJam; no customer credits consumed; it counts against the organization's daily generation quota.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--mode <normal\|negative>` | No | Generation mode (default `normal`) |
+| `--server <id-or-name...>` | No | Servers to discover tools from (default: suite's) |
+| `--environment <id-or-name>` | No | Discover tools from this attached environment's server set |
+| `--case-model <id...>` | No | Execution model(s) for the generated cases |
+| `--simple <n>` | No | How many easy, single-tool cases |
+| `--multi-tool <n>` | No | How many medium, 2+ tool cases |
+| `--multi-turn <n>` | No | How many multi-turn follow-up cases |
+| `--complex <n>` | No | How many hard / cross-server cases |
+| `--negative <n>` | No | How many negative (no-tool) cases |
+| `--vary-user-styles` | No | Vary query phrasing across a realistic range of user styles |
+| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again |
+
+#### `cloud eval cases import`
+
+Turn a document — a test plan, a QA checklist, a spreadsheet of scenarios — into runnable test cases with MCPJam's AI and add them to the suite. Any text document works (markdown, JSON, CSV, plain notes), up to 100 KiB; the model reads the shape itself. **Costs money:** each import consumes customer credits.
+
+Cases the model could not finish are not created. They come back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts so a person can complete them. To fix one, import only that case's corrected text — re-sending the whole document authors and bills every case in it again.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | One of | Document to import (`-` reads stdin) |
+| `--content <text>` | One of | Document text, instead of `--file` |
+| `--file-name <name>` | No | Name recorded on each case's source (default: `--file`'s basename) |
+| `--server <id-or-name...>` | No | Servers to discover tools from (default: suite's) |
+| `--environment <id-or-name>` | No | Discover tools from this attached environment's server set |
+| `--case-model <id...>` | No | Execution model(s) for the imported cases |
+| `--duplicate-policy <block\|warn\|create_anyway>` | No | What to do with a case that already exists (default `block`) |
+| `--override-reason <text>` | No | Why importing a duplicate is intended (required by `warn` / `create_anyway`) |
+| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again |
+
+***
+
+## `mcp` command
+
+### `mcp`
+
+Run MCPJam as an MCP server over stdio so MCP clients (Claude Desktop, Claude Code, Cursor, ...) can connect to, exercise, and debug other MCP servers. See [MCPJam as an MCP server](https://docs.mcpjam.com/cli/mcp-server.md) for the exposed tools and client setup.
+
+```bash theme={"theme":"css-variables"}
+npx -y @mcpjam/cli@latest mcp
+```
+
+The command takes no flags of its own. The global `--timeout <ms>` flag sets the default per-request timeout against target servers, and `--quiet` suppresses the startup notice on stderr. Stdout carries only JSON-RPC; never pipe other output into it.
+
+***
+
+## `telemetry` commands
+
+Telemetry commands inspect and configure anonymous CLI telemetry. They never emit telemetry events themselves.
+
+### `telemetry status`
+
+Shows the effective telemetry state, install ID state, state file path, debug mode, and disable reason when disabled. This command does not create an install ID.
+
+### `telemetry disable`
+
+Persistently disables anonymous CLI telemetry by writing `enabled: false` to the telemetry state file. If no install ID exists yet, this command does not create one.
+
+### `telemetry enable`
+
+Persistently enables anonymous CLI telemetry. If no install ID exists yet, this command creates a random install UUID.
+
+***
+
+## `cloud` workspace
+
+`mcpjam cloud` is the account-bound namespace. Log in, link a project, then run evals, tunnels, and the rest of the Cloud groups.
+
+### Cloud account session
+
+See [`cloud login` / `logout` / `whoami`](#cloud-login--logout--whoami) below.
+
+### `cloud link`
+
+Pin the current Git worktree (or `--here` cwd) to a Cloud project by writing `.mcpjam/project.json`. No secrets. Bare `link` ignores an existing file when choosing what to pin.
+
+| Flag | Description |
+| - | - |
+| `[project]` | Optional project name or ID to pin. Omit to pick the most recently updated project. |
+| `--here` | Write the link in the current working directory instead of the Git worktree root. |
+| `--remove` | Remove the nearest project link (or the current-directory link with `--here`). Cannot be combined with `[project]`. |
+
+### `cloud status`
+
+Zero-network. Prints credential source, deployment URL, and the project selector that Cloud commands would use (flag / env / link / automatic). API keys are redacted.
+
+The report includes `credential.valid` (`true` / `false` / `null`), `deployment.valid`, and where the server came from in `deployment.source` and `deployment.description` (for example `set by your organization (locked)`). `null` means no credential is configured and is a successful informational status. An invalid explicit `--api-key` or `--api-url` still emits the complete JSON report, sets `ok: false`, includes an `error` string, and exits `1`. Other Cloud commands reject those same values with exit `2` and no report.
+
+### `cloud organizations list`
+
+List organizations and their ids. An `sk_` key sees only its own. Use the id with `mcpjam cloud projects list --org <id>`.
+
+### `cloud projects list`
+
+| Flag | Description |
+| - | - |
+| `--org <id>` | Restrict the listing to one organization (ID only; see `organizations list`) |
+
+### `cloud sessions list`
+
+List Playground chat sessions in the selected project. Same project-selection rule as other Cloud commands.
+
+| Flag | Description |
+| - | - |
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+| `--all-projects` | List across every accessible project. Conflicts with `--project`. |
+| `--status <status>` | Filter by session status |
+| `--limit <n>` | Maximum sessions to return (1–200) |
+
+### `cloud sessions send`
+
+Send one message to a project's MCP servers and print the reply plus the raw tool calls, per-call latency and token usage — the telemetry a participant in the conversation cannot see.
+
+**This spends model credits on every call.**
+
+`--idempotency-key` is required and must be **stable for the intent**, not regenerated per attempt. It is what makes a retry safe: with the same key, a turn that already completed is replayed rather than re-run and re-billed. A fresh key per attempt deduplicates nothing.
+
+Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. A session created by `cloud sessions browser open` is initially unconfigured and accepts its model configuration with its first send. After the first model turn, the session is configured: `--model`, `--environment`, `--server`, `--no-servers`, `--system-prompt` and `--tool-mode` are then refused alongside `--session` rather than silently repinning it.
+
+| Flag | Description |
+| - | - |
+| `--message <text>` | The message to send, as the user (required) |
+| `--idempotency-key <key>` | Stable key for this turn's intent (required). Reuse it when retrying. |
+| `--session <sessionId>` | Continue this session instead of starting one |
+| `--model <modelId>` | Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on the first send: defaults to the selected environment’s or client’s model and is then pinned. A supplied ID must be provider-prefixed. |
+| `--environment <environmentId>` | Target this environment's servers. Conflicts with `--server`. |
+| `--server <serverId...>` | Target these project servers. Conflicts with `--environment`. |
+| `--no-servers` | Start with no MCP servers. Conflicts with `--server` and `--environment`; requires a backend with chat-environment support. |
+| `--system-prompt <text>` | System prompt for the session |
+| `--tool-mode <mode>` | `read_only` (default) advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and **may cause real side effects**. |
+| `--max-steps <n>` | Maximum engine steps this turn (1–16) |
+| `--max-tool-calls <n>` | Cap the tool calls this turn may make. `0` answers without tools. |
+| `--temperature <n>` | Sampling temperature (0–2) |
+| `--effort <level>` | Reasoning effort for the model. First turn only: pinned to the session, refused with `--session`. It replaces the temperature, so it cannot be combined with `--temperature`. Applied or refused by the rail the model runs on, never dropped |
+| `--project <id-or-name>` | Project name or ID (required to start a session) |
+
+`read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.
+
+> [!NOTE]
+>
+> Hosted session browsers require browser availability for your account and deployment. An unavailable browser reports a refusal or `browser.attached: false` with its reason. The live pane opens in the Playground when the browser workspace is enabled.
+
+Add `--browser` to advertise browser tools for this turn. The first browser turn requires `--browser-mode allow_all|read_only|allowlist` unless the selected client supplies a browser policy. Optional `--browser-origins <origin...>` and `--browser-tools <name...>` restrict that grant; `--browser-profile <profileId>` selects its initial saved profile. The grant and profile are fixed thereafter. A client's current browser policy and the session's `read_only` tool mode may further restrict execution.
+
+A continuation must opt in again with `--browser`; a plain send does not wake the desktop. Screenshots are returned as URLs and trace pointers. Use the printed **Open in Playground** link to view the transcript, take over the browser, and select **Resume agent** when finished. API session transcripts are view-only there.
+
+### `cloud sessions browser`
+
+Drive the session browser without a model turn. All verbs except a new `open` require `--session <sessionId>`; use the public session ID, never its read-only conversation UUID or logical browser ID.
+
+| Verb | Description |
+| - | - |
+| `open` | Open or wake an existing session browser. Omit `--session` and provide `--project`, a browser policy, and a stable `--idempotency-key` to create an empty API session. |
+| `navigate <url>` | Navigate to an allowed URL. Use a stable `--command-id` for retries. |
+| `act --verb <verb>` | Act on the page; pass `--target` as JSON and optional `--value` and `--expected-state`. |
+| `invoke <toolKey> --input <json>` | Invoke a permitted page tool. |
+| `observe --mode <mode>` | Read the page; `--mode screenshot --download <dir>` saves screenshot evidence. |
+| `note <text>` | Append a note to the command ledger. |
+| `trace` | Read command receipts and screenshot URLs. |
+| `artifact --command-id <id> --download <dir>` | Fetch screenshot evidence for a command. |
+| `close` | Release the desktop; a later open or browser turn can revive the logical browser. |
+
+Desktop time is metered. The default cap is two live conversation desktops per user across projects; close one before retrying a capacity refusal. Sleeping browsers wake on the next browser command. Human takeover blocks agent actions; after `browser_in_use`, wait for the person to hand control back and observe the current page. Never repeat an `unknown` command under a new ID without inspecting its trace and page state.
+
+### `cloud sessions show`
+
+Print a session's metadata and a window of its raw messages. Message `index` values are **absolute transcript positions** — the same indices `cloud sessions trace` spans reference, so the two outputs join on that number.
+
+A transcript that could not be read reports `transcriptUnavailable: true` and a `null` `messageCount` — never `0`, which would claim the conversation is empty.
+
+| Flag | Description |
+| - | - |
+| `--session <sessionId>` | The session to read (required) |
+| `--after-message <index>` | Start the window at this absolute transcript index |
+| `--limit <n>` | Messages to return (1–200) |
+| `--project <id-or-name>` | Optional project scope; a session in another project answers not-found |
+
+### `cloud sessions trace`
+
+Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript.
+
+Returns the **latest turn** by default rather than the whole session — a session's spans are the largest thing the API emits, and the turn you just took is the one you are debugging.
+
+A turn whose spans could not be read reports `spansUnavailable: true` rather than an empty `spans` array: "made no calls" and "could not fetch" are opposite conclusions.
+
+| Flag | Description |
+| - | - |
+| `--session <sessionId>` | The session to trace (required) |
+| `--turn <turnId>` | Return exactly this turn. Conflicts with `--after-turn`. |
+| `--after-turn <promptIndex>` | Page forward from this turn index |
+| `--limit <n>` | Turns to return (1–20). Defaults to 1. |
+| `--no-spans` | Per-turn summaries without span payloads |
+| `--project <id-or-name>` | Optional project scope |
+
+### `cloud feedback`
+
+Tell the MCPJam team about MCPJam itself: a bug, a missing capability, something confusing, or a docs gap.
+
+**Your text is sent to the MCPJam team, outside your organization, and stored for 180 days.** It is kept in MCPJam's own database and never published. Summarize. Never paste secrets, tokens, or raw tool output. Requires a signed-in account (`cloud login` or an `sk_` key).
+
+When a Cloud command fails with an internal error or a missing capability and the response carries a request id, its error message ends with a ready-to-run `cloud feedback` command that carries that id, so the report can be matched to the server's logs. Gateway failures (502/503/504) and `cloud feedback` itself never suggest it.
+
+| Flag | Description |
+| - | - |
+| `--kind <kind>` | `bug`, `missing_capability`, `confusing`, `docs`, or `other` (required) |
+| `--summary <text>` | One line, up to 200 characters (required) |
+| `--details <text>` | What you were trying to accomplish, what you expected, and what blocked you. For a missing capability, name the task and any workaround you tried. Up to 8000 characters. |
+| `--details-file <path>` | Read `--details` from a file, or `-` for stdin. Conflicts with `--details`. |
+| `--operation <name>` | The command, tool or app page in use |
+| `--request-id <id>` | The request id from the failing command's error |
+| `--error-code <code>` | The failing command's error code |
+| `--project <id-or-name>` | A project the report is about. No project is assumed otherwise, not even a linked one or `MCPJAM_PROJECT`. |
+| `--idempotency-key <key>` | Retry key: a retry with the same key returns the original receipt instead of filing twice |
+
+The result is `{ id, receivedAt, duplicate }`. It means the report is stored. `duplicate: true` means you sent an identical report within the last day; it was counted, not filed again.
+
+***
+
+## `cloud login` / `logout` / `whoami`
+
+These commands manage your MCPJam platform session. `login` opens a browser for OAuth and stores the session locally; `logout` removes it; `whoami` shows the account behind the current credentials.
+
+### `cloud login`
+
+| Flag | Default | Description |
+| - | - | - |
+| `--api-url <url>` | The saved login's server, else `https://app.mcpjam.com/api/v1` | MCPJam API base URL. The value is saved with the session so later cloud commands target the same server without `--api-url`. Must be a valid `http(s)` URL; an invalid value exits with code `2` before any network call. |
+| `--no-browser` | | Print the login URL to stderr instead of opening a browser. |
+
+The `MCPJAM_API_URL` environment variable is equivalent to `--api-url`, and `MCPJAM_BASE_URL` names the same server in the older format, without `/api/v1`. An invalid value in any of them is a hard error (exit 2), and so is setting both variables to different servers.
+
+**Server resolution order for cloud commands:**
+
+1. Explicit `--api-url` flag
+2. `MCPJAM_API_URL`, or `MCPJAM_BASE_URL`
+3. The server saved with the login, only when the saved login is the credential. A login saved before logins recorded their server counts as an MCPJam Cloud login. A login whose recorded server is not a usable address, such as one with a query that an older CLI accepted, is refused with exit `3`: run `mcpjam cloud login` again. `sk_` API keys never use the saved server.
+4. Production default (`https://app.mcpjam.com/api/v1`)
+
+A saved login is only sent to its own server. When it is the credential and the order picks another server, the command exits `3` (`LOGIN_DEPLOYMENT_MISMATCH`) before any request: run `mcpjam cloud login` for that server, or pass an `sk_` key for it. A saved login never blocks `cloud login`, which replaces it, or `cloud logout`, which contacts no server.
+
+`--api-header` values are sent on MCPJam API requests and the login settings request only, never to the sign-in provider. MCPJam API requests never follow a redirect: a `3xx` answer exits `2` (`BACKEND_REDIRECT_REFUSED`).
+
+A locked IT settings file sets the server ahead of all of these, and an unlocked one takes the place of the production default; see [Self-hosted MCPJam](https://docs.mcpjam.com/cli/self-hosted.md) for the file, the lock and corporate proxies.
+
+**Login output fields:**
+
+After a successful login, the result includes:
+
+| Field | Description |
+| - | - |
+| `status` | `"logged_in"` |
+| `issuer` | OAuth issuer URL |
+| `apiUrl` | MCPJam API base URL persisted with the session |
+| `authFile` | Path to the stored session file |
+| `email` | Account email address (present when account lookup succeeded) |
+| `plan` | Account plan (present when account lookup succeeded) |
+| `expiresAt` | ISO 8601 access-token expiry (present when the token carries an expiry) |
+
+Account details (`email` and `plan`) are fetched from the platform after the OAuth exchange completes. If the lookup fails, login still succeeds and a warning is printed to stderr (suppressed with `--quiet`).
+
+### `cloud logout`
+
+No additional flags. Removes the stored MCPJam session.
+
+When `MCPJAM_API_KEY` is set to an active `sk_` key, `logout` prints a warning to stderr (human format only) noting that the CLI remains authenticated via the environment variable even after the stored session is cleared. JSON output is unaffected.
+
+### `cloud whoami`
+
+| Flag | Default | Description |
+| - | - | - |
+| `--api-key <key>` | | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`). |
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. |
+
+***
+
+## Exit codes
+
+| Code | Meaning |
+| - | - |
+| `0` | Success / all checks passed |
+| `1` | Command ran but reported a failure |
+| `2` | Invalid arguments or configuration. Also `events` commands against a server that did not declare `capabilities.events` (`EVENTS_NOT_DECLARED`, unless `--force`), and `events watch` when no delivery mode fits both the event and the profile |
+| `3` | `tasks conformance` and `events conformance`: the run was incomplete — applicable checks never ran, so it is neither a pass nor a spec violation |
+| `6` | `tasks watch` only: the task needs input this run could not answer. Answer it with `tasks update`, or re-run with `--interactive` in a TTY |
+| `7` | `tasks watch` only: `--duration-ms` elapsed before the task reached a terminal status |
+| `130` | Interrupted by a signal (`tasks watch` aborted, or a second Ctrl-C during `tunnel` shutdown) |
+
+Codes above `2` are reserved for outcomes a script should act on *differently* — not merely for naming a failure. See [MCP Tasks](https://docs.mcpjam.com/cli/tasks.md#watch-exit-codes) for the full `tasks watch` mapping.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

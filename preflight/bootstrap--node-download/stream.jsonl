@@ -1,0 +1,6 @@
+{"seconds": 0.019433975219726562, "stream": "stderr", "data": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0"}
+{"seconds": 0.8102478981018066, "stream": "stderr", "data": "\r 17 50.6M   17 9087k    0     0  11.2M      0  0:00:04 --:--:--  0:00:04 11.2M"}
+{"seconds": 1.808655023574829, "stream": "stderr", "data": "\r 41 50.6M   41 21.2M    0     0  11.8M      0  0:00:04  0:00:01  0:00:03 11.8M"}
+{"seconds": 2.8087351322174072, "stream": "stderr", "data": "\r 66 50.6M   66 33.4M    0     0  12.0M      0  0:00:04  0:00:02  0:00:02 12.0M"}
+{"seconds": 3.8071072101593018, "stream": "stderr", "data": "\r 91 50.6M   91 46.1M    0     0  12.1M      0  0:00:04  0:00:03  0:00:01 12.1M"}
+{"seconds": 4.227272987365723, "stream": "stderr", "data": "\r100 50.6M  100 50.6M    0     0  12.0M      0  0:00:04  0:00:04 --:--:-- 12.0M\n"}

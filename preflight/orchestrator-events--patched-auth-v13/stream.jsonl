@@ -1,0 +1,18 @@
+{"seconds": 220.03293013572693, "stream": "stdout", "data": "  2/2 Mean: 1.000 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:03:37 0:00:00"}
+{"seconds": 220.03342819213867, "stream": "stdout", "data": "\n"}
+{"seconds": 220.03525519371033, "stream": "stdout", "data": "adhoc • codex • gpt-6.1-sol\n"}
+{"seconds": 220.03639197349548, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩\n│      1 │          0 │ 1.000 │\n└────────┴────────────┴───────┘\n"}
+{"seconds": 220.0364191532135, "stream": "stdout", "data": "\n"}
+{"seconds": 220.0365970134735, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 1.0    │     1 │\n└────────┴───────┘\n"}
+{"seconds": 220.03666734695435, "stream": "stdout", "data": "\n"}
+{"seconds": 220.0368161201477, "stream": "stdout", "data": "adhoc • claude-code • claude-sonnet-5-5\n"}
+{"seconds": 220.0370421409607, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Trials ┃ Exceptions ┃\n┡━━━━━━━━╇━━━━━━━━━━━━┩\n│      0 │          1 │\n└────────┴────────────┘\n"}
+{"seconds": 220.03708910942078, "stream": "stdout", "data": "\n"}
+{"seconds": 220.03730726242065, "stream": "stdout", "data": "┏━━━━━━━━━━━━━━━━━┳━━━━━━━┓\n┃ Exception       ┃ Count ┃\n┡━━━━━━━━━━━━━━━━━╇━━━━━━━┩\n│ UnknownApiError │     1 │\n└─────────────────┴───────┘\n"}
+{"seconds": 220.03734517097473, "stream": "stdout", "data": "\n"}
+{"seconds": 220.03742814064026, "stream": "stdout", "data": "Job Info\n"}
+{"seconds": 220.03753399848938, "stream": "stdout", "data": "Total runtime: 3m 37s\n"}
+{"seconds": 220.03765320777893, "stream": "stdout", "data": "Results written to \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/patched-auth-v13/result.json\n"}
+{"seconds": 220.03776121139526, "stream": "stdout", "data": "Inspect results by running `harbor view \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs`\n"}
+{"seconds": 220.03785228729248, "stream": "stdout", "data": "Share results by running `harbor upload \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/patched-auth-v13`\n"}
+{"seconds": 220.03788232803345, "stream": "stdout", "data": "\n"}

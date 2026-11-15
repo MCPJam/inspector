@@ -1,0 +1,16 @@
+{"seconds": 489.0692892074585, "stream": "stdout", "data": "  6/6 Mean: 0.000 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:08:05 0:00:00"}
+{"seconds": 489.0746350288391, "stream": "stdout", "data": "\n"}
+{"seconds": 489.07696509361267, "stream": "stdout", "data": "adhoc • codex • gpt-6.1-sol\n"}
+{"seconds": 489.07729601860046, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩\n│      3 │          0 │ 0.000 │\n└────────┴────────────┴───────┘\n"}
+{"seconds": 489.0773620605469, "stream": "stdout", "data": "\n"}
+{"seconds": 489.07782220840454, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 0.0    │     3 │\n└────────┴───────┘\n"}
+{"seconds": 489.07786893844604, "stream": "stdout", "data": "\n"}
+{"seconds": 489.07801485061646, "stream": "stdout", "data": "adhoc • claude-code • claude-sonnet-5-5\n"}
+{"seconds": 489.0787150859833, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩\n│      3 │          0 │ 0.333 │\n└────────┴────────────┴───────┘\n"}
+{"seconds": 489.0787260532379, "stream": "stdout", "data": "\n┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 0.0    │     2 │\n│ 1.0    │     1 │\n└────────┴───────┘\n\n"}
+{"seconds": 489.0788221359253, "stream": "stdout", "data": "Job Info\n"}
+{"seconds": 489.0790629386902, "stream": "stdout", "data": "Total runtime: 8m 5s\n"}
+{"seconds": 489.07924485206604, "stream": "stdout", "data": "Results written to \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/baseline-six-v12/result.json\n"}
+{"seconds": 489.07938408851624, "stream": "stdout", "data": "Inspect results by running `harbor view \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs`\n"}
+{"seconds": 489.0794909000397, "stream": "stdout", "data": "Share results by running `harbor upload \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/baseline-six-v12`\n"}
+{"seconds": 489.07953000068665, "stream": "stdout", "data": "\n"}

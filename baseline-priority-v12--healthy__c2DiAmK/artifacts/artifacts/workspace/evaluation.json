@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "expectedSum": 5,
+  "iterations": [
+    {
+      "iterationId": "run_fixture_5_0",
+      "passed": true
+    }
+  ],
+  "evidence": "iterations.json",
+  "grading": "exact local check of public MCPJam iteration evidence"
+}

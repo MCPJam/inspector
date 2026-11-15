@@ -1,0 +1,31 @@
+### `cloud whoami`
+
+| Flag | Default | Description |
+| - | - | - |
+| `--api-key <key>` | | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`). |
+| `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. |
+
+***
+
+## Exit codes
+
+| Code | Meaning |
+| - | - |
+| `0` | Success / all checks passed |
+| `1` | Command ran but reported a failure |
+| `2` | Invalid arguments or configuration. Also `events` commands against a server that did not declare `capabilities.events` (`EVENTS_NOT_DECLARED`, unless `--force`), and `events watch` when no delivery mode fits both the event and the profile |
+| `3` | `tasks conformance` and `events conformance`: the run was incomplete — applicable checks never ran, so it is neither a pass nor a spec violation |
+| `6` | `tasks watch` only: the task needs input this run could not answer. Answer it with `tasks update`, or re-run with `--interactive` in a TTY |
+| `7` | `tasks watch` only: `--duration-ms` elapsed before the task reached a terminal status |
+| `130` | Interrupted by a signal (`tasks watch` aborted, or a second Ctrl-C during `tunnel` shutdown) |
+
+Codes above `2` are reserved for outcomes a script should act on *differently* — not merely for naming a failure. See [MCP Tasks](https://docs.mcpjam.com/cli/tasks.md#watch-exit-codes) for the full `tasks watch` mapping.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.1590:### `cloud eval run`
+1685:| `mcpjam cloud eval run` / `cases run` / `update` / `create` | A **client saved in your project** (`mcpjam cloud clients list`). |
+1689:deprecated alias for it — so `mcpjam cloud eval run --host claude` looks for a
+1851:mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+1917:model actually saw is a host fact and is not here. Token figures are estimated
+1991:| `--dry-run` | No | Show which cases would rerun, and why, without starting anything. Exits 1 when nothing can rerun |
+2004:mcpjam cloud eval rerun "$RUN_ID" --failed --dry-run --json

@@ -1,0 +1,1 @@
+{"seconds": 1.9110407829284668, "stream": "stdout", "data": "{\"error\":{\"code\":\"CREDENTIALS_REJECTED\",\"message\":\"The MCPJam project was not found. Check your project selection and try again.\",\"details\":{\"phase\":\"setup\",\"category\":\"credentials\"}}}\n"}

@@ -1,0 +1,11 @@
+{"seconds": 58.69343423843384, "stream": "stdout", "data": "  1/1 Mean: 0.000 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:00:57 0:00:00"}
+{"seconds": 58.697084188461304, "stream": "stdout", "data": "\n"}
+{"seconds": 58.704840898513794, "stream": "stdout", "data": "adhoc • nop\n"}
+{"seconds": 58.70561718940735, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩\n│      1 │          0 │ 0.000 │\n└────────┴────────────┴───────┘\n\n"}
+{"seconds": 58.70726704597473, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 0.0    │     1 │\n└────────┴───────┘\n"}
+{"seconds": 58.70730400085449, "stream": "stdout", "data": "\n"}
+{"seconds": 58.70755100250244, "stream": "stdout", "data": "Job Info\nTotal runtime: 57s\n"}
+{"seconds": 58.70773410797119, "stream": "stdout", "data": "Results written to work/jobs/packaging-nop-credits-v12/result.json\n"}
+{"seconds": 58.70823812484741, "stream": "stdout", "data": "Inspect results by running `harbor view work/jobs`\n"}
+{"seconds": 58.70849418640137, "stream": "stdout", "data": "Share results by running `harbor upload work/jobs/packaging-nop-credits-v12`\n"}
+{"seconds": 58.70850110054016, "stream": "stdout", "data": "\n"}

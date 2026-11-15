@@ -1,0 +1,22 @@
+{
+  "event_id": "4a55e89215994cabb46662af996c6d1e",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > run-eval.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\ncd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\"\n: \"${MCPJAM_API_URL:?Set MCPJAM_API_URL to the trial account API URL}\"\n: \"${MCPJAM_API_KEY:?Set MCPJAM_API_KEY to the trial account API key}\"\nmkdir -p reports\n./node_modules/.bin/mcpjam cloud eval validate --file arithmetic.eval.json --project project_fixture --format json > reports/validation.json\n./node_modules/.bin/mcpjam cloud eval run --file arithmetic.eval.json --project project_fixture --wait --wait-timeout 45000 --out reports/eval.json --format json > reports/launch.json\nEOF\nchmod +x run-eval.sh\npython3 - <<'PY'\nimport json\ns=json.load(open('arithmetic.eval.json'))\ns['suite']={'id':'s_arithmetic_negative_control','name':'Arithmetic negative control'}\ns['cases'][0]['steps'][1]['assertion']['needle']='43'\nopen('negative-control.eval.json','w').write(json.dumps(s,indent=2)+'\\n')\nPY\nnpx mcpjam cloud eval run --file negative-control.eval.json --project project_fixture --wait --wait-timeout 45000 --out reports/negative-control.json --format json > reports/negative-control-launch.json\ntrial_status=$?\nprintf 'Negative control exit: %s\\n' \"$trial_status\"\ntest \"$trial_status\" -eq 1"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:10:57.791373+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.8894145488739014,
+  "end": "2026-11-15T02:10:58.680723+00:00"
+}

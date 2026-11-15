@@ -1,0 +1,6 @@
+/workspace
+total 8
+drwxr-xr-x 2 root root 4096 Nov 15 01:18 .
+drwxr-xr-x 1 root root 4096 Nov 15 01:41 ..
+MCPJAM_API_KEY=[REDACTED]
+MCPJAM_API_URL=http://fixture:8765/api/v1

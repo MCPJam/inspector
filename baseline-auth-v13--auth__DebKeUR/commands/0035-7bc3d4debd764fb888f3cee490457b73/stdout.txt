@@ -1,0 +1,119 @@
+{
+  "status": "ready",
+  "initInfo": {
+    "protocolVersion": "2025-11-25",
+    "transport": "streamable-http",
+    "serverCapabilities": {
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "serverVersion": {
+      "name": "arithmetic-fixture",
+      "version": "1.0.0"
+    },
+    "clientCapabilities": {
+      "extensions": {
+        "io.modelcontextprotocol/ui": {
+          "mimeTypes": [
+            "text/html;profile=mcp-app"
+          ]
+        },
+        "io.modelcontextprotocol/skills": {}
+      }
+    }
+  },
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    }
+  },
+  "tools": [
+    {
+      "name": "add",
+      "description": "Add two finite numbers and return their sum.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number"
+          },
+          "b": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "sum": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "sum"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  ],
+  "checks": {
+    "probe": {
+      "status": "ok",
+      "detail": "HTTP initialize probe succeeded via streamable-http."
+    },
+    "connection": {
+      "status": "ok",
+      "detail": "Connected and initialized successfully."
+    },
+    "initialization": {
+      "status": "ok",
+      "detail": "Initialization info captured."
+    },
+    "capabilities": {
+      "status": "ok",
+      "detail": "Server capabilities captured."
+    },
+    "tools": {
+      "status": "ok",
+      "detail": "1 tool discovered."
+    },
+    "resources": {
+      "status": "ok",
+      "detail": "0 resources discovered."
+    },
+    "resourceTemplates": {
+      "status": "ok",
+      "detail": "0 resource templates discovered."
+    },
+    "prompts": {
+      "status": "ok",
+      "detail": "0 prompts discovered."
+    },
+    "skills": {
+      "status": "skipped",
+      "detail": "The server does not declare the Skills over MCP extension (`io.modelcontextprotocol/skills`)."
+    }
+  }
+}
+Usage: mcpjam conformance [options] [command]
+
+Run MCPJam conformance suites and optionally upload results
+
+Options:
+  -h, --help      display help for command
+
+Commands:
+  run [options]   Run Protocol, Apps, and Tasks (default). OAuth is opt-in via
+                  --suite oauth.
+  help [command]  display help for command

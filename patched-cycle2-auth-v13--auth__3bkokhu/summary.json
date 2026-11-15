@@ -1,0 +1,104 @@
+{
+  "run_id": "patched-cycle2-auth-v13--auth__3bkokhu",
+  "job": "patched-cycle2-auth-v13",
+  "scenario": "mcpjam/auth",
+  "agent": {
+    "name": "claude-code",
+    "version": "2.1.323",
+    "model_info": {
+      "name": "claude-sonnet-5-5",
+      "provider": "anthropic"
+    }
+  },
+  "outcome": "passed",
+  "rewards": {
+    "reward": 1.0
+  },
+  "usage": {
+    "n_input_tokens": 128665,
+    "n_cache_tokens": 119344,
+    "n_output_tokens": 1226,
+    "cost_usd": 0.0614544,
+    "model_usage": {
+      "claude-sonnet-5-5": {
+        "n_input_tokens": 128665,
+        "n_cache_tokens": 119344,
+        "n_output_tokens": 1226,
+        "cost_usd": 0.04749090000000001
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "exception": null,
+  "capture_event_count": 17,
+  "unique_capture_event_count": 17,
+  "agent_tool_invocation_count": 5,
+  "agent_shell_invocation_count": 5,
+  "incomplete_events": 0,
+  "concern_count": 1,
+  "metrics": [
+    {
+      "source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "C",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 28.36040210723877,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 1,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 20,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "6826495b452144d6ab3bca05e4115e35"
+        ],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcp.json"
+        ],
+        "command_count": 17,
+        "reward": 1.0,
+        "request_count": 77,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      }
+    }
+  ],
+  "assessment_flags": [],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T02:27:58.853142Z",
+    "explicitly_harness_invalid": false,
+    "comparison_eligible": true,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": true,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": 5,
+    "invocation_id": "toolu_017iSGddxH1B4E4jea26RdRE",
+    "phase": "trial",
+    "source": "public-agent-claude-code.txt.jsonl",
+    "public_line": 17,
+    "corroborating_capture_ids": [
+      "6826495b452144d6ab3bca05e4115e35"
+    ]
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once."
+}

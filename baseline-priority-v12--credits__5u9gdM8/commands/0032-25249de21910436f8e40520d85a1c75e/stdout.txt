@@ -1,0 +1,3 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"NOT_FOUND","message":"Server \"http://fixture:8765/mcp\" was not found in project \"Fixture\". Available: Arithmetic (id: server_fixture)."}}
+exit=2

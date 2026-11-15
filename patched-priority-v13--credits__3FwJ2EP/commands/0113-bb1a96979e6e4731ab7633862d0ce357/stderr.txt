@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/workspace/mcp-eval/smoke.py", line 31, in <module>
+    assert '5' in texts,data
+           ^^^^^^^^^^^^
+AssertionError: {'content': [{'type': 'text', 'text': '{"sum": 5}'}], 'structuredContent': {'sum': 5}, 'isError': False}

@@ -1,0 +1,7 @@
+time="2026-11-14T17:12:47-08:00" level=info msg="starting colima"
+time="2026-11-14T17:12:47-08:00" level=info msg="runtime: docker"
+time="2026-11-14T17:12:47-08:00" level=warning msg="disk size cannot be reduced, ignoring..." context=vm
+time="2026-11-14T17:12:47-08:00" level=info msg="starting ..." context=vm
+time="2026-11-14T17:12:59-08:00" level=info msg="provisioning ..." context=docker
+time="2026-11-14T17:13:00-08:00" level=info msg="starting ..." context=docker
+time="2026-11-14T17:13:01-08:00" level=info msg=done

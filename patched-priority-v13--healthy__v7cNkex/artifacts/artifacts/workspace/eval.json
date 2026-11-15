@@ -1,0 +1,40 @@
+{
+  "suiteName": "Arithmetic repeatable smoke",
+  "serverIds": [
+    "server_fixture"
+  ],
+  "tests": [
+    {
+      "title": "Add two and three",
+      "runs": 1,
+      "steps": [
+        {
+          "id": "add",
+          "kind": "toolCall",
+          "serverName": "Arithmetic",
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        {
+          "id": "no-errors",
+          "kind": "assert",
+          "assertion": {
+            "type": "noToolErrors"
+          }
+        },
+        {
+          "id": "sum",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultContains",
+            "toolName": "add",
+            "needle": "5"
+          }
+        }
+      ]
+    }
+  ]
+}

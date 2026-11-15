@@ -1,0 +1,14 @@
+
+> @mcpjam/cli@6.2.2 build
+> tsup
+
+CLI Building entry: src/index.ts
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Using tsup config: $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/cli/tsup.config.ts
+CLI Target: node22
+CLI Cleaning output folder
+ESM Build start
+ESM dist/index.js     1.19 MB
+ESM dist/index.js.map 2.81 MB
+ESM ⚡️ Build success in 415ms

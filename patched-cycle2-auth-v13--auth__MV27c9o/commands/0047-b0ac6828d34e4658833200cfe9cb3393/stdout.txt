@@ -1,0 +1,6 @@
+/workspace
+total 12
+drwxr-xr-x 1 root root 4096 Nov 15 01:25 .
+drwxr-xr-x 1 root root 4096 Nov 15 02:26 ..
+-rw-r--r-- 1 root root   64 Nov 15 01:25 mcp.json
+{"mcpServers":{"arithmetic":{"url":"http://fixture:8765/mcp"}}}

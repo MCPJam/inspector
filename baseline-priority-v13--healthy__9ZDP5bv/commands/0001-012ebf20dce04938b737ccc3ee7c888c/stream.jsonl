@@ -1,0 +1,1 @@
+{"seconds": 0.8287253379821777, "stream": "stdout", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"Invalid suite definition: cases.0.steps.0.id: Invalid input: expected string, received undefined; cases.0.steps.1.id: Invalid input: expected string, received undefined\"}}\n"}

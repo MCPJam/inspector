@@ -1,0 +1,9 @@
+1628:| `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
+1811:it. A file with no deterministic `toolCall` steps asks no question and pays no
+2451:checks every deterministic `toolCall` step against the live tool inventory of
+2486:* **Only `toolCall` steps count.** A tool named in prompt text is a hint the
+- [runSuiteFile](https://docs.mcpjam.com/sdk/reference/run-suite-file.md): API reference for running an MCPJam suite file locally from code
+- [Read an eval authoring job](https://docs.mcpjam.com/api-reference/eval-runs/read-an-eval-authoring-job.md): Progress and drafts for a job started by `cases/g
+- [Write a finished authoring job's cases into the suite](https://docs.mcpjam.com/api-reference/eval-runs/write-a-finished-authoring-jobs-cases-into-the-suite.m
+- [List tools](https://docs.mcpjam.com/api-reference/primitives/list-tools.md): Returns the server's tools as a collection page. Each item is the MCP tool defin
+- [Create a swarm](https://docs.mcpjam.com/api-reference/swarms/create-a-swarm.md): A swarm is an authoring container holding DEFAULTS for the goals made under 

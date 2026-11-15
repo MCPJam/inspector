@@ -1,0 +1,2 @@
+{"seconds": 0.006615877151489258, "stream": "stdout", "data": "5:  id: s_arith_fixture\n9:    - name: arith\n23:        serverName: arith\n"}
+{"seconds": 1.512355089187622, "stream": "stdout", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Synthetic fixture does not implement this route.\"}}\n"}

@@ -1,0 +1,22 @@
+{
+  "event_id": "f5d61bc05fa4496bb0e2ba37d8c11747",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 /workspace/validation/api.py GET /projects/project_fixture/eval-runs/run_fixture_1 null run-1\npython3 /workspace/validation/api.py GET /projects/project_fixture/eval-runs/run_fixture_1/iterations/run_fixture_1_0/trace null trace-1\npython3 /workspace/validation/api.py POST /projects/project_fixture/servers/server_fixture/conformance-runs '{\"suites\":[\"protocol\"],\"idempotencyKey\":\"validation-20261115\"}' conformance-start\npython3 /workspace/validation/api.py GET /projects/project_fixture/servers/server_fixture null server-detail"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:28:02.334013+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.09205913543701172,
+  "end": "2026-11-15T02:28:02.426004+00:00"
+}

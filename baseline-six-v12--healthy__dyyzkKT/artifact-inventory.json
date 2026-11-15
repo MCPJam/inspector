@@ -1,0 +1,186 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "86873eca0d3333c371005f292122950d6242970b1cd9ef1997e5ef7884d5edd8"
+  },
+  {
+    "source": "artifacts/workspace/run-receipt.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/run-receipt.json",
+    "sha256": "e8af41602070150269d6bc829e91d7559f310e49ab1aafccebb62cec5b956ad7"
+  },
+  {
+    "source": "artifacts/workspace/suite-cases.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/suite-cases.json",
+    "sha256": "2f59b066c15d75bff8326bf8e5819d2816d80dbba65598acc0046ffb9bc654ef"
+  },
+  {
+    "source": "artifacts/workspace/case-update.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/case-update.json",
+    "sha256": "68b52c335f290eacdfd6ea9310363f79e026664d81b7695fd403bedc9f8910fc"
+  },
+  {
+    "source": "artifacts/workspace/eval-run.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/eval-run.json",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "artifacts/workspace/reproduce.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/local-evals.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/local-evals.md",
+    "sha256": "d1cf3b193596d5feca31ec63bc9649a729127428225c1ae21969ba84138986ab"
+  },
+  {
+    "source": "artifacts/workspace/project.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/project.json",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "artifacts/workspace/eval-report.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/eval-report.json",
+    "sha256": "fb3e63f10fddcc4a8b9a9755051bc165c44257101973a8534367a93fe9f0f828"
+  },
+  {
+    "source": "artifacts/workspace/tools.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/tools.json",
+    "sha256": "a1ada4ec42d7cd887feb1a6a3f1cb5fbfa2053b077728f0ff89db8481499ba36"
+  },
+  {
+    "source": "artifacts/workspace/connection.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/connection.json",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "artifacts/workspace/repeat-report.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/repeat-report.json",
+    "sha256": "d36a746ad616a0e595aeff86afb9e3f0a85cb23c59508506cca0693c976ce212"
+  },
+  {
+    "source": "artifacts/workspace/suite-create.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/suite-create.json",
+    "sha256": "dd43942ce746d6bad79c06c31fa626479c36f53e903afb2be17f00be529081b5"
+  },
+  {
+    "source": "artifacts/workspace/eval-iterations.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/eval-iterations.json",
+    "sha256": "015af67d827438f843edcc8bf0a43f90bc567005dae430f5838a3466a92caced"
+  },
+  {
+    "source": "artifacts/workspace/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/doctor.json",
+    "sha256": "3b98e6bcc93393ac7cdba75ef6d48dfe5ab5da9e8410a19731da3e5ae0cdd1ec"
+  },
+  {
+    "source": "artifacts/workspace/README.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/README.md",
+    "sha256": "d7c52971e2b20af5c4837faf36272f1ef7e05e35421270d9b8c02e73d0e1e783"
+  },
+  {
+    "source": "artifacts/workspace/repeat-receipt.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/repeat-receipt.json",
+    "sha256": "2fc163c27ac3ed1e67fbc8d5ac0f7a05fbe7b42b46efd023cc15ccc7c8b3f8fb"
+  },
+  {
+    "source": "artifacts/workspace/api.py",
+    "published": false,
+    "reason": "not a supported reviewable text artifact"
+  },
+  {
+    "source": "artifacts/workspace/package-lock.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/package-lock.json",
+    "sha256": "e49574ae7cb8c8380191d22c2c2fd1a185151749551577c00c2cb1507ec04754"
+  },
+  {
+    "source": "artifacts/workspace/package.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/package.json",
+    "sha256": "a61637be221e6da1ffd05cca6fd62380fb086e12ddcad6782415608e5fd448a5"
+  },
+  {
+    "source": "artifacts/workspace/suite-config.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/suite-config.json",
+    "sha256": "28f78870811607cd369ca3e1d6da3639934255194f0fdce247d5b743a09a4945"
+  },
+  {
+    "source": "artifacts/workspace/create-suite-doc.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/create-suite-doc.md",
+    "sha256": "82f775309572af1f179bbc9d7bc61eb1cd496da9c4908839b3593926bf39b292"
+  },
+  {
+    "source": "artifacts/workspace/first-result.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/first-result.json",
+    "sha256": "2687709291dae979ae38b04a624b0bc6363b3e33a71ceb06f4b5b26ef8bd33aa"
+  },
+  {
+    "source": "artifacts/workspace/docs-index.txt",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs-index.txt",
+    "sha256": "9654f2d4d237e5a10221f10d205a8569deaa3224f7e12bc1b89bba608168058e"
+  },
+  {
+    "source": "artifacts/workspace/evals.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/evals.md",
+    "sha256": "2e5d2a91f21a776b35c1e4829c96f169da0e069055e632af2662d43af767cc90"
+  },
+  {
+    "source": "artifacts/workspace/cli-reference.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/cli-reference.md",
+    "sha256": "a28de1090411ef1cad67b701ad9e4906a13be470376157de11ed8ee8918dcc2b"
+  },
+  {
+    "source": "artifacts/workspace/case-updated.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/case-updated.json",
+    "sha256": "79b75eaadc50d4c9ec8be573022284cfb10f322a7037eb80a988d362e769ac18"
+  },
+  {
+    "source": "artifacts/workspace/repeat-iterations.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/repeat-iterations.json",
+    "sha256": "7815793235317ac9cd725b5129c8427096e5ce796c42476d36698e9b64d944ed"
+  },
+  {
+    "source": "artifacts/workspace/run-request.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/run-request.json",
+    "sha256": "30082fb07248038fded5ca41a4c18b96bceb43f65cbc27ed308dea09b7db3b17"
+  },
+  {
+    "source": "artifacts/workspace/openapi.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/openapi.json",
+    "sha256": "53d45b9b1bf44189b5c9eded3d5600221298c49c9375f8d34fb76944235f7d28"
+  },
+  {
+    "source": "artifacts/workspace/suite-created.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/suite-created.json",
+    "sha256": "b1f80d162e566e29e539116eaea1bc78925eb2037ae1e33e642935b115957a31"
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "event_id": "d3dab9205e754eeea2a28e1c01b47dd7",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json\np=json.load(open('/workspace/mcp-eval/docs/openapi.json'))\nfor k,v in p.get('paths',{}).items():\n if any(w in k for w in ['usage','billing','credits','account','budget','eval-runs','eval-suites']):\n  print(k, ', '.join(v.keys()))\nprint(open('/workspace/mcp-eval/docs/public-api.md').read()[:14000])\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:12:46.117912+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.012372493743896484,
+  "end": "2026-11-15T02:12:46.130225+00:00"
+}

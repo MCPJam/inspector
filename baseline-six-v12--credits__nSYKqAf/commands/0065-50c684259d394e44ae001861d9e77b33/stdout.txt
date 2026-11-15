@@ -1,0 +1,49 @@
+# Repeatable MCP evaluation
+
+Target: http://fixture:8765/mcp
+Project: project_fixture; saved server: server_fixture (Arithmetic).
+Saved suite: suite_fixture (Arithmetic smoke).
+Case: case_add, call add with a=2, b=3, expectedOutput="5".
+
+## Reproduce
+
+Keep MCPJAM_API_URL and MCPJAM_API_KEY in the environment, then run:
+
+    python3 /workspace/mcp-eval/run.py
+
+The runner launches the saved suite with explicit server selection, polls terminal
+status (including waiting through grading), and saves status, iterations, and
+decision-summary responses. Each launch is a new evaluation and may consume
+synthetic credits. It never buys credits or changes billing settings.
+The saved suite and case snapshots are in results/suite.json and results/cases.json.
+
+## Preflight findings
+
+Authenticated account: Team plan, organization owner (org_fixture).
+Public hosted documentation says usage and paid credit balances appear in the
+account menu; billing exposes top-ups. One credit equals one cent according to
+the public spend-budget API documentation. Exact available credits, consumed
+usage, and expected run cost could not be established: the fixture does not
+implement GET /models or GET /organizations/org_fixture/spend-budget; suite
+run-disclosure returns FEATURE_NOT_SUPPORTED / contract_unavailable. Root and
+settings UI paths returned NOT_FOUND. Do not infer a zero balance or zero cost.
+
+Initial launch: HTTP 403 FORBIDDEN, details.reason=PLATFORM_FEE_REQUIRED.
+Message: This work requires platform credits. Add credits or contact your
+organization administrator.
+The documented paid-plan owner action is to add shared credits. No purchase,
+production billing contact, or account/budget mutation was performed. Wait for
+the environment to report resolution, then rerun the same command.
+
+## Public references
+
+- https://docs.mcpjam.com/reference/public-api
+- https://docs.mcpjam.com/reference/openapi.json
+- https://docs.mcpjam.com/hosted/overview
+- https://docs.mcpjam.com/troubleshooting/error-codes
+
+Documentation copies and raw API evidence are included under docs/ and results/.
+launch-1794707052022014892 202 {"runId": "run_fixture_1", "suiteId": "suite_fixture", "status": "running", "servers": [{"id": "server_fixture", "name": "Arithmetic"}], "environment": null}
+run_fixture_1-status 200 {"id": "run_fixture_1", "suiteId": "suite_fixture", "runNumber": 1, "status": "completed", "result": "passed", "summary": {"total": 1, "passed": 1, "failed": 0, "passRate": 1.0}, "source": "api", "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.", "createdAt": 1794707052027, "completedAt": 1794707052027}
+run_fixture_1-iterations 200 {"items": [{"id": "run_fixture_1_0", "testCaseId": "case_add", "title": "add 2 and 3 returns 5", "iterationNumber": 1, "status": "completed", "result": "passed", "actualToolCalls": [{"toolName": "add", "arguments": {"a": 2, "b": 3}, "result": {"content": [{"type": "text", "text": "{\"sum\": 5}"}], "structuredContent": {"sum": 5}, "isError": false}}], "expectedToolCalls": [], "durationMs": 1, "error": null}]}
+run_fixture_1-decision 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

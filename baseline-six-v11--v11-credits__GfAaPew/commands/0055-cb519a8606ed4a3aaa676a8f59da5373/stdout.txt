@@ -1,0 +1,4 @@
+URL https://docs.mcpjam.com/llms.txt
+HTTP Error 403: Forbidden
+URL http://fixture:8765/api/v1
+HTTP Error 404: Not Found

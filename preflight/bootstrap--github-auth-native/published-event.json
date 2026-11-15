@@ -1,0 +1,19 @@
+{
+  "id": "bootstrap:github-auth-native",
+  "path": "bootstrap--github-auth-native",
+  "argv": [
+    "gh",
+    "auth",
+    "status"
+  ],
+  "start": "2026-11-15T01:32:07.723678+00:00",
+  "end": "2026-11-15T01:32:07.969881+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

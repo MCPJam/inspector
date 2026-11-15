@@ -1,0 +1,22 @@
+{
+  "event_id": "87136d6ef3bf4fd0abe18f0109b69e0a",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -sS --max-time 10 http://fixture:8765/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-11-25' -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"add\",\"arguments\":{\"a\":2,\"b\":3}}}'\nnode --version\nnpm --version"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:27:58.903719+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.044632911682128906,
+  "end": "2026-11-15T02:27:58.948288+00:00"
+}

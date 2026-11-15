@@ -1,0 +1,6 @@
+/projects/{projectId}/servers [ 'get', 'post' ]
+/projects/{projectId}/eval-suites [ 'get', 'post' ]
+/projects/{projectId}/servers/{serverId} [ 'get', 'patch', 'delete' ]
+/registry/directory-servers [ 'get' ]
+/registry/directory-servers/{idOrName} [ 'get' ]
+/projects/{projectId}/registry/servers [ 'get' ]

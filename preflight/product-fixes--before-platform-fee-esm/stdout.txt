@@ -1,0 +1,8 @@
+{
+  "code": "FORBIDDEN",
+  "exitCode": 1,
+  "details": {
+    "reason": "PLATFORM_FEE_REQUIRED"
+  },
+  "name": "CliError"
+}

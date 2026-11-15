@@ -1,0 +1,11 @@
+{
+  "runId": "run_fixture_2",
+  "passed": true,
+  "checks": {
+    "completed": true,
+    "platformPassed": true,
+    "evidencePresent": true,
+    "allTrialsCorrect": true
+  },
+  "trials": 1
+}

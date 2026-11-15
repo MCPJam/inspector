@@ -1,0 +1,40 @@
+['post'] /projects/{projectId}/eval-runs/{runId}/judge/backtest
+['post'] /projects/{projectId}/eval-runs
+['get'] /projects/{projectId}/eval-runs/{runId}
+['get'] /projects/{projectId}/eval-runs/{runId}/decision-summary
+['get'] /projects/{projectId}/eval-runs/{runId}/compare
+['get'] /projects/{projectId}/eval-runs/{runId}/iterations
+['get'] /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace
+['get'] /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps
+['post'] /projects/{projectId}/eval-runs/{runId}/cancel
+['get'] /projects/{projectId}/eval-runs/{runId}/rerun-preview
+['post'] /projects/{projectId}/eval-runs/{runId}/rerun
+['get'] /projects/{projectId}/eval-suites/{suiteId}/runs
+['get'] /projects/{projectId}/eval-suites/{suiteId}/revisions
+['get'] /projects/{projectId}/eval-suites/{suiteId}/stage-analytics
+['get'] /projects/{projectId}/eval-runs/{runId}/stage-analytics
+['get'] /projects/{projectId}/eval-runs/{runId}/gate
+['patch'] /projects/{projectId}/eval-suites/{suiteId}/schedule
+['parameters', 'get', 'put', 'delete'] /organizations/{organizationId}/spend-budget
+['post'] /projects/{projectId}/eval-suites/{suiteId}/environments
+['post'] /projects/{projectId}/eval-run-groups
+['get', 'patch', 'delete'] /projects/{projectId}/eval-suites/{suiteId}
+['get'] /projects/{projectId}/eval-suites/{suiteId}/run-disclosure
+['get', 'post'] /projects/{projectId}/eval-suites/{suiteId}/cases
+['post'] /projects/{projectId}/eval-suites/{suiteId}/cases/batch
+['post'] /projects/{projectId}/eval-suites/{suiteId}/cases/generate
+['post'] /projects/{projectId}/eval-suites/{suiteId}/cases/import
+['get'] /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}
+['post'] /projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit
+['get', 'patch', 'delete'] /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}
+['post'] /projects/{projectId}/eval-ingest/runs/evaluations
+['post'] /projects/{projectId}/eval-ingest/runs/finalize
+['post'] /projects/{projectId}/eval-ingest/runs/iterations
+['post'] /projects/{projectId}/eval-ingest/start-run
+['post'] /projects/{projectId}/eval-ingest/runs/start
+['parameters', 'get', 'post'] /projects/{projectId}/goals/{goalId}/runs
+['parameters', 'get'] /projects/{projectId}/goal-runs/{runId}
+['parameters', 'get'] /projects/{projectId}/goal-runs/{runId}/sessions
+['parameters', 'post'] /projects/{projectId}/goal-runs/{runId}/cancel
+['parameters', 'get'] /projects/{projectId}/goal-runs/{runId}/scorecard
+['parameters', 'get', 'post', 'delete'] /projects/{projectId}/swarm-runs/{swarmRunId}/insights

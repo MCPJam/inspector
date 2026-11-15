@@ -1,0 +1,62 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "7c7889c5f78eb629870d1c719b02a03dc486a4bdc6c038b0d2a06bca3f3959d0"
+  },
+  {
+    "source": "artifacts/workspace/api.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/api.md",
+    "sha256": "c9aef67b87269365a88992b95bc3966958352e3aff058c3f0a1d238c3e7e60ac"
+  },
+  {
+    "source": "artifacts/workspace/suite-resp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/suite-resp.json",
+    "sha256": "2b6783c0eb0f0791a374ed12e87299672a8935fadc66c8d92bf50ca6480f27e7"
+  },
+  {
+    "source": "artifacts/workspace/s.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/s.json",
+    "sha256": "41addd52bc73382e42689fc53bb92b4116cfc34b13ea8f008fd96aa95b9634f2"
+  },
+  {
+    "source": "artifacts/workspace/suite.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/suite.json",
+    "sha256": "cb797516f6df9b2be409fc467d875f6c6bc3f5d7aaf5e8726ad89caca07f4fed"
+  },
+  {
+    "source": "artifacts/workspace/run-resp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/run-resp.json",
+    "sha256": "14e8a6365166a6888220756c8ce8187a29075df8eb2968610aa9997b46785d80"
+  },
+  {
+    "source": "artifacts/workspace/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/doctor.json",
+    "sha256": "4bd0951a71e5a5c27b4b9b2b066d4752821983743817f2023d42e5ba86171c2b"
+  },
+  {
+    "source": "artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/run_eval.sh",
+    "sha256": "f165416fd28b0912c66b89c544c1cc3c1aa35e8dd3bad6a97cc742b48de4c65d"
+  },
+  {
+    "source": "artifacts/workspace/run.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/run.json",
+    "sha256": "2143927c366492510a3c0a431246627fe54e2f15c5d9a71bb02c4c629ac67524"
+  },
+  {
+    "source": "artifacts/workspace/.mcpjam/evals/arith.yaml",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/.mcpjam/evals/arith.yaml",
+    "sha256": "aa16dd2143e8788e3b329826a9f37d9e26df8295dd65dc23893cbfe945d08e3f"
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "event_id": "9b09613da29c4563b28a50f3ef1026e4",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcp-eval/run.py <<'PY'\n#!/usr/bin/env python3\n\"\"\"Repeat saved Arithmetic smoke suite through the public MCPJam API.\"\"\"\nimport json, os, pathlib, time, urllib.request, urllib.error\nroot = pathlib.Path(__file__).resolve().parent\nout = root / 'results'\nout.mkdir(exist_ok=True)\ndef call(method, path, body=None, label='response'):\n    req = urllib.request.Request(os.environ['MCPJAM_API_URL'].rstrip('/') + path,\n        data=None if body is None else json.dumps(body).encode(), method=method,\n        headers={'Authorization': 'Bearer ' + os.environ['MCPJAM_API_KEY'],\n                 'Content-Type': 'application/json', 'x-mcpjam-launcher': 'workspace-repeatable-eval'})\n    try:\n        with urllib.request.urlopen(req, timeout=20) as r: status, raw = r.status, r.read()\n    except urllib.error.HTTPError as e: status, raw = e.code, e.read()\n    data = json.loads(raw)\n    (out / (label + '.json')).write_text(json.dumps({'httpStatus': status, 'body': data}, indent=2) + '\\n')\n    print(label, status, json.dumps(data), flush=True)\n    return status, data\nif __name__ == '__main__':\n    request = {'suiteId': 'suite_fixture', 'serverIds': ['server_fixture']}\n    (root / 'run-request.json').write_text(json.dumps(request, indent=2)+'\\n')\n    status, receipt = call('POST', '/projects/project_fixture/eval-runs', request, 'launch-'+str(time.time_ns()))\n    if status != 202: raise SystemExit(2)\n    run = receipt['runId']\n    for i in range(30):\n        _, result = call('GET', '/projects/project_fixture/eval-runs/'+run, label=run+'-status')\n        if result.get('status') in ('completed','failed','cancelled','timed_out'): break\n        time.sleep(1)\n    call('GET', '/projects/project_fixture/eval-runs/'+run+'/iterations', label=run+'-iterations')\n    call('GET', '/projects/project_fixture/eval-runs/'+run+'/decision-summary', label=run+'-decision')\nPY\npython3 /workspace/mcp-eval/run.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:43:21.277169+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 2,
+  "signal": null,
+  "duration_seconds": 0.05113625526428223,
+  "end": "2026-11-15T01:43:21.328196+00:00"
+}

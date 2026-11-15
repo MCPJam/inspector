@@ -1,0 +1,2 @@
+{"seconds": 10.578153848648071, "stream": "stdout", "data": "\nadded 153 packages in 11s\n\n39 packages are looking for funding\n"}
+{"seconds": 10.578225135803223, "stream": "stdout", "data": "  run `npm fund` for details\n"}

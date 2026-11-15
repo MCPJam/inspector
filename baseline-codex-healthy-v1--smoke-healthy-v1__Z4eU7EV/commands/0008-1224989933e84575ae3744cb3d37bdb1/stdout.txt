@@ -1,0 +1,32 @@
+/projects/{projectId}/eval-runs/{runId}/judge/backtest Preview draft judge grading on one recorded iteration
+/projects/{projectId}/servers/{serverId}/validate Validate a server
+/projects/{projectId}/servers/{serverId}/doctor Run the doctor
+/projects/{projectId}/servers/{serverId}/check-oauth Check OAuth requirement
+/projects/{projectId}/servers/{serverId}/tools List tools
+/projects/{projectId}/servers/{serverId}/prompts List prompts
+/projects/{projectId}/servers/{serverId}/resources List resources
+/projects/{projectId}/servers/{serverId}/resources/read Read a resource
+/projects/{projectId}/servers/{serverId}/export Export a server snapshot
+/projects/{projectId}/servers/{serverId}/tools/call Call a tool
+/projects/{projectId}/servers/{serverId}/prompts/get Render a prompt
+/projects/{projectId}/eval-runs Create an eval run (async)
+/projects/{projectId}/eval-runs/{runId}/cancel Cancel a run
+/projects/{projectId}/eval-runs/{runId}/rerun Rerun a run's failed cases
+/projects/{projectId}/servers/{serverId}/oauth/import-tokens Import OAuth tokens
+/projects/{projectId}/servers Save a server into a project
+/projects/{projectId}/clients/{client}/servers Replace a client's servers
+/projects/{projectId}/eval-runs/{runId}/insights Request insights for an eval run
+/projects/{projectId}/eval-runs/{runId}/judge Grade an eval run with LLM as Judge
+/projects/{projectId}/servers/{serverId}/readiness-runs/claude Start a Claude directory-readiness run
+/projects/{projectId}/servers/{serverId}/readiness-runs/openai Start an OpenAI plugin-directory readiness run
+/projects/{projectId}/servers/{serverId}/readiness-runs/muse Start a Muse connector readiness run
+/projects/{projectId}/servers/{serverId}/conformance-runs Start a persisted conformance run
+/projects/{projectId}/servers/{serverId}/widgets/render Render an MCP App widget headlessly
+/projects/{projectId}/servers/{serverId}/widget-sessions Create a retained widget session
+/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/action Act on a retained widget
+/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/scripted-step Run a retained widget step
+/projects/{projectId}/eval-runs/{runId}/gate-waivers Waive a run gate
+/projects/{projectId}/servers/{serverId}/skills List server skills
+/projects/{projectId}/servers/{serverId}/skills/get Get a server skill
+/projects/{projectId}/servers/{serverId}/skills/read-file Read a server skill's supporting file
+/projects/{projectId}/eval-runs/{runId}/backtest Preview deterministic draft evaluators against stored evidence

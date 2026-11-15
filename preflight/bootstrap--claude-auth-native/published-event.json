@@ -1,0 +1,19 @@
+{
+  "id": "bootstrap:claude-auth-native",
+  "path": "bootstrap--claude-auth-native",
+  "argv": [
+    "claude",
+    "auth",
+    "status"
+  ],
+  "start": "2026-11-15T01:21:08.708483+00:00",
+  "end": "2026-11-15T01:21:09.108523+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

@@ -1,0 +1,14 @@
+{"seconds": 0.09143495559692383, "stream": "stderr", "data": "test_account_and_email_are_redacted (test_report.EvidencePublicationTests.test_account_and_email_are_redacted) ... ok\ntest_actual_tool_ids_count_once_per_phase (test_report.EvidencePublicationTests.test_actual_tool_ids_count_once_per_phase) ... ok\ntest_finalized_run_is_immutable (test_report.EvidencePublicationTests.test_finalized_run_is_immutable) ... "}
+{"seconds": 0.09656715393066406, "stream": "stderr", "data": "ok\ntest_harbor_exception_overrides_process_exit (test_report.EvidencePublicationTests.test_harbor_exception_overrides_process_exit) ... "}
+{"seconds": 0.09658408164978027, "stream": "stderr", "data": "ok\ntest_initial_blocked_reward_does_not_override_final_recovery (test_report.EvidencePublicationTests.test_initial_blocked_reward_does_not_override_final_recovery) ... ok\n"}
+{"seconds": 0.09659123420715332, "stream": "stderr", "data": "test_mixed_claude_message_keeps_public_text_only (test_report.EvidencePublicationTests.test_mixed_claude_message_keeps_public_text_only) ... "}
+{"seconds": 0.09672188758850098, "stream": "stderr", "data": "ok\ntest_nested_verifier_exception_is_harness_invalid (test_report.EvidencePublicationTests.test_nested_verifier_exception_is_harness_invalid) ... "}
+{"seconds": 0.09673309326171875, "stream": "stderr", "data": "ok\ntest_phase_snapshot_wins_over_live_duplicate (test_report.EvidencePublicationTests.test_phase_snapshot_wins_over_live_duplicate) ... "}
+{"seconds": 0.10517621040344238, "stream": "stderr", "data": "ok\ntest_private_identifier_list_covers_split_recordings (test_report.EvidencePublicationTests.test_private_identifier_list_covers_split_recordings) ... "}
+{"seconds": 0.10529422760009766, "stream": "stderr", "data": "ok\ntest_private_reasoning_is_never_a_concern_quote (test_report.EvidencePublicationTests.test_private_reasoning_is_never_a_concern_quote) ... "}
+{"seconds": 0.10720324516296387, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.10725617408752441, "stream": "stderr", "data": "test_secret_split_across_chunks_is_fully_removed (test_report.EvidencePublicationTests.test_secret_split_across_chunks_is_fully_removed) ... "}
+{"seconds": 0.10735630989074707, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.10738515853881836, "stream": "stderr", "data": "\n----------------------------------------------------------------------\nRan 11 tests in 0.016s\n"}
+{"seconds": 0.1073920726776123, "stream": "stderr", "data": "\n"}
+{"seconds": 0.10739421844482422, "stream": "stderr", "data": "OK\n"}

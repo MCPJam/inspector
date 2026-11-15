@@ -1,0 +1,22 @@
+{
+  "id": "bootstrap:docker-preflight",
+  "path": "bootstrap--docker-preflight",
+  "argv": [
+    "env",
+    "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+    "docker",
+    "info",
+    "--format",
+    "{{.ServerVersion}} {{.Architecture}}"
+  ],
+  "start": "2026-11-15T01:16:03.533799+00:00",
+  "end": "2026-11-15T01:16:03.778803+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

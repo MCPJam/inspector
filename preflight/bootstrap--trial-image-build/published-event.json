@@ -1,0 +1,40 @@
+{
+  "id": "bootstrap:trial-image-build",
+  "path": "bootstrap--trial-image-build",
+  "argv": [
+    "env",
+    "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+    "docker",
+    "build",
+    "-t",
+    "mcpjam-harbor-agent:v1",
+    "work/inspector/scripts/harbor-activation"
+  ],
+  "start": "2026-11-15T01:16:50.282159+00:00",
+  "end": "2026-11-15T01:18:08.780586+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg",
+    "outcome-004.svg",
+    "outcome-005.svg",
+    "outcome-006.svg",
+    "outcome-007.svg",
+    "outcome-008.svg",
+    "outcome-009.svg",
+    "outcome-010.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg",
+    "intermediate-003-001.svg",
+    "intermediate-004-001.svg",
+    "intermediate-005-001.svg",
+    "intermediate-006-001.svg",
+    "intermediate-007-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

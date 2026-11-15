@@ -1,0 +1,10 @@
+{"content":[{"type":"text","text":"{\"sum\": 42}"}],"structuredContent":{"sum":42},"isError":false,"_durationMs":4}
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"items":[{"id":"server_fixture","name":"Arithmetic","projectId":"project_fixture","transportType":"http","url":"http://fixture:8765/mcp","enabled":true,"useOAuth":false,"hasClientSecret":false}],"otherProjects":[]}
+Usage: mcpjam cloud projects servers create|add [options]
+
+Create a saved MCP server
+
+Options:
+  --project <id-or-name>  Project name or ID
+  --body <json>           Server JSON body
+  -h, --help              display help for command

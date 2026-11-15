@@ -1,0 +1,2 @@
+{"seconds": 0.09579610824584961, "stream": "stdout", "data": "/projects/{projectId}/servers [ 'get', 'post' ]\n/projects/{projectId}/eval-suites [ 'get', 'post' ]\n/projects/{projectId}/servers/{serverId} [ 'get', 'patch', 'delete' ]\n/registry/directory-servers [ 'get' ]\n/registry/directory-servers/{idOrName} [ 'get' ]\n"}
+{"seconds": 0.09686541557312012, "stream": "stdout", "data": "/projects/{projectId}/registry/servers [ 'get' ]\n"}

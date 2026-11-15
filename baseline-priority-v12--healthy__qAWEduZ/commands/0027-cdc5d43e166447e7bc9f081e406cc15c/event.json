@@ -1,0 +1,22 @@
+{
+  "event_id": "cdc5d43e166447e7bc9f081e406cc15c",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707142914-66fks8.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_API_URL=http://127.0.0.1:18765/api/v1\nnpx -y @mcpjam/cli@latest test .mcpjam/evals/add.yaml --project Fixture --reporter junit-xml --out reports/add.xml 2>&1 | tail -5; npx -y @mcpjam/cli@latest cloud eval --help 2>&1 | head -30' < /dev/null && pwd -P >| /tmp/claude-a04c-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:46:33.672822+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.479863166809082,
+  "end": "2026-11-15T01:46:35.152615+00:00"
+}

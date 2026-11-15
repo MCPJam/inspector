@@ -1,0 +1,4 @@
+{"seconds": 0.05977606773376465, "stream": "stderr", "data": "WARNING: proceeding, even though we could not create PATH aliases: "}
+{"seconds": 0.06011700630187988, "stream": "stderr", "data": "Operation not permitted (os error "}
+{"seconds": 0.060227155685424805, "stream": "stderr", "data": "1)\n"}
+{"seconds": 0.08838319778442383, "stream": "stdout", "data": "codex-cli 0.160.0\n"}

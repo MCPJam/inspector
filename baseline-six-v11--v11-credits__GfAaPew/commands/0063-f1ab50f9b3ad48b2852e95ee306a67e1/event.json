@@ -1,0 +1,22 @@
+{
+  "event_id": "f1ab50f9b3ad48b2852e95ee306a67e1",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -sS https://docs.mcpjam.com/hosted/overview.md -o /workspace/mcpjam-eval/docs/hosted.md\nrg -n -i 'credit|billing|usage|cost|settings' /workspace/mcpjam-eval/docs/hosted.md\ncurl -sS -X POST http://fixture:8765/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"repeatable-eval\",\"version\":\"1.0\"}}}'\ncurl -sS -X POST http://fixture:8765/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}'\ncd /workspace/mcpjam-eval\npython3 - <<'PY'\nfrom api import call\ncall('/projects/project_fixture/eval-suites',label='suites-before')\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:35:16.018815+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.30080389976501465,
+  "end": "2026-11-15T01:35:16.319548+00:00"
+}

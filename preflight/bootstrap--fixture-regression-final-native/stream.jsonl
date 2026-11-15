@@ -1,0 +1,18 @@
+{"seconds": 0.0859677791595459, "stream": "stderr", "data": "test_auth_recovery_after_refusal (test_service.FixtureTest.test_auth_recovery_after_refusal) ... "}
+{"seconds": 0.6200838088989258, "stream": "stderr", "data": "ok\ntest_authored_suite_runs_its_actual_tool_arguments (test_service.FixtureTest.test_authored_suite_runs_its_actual_tool_arguments) ... "}
+{"seconds": 1.153548002243042, "stream": "stderr", "data": "ok\n"}
+{"seconds": 1.1535658836364746, "stream": "stderr", "data": "test_file_owned_suite_sync_keeps_identity_and_refuses_fake_model_pass (test_service.FixtureTest.test_file_owned_suite_sync_keeps_identity_and_refuses_fake_model_pass) ... "}
+{"seconds": 1.662721872329712, "stream": "stderr", "data": "ok\ntest_healthy_first_value_requires_server_state (test_service.FixtureTest.test_healthy_first_value_requires_server_state) ... "}
+{"seconds": 2.166123867034912, "stream": "stderr", "data": "ok\n"}
+{"seconds": 2.1661417484283447, "stream": "stderr", "data": "test_invalid_arguments_never_count_as_first_value (test_service.FixtureTest.test_invalid_arguments_never_count_as_first_value) ... "}
+{"seconds": 2.669895887374878, "stream": "stderr", "data": "ok\n"}
+{"seconds": 2.6699559688568115, "stream": "stderr", "data": "test_private_control_is_not_http_surface (test_service.FixtureTest.test_private_control_is_not_http_surface) ... "}
+{"seconds": 3.178266763687134, "stream": "stderr", "data": "ok\ntest_prompt_b_cannot_pass_discovery_only_or_missing_output (test_service.FixtureTest.test_prompt_b_cannot_pass_discovery_only_or_missing_output) ... "}
+{"seconds": 3.687156915664673, "stream": "stderr", "data": "ok\n"}
+{"seconds": 3.6871678829193115, "stream": "stderr", "data": "test_registry_serves_only_actual_tarball_manifest (test_service.FixtureTest.test_registry_serves_only_actual_tarball_manifest) ... "}
+{"seconds": 4.19366192817688, "stream": "stderr", "data": "ok\ntest_tool_reference_validation_server_cleanup_and_real_iterations (test_service.FixtureTest.test_tool_reference_validation_server_cleanup_and_real_iterations) ... "}
+{"seconds": 4.731506824493408, "stream": "stderr", "data": "ok\n"}
+{"seconds": 4.73155665397644, "stream": "stderr", "data": "test_zero_credits_recovery_and_idempotency (test_service.FixtureTest.test_zero_credits_recovery_and_idempotency) ... "}
+{"seconds": 5.2488298416137695, "stream": "stderr", "data": "ok\n"}
+{"seconds": 5.248861789703369, "stream": "stderr", "data": "\n----------------------------------------------------------------------\n"}
+{"seconds": 5.248865842819214, "stream": "stderr", "data": "Ran 10 tests in 5.164s\n\nOK\n"}

@@ -1,0 +1,7 @@
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

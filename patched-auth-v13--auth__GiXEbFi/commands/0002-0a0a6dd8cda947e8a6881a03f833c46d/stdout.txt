@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "arithmetic": {
+      "url": "http://fixture:8765/mcp"
+    }
+  }
+}
+API_URL http://fixture:8765/api/v1
+credential presence {'MCPJAM_API_KEY': True, 'MCP_SERVER_TOKEN': True}

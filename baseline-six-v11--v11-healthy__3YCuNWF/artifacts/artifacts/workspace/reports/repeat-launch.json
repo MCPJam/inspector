@@ -1,0 +1,12 @@
+{
+  "runId": "run_fixture_3",
+  "suiteId": "suite_authored_3",
+  "status": "running",
+  "servers": [
+    {
+      "id": "server_fixture",
+      "name": "Arithmetic"
+    }
+  ],
+  "environment": null
+}

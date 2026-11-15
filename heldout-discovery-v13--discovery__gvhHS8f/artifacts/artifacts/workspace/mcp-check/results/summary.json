@@ -1,0 +1,195 @@
+{
+  "generatedAt": "2026-11-15T02:29:07.325878+00:00",
+  "url": "http://fixture:8765/mcp",
+  "cliVersion": "6.2.2",
+  "passed": 7,
+  "total": 8,
+  "cases": [
+    {
+      "name": "positive",
+      "arguments": {
+        "a": 2,
+        "b": 3
+      },
+      "expected": 5,
+      "passed": true,
+      "exitCode": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"sum\": 5}"
+          }
+        ],
+        "structuredContent": {
+          "sum": 5
+        },
+        "isError": false,
+        "_durationMs": 7
+      },
+      "rpcErrors": []
+    },
+    {
+      "name": "negative",
+      "arguments": {
+        "a": -7,
+        "b": 2
+      },
+      "expected": -5,
+      "passed": true,
+      "exitCode": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"sum\": -5}"
+          }
+        ],
+        "structuredContent": {
+          "sum": -5
+        },
+        "isError": false,
+        "_durationMs": 7
+      },
+      "rpcErrors": []
+    },
+    {
+      "name": "zero",
+      "arguments": {
+        "a": 0,
+        "b": 0
+      },
+      "expected": 0,
+      "passed": true,
+      "exitCode": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"sum\": 0}"
+          }
+        ],
+        "structuredContent": {
+          "sum": 0
+        },
+        "isError": false,
+        "_durationMs": 6
+      },
+      "rpcErrors": []
+    },
+    {
+      "name": "decimal",
+      "arguments": {
+        "a": 1.25,
+        "b": 2.5
+      },
+      "expected": 3.75,
+      "passed": true,
+      "exitCode": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"sum\": 3.75}"
+          }
+        ],
+        "structuredContent": {
+          "sum": 3.75
+        },
+        "isError": false,
+        "_durationMs": 7
+      },
+      "rpcErrors": []
+    },
+    {
+      "name": "cancellation",
+      "arguments": {
+        "a": 1000000,
+        "b": -1000000
+      },
+      "expected": 0,
+      "passed": true,
+      "exitCode": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"sum\": 0}"
+          }
+        ],
+        "structuredContent": {
+          "sum": 0
+        },
+        "isError": false,
+        "_durationMs": 5
+      },
+      "rpcErrors": []
+    },
+    {
+      "name": "missing",
+      "arguments": {
+        "a": 2
+      },
+      "expected": "reject invalid input",
+      "passed": true,
+      "exitCode": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "a and b must be finite numbers"
+          }
+        ],
+        "isError": true,
+        "_durationMs": 6
+      },
+      "rpcErrors": []
+    },
+    {
+      "name": "wrong_type",
+      "arguments": {
+        "a": "2",
+        "b": 3
+      },
+      "expected": "reject invalid input",
+      "passed": true,
+      "exitCode": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "a and b must be finite numbers"
+          }
+        ],
+        "isError": true,
+        "_durationMs": 6
+      },
+      "rpcErrors": []
+    },
+    {
+      "name": "extra_property",
+      "arguments": {
+        "a": 2,
+        "b": 3,
+        "c": 4
+      },
+      "expected": "reject invalid input",
+      "passed": false,
+      "exitCode": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"sum\": 5}"
+          }
+        ],
+        "structuredContent": {
+          "sum": 5
+        },
+        "isError": false,
+        "_durationMs": 7
+      },
+      "rpcErrors": []
+    }
+  ]
+}

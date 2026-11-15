@@ -1,0 +1,17 @@
+{
+  "id": "run_fixture_2",
+  "suiteId": "suite_authored_1",
+  "runNumber": 2,
+  "status": "completed",
+  "result": "passed",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "passRate": 1.0
+  },
+  "source": "api",
+  "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+  "createdAt": 1794706775294,
+  "completedAt": 1794706775294
+}

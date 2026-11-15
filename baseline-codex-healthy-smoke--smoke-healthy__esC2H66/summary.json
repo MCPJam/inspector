@@ -1,0 +1,49 @@
+{
+  "run_id": "baseline-codex-healthy-smoke--smoke-healthy__esC2H66",
+  "job": "baseline-codex-healthy-smoke",
+  "scenario": "mcpjam/healthy",
+  "agent": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "outcome": "harness-invalid",
+  "rewards": null,
+  "usage": null,
+  "exception": {
+    "exception_type": "RuntimeError",
+    "exception_message": "Docker compose command failed for environment healthy. Command: docker compose --project-name smoke-healthy__esc2h66__env --project-directory $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/smoke-healthy/environment -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmp8x_pj15e/smoke-healthy__esC2H66__env-docker-compose-resources.json -f $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker-compose-build.yaml -f $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/smoke-healthy/environment/docker-compose.yaml -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmplq8pafen/docker-compose-environment.json -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmps2dekjks/docker-compose-mounts.json build. Return code: 125. Stdout: unknown flag: --project-name\n\nUsage:  docker [OPTIONS] COMMAND [ARG...]\n\nRun 'docker --help' for more information\n. Stderr: None. ",
+    "exception_traceback": "Traceback (most recent call last):\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 613, in run\n    await self._prepare()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 652, in _prepare\n    await self._setup_agent_environment()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1875, in _setup_agent_environment\n    await self._start_agent_environment()\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/trial/trial.py\", line 1881, in _start_agent_environment\n    await asyncio.wait_for(\n  File \"$USER_HOME/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/tasks.py\", line 520, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 1108, in start\n    await self._run_docker_compose_command([\"build\"])\n  File \"$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker.py\", line 808, in _run_docker_compose_command\n    raise RuntimeError(\nRuntimeError: Docker compose command failed for environment healthy. Command: docker compose --project-name smoke-healthy__esc2h66__env --project-directory $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/smoke-healthy/environment -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmp8x_pj15e/smoke-healthy__esC2H66__env-docker-compose-resources.json -f $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/lib/python3.12/site-packages/harbor/environments/docker/docker-compose-build.yaml -f $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/smoke-healthy/environment/docker-compose.yaml -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmplq8pafen/docker-compose-environment.json -f /private/var/folders/mw/4_rmtd7j52z_6zkvd2mxnt8r0000gn/T/tmps2dekjks/docker-compose-mounts.json build. Return code: 125. Stdout: unknown flag: --project-name\n\nUsage:  docker [OPTIONS] COMMAND [ARG...]\n\nRun 'docker --help' for more information\n. Stderr: None. \n",
+    "occurred_at": "2026-11-15T01:19:49.238949Z",
+    "policy": {
+      "should_retry": true,
+      "should_grade": true,
+      "has_valid_reward": true
+    }
+  },
+  "capture_event_count": 0,
+  "unique_capture_event_count": 0,
+  "agent_tool_invocation_count": 0,
+  "agent_shell_invocation_count": 0,
+  "incomplete_events": 0,
+  "concern_count": 0,
+  "metrics": [],
+  "assessment_flags": [],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T01:19:49.677312Z",
+    "explicitly_harness_invalid": true,
+    "comparison_eligible": false,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": false,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": null,
+    "reason": "No unique native shell output with successful structuredContent.sum exactly matched a verifier-confirmed capture."
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once."
+}

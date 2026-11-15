@@ -1,0 +1,56 @@
+project, or the answer is `400`. `authorizationServerUrl`, `oauthResourceUrl`
+and `tokens.id_token` are accepted and ignored. Move to
+`PUT .../accounts/{account}`, which names the account it writes.
+
+The error codes these routes add to `details.code` are listed in the
+[error code reference](https://docs.mcpjam.com/troubleshooting/error-codes.md#server-account-errors).
+
+## Run evals from the API
+
+The shortest useful loop: create a run with one inline test, then poll:
+
+```bash theme={"theme":"css-variables"}
+# 1. Create (responds 202 immediately; -f + jq -e fail fast on errors)
+RUN_ID=$(curl -fsS -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "suiteName": "smoke",
+    "serverIds": ["'$SERVER_ID'"],
+    "tests": [{
+      "title": "echo works",
+      "runs": 1,
+      "model": "anthropic/claude-haiku-4.5",
+      "provider": "anthropic",
+      "steps": [
+        { "id": "s1", "kind": "prompt", "prompt": "Use the echo tool to say hi" },
+        {
+          "id": "s2",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolCalledWith",
+            "toolName": "echo",
+            "args": { "args": { "text": "hi" } }
+          }
+        }
+      ]
+    }]
+  }' | jq -er .runId)
+
+# 2. Poll until status is completed | failed | cancelled | timed_out
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+# 3. If it did not pass, read the decision summary FIRST
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/decision-summary" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+# 4. Or go straight to per-iteration tool calls, token usage, latency
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/iterations" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+```
+
+The decision summary composes steps 2 and 4 into one versioned object so every
+client reads a run the same way. Four things to know before gating on it:
+

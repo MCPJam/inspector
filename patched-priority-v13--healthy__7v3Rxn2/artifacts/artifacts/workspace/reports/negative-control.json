@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "kind": "eval-run",
+  "passed": false,
+  "verdict": "failed",
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "byCategory": {
+      "eval": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "run_fixture_2:suite_authored_2_case_0",
+      "title": "Add 17 and 25 to obtain 42",
+      "category": "eval",
+      "passed": false,
+      "durationMs": 1,
+      "error": "Iteration 1 failed",
+      "details": {
+        "runId": "run_fixture_2",
+        "iterations": [
+          {
+            "id": "run_fixture_2_0",
+            "iterationNumber": 1,
+            "status": "completed",
+            "result": "failed",
+            "error": null
+          }
+        ]
+      }
+    }
+  ],
+  "durationMs": 0,
+  "metadata": {
+    "runs": [
+      {
+        "id": "run_fixture_2",
+        "suiteId": "suite_authored_2",
+        "status": "completed",
+        "result": "failed",
+        "summary": {
+          "total": 1,
+          "passed": 0,
+          "failed": 1,
+          "passRate": 0
+        },
+        "iterationsComplete": true
+      }
+    ],
+    "project": {
+      "id": "project_fixture",
+      "name": "Fixture",
+      "sensitive_value": "[REDACTED]"
+    },
+    "suite": {
+      "id": "suite_authored_2",
+      "name": "Arithmetic negative control"
+    }
+  },
+  "decisionSummary": {
+    "schemaVersion": 1,
+    "runId": "run_fixture_2",
+    "runStatus": "completed",
+    "diagnostics": {
+      "items": [
+        {
+          "iterationId": "run_fixture_2_0",
+          "iterationNumber": 1,
+          "testCaseId": "suite_authored_2_case_0",
+          "title": "Add 17 and 25 to obtain 42",
+          "status": "completed",
+          "result": "failed",
+          "chain": {
+            "status": "absent"
+          },
+          "observed": {
+            "toolNames": [
+              "add"
+            ]
+          },
+          "evidence": {
+            "runId": "run_fixture_2",
+            "iterationId": "run_fixture_2_0",
+            "tracePath": "/projects/project_fixture/eval-runs/run_fixture_2/iterations/run_fixture_2_0/trace"
+          },
+          "nextAction": "inspect the case trace; no failure category was recorded"
+        }
+      ],
+      "complete": true,
+      "scannedIterations": 1
+    },
+    "verdict": "failed",
+    "verdictSource": "legacy",
+    "counts": {
+      "measurementUnit": "trial",
+      "total": 1,
+      "passed": 0,
+      "failed": 1
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "status": 403,
+  "body": {
+    "code": "FORBIDDEN",
+    "message": "This work requires platform credits. Add credits or contact your organization administrator.",
+    "details": {
+      "reason": "PLATFORM_FEE_REQUIRED"
+    }
+  }
+}

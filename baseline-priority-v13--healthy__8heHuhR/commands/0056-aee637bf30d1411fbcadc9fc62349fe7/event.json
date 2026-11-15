@@ -1,0 +1,22 @@
+{
+  "event_id": "aee637bf30d1411fbcadc9fc62349fe7",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -fsSL https://docs.mcpjam.com/reference/openapi.json -o openapi.json && python - <<'PY'\nimport json\ns=json.load(open('openapi.json'))\nfor p, ops in s['paths'].items():\n if any(x in p for x in ['servers','eval-suites','eval-runs','capabilities','chat-sessions/messages']):\n  print(p, ', '.join(ops))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:57:53.691874+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 127,
+  "signal": null,
+  "duration_seconds": 0.494964599609375,
+  "end": "2026-11-15T01:57:54.186743+00:00"
+}

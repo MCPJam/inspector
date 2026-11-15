@@ -1,0 +1,7 @@
+{"id":"user_fixture","email":"[EMAIL REDACTED]","name":"Fixture user","plan":"team","credential":"api-key"}
+
+{"error":{"code":"USAGE_ERROR","message":"error: unknown command 'servers'\n(Did you mean secrets?)"}}
+
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Eval idempotency key: 45ca0bcc-b0d0-428c-b0c6-aaa60af5dc70
+{"error":{"code":"INTERNAL_ERROR","message":"Server \"arith\" was not found in project \"Fixture\". Available: Arithmetic (id: server_fixture).\nRetry this launch with --idempotency-key 45ca0bcc-b0d0-428c-b0c6-aaa60af5dc70.","details":{"idempotencyKey":"45ca0bcc-b0d0-428c-b0c6-aaa60af5dc70"}}}

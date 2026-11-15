@@ -1,0 +1,22 @@
+{
+  "event_id": "5b97416a00734cfaab9baa84ce0d6bdb",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/validation/api.py <<'PY'\nimport os,json,urllib.request,urllib.error,sys,datetime\nBASE=os.environ['MCPJAM_API_URL'].rstrip('/')\ndef call(method,path,body=None,label=None):\n data=None if body is None else json.dumps(body).encode()\n req=urllib.request.Request(BASE+path,data=data,method=method,headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'})\n try:\n  with urllib.request.urlopen(req,timeout=25) as r: status=r.status; raw=r.read().decode()\n except urllib.error.HTTPError as e: status=e.code;raw=e.read().decode()\n try: result=json.loads(raw)\n except ValueError: result={'raw':raw}\n entry={'method':method,'path':path,'status':status,'response':result}\n with open('/workspace/validation/requests.jsonl','a') as f:f.write(json.dumps(entry)+'\\n')\n if label:json.dump(entry,open('/workspace/validation/'+label+'.json','w'),indent=2)\n print(json.dumps(entry));return status,result\nif __name__=='__main__':call(sys.argv[1],sys.argv[2],json.loads(sys.argv[3]) if len(sys.argv)>3 else None,sys.argv[4] if len(sys.argv)>4 else None)\nPY\npython3 /workspace/validation/api.py POST /projects/project_fixture/servers/server_fixture/doctor '{}' doctor\npython3 /workspace/validation/api.py GET /projects/project_fixture/eval-suites"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:27:39.955218+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.04236435890197754,
+  "end": "2026-11-15T02:27:39.997527+00:00"
+}

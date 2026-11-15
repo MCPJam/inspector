@@ -1,0 +1,22 @@
+{
+  "event_id": "c0b967b58e7f4c20916d6347c71c5982",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcp-eval/api.py <<'PY'\nimport os,json,urllib.request,urllib.error,sys,pathlib\nroot=pathlib.Path(__file__).parent\n\ndef call(method,path,body=None,label=None):\n req=urllib.request.Request(os.environ['MCPJAM_API_URL'].rstrip('/')+path,data=json.dumps(body).encode() if body is not None else None,headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'},method=method)\n try:\n  with urllib.request.urlopen(req,timeout=20) as r: status=r.status; raw=r.read().decode()\n except urllib.error.HTTPError as e: status=e.code; raw=e.read().decode()\n try: data=json.loads(raw)\n except ValueError:data=raw\n result={'status':status,'body':data}\n if label:(root/(label+'.json')).write_text(json.dumps(result,indent=2))\n return result\nif __name__=='__main__':\n print(json.dumps(call(sys.argv[1],sys.argv[2],json.loads(pathlib.Path(sys.argv[3]).read_text()) if len(sys.argv)>3 else None,sys.argv[4] if len(sys.argv)>4 else None),indent=2))\nPY\ncd /workspace/mcp-eval && python3 - <<'PY'\nfrom api import call\nimport json\nfor label,path in [('me','/me'),('organizations','/organizations'),('servers','/projects/project_fixture/servers'),('suites','/projects/project_fixture/eval-suites'),('models','/models')]:print(label,json.dumps(call('GET',path,label=label)))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:06:24.487991+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.030381202697753906,
+  "end": "2026-11-15T02:06:24.518310+00:00"
+}

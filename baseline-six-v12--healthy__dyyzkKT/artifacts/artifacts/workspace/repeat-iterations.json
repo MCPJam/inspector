@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": "run_fixture_2_0",
+      "testCaseId": "suite_authored_1_case_0",
+      "title": "add 19 and 23 returns 42",
+      "iterationNumber": 1,
+      "status": "completed",
+      "result": "passed",
+      "actualToolCalls": [
+        {
+          "toolName": "add",
+          "arguments": {
+            "a": 19,
+            "b": 23
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"sum\": 42}"
+              }
+            ],
+            "structuredContent": {
+              "sum": 42
+            },
+            "isError": false
+          }
+        }
+      ],
+      "expectedToolCalls": [],
+      "durationMs": 1,
+      "error": null
+    }
+  ]
+}

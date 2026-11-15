@@ -1,0 +1,28 @@
+schema_version = "1.4"
+[task]
+name = "mcpjam/healthy"
+[metadata]
+benchmark_version = "1.2.0"
+fixture_seed = 42
+simulation = true
+[agent]
+timeout_sec = 240
+[environment]
+build_timeout_sec = 180
+cpus = 2
+memory_mb = 2048
+workdir = "/workspace"
+[verifier]
+timeout_sec = 60
+environment_mode = "separate"
+[[artifacts]]
+source = "/private"
+destination = "fixture"
+service = "fixture"
+[[artifacts]]
+source = "/workspace"
+destination = "workspace"
+exclude = ["node_modules", ".npm", ".cache"]
+[[artifacts]]
+source = "/capture"
+destination = "capture"

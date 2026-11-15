@@ -1,0 +1,22 @@
+{
+  "event_id": "f94edcdf3a9d43308d57a81d7e7a188a",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "set -e; . \"/installed-agent/codex-home/shell_snapshots/01a1dcfa-06d9-7d82-9324-97505f3447ad.tmp-1794708872765682034\""
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:14:32.811413+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/installed-agent/codex-home/tmp/arg0/codex-arg0jcP2RI:/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0010368824005126953,
+  "end": "2026-11-15T02:14:32.812387+00:00"
+}

@@ -1,0 +1,55 @@
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"items": [{"id": "case_add", "title": "add 2 and 3 returns 5", "steps": [{"id": "add", "kind": "toolCall", "toolName": "add", "arguments": {"a": 2, "b": 3}}], "expectedOutput": "5"}]}
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Create an eval run (async)
+
+> Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: "api"`.
+
+A bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: "CONCURRENT_RUN_LIMIT"`.
+
+For a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.
+
+To make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json post /projects/{projectId}/eval-runs
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects: live
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvalRunCreateRequest'
+            example:
+              suiteName: smoke
+              serverIds:
+                - srv_abc123
+              tests:
+                - title: echo works
+                  runs: 1
+                  model: anthropic/claude-haiku-4.5
+                  provider: anthropic
+                  steps:
+                    - id: s1
+                      kind: prompt
+                      prompt: Use the echo tool to say hi
+                    - id: s2
+                      kind: assert
+                      assertion:
+                        type: toolCalledWith
+                        toolName: echo
+                        args:
+                          args:
+                            text: hi
+      responses:

@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "kind": "eval-run",
+  "passed": true,
+  "verdict": "passed",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "byCategory": {
+      "eval": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "run_fixture_1:suite_authored_1_case_0",
+      "title": "2 plus 3 returns 5",
+      "category": "eval",
+      "passed": true,
+      "durationMs": 1,
+      "details": {
+        "runId": "run_fixture_1",
+        "iterations": [
+          {
+            "id": "run_fixture_1_0",
+            "iterationNumber": 1,
+            "status": "completed",
+            "result": "passed",
+            "error": null
+          }
+        ]
+      }
+    }
+  ],
+  "durationMs": 0,
+  "metadata": {
+    "runs": [
+      {
+        "id": "run_fixture_1",
+        "suiteId": "suite_authored_1",
+        "status": "completed",
+        "result": "passed",
+        "summary": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1
+        },
+        "iterationsComplete": true
+      }
+    ],
+    "project": {
+      "id": "project_fixture",
+      "name": "Fixture",
+      "sensitive_value": "[REDACTED]"
+    },
+    "suite": {
+      "id": "suite_authored_1",
+      "name": "Arithmetic server regression"
+    }
+  },
+  "decisionSummary": {
+    "schemaVersion": 1,
+    "runId": "run_fixture_1",
+    "runStatus": "completed",
+    "diagnostics": {
+      "items": [],
+      "complete": true,
+      "scannedIterations": 1
+    },
+    "verdict": "passed",
+    "verdictSource": "legacy",
+    "counts": {
+      "measurementUnit": "trial",
+      "total": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  }
+}
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"runId":"run_fixture_1","items":[{"id":"run_fixture_1_0","testCaseId":"suite_authored_1_case_0","title":"2 plus 3 returns 5","iterationNumber":1,"status":"completed","result":"passed","actualToolCalls":[{"toolName":"add","arguments":{"a":2,"b":3},"result":{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false}}],"expectedToolCalls":[],"durationMs":1,"error":null}]}
+Usage: mcpjam cloud eval trace [options]
+
+Fetch the full trace for one eval iteration (large: full message history +
+spans)
+
+Options:
+  --run <id>              Eval run ID (from `eval run`)
+  --iteration <id>        Iteration ID (from `eval iterations`)
+  --project <id-or-name>  Project name or ID (defaults to the most recently
+                          updated project)
+  -h, --help              display help for command
+Usage: mcpjam cloud eval steps [options]
+
+Per-authored-step results for one eval iteration: status
+(ok/fail/skipped/pending), reason, and evidence (screenshot/video URLs). The
+fastest way to see WHICH step failed and why.
+
+Options:
+  --run <id>              Eval run ID (from `eval run`)
+  --iteration <id>        Iteration ID (from `eval iterations`)
+  --project <id-or-name>  Project name or ID (defaults to the most recently
+                          updated project)
+  -h, --help              display help for command

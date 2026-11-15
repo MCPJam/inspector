@@ -1,0 +1,22 @@
+{
+  "event_id": "4049164a24b94b5395e569f3b7c0a14e",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707142914-66fks8.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_API_URL=http://127.0.0.1:18765/api/v1\npython3 - <<'\"'\"'E'\"'\"'\ns=open('\"'\"'.mcpjam/evals/add.yaml'\"'\"').read()\ni=s.index('\"'\"'      - id: a1'\"'\"')\ns=s[:i]+'\"'\"''\"'\"''\"'\"'      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\n'\"'\"''\"'\"''\"'\"'\nopen('\"'\"'.mcpjam/evals/add.yaml'\"'\"','\"'\"'w'\"'\"').write(s)\nE\nnpx -y @mcpjam/cli@latest cloud eval validate --file .mcpjam/evals/add.yaml --project project_fixture 2>&1 | tail -3\nnpx -y @mcpjam/cli@latest cloud eval run --file .mcpjam/evals/add.yaml --project project_fixture --server server_fixture --wait --reporter json-summary --out reports/add.json 2>&1 | tail -8; head -c 1500 reports/add.json' && pwd -P >| /tmp/claude-ab07-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:47:02.135355+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 2.1209678649902344,
+  "end": "2026-11-15T01:47:04.256216+00:00"
+}

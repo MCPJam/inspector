@@ -1,0 +1,310 @@
+
+`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
+authenticates, then validates. A contract-invalid file exits **2** after the
+auth request — it does not start a run. `eval validate` on the same bytes
+still exits 1: that command is a verdict on the file; this one is not.
+
+The file's `suite.id` is the declared suite identity. The first run creates a
+file-owned suite stamped with that id; later runs of the same id in the same
+project update that suite rather than creating a second one. A UI-authored
+suite has no declared id, so no file can claim it. Resolve is never by name.
+
+File `passThreshold` is a fraction; the hosted suite grades on a percent. The
+conversion refuses rather than approximates. A file count above **10**
+(`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`) is
+refused by name (`REPETITIONS_CAP`) and is not clamped.
+
+**Which vocabulary the sync speaks is the deployment's call.** Before writing
+anything, the CLI reads `GET /capabilities` once. A deployment that advertises
+`vocabulary.version: 2` gets every request with `x-mcpjam-eval-vocabulary: 2`
+and case bodies spelled canonically — `iterations` (the exact count),
+`legacyIterations` (the legacy floor, the same number) and `assertions` —
+instead of `repetitions` / `iterations` / `checks`. A deployment without the
+capability block, or without the capabilities route at all, is spoken to in
+vocabulary 1, byte-for-byte as before. Nothing in the file changes either way:
+the dialect of the file and the vocabulary of the wire are independent.
+
+Cases are synced in batches of at most 100 (`create_eval_cases`). Every
+declared case is created or updated, including `disabled: true` rows. A case
+the file **no longer declares** is deleted from the hosted suite before
+launch. A case the file still declares but marks `disabled: true` is **kept,
+with its history** — it is simply left out of the launch, so parking a flaky
+test does not destroy its past results and re-enabling it later resumes the
+same case.
+The run is scoped to the enabled cases either way. A file with no enabled
+cases is refused (`NO_ENABLED_CASES`) rather than launching the whole
+persisted suite. `--case` may only name an enabled case. A later run updates
+existing cases by declared id and creates new ones. An enabled case that
+overrides `passThreshold` is refused: hosted grading is suite-wide. A
+disabled case with the same override is ignored, matching how repetitions
+are checked. Authored
+`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused at
+hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
+refusal). Hosted platform-authored suites do not currently have a backend
+tool-policy field or enforcement path, so the CLI does not upload a suite that
+would claim those guarantees. When supported by an eval runner, `toolPolicy`
+is enforced at execution time with denied tools kept visible but blocked;
+server annotations are advisory and **UNTRUSTED**. The file's default count
+(`defaults.repetitions`, or `defaults.iterations` in `schemaVersion: "2"`) is
+inherited per case and is not uploaded as a suite `minIterations` floor.
+Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
+execution defaults; omitted fields stay omitted so the platform applies its
+own defaults. `target.hosts` and `target.environment` are attached before
+launch. A file environment takes precedence over file hosts for that launch,
+while an explicit CLI target takes precedence over both. When an explicit CLI
+target is provided (for example `--host`), the file's `target.hosts` are
+**not** synchronized to the suite's persisted host attachments — the suite
+keeps whatever hosts it already has. Host attachment synchronization only
+runs when no explicit CLI target overrides the file. Environment attachment
+synchronization is unaffected and always runs.
+
+Without `--idempotency-key`, the CLI mints a fresh UUID for every invocation
+and prints it to stderr before launch (`Eval idempotency key: <key>`). Each
+invocation therefore starts and bills a new run. To retry a launch whose
+response was lost — without starting a second run — pass the key that was
+printed: `--idempotency-key <printed-key>`. A replay is marked `deduped` in
+the receipt and human output. `--notes` is not part of the key.
+
+##### Imported cases: live tool resolution, and per-run approval
+
+Every file run performs the same live check `eval validate --project` performs,
+**before it writes anything**. It is not opt-in and there is no flag to skip
+it. A file with no deterministic `toolCall` steps asks no question and pays no
+round trip.
+
+What happens when a deterministic reference does not resolve depends on the
+case:
+
+| Case | Outcome |
+| - | - |
+| Selected (enabled, and named by `--case` if you used it) | The launch **refuses before the suite is synced** — nothing is written and nothing is billed |
+| Imported, not selected | Its claim is rewritten to `unresolved` (keeping `sourceCaseKey`) and it is **still persisted**, so the hosted record says what MCPJam found rather than still asserting a claim about a missing tool |
+| Native, not selected | Left exactly as authored. A hand-written case never acquires an `import` block from this — "somebody wrote this" and "something converted this" are different facts |
+
+Each target is checked on **its own** server set. `--host` is checked against
+that host's configured servers rather than the file's, because that is the set
+the run connects — validating `target.servers` would approve a tool the host
+cannot reach. A host the FILE declares uses its own `servers` list when it
+declares one (those are attached to the host before launch) and the host's
+configured set when the field is omitted. An explicitly empty `servers: []`
+is a real, empty set — it clears the attachment before launch — and is
+validated as such, never as an omitted field. A step that pins `serverId` is resolved by id;
+`serverName` is a display fallback and never overrides it.
+
+If the run's target set cannot be enumerated before the suite exists
+(`--all-targets`, `--compose-*`), or a host does not report a server set, or a
+host pins a server the project no longer has, the launch refuses rather than
+assuming the references are fine.
+
+`--case` accepts a hosted row id, which does not exist yet when this check
+runs. A selector this stage cannot map is therefore treated as possibly naming
+any enabled case, so an unresolved reference still refuses; the launcher
+resolves the selector itself a moment later.
+
+A selected `approximated` case refuses unless this invocation approves it:
+
+| Flag | Required | Description |
+| - | - | - |
+| `--allow-approximated <case...>` | No | Approve an `approximated` imported case for **this run only**, by AUTHORED case id (`cases[].id`). Repeatable. `--file` runs only |
+| `--approval-reason <text>` | With the above | Why the approximations are acceptable for this run. 1–500 characters after trimming; one reason covers every approval in the invocation |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+  --allow-approximated c_refund_partial \
+  --approval-reason "Reviewed against the upstream rubric; ENG-4821"
+```
+
+Checked before anything is billed, each with its own message: approving a
+**native** case (nothing to approve), a **claimed-exact** one (needs no
+approval), an **unsupported** or **unresolved** one (approval covers a case
+whose behaviour was approximated, not one whose behaviour is missing), a
+**disabled** or **unselected** one (the run will not execute it), an unknown
+id, or the same id twice. The flags are refused outright with `--suite`: a
+hosted suite's cases are not the ones this invocation authored, so an
+authored-id selector has nothing to resolve against.
+
+**The approval belongs to the run, never to the case.** You supply an id and a
+reason and nothing else — the approver and the timestamp are derived by the
+server and frozen into that run's own snapshot, because a caller-supplied
+approver would file one person's approval under another's name and a
+caller-supplied timestamp could be backdated past the edit that invalidated the
+claim. Nothing persists: edit the suite, re-sync, or launch again, and the flags
+are required again.
+
+Scheduled runs and GitHub-App runs cannot approve anything. A scheduled suite
+containing a selected approximation is refused by platform policy, which is the
+intended behaviour — an unattended job is exactly the caller that must not be
+able to wave one through.
+
+`--file` pointing at create-API JSON (no `schemaVersion`) is a usage error
+that names `eval create --file`. The converse is also true: `eval create --file`
+on a versioned suite file names `eval run --file`.
+
+Export of a file-owned suite writes `declaredId` as `suite.id`. Export of a
+UI-owned suite derives a stable file identity (`s_export_<sourceSuiteId>`),
+so importing the exported file creates a file-owned clone rather than
+re-claiming the original UI suite.
+
+When the run targets an **attached project environment** (`eval environments
+set`), it executes against that environment's resolved host config, closed
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval validate`
+
+Validate a local eval **suite file** — the versioned declarative document that
+describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
+canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
+
+Offline by default: without `--project` this command builds no API client, reads
+no API key and never touches the network. Passing `--project` is the only thing
+that changes that, and it is keyed off the FLAG — a linked directory or an
+`MCPJAM_PROJECT` in the environment never turns the offline command into a
+networked one.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--file <path>` | Yes | Suite file to validate, `.yaml` or `.json` (or `-` for stdin) |
+| `--project <id-or-name>` | No | Also resolve the file's deterministic tool references against this project's live servers. Opt-in; authenticates and makes network calls |
+
+| Exit code | Meaning |
+| - | - |
+| `0` | Valid |
+| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first. `eval run --file` on the same bytes exits **2** — 1 is reserved there for a real verdict |
+| `2` | Nothing was validated: unreadable path, input over the 1 MiB limit, or malformed YAML |
+
+Input is capped at **1,048,576 bytes (1 MiB) of UTF-8** and is never truncated —
+a file over the cap is rejected outright.
+
+Under `--format json`, stdout carries this envelope whether the file is valid or
+not:
+
+```jsonc theme={"theme":"css-variables"}
+// exit 0
+{
+  "valid": true,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+  "findings": []
+}
+
+// exit 1 or 2
+{
+  "valid": false,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "stage": "contract",           // "contract" is exit 1; "input" and "parse" are exit 2
+  "findings": [
+    {
+      "code": "SUITE_FILE_INVALID",   // or SUITE_FILE_TOO_LARGE / _EMPTY / _YAML_INVALID / _MULTIPLE_DOCUMENTS
+      "path": ["cases", 1, "id"],      // field path as segments
+      "pointer": "cases[1].id",        // the same path, rendered
+      "message": "duplicate case id \"c_refund\""
+      // `location` accompanies SUITE_FILE_YAML_INVALID findings only, where the
+      // YAML parser reported a position: { "line": 24, "column": 9 }
+    }
+  ]
+}
+```
+
+Findings are deterministically ordered and carry no timestamps, so two runs over
+the same bytes produce byte-identical output.
+
+An unreadable or missing path is a usage error and goes to stderr in the CLI's
+standard error envelope rather than as findings — nothing was read, so there is
+nothing to report about.
+
+**What "valid" does not mean, without `--project`.** The offline check judges
+the file against the suite-file contract. It does **not** re-resolve tool names,
+server references or fixtures against a project's live discovery, so a file that
+validates here can still fail to run.
+
+#### `--project`: resolving the names against a real project
+
+With `--project`, the command authenticates, resolves the named project, and
+checks every deterministic `toolCall` step against the live tool inventory of
+the targets the file would run on. Structural findings are unchanged and the
+live half is additive, under its own key:
+
+```jsonc theme={"theme":"css-variables"}
+{
+  "valid": false,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+  "findings": [],
+  "projectValidation": {
+    "project": { "id": "proj_123", "name": "Alpha" },
+    "targets": ["environment prod"],
+    "valid": false,
+    "findings": [
+      {
+        "code": "TOOL_REFERENCE_UNRESOLVED",   // or TOOL_DISCOVERY_UNAVAILABLE
+        "path": ["cases", 1, "steps", 0, "toolName"],
+        "pointer": "cases[1].steps[0].toolName",
+        "caseId": "c_render_legacy",
+        "caseTitle": "Renders the legacy receipt",
+        "toolName": "render_gone",
+        "serverName": "billing",
+        "targetLabel": "environment prod",
+        "disabled": true,
+        "imported": true,
+        "message": "Server \"billing\" in environment prod exposes no tool named \"render_gone\"."
+      }
+    ]
+  }
+}
+```
+
+Three properties of the live check are worth knowing before you rely on it:
+
+* **Only `toolCall` steps count.** A tool named in prompt text is a hint the
+  model may or may not act on, and an `assert` step is an expectation a case may
+  legitimately fail at run time. Treating either as a deterministic reference
+  would make a negative test unwritable.
+* **Per target, never over their union.** A file that runs against several
+  targets must resolve in all of them; a union would green-light a case that
+  fails on two targets out of three.
+* **Auth and network failures are command errors, not findings.** "Your file
+  names a tool that does not exist" and "we could not look" send you to two
+  different places, so they are never reported as the same thing.
+
+A completed live check with unresolved references is a **verdict on the file**
+and exits `1`, like any other contract failure. A failure to authenticate,
+reach the project, or list a server's tools is a command error on stderr.
+
+### `cloud eval export`
+
+Write a hosted eval suite to a local suite file.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes | Eval suite to export (name or ID) |
+| `--project <id-or-name>` | No | Project the suite belongs to (defaults to the most recently updated project) |
+| `--out <path>` | No | Where to write (default `.mcpjam/evals/<suite-id>.yaml`) |
+| `--force` | No | Replace an existing file at the output path |
+| `--schema-version <1\|2>` | No | Suite-file dialect to write. `1` (the default) spells the count `repetitions` and the rules `checks`; `2` spells them `iterations` and `assertions`. Both dialects load. |
+
+The default path uses the suite's **id**, not its display name: an id is stable
+and path-safe, so a rename does not leave a second file behind.
+
+Like `eval run --file`, export reads `GET /capabilities` first and fetches the
+cases in the vocabulary the deployment advertises; the file it writes is the
+same either way. `--schema-version` chooses the file's dialect, the deployment
+chooses the wire's vocabulary, and neither decides the other.
+
+The dialect is the author's choice and is never inferred: a file has no
+handshake with whatever will read it later, so `eval export` keeps writing
+`schemaVersion: "1"` until you ask for `2`.
+
+**Fail-closed.** A suite file cannot express everything a hosted suite can, and
+this command refuses rather than writing a file that describes a different test
+than the dashboard runs. When any part of a suite is not representable it emits
+`UNSUPPORTED_SUITE_EXPORT` findings, exits `1`, and writes **no file at all** —
+not a partial one, not one with a warning comment. Every finding names the field
+it is about, so the command's output is the authoritative list; the constructs
+that refuse today include:
+
+* several attached project environments, or legacy servers combined with an
+  attached environment (the suite file can name one environment);
+* a pinned sandbox image;

@@ -1,0 +1,2 @@
+{"seconds": 9.50728726387024, "stream": "stdout", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"error: unknown option '--project'\"}}\n"}
+{"seconds": 10.139174461364746, "stream": "stdout", "data": "{\"id\":\"user_fixture\",\"email\":\"[EMAIL REDACTED]\",\"name\":\"Fixture user\",\"plan\":\"team\",\"credential\":\"api-key\"}\n"}

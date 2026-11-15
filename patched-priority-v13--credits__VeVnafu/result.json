@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "id": "8086384a-8309-4131-9a21-61455f93e066",
+  "task_name": "mcpjam/credits",
+  "trial_name": "credits__VeVnafu",
+  "trial_uri": "file://$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/patched-priority-v13/credits__VeVnafu",
+  "task_id": {
+    "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/patched-priority-v13/credits"
+  },
+  "source": null,
+  "task_checksum": "3d85d5185c128fbe65375a87f8383765790f54c28331115a02cce791e444ed3d",
+  "config": {
+    "schema_version": 1,
+    "task": {
+      "path": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/tasks/patched-priority-v13/credits",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "credits__VeVnafu",
+    "trials_dir": "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/jobs/patched-priority-v13",
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "claude-code",
+      "import_path": null,
+      "model_name": "anthropic/claude-sonnet-5-5",
+      "base_url": null,
+      "model_api_key_name": null,
+      "model_api_format": null,
+      "skip_model_parsing": false,
+      "n_concurrent": null,
+      "concurrency_group": null,
+      "skills": [],
+      "override_timeout_sec": null,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "resume_trajectory": true,
+      "load_trajectory": null,
+      "extra_allowed_hosts": [],
+      "kwargs": {
+        "version": "2.1.323",
+        "max_turns": 30,
+        "max_budget_usd": "2",
+        "thinking_display": "omitted"
+      },
+      "mcp_servers": []
+    },
+    "user_agent": null,
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "stream": false,
+      "cpu_enforcement_policy": "auto",
+      "memory_enforcement_policy": "auto",
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "override_tpu": null,
+      "mounts": null,
+      "extra_docker_compose": [],
+      "kwargs": {},
+      "extra_allowed_hosts": []
+    },
+    "verifier": {
+      "override_timeout_sec": null,
+      "max_timeout_sec": null,
+      "disable": false
+    },
+    "override_error_policy": {},
+    "artifacts": [],
+    "extra_instruction_paths": [],
+    "extra_instructions": [],
+    "job_id": "dcca7448-9592-44b3-882d-5c20519c62c3",
+    "source_trial": null
+  },
+  "agent_info": {
+    "name": "claude-code",
+    "version": "2.1.323",
+    "model_info": {
+      "name": "claude-sonnet-5-5",
+      "provider": "anthropic"
+    }
+  },
+  "agent_result": null,
+  "verifier_result": {
+    "rewards": {
+      "reward": 0.0
+    }
+  },
+  "verifier_environment_mode": null,
+  "exception_info": null,
+  "started_at": "2026-11-15T02:05:48.001151Z",
+  "finished_at": "2026-11-15T02:07:58.101840Z",
+  "environment_setup": {
+    "started_at": "2026-11-15T02:05:48.004996Z",
+    "finished_at": "2026-11-15T02:05:50.941731Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-11-15T02:05:50.941778Z",
+    "finished_at": "2026-11-15T02:05:51.092509Z"
+  },
+  "agent_execution": null,
+  "verifier": null,
+  "step_results": [
+    {
+      "step_name": "blocked",
+      "agent_result": {
+        "n_input_tokens": 288002,
+        "n_cache_tokens": 271413,
+        "n_output_tokens": 3250,
+        "cost_usd": 0.1259533,
+        "model_usage": {
+          "claude-sonnet-5-5": {
+            "n_input_tokens": 288002,
+            "n_cache_tokens": 271413,
+            "n_output_tokens": 3250,
+            "cost_usd": 0.1011028
+          }
+        },
+        "rollout_details": null,
+        "metadata": null
+      },
+      "verifier_result": {
+        "rewards": {
+          "reward": 0.0
+        }
+      },
+      "exception_info": null,
+      "agent_execution": {
+        "started_at": "2026-11-15T02:05:51.241476Z",
+        "finished_at": "2026-11-15T02:06:27.923591Z"
+      },
+      "verifier": {
+        "started_at": "2026-11-15T02:06:28.737525Z",
+        "finished_at": "2026-11-15T02:06:41.384809Z"
+      }
+    },
+    {
+      "step_name": "resume",
+      "agent_result": {
+        "n_input_tokens": 426923,
+        "n_cache_tokens": 407972,
+        "n_output_tokens": 4550,
+        "cost_usd": 0.1620412,
+        "model_usage": {
+          "claude-sonnet-5-5": {
+            "n_input_tokens": 426923,
+            "n_cache_tokens": 407972,
+            "n_output_tokens": 4550,
+            "cost_usd": 0.13365970000000002
+          }
+        },
+        "rollout_details": null,
+        "metadata": null
+      },
+      "verifier_result": {
+        "rewards": {
+          "reward": 0.0
+        }
+      },
+      "exception_info": null,
+      "agent_execution": {
+        "started_at": "2026-11-15T02:06:41.495542Z",
+        "finished_at": "2026-11-15T02:07:24.187723Z"
+      },
+      "verifier": {
+        "started_at": "2026-11-15T02:07:45.463388Z",
+        "finished_at": "2026-11-15T02:07:58.092055Z"
+      }
+    }
+  ],
+  "reward_valid": true
+}

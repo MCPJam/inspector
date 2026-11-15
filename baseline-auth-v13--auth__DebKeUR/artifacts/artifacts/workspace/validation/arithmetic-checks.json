@@ -1,0 +1,157 @@
+[
+  {
+    "case": "positive",
+    "arguments": {
+      "a": 2,
+      "b": 3
+    },
+    "expectedSum": 5,
+    "exitCode": 0,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": 5}"
+        }
+      ],
+      "structuredContent": {
+        "sum": 5
+      },
+      "isError": false,
+      "_durationMs": 8
+    }
+  },
+  {
+    "case": "negative",
+    "arguments": {
+      "a": -7,
+      "b": 2
+    },
+    "expectedSum": -5,
+    "exitCode": 0,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": -5}"
+        }
+      ],
+      "structuredContent": {
+        "sum": -5
+      },
+      "isError": false,
+      "_durationMs": 5
+    }
+  },
+  {
+    "case": "zero",
+    "arguments": {
+      "a": 0,
+      "b": 0
+    },
+    "expectedSum": 0,
+    "exitCode": 0,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": 0}"
+        }
+      ],
+      "structuredContent": {
+        "sum": 0
+      },
+      "isError": false,
+      "_durationMs": 5
+    }
+  },
+  {
+    "case": "decimal",
+    "arguments": {
+      "a": 1.25,
+      "b": 2.5
+    },
+    "expectedSum": 3.75,
+    "exitCode": 0,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": 3.75}"
+        }
+      ],
+      "structuredContent": {
+        "sum": 3.75
+      },
+      "isError": false,
+      "_durationMs": 5
+    }
+  },
+  {
+    "case": "missing",
+    "arguments": {
+      "a": 2
+    },
+    "expectedSum": null,
+    "exitCode": 1,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "a and b must be finite numbers"
+        }
+      ],
+      "isError": true,
+      "_durationMs": 6
+    }
+  },
+  {
+    "case": "wrong-type",
+    "arguments": {
+      "a": "2",
+      "b": 3
+    },
+    "expectedSum": null,
+    "exitCode": 1,
+    "passed": true,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "a and b must be finite numbers"
+        }
+      ],
+      "isError": true,
+      "_durationMs": 17
+    }
+  },
+  {
+    "case": "extra-field",
+    "arguments": {
+      "a": 2,
+      "b": 3,
+      "c": 4
+    },
+    "expectedSum": null,
+    "exitCode": 0,
+    "passed": false,
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"sum\": 5}"
+        }
+      ],
+      "structuredContent": {
+        "sum": 5
+      },
+      "isError": false,
+      "_durationMs": 5
+    }
+  }
+]

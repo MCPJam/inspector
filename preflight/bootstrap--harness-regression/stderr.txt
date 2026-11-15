@@ -1,0 +1,16 @@
+test_account_and_email_are_redacted (test_report.EvidencePublicationTests.test_account_and_email_are_redacted) ... ok
+test_actual_tool_ids_count_once_per_phase (test_report.EvidencePublicationTests.test_actual_tool_ids_count_once_per_phase) ... ok
+test_finalized_run_is_immutable (test_report.EvidencePublicationTests.test_finalized_run_is_immutable) ... ok
+test_harbor_exception_overrides_process_exit (test_report.EvidencePublicationTests.test_harbor_exception_overrides_process_exit) ... ok
+test_initial_blocked_reward_does_not_override_final_recovery (test_report.EvidencePublicationTests.test_initial_blocked_reward_does_not_override_final_recovery) ... ok
+test_mixed_claude_message_keeps_public_text_only (test_report.EvidencePublicationTests.test_mixed_claude_message_keeps_public_text_only) ... ok
+test_nested_verifier_exception_is_harness_invalid (test_report.EvidencePublicationTests.test_nested_verifier_exception_is_harness_invalid) ... ok
+test_phase_snapshot_wins_over_live_duplicate (test_report.EvidencePublicationTests.test_phase_snapshot_wins_over_live_duplicate) ... ok
+test_private_identifier_list_covers_split_recordings (test_report.EvidencePublicationTests.test_private_identifier_list_covers_split_recordings) ... ok
+test_private_reasoning_is_never_a_concern_quote (test_report.EvidencePublicationTests.test_private_reasoning_is_never_a_concern_quote) ... ok
+test_secret_split_across_chunks_is_fully_removed (test_report.EvidencePublicationTests.test_secret_split_across_chunks_is_fully_removed) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.016s
+
+OK

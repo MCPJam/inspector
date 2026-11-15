@@ -1,0 +1,22 @@
+{
+  "event_id": "eaaff2f104c6465e84754613f2f3e677",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "npx mcpjam cloud servers list --project project_fixture --no-telemetry --format json > artifacts/servers.json && cat artifacts/servers.json && npx mcpjam cloud models list --no-telemetry --format json > artifacts/models.json && head -c 5000 artifacts/models.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:09:09.364099+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 2,
+  "signal": null,
+  "duration_seconds": 0.4135725498199463,
+  "end": "2026-11-15T02:09:09.777607+00:00"
+}

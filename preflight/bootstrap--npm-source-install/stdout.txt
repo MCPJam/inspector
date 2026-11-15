@@ -1,0 +1,20 @@
+
+> prepare
+> node -e "require('fs').existsSync('scripts/git-hooks/install.mjs') && import('./scripts/git-hooks/install.mjs').then((m) => m.main())" && node -e "require('fs').existsSync('scripts/generate-telemetry-catalogs.mjs') && import('./scripts/generate-telemetry-catalogs.mjs').then((m) => m.writeTelemetryCatalogs()).catch((e) => console.warn('[telemetry] catalogs not generated: ' + e.message))"
+
+git hooks: core.hooksPath set to scripts/git-hooks
+
+added 588 packages, and audited 592 packages in 41s
+
+175 packages are looking for funding
+  run `npm fund` for details
+
+10 moderate severity vulnerabilities
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.

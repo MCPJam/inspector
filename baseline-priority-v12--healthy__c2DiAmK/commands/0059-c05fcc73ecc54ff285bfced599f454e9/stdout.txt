@@ -1,0 +1,1 @@
+201 {"suiteId": "suite_authored_1", "name": "Arithmetic repeatable smoke", "servers": [{"id": "server_fixture"}], "hosts": [], "caseUpsert": {"committed": [{"id": "suite_authored_1_case_0", "name": "add 2 and 3 returns 5"}], "failed": []}}

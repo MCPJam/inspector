@@ -1,0 +1,22 @@
+{
+  "event_id": "7fd715c741394f89a0a9df60caf12af7",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794709615798-n7dvr4.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; ls; cat mcp.json | sed '\"'\"'s/\\(Bearer \\)[^\"]*/\\1***/'\"'\"'; which mcpjam; npx --no-install mcpjam --help 2>&1 | head -30' < /dev/null && pwd -P >| /tmp/claude-e92b-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:26:55.831062+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.4436366558074951,
+  "end": "2026-11-15T02:26:56.274629+00:00"
+}

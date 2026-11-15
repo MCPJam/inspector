@@ -1,0 +1,22 @@
+{
+  "event_id": "55d0d5ba05c045c8a43b978d96b2e1f3",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "(set -o pipefail) 2>/dev/null && set -o pipefail; rm -rf /tmp/codex-secrets /installed-agent/codex-home"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:33:50.271292+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.024001121520996094,
+  "end": "2026-11-15T01:33:50.295200+00:00"
+}

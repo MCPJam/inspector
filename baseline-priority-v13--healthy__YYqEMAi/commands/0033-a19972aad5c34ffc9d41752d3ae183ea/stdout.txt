@@ -1,0 +1,222 @@
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":4}
+### `cloud eval create`
+
+Create a runnable eval suite from authored test cases (does not run it).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"`) belongs on `eval run --file` |
+| `--json <json>` | No | Inline suite definition JSON (or `@file`, or `-` for stdin) |
+| `--name <name>` | No | Suite name (overrides the file) |
+| `--model <model>` | No | Suite-level default model (overrides the file) |
+| `--provider <provider>` | No | Suite-level default provider (overrides the file) |
+| `--server <id-or-name...>` | No | Project HTTP server names or IDs (overrides the file) |
+| `--client <id-or-name...>` | No | Clients to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --client` has nothing to select |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
+
+### `cloud eval list`
+
+List the eval suites saved in a project.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval run`
+
+Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
+
+By default the command prints a launch receipt and returns immediately. `--wait` polls every launched run to a terminal state.
+
+**Exit codes (`--wait` only).** Without `--wait` this command's exit code is unchanged: `0` on any launch, `1` on a partial or wholly failed fan-out. `--wait` owns a separate six-code contract — a caller who asked this process to sit and watch a run to completion is asking it to say how the run went:
+
+| Code | Meaning |
+| - | - |
+| `0` | Every waited run passed, unanimously, and (when a report was requested) every report was assembled |
+| `1` | A run **completed** with a **failed** verdict. The only condition that produces this code |
+| `2` | Usage error — bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file (after auth, before any server/model work) |
+| `3` | Auth failed — no credential, or the platform rejected it, at launch or mid-wait (a token that expired during a long poll). Zero credits spent if it happened before launch |
+| `4` | Connection/setup failed before evaluation — a launch failure this CLI itself observed (network, timeout, rate limit, a partial or failed fan-out, an unrecognized launch error), or a local `--out` write failure — unless a more severe outcome (`1` or `3`) already applies to the same run, per the merge order above |
+| `5` | No valid verdict — `inconclusive`, a null/unrecognized result, a run whose own status is failed/cancelled/timed-out, a wait that hit its deadline, a mid-wait failure that was not auth-shaped, or a report that could not be assembled |
+
+No infrastructure condition ever maps to `1` — see the same rule under `eval gate` below. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`: a real verdict failure is never masked by a sibling's infrastructure noise, and a credential failure (which may be *why* other targets show no verdict) outranks a plain connection failure.
+
+This six-code contract is new and deliberately **different** from `eval gate`'s four codes below — see that command's own doc for why the two are not unified. An invalid suite file exits **2** either way — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes, unless `--file` | Eval suite name or ID |
+| `--file <path>` | Yes, unless `--suite` | Versioned suite file to upload and run (`.yaml` or `.json`, or `-` for stdin) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
+| `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
+| `--client <id-or-name...>` | No | Attached client(s) to run, so the run is stamped with that client's config. Several values start one **paid run each**. |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. Not the host-compat catalog id `mcpjam compat --host` / `mcpjam tools --host` take — see [Two different `--host` flags](#two-different---host-flags). |
+| `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
+| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
+| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
+| `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
+| `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
+| `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
+| `--notes <text>` | No | Free-text note stored on the run |
+| `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
+| `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
+| `--idempotency-key <key>` | No | Retry key for a lost launch response. For `--file`, a fresh key is minted and printed on every invocation when this flag is omitted; supply the printed key to replay the same run instead of starting a new one |
+| `--wait` | No | Wait for every launched run to reach a terminal status |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 2100000); requires `--wait` |
+| `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
+| `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
+| `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Ephemeral by default** — pass `--save-targets` to attach it to the suite. |
+| `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
+| `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
+| `--compose-model <id...>` | No | Model(s) to run on the composed stack. Replaces the client's pinned model unless `--with-client-default` is set |
+| `--compose-model-selection <json...>` | No | Whole saved model selection(s) — source, connection, `settings.reasoningEffort` — as JSON: one cell per selection, for its model, at its effort. Repeat to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell |
+| `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
+| `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
+| `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-host-servers` | No | **No longer supported** — rejected. An eval run takes its servers from a server group alone; use `--compose-server` or `--compose-server-group` |
+| `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
+| `--save-targets` | No | Attach the composed environments to the suite (append, capped at 10). Without it the stack is ephemeral |
+
+#### Composing a target instead of naming one
+
+`--compose-client <id-or-name>` builds an execution stack for this run instead of
+naming a saved environment, refined by `--compose-computer`, `--compose-model`,
+`--compose-server-group`, `--compose-skill` and `--compose-secret`. The stack becomes an unnamed,
+content-addressed environment (the same one `environments ensure-adhoc`
+produces), so composing the same stack twice reuses one environment.
+`--compose-host` is the deprecated spelling of the same flag.
+
+`--compose-model` and `--compose-secret` carry the deployment requirement
+described under [Deployment support for model overrides and secret
+grants](#deployment-support-for-model-overrides-and-secret-grants): a launch that names
+either is refused before it composes anything if this deployment does not
+publish the capability.
+
+> [!WARNING]
+`--wait` it exits **4** (see the exit-code table above). A per-target failure
+does not abort its siblings, so exiting 0 would let a pipeline read "1 of 3
+runs never started" as a clean launch.
+
+#### `--file`: upload and run a suite file
+
+`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
+authenticates, then validates. A contract-invalid file exits **2** after the
+auth request — it does not start a run. `eval validate` on the same bytes
+still exits 1: that command is a verdict on the file; this one is not.
+
+The file's `suite.id` is the declared suite identity. The first run creates a
+file-owned suite stamped with that id; later runs of the same id in the same
+project update that suite rather than creating a second one. A UI-authored
+suite has no declared id, so no file can claim it. Resolve is never by name.
+
+File `passThreshold` is a fraction; the hosted suite grades on a percent. The
+conversion refuses rather than approximates. A file count above **10**
+(`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`) is
+refused by name (`REPETITIONS_CAP`) and is not clamped.
+
+**Which vocabulary the sync speaks is the deployment's call.** Before writing
+anything, the CLI reads `GET /capabilities` once. A deployment that advertises
+`vocabulary.version: 2` gets every request with `x-mcpjam-eval-vocabulary: 2`
+and case bodies spelled canonically — `iterations` (the exact count),
+`legacyIterations` (the legacy floor, the same number) and `assertions` —
+instead of `repetitions` / `iterations` / `checks`. A deployment without the
+capability block, or without the capabilities route at all, is spoken to in
+vocabulary 1, byte-for-byte as before. Nothing in the file changes either way:
+the dialect of the file and the vocabulary of the wire are independent.
+
+Cases are synced in batches of at most 100 (`create_eval_cases`). Every
+declared case is created or updated, including `disabled: true` rows. A case
+the file **no longer declares** is deleted from the hosted suite before
+launch. A case the file still declares but marks `disabled: true` is **kept,
+with its history** — it is simply left out of the launch, so parking a flaky
+test does not destroy its past results and re-enabling it later resumes the
+same case.
+The run is scoped to the enabled cases either way. A file with no enabled
+cases is refused (`NO_ENABLED_CASES`) rather than launching the whole
+persisted suite. `--case` may only name an enabled case. A later run updates
+existing cases by declared id and creates new ones. An enabled case that
+overrides `passThreshold` is refused: hosted grading is suite-wide. A
+disabled case with the same override is ignored, matching how repetitions
+are checked. Authored
+`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused at
+hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
+refusal). Hosted platform-authored suites do not currently have a backend
+tool-policy field or enforcement path, so the CLI does not upload a suite that
+would claim those guarantees. When supported by an eval runner, `toolPolicy`
+is enforced at execution time with denied tools kept visible but blocked;
+server annotations are advisory and **UNTRUSTED**. The file's default count
+(`defaults.repetitions`, or `defaults.iterations` in `schemaVersion: "2"`) is
+inherited per case and is not uploaded as a suite `minIterations` floor.
+Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
+execution defaults; omitted fields stay omitted so the platform applies its
+own defaults. `target.hosts` and `target.environment` are attached before
+launch. A file environment takes precedence over file hosts for that launch,
+while an explicit CLI target takes precedence over both. When an explicit CLI
+target is provided (for example `--host`), the file's `target.hosts` are
+**not** synchronized to the suite's persisted host attachments — the suite
+keeps whatever hosts it already has. Host attachment synchronization only
+runs when no explicit CLI target overrides the file. Environment attachment
+synchronization is unaffected and always runs.
+
+Without `--idempotency-key`, the CLI mints a fresh UUID for every invocation
+and prints it to stderr before launch (`Eval idempotency key: <key>`). Each
+invocation therefore starts and bills a new run. To retry a launch whose
+response was lost — without starting a second run — pass the key that was
+printed: `--idempotency-key <printed-key>`. A replay is marked `deduped` in
+the receipt and human output. `--notes` is not part of the key.
+
+##### Imported cases: live tool resolution, and per-run approval
+
+Every file run performs the same live check `eval validate --project` performs,
+**before it writes anything**. It is not opt-in and there is no flag to skip
+it. A file with no deterministic `toolCall` steps asks no question and pays no
+round trip.
+
+What happens when a deterministic reference does not resolve depends on the
+case:
+
+| Case | Outcome |
+| - | - |
+| Selected (enabled, and named by `--case` if you used it) | The launch **refuses before the suite is synced** — nothing is written and nothing is billed |
+| Imported, not selected | Its claim is rewritten to `unresolved` (keeping `sourceCaseKey`) and it is **still persisted**, so the hosted record says what MCPJam found rather than still asserting a claim about a missing tool |
+| Native, not selected | Left exactly as authored. A hand-written case never acquires an `import` block from this — "somebody wrote this" and "something converted this" are different facts |
+
+Each target is checked on **its own** server set. `--host` is checked against
+that host's configured servers rather than the file's, because that is the set
+the run connects — validating `target.servers` would approve a tool the host
+cannot reach. A host the FILE declares uses its own `servers` list when it
+declares one (those are attached to the host before launch) and the host's
+configured set when the field is omitted. An explicitly empty `servers: []`
+is a real, empty set — it clears the attachment before launch — and is
+validated as such, never as an omitted field. A step that pins `serverId` is resolved by id;
+`serverName` is a display fallback and never overrides it.
+
+If the run's target set cannot be enumerated before the suite exists
+(`--all-targets`, `--compose-*`), or a host does not report a server set, or a
+host pins a server the project no longer has, the launch refuses rather than
+assuming the references are fine.
+
+`--case` accepts a hosted row id, which does not exist yet when this check
+runs. A selector this stage cannot map is therefore treated as possibly naming
+any enabled case, so an unresolved reference still refuses; the launcher
+resolves the selector itself a moment later.
+
+A selected `approximated` case refuses unless this invocation approves it:
+
+| Flag | Required | Description |
+| - | - | - |
+| `--allow-approximated <case...>` | No | Approve an `approximated` imported case for **this run only**, by AUTHORED case id (`cases[].id`). Repeatable. `--file` runs only |
+| `--approval-reason <text>` | With the above | Why the approximations are acceptable for this run. 1–500 characters after trimming; one reason covers every approval in the invocation |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+  --allow-approximated c_refund_partial \
+  --approval-reason "Reviewed against the upstream rubric; ENG-4821"
+```
+
+Checked before anything is billed, each with its own message: approving a
+**native** case (nothing to approve), a **claimed-exact** one (needs no
+approval), an **unsupported** or **unresolved** one (approval covers a case

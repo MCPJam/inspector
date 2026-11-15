@@ -1,0 +1,1374 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Error code reference
+
+> What every MCPJam Inspector error code means, the likely causes, and the next step to fix it.
+
+This page is the source of truth for the error messages MCPJam Inspector surfaces. Every error rendered in the inspector deep-links to one of the sections below.
+
+If you arrived here from an ErrorCard's "Learn more" link, the page should already be scrolled to the right section. Otherwise, use the index below.
+
+## JSON-RPC codes
+
+These come from the MCP transport itself. Numeric codes are defined by the [JSON-RPC 2.0 spec](https://www.jsonrpc.org/specification#error_object) plus a handful of MCP-specific extensions.
+
+| Code | Anchor |
+| - | - |
+| `-32700` | [Parse error](#parse-error) |
+| `-32600` | [Invalid request](#invalid-request) |
+| `-32601` | [Method not found](#method-not-found) |
+| `-32602` | [Invalid params](#invalid-params) |
+| `-32603` | [Internal error](#internal-error) / [Invalid response format](#invalid-response-format) |
+| `-32000` | [Connection closed](#connection-closed) |
+| `-32001` | [Request timed out](#request-timeout) / [Header mismatch](#header-mismatch) |
+| `-32004` | [Unsupported protocol version](#unsupported-protocol-version) |
+| `-32021` | [Missing required client capability](#missing-required-client-capability) |
+| `-32042` | [URL elicitation required](#url-elicitation-required) |
+
+### Parse error
+
+`-32700`, `jsonrpc/parse_error`
+
+The MCP wire contained JSON the inspector could not parse as JSON-RPC.
+
+**Likely causes**
+
+* The server emitted invalid JSON on the response channel.
+* A proxy or middleware mangled the response body.
+* Server emitted log output on stdout instead of stderr (STDIO transport).
+* The inspector sent malformed JSON and the server returned a parse error.
+
+**Next steps**
+
+* Check the server's stdout/stderr for unintended log output.
+* Use the inspector's Traffic Log to inspect the raw response.
+
+### Invalid request
+
+`-32600`, `jsonrpc/invalid_request`
+
+The server rejected the payload as not a well-formed JSON-RPC request.
+
+**Likely causes**
+
+* Client sent a request shape the server's MCP runtime does not accept.
+* Outdated server SDK that disagrees with the protocol version advertised.
+
+**Next steps**
+
+* Verify the negotiated MCP protocol version.
+* Update the server's MCP SDK.
+
+### Method not found
+
+`-32601`, `jsonrpc/method_not_found`
+
+The server does not implement the JSON-RPC method that was called.
+
+**Likely causes**
+
+* The server hasn't implemented the requested MCP method.
+* Client and server are on incompatible MCP protocol versions.
+* The capability you expected was not advertised in `initialize`.
+
+**Next steps**
+
+* Check the server's advertised capabilities in the connection info modal.
+* Confirm the protocol version negotiated at `initialize`.
+
+### Invalid params
+
+`-32602`, `jsonrpc/invalid_params`
+
+The server rejected the request parameters.
+
+**Likely causes**
+
+* Required field is missing from the call.
+* Field type does not match the tool's input schema.
+* Server-side validator is stricter than the published schema.
+
+**Next steps**
+
+* Re-check the tool's input schema in the Tools tab.
+* Compare your call payload against the schema in the inspector.
+
+### Internal error
+
+`-32603`, `jsonrpc/internal_error`
+
+The server hit an unexpected error while handling the request.
+
+**Likely causes**
+
+* Unhandled exception inside the server's tool/resource/prompt handler.
+* Downstream dependency (database, API) failed during the call.
+
+**Next steps**
+
+* Check the server's logs around the time of the error.
+* Retry the request once the server is healthy.
+
+### Invalid response format
+
+`-32603`, `jsonrpc/invalid_response_format`
+
+The server replied, but the result was not a valid MCP tool, resource, or prompt payload.
+
+**Why this happened**
+
+* The handler returned a string or custom object instead of the MCP result shape (usually `{ content: [...] }`).
+
+**Next steps**
+
+* Inspect the result in the Traffic Log and compare it to the MCP result shape.
+* Return `{ content: [{ type: "text", text: "..." }] }` from the handler, or the matching resource/prompt result.
+
+> The `-32603` code is overloaded between a generic internal error and `invalid_response_format`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
+
+### Connection closed
+
+`-32000`, `jsonrpc/connection_closed`
+
+The underlying transport closed before the response could be delivered.
+
+**Likely causes**
+
+* STDIO server process exited or crashed mid-request.
+* HTTP server dropped the streaming connection.
+* Network blip between the inspector and the server.
+
+**Next steps**
+
+* Restart the server and reconnect.
+* Check the server logs for a crash or exit message.
+
+**Inspector-specific:** the inspector synthesizes this code when an active transport goes away mid-request. If you see it on every call, the server is probably exiting immediately after startup; check for a fatal log.
+
+### Request timeout
+
+`-32001`, `jsonrpc/request_timeout`
+
+The server did not respond within the configured request timeout.
+
+**Likely causes**
+
+* Server is overloaded or stuck on the operation.
+* Long-running tool call exceeds the inspector's per-request timeout.
+* Network latency between client and server.
+
+**Next steps**
+
+* Increase the per-server request timeout in the Servers tab.
+* Use MCP `tasks/*` for operations that legitimately run long.
+
+### Header mismatch
+
+`-32001`, `jsonrpc/header_mismatch`
+
+The server rejected the request because an HTTP header disagreed with the JSON-RPC body; for example, `Mcp-Protocol-Version` does not match the version negotiated at `initialize`, or `Mcp-Name` does not match the tool name in the request body.
+
+**Likely causes**
+
+* Server is enforcing a different protocol version than the one negotiated at `initialize`.
+* A proxy stripped or rewrote an `Mcp-*` header.
+* A routing header (`Mcp-Name`, `Mcp-Method`) was set to a value that disagrees with the request body.
+
+**Next steps**
+
+* Expand the failing JSON-RPC frame in the traffic log. The collapsed **HTTP headers** row beneath the JSON body names the disagreeing header (for example, `mcp-name disagrees with the body`) without requiring you to open a separate view.
+* If the inline headers section is absent, open the **HTTP** source filter in the traffic log to find the matching exchange and inspect its headers directly.
+* Verify the server's protocol-version pinning in the connection settings.
+* If you set an explicit protocol version per server, ensure it matches what the server advertises.
+
+> The `-32001` code is overloaded between `request_timeout` and `header_mismatch`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
+
+### Unsupported protocol version
+
+`-32004`, `jsonrpc/unsupported_protocol_version`
+
+The server does not support any protocol version this inspector offered.
+
+**Likely causes**
+
+* Server pinned to a newer MCP draft your inspector build does not understand.
+* Server pinned to a legacy version this build dropped support for.
+
+**Next steps**
+
+* Update the inspector to a newer build.
+* Check the supported versions list in the server's `initialize` response.
+
+### Missing required client capability
+
+`-32021`, `jsonrpc/missing_required_client_capability`
+
+The server refused the request because the client did not advertise a capability the operation requires.
+
+**Likely causes**
+
+* A server-initiated input request (elicitation, sampling) needs a client capability MCPJam did not declare.
+* The connection advertised a capability set the server considers insufficient for this operation.
+
+**Next steps**
+
+* Enable the required client capability in the connection's Client settings.
+* Check the server's documentation for which client capabilities it requires.
+
+### URL elicitation required
+
+`-32042`, `jsonrpc/url_elicitation_required`
+
+The server needs the user to visit an external URL to complete the operation.
+
+**Likely causes**
+
+* Server requested a URL elicitation (OAuth, payment, confirmation).
+* Operation cannot proceed until the user opens the URL in a browser.
+
+**Next steps**
+
+* Open the elicited URL and complete the flow.
+* Re-issue the request after the external step completes.
+
+***
+
+## Transport errors
+
+These come from the OS or the HTTP stack. Most of them are recoverable.
+
+### ECONNREFUSED
+
+`transport/econnrefused`
+
+Nothing is listening on the host and port the server URL points at.
+
+**Likely causes**
+
+* Server isn't running.
+* Port number is wrong in the server URL.
+* Server is bound to a different interface (e.g. only `127.0.0.1` but you're connecting via the LAN IP).
+
+**Next steps**
+
+* Start the server.
+* Double-check the URL's host and port.
+* For Docker/containers, confirm the port is published to your host.
+
+### ECONNRESET
+
+`transport/econnreset`
+
+The remote side closed the TCP connection abruptly.
+
+**Likely causes**
+
+* Server process crashed mid-request.
+* Intermediate proxy or load balancer dropped the connection.
+* Server hit an OS-level resource limit.
+
+**Next steps**
+
+* Inspect the server logs for a crash.
+* Retry the request.
+
+### ETIMEDOUT
+
+`transport/etimedout`
+
+The OS-level TCP connection attempt did not complete in time.
+
+**Likely causes**
+
+* Wrong host/port in the server URL.
+* Firewall is silently dropping packets.
+* Server is overloaded and never accepted the connection.
+
+**Next steps**
+
+* Verify the URL is reachable from your machine (e.g. `curl`).
+* Check firewall / VPN rules.
+
+### ENOTFOUND
+
+`transport/enotfound`
+
+DNS lookup failed for the server's hostname.
+
+**Likely causes**
+
+* Hostname is misspelled in the URL.
+* DNS resolver is misconfigured.
+* You're offline.
+
+**Next steps**
+
+* Confirm the hostname in the URL is correct.
+* Try resolving the host with `nslookup` or `dig`.
+
+### EAI again
+
+`transport/eai_again`
+
+DNS resolution failed with a transient error.
+
+**Likely causes**
+
+* Local DNS resolver is overloaded or restarting.
+* Upstream DNS server is briefly unavailable.
+
+**Next steps**
+
+* Wait a few seconds and retry.
+* Switch to a different DNS resolver if this persists.
+
+### Undici transport error
+
+`transport/undici`
+
+The underlying HTTP client (undici / fetch) reported a low-level transport failure. Common subcodes: `UND_ERR_SOCKET`, `UND_ERR_CONNECT_TIMEOUT`, `UND_ERR_HEADERS_TIMEOUT`.
+
+**Likely causes**
+
+* Server closed the connection mid-response.
+* TLS handshake failed.
+* Socket-level error during streaming.
+
+**Next steps**
+
+* Inspect the Traffic Log for the failed request.
+* Verify the server's TLS certificate is valid.
+
+### Fetch failed
+
+`transport/fetch_failed`
+
+The HTTP request never produced a response.
+
+**Likely causes**
+
+* Server is unreachable (offline, wrong URL, blocked by firewall).
+* TLS handshake failed (self-signed cert, expired cert).
+* Mixed-content block (HTTPS page calling HTTP endpoint in browser).
+
+**Next steps**
+
+* Open the URL in a browser to confirm it loads.
+* If self-signed, install the certificate or switch to a trusted one.
+
+### Socket hang up
+
+`transport/socket_hang_up`
+
+The server closed the connection without sending a response.
+
+**Likely causes**
+
+* Server crashed or restarted during the request.
+* Reverse proxy timed the request out.
+
+**Next steps**
+
+* Retry the request.
+* Check server-side logs for the crash.
+
+### TLS certificate not trusted
+
+`transport/tls_untrusted`
+
+The server presented a TLS certificate that Node.js could not verify, so no request reached it.
+
+**Likely causes**
+
+* The certificate comes from a private or corporate CA that Node.js does not trust.
+* The server does not send its intermediate certificates.
+* The certificate is self-signed, expired, or issued for a different hostname.
+* A TLS-inspecting proxy or antivirus replaces the server's certificate.
+
+**Next steps**
+
+* Fix the certificate on the server: renew it, send the full chain, and match the hostname.
+* If the error suggests `--use-system-ca`, start the inspector with `NODE_OPTIONS=--use-system-ca npx @mcpjam/inspector@latest` so Node.js trusts your system's CAs.
+* Or point Node.js at the CA file: `NODE_EXTRA_CA_CERTS=/path/to/ca.pem npx @mcpjam/inspector@latest`.
+
+***
+
+## Auth & OAuth
+
+For the difference between the three "API key" concepts (LLM provider keys, MCPJam API keys, Playground BYOK), see [API keys](https://docs.mcpjam.com/reference/api-keys.md).
+
+### Unauthorized 401
+
+`auth/http_401`
+
+The server requires authentication that wasn't provided or is no longer valid.
+
+**Likely causes**
+
+* Missing or expired bearer token.
+* OAuth access token expired and refresh failed.
+* Server changed its required authentication scheme.
+
+**Next steps**
+
+* Re-authenticate using the **Reconnect** button on the server card.
+* If using OAuth, run through the OAuth flow again from Servers.
+* From the CLI, sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`.
+
+If the server connected without a token and returned the 401 on one call, it is asking for sign-in for that call. See [Mid-session sign-in](https://docs.mcpjam.com/inspector/lazy-authentication.md).
+
+### Auth required
+
+`AUTH_REQUIRED`
+
+The MCP server asked for sign-in, when connecting or on one call. The CLI and the [public API](https://docs.mcpjam.com/reference/public-api.md#errors) report this code. In the public API it comes with HTTP `403`, and `details.authChallenge` carries the parsed challenge. In the CLI, `details.challenge` carries the challenge and `details.hint` the command that signs in.
+
+This is not `UNAUTHORIZED`. `UNAUTHORIZED` means your MCPJam API key is missing or invalid. With `AUTH_REQUIRED`, your MCPJam credential is fine and the target MCP server wants a sign-in, so a different MCPJam key will not help.
+
+**Likely causes**
+
+* The server allows anonymous access to some tools and requires sign-in for this one.
+* The saved token for this server expired or was revoked.
+
+**Next steps**
+
+* Sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`. Add `--scopes` with the scope the challenge names, if any.
+* Through the public API, upload the token to one of the server's accounts with `PUT .../accounts/{account}`, then call again. See [Server accounts](https://docs.mcpjam.com/reference/public-api.md#server-accounts).
+* In the inspector, if the server asked when connecting, use **Reconnect** on its card in the **Servers** tab to run the OAuth flow. See [Connecting servers](https://docs.mcpjam.com/inspector/connecting-servers.md).
+* If it asked on one call, run that call from the **Tools** tab and use the **Connect** card. See [Mid-session sign-in](https://docs.mcpjam.com/inspector/lazy-authentication.md).
+
+### Forbidden 403
+
+`auth/http_403`
+
+You authenticated successfully but lack permission for the operation.
+
+**Likely causes**
+
+* OAuth scopes granted don't cover the requested operation.
+* Server-side ACL blocks this account.
+
+**Next steps**
+
+* Re-run OAuth and request the additional scopes if the server allows.
+* Ask the server admin to grant the necessary permissions.
+
+### OAuth refresh failed
+
+`auth/oauth_refresh_failed`
+
+An expired OAuth access token could not be refreshed.
+
+**Likely causes**
+
+* Refresh token was revoked.
+* Refresh token expired.
+* Server returned `invalid_grant` to the refresh attempt.
+
+**Next steps**
+
+* Click **Reconnect** on the server card to run a fresh OAuth flow.
+
+### Consent required
+
+`auth/consent_required`
+
+This server needs your permission before it can connect.
+
+**Likely causes**
+
+* Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.
+
+**Next steps**
+
+* Click **Reconnect** and approve the request in the window that opens.
+
+### Missing bearer
+
+`auth/missing_bearer`
+
+The API call did not include the required `Authorization: Bearer ...` header.
+
+**Likely causes**
+
+* Inspector session expired.
+* Sign-in token failed to attach to the request.
+
+**Next steps**
+
+* Refresh the page and sign in again.
+
+### OAuth invalid grant
+
+`oauth/invalid_grant`
+
+The OAuth server rejected the authorization code or refresh token.
+
+**Likely causes**
+
+* Authorization code was already redeemed.
+* Refresh token was revoked.
+* Authorization code expired (typical lifetime \~60s).
+
+**Next steps**
+
+* Start the OAuth flow again from the server card.
+
+### OAuth invalid client
+
+`oauth/invalid_client`
+
+The OAuth server does not recognize the client credentials.
+
+**Likely causes**
+
+* Client was deleted on the authorization server.
+* Dynamic registration cache is stale.
+* `client_id` was rotated server-side.
+
+**Next steps**
+
+* Re-register the client (Reconnect from the server card triggers DCR if supported).
+
+### OAuth redirect mismatch
+
+`oauth/redirect_mismatch`
+
+The redirect URI in the request does not match the one registered with the OAuth server.
+
+**Likely causes**
+
+* Authorization server requires the inspector's callback URL to be registered explicitly.
+* Server's allow-list is wrong.
+
+**Next steps**
+
+* Add the inspector's callback URL to the OAuth server's allowed redirects.
+* Verify the inspector's base URL hasn't changed.
+
+### OAuth well-known unreachable
+
+`oauth/well_known_unreachable`
+
+The OAuth `.well-known` discovery endpoint could not be fetched.
+
+**Likely causes**
+
+* Authorization server is down.
+* Wrong issuer URL.
+* CORS blocks the discovery request from the browser.
+
+**Next steps**
+
+* Confirm the issuer URL in the server config.
+* Open the `.well-known/openid-configuration` (or `oauth-authorization-server`) URL in a browser.
+
+***
+
+### Insufficient scope
+
+`auth/insufficient_scope`
+
+The server reported `insufficient_scope`: the grant does not cover this operation.
+
+**Likely causes**
+
+* The authorization did not request the scopes the server now requires.
+* The server added a scope requirement after the grant was issued.
+
+**Next steps**
+
+* Re-authorize and grant the scopes the server names in its challenge.
+* From the CLI, the command fails with `INSUFFICIENT_SCOPE`. Sign in again with `mcpjam oauth login --url <server-url> --scopes "<scope>" --credentials-out <file>`, using the scope the challenge names.
+* A `403` asks for more scopes on an existing sign-in. A server that wants a first sign-in for one call answers `401` instead; see [Auth required](#auth-required).
+
+### Authorization server unreachable
+
+`auth/authorization_server_unreachable`
+
+The stored token could not be refreshed because the authorization server was unreachable or did not return a usable response.
+
+**Likely causes**
+
+* The authorization server is down or slow.
+* The refresh request could not leave the network it was made from.
+
+**Next steps**
+
+* Retry in a minute; if it persists, check the authorization server's status.
+* Reconnect the server to obtain a fresh token once the authorization server is reachable.
+
+### Proxy rejected
+
+`auth/proxy_rejected`
+
+The response was HTTP 403 with an HTML content type and no authentication challenge. A proxy or firewall may be involved, but the response format alone does not establish its source.
+
+**Likely causes**
+
+* An IP allowlist or WAF blocks the address the request came from.
+* A corporate proxy or SSO portal intercepted the request.
+
+**Next steps**
+
+* Allow MCPJam's [egress addresses](https://docs.mcpjam.com/hosted/network.md), or the address you connect from, on the server's firewall.
+* Open the server URL in a browser from the same network to see what answers.
+
+### No Bearer [REDACTED]
+
+`oauth/no_bearer_challenge`
+
+The response was HTTP 401 without a Bearer [REDACTED] It did not explain how to authorize; this does not establish whether well-known metadata discovery is available.
+
+**Likely causes**
+
+* The server or an intermediary omitted a Bearer [REDACTED]
+* The server expects a static API key and does not implement OAuth.
+
+**Next steps**
+
+* Check OAuth discovery, including the well-known metadata fallback supported by newer MCP versions.
+* If the server expects an API key, configure it as a header on the server instead of OAuth.
+
+### Non-compliant challenge
+
+`oauth/non_compliant_challenge`
+
+The response reported `invalid_token` with HTTP 403; MCP requires HTTP 401 for an invalid or expired token. A bare Bearer [REDACTED] on a 403 is not enough to diagnose this mismatch.
+
+**Likely causes**
+
+* The server maps every authorization failure to 403.
+* A gateway rewrites the server's 401 to 403.
+
+**Next steps**
+
+* Re-authorize the server to replace the rejected token.
+* Report the status mismatch to the server author; invalid-token recovery expects HTTP 401.
+
+## Inspector-specific
+
+These come from the inspector's own SDK runtime.
+
+### Not yet supported in stateless
+
+`sdk/not_yet_supported_in_stateless`
+
+The inspector's stateless HTTP transport does not yet implement this MCP operation.
+
+**Likely causes**
+
+* Operation requires a server-initiated channel (subscriptions, MRTR) the stateless preview transport hasn't wired up yet.
+
+**Next steps**
+
+* Switch the server to the legacy stateful transport in its protocol-mode toggle.
+
+### Stateless requires HTTP
+
+`sdk/stateless_requires_http`
+
+Stateless mode can only be used with an HTTP-transport server, not STDIO.
+
+**Likely causes**
+
+* You enabled the stateless protocol toggle on a stdio server.
+
+**Next steps**
+
+* Disable the stateless toggle for stdio servers.
+
+### Protocol version pin unsupported
+
+`sdk/protocol_version_pin_unsupported`
+
+This connection is pinned to a specific MCP protocol version that the server does not offer.
+
+**Likely causes**
+
+* The client profile you're using pins a protocol version this server hasn't adopted; for example, a client set to **Latest (2026-07-28)** against a server that still speaks a 2025 revision.
+* A per-server protocol override is pinned to a version the server dropped or never shipped.
+
+**Next steps**
+
+* Click **Change protocol version** in the error banner or toast to open the client's **MCP Protocol** tab, then set the version to **Automatic** to negotiate whatever the server supports.
+* Or pick the version the server advertises; `server/discover` (modern) or the `initialize` response (legacy) lists the supported versions.
+
+### Paginated tool and header discovery unsupported
+
+`sdk/paginated_tool_header_discovery_unsupported`
+
+Paginated tools discovery cannot run alongside per-request header overrides on this transport.
+
+**Likely causes**
+
+* Conflicting combination of progressive tool discovery + per-server header overrides.
+
+**Next steps**
+
+* Disable progressive tool discovery for this server, or move headers into the server config.
+
+***
+
+## Provider errors
+
+Errors from the LLM provider running behind the playground.
+
+### Provider invalid tool name
+
+`provider/invalid_tool_name`
+
+An LLM provider rejected a tool name (Anthropic's strict tool-name validator is the most common source).
+
+**Likely causes**
+
+* Tool name contains characters or length the provider does not allow.
+* Two attached servers expose tools whose namespaced names collide after sanitization.
+
+**Next steps**
+
+* Rename the offending tool on the server.
+* Detach one of the colliding servers from the chat surface.
+
+### Provider auth error
+
+`provider/auth_error`
+
+Your LLM provider rejected the API key for this request.
+
+**Likely causes**
+
+* Key is missing.
+* Key is invalid or revoked.
+* Key is for a different environment (project, region).
+
+**Next steps**
+
+* Add or update your API key under **Settings → LLM Providers**.
+* Verify the key in the provider's dashboard.
+
+### Provider not allowlisted
+
+`provider/not_allowlisted`
+
+This model's provider is not enabled on MCPJam's hosted AI gateway, so MCPJam can't run it. This is a setting on MCPJam's side, not a problem with your API key. Retrying or changing your key won't help.
+
+**Likely causes**
+
+* MCPJam's hosted gateway does not have this model's provider on its provider allowlist.
+
+**Next steps**
+
+* Choose a model from a different provider.
+* Add your own key for this provider under **Settings → LLM Providers** (BYOK) to run the model on your key instead of MCPJam's gateway.
+
+### Model retired
+
+`provider/model_retired`
+
+This model has been retired and is no longer available on MCPJam. Retrying won't help.
+
+**Likely causes**
+
+* The model saved on this chat, eval or suite has been retired from MCPJam.
+
+**Next steps**
+
+* Choose a newer model, then run again.
+
+### Provider quota
+
+`provider/quota`
+
+Your LLM provider rejected the request because you hit a rate limit or quota. This is a limit on your own provider key; no MCPJam purchase lifts it.
+
+**Likely causes**
+
+* Per-minute rate limit exceeded.
+* Daily or monthly quota exhausted.
+* Free tier limits hit.
+
+**Next steps**
+
+* Wait for the limit window to reset, then retry.
+* Switch the host to a different model or provider.
+* Upgrade your plan on the provider's own dashboard.
+
+> **MCPJam account limit vs. provider throttle.** If the session pane shows a billing or credit message instead of this card, the limit is on your MCPJam account, not your provider key. Adding credits or switching to BYOK resolves that case; the steps above do not apply.
+
+### Frontier model sign-in required
+
+`provider/guest_model_not_allowed`
+
+A frontier model was selected but the request requires a signed-in account.
+
+**Likely causes**
+
+* You are browsing as a guest and selected a frontier model that requires authentication.
+
+**Next steps**
+
+* A sign-in prompt appears automatically. Click **Sign in** to authenticate and get access to frontier models.
+* Click **Not now** to dismiss and continue with a standard model. Your credit balance is not affected.
+
+### Out of MCPJam credits
+
+`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit` · `provider/mcpjam_limit_insufficient`
+
+MCPJam refused the call before it reached a provider. For the daily, monthly,
+and general codes, the account's own allowance is spent.
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. Which allowance depends on the plan: free accounts
+share a daily bucket per organization, paid plans spend a monthly allowance that
+renews with the billing period.
+
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. MCPJam reserves a request's worst-case cost before
+it runs, so a cheaper model or a shorter conversation can fit where this one did
+not.
+
+**Next steps**
+
+* **Free plan (owner)**: The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
+* **Free plan (admin or member)**: The dialog shows a **Request upgrade** link to email an organization owner.
+* **Paid plan (owner or admin)**: The dialog shows **Buy credits** to add shared credits to your organization.
+* **Paid plan (member)**: The dialog shows a **Request credits** link to email an organization owner.
+* Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+* If your organization uses its own keys for all AI features, model tokens are billed by its providers instead; see [Organization AI key policy](#organization-ai-key-policy).
+
+**Swarm and Eval runs**
+
+When credits run out during a Swarm or Eval run, blocked work stops and you receive one credit-exhaustion prompt per run, or one per swarm when a swarm launches several runs at once. Completed results are preserved. Buying credits does not automatically restart the run; start a new run once credits are available.
+
+> [!WARNING]
+>
+> Bring-your-own-key covers chat. Swarm persona generation and persona-driver
+> turns are billed to MCPJam and have no personal BYOK path, so adding a key
+> does not lift this limit for a swarm. An organization that uses its own keys
+> for all AI features runs those turns on its default AI model instead, and its
+> providers bill their tokens; see
+> [Organization AI key policy](#organization-ai-key-policy).
+
+### Credits temporarily held
+
+A swarm session can stop with **Credits temporarily held**. The balance is not
+empty: other requests from your organization were in flight and held the
+remaining credits until they finish. No credit prompt opens for it and nothing
+needs buying.
+
+**Next steps**
+
+* Run the session again once your other sessions have finished.
+* Start fewer sessions at once if it keeps happening.
+
+### Provider failed fallback not permitted
+
+`provider/fallback_prohibited`
+
+The model's provider failed and the saved model selection does not allow a
+fallback provider, so the request stopped instead of running somewhere other
+than where it was asked to. Evals, swarms and judges default to no fallback, so
+a result never silently comes from a different provider than the one recorded.
+
+**Next steps**
+
+* Retry: the provider's failure may be temporary.
+* Pick a different model, or a model on a connection you control.
+
+### MCPJam platform budget
+
+`provider/mcpjam_platform_budget`
+
+The shared free allowance is exhausted or temporarily paused. This limit applies across free usage, not just your account, so it can appear even when your own allowance is untouched.
+
+**Next steps**
+
+* Wait until the reset time shown in the error, if one is present.
+* Use purchased credits, or add your own API key under **Settings → LLM Providers** for chat.
+
+### Account suspended
+
+`account/suspended`
+
+MCPJam has suspended this account, so billed requests are refused.
+
+**Next steps**
+
+* Contact [[EMAIL REDACTED]](mailto:[EMAIL REDACTED]) for support.
+
+### Request too large for a guest
+
+`account/guest_input_too_large`
+
+This request is larger than MCPJam allows for guests, so it was not sent to the model. Retrying sends the same request and won't help.
+
+**Likely causes**
+
+* Connected servers add their tool definitions to every request, and those count toward the guest limit.
+* A tool returned a large result, and it is sent back to the model with the next request.
+* The conversation has grown past the guest limit.
+
+**Next steps**
+
+* Sign in to remove the guest limit.
+* Have the tool return less, or disconnect servers this request doesn't need.
+* In chat, start a new chat or shorten the conversation.
+
+### Server rate limited
+
+`server/rate_limited`
+
+The MCP server rejected the request with HTTP 429 (too many requests). This is the server's own limit, not your LLM provider's; see [Provider quota](#provider-quota) for that case.
+
+**Likely causes**
+
+* The server enforces its own per-client rate limit.
+* An upstream API the server calls is throttling it.
+* A burst of tool calls exceeded what the server allows.
+
+**Next steps**
+
+* Wait for the server's limit window to reset, then retry.
+* Reduce concurrency or the number of tool calls in the run.
+* Check the server's own rate-limit documentation or logs.
+
+### Server HTTP error
+
+`server/http_error`
+
+The MCP server answered the request with an HTTP error status. The message names the status the server returned. MCPJam reached the server; the server refused or failed the request.
+
+**Likely causes**
+
+* 404: the URL points at the wrong endpoint path (for example, a missing `/mcp`).
+* 405: the endpoint does not accept MCP requests (POST).
+* 5xx: the server hit an error of its own while handling the request.
+
+**Next steps**
+
+* Check the server URL, including the MCP endpoint path.
+* Check the server's logs for the failed request.
+
+***
+
+## Organization AI key policy
+
+**Use your keys for all AI features** is an organization setting under
+**Organization → AI providers**. It is available on Enterprise plans.
+
+When it is on, every AI request on the organization's data must run on one of
+the organization's own providers. MCPJam-provided models, personal keys and
+local models are disabled for it, and nothing falls back to them: a feature
+without a compatible provider is unavailable instead. Only direct cloud
+providers count; OpenRouter and local-runtime connections do not.
+
+* **Model pickers** list only the organization's eligible models. A suite's
+  judge must be chosen from an organization provider; there is no default
+  judge, and a suite without one can't run.
+* **Default AI model.** Work nobody picks a model for (insights and findings,
+  generation, typed decisions, and the simulated user
+  in Swarm and User Testing) runs on the organization's default AI model. An
+  admin chooses it under **Organization → AI providers → Default AI model**,
+  and can test it there. MCPJam may suggest one but never sets it. Until it is
+  set, that work is unavailable. Model pickers never use it, and it is never
+  a suite's judge.
+* **Feature coverage** on the settings page shows which features are ready,
+  and which wait for the default AI model. Features that can't run on
+  organization providers yet show **Not supported yet** and are unavailable
+  while the setting is on. Today that includes the session map,
+  transcription and Ask MCPJam. When an eligible provider exists, the card
+  names choosing the default model as the fix for work that waits on it.
+* **Billing.** Model tokens are billed by the organization's providers.
+  MCPJam's fixed product fees and usage limits still apply.
+
+Only organization owners and admins can change the setting. Any of them can
+turn it off at any time, including after the organization leaves Enterprise;
+leaving Enterprise never turns it off. Turning it off is recorded in the audit
+log, and the organization's owners get an email.
+
+When a request is refused under the setting, it fails with one of the codes
+below.
+
+## Organization provider refusals
+
+These codes mean an AI request was refused because it could not run on one of
+the organization's own model providers. None of them count against MCPJam
+credits.
+
+Most are configuration: the request won't run until someone changes its model
+or the organization's providers, so trying again doesn't help. Two are
+temporary: `org/key_policy_unavailable` (MCPJam couldn't read the
+organization's AI settings) and `org/provider_unavailable` (the provider is
+rate-limiting or failing). Try those again in a moment.
+
+### Organization provider required
+
+`org/keys_required`
+
+This organization requires its own provider keys for AI features, so the
+request was refused before it reached a model. A required dependency could
+not run on an eligible organization connection:
+
+* An MCPJam-provided (hosted) model.
+* A personal or local key model.
+* A model saved without an organization provider connection (a legacy bare model ID).
+* A model on an organization connection that is missing or not eligible to run it.
+* The suite requires a judge, but none was chosen or its model is not on an eligible organization connection.
+
+The **Setup Run** sheet lists these problems and blocks Start until every
+required dependency can run. Organization admins can use **Manage AI
+providers** to configure connections. **Suite settings** opens the
+suite's judge settings; choosing an existing eligible judge does not
+require organization admin rights.
+
+**Next steps**
+
+* Choose a model from an organization provider connection that is enabled and eligible, and save its connection.
+* Choose the required judge under **Suite settings**.
+* Organization admins can add, configure or reconnect a provider under **Organization → AI providers**.
+
+### Organization model not configured
+
+`org/model_unconfigured`
+
+The feature runs on the organization's default AI model, and none is set.
+Work nobody picks a model for, such as insights, findings, generation and
+the simulated user, runs on that model while the organization uses its own
+keys for all AI features.
+
+The feature coverage card on **Organization → AI providers** also explains related
+configuration failures:
+
+* **Default model not set**: admins see "The organization's default AI model
+  isn't set. Choose it below." Members are asked to contact an admin.
+* **Saved model can't run**: the model was saved but its connection was
+  removed or it can no longer serve the feature. Admins see "The
+  organization's default AI model can't run. Choose another below."
+  A removed provider connection reports `credential_missing`.
+* **No eligible provider yet**: when no direct cloud provider exists, the
+  card asks for a provider first, then the model.
+
+**Next steps**
+
+* Organization admins can set or change the default model under
+  **Organization → AI providers → Default AI model**.
+* Members: ask an organization admin to configure one.
+
+### Organization runtime unsupported
+
+`org/runtime_unsupported`
+
+The feature, runtime, or selected provider cannot run on organization
+credentials yet. Only direct cloud connections are eligible: OpenRouter (a
+shared gateway) and local-runtime connections are not.
+
+**Next steps**
+
+* Choose a model from a directly connected cloud provider (OpenAI, Anthropic, Google, Azure, Bedrock, and others).
+* A feature without an organization-key path remains unavailable under this policy.
+* Organization admins can turn off **Use your keys for all AI features** to run this feature on MCPJam-provided models again.
+
+### Organization scope unresolved
+
+`org/scope_unresolved`
+
+MCPJam could not tell which organization the AI request belongs to, so it did
+not run it.
+
+**Next steps**
+
+* Open the request from the organization's project and try again.
+* Contact support if this keeps happening.
+
+### Organization AI key policy unavailable
+
+`org/key_policy_unavailable`
+
+MCPJam could not read the organization's AI settings and refused the request
+rather than guess. This is temporary and on MCPJam's side.
+
+**Next steps**
+
+* Try again in a moment.
+
+### Organization provider auth failed
+
+`org/provider_auth_failed`
+
+The organization's model provider rejected its API key (401 or 403).
+
+**Next steps**
+
+* Organization admins can update the key under **Organization → AI providers**.
+* Members: ask an organization admin to update it.
+
+### Organization provider missing
+
+`org/credential_missing`
+
+The organization provider the model is saved to run on is no longer available:
+the connection was deleted, disabled or moved, or its API key was removed.
+
+**Next steps**
+
+* Choose a model from an organization provider that is still connected.
+* Organization admins can add or reconnect the provider under **Organization → AI providers**.
+
+### Organization model not allowed
+
+`org/model_not_allowed`
+
+The organization provider this model runs on only allows certain models, and
+this model is not one of them.
+
+**Likely causes**
+
+* The organization's OpenRouter provider has a list of selected models that leaves this model out, or its Azure OpenAI provider has no deployment for it.
+
+**Next steps**
+
+* Choose a model the organization provider allows.
+* Organization admins can change the provider's models under **Organization → AI providers**.
+
+### Organization provider unavailable
+
+`org/provider_unavailable`
+
+The organization's model provider is rate-limiting requests or temporarily
+failing.
+
+**Next steps**
+
+* Try again shortly.
+* Check the provider's status page and the organization's limits on its dashboard.
+
+***
+
+## Environment errors
+
+These codes come from the environment resolution service. They appear in the Playground, the Environment Tools pane, and on scenario shared links when a project environment cannot be resolved to a usable set of servers. The error card offers an action where one exists (for example, **Open Servers** for `ENV_NO_SERVERS`) rather than a generic retry that would fail identically.
+
+When a visitor opens a scenario shared link and the scenario's environment is archived, they see **"This link has been archived"** instead of a generic failure message. For other unresolvable environment states they see **"This link isn't available right now"**. Signing in cannot change either state; the environment itself must be restored or reconfigured by the scenario owner.
+
+### No servers
+
+`ENV_NO_SERVERS`
+
+This environment has no servers.
+
+**Likely causes**
+
+* The client this environment points at has no servers connected.
+* The attached server group is empty.
+
+**Next steps**
+
+* Connect a server to the client, or attach a server group.
+
+### Archived
+
+`ENV_ARCHIVED`
+
+This environment is archived.
+
+**Likely causes**
+
+* Someone archived it after this was configured.
+
+**Next steps**
+
+* Restore it from the Environments list, or pick a different environment.
+
+### Client missing
+
+`ENV_HOST_MISSING`
+
+This environment's client no longer exists.
+
+**Likely causes**
+
+* The client was deleted after the environment was created.
+
+**Next steps**
+
+* Point the environment at a different client, or recreate it.
+
+### Server group missing
+
+`ENV_ATTACHMENT_MISSING`
+
+This environment's server group is gone.
+
+**Likely causes**
+
+* The attached server group was deleted.
+
+**Next steps**
+
+* Attach a different server group, or clear the attachment.
+
+***
+
+## Server account errors
+
+The [server accounts API](https://docs.mcpjam.com/reference/public-api.md#server-accounts) answers with the standard error envelope and puts one of these codes in `details.code`. The HTTP status and the top-level `code` follow the status in each heading.
+
+### Invalid account name
+
+`invalid_account_name` (400, `VALIDATION_ERROR`)
+
+The account name breaks the name rule. Names are refused, never cleaned up.
+
+**Next steps**
+
+* Use letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 64 characters.
+* Don't use a name that is also a well-formed account id.
+
+### Server URL mismatch
+
+`server_url_mismatch` (400, `VALIDATION_ERROR`)
+
+The deprecated `oauth/import-tokens` route was sent a `serverUrl` that is not the server URL saved in the project. Nothing was stored.
+
+**Next steps**
+
+* Send the saved URL, or move to `PUT .../accounts/{account}`, which takes no URL.
+
+### Token too large
+
+`token_too_large` (400, `VALIDATION_ERROR`)
+
+A token field is over 16 KB. Nothing was stored.
+
+**Next steps**
+
+* Upload the access token alone. If it is genuinely that large, check that the issuer is not packing extra data into it.
+
+### Field not accepted
+
+`field_not_accepted` (400, `VALIDATION_ERROR`)
+
+The upload carried a URL field (`serverUrl`, `authorizationServerUrl`, `oauthResourceUrl`) or `tokens.id_token`. Tokens are used with the server URL saved in the project, and ID tokens are not stored.
+
+**Next steps**
+
+* Send only `tokens` and `clientInformation`, without `id_token`.
+
+### Admin required
+
+`admin_required` (403, `FORBIDDEN`)
+
+A member who is not a project admin tried to change a project account, or to upload to a server shared with the project.
+
+**Next steps**
+
+* Ask a project admin, or use an API key created by one.
+
+### Account not found
+
+`account_not_found` (404, `NOT_FOUND`)
+
+No account matches the id or name for you on this server. Another member's personal account answers the same way.
+
+**Next steps**
+
+* List the server's accounts with `GET .../accounts` and use one of their ids or names.
+
+### Account name ambiguous
+
+`account_name_ambiguous` (409, `CONFLICT`)
+
+Two or more accounts share the name, so it can't pick one. `details.accountIds` lists them.
+
+**Next steps**
+
+* Address the account by its id, then rename one of them.
+
+### Account name taken
+
+`account_name_taken` (409, `CONFLICT`)
+
+Another account on this server already uses the name, ignoring case.
+
+**Next steps**
+
+* Pick a different name, or rename the other account first.
+
+### Account is default
+
+`account_is_default` (409, `CONFLICT`)
+
+The account is the default and other accounts exist, so deleting it would change which account runs act as.
+
+**Next steps**
+
+* Make another account the default with `PATCH .../accounts/{account}` and `{ "isDefault": true }`, then delete this one.
+
+### Account limit reached
+
+`account_limit_reached` (409, `CONFLICT`)
+
+The server already has 8 accounts, or 16 counting the ones that need reconnecting.
+
+**Next steps**
+
+* Delete an account you no longer use, or upload to an existing one by name.
+
+### Upload budget spent
+
+`rate_limited` (429, `RATE_LIMITED`)
+
+Uploads to this server are budgeted per person: 60, refilling at 120 an hour. Nothing was stored. `details.retryAfterMs` and the `Retry-After` header say how long to wait.
+
+**Next steps**
+
+* Wait for `Retry-After`, then upload again. Upload once per run, not on every retry.
+
+### Account for hosted runs only
+
+`policy: "hostedOnlyAccount"`
+
+The server signs in with an account that only MCPJam-hosted runs can use: one uploaded through the API, or a project account. Its token is never sent to a local app, a browser or a sandbox, and no organization setting changes that.
+
+**Next steps**
+
+* Run it as a hosted run, or connect a separate account for local use.
+
+***
+
+## Model empty response
+
+`provider/empty_response`
+
+The model request ended without usable content, so the turn could not complete.
+The recorded error names the provider's finish reason where one was reported.
+
+Rerun the affected cases. If the error recurs on an MCPJam model, report it with
+those run details. For BYOK, check the recorded provider error and account configuration.
+
+## Unknown error
+
+`internal/unknown`
+
+An error occurred that the inspector could not classify.
+
+**Likely causes**
+
+* Unhandled error path.
+* New error class the inspector hasn't been taught about yet.
+
+**Next steps**
+
+* Open the details panel of the ErrorCard and copy the raw message.
+* File an issue with the raw message so we can add it to the catalog.
+
+## Generation failed
+
+Persona or goal generation returned a response that could not be used. Try generation again. If it keeps failing, contact support with the request ID.
+
+The request ID lets the team find the saved failed response and its retry outcome. Failed model output is kept in private diagnostics and is not returned to the browser.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

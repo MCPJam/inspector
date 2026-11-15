@@ -1,0 +1,22 @@
+{
+  "event_id": "91cb8450d0eb41e59e902f26d22c4b9c",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708594935-jszotp.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; M=\"npx -y @mcpjam/cli@latest\"\n$M tools call --url http://fixture:8765/mcp --tool-name add --tool-args '\"'\"'{\"a\":2,\"b\":3}'\"'\"' 2>&1 | head -20\nmkdir -p .mcpjam/evals\ncat > .mcp.json <<'\"'\"'E'\"'\"'\n{\"mcpServers\":{\"arith\":{\"type\":\"http\",\"url\":\"http://fixture:8765/mcp\"}}}\nE\ncat > .mcpjam/evals/arith.yaml <<'\"'\"'E'\"'\"'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arith\n  name: Arithmetic fixture\ntarget:\n  servers:\n    - name: arith\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_adds\n    title: uses add for a sum\n    steps:\n      - id: s1\n        kind: prompt\n        prompt: What is 17 plus 25? Use the tool.\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\nE\n$M cloud eval validate --file .mcpjam/evals/arith.yaml 2>&1 | tail -10\n$M test --help 2>&1 | grep -iE \"hosted|inference|api-key|project|reporter\" | head' && pwd -P >| /tmp/claude-f41f-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:10:16.300258+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 2.286681652069092,
+  "end": "2026-11-15T02:10:18.586895+00:00"
+}

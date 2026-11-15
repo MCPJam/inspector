@@ -1,0 +1,1 @@
+{"name":"Arithmetic add deterministic","model":"anthropic/claude-haiku-4.5","cases":[{"title":"add 2 and 3","steps":[{"id":"s1","kind":"toolCall","serverName":"Arithmetic","toolName":"add","arguments":{"a":2,"b":3}},{"id":"a1","kind":"assert","assertion":{"type":"toolCalledAtLeastOnce","toolName":"add"}}]}]}

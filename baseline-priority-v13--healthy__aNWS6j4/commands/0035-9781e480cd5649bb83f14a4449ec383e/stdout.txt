@@ -1,0 +1,45 @@
+1334:### `cloud eval create`
+1341:| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"`) belongs on `eval run --file` |
+1347:| `--client <id-or-name...>` | No | Clients to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --client` has nothing to select |
+1358:### `cloud eval run`
+1360:Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
+1377:This six-code contract is new and deliberately **different** from `eval gate`'s four codes below; see that command's own doc for why the two are not unified. An invalid suite file exits **2** either way; `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+1395:| `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
+1408:| `--compose-host-servers` | No | **No longer supported**: rejected. An eval run takes its servers from a server group alone; use `--compose-server` or `--compose-server-group` |
+1450:| `mcpjam cloud eval run` / `cases run` / `update` / `create` | A **client saved in your project** (`mcpjam cloud clients list`). |
+1454:deprecated alias for it, so `mcpjam cloud eval run --host claude` looks for a
+1506:`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
+1508:auth request; it does not start a run. `eval validate` on the same bytes
+1525:`legacyIterations` (the legacy floor, the same number) and `assertions`
+1549:would claim those guarantees. When supported by an eval runner, `toolPolicy`
+1574:Every file run performs the same live check `eval validate --project` performs,
+1576:it. A file with no deterministic `toolCall` steps asks no question and pays no
+1616:mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+1644:that names `eval create --file`. The converse is also true: `eval create --file`
+1645:on a versioned suite file names `eval run --file`.
+1665:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+1698:Get the status and summary of an eval run.
+1702:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+1754:| `<run-id>` | Yes | Eval run ID to rerun (from `eval run`) |
+1759:| `--wait` | No | Wait for the rerun to reach a terminal status; exits on its verdict like `eval run --wait` |
+1775:Grade a finished eval run with LLM as Judge. **Spends your organization's model
+1780:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+1799:| `--run <id>` | Yes | Terminal eval run ID (from `eval run`) |
+1865:List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
+1871:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+1878:Apply a pass/fail policy to an eval run. Add `--wait` to poll an in-progress
+1883:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2009:These four are deliberately **not** the same set `eval run --wait` uses (see
+2077:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2089:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2106:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2129:### `cloud eval validate`
+2149:| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first. `eval run --file` on the same bytes exits **2**: 1 is reserved there for a real verdict |
+2200:checks every deterministic `toolCall` step against the live tool inventory of
+2235:* **Only `toolCall` steps count.** A tool named in prompt text is a hint the
+2250:### `cloud eval export`
+2260:| `--schema-version <1\|2>` | No | Suite-file dialect to write. `1` (the default) spells the count `repetitions` and the rules `checks`; `2` spells them `iterations` and `assertions`. Both dialects load. |
+2265:Like `eval run --file`, export reads `GET /capabilities` first and fetches the
+2271:handshake with whatever will read it later, so `eval export` keeps writing
+2422:makes `eval run --environment` available for the suite.
+2499:Every `--compose-*` flag behaves exactly as it does for `eval run`; see

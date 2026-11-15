@@ -1,0 +1,1 @@
+{"seconds": 0.04296398162841797, "stream": "stderr", "data": "Traceback (most recent call last):\n  File \"/workspace/mcp-eval/smoke.py\", line 31, in <module>\n    assert '5' in texts,data\n           ^^^^^^^^^^^^\nAssertionError: {'content': [{'type': 'text', 'text': '{\"sum\": 5}'}], 'structuredContent': {'sum': 5}, 'isError': False}\n"}

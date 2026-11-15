@@ -1,0 +1,2 @@
+{"seconds": 0.8693697452545166, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":8}\n"}
+{"seconds": 1.5418648719787598, "stream": "stderr", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"error: unknown option '--project'\"}}\n"}

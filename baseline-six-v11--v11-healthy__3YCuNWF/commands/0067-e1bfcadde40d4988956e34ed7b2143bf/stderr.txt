@@ -1,0 +1,2 @@
+/bin/bash.real: line 1: python: command not found
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1

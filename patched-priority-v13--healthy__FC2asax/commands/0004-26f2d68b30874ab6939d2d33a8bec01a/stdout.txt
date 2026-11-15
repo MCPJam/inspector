@@ -1,0 +1,16 @@
+    title: add returns sum
+    steps:
+      - id: s1
+        kind: toolCall
+        serverName: fixture
+        toolName: add
+        arguments:
+          a: 17
+          b: 25
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: add
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"IMPORT_REFERENCE_UNRESOLVED","message":"1 selected case(s) name a deterministic tool that does not resolve against this run's target. Nothing was written and no run was started.\n  cases[0].steps[0].toolName: Server \"fixture\" is not part of the file's target.servers, so the deterministic call to \"add\" cannot execute there.","details":{"unresolved":[{"caseId":"c_add","title":"add returns sum","imported":false,"findings":[{"code":"TOOL_REFERENCE_UNRESOLVED","path":["cases",0,"steps",0,"toolName"],"pointer":"cases[0].steps[0].toolName","caseId":"c_add","caseTitle":"add returns sum","toolName":"add","serverName":"fixture","targetLabel":"the file's target.servers","disabled":false,"imported":false,"message":"Server \"fixture\" is not part of the file's target.servers, so the deterministic call to \"add\" cannot execute there."}]}]}}}

@@ -1,0 +1,22 @@
+{
+  "event_id": "44707857f6ae4bdf9ee6da3bc2d0a155",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -fsSL https://docs.mcpjam.com/cli/reference.md -o /workspace/mcpjam-validation/docs/reference.md\ncurl -fsSL https://docs.mcpjam.com/cli/tools-resources-prompts.md -o /workspace/mcpjam-validation/docs/tools.md\npython - <<'PY'\nimport json\ns=json.load(open('/workspace/mcpjam-validation/docs/openapi.json'))\nfor p,v in s.get('paths',{}).items():\n if any(x in p for x in ['chat','eval','servers']):\n  print(p,','.join(v))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:03:53.186292+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 127,
+  "signal": null,
+  "duration_seconds": 0.323087215423584,
+  "end": "2026-11-15T02:03:53.509306+00:00"
+}

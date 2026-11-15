@@ -1,0 +1,52 @@
+/workspace/mcpjam-eval/docs/error-codes.md-985-  transcription and Ask MCPJam. When an eligible provider exists, the card
+/workspace/mcpjam-eval/docs/error-codes.md-986-  names choosing the default model as the fix for work that waits on it.
+/workspace/mcpjam-eval/docs/error-codes.md-987-* **Billing.** Model tokens are billed by the organization's providers.
+/workspace/mcpjam-eval/docs/error-codes.md:988:  MCPJam's fixed product fees and usage limits still apply.
+/workspace/mcpjam-eval/docs/error-codes.md-989-
+/workspace/mcpjam-eval/docs/error-codes.md-990-Only organization owners and admins can change the setting. Any of them can
+/workspace/mcpjam-eval/docs/error-codes.md-991-turn it off at any time, including after the organization leaves Enterprise;
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Pay for one local eval iteration
+
+> Collect the declared prompt fee and reserve one iteration atomically before execution. Retries with the same identity reuse the receipt; changed requests conflict. Uploads claim the payment without charging again.
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json post /projects/{projectId}/eval-ingest/pay-iteration
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects — live
+    diagnostics (validate, inspect, export) and operations: call tools, render
+    prompts, run eval suites asynchronously and poll their results, and import
+    OAuth tokens.
+
+
+    **The API is in preview**: the surface may change while we finish the
+    design. Error `code` values are stable; error `message` strings are not.
+    Write clients that ignore unknown response fields.
+  contact:
+    name: MCPJam
+    url: https://github.com/MCPJam/inspector/issues
+servers:
+  - url: https://app.mcpjam.com/api/v1
+    description: Hosted MCPJam
+security:
+  - bearerAuth: []
+tags:
+  - name: Agent browsers
+    description: >-
+      Isolated cloud browser sessions for coding agents. Requires authenticated
+      project membership and a configured desktop runtime.
+  - name: Clients
+    description: >-
+      Clients — the named, reusable configurations that define how MCPJam
+      connects to and talks to your MCP servers. The original `/hosts` paths
+      remain as deprecated, ID-only compatibility aliases with their original

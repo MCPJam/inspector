@@ -1,0 +1,7 @@
+/billing {"status": 404, "response": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+/organizations/org_fixture/billing {"status": 404, "response": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+/organizations/org_fixture/usage {"status": 404, "response": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+/usage {"status": 404, "response": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+/credits {"status": 404, "response": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+/organizations/org_fixture/credits {"status": 404, "response": {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}}
+/projects/project_fixture/capabilities {"status": 200, "response": {"projectId": "project_fixture", "sensitive_value": "[REDACTED]", "role": "owner", "projectRole": "owner", "surface": "cli", "features": {"sandboxes": {"enabled": false, "mode": "off", "enforced": false}}, "plan": {"name": "team", "limits": {}, "features": {}}, "can": {}}}

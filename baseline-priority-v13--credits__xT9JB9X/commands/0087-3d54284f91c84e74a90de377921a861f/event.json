@@ -1,0 +1,22 @@
+{
+  "event_id": "3d54284f91c84e74a90de377921a861f",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "sed -n '100,180p' /workspace/mcpjam-eval/hosted-doc.md; curl -sS --max-time 15 http://fixture:8765/ -o /workspace/mcpjam-eval/app-entry.html; head -c 12000 /workspace/mcpjam-eval/app-entry.html; curl -sS --max-time 15 -H \"Authorization: Bearer $MCPJAM_API_KEY\" \"$MCPJAM_API_URL/projects/project_fixture/eval-suites/suite_fixture/cases\" -o /workspace/mcpjam-eval/cases.json; cat /workspace/mcpjam-eval/cases.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:00:25.726383+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.01125788688659668,
+  "end": "2026-11-15T02:00:25.737573+00:00"
+}

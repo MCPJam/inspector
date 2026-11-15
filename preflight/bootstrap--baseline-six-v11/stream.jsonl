@@ -1,0 +1,20 @@
+{"seconds": 468.54840111732483, "stream": "stderr", "data": "Step 'blocked' failed, aborting remaining steps\n"}
+{"seconds": 537.4435029029846, "stream": "stderr", "data": "Step 'blocked' failed, aborting remaining steps\n"}
+{"seconds": 557.9597070217133, "stream": "stdout", "data": "  6/6 Running trials... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:09:10 0:00:00"}
+{"seconds": 557.9605119228363, "stream": "stdout", "data": "\n"}
+{"seconds": 557.9620668888092, "stream": "stdout", "data": "adhoc • codex • gpt-6.1-sol\n"}
+{"seconds": 557.9623568058014, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Trials ┃ Exceptions ┃\n┡━━━━━━━━╇━━━━━━━━━━━━┩\n│      0 │          3 │\n└────────┴────────────┘\n"}
+{"seconds": 557.9624679088593, "stream": "stdout", "data": "\n"}
+{"seconds": 557.9633450508118, "stream": "stdout", "data": "┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓\n┃ Exception               ┃ Count ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩\n│ AgentTimeoutError       │     1 │\n│ RewardFileNotFoundError │     2 │\n└─────────────────────────┴───────┘\n"}
+{"seconds": 557.9633779525757, "stream": "stdout", "data": "\n"}
+{"seconds": 557.9634790420532, "stream": "stdout", "data": "adhoc • claude-code • sonnet\n"}
+{"seconds": 557.963752746582, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Trials ┃ Exceptions ┃\n┡━━━━━━━━╇━━━━━━━━━━━━┩\n│      0 │          3 │\n└────────┴────────────┘\n"}
+{"seconds": 557.9638319015503, "stream": "stdout", "data": "\n"}
+{"seconds": 557.9639949798584, "stream": "stdout", "data": "┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓\n┃ Exception               ┃ Count ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩\n│ RewardFileNotFoundError │     3 │\n└─────────────────────────┴───────┘\n"}
+{"seconds": 557.9640400409698, "stream": "stdout", "data": "\n"}
+{"seconds": 557.964136838913, "stream": "stdout", "data": "Job Info\n"}
+{"seconds": 557.9642007350922, "stream": "stdout", "data": "Total runtime: 9m 10s\n"}
+{"seconds": 557.9642858505249, "stream": "stdout", "data": "Results written to work/jobs/baseline-six-v11/result.json\n"}
+{"seconds": 557.9644079208374, "stream": "stdout", "data": "Inspect results by running `harbor view work/jobs`\n"}
+{"seconds": 557.9644930362701, "stream": "stdout", "data": "Share results by running `harbor upload work/jobs/baseline-six-v11`\n"}
+{"seconds": 557.9645071029663, "stream": "stdout", "data": "\n"}

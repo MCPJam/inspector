@@ -1,0 +1,18 @@
+{"seconds": 191.62955117225647, "stream": "stdout", "data": "  2/2 Mean: 1.000 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:03:09 0:00:00"}
+{"seconds": 191.62997913360596, "stream": "stdout", "data": "\n"}
+{"seconds": 191.63195514678955, "stream": "stdout", "data": "adhoc • codex • gpt-6.1-sol\n"}
+{"seconds": 191.63225293159485, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩\n│      1 │          0 │ 1.000 │\n└────────┴────────────┴───────┘\n"}
+{"seconds": 191.6323311328888, "stream": "stdout", "data": "\n"}
+{"seconds": 191.63254618644714, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 1.0    │     1 │\n└────────┴───────┘\n"}
+{"seconds": 191.63257312774658, "stream": "stdout", "data": "\n"}
+{"seconds": 191.63272714614868, "stream": "stdout", "data": "adhoc • claude-code • claude-sonnet-5-5\n"}
+{"seconds": 191.6329779624939, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓\n┃ Trials ┃ Exceptions ┃  Mean ┃\n┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩\n│      1 │          0 │ 1.000 │\n└────────┴────────────┴───────┘\n"}
+{"seconds": 191.63301515579224, "stream": "stdout", "data": "\n"}
+{"seconds": 191.6331810951233, "stream": "stdout", "data": "┏━━━━━━━━┳━━━━━━━┓\n┃ Reward ┃ Count ┃\n┡━━━━━━━━╇━━━━━━━┩\n│ 1.0    │     1 │\n└────────┴───────┘\n"}
+{"seconds": 191.63362622261047, "stream": "stdout", "data": "\n"}
+{"seconds": 191.63370823860168, "stream": "stdout", "data": "Job Info\n"}
+{"seconds": 191.63377690315247, "stream": "stdout", "data": "Total runtime: 3m 9s\n"}
+{"seconds": 191.6339089870453, "stream": "stdout", "data": "Results written to \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/heldout-discovery-v13/result.json\n"}
+{"seconds": 191.63405799865723, "stream": "stdout", "data": "Inspect results by running `harbor view \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs`\n"}
+{"seconds": 191.63416028022766, "stream": "stdout", "data": "Share results by running `harbor upload \n$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w\nork/jobs/heldout-discovery-v13`\n"}
+{"seconds": 191.63418292999268, "stream": "stdout", "data": "\n"}

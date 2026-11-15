@@ -1,0 +1,27 @@
+{
+  "id": "product-fixes:before-usage-help",
+  "path": "product-fixes--before-usage-help",
+  "argv": [
+    "../node-v24.22.1-darwin-arm64/bin/node",
+    "cli/dist/index.js",
+    "cloud",
+    "project",
+    "link",
+    "--project",
+    "project_fixture"
+  ],
+  "start": "2026-11-15T01:37:23.997222+00:00",
+  "end": "2026-11-15T01:37:25.228754+00:00",
+  "exit_status": 2,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg"
+  ],
+  "output_classes": [
+    "USAGE_ERROR"
+  ],
+  "source_group": "product-fixes"
+}

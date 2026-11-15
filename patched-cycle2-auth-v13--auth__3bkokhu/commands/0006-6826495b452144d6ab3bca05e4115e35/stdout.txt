@@ -1,0 +1,6 @@
+== {"a":2,"b":3}
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":6}
+== {"a":1.5,"b":-4}
+{"content":[{"type":"text","text":"{\"sum\": -2.5}"}],"structuredContent":{"sum":-2.5},"isError":false,"_durationMs":5}
+== {"a":"x","b":1}
+{"content":[{"type":"text","text":"a and b must be finite numbers"}],"isError":true,"_durationMs":13}

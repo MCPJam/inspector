@@ -1,0 +1,12 @@
+159:    "mode": "active-client",
+285:| `--listen <host:port>` | Webhook mode: where the local receiver listens (default `127.0.0.1:0`) |
+286:| `--public-url <url>` | Webhook mode: the `https` origin that forwards to the local receiver, such as a tunnel. Callback URLs are `<url>/i/<inbox>/s/<slot>`. |
+287:| `--insecure-local-receiver` | Webhook mode: accept a plain-`http` callback origin, defaulting to the receiver's own address. Non-conformant development mode that never counts as a conformance pass. |
+1395:| `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
+1576:it. A file with no deterministic `toolCall` steps asks no question and pays no
+2200:checks every deterministic `toolCall` step against the live tool inventory of
+2235:* **Only `toolCall` steps count.** A tool named in prompt text is a hint the
+EvalSuiteFromFileRequest
+{}
+EvalSuiteDetail
+{}

@@ -1,0 +1,22 @@
+{
+  "event_id": "f6b4cea2d08440218ceebd5fd3dc5686",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/validation/safe-calls.json <<'EOF'\n{\"toolCalls\":[{\"toolName\":\"add\",\"arguments\":{\"a\":2,\"b\":3}}]}\nEOF\nnpx --yes @mcpjam/cli --no-telemetry protocol conformance --url http://fixture:8765/mcp --access-token \"$MCP_SERVER_TOKEN\" --protocol-version 2025-11-25 --fixtures-file /workspace/validation/safe-calls.json --check-timeout 1500 --reporter json-summary > /workspace/validation/protocol.json 2> /workspace/validation/protocol.stderr"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:32:20.264466+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 1.301358699798584,
+  "end": "2026-11-15T01:32:21.565754+00:00"
+}

@@ -1,0 +1,70 @@
+- [MCPJam Docs](https://docs.mcpjam.com/index.md): Test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps across every major AI client.
+- [Home](https://docs.mcpjam.com/inspector/home.md): Org-scoped dashboard with activity stats, recommended servers, and quick-start clients
+- [Clients](https://docs.mcpjam.com/inspector/clients.md): Reusable MCP client configurations for testing servers and apps under realistic conditions
+- [XAA Debugger](https://docs.mcpjam.com/inspector/xaa-debugger.md): Configure and debug Cross-App Access flows with MCPJam as the test identity provider and client/agent
+- [CLI Overview](https://docs.mcpjam.com/cli/overview.md): Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal
+- [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md): Command-path and flag changes when account-bound mcpjam commands moved under mcpjam cloud
+- [Local Evals](https://docs.mcpjam.com/cli/local-evals.md): Run an MCPJam eval suite file on your machine with mcpjam test with local results and an MCPJam identity
+- [MCPJam as an MCP Server](https://docs.mcpjam.com/cli/mcp-server.md): Run MCPJam as a local stdio MCP server so agents can connect to, exercise, and debug other MCP servers
+- [Server Inspection](https://docs.mcpjam.com/cli/server-inspection.md): Probe, diagnose, and export MCP server connectivity and capabilities
+- [OAuth Conformance](https://docs.mcpjam.com/cli/oauth-conformance.md): Test your MCP server's OAuth implementation across all registration methods and protocol versions
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Getting Started
+
+> Start testing your MCP server in minutes
+
+> [!NOTE]
+>
+> The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+
+## 1. Choose how to open Inspector
+
+Every option below opens the MCPJam Inspector. Pick one based on where your MCP server runs.
+
+> [card] [Web](https://app.mcpjam.com)
+>
+> No install. HTTPS servers only. Share servers with your team.
+
+> [card] [Terminal](https://docs.mcpjam.com/installation.md#terminal)
+>
+> `npx @mcpjam/inspector@latest`. Requires Node.js. HTTP/S and local STDIO.
+
+> [card] [macOS](https://docs.mcpjam.com/installation.md#desktop-app)
+>
+> Desktop app (`.dmg`). No Node.js. HTTP/S and local STDIO.
+
+> [card] [Windows](https://docs.mcpjam.com/installation.md#desktop-app)
+>
+> Desktop app (`.exe` installer). No Node.js. HTTP/S and local STDIO.
+
+> [card] [Docker](https://docs.mcpjam.com/installation.md#docker)
+>
+> Pull from Docker Hub. HTTP/S, plus STDIO servers that run inside the container.
+
+* **Your server has a public HTTPS URL**: any option works. The web app needs no install.
+* **Your server runs on `localhost` or over STDIO**: use Terminal or the macOS or Windows desktop app. The web app can't reach it.
+* **You want Inspector isolated in a container**: use Docker. Reach servers on your machine at `http://host.docker.internal:PORT`, and note that STDIO commands run inside the container, not on your machine.
+
+See [Installation](https://docs.mcpjam.com/installation.md#which-one-do-i-need) for the full comparison.
+
+## 2. Connect a server
+
+On first launch, MCPJam shows a **Welcome** overlay that guides you through connecting your first server. You can:
+
+* **Enter your own server** — paste an HTTPS URL (e.g. `https://your-server.example/mcp`) or a STDIO command (Terminal, Desktop, and Docker only).
+* **Try the Excalidraw demo** — a hosted diagramming MCP app, no setup required.
+
+After connecting, MCPJam shows the server name and tool count, then offers an **Open Playground** button that seeds the chat with the prompt:
+
+```
+What can this server do?
+```
+
+Press **Send** to explore your server's tools. No API key, ngrok, or ChatGPT/Claude subscription needed.
+
+> [!TIP]
+>
+> You should see your server show **Connected** and its tools listed in the Playground's left rail.

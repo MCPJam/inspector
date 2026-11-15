@@ -1,0 +1,20 @@
+[
+  {
+    "source": "steps/blocked/verifier/metrics.json",
+    "metrics": {
+      "reward": 0.0,
+      "task_success": false,
+      "harness_invalid": true,
+      "error": "[Errno 2] No such file or directory: '/artifacts/fixture/state.json'"
+    }
+  },
+  {
+    "source": "steps/resume/verifier/metrics.json",
+    "metrics": {
+      "reward": 0.0,
+      "task_success": false,
+      "harness_invalid": true,
+      "error": "[Errno 2] No such file or directory: '/artifacts/fixture/state.json'"
+    }
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "event_id": "6b6511e934d54d27bc8f555742ccb6ff",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/mcpjam-eval/replay.py <<'PY'\n#!/usr/bin/env python3\n\"\"\"Replay the hosted smoke evaluation; preserve refusals and completed evidence.\"\"\"\nimport argparse,json,os,time,urllib.request,urllib.error\nfrom pathlib import Path\np=argparse.ArgumentParser(); p.add_argument('--attempt',required=True); p.add_argument('--timeout',type=int,default=45); args=p.parse_args()\nroot=Path(__file__).resolve().parent; out=root/args.attempt; out.mkdir(exist_ok=True)\nbase=os.environ['MCPJAM_API_URL'].rstrip('/'); key=[REDACTED]'MCPJAM_API_KEY']\ndef call(method,path,body=None):\n headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','x-mcpjam-launcher':'repeatable-arithmetic-smoke'}\n if method=='POST': headers['Idempotency-Key']='arithmetic-smoke-'+args.attempt\n req=urllib.request.Request(base+path,data=None if body is None else json.dumps(body).encode(),headers=headers,method=method)\n try:\n  with urllib.request.urlopen(req,timeout=15) as r: return r.status,json.load(r)\n except urllib.error.HTTPError as e: return e.code,json.load(e)\ndef save(name,status,data):\n (out/(name+'.json')).write_text(json.dumps({'httpStatus':status,'body':data},indent=2)+'\\n'); print(name,status,json.dumps(data),flush=True)\npath='/projects/project_fixture/eval-runs'; payload=json.loads((root/'run-request.json').read_text())\nstatus,data=call('POST',path,payload); save('launch',status,data)\nif status!=202: raise SystemExit(2)\nrun_id=data['runId']; deadline=time.monotonic()+args.timeout\nwhile time.monotonic()<deadline:\n status,data=call('GET',path+'/'+run_id); save('status',status,data)\n if status!=200: raise SystemExit(3)\n if data.get('status') in ['completed','failed','cancelled','succeeded','error']: break\n time.sleep(2)\nelse: raise SystemExit('Polling timeout: run may still be active; read saved runId before relaunching.')\nfor suffix in ['iterations','decision-summary']:\n status,data=call('GET',path+'/'+run_id+'/'+suffix); save(suffix,status,data)\nPY\nchmod +x /workspace/mcpjam-eval/replay.py\ncurl -sS --max-time 15 -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}' http://fixture:8765/mcp -o /workspace/mcpjam-eval/tools.json; cat /workspace/mcpjam-eval/tools.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:01:16.663715+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0062749385833740234,
+  "end": "2026-11-15T02:01:16.669931+00:00"
+}

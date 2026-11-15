@@ -1,0 +1,9 @@
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":7}
+Usage: mcpjam cloud projects servers create|add [options]
+
+Create a saved MCP server
+
+Options:
+  --project <id-or-name>  Project name or ID
+  --body <json>           Server JSON body
+  -h, --help              display help for command

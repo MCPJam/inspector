@@ -1,0 +1,18 @@
+{
+  "event_id": "9bbc28982bc049ca92ca650e9112f18f",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707522113-igorn0.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; npx -y @mcpjam/cli@latest tools call --help 2>&1 | grep -iE \"param|args|--\" | head; mkdir -p .mcpjam/evals\ncat > .mcpjam/evals/add.yaml <<'\"'\"'E'\"'\"'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arith_add\n  name: Arithmetic fixture\ntarget:\n  servers:\n    - name: fixture\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_adds\n    title: uses add for 2+3\n    steps:\n      - id: s1\n        kind: prompt\n        prompt: What is 17 plus 25? Use the tool.\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\nE\ncat > .mcp.json <<'\"'\"'E'\"'\"'\n{\"mcpServers\":{\"fixture\":{\"url\":\"http://fixture:8765/mcp\"}}}\nE\nnpx -y @mcpjam/cli@latest cloud eval validate --file .mcpjam/evals/add.yaml 2>&1 | head -20; env | grep -ciE \"ANTHROPIC|OPENAI\"' && pwd -P >| /tmp/claude-9b73-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:52:25.697506+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive"
+}

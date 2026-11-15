@@ -1,0 +1,8 @@
+PASS positive {"content": [{"type": "text", "text": "{\"sum\": 5}"}], "structuredContent": {"sum": 5}, "isError": false, "_durationMs": 4}
+PASS negative {"content": [{"type": "text", "text": "{\"sum\": -5}"}], "structuredContent": {"sum": -5}, "isError": false, "_durationMs": 5}
+PASS zero {"content": [{"type": "text", "text": "{\"sum\": 0}"}], "structuredContent": {"sum": 0}, "isError": false, "_durationMs": 5}
+PASS decimal {"content": [{"type": "text", "text": "{\"sum\": 3.75}"}], "structuredContent": {"sum": 3.75}, "isError": false, "_durationMs": 4}
+PASS cancellation {"content": [{"type": "text", "text": "{\"sum\": 0}"}], "structuredContent": {"sum": 0}, "isError": false, "_durationMs": 5}
+PASS missing {"content": [{"type": "text", "text": "a and b must be finite numbers"}], "isError": true, "_durationMs": 5}
+PASS wrong_type {"content": [{"type": "text", "text": "a and b must be finite numbers"}], "isError": true, "_durationMs": 4}
+PASS extra_property {"content": [{"type": "text", "text": "{\"sum\": 5}"}], "structuredContent": {"sum": 5}, "isError": false, "_durationMs": 5}

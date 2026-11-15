@@ -1,0 +1,22 @@
+{
+  "event_id": "eddaef76d77f4309ac8839ebb29dc53d",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "[ -d /installed-agent ] || mkdir -p /installed-agent"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:51:23.818851+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.002727031707763672,
+  "end": "2026-11-15T01:51:23.821494+00:00"
+}

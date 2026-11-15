@@ -1,0 +1,20 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "65340ac21ff4d8e3f8eef4ff3e242cbc03edd3890c9c70c93bdb18adf6061f3f"
+  },
+  {
+    "source": "artifacts/workspace/run_eval.sh",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/run_eval.sh",
+    "sha256": "19b157389830fa4a902a5c84826f477dd4aa0d5fd04d9fc370c17444551ad58d"
+  },
+  {
+    "source": "artifacts/workspace/run1.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/run1.json",
+    "sha256": "d0b777ea82a3d40db1af3d436295e0355318e4a6d0b8595768d64a95f1fc0c23"
+  }
+]

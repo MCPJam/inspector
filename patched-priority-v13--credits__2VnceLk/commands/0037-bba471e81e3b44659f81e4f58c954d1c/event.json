@@ -1,0 +1,22 @@
+{
+  "event_id": "bba471e81e3b44659f81e4f58c954d1c",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mkdir -p /workspace/mcp-eval/docs\ncurl -sS -L https://docs.mcpjam.com/llms.txt -o /workspace/mcp-eval/docs/llms.txt\ncurl -sS -L https://docs.mcpjam.com/reference/public-api.md -o /workspace/mcp-eval/docs/public-api.md\ncurl -sS -L https://docs.mcpjam.com/reference/openapi.json -o /workspace/mcp-eval/docs/openapi.json\nrg -n -i 'usage|credit|cost|billing|eval|account' /workspace/mcp-eval/docs/llms.txt"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:12:40.954072+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.0694758892059326,
+  "end": "2026-11-15T02:12:42.023516+00:00"
+}

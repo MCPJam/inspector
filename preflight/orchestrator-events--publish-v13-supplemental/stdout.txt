@@ -1,0 +1,5 @@
+{"run_id": "heldout-discovery-v13--discovery__gvhHS8f", "outcome": "passed", "capture_event_count": 56, "agent_shell_invocation_count": 19, "concern_count": 1}
+{"run_id": "heldout-discovery-v13--discovery__pXszNVb", "outcome": "passed", "capture_event_count": 17, "agent_shell_invocation_count": 4, "concern_count": 2}
+{"run_id": "patched-cycle2-auth-v13--auth__3bkokhu", "outcome": "passed", "capture_event_count": 17, "agent_shell_invocation_count": 5, "concern_count": 1}
+{"run_id": "patched-cycle2-auth-v13--auth__MV27c9o", "outcome": "passed", "capture_event_count": 71, "agent_shell_invocation_count": 26, "concern_count": 1}
+{"privacy_audit": true, "scanned_files": 34941, "matches_by_category": {"private_identifiers": 0, "jwt": 0, "provider_token": 0, "email": 0, "native_reasoning_block": 0, "secret_assignments": 0}, "in_memory_secret_values": 38}

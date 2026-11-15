@@ -1,0 +1,22 @@
+{
+  "event_id": "eefbb79ce23c456ba598e410c5dcb8e6",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "(set -o pipefail) 2>/dev/null && set -o pipefail; export PATH=\"$HOME/.local/bin:$PATH\"; claude_code_instruction_77d62c0e6aec4a0b9b0863d26849472e=\"$CLAUDE_CODE_INSTRUCTION_77D62C0E6AEC4A0B9B0863D26849472E\"; unset CLAUDE_CODE_INSTRUCTION_77D62C0E6AEC4A0B9B0863D26849472E; printf \"%s\" \"$claude_code_instruction_77d62c0e6aec4a0b9b0863d26849472e\" | claude --verbose --output-format=stream-json --max-turns 30 --thinking-display omitted --max-budget-usd 2 --permission-mode=bypassPermissions --print 2>&1 | tee /logs/agent/claude-code.txt"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:26:53.034847+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 31.829727172851562,
+  "end": "2026-11-15T02:27:24.864498+00:00"
+}

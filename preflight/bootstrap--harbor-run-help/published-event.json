@@ -1,0 +1,30 @@
+{
+  "id": "bootstrap:harbor-run-help",
+  "path": "bootstrap--harbor-run-help",
+  "argv": [
+    "work/venv/bin/harbor",
+    "run",
+    "--help"
+  ],
+  "start": "2026-11-15T01:13:53.095877+00:00",
+  "end": "2026-11-15T01:13:53.806072+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg",
+    "outcome-004.svg",
+    "outcome-005.svg",
+    "outcome-006.svg",
+    "outcome-007.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg",
+    "intermediate-003-001.svg",
+    "intermediate-003-002.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

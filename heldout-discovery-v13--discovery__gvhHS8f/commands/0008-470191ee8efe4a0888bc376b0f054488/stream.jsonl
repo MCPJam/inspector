@@ -1,0 +1,1 @@
+{"seconds": 0.021225929260253906, "stream": "stdout", "data": "Final: 7 / 8\nFailure: extra_property {'content': [{'type': 'text', 'text': '{\"sum\": 5}'}], 'structuredContent': {'sum': 5}, 'isError': False, '_durationMs': 7}\n"}

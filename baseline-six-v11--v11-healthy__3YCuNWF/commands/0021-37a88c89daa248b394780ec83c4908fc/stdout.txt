@@ -1,0 +1,406 @@
+| Flag | Description |
+| - | - |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud eval create`
+
+Create a runnable eval suite from authored test cases (does not run it).
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"`) belongs on `eval run --file` |
+| `--json <json>` | No | Inline suite definition JSON (or `@file`, or `-` for stdin) |
+| `--name <name>` | No | Suite name (overrides the file) |
+| `--model <model>` | No | Suite-level default model (overrides the file) |
+| `--provider <provider>` | No | Suite-level default provider (overrides the file) |
+| `--server <id-or-name...>` | No | Project HTTP server names or IDs (overrides the file) |
+| `--client <id-or-name...>` | No | Clients to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --client` has nothing to select |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
+
+### `cloud eval list`
+
+List the eval suites saved in a project.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval run`
+
+Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
+
+By default the command prints a launch receipt and returns immediately. `--wait` polls every launched run to a terminal state.
+
+**Exit codes (`--wait` only).** Without `--wait` this command's exit code is unchanged: `0` on any launch, `1` on a partial or wholly failed fan-out. `--wait` owns a separate six-code contract — a caller who asked this process to sit and watch a run to completion is asking it to say how the run went:
+
+| Code | Meaning |
+| - | - |
+| `0` | Every waited run passed, unanimously, and (when a report was requested) every report was assembled |
+| `1` | A run **completed** with a **failed** verdict. The only condition that produces this code |
+| `2` | Usage error — bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file (after auth, before any server/model work) |
+| `3` | Auth failed — no credential, or the platform rejected it, at launch or mid-wait (a token that expired during a long poll). Zero credits spent if it happened before launch |
+| `4` | Connection/setup failed before evaluation — a launch failure this CLI itself observed (network, timeout, rate limit, a partial or failed fan-out, an unrecognized launch error), or a local `--out` write failure — unless a more severe outcome (`1` or `3`) already applies to the same run, per the merge order above |
+| `5` | No valid verdict — `inconclusive`, a null/unrecognized result, a run whose own status is failed/cancelled/timed-out, a wait that hit its deadline, a mid-wait failure that was not auth-shaped, or a report that could not be assembled |
+
+No infrastructure condition ever maps to `1` — see the same rule under `eval gate` below. A multi-target launch merges these worst-of across every waited run, in the order `1 > 3 > 4 > 5 > 0`: a real verdict failure is never masked by a sibling's infrastructure noise, and a credential failure (which may be *why* other targets show no verdict) outranks a plain connection failure.
+
+This six-code contract is new and deliberately **different** from `eval gate`'s four codes below — see that command's own doc for why the two are not unified. An invalid suite file exits **2** either way — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--suite <id-or-name>` | Yes, unless `--file` | Eval suite name or ID |
+| `--file <path>` | Yes, unless `--suite` | Versioned suite file to upload and run (`.yaml` or `.json`, or `-` for stdin) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
+| `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
+| `--client <id-or-name...>` | No | Attached client(s) to run, so the run is stamped with that client's config. Several values start one **paid run each**. |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. Not the host-compat catalog id `mcpjam compat --host` / `mcpjam tools --host` take — see [Two different `--host` flags](#two-different---host-flags). |
+| `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
+| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
+| `--repetitions <n>` | No | **Legacy** spelling of `--iterations`. Passing both is an error. |
+| `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
+| `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
+| `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
+| `--notes <text>` | No | Free-text note stored on the run |
+| `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
+| `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
+| `--idempotency-key <key>` | No | Retry key for a lost launch response. For `--file`, a fresh key is minted and printed on every invocation when this flag is omitted; supply the printed key to replay the same run instead of starting a new one |
+| `--wait` | No | Wait for every launched run to reach a terminal status |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 2100000); requires `--wait` |
+| `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
+| `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
+| `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Ephemeral by default** — pass `--save-targets` to attach it to the suite. |
+| `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
+| `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
+| `--compose-model <id...>` | No | Model(s) to run on the composed stack. Replaces the client's pinned model unless `--with-client-default` is set |
+| `--compose-model-selection <json...>` | No | Whole saved model selection(s) — source, connection, `settings.reasoningEffort` — as JSON: one cell per selection, for its model, at its effort. Repeat to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell |
+| `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
+| `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
+| `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-host-servers` | No | **No longer supported** — rejected. An eval run takes its servers from a server group alone; use `--compose-server` or `--compose-server-group` |
+| `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
+| `--save-targets` | No | Attach the composed environments to the suite (append, capped at 10). Without it the stack is ephemeral |
+
+#### Composing a target instead of naming one
+
+`--compose-client <id-or-name>` builds an execution stack for this run instead of
+naming a saved environment, refined by `--compose-computer`, `--compose-model`,
+`--compose-server-group`, `--compose-skill` and `--compose-secret`. The stack becomes an unnamed,
+content-addressed environment (the same one `environments ensure-adhoc`
+produces), so composing the same stack twice reuses one environment.
+`--compose-host` is the deprecated spelling of the same flag.
+
+`--compose-model` and `--compose-secret` carry the deployment requirement
+described under [Deployment support for model overrides and secret
+grants](#deployment-support-for-model-overrides-and-secret-grants): a launch that names
+either is refused before it composes anything if this deployment does not
+publish the capability.
+
+> [!WARNING]
+>
+> **With `--save-targets`, this edits the suite.** The composed environment is
+> appended to the suite's environment list — deliberately, because an
+> environment the suite does not list is one nobody can re-run from the app
+> afterwards. Without it the stack is ephemeral and the suite is untouched,
+> except on a deployment with no ephemeral-launch support, where a
+runs. `--reporter` replaces that output with the canonical structured report.
+`--out` writes the same report atomically, including on failed-run and
+post-completion reporting-error paths, before the command sets its exit code.
+
+Without `--wait`, a partial or wholly failed fan-out **exits 1**; with
+`--wait` it exits **4** (see the exit-code table above). A per-target failure
+does not abort its siblings, so exiting 0 would let a pipeline read "1 of 3
+runs never started" as a clean launch.
+
+#### `--file`: upload and run a suite file
+
+`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
+authenticates, then validates. A contract-invalid file exits **2** after the
+auth request — it does not start a run. `eval validate` on the same bytes
+still exits 1: that command is a verdict on the file; this one is not.
+
+The file's `suite.id` is the declared suite identity. The first run creates a
+file-owned suite stamped with that id; later runs of the same id in the same
+project update that suite rather than creating a second one. A UI-authored
+suite has no declared id, so no file can claim it. Resolve is never by name.
+
+File `passThreshold` is a fraction; the hosted suite grades on a percent. The
+conversion refuses rather than approximates. A file count above **10**
+(`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`) is
+refused by name (`REPETITIONS_CAP`) and is not clamped.
+
+**Which vocabulary the sync speaks is the deployment's call.** Before writing
+anything, the CLI reads `GET /capabilities` once. A deployment that advertises
+`vocabulary.version: 2` gets every request with `x-mcpjam-eval-vocabulary: 2`
+and case bodies spelled canonically — `iterations` (the exact count),
+`legacyIterations` (the legacy floor, the same number) and `assertions` —
+instead of `repetitions` / `iterations` / `checks`. A deployment without the
+capability block, or without the capabilities route at all, is spoken to in
+vocabulary 1, byte-for-byte as before. Nothing in the file changes either way:
+the dialect of the file and the vocabulary of the wire are independent.
+
+Cases are synced in batches of at most 100 (`create_eval_cases`). Every
+declared case is created or updated, including `disabled: true` rows. A case
+the file **no longer declares** is deleted from the hosted suite before
+launch. A case the file still declares but marks `disabled: true` is **kept,
+with its history** — it is simply left out of the launch, so parking a flaky
+test does not destroy its past results and re-enabling it later resumes the
+same case.
+The run is scoped to the enabled cases either way. A file with no enabled
+cases is refused (`NO_ENABLED_CASES`) rather than launching the whole
+persisted suite. `--case` may only name an enabled case. A later run updates
+existing cases by declared id and creates new ones. An enabled case that
+overrides `passThreshold` is refused: hosted grading is suite-wide. A
+disabled case with the same override is ignored, matching how repetitions
+are checked. Authored
+`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused at
+hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
+refusal). Hosted platform-authored suites do not currently have a backend
+tool-policy field or enforcement path, so the CLI does not upload a suite that
+would claim those guarantees. When supported by an eval runner, `toolPolicy`
+is enforced at execution time with denied tools kept visible but blocked;
+server annotations are advisory and **UNTRUSTED**. The file's default count
+(`defaults.repetitions`, or `defaults.iterations` in `schemaVersion: "2"`) is
+inherited per case and is not uploaded as a suite `minIterations` floor.
+Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
+execution defaults; omitted fields stay omitted so the platform applies its
+own defaults. `target.hosts` and `target.environment` are attached before
+launch. A file environment takes precedence over file hosts for that launch,
+while an explicit CLI target takes precedence over both. When an explicit CLI
+target is provided (for example `--host`), the file's `target.hosts` are
+**not** synchronized to the suite's persisted host attachments — the suite
+keeps whatever hosts it already has. Host attachment synchronization only
+runs when no explicit CLI target overrides the file. Environment attachment
+synchronization is unaffected and always runs.
+
+Without `--idempotency-key`, the CLI mints a fresh UUID for every invocation
+and prints it to stderr before launch (`Eval idempotency key: <key>`). Each
+invocation therefore starts and bills a new run. To retry a launch whose
+response was lost — without starting a second run — pass the key that was
+printed: `--idempotency-key <printed-key>`. A replay is marked `deduped` in
+the receipt and human output. `--notes` is not part of the key.
+
+##### Imported cases: live tool resolution, and per-run approval
+
+Every file run performs the same live check `eval validate --project` performs,
+**before it writes anything**. It is not opt-in and there is no flag to skip
+it. A file with no deterministic `toolCall` steps asks no question and pays no
+round trip.
+
+What happens when a deterministic reference does not resolve depends on the
+case:
+
+| Case | Outcome |
+| - | - |
+| Selected (enabled, and named by `--case` if you used it) | The launch **refuses before the suite is synced** — nothing is written and nothing is billed |
+| Imported, not selected | Its claim is rewritten to `unresolved` (keeping `sourceCaseKey`) and it is **still persisted**, so the hosted record says what MCPJam found rather than still asserting a claim about a missing tool |
+| Native, not selected | Left exactly as authored. A hand-written case never acquires an `import` block from this — "somebody wrote this" and "something converted this" are different facts |
+
+Each target is checked on **its own** server set. `--host` is checked against
+that host's configured servers rather than the file's, because that is the set
+the run connects — validating `target.servers` would approve a tool the host
+cannot reach. A host the FILE declares uses its own `servers` list when it
+declares one (those are attached to the host before launch) and the host's
+configured set when the field is omitted. An explicitly empty `servers: []`
+is a real, empty set — it clears the attachment before launch — and is
+validated as such, never as an omitted field. A step that pins `serverId` is resolved by id;
+`serverName` is a display fallback and never overrides it.
+
+If the run's target set cannot be enumerated before the suite exists
+(`--all-targets`, `--compose-*`), or a host does not report a server set, or a
+host pins a server the project no longer has, the launch refuses rather than
+assuming the references are fine.
+
+`--case` accepts a hosted row id, which does not exist yet when this check
+runs. A selector this stage cannot map is therefore treated as possibly naming
+any enabled case, so an unresolved reference still refuses; the launcher
+resolves the selector itself a moment later.
+
+A selected `approximated` case refuses unless this invocation approves it:
+
+| Flag | Required | Description |
+| - | - | - |
+| `--allow-approximated <case...>` | No | Approve an `approximated` imported case for **this run only**, by AUTHORED case id (`cases[].id`). Repeatable. `--file` runs only |
+| `--approval-reason <text>` | With the above | Why the approximations are acceptable for this run. 1–500 characters after trimming; one reason covers every approval in the invocation |
+
+```bash theme={"theme":"css-variables"}
+mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+  --allow-approximated c_refund_partial \
+  --approval-reason "Reviewed against the upstream rubric; ENG-4821"
+```
+
+Checked before anything is billed, each with its own message: approving a
+**native** case (nothing to approve), a **claimed-exact** one (needs no
+approval), an **unsupported** or **unresolved** one (approval covers a case
+whose behaviour was approximated, not one whose behaviour is missing), a
+**disabled** or **unselected** one (the run will not execute it), an unknown
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+| `--all-projects` | List across every accessible project. Conflicts with `--project`. |
+| `--status <status>` | Filter by session status |
+| `--limit <n>` | Maximum sessions to return (1–200) |
+
+### `cloud sessions send`
+
+Send one message to a project's MCP servers and print the reply plus the raw tool calls, per-call latency and token usage — the telemetry a participant in the conversation cannot see.
+
+**This spends model credits on every call.**
+
+`--idempotency-key` is required and must be **stable for the intent**, not regenerated per attempt. It is what makes a retry safe: with the same key, a turn that already completed is replayed rather than re-run and re-billed. A fresh key per attempt deduplicates nothing.
+
+Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. A session created by `cloud sessions browser open` is initially unconfigured and accepts its model configuration with its first send. After the first model turn, the session is configured: `--model`, `--environment`, `--server`, `--no-servers`, `--system-prompt` and `--tool-mode` are then refused alongside `--session` rather than silently repinning it.
+
+| Flag | Description |
+| - | - |
+| `--message <text>` | The message to send, as the user (required) |
+| `--idempotency-key <key>` | Stable key for this turn's intent (required). Reuse it when retrying. |
+| `--session <sessionId>` | Continue this session instead of starting one |
+| `--model <modelId>` | Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on the first send: defaults to the selected environment’s or client’s model and is then pinned. A supplied ID must be provider-prefixed. |
+| `--environment <environmentId>` | Target this environment's servers. Conflicts with `--server`. |
+| `--server <serverId...>` | Target these project servers. Conflicts with `--environment`. |
+| `--no-servers` | Start with no MCP servers. Conflicts with `--server` and `--environment`; requires a backend with chat-environment support. |
+| `--system-prompt <text>` | System prompt for the session |
+| `--tool-mode <mode>` | `read_only` (default) advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and **may cause real side effects**. |
+| `--max-steps <n>` | Maximum engine steps this turn (1–16) |
+| `--max-tool-calls <n>` | Cap the tool calls this turn may make. `0` answers without tools. |
+| `--temperature <n>` | Sampling temperature (0–2) |
+| `--effort <level>` | Reasoning effort for the model. First turn only: pinned to the session, refused with `--session`. It replaces the temperature, so it cannot be combined with `--temperature`. Applied or refused by the rail the model runs on, never dropped |
+| `--project <id-or-name>` | Project name or ID (required to start a session) |
+
+`read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.
+
+> [!NOTE]
+>
+> Hosted session browsers require browser availability for your account and deployment. An unavailable browser reports a refusal or `browser.attached: false` with its reason. The live pane opens in the Playground when the browser workspace is enabled.
+
+Add `--browser` to advertise browser tools for this turn. The first browser turn requires `--browser-mode allow_all|read_only|allowlist` unless the selected client supplies a browser policy. Optional `--browser-origins <origin...>` and `--browser-tools <name...>` restrict that grant; `--browser-profile <profileId>` selects its initial saved profile. The grant and profile are fixed thereafter. A client's current browser policy and the session's `read_only` tool mode may further restrict execution.
+
+A continuation must opt in again with `--browser`; a plain send does not wake the desktop. Screenshots are returned as URLs and trace pointers. Use the printed **Open in Playground** link to view the transcript, take over the browser, and select **Resume agent** when finished. API session transcripts are view-only there.
+
+### `cloud sessions browser`
+
+Drive the session browser without a model turn. All verbs except a new `open` require `--session <sessionId>`; use the public session ID, never its read-only conversation UUID or logical browser ID.
+
+| Verb | Description |
+| - | - |
+| `open` | Open or wake an existing session browser. Omit `--session` and provide `--project`, a browser policy, and a stable `--idempotency-key` to create an empty API session. |
+| `navigate <url>` | Navigate to an allowed URL. Use a stable `--command-id` for retries. |
+| `act --verb <verb>` | Act on the page; pass `--target` as JSON and optional `--value` and `--expected-state`. |
+| `invoke <toolKey> --input <json>` | Invoke a permitted page tool. |
+| `observe --mode <mode>` | Read the page; `--mode screenshot --download <dir>` saves screenshot evidence. |
+| `note <text>` | Append a note to the command ledger. |
+| `trace` | Read command receipts and screenshot URLs. |
+| `artifact --command-id <id> --download <dir>` | Fetch screenshot evidence for a command. |
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# MCPJam API
+
+> Programmatic access to the MCP servers in your MCPJam projects — diagnostics, tool calls, prompt rendering, and asynchronous eval runs.
+
+> [!WARNING]
+>
+> **The MCPJam API is in preview.** It works today and we use it ourselves, but
+> it has not been generally announced and the surface may change — including in
+> breaking ways — while we finish the design. Pin your integration to the
+> behaviors documented on this page, build a [tolerant
+> reader](#versioning--stability), and expect to revisit it. Feedback is very
+> welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
+> [GitHub](https://github.com/MCPJam/inspector/issues).
+
+> [card] [Create an API key](https://app.mcpjam.com/settings/api-keys)
+>
+> Go straight to key management in the hosted app. If you're signed out,
+> you'll be asked to sign in and then land right back on the API keys page.
+
+The MCPJam API lets you operate the MCP servers saved in your
+[hosted](https://docs.mcpjam.com/hosted/overview.md) projects — from CI, scripts, or your own agents —
+without opening the UI.
+
+What you can do with it today:
+
+* **Discover your resources** — list your projects, their servers, eval
+  suites, and chat sessions, so every ID the other routes need is
+  self-serve
+* **Validate a server** — connect, initialize, and capture a capability snapshot
+* **Run the doctor** — the probe → connect → initialize → capabilities workflow
+* **Check OAuth requirements** — does this server need an OAuth grant?
+* **List tools, prompts, and resources** — the server's MCP primitives
+* **Call a tool / render a prompt** — execute primitives and get the MCP result back verbatim
+* **Read a resource** by URI
+* **Export a full snapshot** — tools, resources, and prompts as one JSON document
+* **Manage a project's clients** — list, read, **create** (from a built-in
+  template like `claude`/`chatgpt`/`cursor`, or from a full config), edit,
+  duplicate, and delete the named, reusable configurations that define how
+  MCPJam connects to and talks to your MCP servers. Edits are compare-and-set:
+  read the client, then send its `configId` back as `expectedConfigId` for a
+  config change and its `name` back as `expectedName` for a rename — a rename
+  does not rotate the config, so the config token cannot detect a concurrent
+  one — and a concurrent edit is rejected rather than silently reverted
+* **Manage a project's environments** — list, read, create, edit, archive, and
+  restore the named execution bundles (host + optional server group + optional
+  pinned skills and plugin versions) that eval suites and goals run against,
+  and **preview** what one resolves to before launching it
+* **List a project's studies** — name, access mode, attached servers, and
+  share link — and **read one study's settings**: model, system prompt,
+  tool-approval policy, and resolved servers
+* **Author eval suites** — create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+* **Run eval suites asynchronously** — create a run from a saved suite, get a `202` + `runId`
+  immediately, then poll status, per-iteration results (tool calls, token
+  usage, latency), and full traces. Runs appear live in the hosted UI,
+  tagged `source: "api"`
+* **Manage a server's accounts** — complete OAuth yourself (e.g. the SDK's
+  `runOAuthLogin`, or your CI's own sign-in) and upload the token to a named
+  account; list, rename, choose the default, and delete accounts. Tokens are
+  write-only: no route returns one
+* **Run a headless agent turn** — send a message history, get back the
+  assistant reply, the platform operations it invoked, references to any
+  resources it created (eval suites), and token usage; the model is pinned
+  server-side and billed to the project
+* **Send feedback** — report a bug, a missing capability, or something
+  confusing to the MCPJam team at the moment you hit it; the same endpoint the
+  `send_feedback` MCP tool calls
+
+All endpoints operate on servers you have already added to a project in the
+hosted inspector. Managing API keys remains UI-only — see
+[Not in the API yet](#not-in-the-api-yet).
+
+## Base URL
+
+```text theme={"theme":"css-variables"}
+https://app.mcpjam.com/api/v1
+```
+
+The API is path-versioned. All routes on this page are relative to the base
+URL above.
+
+## Authentication
+
+Every request needs an MCPJam API key in the `Authorization` header:
+
+```bash theme={"theme":"css-variables"}
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/tools" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### Creating a key
+
+1. Open [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys)
+   in the hosted app (the card at the top of this page takes you there
+   directly).
+2. Click **Create API key**, name it, and pick the **organization** it will act in.
+3. Copy the key (`sk_…`) immediately — **it is shown exactly once** and never
+   stored by MCPJam in retrievable form.
+
+Keys can be revoked from the same page at any time. Revocation takes effect
+immediately.
+
+### Scope
+

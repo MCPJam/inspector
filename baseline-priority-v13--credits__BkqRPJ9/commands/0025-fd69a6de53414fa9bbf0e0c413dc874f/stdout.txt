@@ -1,0 +1,10 @@
+- [Slack](https://docs.mcpjam.com/hosted/slack.md): Run MCPJam from Slack — mention the bot to ask about your projects, and approve the actions that spend credits
+- [CLI Overview](https://docs.mcpjam.com/cli/overview.md): Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal
+- [Migrating to CLI 4.0](https://docs.mcpjam.com/cli/migration.md): Command-path and flag changes when account-bound mcpjam commands moved under mcpjam cloud
+- [host-compat](https://docs.mcpjam.com/sdk/reference/host-compat.md): API reference for @mcpjam/sdk/host-compat — derive server requirements, evaluate host compatibility, and scan widget bridge usa
+- [List run iterations](https://docs.mcpjam.com/api-reference/eval-runs/list-run-iterations.md): Per-iteration results: actual tool calls, structured token usage, and latency. Cursor-paginated.
+- [Get the pre-run disclosure for a suite launch plan](https://docs.mcpjam.com/api-reference/eval-runs/get-the-pre-run-disclosure-for-a-suite-launch-plan.md): What happens to a run's content BEFORE yo
+- [Author eval cases from a document](https://docs.mcpjam.com/api-reference/eval-runs/author-eval-cases-from-a-document.md): The sibling of `cases/generate`: generation invents cases from the suite's 
+- [Mint a model lease for MCPJam-hosted inference](https://docs.mcpjam.com/api-reference/eval-runs/mint-a-model-lease-for-mcpjam-hosted-inference.md): How an SDK eval running OUTSIDE the platform (loc
+- [Authenticate and record an eval start](https://docs.mcpjam.com/api-reference/eval-runs/authenticate-and-record-an-eval-start.md): Called by official SDK, CLI and Vitest runners before executing an 
+- [Open a cloud browser session](https://docs.mcpjam.com/api-reference/agent-browsers/open-a-cloud-browser-session.md): Returns session identity, engine, bootId and runKey. Same runKey and policy reus

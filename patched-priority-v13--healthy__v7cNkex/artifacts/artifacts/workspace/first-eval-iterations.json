@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": "run_fixture_2_0",
+      "testCaseId": "suite_authored_4_case_0",
+      "title": "Add two and three",
+      "iterationNumber": 1,
+      "status": "completed",
+      "result": "passed",
+      "actualToolCalls": [
+        {
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"sum\": 5}"
+              }
+            ],
+            "structuredContent": {
+              "sum": 5
+            },
+            "isError": false
+          }
+        }
+      ],
+      "expectedToolCalls": [],
+      "durationMs": 1,
+      "error": null
+    }
+  ]
+}

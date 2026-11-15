@@ -1,0 +1,31 @@
+{"seconds": 0.09037113189697266, "stream": "stderr", "data": "test_call_assertions_use_nested_args_count_and_matching_mode (test_predicates.PredicateTest.test_call_assertions_use_nested_args_count_and_matching_mode) ... "}
+{"seconds": 0.09040021896362305, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.09040617942810059, "stream": "stderr", "data": "test_missing_unknown_and_wrongly_typed_fields_are_never_a_pass (test_predicates.PredicateTest.test_missing_unknown_and_wrongly_typed_fields_are_never_a_pass) ... "}
+{"seconds": 0.0905311107635498, "stream": "stderr", "data": "ok\ntest_no_tool_errors_reads_actual_result (test_predicates.PredicateTest.test_no_tool_errors_reads_actual_result) ... "}
+{"seconds": 0.09055113792419434, "stream": "stderr", "data": "ok\ntest_preflight_refuses_unsupported_semantics_before_any_tool_execution (test_predicates.PredicateTest.test_preflight_refuses_unsupported_semantics_before_any_tool_execution) ... "}
+{"seconds": 0.09057211875915527, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.09057736396789551, "stream": "stderr", "data": "test_response_contains_never_mistakes_tool_text_for_assistant_message (test_predicates.PredicateTest.test_response_contains_never_mistakes_tool_text_for_assistant_message) ... "}
+{"seconds": 0.09058833122253418, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.09059309959411621, "stream": "stderr", "data": "test_tool_result_contains_requires_correct_needle_and_scope (test_predicates.PredicateTest.test_tool_result_contains_requires_correct_needle_and_scope) ... "}
+{"seconds": 0.0906071662902832, "stream": "stderr", "data": "ok\n"}
+{"seconds": 0.09062027931213379, "stream": "stderr", "data": "test_auth_recovery_after_refusal (test_service.FixtureTest.test_auth_recovery_after_refusal) ... "}
+{"seconds": 0.6118931770324707, "stream": "stderr", "data": "ok\ntest_authored_suite_runs_its_actual_tool_arguments (test_service.FixtureTest.test_authored_suite_runs_its_actual_tool_arguments) ... "}
+{"seconds": 1.1323792934417725, "stream": "stderr", "data": "ok\n"}
+{"seconds": 1.1324021816253662, "stream": "stderr", "data": "test_file_owned_suite_sync_keeps_identity_and_refuses_fake_model_pass (test_service.FixtureTest.test_file_owned_suite_sync_keeps_identity_and_refuses_fake_model_pass) ... "}
+{"seconds": 1.6412312984466553, "stream": "stderr", "data": "ok\n"}
+{"seconds": 1.6412391662597656, "stream": "stderr", "data": "test_healthy_first_value_requires_server_state (test_service.FixtureTest.test_healthy_first_value_requires_server_state) ... "}
+{"seconds": 2.1443872451782227, "stream": "stderr", "data": "ok\n"}
+{"seconds": 2.1444003582000732, "stream": "stderr", "data": "test_invalid_arguments_never_count_as_first_value (test_service.FixtureTest.test_invalid_arguments_never_count_as_first_value) ... "}
+{"seconds": 2.6476521492004395, "stream": "stderr", "data": "ok\n"}
+{"seconds": 2.647660255432129, "stream": "stderr", "data": "test_private_control_is_not_http_surface (test_service.FixtureTest.test_private_control_is_not_http_surface) ... "}
+{"seconds": 3.1655852794647217, "stream": "stderr", "data": "ok\ntest_prompt_b_cannot_pass_discovery_only_or_missing_output (test_service.FixtureTest.test_prompt_b_cannot_pass_discovery_only_or_missing_output) ... "}
+{"seconds": 3.6749000549316406, "stream": "stderr", "data": "ok\n"}
+{"seconds": 3.6749093532562256, "stream": "stderr", "data": "test_registry_serves_only_actual_tarball_manifest (test_service.FixtureTest.test_registry_serves_only_actual_tarball_manifest) ... "}
+{"seconds": 4.184694051742554, "stream": "stderr", "data": "ok\ntest_tool_reference_validation_server_cleanup_and_real_iterations (test_service.FixtureTest.test_tool_reference_validation_server_cleanup_and_real_iterations) ... "}
+{"seconds": 4.812782287597656, "stream": "stderr", "data": "ok\n"}
+{"seconds": 4.812796354293823, "stream": "stderr", "data": "test_v13_wrong_expected_result_fails_and_unknown_fields_never_charge (test_service.FixtureTest.test_v13_wrong_expected_result_fails_and_unknown_fields_never_charge) ... "}
+{"seconds": 5.365764141082764, "stream": "stderr", "data": "ok\ntest_zero_credits_recovery_and_idempotency (test_service.FixtureTest.test_zero_credits_recovery_and_idempotency) ... "}
+{"seconds": 5.875765085220337, "stream": "stderr", "data": "ok\n"}
+{"seconds": 5.875868320465088, "stream": "stderr", "data": "\n----------------------------------------------------------------------\n"}
+{"seconds": 5.875877141952515, "stream": "stderr", "data": "Ran 17 tests in 5.785s\n\n"}
+{"seconds": 5.875899314880371, "stream": "stderr", "data": "OK\n"}

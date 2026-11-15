@@ -1,0 +1,24 @@
+{
+  "id": "bootstrap:codex-exec-help",
+  "path": "bootstrap--codex-exec-help",
+  "argv": [
+    "codex",
+    "exec",
+    "--help"
+  ],
+  "start": "2026-11-15T01:13:02.745481+00:00",
+  "end": "2026-11-15T01:13:02.761568+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg",
+    "intermediate-002-002.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

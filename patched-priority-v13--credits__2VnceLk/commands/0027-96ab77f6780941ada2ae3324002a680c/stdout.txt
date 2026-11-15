@@ -1,0 +1,50 @@
+# MCPJam Inspector
+
+- [MCPJam Docs](https://docs.mcpjam.com/index.md): Test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps across every major AI client.
+- [Getting Started](https://docs.mcpjam.com/getting-started.md): Start testing your MCP server in minutes
+- [Installation](https://docs.mcpjam.com/installation.md): Here's a list of all ways to start MCPJam
+- [Hosted App](https://docs.mcpjam.com/hosted/overview.md): Use MCPJam Inspector in the browser, no installation required
+- [MCPJam in Claude](https://docs.mcpjam.com/hosted/claude-connector.md): Connect Claude to your MCPJam account through the hosted MCP server: projects, saved servers, evals, and user testing
+- [Okta SSO & SCIM](https://docs.mcpjam.com/hosted/sso.md): Install MCPJam from the Okta Integration Network and configure SAML single sign-on and SCIM provisioning
+- [IP Allowlisting](https://docs.mcpjam.com/hosted/network.md): The addresses hosted MCPJam connects from, for firewalls and IP allowlists on your MCP and OAuth servers
+- [Common MCP Errors](https://docs.mcpjam.com/troubleshooting/common-errors.md): Solutions to common MCP server connection and configuration issues
+- [Error code reference](https://docs.mcpjam.com/troubleshooting/error-codes.md): What every MCPJam Inspector error code means, the likely causes, and the next step to fix it.
+- [Changelog](https://docs.mcpjam.com/changelog/overview.md): Track the latest updates, features, and improvements to MCPJam Inspector
+- [Home](https://docs.mcpjam.com/inspector/home.md): Org-scoped dashboard with activity stats, recommended servers, and quick-start clients
+- [Clients](https://docs.mcpjam.com/inspector/clients.md): Reusable MCP client configurations for testing servers and apps under realistic conditions
+- [Multi-server connections](https://docs.mcpjam.com/inspector/connecting-servers.md): Connect to multiple MCP servers with different transport methods
+- [Projects](https://docs.mcpjam.com/inspector/projects.md): Group your MCP servers into projects, with the ability to share them with your team
+- [MCP protocol versions](https://docs.mcpjam.com/inspector/protocol-versions.md): Pin the inspector to a specific MCP protocol version, including the 2026-07-28 stateless RC, to test how your server behaves across versions.
+- [Host Compatibility](https://docs.mcpjam.com/inspector/host-compat.md): See which hosts your MCP server will work in (Claude, ChatGPT, Cursor, Copilot) the moment you connect
+- [Skills](https://docs.mcpjam.com/inspector/skills.md): Load and use skills to give your agents the context they need to use MCP tools effectively
+- [Playground](https://docs.mcpjam.com/inspector/playground.md): Chat with your MCP servers, invoke tools by hand, render widgets, and inspect every step, all in one IDE-style workspace
+- [Evaluate](https://docs.mcpjam.com/inspector/evals.md): Author test cases for your MCP server, run them across models, and gate pass/fail on deterministic assertions plus optional LLM-as-judge.
+- [View origins](https://docs.mcpjam.com/inspector/view-origins.md): Which origin your MCP App's view runs at, and how to allowlist it with a third-party API
+- [Host presets](https://docs.mcpjam.com/inspector/host-templates.md): What MCPJam's built-in host presets capture, and which fields to get right when you mirror a host in your own Client.
+- [OAuth Debugger](https://docs.mcpjam.com/inspector/guided-oauth.md): Debug your MCP server's OAuth implementation at every step of the handshake
+- [XAA Debugger](https://docs.mcpjam.com/inspector/xaa-debugger.md): Configure and debug Cross-App Access flows with MCPJam as the test identity provider and client/agent
+- [Mid-session sign-in](https://docs.mcpjam.com/inspector/lazy-authentication.md): Test servers that let you connect without signing in and ask for sign-in only when a protected call needs it
+- [MCP Inspector](https://docs.mcpjam.com/inspector/tools-prompts-resources.md): Manually test your MCP server's tools, resources, and prompts
+- [Tracing & debugging](https://docs.mcpjam.com/inspector/debugging.md): See all messages sent to and from your MCP server
+- [Telemetry & privacy](https://docs.mcpjam.com/inspector/telemetry-privacy.md): What the Inspector sends to analytics and error reporting, how links that act as credentials are kept out of it, and how to opt out
+- [Launch from Code (Beta)](https://docs.mcpjam.com/inspector/launch-from-code.md): Programmatically launch and configure MCPJam Inspector from your code or build tools
+- [MCP Docs Server](https://docs.mcpjam.com/inspector/docs-server.md): Connect AI applications to MCPJam documentation
+- [My First MCP App](https://docs.mcpjam.com/guides/first-mcp-app.md): Build a simple Reservation MCP App from scratch
+- [My First ChatGPT App](https://docs.mcpjam.com/guides/first-chatgpt-app-react.md): Build a simple Coffee Shop ChatGPT App with React
+- [CLI Overview](https://docs.mcpjam.com/cli/overview.md): Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal
+/organizations/org_fixture/spend-budget 404 {"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+/projects/project_fixture/eval-suites/suite_fixture 200 {"id": "suite_fixture", "name": "Arithmetic smoke", "projectId": "project_fixture", "description": "Synthetic fixture: add 2 and 3 and assert 5.", "environment": {"servers": []}, "executionConfig": null, "hosts": [], "environmentIds": [], "settings": {"policy": "legacy", "minimumIterations": 1}, "schedule": {}, "createdAt": 1, "updatedAt": 2}
+/projects/project_fixture/eval-suites/suite_fixture/cases 200 {"items": [{"id": "case_add", "title": "add 2 and 3 returns 5", "steps": [{"id": "add", "kind": "toolCall", "toolName": "add", "arguments": {"a": 2, "b": 3}}], "expectedOutput": "5"}]}
+> ## Documentation Index
+> Fetch the documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Page Not Found
+
+The requested page could not be found.
+
+## Related topics
+
+- [Hosted App](https://docs.mcpjam.com/hosted/overview.md#managing-billing-details)
+- [Local Evals](https://docs.mcpjam.com/cli/local-evals.md)
+- [LLM Providers](https://docs.mcpjam.com/sdk/reference/llm-providers.md#mcpjam-hosted-no-provider-key)

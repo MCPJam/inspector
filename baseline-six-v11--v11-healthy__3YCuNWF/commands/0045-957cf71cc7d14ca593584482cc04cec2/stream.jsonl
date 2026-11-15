@@ -1,0 +1,3 @@
+{"seconds": 0.00398564338684082, "stream": "stderr", "data": "/bin/bash.real: line 1: python: command not found\n"}
+{"seconds": 0.9825711250305176, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 1.0417113304138184, "stream": "stdout", "data": "{\"valid\":true,\"file\":\".mcpjam/evals/arithmetic.json\",\"suite\":{\"id\":\"s_arithmetic_smoke\",\"name\":\"Arithmetic smoke\",\"cases\":1,\"enabledCases\":1},\"findings\":[],\"projectValidation\":{\"project\":{\"id\":\"project_fixture\",\"name\":\"Fixture\"},\"targets\":[],\"valid\":true,\"findings\":[]}}\n"}

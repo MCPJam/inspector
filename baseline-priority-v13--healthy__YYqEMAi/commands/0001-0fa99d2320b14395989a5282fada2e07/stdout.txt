@@ -1,0 +1,1 @@
+{"valid":true,"file":"suite.json","suite":{"id":"s_arithmetic_validation","name":"Arithmetic server regression","cases":1,"enabledCases":1},"findings":[]}

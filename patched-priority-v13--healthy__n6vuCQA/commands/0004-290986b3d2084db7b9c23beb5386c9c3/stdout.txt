@@ -1,0 +1,40 @@
+55:* **Author eval suites**: create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+56:* **Run eval suites asynchronously**: create a run from a saved suite, get a `202` + `runId`
+64:* **Run a headless agent turn**: send a message history, get back the
+159:**Authoring vs running suites.** `POST /eval-suites` creates a runnable suite
+161:`suiteId`, WITHOUT running anything; author once, run later. `POST /eval-runs`
+164:`GET /eval-runs/{runId}` until `status` is `completed`, `failed`,
+168:itself: `GET /projects` lists your projects, `GET /projects/{projectId}/servers`
+169:lists each project's servers, and `GET /projects/{projectId}/eval-suites`
+170:lists its eval suites. Start from `GET /me` to confirm which account a key
+250:| `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
+251:| `GET /projects/{projectId}/servers` | The project's saved MCP servers |
+252:| `GET /projects/{projectId}/servers/{serverId}/revisions` | A server's stored revisions, newest first: captures of its tools and server info, recorded whenever they change (`?limit=&cursor=`) |
+253:| `GET /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}` | One revision: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large
+254:| `GET /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff` | What changed since the revision before, or since `?from=`: tools added, removed and changed, and server info chan
+255:| `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |
+256:| `GET`, `POST /projects/{projectId}/clients` | List clients, or create one from a template or full config |
+258:| `POST /projects/{projectId}/clients/{client}/servers` | Replace the client's server attachments (a replacement; omitted servers are detached) |
+259:| `POST /projects/{projectId}/clients/{client}/duplicate` | Copy a client's current config into a new client |
+270:| `GET /projects/{projectId}/environments` | List environments (`?includeArchived=true` to include archived ones) |
+271:| `GET /projects/{projectId}/environments/{environmentId}` | Read one environment |
+272:| `GET /projects/{projectId}/environments/{environmentId}/resolve` | Preview the host config and closed server set this environment resolves to right now |
+273:| `POST /projects/{projectId}/environments/{environmentId}/archive` | Archive it. The environment is kept, and its name is freed for a new one |
+296:| `POST .../eval-suites` | Author-only: create a suite + its test cases from `name` + `serverIds` + a default `model` + `tests`, WITHOUT running it; responds `201` + `suiteId`. Each test's case bo
+297:| `POST .../eval-runs` | Create a run from a `suiteId` (rerun; `serverIds` optional, defaults to the suite's saved servers) or `suiteName` + inline `tests` + `serverIds` (new suite). `environmentI
+300:| `GET .../eval-runs/{runId}` | Run status, result, and summary; poll until terminal. Carries `gateWaiver`: the audited override in force over this run's gate, or `null` |
+301:| `GET .../eval-runs/{runId}/gate` | The stored suite quality-gate report for this run (`passed` / `failed` / `non_gateable` / `not_configured`). `not_configured` is a 200 report, never a missing 
+302:| `GET .../eval-runs/{runId}/decision-summary` | **Start here when a run did not pass.** The canonical run decision contract: the verdict and where it came from, counts labelled with the populatio
+303:| `POST .../eval-runs/{runId}/gate-waivers` | Override a **failing** run's release gate until `expiresAt` (required, future, max 30 days out), with a `reason` (required, max 500 chars). Manage tie
+304:| `GET .../eval-runs/{runId}/gate-waivers` | The waiver in force over a run, or `null`. Readable by anyone who can view the run |
+306:| `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
+307:| `GET .../eval-runs/{runId}/iterations/{iterationId}/trace` | Full trace: messages + expected-vs-actual analysis |
+308:| `GET .../eval-suites/{suiteId}/runs` | Recent runs for a suite, newest first |
+314:| `POST .../eval-ingest/report` | One-shot: create a run from finished results and finalize it |
+315:| `POST .../eval-ingest/runs/start` | Chunked flow: create (or idempotently reuse) a run by `externalRunId` |
+316:| `POST .../eval-ingest/runs/iterations` | Append an iteration batch to a started run |
+317:| `POST .../eval-ingest/runs/finalize` | Finalize a chunked run (idempotent) |
+318:| `POST .../eval-ingest/artifacts` | Store one artifact's raw bytes (widget HTML too large to send inline) and return its `storageId` |
+319:| `POST .../eval-ingest/artifacts/upload-url` | Retired. Answers `410 Gone` with `details.code: "SDK_UPGRADE_REQUIRED"`. `@mcpjam/sdk` 8.17.0 and later upload artifacts with `POST .../eval-ingest/
+326:| `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and
+340:`POST .../goals/{goalId}/runs`.

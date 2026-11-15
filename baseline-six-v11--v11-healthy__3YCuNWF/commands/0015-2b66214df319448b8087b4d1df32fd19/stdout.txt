@@ -1,0 +1,64 @@
+104:| `--model-id <model>` | Model ID used for token counting |
+848:| `--model <id>` | No | Model to run instead of the host's |
+849:| `--model-selection <json>` | No | Whole saved model selection behind the override — source, connection and `settings.reasoningEffort` (see [Reasoning effort](#reasoning-effort)). Must be for the model named; sent alone it pins its own model |
+873:| `--model-selection <json>` | No | Whole saved model selection for the override, as JSON (or `@file`, or `-`) |
+916:| `--model <id>` | No | Model to run instead of the host's pinned one |
+917:| `--model-selection <json>` | No | Whole saved model selection (source, connection, `settings.reasoningEffort`) as JSON. Stacks that differ only by effort are different environments |
+947:> `--model` / `"modelId"` and `--secret` / `"secretSelection"` are answered by
+963:> `--model` / `--clear-model` / `"modelId"` on the environment writes,
+966:> `--model-selection` / `--compose-model-selection` / `--effort` on an
+989:  `--model-selection '{…}'` (environments, `eval update`),
+1012:Changing a target's model with a bare `--model` never keeps a selection saved for
+1141:List and read the Cloud Skills in your hosted MCPJam projects. These commands exist to close a gap: three flags across the CLI take a skill ID (`eval run --compose-skill`, `eval cases run --compose-skill`, `environments ensure-adhoc --skill`) and until now there was no way to discover those IDs without opening the web app. Authoring stays in the app — these commands are read-only.
+1197:## `cloud projects servers` commands
+1209:### `cloud projects servers connect`
+1227:### `cloud projects servers connect-status`
+1235:### `cloud projects servers connect-cancel`
+1245:### `cloud projects servers revisions`
+1256:### `cloud projects servers revision`
+1266:### `cloud projects servers revision-diff`
+1566:### `cloud eval create`
+1573:| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"`) belongs on `eval run --file` |
+1576:| `--model <model>` | No | Suite-level default model (overrides the file) |
+1579:| `--client <id-or-name...>` | No | Clients to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --client` has nothing to select |
+1590:### `cloud eval run`
+1592:Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
+1609:This six-code contract is new and deliberately **different** from `eval gate`'s four codes below — see that command's own doc for why the two are not unified. An invalid suite file exits **2** either way — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+1642:| `--compose-host-servers` | No | **No longer supported** — rejected. An eval run takes its servers from a server group alone; use `--compose-server` or `--compose-server-group` |
+1685:| `mcpjam cloud eval run` / `cases run` / `update` / `create` | A **client saved in your project** (`mcpjam cloud clients list`). |
+1689:deprecated alias for it — so `mcpjam cloud eval run --host claude` looks for a
+1741:`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
+1743:auth request — it does not start a run. `eval validate` on the same bytes
+1784:would claim those guarantees. When supported by an eval runner, `toolPolicy`
+1809:Every file run performs the same live check `eval validate --project` performs,
+1851:mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+1879:that names `eval create --file`. The converse is also true: `eval create --file`
+1880:on a versioned suite file names `eval run --file`.
+1900:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+1933:Get the status and summary of an eval run.
+1937:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+1989:| `<run-id>` | Yes | Eval run ID to rerun (from `eval run`) |
+1994:| `--wait` | No | Wait for the rerun to reach a terminal status; exits on its verdict like `eval run --wait` |
+2010:Grade a finished eval run with LLM as Judge. **Spends your organization's model
+2015:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2034:| `--run <id>` | Yes | Terminal eval run ID (from `eval run`) |
+2100:List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
+2106:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2113:Apply a pass/fail policy to an eval run. Add `--wait` to poll an in-progress
+2118:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2245:These four are deliberately **not** the same set `eval run --wait` uses (see
+2316:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2328:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2357:| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+2380:### `cloud eval validate`
+2400:| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first. `eval run --file` on the same bytes exits **2** — 1 is reserved there for a real verdict |
+2501:### `cloud eval export`
+2516:Like `eval run --file`, export reads `GET /capabilities` first and fetches the
+2522:handshake with whatever will read it later, so `eval export` keeps writing
+2575:| `--computer-image <id-or-name\|off>` | No | Sandbox image eval runs boot a fresh computer from (list them with `mcpjam cloud images list`). `off` uses the provider's default base image |
+2578:| `--model <id>` | No | Execution model ID |
+2579:| `--model-selection <json>` | No | Whole saved model selection for the suite (source, connection, `settings.reasoningEffort`) as JSON. A bare `--model` change drops a selection saved for a different model |
+2722:makes `eval run --environment` available for the suite.
+2801:Every `--compose-*` flag behaves exactly as it does for `eval run` — see
+2968:Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. A session created by `cloud sessions browser open` is initially unconfigured and accepts its model configuration with its first send. After the first model turn, the session is configured: `--model`, `--environment`, `--server`, `--no-servers`, `--system-prompt` and `--tool-mode` are then refused alongside `--session` rather than silently repinning it.
+2975:| `--model <modelId>` | Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on the first send: defaults to the selected environment’s or client’s model and is then pinned. A supplied ID must be provider-prefixed. |

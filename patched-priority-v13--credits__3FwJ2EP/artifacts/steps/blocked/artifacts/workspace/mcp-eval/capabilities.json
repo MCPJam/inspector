@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": {
+    "projectId": "project_fixture",
+    "sensitive_value": "[REDACTED]",
+    "role": "owner",
+    "projectRole": "owner",
+    "surface": "cli",
+    "features": {
+      "sandboxes": {
+        "enabled": false,
+        "mode": "off",
+        "enforced": false
+      }
+    },
+    "plan": {
+      "name": "team",
+      "limits": {},
+      "features": {}
+    },
+    "can": {}
+  }
+}

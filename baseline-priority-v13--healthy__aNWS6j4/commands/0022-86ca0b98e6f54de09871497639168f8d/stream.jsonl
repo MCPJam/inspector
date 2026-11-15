@@ -1,0 +1,5 @@
+{"seconds": 0.012534141540527344, "stream": "stdout", "data": "/workspace\n"}
+{"seconds": 0.012958288192749023, "stream": "stdout", "data": "total 8\ndrwxr-xr-x 2 root root 4096 Nov 15 01:18 .\ndrwxr-xr-x 1 root root 4096 Nov 15 02:08 ..\n"}
+{"seconds": 0.014261007308959961, "stream": "stdout", "data": "v24.22.1\n"}
+{"seconds": 0.046515703201293945, "stream": "stdout", "data": "11.19.1\n"}
+{"seconds": 0.048795461654663086, "stream": "stdout", "data": "MCPJAM_API_URL is configured\nMCPJAM_API_KEY is configured\n"}

@@ -1,0 +1,91 @@
+### Out of MCPJam credits
+
+`provider/mcpjam_limit_daily` · `provider/mcpjam_limit_monthly` · `provider/mcpjam_limit` · `provider/mcpjam_limit_insufficient`
+
+MCPJam refused the call before it reached a provider. For the daily, monthly,
+and general codes, the account's own allowance is spent.
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. Which allowance depends on the plan: free accounts
+share a daily bucket per organization, paid plans spend a monthly allowance that
+renews with the billing period.
+
+`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
+what the request could cost. MCPJam reserves a request's worst-case cost before
+it runs, so a cheaper model or a shorter conversation can fit where this one did
+not.
+
+**Next steps**
+
+* **Free plan (owner)**: The limit dialog shows **Compare plans** to upgrade, and **Learn more about BYOK** to understand how provider keys and MCPJam credits work separately.
+* **Free plan (admin or member)**: The dialog shows a **Request upgrade** link to email an organization owner.
+* **Paid plan (owner or admin)**: The dialog shows **Buy credits** to add shared credits to your organization.
+* **Paid plan (member)**: The dialog shows a **Request credits** link to email an organization owner.
+* Add your own API key under **Settings → LLM Providers** for chat (BYOK does not cover Swarm, Evals, or other MCPJam-billed features).
+* If your organization uses its own keys for all AI features, model tokens are billed by its providers instead; see [Organization AI key policy](#organization-ai-key-policy).
+
+**Swarm and Eval runs**
+
+When credits run out during a Swarm or Eval run, blocked work stops and you receive one credit-exhaustion prompt per run, or one per swarm when a swarm launches several runs at once. Completed results are preserved. Buying credits does not automatically restart the run; start a new run once credits are available.
+
+> [!WARNING]
+>
+> Bring-your-own-key covers chat. Swarm persona generation and persona-driver
+> turns are billed to MCPJam and have no personal BYOK path, so adding a key
+> does not lift this limit for a swarm. An organization that uses its own keys
+> for all AI features runs those turns on its default AI model instead, and its
+> providers bill their tokens; see
+> [Organization AI key policy](#organization-ai-key-policy).
+
+### Credits temporarily held
+
+When it is on, every AI request on the organization's data must run on one of
+the organization's own providers. MCPJam-provided models, personal keys and
+local models are disabled for it, and nothing falls back to them: a feature
+without a compatible provider is unavailable instead. Only direct cloud
+providers count; OpenRouter and local-runtime connections do not.
+
+* **Model pickers** list only the organization's eligible models. A suite's
+  judge must be chosen from an organization provider; there is no default
+  judge, and a suite without one can't run.
+* **Default AI model.** Work nobody picks a model for (insights and findings,
+  generation, typed decisions, and the simulated user
+  in Swarm and User Testing) runs on the organization's default AI model. An
+  admin chooses it under **Organization → AI providers → Default AI model**,
+  and can test it there. MCPJam may suggest one but never sets it. Until it is
+  set, that work is unavailable. Model pickers never use it, and it is never
+  a suite's judge.
+* **Feature coverage** on the settings page shows which features are ready,
+  and which wait for the default AI model. Features that can't run on
+  organization providers yet show **Not supported yet** and are unavailable
+  while the setting is on. Today that includes the session map,
+  transcription and Ask MCPJam. When an eligible provider exists, the card
+  names choosing the default model as the fix for work that waits on it.
+* **Billing.** Model tokens are billed by the organization's providers.
+  MCPJam's fixed product fees and usage limits still apply.
+
+Only organization owners and admins can change the setting. Any of them can
+turn it off at any time, including after the organization leaves Enterprise;
+leaving Enterprise never turns it off. Turning it off is recorded in the audit
+log, and the organization's owners get an email.
+
+When a request is refused under the setting, it fails with one of the codes
+below.
+
+## Organization provider refusals
+
+These codes mean an AI request was refused because it could not run on one of
+the organization's own model providers. None of them count against MCPJam
+credits.
+
+Most are configuration: the request won't run until someone changes its model
+7:- [Slack](https://docs.mcpjam.com/hosted/slack.md): Run MCPJam from Slack — mention the bot to ask about your projects, and approve the actions that spend credits
+38:- [My First ChatGPT App](https://docs.mcpjam.com/guides/first-chatgpt-app-react.md): Build a simple Coffee Shop ChatGPT App with React
+86:- [Pay for one local eval iteration](https://docs.mcpjam.com/api-reference/eval-runs/pay-for-one-local-eval-iteration.md): Collect the declared prompt fee and reserve one iteration atomically before execution. Retries with the same identity reuse the receipt; changed requests conflict. Uploads claim the payment without charging again.
+125:- [Mint a model lease for MCPJam-hosted inference](https://docs.mcpjam.com/api-reference/eval-runs/mint-a-model-lease-for-mcpjam-hosted-inference.md): How an SDK eval running OUTSIDE the platform (local dev, CI) uses MCPJam-hosted inference on the organization's credits, with no provider key of its own. Authenticate like any other `/api/v1` route (typically an `sk_` key).
+151:- [Search or list unified sessions](https://docs.mcpjam.com/api-reference/catalog/search-or-list-unified-sessions.md): The unified, cross-surface sessions feed for one project: Playground, user-testing, eval, and swarm transcripts in one list, newest first. Project-NESTED (unlike `/chat-sessions`) because `projectId` owns the scope here rather than filtering it.
+154:- [Export project traces as OTLP/JSON](https://docs.mcpjam.com/api-reference/catalog/export-project-traces-as-otlpjson.md): Returns an OTLP `ExportTraceServiceRequest`. Pagination rides in RESPONSE HEADERS rather than the body so the payload stays a valid OTLP document: read `x-mcpjam-next-cursor` and feed it back as `cursor`, and treat `x-mcpjam-export-complete: true` as the end of the stream.
+203:- [Request insights for an eval run](https://docs.mcpjam.com/api-reference/evals/request-insights-for-an-eval-run.md): **No credits are consumed** — the model cost is on MCPJam. Runs a model over the finished run and draws on the same shared `insightsPerDay` request ledger as swarm and user-testing insights.
+240:- [Session metrics](https://docs.mcpjam.com/api-reference/studies/session-metrics.md): Volumes, completion and feedback rates over the study's sessions.
+245:- [Request insights for the current window](https://docs.mcpjam.com/api-reference/studies/request-insights-for-the-current-window.md): **No credits are consumed** — the model cost is on MCPJam. Runs a model over the study's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm run insights, so a request here takes one from there.
+331:- [Send feedback to the MCPJam team](https://docs.mcpjam.com/api-reference/feedback/send-feedback-to-the-mcpjam-team.md): Tell the MCPJam team about MCPJam itself (a bug, a missing capability, something confusing, or a docs gap) at the moment you hit it. THE TEXT IS SENT TO THE MCPJAM TEAM, outside your organization, and kept for 180 days. It is stored in MCPJam's own database and never published. Summarize: never incl…
+{"code": "NOT_FOUND", "message": "Not found"}

@@ -1,0 +1,29 @@
+{
+  "name": "Arithmetic deterministic",
+  "serverIds": [
+    "server_fixture"
+  ],
+  "model": "anthropic/claude-haiku-4.5",
+  "passCriteria": {
+    "minimumPassRatePercent": 100
+  },
+  "tests": [
+    {
+      "title": "Add two numbers and return five",
+      "runs": 3,
+      "steps": [
+        {
+          "id": "call_add",
+          "kind": "toolCall",
+          "serverId": "server_fixture",
+          "serverName": "Arithmetic",
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        }
+      ]
+    }
+  ]
+}

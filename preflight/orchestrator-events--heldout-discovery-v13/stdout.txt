@@ -1,0 +1,39 @@
+  2/2 Mean: 1.000 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:03:09 0:00:00
+adhoc • codex • gpt-6.1-sol
+┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓
+┃ Trials ┃ Exceptions ┃  Mean ┃
+┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┏━━━━━━━━┳━━━━━━━┓
+┃ Reward ┃ Count ┃
+┡━━━━━━━━╇━━━━━━━┩
+│ 1.0    │     1 │
+└────────┴───────┘
+
+adhoc • claude-code • claude-sonnet-5-5
+┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓
+┃ Trials ┃ Exceptions ┃  Mean ┃
+┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┏━━━━━━━━┳━━━━━━━┓
+┃ Reward ┃ Count ┃
+┡━━━━━━━━╇━━━━━━━┩
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 3m 9s
+Results written to 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs/heldout-discovery-v13/result.json
+Inspect results by running `harbor view 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs`
+Share results by running `harbor upload 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs/heldout-discovery-v13`
+

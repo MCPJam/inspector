@@ -1,0 +1,105 @@
+{"suiteId":"suite_fixture","serverIds":["server_fixture"],"iterationOverride":1,"idempotencyKey":"arithmetic-smoke-20261115-01"}
+#!/usr/bin/env python3
+"""Repeat the saved one-iteration suite; credentials come only from environment."""
+import json,time,sys
+from pathlib import Path
+from api import call
+root=Path(__file__).resolve().parent
+body=json.loads((root/'launch.json').read_text())
+# Supply a fresh key for a deliberately new run, or reuse one to retry safely.
+if len(sys.argv)>1: body['idempotencyKey']=sys.argv[1]
+r=call('POST','/projects/project_fixture/eval-runs',body,'launch-latest')
+if r['http_status']!=202: sys.exit(2)
+data=r['body']; runid=data.get('runId') or data.get('id')
+if not runid: raise RuntimeError('Launch response has no run ID')
+path='/projects/project_fixture/eval-runs/'+runid
+for i in range(30):
+ r=call('GET',path,name='status-latest')
+ if r['http_status']!=200: sys.exit(3)
+ if r['body'].get('status') in ['completed','failed','cancelled','timed_out']: break
+ time.sleep(2)
+else: sys.exit(4)
+call('GET',path+'/iterations',name='iterations-latest')
+call('GET',path+'/decision-summary',name='decision-latest')
+sys.exit(0 if r['body'].get('status')=='completed' and r['body'].get('result') in ['passed','pass'] else 5)
+{
+  "http_status": 202,
+  "body": {
+    "runId": "run_fixture_1",
+    "suiteId": "suite_fixture",
+    "status": "running",
+    "servers": [
+      {
+        "id": "server_fixture",
+        "name": "Arithmetic"
+      }
+    ],
+    "environment": null
+  }
+}
+{
+  "http_status": 200,
+  "body": {
+    "id": "run_fixture_1",
+    "suiteId": "suite_fixture",
+    "runNumber": 1,
+    "status": "completed",
+    "result": "passed",
+    "summary": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "passRate": 1.0
+    },
+    "source": "api",
+    "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+    "createdAt": 1794708526865,
+    "completedAt": 1794708526865
+  }
+}
+{
+  "http_status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "run_fixture_1_0",
+        "testCaseId": "case_add",
+        "title": "add 2 and 3 returns 5",
+        "iterationNumber": 1,
+        "status": "completed",
+        "result": "passed",
+        "actualToolCalls": [
+          {
+            "toolName": "add",
+            "arguments": {
+              "a": 2,
+              "b": 3
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"sum\": 5}"
+                }
+              ],
+              "structuredContent": {
+                "sum": 5
+              },
+              "isError": false
+            }
+          }
+        ],
+        "expectedToolCalls": [],
+        "durationMs": 1,
+        "error": null
+      }
+    ]
+  }
+}
+{
+  "http_status": 404,
+  "body": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

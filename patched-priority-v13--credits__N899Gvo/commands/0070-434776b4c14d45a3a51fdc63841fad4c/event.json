@@ -1,0 +1,22 @@
+{
+  "event_id": "434776b4c14d45a3a51fdc63841fad4c",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "curl -fsSL https://docs.mcpjam.com/troubleshooting/error-codes.md -o /workspace/mcpjam-eval/error-codes.md; curl -fsSL https://docs.mcpjam.com/cli/local-evals.md -o /workspace/mcpjam-eval/local-evals.md; rg -n -i -C 4 'PLATFORM_FEE_REQUIRED|platform.fee|credit|cost|billing' /workspace/mcpjam-eval/error-codes.md /workspace/mcpjam-eval/local-evals.md"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:01:05.638064+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.3322412967681885,
+  "end": "2026-11-15T02:01:05.970248+00:00"
+}

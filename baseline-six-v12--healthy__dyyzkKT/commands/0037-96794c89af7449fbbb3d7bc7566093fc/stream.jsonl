@@ -1,0 +1,4 @@
+{"seconds": 0.024088144302368164, "stream": "stdout", "data": "v24.22.1"}
+{"seconds": 0.02449488639831543, "stream": "stdout", "data": "\n"}
+{"seconds": 0.07674908638000488, "stream": "stdout", "data": "11.19.1\n"}
+{"seconds": 13.076722145080566, "stream": "stdout", "data": "\nadded 153 packages in 13s\n\n39 packages are looking for funding\n  run `npm fund` for details\n"}

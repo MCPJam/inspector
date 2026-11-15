@@ -1,0 +1,2 @@
+Client.listResources() called but server does not advertise resources capability - returning empty list
+Client.listResourceTemplates() called but server does not advertise resources capability - returning empty list

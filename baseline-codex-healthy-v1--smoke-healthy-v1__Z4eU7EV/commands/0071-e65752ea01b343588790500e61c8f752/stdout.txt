@@ -1,0 +1,7 @@
+{"error":{"code":"CREDENTIALS_REJECTED","message":"The MCPJam project was not found. Check your project selection and try again.","details":{"phase":"setup","category":"credentials"}}}
+01:23:38
+{
+  "dependencies": {
+    "@mcpjam/cli": "6.2.2"
+  }
+}

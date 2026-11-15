@@ -1,0 +1,18 @@
+{"error":{"code":"USAGE_ERROR","message":"error: too many arguments for 'servers'. Expected 0 arguments but got 1."}}
+
+{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"items":[{"id":"suite_fixture","name":"Arithmetic smoke","projectId":"project_fixture","description":"Synthetic fixture: add 2 and 3 and assert 5.","environment":{"servers":[]},"executionConfig":null,"hosts":[],"environmentIds":[],"settings":{"policy":"legacy","minimumIterations":1},"schedule":{},"createdAt":1,"updatedAt":2}],"otherProjects":[]}
+
+Usage: mcpjam cloud projects servers connect [options]
+
+Connect an MCP server URL to a project, authorizing in a browser if needed
+
+Options:
+  --url <url>             MCP server URL to connect
+  --project <id-or-name>  Project name or ID
+  --server <id>           Existing server ID, when the project has several on
+                          this URL
+  --name <name>           Name for the server, if one is created
+  --reauthorize           Force a fresh authorization
+  --no-browser            Print the authorization link instead of opening it
+  --no-wait               Return as soon as the request is created
+  -h, --help              display help for command

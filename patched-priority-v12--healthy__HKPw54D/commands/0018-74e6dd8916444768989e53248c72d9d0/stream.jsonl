@@ -1,0 +1,3 @@
+{"seconds": 0.013511896133422852, "stream": "stdout", "data": "/workspace\n"}
+{"seconds": 0.014094352722167969, "stream": "stdout", "data": "total 8\ndrwxr-xr-x 2 root root 4096 Nov 15 01:18 .\ndrwxr-xr-x 1 root root 4096 Nov 15 01:51 ..\n"}
+{"seconds": 0.01579427719116211, "stream": "stdout", "data": "MCPJAM_API_URL\nMCPJAM_TELEMETRY_DISABLED\nMCPJAM_API_KEY\nPATH\nNODE_VERSION\n"}

@@ -1,0 +1,41 @@
+  12/12 Mean: 0.500 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:16:54 0:00:00
+adhoc • codex • gpt-6.1-sol
+┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
+┃ Trials ┃ Exceptions ┃  Mean ┃ Pass@2 ┃
+┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
+│      6 │          0 │ 0.500 │  0.500 │
+└────────┴────────────┴───────┴────────┘
+
+┏━━━━━━━━┳━━━━━━━┓
+┃ Reward ┃ Count ┃
+┡━━━━━━━━╇━━━━━━━┩
+│ 1.0    │     3 │
+│ 0.0    │     3 │
+└────────┴───────┘
+
+adhoc • claude-code • claude-sonnet-5-5
+┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
+┃ Trials ┃ Exceptions ┃  Mean ┃ Pass@2 ┃
+┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
+│      6 │          0 │ 0.167 │  0.333 │
+└────────┴────────────┴───────┴────────┘
+
+┏━━━━━━━━┳━━━━━━━┓
+┃ Reward ┃ Count ┃
+┡━━━━━━━━╇━━━━━━━┩
+│ 0.0    │     5 │
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 16m 54s
+Results written to 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs/baseline-priority-v13/result.json
+Inspect results by running `harbor view 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs`
+Share results by running `harbor upload 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs/baseline-priority-v13`
+

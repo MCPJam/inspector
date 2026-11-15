@@ -1,0 +1,22 @@
+{
+  "event_id": "9781e480cd5649bb83f14a4449ec383e",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "rg -n 'eval (create|run|validate|export)|toolCall|toolResultContains|assertions|cloud models' docs/cli-reference.md | head -70"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:08:57.189981+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0020830631256103516,
+  "end": "2026-11-15T02:08:57.191968+00:00"
+}

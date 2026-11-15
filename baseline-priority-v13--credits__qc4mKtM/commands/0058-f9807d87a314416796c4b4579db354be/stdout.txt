@@ -1,0 +1,21 @@
+# MCPJam Inspector
+
+- [MCPJam Docs](https://docs.mcpjam.com/index.md): Test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps across every major AI client.
+- [Getting Started](https://docs.mcpjam.com/getting-started.md): Start testing your MCP server in minutes
+- [Installation](https://docs.mcpjam.com/installation.md): Here's a list of all ways to start MCPJam
+- [Hosted App](https://docs.mcpjam.com/hosted/overview.md): Use MCPJam Inspector in the browser, no installation required
+- [MCPJam in Claude](https://docs.mcpjam.com/hosted/claude-connector.md): Connect Claude to your MCPJam account through the hosted MCP server: projects, saved servers, evals, and user testing
+- [Okta SSO & SCIM](https://docs.mcpjam.com/hosted/sso.md): Install MCPJam from the Okta Integration Network and configure SAML single sign-on and SCIM provisioning
+- [IP Allowlisting](https://docs.mcpjam.com/hosted/network.md): The addresses hosted MCPJam connects from, for firewalls and IP allowlists on your MCP and OAuth servers
+- [Common MCP Errors](https://docs.mcpjam.com/troubleshooting/common-errors.md): Solutions to common MCP server connection and configuration issues
+- [Error code reference](https://docs.mcpjam.com/troubleshooting/error-codes.md): What every MCPJam Inspector error code means, the likely causes, and the next step to fix it.
+- [Changelog](https://docs.mcpjam.com/changelog/overview.md): Track the latest updates, features, and improvements to MCPJam Inspector
+- [Home](https://docs.mcpjam.com/inspector/home.md): Org-scoped dashboard with activity stats, recommended servers, and quick-start clients
+- [Clients](https://docs.mcpjam.com/inspector/clients.md): Reusable MCP client configurations for testing servers and apps under realistic conditions
+- [Multi-server connections](https://docs.mcpjam.com/inspector/connecting-servers.md): Connect to multiple MCP servers with different transport methods
+- [Projects](https://docs.mcpjam.com/inspector/projects.md): Group your MCP servers into projects, with the ability to share them with your team
+- [MCP protocol versions](https://docs.mcpjam.com/inspector/protocol-versions.md): Pin the inspector to a specific MCP protocol version, including the 2026-07-28 stateless RC, to test how your server behaves across versions.
+- [Host Compatibility](https://docs.mcpjam.com/inspector/host-compat.md): See which hosts your MCP server will work in (Claude, ChatGPT, Cursor, Copilot) the moment you connect
+- [Skills](https://docs.mcpjam.com/inspector/skills.md): Load and use skills to give your agents the context they need to use MCP tools effectively
+- [Playground](https://docs.mcpjam.com/inspector/playground.md): Chat with your MCP servers, invoke tools by hand, render widgets, and inspect every step, all in one IDE-style workspace
+- [Evaluate](https://docs.mcpjam.com/inspector/evals.md): Author test cases for your MCP server, run them across models, and gate pass/fail on deterministic assertions plus optional LLM-as-judge.

@@ -1,0 +1,379 @@
+/me
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Get the authenticated account
+
+> The user behind the API key (keys act as their creator, scoped to one organization).
+
+
+
+## OpenAPI
+
+````yaml /reference/openapi.json get /me
+openapi: 3.1.0
+info:
+  title: MCPJam API
+  version: 1.0.0-preview
+  description: >-
+    Programmatic access to MCP servers saved in your MCPJam projects — live
+    diagnostics (validate, inspect, export) and operations: call tools, render
+    prompts, run eval suites asynchronously and poll their results, and import
+    OAuth tokens.
+
+
+    **The API is in preview**: the surface may change while we finish the
+    design. Error `code` values are stable; error `message` strings are not.
+    Write clients that ignore unknown response fields.
+  contact:
+    name: MCPJam
+    url: https://github.com/MCPJam/inspector/issues
+servers:
+  - url: https://app.mcpjam.com/api/v1
+    description: Hosted MCPJam
+security:
+  - bearerAuth: []
+tags:
+  - name: Agent browsers
+    description: >-
+      Isolated cloud browser sessions for coding agents. Requires authenticated
+      project membership and a configured desktop runtime.
+  - name: Clients
+    description: >-
+      Clients — the named, reusable configurations that define how MCPJam
+      connects to and talks to your MCP servers. The original `/hosts` paths
+      remain as deprecated, ID-only compatibility aliases with their original
+      DTOs and their original (tokenless) write contracts; every alias response
+      carries `Deprecation: true`. New integrations should use `/clients`.
+  - name: Environments
+    description: >-
+      Project environments: named, live-editable execution bundles (one host, an
+      optional standalone server group, optionally pinned skills and plugin
+      versions) that eval suites and goals run against. Distinct from Sandbox
+      images, which are Computer base images. Reads require project membership;
+      every write requires project admin.
+  - name: Plugins
+    description: >-
+      Agent Plugins imported into a project — read-only inventory and version
+      detail.
+  - name: Skills
+    description: >-
+      Cloud Skills: authored SKILL.md files stored in a project. Read-only here.
+      Environments pin skills by id (`skillSelection.skillIds`) and eval runs
+      pin them with `--compose-skill`, so this surface exists to give an
+      unattended caller those ids; authoring is an app flow behind a beta gate.
+  - name: Sandbox images
+    description: >-
+      Custom Computer images: a digest-pinned Dockerfile built into an immutable
+      image your project's computers boot from.
+  - name: Server diagnostics
+    description: Connect-level health checks against a saved MCP server.
+  - name: Primitives
+    description: 'The server''s MCP primitives: tools, prompts, and resources.'
+  - name: Export
+    description: Full-server snapshots for diffing and CI.
+  - name: Execution
+    description: 'Run the server''s primitives: call tools, render prompts.'
+  - name: Eval runs
+    description: >-
+      Asynchronous eval suite runs: create with 202, poll status, iterations,
+      and traces.
+  - name: Conformance runs
+    description: >-
+      Ingest MCP spec-conformance results from the SDK/CLI into project-owned
+      history. Distinct from Eval runs (authored LLM cases) and from directory
+      readiness.
+  - name: Server connections
+    description: >-
+      Connect an MCP server URL to a project, authorizing in a browser when the
+      server requires it.
+  - name: Server accounts
+    description: >-
+      The accounts a saved server signs in with, addressed by id or by name.
+      Tokens are write-only: an upload takes them and no route returns one.
+  - name: OAuth
+    description: 'Bring-your-own OAuth: import externally obtained tokens for a server.'
+  - name: Studies
+    description: >-
+      Publish a project environment as a **study** for people outside the
+      project to talk to, read what they did, and control who can reach it.
+      Several of these NARROW access and take effect immediately.
+
+
+      The pre-rename paths — `/projects/{projectId}/scenarios`,
+      `/projects/{projectId}/scenarios/{scenarioId}`,
+      `/projects/{projectId}/environments/{environmentId}/scenario` and
+      `/projects/{projectId}/user-testing/scenarios/{scenarioId}/…` — keep
+      working and are deliberately not documented here. They return their
+      original bodies, which spell the owning id `scenarioId` and whose detail
+      read carries no execution settings, and every response answers with
+      `Deprecation: true` and a `Link` header naming its successor. They are
+      removed at general availability; a new integration should use the paths on
+      this page.
+  - name: Catalog
+    description: >-
+      Discover the resources the other routes operate on: your account,
+      projects, servers, eval suites, and chat sessions.
+  - name: Tunnels
+    description: >-
+      Relay tunnels that expose local MCP servers through a public URL,
+      registered as first-class project servers (the `mcpjam cloud tunnel` CLI
+      flow).
+  - name: Agent
+    description: >-
+      Headless agent turns over the public API: send a message history, the
+      server runs one assistant turn with project-scoped workspace tools (eval
+      reads + suite creation) on a pinned hosted model, and returns the reply
+      plus created-resource references.
+  - name: Swarms
+    description: >-
+      Personas, journeys and swarm containers — the authoring half of Swarms —
+      plus the model-backed generation that drafts them.
+  - name: Swarm runs
+    description: >-
+      Launching journeys and reading what they produced. Launching SPENDS — see
+      the per-operation notes.
+  - name: Swarm insights
+    description: >-
+      What a swarm run revealed. The scorecard and findings are deterministic
+      and free; requesting wave insights runs models and draws on your shared
+      daily ledger.
+  - name: Directory readiness
+    description: >-
+      Grade a saved server against a publisher's listing requirements:
+      Anthropic's connector directory or OpenAI's plugin directory. Reported as
+      lane status and coverage, never as a numeric score, and excluded from
+      `pooledConformanceScore`. Deterministic grading is free; model-backed
+      experience observations are an explicit opt-in whose model cost is on
+      MCPJam — no credits are consumed — and they can never decide a verdict.
+  - name: Registry
+    description: >-
+      Search the scraped MCP directories (Claude, ChatGPT, and any future
+      source), list curated/org registry cards, and install them into a project.
+      Install writes a `servers` row and provenance — it does not open a live
+      session. There is no catalog-uninstall route: delete the project server
+      instead. Directory reads require a bearer (including minted guest tokens)
+      but do not materialize a user. Card/connection reads and all writes are
+      authed-non-guest.
+  - name: Feedback
+    description: >-
+      Feedback about MCPJam itself (bugs, missing capabilities, confusing
+      behavior), sent to the MCPJam team and kept for 180 days. The
+      `send_feedback` MCP tool calls the same endpoint.
+paths:
+  /me:
+    get:
+      tags:
+        - Catalog
+      summary: Get the authenticated account
+      description: >-
+        The user behind the API key (keys act as their creator, scoped to one
+        organization).
+      operationId: getMe
+      responses:
+        '200':
+          description: The account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/ServerUnreachable'
+components:
+  schemas:
+    Me:
+      type: object
+      required:
+        - id
+        - email
+        - name
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        imageUrl:
+          type:
+            - string
+            - 'null'
+        profilePictureUrl:
+          type:
+            - string
+            - 'null'
+        plan:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type:
+            - number
+            - 'null'
+          description: Epoch milliseconds.
+        updatedAt:
+          type:
+            - number
+            - 'null'
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: >-
+            Stable, machine-readable error code. New codes may be added over
+            time; treat unknown codes as non-retryable failures unless the HTTP
+            status says otherwise.
+          enum:
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - NOT_FOUND
+            - CONFLICT
+            - VALIDATION_ERROR
+            - RATE_LIMITED
+            - FEATURE_NOT_SUPPORTED
+            - SERVER_UNREACHABLE
+            - TIMEOUT
+            - OAUTH_REQUIRED
+            - AUTH_REQUIRED
+            - INTERNAL_ERROR
+        message:
+          type: string
+          description: >-
+            Human-readable description. May change between releases — don't
+            match on it.
+        details:
+          type: object
+          description: Optional, unstructured context bag.
+          additionalProperties: true
+  responses:
+    Unauthorized:
+      description: >-
+        Missing, invalid, revoked, or orphaned key (`UNAUTHORIZED`) — or the
+        **target MCP server** needs an OAuth grant (`OAUTH_REQUIRED`), which is
+        a property of the server, not your key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            badKey:
+              summary: Invalid or revoked key
+              value:
+                code: UNAUTHORIZED
+                message: Invalid API key
+            oauthRequired:
+              summary: Target server needs an OAuth grant
+              value:
+                code: OAUTH_REQUIRED
+                message: Server requires OAuth authorization
+    Forbidden:
+      description: Key is valid but not allowed to do this.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: FORBIDDEN
+            message: You do not have access to this project
+    RateLimited:
+      description: >-
+        Per-key rate limit exceeded (60 requests/minute sustained, bursts up to
+        10). Honor `Retry-After` and back off with jitter.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: RATE_LIMITED
+            message: API key rate limit exceeded. Slow down and retry.
+    InternalError:
+      description: Something failed on MCPJam's side.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: INTERNAL_ERROR
+            message: Unexpected internal error
+    ServerUnreachable:
+      description: Could not connect to the target MCP server.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: SERVER_UNREACHABLE
+            message: Failed to connect to server
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: Bearer [REDACTED]: >-
+        MCPJam API key (`sk_…`). Create one at [Settings → API
+        keys](https://app.mcpjam.com/settings/api-keys). Guest sessions cannot
+        use the API, and API keys cannot manage other API keys.
+
+````
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform./workspace/mcpjam-eval/docs/api.md:55:* **Author eval suites** — create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+/workspace/mcpjam-eval/docs/api.md:58:  usage, latency), and full traces. Runs appear live in the hosted UI,
+/workspace/mcpjam-eval/docs/api.md:66:  resources it created (eval suites), and token usage; the model is pinned
+/workspace/mcpjam-eval/docs/api.md:312:| `GET .../eval-runs/{runId}/iterations` | Per-iteration results: tool calls, token usage, latency (paginated) |
+/workspace/mcpjam-eval/docs/api.md:332:| `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and billed to the project. The turn can read project servers/suites/runs and **create eval suites**; it can NOT start runs — kick those off yourself with `POST .../eval-runs`. Responds synchronously with `reply`, the `toolCalls` it made, `createdResources` (ids + app links), and token `usage`. Capped at 4 concurrent turns per organization and \~90 s wall clock. **Not idempotent — never blind-retry**: dedupe on your own trigger identity, and on an error response check `details.createdResources` (and, after a lost response, list suites) before retrying, or you'll create duplicates |
+/workspace/mcpjam-eval/docs/api.md:396:> The generation routes consume **no customer credits** — the model cost is on
+/workspace/mcpjam-eval/docs/api.md:397:> MCPJam. They are still subject to usage limits, and each limit means a
+/workspace/mcpjam-eval/docs/api.md:403:> on every one: buying credits does not lift them, so do not retry in a loop
+/workspace/mcpjam-eval/docs/api.md:412:| `POST .../goals/{goalId}/runs` | **Launch.** Answers `202` — the fan-out has started, not finished. Send `Idempotency-Key`. Optional `expectedSponsored` is how many conversations you expect MCPJam to sponsor; a different actual split is a `409` (`details.code: swarm_funding_changed`) and nothing is created. The response can report `funding` (`sponsored`, `credits`, `total`) |
+/workspace/mcpjam-eval/docs/api.md:419:* **Always send `Idempotency-Key` on a launch.** It spends model credits, so a
+/workspace/mcpjam-eval/docs/api.md:439:**Swarms — insights** — what a run revealed. Read these in order of cost: the
+/workspace/mcpjam-eval/docs/api.md:470:> Requesting swarm run insights consumes **no credits** — the model cost is on
+/workspace/mcpjam-eval/docs/api.md:493:| `PUT .../studies/{studyId}/guest-execution` | The spend dial for anonymous visitors: daily credits, computer starts, concurrency |
+/workspace/mcpjam-eval/docs/api.md:517:over them. Read these in cost order: metrics, usage and signals are
+/workspace/mcpjam-eval/docs/api.md:523:| `GET .../studies/{studyId}/usage` | Which models, tools and servers the sessions used. **Check `scan.truncated`** before quoting a rate |
+/workspace/mcpjam-eval/docs/api.md:527:| `POST .../studies/{studyId}/insights` | **No credits; counts against `insightsPerDay`.** `202` with the `windowId` to poll. `409` if the window has not been mined yet |
+/workspace/mcpjam-eval/docs/api.md:532:The `usage` response includes an `analysis` summary: `total`, `analyzed`,
+/workspace/mcpjam-eval/docs/api.md:558:> Requesting insights consumes **no credits** — the model cost is on MCPJam.
+/workspace/mcpjam-eval/docs/api.md:587:> independently, so a `true` here that races a flag flip costs you a clean
+/workspace/mcpjam-eval/docs/api.md:763:# 4. Or go straight to per-iteration tool calls, token usage, latency
+/workspace/mcpjam-eval/docs/api.md:795:`anthropic/claude-haiku-4.5` — and runs on your organization's credits.
+/workspace/mcpjam-eval/docs/cli.md:335:Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token. See the [XAA Debugger guide](https://docs.mcpjam.com/cli/xaa.md) for the trust setup, registration strategies, and CI usage.
+/workspace/mcpjam-eval/docs/cli.md:569:An unknown ID, or an ID or flag for a suite the run leaves out, is a usage error (exit code `2`) before anything runs.
+/workspace/mcpjam-eval/docs/cli.md:597:| `--server <name=url>` | | Bind a target server to an HTTP(S) URL. Repeatable. Split on the first `=`; duplicate or unknown names are usage errors. |
+/workspace/mcpjam-eval/docs/cli.md:611:Global `--timeout` bounds each setup operation and MCP request, not the whole run. Exit codes: `0` passed, `1` failed, `2` usage/unsupported/import/policy, `3` credentials, `4` setup/billing/artifact, `5` inconclusive or interrupted — see [Exit codes](https://docs.mcpjam.com/cli/local-evals.md#exit-codes).
+/workspace/mcpjam-eval/docs/cli.md:643:`--host` is a usage error rather than a silent precedence rule.
+/workspace/mcpjam-eval/docs/cli.md:1186:Launch a goal run. **Spends model credits** — fans out into `targets × iterations` chat sessions.
+/workspace/mcpjam-eval/docs/cli.md:1193:| `--expected-sponsored <n>` | No | How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` and nothing is created. Omit to accept whatever split applies. |
+/workspace/mcpjam-eval/docs/cli.md:1441:Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam — no credits are consumed), and leaves a persistent record.
+/workspace/mcpjam-eval/docs/cli.md:1461:| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+/workspace/mcpjam-eval/docs/cli.md:1477:| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+/workspace/mcpjam-eval/docs/cli.md:1490:| `--claim <feature>` | Declare a feature the server offers, so the report shows it as claimed. One of `lazy-authentication` or `enterprise-managed-auth`. Repeat to claim several (at most 10). An unknown value is a usage error. |
+/workspace/mcpjam-eval/docs/cli.md:1602:| `2` | Usage error — bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file (after auth, before any server/model work) |
+/workspace/mcpjam-eval/docs/cli.md:1603:| `3` | Auth failed — no credential, or the platform rejected it, at launch or mid-wait (a token that expired during a long poll). Zero credits spent if it happened before launch |
+/workspace/mcpjam-eval/docs/cli.md:1674:`--all-targets` is a usage error: compose builds the stack the run uses, so
+/workspace/mcpjam-eval/docs/cli.md:1851:mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+/workspace/mcpjam-eval/docs/cli.md:1878:`--file` pointing at create-API JSON (no `schemaVersion`) is a usage error
+/workspace/mcpjam-eval/docs/cli.md:2130:| `--max-cost-usd <usd>` | No | Fail if the run's MCPJam-billed cost exceeded this many dollars. Accepts decimals (`0.05`) |
+/workspace/mcpjam-eval/docs/cli.md:2131:| `--max-cost-increase-percent <percent>` | No | Fail if cost rose by more than this percentage of the baseline's; requires `--baseline` or `--baseline-sha`. Values above 100 are allowed — a run costing three times its baseline is a 200% increase |
+/workspace/mcpjam-eval/docs/cli.md:2137:Both cost gates report **non-gateable** (exit 3) rather than passing when the
+/workspace/mcpjam-eval/docs/cli.md:2138:cost is unknown or only partly measured. Cost is stamped per iteration and is
+/workspace/mcpjam-eval/docs/cli.md:2143:`--max-cost-increase-percent` gate is also non-gateable when the baseline cost
+/workspace/mcpjam-eval/docs/cli.md:2153:flags need a baseline to mean anything and are a usage error without one. A
+/workspace/mcpjam-eval/docs/cli.md:2160:The two are **mutually exclusive** — passing both is a usage error (exit `2`).
+/workspace/mcpjam-eval/docs/cli.md:2199:regressed is not consent to ship on an infrastructure failure. A `usage_error`

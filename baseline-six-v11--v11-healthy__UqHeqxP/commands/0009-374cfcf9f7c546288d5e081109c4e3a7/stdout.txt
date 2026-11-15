@@ -1,0 +1,10 @@
+{"error":{"code":"USAGE_ERROR","message":"error: too many arguments for 'servers'. Expected 0 arguments but got 1."}}
+
+Usage: mcpjam cloud projects servers create|add [options]
+
+Create a saved MCP server
+
+Options:
+  --project <id-or-name>  Project name or ID
+  --body <json>           Server JSON body
+  -h, --help              display help for command

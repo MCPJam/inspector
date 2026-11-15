@@ -1,0 +1,2 @@
+{"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "{\"sum\": 5}"}], "structuredContent": {"sum": 5}, "isError": false}}v24.22.1
+11.19.1

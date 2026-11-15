@@ -1,0 +1,371 @@
+      description: >-
+        One authored test step (the unified test model). `kind` discriminates:
+        `prompt` is a user message (model turn); `toolCall` is a deterministic,
+        model-free tool call; `interact` is one pure widget action; `assert` is
+        an assertion (a `Predicate` like `toolCalledWith` / `widgetRendered`, or
+        a DOM `WidgetAssertion`).
+      required:
+        - id
+        - kind
+      properties:
+        id:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          enum:
+            - prompt
+            - toolCall
+            - interact
+            - assert
+        prompt:
+          type: string
+          description: 'User message (`kind: prompt`).'
+        serverName:
+          type: string
+          description: 'Server that owns the tool (`kind: toolCall`).'
+        toolName:
+          type: string
+          description: 'Tool name (`kind: toolCall` / `interact`).'
+        arguments:
+          type: object
+          description: 'Tool-call arguments (`kind: toolCall`).'
+          additionalProperties: true
+        action:
+          type: object
+          description: 'Widget action (`kind: interact`).'
+          additionalProperties: true
+        assertion:
+          type: object
+          description: >-
+            The rule an `assert` step checks (`kind: assert`). NOT a narrower
+            spelling of a case's `checks`: this is `WidgetAssertion |
+            Predicate`, and that union is why the field is called an assertion
+            rather than a check. A `Predicate` is evaluated against the
+            PERSISTED transcript, so a stored run can be re-graded against it
+            months later; a `WidgetAssertion` is evaluated against a LIVE DOM
+            and can never be replayed. Calling this a check would promise the
+            replayability only one half of it has.
+          additionalProperties: true
+      additionalProperties: true
+    EvalAssertion:
+      oneOf:
+        - type: object
+          properties:
+            type:
+              type: string
+              const: toolDescriptionsPresent
+            minLength:
+              type: integer
+              exclusiveMinimum: 0
+              maximum: 9007199254740991
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              const: toolCalledWith
+            toolName:
+              type: string
+              minLength: 1
+            args:
+              type: object
+              properties:
+                args:
+                  type: object
+                  propertyNames:
+                    type: string
+                  additionalProperties: {}
+                argumentMatching:
+                  type: string
+                  enum:
+                    - exact
+                    - partial
+                    - ignore
+              required:
+                - args
+            minCount:
+              type: integer
+              exclusiveMinimum: 0
+              maximum: 9007199254740991
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+            - toolName
+            - args
+        - type: object
+          properties:
+            type:
+              type: string
+              const: toolCalledAtLeastOnce
+              type: string
+              const: toolLatencyUnder
+            ms:
+              type: integer
+              exclusiveMinimum: 0
+              maximum: 9007199254740991
+            toolName:
+              type: string
+              minLength: 1
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+            - ms
+        - type: object
+          properties:
+            type:
+              type: string
+              const: toolResultContains
+            needle:
+              type: string
+              minLength: 1
+              maxLength: 1000
+            caseSensitive:
+              type: boolean
+            toolName:
+              type: string
+              minLength: 1
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+            - needle
+        - type: object
+          properties:
+            type:
+              type: string
+              const: toolResultMatchesSchema
+            schema: {}
+            toolName:
+              type: string
+              minLength: 1
+            role:
+              type: string
+              enum:
+                - gating
+                - advisory
+                - required
+            severity:
+              type: string
+              const: warn
+          required:
+            - type
+            - schema
+        - type: object
+    EvalSuiteCreateRequest:
+      type: object
+      description: >-
+        Author-only suite-create body. A suite-level default `model` (and
+        optional `provider`) applies to every test unless the test overrides it.
+      required:
+        - name
+        - serverIds
+        - model
+        - tests
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Suite name.
+        description:
+          type: string
+        serverIds:
+          type: array
+          minItems: 1
+          description: Servers (by canonical project ID) the suite's cases run against.
+          items:
+            type: string
+        serverNames:
+          type: array
+          description: Optional display names, parallel to `serverIds`.
+          items:
+            type: string
+        hosts:
+          type: array
+          description: >-
+            Clients (hosts) to attach the suite to, in attach order. A suite
+            with no attached client reports none wherever it is listed, and a
+            run has no host to select. Same shape as the PATCH `hosts` field.
+          items:
+            type: object
+            required:
+              - host
+            properties:
+              host:
+                type: string
+                minLength: 1
+                description: Host name or id.
+              servers:
+                type: array
+                items:
+                  type: string
+                  minLength: 1
+                description: >-
+                  Server names (as bound in the suite's environment) or
+                  project-server ids.
+        model:
+          type: string
+          minLength: 1
+          description: >-
+            Suite-level default model id (e.g. `anthropic/claude-haiku-4.5`).
+            Used for any test that omits `model`.
+        provider:
+          type: string
+          description: >-
+            Optional suite-level default provider. When omitted, the provider is
+            derived from a `provider/model` id.
+        passCriteria:
+          type: object
+          description: >-
+            The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%.
+            `minimumPassRatePercent` is the canonical spelling (the unit is in
+            the name); `minimumPassRate` is the deprecated alias for it. Send
+            exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is
+            accepted on `minimumPassRatePercent`, where it unambiguously means a
+            sub-1% floor the evaluator can act on, and REJECTED on the bare
+            `minimumPassRate`, where `0.8` cannot be told apart from a fraction
+            sent by mistake and would silently make the gate unfailable. Neither
+            field ever reinterprets a value. A per-case `passThreshold` IS a
+            fraction; this suite/run floor is not.
+          properties:
+            minimumPassRatePercent:
+              type: number
+              minimum: 0
+              maximum: 100
+              description: >-
+                A percent in [0, 100]. The whole range is usable, sub-1 values
+                included — the unit is in the field name, so nothing is
+                ambiguous. Note that the GitHub Checks gate rounds the measured
+                rate to an integer before comparing (to stay in step with the
+                eval UI), so a floor below 0.5 behaves there as if it were 0.5;
+                the platform's own verdict compares unrounded.
+            minimumPassRate:
+              type: number
+              minimum: 0
+              maximum: 100
+              deprecated: true
+              description: >-
+                Deprecated alias for `minimumPassRatePercent`, same unit. A
+                value in (0, 1) is REJECTED here — it reads as a fraction sent
+                by mistake — which is what the `not` below expresses. Use
+                `minimumPassRatePercent` for a genuine sub-1% floor.
+              not:
+                exclusiveMinimum: 0
+                exclusiveMaximum: 1
+          oneOf:
+            - required:
+                - minimumPassRatePercent
+            - required:
+                - minimumPassRate
+          additionalProperties: false
+        tags:
+          type: array
+          description: Accepted for forward-compat; not persisted today (no-op).
+          items:
+            type: string
+        tests:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: >-
+            Test cases to create in the suite. The object is CLOSED: an unknown
+            key is a VALIDATION_ERROR, never a silently dropped field.
+            `repetitions`, `passThreshold` and `kind` are per-case policy fields
+            this surface cannot author — set them through `POST
+            /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.
+          items:
+            type: object
+            required:
+              - title
+              - steps
+            allOf:
+              - not:
+                  required:
+                    - runs
+                    - iterations
+              - not:
+                  required:
+                    - isNegative
+                    - isNegativeTest
+              - not:
+                  required:
+                    - checks
+                    - predicates
+            properties:
+              title:
+                type: string
+                minLength: 1
+              steps:
+### `cloud eval validate`
+
+Validate a local eval **suite file** — the versioned declarative document that
+describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
+canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
+
+Offline by default: without `--project` this command builds no API client, reads
+no API key and never touches the network. Passing `--project` is the only thing
+that changes that, and it is keyed off the FLAG — a linked directory or an
+`MCPJAM_PROJECT` in the environment never turns the offline command into a
+networked one.
+
+| Flag | Required | Description |
+| - | - | - |
+| `--file <path>` | Yes | Suite file to validate, `.yaml` or `.json` (or `-` for stdin) |
+| `--project <id-or-name>` | No | Also resolve the file's deterministic tool references against this project's live servers. Opt-in; authenticates and makes network calls |
+
+| Exit code | Meaning |
+| - | - |
+| `0` | Valid |
+| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first. `eval run --file` on the same bytes exits **2** — 1 is reserved there for a real verdict |
+| `2` | Nothing was validated: unreadable path, input over the 1 MiB limit, or malformed YAML |
+
+Input is capped at **1,048,576 bytes (1 MiB) of UTF-8** and is never truncated —
+a file over the cap is rejected outright.
+

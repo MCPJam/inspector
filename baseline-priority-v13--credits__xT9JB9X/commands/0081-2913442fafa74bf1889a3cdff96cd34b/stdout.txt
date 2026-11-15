@@ -1,0 +1,3 @@
+-rw-r--r-- 1 root root 3327 Nov 15 02:02 /workspace/mcpjam-eval/README.md
+-rw-r--r-- 1 root root 7931 Nov 15 02:01 /workspace/mcpjam-eval/protocol-smoke-results.json
+-rwxr-xr-x 1 root root 1920 Nov 15 02:01 /workspace/mcpjam-eval/replay.py

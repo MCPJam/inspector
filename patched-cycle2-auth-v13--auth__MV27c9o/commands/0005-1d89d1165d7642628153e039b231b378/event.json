@@ -1,0 +1,22 @@
+{
+  "event_id": "1d89d1165d7642628153e039b231b378",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 /workspace/validation/api.py GET /projects/project_fixture/eval-suites/suite_fixture\npython3 /workspace/validation/api.py POST /projects/project_fixture/servers/server_fixture/validate '{}' validate\npython3 /workspace/validation/api.py POST /projects/project_fixture/servers/server_fixture/tools '{}' tools\npython3 - <<'PY'\nimport json\ns=json.load(open('/workspace/validation/openapi.json'))\nfor k in ['ProjectServerUpdateRequest','EvalRunCreateRequest']:\n print(k,json.dumps(s['components']['schemas'][k]))\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:27:46.255435+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0820469856262207,
+  "end": "2026-11-15T02:27:46.337427+00:00"
+}

@@ -1,0 +1,98 @@
+[
+  {
+    "phase": "trial",
+    "id": "toolu_016eVjcehX7LqNk3xN3dsvRX",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 2,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/llms.txt | head -60; which mcpjam npx; env | grep -c MCPJAM",
+    "observed_output_sha256": "d1f510be535f65fa80dbf5ef07d11a35496e582e978219dae38ba8b9156ebee7",
+    "successful_sum_output": false,
+    "result_public_line": 4,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01NnYwnS47B2BdZy4QicfCEh",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 5,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/cli/overview.md | head -80; curl -s https://docs.mcpjam.com/cli/local-evals.md | head -120",
+    "observed_output_sha256": "a078ababc14e283ec28eff3784ad01d2e52de9a2f7b2c2ca35203d32f8970eca",
+    "successful_sum_output": false,
+    "result_public_line": 6,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01AmjNsc51F6KgdnThzkSfsy",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 8,
+    "command": "cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; M=\"npx -y @mcpjam/cli@latest\"; $M server probe --url http://fixture:8765/mcp 2>&1 | tail -20; $M tools list --url http://fixture:8765/mcp 2>&1 | head -50",
+    "observed_output_sha256": "0ed111e403db64ee49b74dd90ddaa9aa7d8c52271f070f5e0d9539ce9d0fd2ea",
+    "successful_sum_output": false,
+    "result_public_line": 11,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_011tW8GB2cfY34fbnHdnMPVV",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 13,
+    "command": "cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; M=\"npx -y @mcpjam/cli@latest\"\n$M tools call --url http://fixture:8765/mcp --tool-name add --tool-args '{\"a\":2,\"b\":3}' 2>&1 | head -20\nmkdir -p .mcpjam/evals\ncat > .mcp.json <<'E'\n{\"mcpServers\":{\"arith\":{\"type\":\"http\",\"url\":\"http://fixture:8765/mcp\"}}}\nE\ncat > .mcpjam/evals/arith.yaml <<'E'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arith\n  name: Arithmetic fixture\ntarget:\n  servers:\n    - name: arith\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_adds\n    title: uses add for a sum\n    steps:\n      - id: s1\n        kind: prompt\n        prompt: What is 17 plus 25? Use the tool.\n      - id: a1\n        kind: assert\n        assertion:\n          type: toolCalledAtLeastOnce\n          toolName: add\nE\n$M cloud eval validate --file .mcpjam/evals/arith.yaml 2>&1 | tail -10\n$M test --help 2>&1 | grep -iE \"hosted|inference|api-key|project|reporter\" | head",
+    "observed_output_sha256": "d089bc69468d551def83c217a79f46a0d92fe5ad55dcbe3a2f8ebf7050af224d",
+    "successful_sum_output": true,
+    "result_public_line": 14,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01WC5ZByY6pntEPStsp1kT4U",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 15,
+    "command": "cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; M=\"npx -y @mcpjam/cli@latest\"\n$M test .mcpjam/evals/arith.yaml --inference mcpjam --project project_fixture --reporter junit-xml --out reports/arith.xml 2>&1 | tail -30; echo exit=$?",
+    "observed_output_sha256": "cf918aeaf7853ce37d2dbaedba5353859d7c7ff57ceb7337024a3f3a1864895f",
+    "successful_sum_output": false,
+    "result_public_line": 16,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01JKvgEyfrkqNUcAiZt34mLo",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 18,
+    "command": "cd /workspace; echo $MCPJAM_API_URL; curl -s https://docs.mcpjam.com/cli/self-hosted.md | grep -iE -B2 -A2 \"http://|insecure|loopback\" | head -40",
+    "observed_output_sha256": "a14892c5eb3d6051e6f8ec12c95e7779d0be54e9e650bbf222c56b2798b40576",
+    "successful_sum_output": false,
+    "result_public_line": 19,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01AE7NLcrrKqa8arU1dewSQe",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 23,
+    "command": "cd /workspace; env | grep -ciE \"ANTHROPIC|OPENAI\"; export MCPJAM_TELEMETRY_DISABLED=1; npx -y @mcpjam/cli@latest cloud whoami 2>&1 | head -5",
+    "observed_output_sha256": "8cd12c39ad1e8f34ddd5391440cd394ed6c1a17e476357869cc68504d658e4d1",
+    "successful_sum_output": false,
+    "result_public_line": 24,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_016E2fLYTfNWpqQchbu38L6g",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 28,
+    "command": "cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; npx -y @mcpjam/cli@latest test .mcpjam/evals/arith.yaml --inference byok --project project_fixture --reporter junit-xml --out reports/arith.xml 2>&1 | tail -15",
+    "observed_output_sha256": "485d47956f86e650a6d152bc2f6876ee1988f770f59478ecf1fa9d1f5c1deea7",
+    "successful_sum_output": false,
+    "result_public_line": 29,
+    "source": "public-agent-claude-code.txt.jsonl"
+  }
+]

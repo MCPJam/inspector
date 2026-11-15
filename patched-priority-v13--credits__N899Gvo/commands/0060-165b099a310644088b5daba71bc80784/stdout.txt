@@ -1,0 +1,143 @@
+- [Slack](https://docs.mcpjam.com/hosted/slack.md): Run MCPJam from Slack — mention the bot to ask about your projects, and approve the actions that spend credits
+- [host-compat](https://docs.mcpjam.com/sdk/reference/host-compat.md): API reference for @mcpjam/sdk/host-compat — derive server requirements, evaluate host compatibility, and scan widget bridge usage.
+- [List run iterations](https://docs.mcpjam.com/api-reference/eval-runs/list-run-iterations.md): Per-iteration results: actual tool calls, structured token usage, and latency. Cursor-paginated.
+- [Preview a failed-cases rerun](https://docs.mcpjam.com/api-reference/eval-runs/preview-a-failed-cases-rerun.md): What `POST /projects/{projectId}/eval-runs/{runId}/rerun` with `scope: "failed_cases"` would execute, before anything spends. The platform selects every case with a trial that is not completed and passed; cancelled and skipped trials do not count. `reasons` and `excluded` count trials; `selectedCase…
+- [Mint a model lease for MCPJam-hosted inference](https://docs.mcpjam.com/api-reference/eval-runs/mint-a-model-lease-for-mcpjam-hosted-inference.md): How an SDK eval running OUTSIDE the platform (local dev, CI) uses MCPJam-hosted inference on the organization's credits, with no provider key of its own. Authenticate like any other `/api/v1` route (typically an `sk_` key).
+- [Authenticate and record an eval start](https://docs.mcpjam.com/api-reference/eval-runs/authenticate-and-record-an-eval-start.md): Called by official SDK, CLI and Vitest runners before executing an eval. Requires an organization API key or saved-login bearer. Records only start metadata, creates no dashboard run, and applies no debit or quota draw. Planned iterations are intent, not completed usage. Reuse the runStartId for ret…
+- [Read the organization's spend budget](https://docs.mcpjam.com/api-reference/catalog/read-the-organizations-spend-budget.md): The ceiling on what this organization may spend on MCPJam-billed work — chat, evals, judges and computer time — in the current billing window, and how much of it has been spent.
+- [Set the organization's spend budget](https://docs.mcpjam.com/api-reference/catalog/set-the-organizations-spend-budget.md): Set or replace the ceiling. **Requires organization owner or admin.**
+- [Remove the organization's spend budget](https://docs.mcpjam.com/api-reference/catalog/remove-the-organizations-spend-budget.md): Leave the organization uncapped. **Requires organization owner or admin.**
+- [List organizations](https://docs.mcpjam.com/api-reference/catalog/list-organizations.md): The organizations the caller belongs to — the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.
+- [Request insights for an eval run](https://docs.mcpjam.com/api-reference/evals/request-insights-for-an-eval-run.md): **No credits are consumed** — the model cost is on MCPJam. Runs a model over the finished run and draws on the same shared `insightsPerDay` request ledger as swarm and user-testing insights.
+- [Grade an eval run with LLM as Judge](https://docs.mcpjam.com/api-reference/evals/grade-an-eval-run-with-llm-as-judge.md): **Spends.** Runs the goal-completion judge over the finished run, scoring each case's final answer against its expected output.
+- [Set the guest-execution caps](https://docs.mcpjam.com/api-reference/studies/set-the-guest-execution-caps.md): The spend dial for anonymous visitors. A FULL REPLACEMENT — send every field. These caps only mean something as a set, and a partial update that raised one while leaving another stale would produce a combination nobody chose.
+- [Usage breakdown](https://docs.mcpjam.com/api-reference/studies/usage-breakdown.md): Which models, tools and servers the study's sessions used.
+- [Request insights for the current window](https://docs.mcpjam.com/api-reference/studies/request-insights-for-the-current-window.md): **No credits are consumed** — the model cost is on MCPJam. Runs a model over the study's current window and draws on the organization's `insightsPerDay` ledger, which counts REQUESTS and is SHARED with eval-run and swarm run insights, so a request here takes one from there.
+- [Get a connection request](https://docs.mcpjam.com/api-reference/server-connections/get-a-connection-request.md): Current state of one connection request. Metered on its own poll budget rather than the shared per-caller one, so polling on a short interval is expected and will not spend the budget your other calls need. A 429 here means the poll interval itself is too fast; honour Retry-After.
+- [Get a run's rubric scorecard](https://docs.mcpjam.com/api-reference/swarm-insights/get-a-runs-rubric-scorecard.md): The deterministic rubric result for one run. No model, no spend.
+- [Start a Claude directory-readiness run](https://docs.mcpjam.com/api-reference/directory-readiness/start-a-claude-directory-readiness-run.md): Grades the saved server against Anthropic's connector-directory requirements and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL, an actor, an organization, a model or a cost. Poll the run detail for the verdict. Deterministic grading is…
+- [Start a Muse connector readiness run](https://docs.mcpjam.com/api-reference/directory-readiness/start-a-muse-connector-readiness-run.md): Grades the saved server against Meta's Muse connector guidelines and returns `202` with a run id. Free: Muse readiness has no AI observations, so the body has no field that can spend, and no submission mode, which belongs to the OpenAI plugin directory. The submission-ready verdict stays `incomplete…
+- [Send one agent Playground message](https://docs.mcpjam.com/api-reference/chat-sessions/send-one-agent-playground-message.md): Send one message to a project's MCP servers and get the model's reply plus the telemetry a participant in the conversation could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage.
+- [Read a chat session's execution trace](https://docs.mcpjam.com/api-reference/chat-sessions/read-a-chat-sessions-execution-trace.md): Per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript. Same span shape as the eval iteration trace.
+{
+ "parameters": [
+  {
+   "$ref": "#/components/parameters/organizationId"
+  }
+ ],
+ "get": {
+  "operationId": "getSpendBudget",
+  "tags": [
+   "Catalog"
+  ],
+  "summary": "Read the organization's spend budget",
+  "description": "The ceiling on what this organization may spend on MCPJam-billed work \u2014 chat, evals, judges and computer time \u2014 in the current billing window, and how much of it has been spent.\n\nAny member may read it: a member who cannot raise the ceiling still needs to know it exists, because it is what refused their run. `capUsd: null` means the organization is uncapped, which is the default.\n\nRuns that use your own provider keys are never counted against the budget and never blocked by it. Neither is the free daily allowance \u2014 it is not credits.",
+  "responses": {
+   "200": {
+    "description": "The organization's spend budget.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/SpendBudget"
+      }
+     }
+    }
+   },
+   "401": {
+    "$ref": "#/components/responses/Unauthorized"
+   },
+   "403": {
+    "$ref": "#/components/responses/Forbidden"
+   },
+   "404": {
+    "$ref": "#/components/responses/NotFound"
+   },
+   "429": {
+    "$ref": "#/components/responses/RateLimited"
+   },
+   "500": {
+    "$ref": "#/components/responses/InternalError"
+   }
+  }
+ },
+ "put": {
+  "operationId": "setSpendBudget",
+  "tags": [
+   "Catalog"
+  ],
+  "summary": "Set the organization's spend budget",
+  "description": "Set or replace the ceiling. **Requires organization owner or admin.**\n\nWhen the budget is reached, new MCPJam-billed work \u2014 chat turns, eval runs, computer starts \u2014 is refused for the whole organization until the window resets or an owner or admin raises the cap. Work already in flight finishes, and running computers keep going until they hibernate.\n\n`capUsd` is stored as whole credits (1 credit = 1 cent), so it is rounded to the cent; the response reports what was kept. Changing the cap mid-window does not reset the spend counter, and does not re-announce a threshold the organization was already told about.",
+  "requestBody": {
+   "required": true,
+   "content": {
+    "application/json": {
+     "schema": {
+      "$ref": "#/components/schemas/SpendBudgetInput"
+     }
+    }
+   }
+  },
+  "responses": {
+   "200": {
+    "description": "The stored spend budget.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/SpendBudget"
+      }
+     }
+    }
+   },
+   "401": {
+    "$ref": "#/components/responses/Unauthorized"
+   },
+   "403": {
+    "$ref": "#/components/responses/Forbidden"
+   },
+   "404": {
+    "$ref": "#/components/responses/NotFound"
+   },
+   "429": {
+    "$ref": "#/components/responses/RateLimited"
+   },
+   "500": {
+    "$ref": "#/components/responses/InternalError"
+   }
+  }
+ },
+ "delete": {
+  "operationId": "clearSpendBudget",
+  "tags": [
+   "Catalog"
+  ],
+  "summary": "Remove the organization's spend budget",
+  "description": "Leave the organization uncapped. **Requires organization owner or admin.**\n\nThe window's spend counter survives: it is a record of spend, not of the budget, and a budget set again later measures against the spend already made this period.",
+  "responses": {
+   "200": {
+    "description": "The spend budget, now uncapped.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/SpendBudget"
+      }
+     }
+    }
+   },
+   "401": {
+    "$ref": "#/components/responses/Unauthorized"
+   },
+   "403": {
+    "$ref": "#/components/responses/Forbidden"
+   },
+   "404": {
+    "$ref": "#/components/responses/NotFound"
+   },
+   "429": {
+    "$ref": "#/components/responses/RateLimited"
+   },
+   "500": {
+    "$ref": "#/components/responses/InternalError"
+   }
+  }
+ }
+}

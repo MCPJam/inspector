@@ -1,0 +1,19 @@
+{
+  "suiteId": "suite_authored_1",
+  "name": "Arithmetic repeatable validation",
+  "servers": [
+    {
+      "id": "server_fixture"
+    }
+  ],
+  "hosts": [],
+  "caseUpsert": {
+    "committed": [
+      {
+        "id": "suite_authored_1_case_0",
+        "name": "add 19 and 23 returns 42"
+      }
+    ],
+    "failed": []
+  }
+}

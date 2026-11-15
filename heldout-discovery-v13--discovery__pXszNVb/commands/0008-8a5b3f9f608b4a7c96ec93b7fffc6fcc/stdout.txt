@@ -1,0 +1,15 @@
+== {"a":2,"b":3}
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":5}
+
+== {"a":-1.5,"b":0.25}
+{"content":[{"type":"text","text":"{\"sum\": -1.25}"}],"structuredContent":{"sum":-1.25},"isError":false,"_durationMs":4}
+
+== {"a":1e308,"b":1e308}
+{"error":{"code":"INTERNAL_ERROR","message":"Unexpected token 'I', ...\": {\"sum\": Infinity},\"... is not valid JSON"}}
+
+== {"a":"x","b":1}
+{"content":[{"type":"text","text":"a and b must be finite numbers"}],"isError":true,"_durationMs":4}
+
+== {"a":1}
+{"content":[{"type":"text","text":"a and b must be finite numbers"}],"isError":true,"_durationMs":4}
+

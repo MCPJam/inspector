@@ -1,0 +1,41 @@
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/mcp-conformance/http-rejection-wire.test.ts > HTTP rejection bodies and JSON-RPC schema validation > 'GET' 405 retains +0 schema violations
+AssertionError: expected [ { …(3) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ tests/mcp-conformance/http-rejection-wire.test.ts:23:66
+     21|     recorder.recordExchange(capture.exchanges[0]);
+     22|     const validator = new WireSchemaValidator({ protocolVersion: "2025…
+     23|     expect(validator.validate(recorder.observations).violations).toHav…
+       |                                                                  ^
+     24|
+     25|     // Excluding a transport refusal from JSON-RPC grading must not er…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/mcp-conformance/http-rejection-wire.test.ts > HTTP rejection bodies and JSON-RPC schema validation > still validates real JSON-RPC responses after a GET refusal
+AssertionError: expected [ { …(3) }, { …(4) } ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ tests/mcp-conformance/http-rejection-wire.test.ts:50:31
+     48|     for (const exchange of capture.exchanges) recorder.recordExchange(…
+     49|     const report = new WireSchemaValidator({ protocolVersion: "2025-11…
+     50|     expect(report.violations).toHaveLength(1);
+       |                               ^
+     51|     expect(report.violations[0].definition).toBe("CallToolResult");
+     52|     expect(report.violations[0].errors.join(" ")).toContain("/content"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+

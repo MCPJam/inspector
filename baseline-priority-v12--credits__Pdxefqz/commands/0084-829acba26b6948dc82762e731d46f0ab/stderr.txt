@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/workspace/mcpjam-eval/protocol-smoke.py", line 16, in <module>
+    assert any(c.get('text')=='5' for c in result['result'].get('content',[])),result
+AssertionError: {'jsonrpc': '2.0', 'id': 3, 'result': {'content': [{'type': 'text', 'text': '{"sum": 5}'}], 'structuredContent': {'sum': 5}, 'isError': False}}

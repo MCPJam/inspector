@@ -1,0 +1,22 @@
+{
+  "event_id": "5f2e4f078bad4ca189c7a706fa7685e9",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > /workspace/validation/check-arithmetic.sh <<'EOF'\n#!/usr/bin/env bash\nset -u\ncd /workspace\nfor entry in 'negative|{\"a\":-7,\"b\":2}|-5' 'decimal|{\"a\":1.25,\"b\":2.5}|3.75' 'zero|{\"a\":0,\"b\":0}|0'; do\n  IFS='|' read -r name args expected <<< \"$entry\"\n  npx -y @mcpjam/cli@6.2.2 --no-telemetry tools call --url http://fixture:8765/mcp --access-token \"$MCP_SERVER_TOKEN\" --tool-name add --tool-args \"$args\" --format json > \"validation/add-$name.json\" 2> \"validation/add-$name.stderr\"\n  python3 - \"$name\" \"$expected\" <<'PY'\nimport json,sys\nname,expected=sys.argv[1:]\nr=json.load(open('validation/add-'+name+'.json'))\nassert r.get('isError') is False,r\nassert r['structuredContent']['sum']==float(expected),r\nprint(name+': passed')\nPY\ndone\nEOF\nchmod +x /workspace/validation/check-arithmetic.sh\n/workspace/validation/check-arithmetic.sh"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:40:49.685602+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 8.893294095993042,
+  "end": "2026-11-15T01:40:58.578963+00:00"
+}

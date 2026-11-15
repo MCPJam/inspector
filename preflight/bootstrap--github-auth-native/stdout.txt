@@ -1,0 +1,6 @@
+github.com
+  ✓ Logged in to github.com account [PRIVATE IDENTIFIER REDACTED] (keyring)
+  - Active account: true
+  - Git operations protocol: ssh
+  - Token: gho_************************************
+  - Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo'

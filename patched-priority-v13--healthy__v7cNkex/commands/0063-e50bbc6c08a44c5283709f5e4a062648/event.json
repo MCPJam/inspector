@@ -1,0 +1,22 @@
+{
+  "event_id": "e50bbc6c08a44c5283709f5e4a062648",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cp suite.json unsupported-deterministic-suite.json && cp run-created.json unsupported-deterministic-response.json && node - <<'JS'\nconst fs=require('fs');const s={suiteName:'Arithmetic repeatable smoke',serverIds:['server_fixture'],tests:[{title:'Add two and three',runs:1,steps:[{id:'add',kind:'toolCall',serverName:'Arithmetic',toolName:'add',arguments:{a:2,b:3}},{id:'no-errors',kind:'assert',assertion:{type:'noToolErrors'}},{id:'sum',kind:'assert',assertion:{type:'toolResultContains',toolName:'add',needle:'5'}}]}]};fs.writeFileSync('eval.json',JSON.stringify(s,null,2)+'\\n');\nJS\ncurl -sS -X POST -H \"Authorization: Bearer $MCPJAM_API_KEY\" -H 'Content-Type: application/json' \"$MCPJAM_API_URL/projects/project_fixture/eval-runs\" --data-binary @eval.json -o run-created.json && cat run-created.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:59:07.159224+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.02289748191833496,
+  "end": "2026-11-15T01:59:07.182054+00:00"
+}

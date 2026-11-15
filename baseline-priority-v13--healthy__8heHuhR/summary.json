@@ -1,0 +1,119 @@
+{
+  "run_id": "baseline-priority-v13--healthy__8heHuhR",
+  "job": "baseline-priority-v13",
+  "scenario": "mcpjam/healthy",
+  "agent": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "outcome": "passed",
+  "rewards": {
+    "reward": 1.0
+  },
+  "usage": {
+    "n_input_tokens": 991297,
+    "n_cache_tokens": 944896,
+    "n_output_tokens": 5670,
+    "cost_usd": 0.24399160000000003,
+    "model_usage": {
+      "gpt-6.1-sol": {
+        "n_input_tokens": 991297,
+        "n_cache_tokens": 944896,
+        "n_output_tokens": 5670,
+        "cost_usd": 0.24399160000000003
+      }
+    },
+    "rollout_details": null,
+    "metadata": null
+  },
+  "exception": null,
+  "capture_event_count": 75,
+  "unique_capture_event_count": 75,
+  "agent_tool_invocation_count": 29,
+  "agent_shell_invocation_count": 28,
+  "incomplete_events": 0,
+  "concern_count": 3,
+  "metrics": [
+    {
+      "source": "verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "B",
+        "task_success": true,
+        "first_meaningful_result": true,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 56.64327073097229,
+        "first_conformance_result": null,
+        "first_eval_completed": true,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": null,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 0,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 2,
+        "synthetic_credits_remaining": 18,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [
+          "4846ab9997ac446c9c86cfc690eab908",
+          "74d8983d7f1847a58c506c10833cf219"
+        ],
+        "mcpjam_eval_event_ids": [
+          "f2b4e2793025416a81387dbb71785504",
+          "6010ecdb744347b1a653e5e20d4c31b0",
+          "ab88068bdfad46bd94d8c25cc68b9db4",
+          "7728777af1284fc98b882ff9700a84bf"
+        ],
+        "reproducible_artifacts": [
+          "cli-doc.md",
+          "first-result.json",
+          "README.md",
+          "api-doc.md",
+          "inspector-evals.md",
+          "eval-doc.md",
+          "run-eval.sh",
+          "reports/repeat-iterations.json",
+          "reports/iterations.json"
+        ],
+        "command_count": 75,
+        "reward": 1.0,
+        "request_count": 292,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      }
+    }
+  ],
+  "assessment_flags": [],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T02:01:21.126102Z",
+    "explicitly_harness_invalid": false,
+    "comparison_eligible": true,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": true,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": 11,
+    "invocation_id": "item_13",
+    "phase": "trial",
+    "source": "public-agent-codex.txt.jsonl",
+    "public_line": 34,
+    "corroborating_capture_ids": [
+      "4846ab9997ac446c9c86cfc690eab908",
+      "74d8983d7f1847a58c506c10833cf219"
+    ]
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once."
+}

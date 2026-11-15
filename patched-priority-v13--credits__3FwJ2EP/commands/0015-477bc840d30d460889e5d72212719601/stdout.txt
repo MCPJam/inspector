@@ -1,0 +1,63 @@
+335:Run the Cross-App Access (ID-JAG) debugger: self-issue an ID-JAG, redeem it at the target authorization server (RFC 7523), and call the MCP server with the resulting access token. See the [XAA Debugger guide](https://docs.mcpjam.com/cli/xaa.md) for the trust setup, registration strategies, and CI usage.
+569:An unknown ID, or an ID or flag for a suite the run leaves out, is a usage error (exit code `2`) before anything runs.
+597:| `--server <name=url>` | | Bind a target server to an HTTP(S) URL. Repeatable. Split on the first `=`; duplicate or unknown names are usage errors. |
+611:Global `--timeout` bounds each setup operation and MCP request, not the whole run. Exit codes: `0` passed, `1` failed, `2` usage/unsupported/import/policy, `3` credentials, `4` setup/billing/artifact, `5` inconclusive or interrupted; see [Exit codes](https://docs.mcpjam.com/cli/local-evals.md#exit-codes).
+643:`--host` is a usage error rather than a silent precedence rule.
+954:Launch a goal run. **Spends model credits**: fans out into `targets × iterations` chat sessions.
+961:| `--expected-sponsored <n>` | No | How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` and nothing is created. Omit to accept whatever split applies. |
+1209:Grade a saved server against a publisher's directory as the platform reaches it, through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally run a model for experience observations (included with MCPJam; no credits are consumed), and leaves a persistent record.
+1229:| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+1245:| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+1258:| `--claim <feature>` | Declare a feature the server offers, so the report shows it as claimed. One of `lazy-authentication` or `enterprise-managed-auth`. Repeat to claim several (at most 10). An unknown value is a usage error. |
+1370:| `2` | Usage error: bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file (after auth, before any server/model work) |
+1371:| `3` | Auth failed: no credential, or the platform rejected it, at launch or mid-wait (a token that expired during a long poll). Zero credits spent if it happened before launch |
+1439:`--all-targets` is a usage error: compose builds the stack the run uses, so
+1616:mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+1643:`--file` pointing at create-API JSON (no `schemaVersion`) is a usage error
+1895:| `--max-cost-usd <usd>` | No | Fail if the run's MCPJam-billed cost exceeded this many dollars. Accepts decimals (`0.05`) |
+1896:| `--max-cost-increase-percent <percent>` | No | Fail if cost rose by more than this percentage of the baseline's; requires `--baseline` or `--baseline-sha`. Values above 100 are allowed: a run costing three times its baseline is a 200% increase |
+1902:Both cost gates report **non-gateable** (exit 3) rather than passing when the
+1903:cost is unknown or only partly measured. Cost is stamped per iteration and is
+1907:`--max-cost-increase-percent` gate is also non-gateable when the baseline cost
+1917:flags need a baseline to mean anything and are a usage error without one. A
+1924:The two are **mutually exclusive**; passing both is a usage error (exit `2`).
+1963:regressed is not consent to ship on an infrastructure failure. A `usage_error`
+1976:| `2` | Usage error: an unknown scorer, or a threshold out of range |
+2162:  "file": ".mcpjam/evals/s_billing.yaml",
+2163:  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+2170:  "file": ".mcpjam/evals/s_billing.yaml",
+2188:An unreadable or missing path is a usage error and goes to stderr in the CLI's
+2207:  "file": ".mcpjam/evals/s_billing.yaml",
+2208:  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+2222:        "serverName": "billing",
+2226:        "message": "Server \"billing\" in environment prod exposes no tool named \"render_gone\"."
+2305:| `2` | Usage: the output path exists and `--force` was not passed, or the suite's cases did not fit one page |
+2363:Passing both flags of a pair is a usage error. The CLI and MCP read the suite's
+2541:AI-generate test cases from the suite's tools. Included with MCPJam; no customer credits consumed; it counts against the organization's daily generation quota.
+2557:| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again |
+2561:Turn a document (a test plan, a QA checklist, a spreadsheet of scenarios) into runnable test cases with MCPJam's AI and add them to the suite. Any text document works (markdown, JSON, CSV, plain notes), up to 100 KiB; the model reads the shape itself. **Costs money:** each import consumes customer credits.
+2577:| `--idempotency-key <key>` | No | Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again |
+2660:Send one message to a project's MCP servers and print the reply plus the raw tool calls, per-call latency and token usage: the telemetry a participant in the conversation cannot see.
+2662:**This spends model credits on every call.**
+2702:Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript.
+166:| **Token budget under N** | Total token usage stayed below the cap. | Case only |
+168:When an assertion is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript: tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other assertions are turn-scopable.
+176:> but for spend, two things replace it: [cost on every run](#cost), which shows
+177:> what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
+179:> cap automatic credit purchases each month, see
+253:> If **Run all** is disabled, no models are selected or a run for that suite is already in progress. For non-environment suites, a missing connected server also disables it. When every model the suite would run is out of MCPJam credits, **Run all** and each case's **Run** button are disabled with an "Out of MCPJam credits · resets in …" tooltip, switching any case to a model from your own providers re-enables those buttons. The header pickers will tell you which condition applies.
+448:* **Run insights**: an AI-written diff against your previous completed run: which cases moved, which tools changed behavior, which models diverged. Skim this first; it usually points at the right rabbit hole. The model pass is **included with MCPJam and consumes no credits**; it counts against a daily insight quota shared with swarm wave and user-testing insights. Guests browsing without a signed-in account will see a **Sign in** prompt in the insights band. Signing in unlocks the feature without losing your place.
+486:When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix: one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
+488:### Cost
+490:Every iteration carries the MCPJam-billed cost of the model work it did,
+492:cost does not move later when prices change. It rolls up onto cases, runs and
+495:A dash (`—`) means **no cost was observed**, never that the trial was free:
+499:| Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
+500:| No token usage reported | Nothing to price. |
+502:A cost your own SDK runner reported is shown but labelled **runner**: it is
+508:alongside the cost and a cost gate treats partial coverage as non-gateable
+532:* **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped (for example `broke at Tool response`, `Request satisfied`, or `chain withheld`) so you can scan the table without opening each row.
+546:Select any two completed runs and click **Compare**. The diff view shows per-case status changes: **Passed**, **Still failing**, **Regressed** (pass→fail), **Fixed** (fail→pass), **New**, **Removed**, and **Changed** (config differed). Summary metrics show deltas for tokens, cost, and duration. In the per-run comparison table, metric deltas (pass rate, P50, P95, tokens) appear inline beside their value rather than in separate Δ columns. Pass-rate movement is shown as a percentage delta (for example, `+10%`).
+609:3. Delete the ones that don't match real usage; tighten assertions on the rest.
+tools {"status": 200, "body": {"items": [{"name": "add", "description": "Add two finite numbers.", "inputSchema": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}}]}}
+launch {"status": 403, "body": {"code": "FORBIDDEN", "message": "This work requires platform credits. Add credits or contact your organization administrator.", "details": {"reason": "PLATFORM_FEE_REQUIRED"}}}

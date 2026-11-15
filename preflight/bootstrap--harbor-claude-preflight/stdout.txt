@@ -1,0 +1,30 @@
+                  claude-code agent auth resolution (dry run)                   
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Setting             ┃ Value                                                  ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Parsed provider     │ anthropic                                              │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ Resolved model      │ claude-sonnet-4-6                                      │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ Endpoint            │ Agent/SDK default (unknown)                            │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ API format          │ anthropic_messages                                     │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ API key precedence  │ 1. --api-key-name — not set                            │
+│                     │ 2. --ae ANTHROPIC_API_KEY — not set                    │
+│                     │ 3. --ae ANTHROPIC_AUTH_TOKEN — not set                 │
+│                     │ 4. ambient ANTHROPIC_API_KEY — not set                 │
+│                     │ 5. ambient ANTHROPIC_AUTH_TOKEN — not set              │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ Base URL precedence │ 1. --base-url — not set                                │
+│                     │ 2. --ae ANTHROPIC_BASE_URL — not set                   │
+│                     │ 3. --ae ANTHROPIC_API_BASE — not set                   │
+│                     │ 4. ambient ANTHROPIC_BASE_URL — not set                │
+│                     │ 5. ambient ANTHROPIC_API_BASE — not set                │
+│                     │ 6. Default base URL — selected (Agent/SDK default (not │
+│                     │ resolved))                                             │
+└─────────────────────┴────────────────────────────────────────────────────────┘
+No API key selected. Set ANTHROPIC_API_KEY or use --api-key-name.
+Keys and model availability were not verified. Native login or other 
+authentication may apply when no API key is found.
+Dry run OK — 1 trial(s); nothing was run.

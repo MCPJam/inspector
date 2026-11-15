@@ -1,0 +1,53 @@
+{
+  "path": "/me",
+  "status": 200,
+  "body": {
+    "id": "user_fixture",
+    "name": "Fixture user",
+    "email": "[EMAIL REDACTED]",
+    "plan": "team"
+  }
+}
+{
+  "path": "/organizations",
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "org_fixture",
+        "name": "Fixture organization",
+        "plan": "team",
+        "myRole": "owner",
+        "isCreator": true,
+        "logoUrl": null,
+        "createdAt": 1
+      }
+    ]
+  }
+}
+{
+  "path": "/projects/project_fixture/servers",
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "server_fixture",
+        "name": "Arithmetic",
+        "projectId": "project_fixture",
+        "transportType": "http",
+        "url": "http://fixture:8765/mcp",
+        "enabled": true,
+        "useOAuth": false,
+        "hasClientSecret": false
+      }
+    ]
+  }
+}
+{
+  "path": "/models",
+  "status": 404,
+  "body": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

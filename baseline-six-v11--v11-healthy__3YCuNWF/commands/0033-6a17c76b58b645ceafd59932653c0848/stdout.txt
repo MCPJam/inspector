@@ -1,0 +1,15 @@
+{
+  suiteId: 'suite_authored_5',
+  name: 'Arithmetic deterministic',
+  servers: [ { id: 'server_fixture' } ],
+  hosts: [],
+  caseUpsert: { committed: [ [Object] ], failed: [] }
+}
+{
+  code: 'FEATURE_NOT_SUPPORTED',
+  message: 'Synthetic fixture executes deterministic toolCall steps and simple assertions only; hosted prompt/model execution is not implemented.',
+  details: { reason: 'fixture_unsupported_execution' }
+}
+first status {"id":"run_fixture_1","suiteId":"suite_authored_3","runNumber":1,"status":"completed","result":"passed","summary":{"total":1,"passed":1,"failed":0,"passRate":1},"source":"api","notes":"SIMULATED: deterministic fixture execution; no hosted model or live billing.","createdAt":1794706245334,"completedAt":1794706245334}
+first iterations {"items":[{"id":"run_fixture_1_0","testCaseId":"suite_authored_3_case_0","title":"Add two numbers and return five","iterationNumber":1,"status":"completed","result":"passed","actualToolCalls":[{"toolName":"add","arguments":{"a":2,"b":3},"result":{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false}}],"expectedToolCalls":[],"durationMs":1,"error":null}]}
+first decision {"code":"NOT_FOUND","message":"Synthetic fixture does not implement this route."}

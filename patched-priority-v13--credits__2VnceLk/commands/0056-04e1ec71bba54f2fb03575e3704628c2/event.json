@@ -1,0 +1,22 @@
+{
+  "event_id": "04e1ec71bba54f2fb03575e3704628c2",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json,pathlib\np=pathlib.Path('/workspace/mcp-eval')\nobserved=[]\nfor label in ['evaluation','repeat']:\n status=json.loads((p/(label+'-status.json')).read_text())['body']\n iterations=json.loads((p/(label+'-iterations.json')).read_text())['body']['items']\n assert status['status']=='completed' and status['result']=='passed'\n assert len(iterations)==1 and iterations[0]['result']=='passed'\n calls=iterations[0]['actualToolCalls']\n assert len(calls)==1\n c=calls[0]\n assert c['toolName']=='add' and c['arguments']=={'a':2,'b':3}\n assert c['result']['structuredContent']['sum']==5 and c['result']['isError'] is False\n observed.append(calls)\nassert observed[0]==observed[1]\n(p/'verification.json').write_text(json.dumps({'runs':['run_fixture_1','run_fixture_2'],'passedCases':2,'totalCases':2,'matchingToolEvidence':True,'scope':'simulated arithmetic smoke; no hosted model or live billing'},indent=2))\nprint('Verified both completed runs passed and have identical add(2,3) -> 5 evidence.')\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:15:04.236135+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.011536121368408203,
+  "end": "2026-11-15T02:15:04.247619+00:00"
+}

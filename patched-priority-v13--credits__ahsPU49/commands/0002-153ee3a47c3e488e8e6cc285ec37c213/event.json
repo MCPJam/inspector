@@ -1,0 +1,22 @@
+{
+  "event_id": "153ee3a47c3e488e8e6cc285ec37c213",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794708062207-jvwkic.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_PROJECT=project_fixture; (timeout 90 npx -y @mcpjam/cli cloud status 2>&1 | head -30); curl -s -m 15 https://docs.mcpjam.com/cli/reference.md | grep -iE \"credit|usage|cost|dry-run|estimate\" | head -15' < /dev/null && pwd -P >| /tmp/claude-d5a5-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:01:10.359574+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 9.719942808151245,
+  "end": "2026-11-15T02:01:20.079457+00:00"
+}

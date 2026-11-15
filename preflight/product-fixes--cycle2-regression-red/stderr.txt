@@ -1,0 +1,23 @@
+✘ [ERROR] Could not resolve "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/sdk/sdk/vitest.config.ts"
+
+failed to load config from $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/sdk/sdk/vitest.config.ts
+
+⎯⎯⎯⎯⎯⎯⎯ Startup Error ⎯⎯⎯⎯⎯⎯⎯⎯
+Error: Build failed with 1 error:
+error: Could not resolve "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/sdk/sdk/vitest.config.ts"
+    at failureErrorWithLog ($USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/esbuild/lib/main.js:1467:15)
+    at $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/esbuild/lib/main.js:926:25
+    at runOnEndCallbacks ($USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/esbuild/lib/main.js:1307:45)
+    at buildResponseToResult ($USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/esbuild/lib/main.js:924:7)
+    at $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/esbuild/lib/main.js:951:16
+    at responseCallbacks.<computed> ($USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/esbuild/lib/main.js:603:9)
+    at handleIncomingPacket ($USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/esbuild/lib/main.js:658:12)
+    at Socket.readFromStdout ($USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/node_modules/esbuild/lib/main.js:581:7)
+    at Socket.emit (node:events:514:28)
+    at addChunk (node:internal/streams/readable:569:12) {
+  errors: [Getter/Setter],
+  warnings: [Getter/Setter]
+}
+
+
+

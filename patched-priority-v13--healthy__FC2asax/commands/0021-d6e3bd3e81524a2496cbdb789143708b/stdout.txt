@@ -1,0 +1,2 @@
+http://fixture:8765/api/v1
+{"valid":true,"file":".mcpjam/evals/add.yaml","suite":{"id":"s_fixture_add","name":"Fixture add","cases":1,"enabledCases":1},"findings":[]}

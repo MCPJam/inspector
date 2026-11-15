@@ -1,0 +1,19 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+Eval idempotency key: 0ecc1c1c-283b-4a3f-befb-18041ec29f6f
+{"error":{"code":"INTERNAL_ERROR","message":"Synthetic fixture supports deterministic toolCall steps and a validated assertion subset only. Unsupported or malformed fields, policies, and hosted prompt/model execution are refused without a charge.\nRetry this launch with --idempotency-key 0ecc1c1c-283b-4a3f-befb-18041ec29f6f.","details":{"idempotencyKey":"0ecc1c1c-283b-4a3f-befb-18041ec29f6f"}}}
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@mcpjam/cli": "6.2.2"
+  }
+}

@@ -1,0 +1,38 @@
+Options:
+  -h, --help                 display help for command
+
+Commands:
+  create [options]           Create a runnable eval suite from authored test
+                             cases (does not run it)
+  list [options]             List the eval suites saved in a project
+  runs [options]             List a suite's run history, newest first
+  revisions [options]        List a suite's settings history, newest first
+  run [options]              Start an eval run of an existing suite, or upload a
+                             versioned suite file and run it. The
+                             upload-and-launch has a 120s deadline overall, not
+                             per request (raise it with the global --timeout
+                             <ms>); --wait-timeout bounds the RUN instead.
+  status [options]           Get the status and summary of an eval run
+  stage-analytics [options]  Read the user-value chain funnel for one run
+                             (--run) or a suite's runs as a trend series
+                             (--suite)
+  route-facts [options]      Read the tool routes a run's trials took — which
+                             paths were used, and which expected tools were
+                             missing or substituted
+  server-facts [options]     Read the server a run was taken against — tool
+                             surface, catalog size, annotation coverage,
+                             tool-metadata signals, and what connect and
+                             discovery observed
+  description-experiment     Propose, start, or read a two-arm tool-description
+                             rewrite experiment
+  cancel [options]           Cancel an in-flight eval run (no-op if already
+                             cancelled; errors if it already finished)
+  rerun [options] <run-id>   Rerun a finished eval run's failed cases as a new
+                             run. The platform picks the cases: any with a trial
+                             that did not complete and pass (cancelled and
+                             skipped trials do not count)
+  judge-backtest [options]   Preview draft grading instructions on recorded
+                             evidence (uses credits)
+  backtest [options]         Preview assertion changes on stored evidence
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1
+{"error":{"code":"NOT_FOUND","message":"Synthetic fixture does not implement this route."}}

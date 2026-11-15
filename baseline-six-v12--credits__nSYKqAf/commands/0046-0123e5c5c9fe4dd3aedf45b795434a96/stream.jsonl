@@ -1,0 +1,1 @@
+{"seconds": 0.024235963821411133, "stream": "stdout", "data": "total 20\n-rw-r--r-- 1 root root 2087 Nov 15 01:43 README.md\ndrwxr-xr-x 2 root root 4096 Nov 15 01:42 docs\ndrwxr-xr-x 2 root root 4096 Nov 15 01:43 results\n-rw-r--r-- 1 root root   76 Nov 15 01:43 run-request.json\n-rw-r--r-- 1 root root 1833 Nov 15 01:43 run.py\n"}

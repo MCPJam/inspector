@@ -1,0 +1,22 @@
+{
+  "event_id": "35f2a757fc68416c9b1f1932f4eb3d95",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > run-eval.py <<'PY'\nimport json, os, time, urllib.request, urllib.error\nfrom pathlib import Path\nBASE = os.environ['MCPJAM_API_URL'].rstrip('/') + '/projects/project_fixture'\nHEADERS = {'Authorization': 'Bearer ' + os.environ['MCPJAM_API_KEY'], 'Content-Type': 'application/json'}\ndef api(path, body=None):\n    req = urllib.request.Request(BASE + path, data=None if body is None else json.dumps(body).encode(), headers=HEADERS)\n    try:\n        with urllib.request.urlopen(req, timeout=30) as response:\n            return json.load(response)\n    except urllib.error.HTTPError as error:\n        raise RuntimeError(f'{error.code}: {error.read().decode()}') from None\ndef save(name, data):\n    Path(name).write_text(json.dumps(data, indent=2) + '\\n')\nif not Path('suite-created.json').exists():\n    save('suite-created.json', api('/eval-suites', json.loads(Path('suite.json').read_text())))\nsuite_id = json.loads(Path('suite-created.json').read_text())['suiteId']\nrun = api('/eval-runs', {'suiteId': suite_id})\nsave('run-created.json', run)\nprint(json.dumps(run), flush=True)\nrun_id = run['runId']\nfor _ in range(40):\n    status = api('/eval-runs/' + run_id)\n    save('run-status.json', status)\n    print(json.dumps(status), flush=True)\n    if status.get('status') in {'completed', 'failed', 'cancelled', 'timed_out'}:\n        break\n    time.sleep(2)\nelse:\n    raise RuntimeError('Run has not reached a terminal state; use run-created.json to resume polling.')\nfor suffix, name in [('iterations', 'iterations.json'), ('decision-summary', 'decision-summary.json')]:\n    data = api('/eval-runs/' + run_id + '/' + suffix)\n    save(name, data)\n    print(name, json.dumps(data), flush=True)\nif status.get('status') != 'completed' or status.get('result') not in {'passed', 'pass'}:\n    raise SystemExit(1)\nPY\npython3 run-eval.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:46:58.302921+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.027583837509155273,
+  "end": "2026-11-15T01:46:58.330432+00:00"
+}

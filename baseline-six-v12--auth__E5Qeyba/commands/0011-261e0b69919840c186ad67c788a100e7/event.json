@@ -1,0 +1,22 @@
+{
+  "event_id": "261e0b69919840c186ad67c788a100e7",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat /workspace/validation/doctor.json /workspace/validation/doctor.stderr; npx -y @mcpjam/cli tools call --url http://fixture:8765/mcp --access-token \"$MCP_SERVER_TOKEN\" --tool-name add --tool-args '{\"a\":2,\"b\":3}' --format json --debug-out /workspace/validation/add-debug.json > /workspace/validation/add.json 2> /workspace/validation/add.stderr; cat /workspace/validation/add.json /workspace/validation/add.stderr"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:39:48.099878+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.6499619483947754,
+  "end": "2026-11-15T01:39:49.749754+00:00"
+}

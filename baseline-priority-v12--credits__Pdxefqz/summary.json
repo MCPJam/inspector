@@ -1,0 +1,129 @@
+{
+  "run_id": "baseline-priority-v12--credits__Pdxefqz",
+  "job": "baseline-priority-v12",
+  "scenario": "mcpjam/credits",
+  "agent": {
+    "name": "codex",
+    "version": "0.160.0",
+    "model_info": {
+      "name": "gpt-6.1-sol",
+      "provider": "openai"
+    }
+  },
+  "outcome": "harness-invalid",
+  "rewards": {
+    "reward": 0.0
+  },
+  "usage": null,
+  "exception": null,
+  "capture_event_count": 122,
+  "unique_capture_event_count": 72,
+  "agent_tool_invocation_count": 19,
+  "agent_shell_invocation_count": 18,
+  "incomplete_events": 0,
+  "concern_count": 3,
+  "metrics": [
+    {
+      "source": "steps/blocked/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 134.20226979255676,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": false,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": false,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": null,
+        "duplicate_charges": 0,
+        "charge_count": 0,
+        "synthetic_credits_remaining": 0,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcpjam-eval/public-api.md",
+          "mcpjam-eval/protocol-evidence.json",
+          "mcpjam-eval/cli.md"
+        ],
+        "command_count": 50,
+        "reward": 0.0,
+        "request_count": 186,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      }
+    },
+    {
+      "source": "steps/resume/verifier/metrics.json",
+      "metrics": {
+        "schema_version": 1,
+        "simulation": true,
+        "prompt": "D",
+        "task_success": false,
+        "first_meaningful_result": false,
+        "server_observed_successful_tool_call": true,
+        "time_to_first_result_seconds": 134.20226979255676,
+        "first_conformance_result": null,
+        "first_eval_completed": false,
+        "server_observed_simulated_eval": true,
+        "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+        "correct_diagnosis": null,
+        "successful_recovery": true,
+        "auth_refusal_count": 0,
+        "credit_refusal_count": 1,
+        "repeated_ineffective_requests": 0,
+        "state_preserved": true,
+        "duplicate_charges": 0,
+        "charge_count": 2,
+        "synthetic_credits_remaining": 18,
+        "human_handoff_correct": null,
+        "credit_cost_understanding": null,
+        "errors_explain_cause_action_actor": null,
+        "evidence_completeness": true,
+        "mcpjam_tool_event_ids": [],
+        "mcpjam_eval_event_ids": [],
+        "reproducible_artifacts": [
+          "mcpjam-eval/public-api.md",
+          "mcpjam-eval/iterations-run_fixture_1.json",
+          "mcpjam-eval/protocol-evidence.json",
+          "mcpjam-eval/cli.md",
+          "mcpjam-eval/iterations-run_fixture_2.json"
+        ],
+        "command_count": 72,
+        "reward": 0.0,
+        "request_count": 258,
+        "workspace_collected": true,
+        "command_evidence_collected": true
+      }
+    }
+  ],
+  "assessment_flags": [
+    "simulated_eval_observed_but_strict_command_match_missing"
+  ],
+  "product_failure_attribution": null,
+  "collection": {
+    "result_present": true,
+    "finished_at_observed": "2026-11-15T01:51:53.173896Z",
+    "explicitly_harness_invalid": true,
+    "comparison_eligible": false,
+    "missing_result_policy": "Missing results, exit statuses and completion times remain null; observed partial output is retained."
+  },
+  "comparison_eligible": false,
+  "first_cli_tool_result": {
+    "commands_to_first_cli_tool_result": null,
+    "reason": "No unique native shell output with successful structuredContent.sum exactly matched a verifier-confirmed capture."
+  },
+  "native_command_count_scope": "Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once.",
+  "collection_timing_note": "Step artifacts are collected after the orchestrator account-resolution hook. A blocked-step snapshot may already contain account resolution applied after the agent stopped. Use refusal/request timestamps and captured output for temporal attribution, not snapshot presence alone."
+}

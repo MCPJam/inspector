@@ -1,0 +1,98 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "fd8760a7806ddc96c39d9ad1ced2ff2bc8c1c2e0753077bb39a45aa401eebe37"
+  },
+  {
+    "source": "artifacts/workspace/arithmetic.eval.yaml",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/arithmetic.eval.yaml",
+    "sha256": "ff7864325cf11c109c8da6445ec0677e394af44cd8a1eb3f26a05050403b1fb3"
+  },
+  {
+    "source": "artifacts/workspace/package-lock.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/package-lock.json",
+    "sha256": "07866854a50b01787990678f5b76d77946cb304d004c5dc90fc60a7ee5df2fa8"
+  },
+  {
+    "source": "artifacts/workspace/package.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/package.json",
+    "sha256": "a61637be221e6da1ffd05cca6fd62380fb086e12ddcad6782415608e5fd448a5"
+  },
+  {
+    "source": "artifacts/workspace/docs-index.txt",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs-index.txt",
+    "sha256": "9654f2d4d237e5a10221f10d205a8569deaa3224f7e12bc1b89bba608168058e"
+  },
+  {
+    "source": "artifacts/workspace/docs/reference.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs/reference.md",
+    "sha256": "a28de1090411ef1cad67b701ad9e4906a13be470376157de11ed8ee8918dcc2b"
+  },
+  {
+    "source": "artifacts/workspace/docs/api.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs/api.md",
+    "sha256": "0736072145c7f701c9c613d901ad0b503b6a4026187c89d922ed8bc3631a279b"
+  },
+  {
+    "source": "artifacts/workspace/docs/cli.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs/cli.md",
+    "sha256": "3540d07971a09946c1ece0fe0a2448fe8414add8ca6c2be95e4ff431d5531baf"
+  },
+  {
+    "source": "artifacts/workspace/docs/local-evals.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs/local-evals.md",
+    "sha256": "d1cf3b193596d5feca31ec63bc9649a729127428225c1ae21969ba84138986ab"
+  },
+  {
+    "source": "artifacts/workspace/docs/create-suite.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs/create-suite.md",
+    "sha256": "82f775309572af1f179bbc9d7bc61eb1cd496da9c4908839b3593926bf39b292"
+  },
+  {
+    "source": "artifacts/workspace/docs/evals.md",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs/evals.md",
+    "sha256": "2e5d2a91f21a776b35c1e4829c96f169da0e069055e632af2662d43af767cc90"
+  },
+  {
+    "source": "artifacts/workspace/docs/openapi.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/docs/openapi.json",
+    "sha256": "53d45b9b1bf44189b5c9eded3d5600221298c49c9375f8d34fb76944235f7d28"
+  },
+  {
+    "source": "artifacts/workspace/results/tools.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/results/tools.json",
+    "sha256": "a1ada4ec42d7cd887feb1a6a3f1cb5fbfa2053b077728f0ff89db8481499ba36"
+  },
+  {
+    "source": "artifacts/workspace/results/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/results/doctor.json",
+    "sha256": "a3c15107c8dc0259de4ba387669f5b2db6dad528267515425f1ad8886dc5518e"
+  },
+  {
+    "source": "artifacts/workspace/results/validation.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/results/validation.json",
+    "sha256": "389f78d17773b8b1c9cb9f4ac1369645bcfd8686b4810c4da170e97fd0ad619e"
+  },
+  {
+    "source": "artifacts/workspace/results/add.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/results/add.json",
+    "sha256": "56af6f4f8e28e1974424b4db6b2515bb4260a3bf8587ba66c8000b7696143860"
+  }
+]

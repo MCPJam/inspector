@@ -1,0 +1,120 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+# MCPJam API
+> Programmatic access to the MCP servers in your MCPJam projects: diagnostics, tool calls, prompt rendering, and asynchronous eval runs.
+> [!WARNING]
+>
+> **The MCPJam API is in preview.** It works today and we use it ourselves, but
+> it has not been generally announced and the surface may change, including in
+> breaking ways, while we finish the design. Pin your integration to the
+> behaviors documented on this page, build a [tolerant
+> reader](#versioning--stability), and expect to revisit it. Feedback is very
+> welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
+> [GitHub](https://github.com/MCPJam/inspector/issues).
+> [card] [Create an API key](https://app.mcpjam.com/settings/api-keys)
+>
+> Go straight to key management in the hosted app. If you're signed out,
+> you'll be asked to sign in and then land right back on the API keys page.
+The MCPJam API lets you operate the MCP servers saved in your
+[hosted](https://docs.mcpjam.com/hosted/overview.md) projects (from CI, scripts, or your own agents)
+without opening the UI.
+What you can do with it today:
+* **Discover your resources**: list your projects, their servers, eval
+  suites, and chat sessions, so every ID the other routes need is
+  self-serve
+* **Validate a server**: connect, initialize, and capture a capability snapshot
+* **Run the doctor**: the probe → connect → initialize → capabilities workflow
+* **Check OAuth requirements**: does this server need an OAuth grant?
+* **List tools, prompts, and resources**: the server's MCP primitives
+* **Call a tool / render a prompt**: execute primitives and get the MCP result back verbatim
+* **Read a resource** by URI
+* **Export a full snapshot**: tools, resources, and prompts as one JSON document
+* **Manage a project's clients**: list, read, **create** (from a built-in
+  template like `claude`/`chatgpt`/`cursor`, or from a full config), edit,
+  duplicate, and delete the named, reusable configurations that define how
+  MCPJam connects to and talks to your MCP servers. Edits are compare-and-set:
+  read the client, then send its `configId` back as `expectedConfigId` for a
+  config change and its `name` back as `expectedName` for a rename (a rename
+  does not rotate the config, so the config token cannot detect a concurrent
+  one), and a concurrent edit is rejected rather than silently reverted
+* **Manage a project's environments**: list, read, and archive the named
+  execution bundles (host + optional server group) that eval
+  suites and goals run against,
+  and **preview** what one resolves to before launching it
+* **List a project's studies**: name, access mode, attached servers, and
+  share link, and **read one study's settings**: model, system prompt,
+  tool-approval policy, and resolved servers
+* **Author eval suites**: create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+* **Run eval suites asynchronously**: create a run from a saved suite, get a `202` + `runId`
+  immediately, then poll status, per-iteration results (tool calls, token
+  usage, latency), and full traces. Runs appear live in the hosted UI,
+  tagged `source: "api"`
+* **Manage a server's accounts**: complete OAuth yourself (e.g. the SDK's
+  `runOAuthLogin`, or your CI's own sign-in) and upload the token to a named
+  account; list, rename, choose the default, and delete accounts. Tokens are
+  write-only: no route returns one
+* **Run a headless agent turn**: send a message history, get back the
+  assistant reply, the platform operations it invoked, references to any
+  resources it created (eval suites), and token usage; the model is pinned
+  server-side and billed to the project
+* **Send feedback**: report a bug, a missing capability, or something
+  confusing to the MCPJam team at the moment you hit it; the same endpoint the
+  `send_feedback` MCP tool calls
+All endpoints operate on servers you have already added to a project in the
+hosted inspector. Managing API keys remains UI-only; see
+[Not in the API yet](#not-in-the-api-yet).
+## Base URL
+```text theme={"theme":"css-variables"}
+https://app.mcpjam.com/api/v1
+```
+The API is path-versioned. All routes on this page are relative to the base
+URL above.
+## Authentication
+Every request needs an MCPJam API key in the `Authorization` header:
+```bash theme={"theme":"css-variables"}
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/tools" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+### Creating a key
+1. Open [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys)
+   in the hosted app (the card at the top of this page takes you there
+   directly).
+2. Click **Create API key**, name it, and pick the **organization** it will act in.
+3. Copy the key (`sk_…`) immediately; **it is shown exactly once** and never
+   stored by MCPJam in retrievable form.
+Keys can be revoked from the same page at any time. Revocation takes effect
+immediately.
+### Scope
+A key is bound to one MCPJam organization at creation and acts **as you,
+inside that organization**. Per-request authorization still applies: a call
+only succeeds if the key's owner can access that project and server. A key
+can never reach projects outside its organization.
+> [!NOTE]
+>
+> Two deliberate restrictions while in preview:
+>
+> * **API keys cannot manage API keys.** Requests to the key-management surface
+>   with an `sk_…` bearer fail with `403 FORBIDDEN`. Create and revoke keys in
+>   the UI.
+> * **Guest sessions cannot use the API.** Sign in to create keys.
+### Keep keys secret
+Treat an API key like a password:
+* Load it from an environment variable or secret manager; never commit it to
+  source control or ship it in client-side code.
+* Scope keys narrowly: one key per integration, named so you can tell them apart.
+* Rotate by creating a replacement key, switching traffic, then revoking the old one.
+* If a key leaks, revoke it immediately in
+  [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys).
+If you see `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"`, the key
+is no longer bound to an organization and cannot be used; create a new key
+from [Settings](https://app.mcpjam.com/settings/api-keys).
+## Conventions
+**Requests.** Operations on servers are `POST` with a JSON body (most accept
+an empty `{}`). **Reads**, the catalog listings and eval-run polling, are
+`GET` and take their options (`cursor`, `limit`, filters) as query
+parameters.
+**Responses.** Three envelope shapes, used consistently:

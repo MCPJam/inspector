@@ -1,0 +1,20 @@
+{
+  "id": "orchestrator-events:baseline-six-v12",
+  "path": "orchestrator-events--baseline-six-v12",
+  "argv": [
+    "$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/venv/bin/harbor",
+    "run",
+    "--config",
+    "work/baseline-six-v12.json"
+  ],
+  "start": "2026-11-15T01:36:55.664787+00:00",
+  "end": "2026-11-15T01:45:05.246584+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "orchestrator-events"
+}

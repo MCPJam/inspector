@@ -1,0 +1,22 @@
+{
+  "event_id": "69315bb57e8041f2931fb4f7b5438e05",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794709170798-qq29op.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; cat > validate.sh <<'\"'\"'E'\"'\"'\n#!/bin/bash\n# usage: MCP_SERVER_TOKEN=[REDACTED] ./validate.sh\nU=\"--url http://fixture:8765/mcp --access-token $MCP_SERVER_TOKEN\"\nnpx -y @mcpjam/cli@latest server doctor $U --rpc --out doctor.json\nnpx -y @mcpjam/cli@latest tools call $U --tool-name add --tool-args '\"'\"'{\"a\":2,\"b\":3}'\"'\"'\nnpx -y @mcpjam/cli@latest tools call $U --tool-name add --tool-args '\"'\"'{\"a\":\"x\"}'\"'\"'\nE\nchmod +x validate.sh' && pwd -P >| /tmp/claude-a5b8-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:19:55.881282+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.002027750015258789,
+  "end": "2026-11-15T02:19:55.883237+00:00"
+}

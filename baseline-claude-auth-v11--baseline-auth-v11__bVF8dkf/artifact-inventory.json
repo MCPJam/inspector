@@ -1,0 +1,26 @@
+[
+  {
+    "source": "artifacts/fixture/state.json",
+    "published": true,
+    "path": "artifacts/artifacts/fixture/state.json",
+    "sha256": "34dd4d6d34996740a9c00e169969eaff34e6e80432dad66151b93de000e853ac"
+  },
+  {
+    "source": "artifacts/workspace/validate.sh",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/validate.sh",
+    "sha256": "73df26fdd0fd4ddfc1b756cfc7ddca12406e6bfb8bf24f13a211823287c21fed"
+  },
+  {
+    "source": "artifacts/workspace/doctor.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/doctor.json",
+    "sha256": "57dadc1e28b8ea8603060b923bdf5aa0f767e7d5223c0b7062d35908d2bd0054"
+  },
+  {
+    "source": "artifacts/workspace/mcp.json",
+    "published": true,
+    "path": "artifacts/artifacts/workspace/mcp.json",
+    "sha256": "456d6b3be6247453de792129da311cb725e22bd18a67fdcff4fa856a73e50f93"
+  }
+]

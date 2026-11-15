@@ -1,0 +1,9 @@
+{
+  "method": "POST",
+  "path": "/projects/project_fixture/servers/server_fixture/tools/call",
+  "status": 404,
+  "response": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

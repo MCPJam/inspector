@@ -1,0 +1,22 @@
+{
+  "event_id": "02c7ee1d35954c32a458135495859bbe",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cp suite.json prompt-suite.json && cp suite-created.json prompt-suite-created.json && python3 - <<'PY'\nimport json,urllib.request,os\nb=json.load(open('suite.json'));b['name']='Arithmetic deterministic smoke';b['tests'][0]['steps'][0]={'id':'add','kind':'toolCall','serverName':'Arithmetic','toolName':'add','arguments':{'a':2,'b':3}}\njson.dump(b,open('suite.json','w'),indent=2)\nr=urllib.request.urlopen(urllib.request.Request(os.environ['MCPJAM_API_URL']+'/projects/project_fixture/eval-suites',data=json.dumps(b).encode(),headers={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'}));d=r.read().decode();print(d);open('suite-created.json','w').write(d)\nPY\npython3 run-eval.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:47:06.679835+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.058132171630859375,
+  "end": "2026-11-15T01:47:06.737893+00:00"
+}

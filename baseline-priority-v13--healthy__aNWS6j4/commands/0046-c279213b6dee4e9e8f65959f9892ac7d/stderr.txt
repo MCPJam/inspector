@@ -1,0 +1,2 @@
+/bin/bash.real: line 1: python: command not found
+cat: artifacts/run.json: No such file or directory

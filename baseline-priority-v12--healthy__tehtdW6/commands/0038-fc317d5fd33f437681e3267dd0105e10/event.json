@@ -1,0 +1,22 @@
+{
+  "event_id": "fc317d5fd33f437681e3267dd0105e10",
+  "argv": [
+    "/bin/bash",
+    "-lc",
+    "python3 - <<'PY'\nimport json\ns=json.load(open('/workspace/openapi.json'))\nfor p,v in s['paths'].items():\n if ('servers' in p and 'post' in v and p.endswith('servers')) or ('eval-suites' in p and 'post' in v and p.endswith('eval-suites')):\n  print(p,json.dumps(v['post'].get('requestBody',{})))\nprint('SCHEMAS',list(s.get('components',{}).get('schemas',{})))\nPY\nrg -n 'toolCall|toolResultContains|schemaVersion|agentWorkflow' /workspace/reference.md | head -35"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:52:26.800505+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/installed-agent/codex-home/tmp/arg0/codex-arg00NY0po:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.020238161087036133,
+  "end": "2026-11-15T01:52:26.820672+00:00"
+}

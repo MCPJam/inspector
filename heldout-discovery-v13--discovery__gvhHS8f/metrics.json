@@ -1,0 +1,57 @@
+[
+  {
+    "source": "verifier/metrics.json",
+    "metrics": {
+      "schema_version": 1,
+      "simulation": true,
+      "prompt": "A",
+      "task_success": true,
+      "first_meaningful_result": true,
+      "server_observed_successful_tool_call": true,
+      "time_to_first_result_seconds": 65.02238464355469,
+      "first_conformance_result": null,
+      "first_eval_completed": false,
+      "server_observed_simulated_eval": false,
+      "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+      "correct_diagnosis": null,
+      "successful_recovery": null,
+      "auth_refusal_count": 0,
+      "credit_refusal_count": 0,
+      "repeated_ineffective_requests": 0,
+      "state_preserved": null,
+      "duplicate_charges": 0,
+      "charge_count": 0,
+      "synthetic_credits_remaining": 20,
+      "human_handoff_correct": null,
+      "credit_cost_understanding": null,
+      "errors_explain_cause_action_actor": null,
+      "evidence_completeness": true,
+      "mcpjam_tool_event_ids": [
+        "a59fd8593ff24c768b872746dfeeb93d",
+        "8f1b78c50f50468a9cbafe0e7505537e"
+      ],
+      "mcpjam_eval_event_ids": [],
+      "reproducible_artifacts": [
+        "mcp-check/cli-positive-trace.json",
+        "mcp-check/README.md",
+        "mcp-check/results/positive-trace.json",
+        "mcp-check/results/extra_property-trace.json",
+        "mcp-check/results/cancellation-trace.json",
+        "mcp-check/results/summary.json",
+        "mcp-check/results/wrong_type-trace.json",
+        "mcp-check/results/negative-trace.json",
+        "mcp-check/results/missing-trace.json",
+        "mcp-check/results/zero-trace.json",
+        "mcp-check/results/decimal-trace.json",
+        "mcp-check/docs/public-api.md",
+        "mcp-check/docs/server-inspection.md",
+        "mcp-check/docs/tools-resources-prompts.md"
+      ],
+      "command_count": 56,
+      "reward": 1.0,
+      "request_count": 402,
+      "workspace_collected": true,
+      "command_evidence_collected": true
+    }
+  }
+]

@@ -1,0 +1,12 @@
+{"seconds": 0.15436816215515137, "stream": "stdout", "data": "\n> @mcpjam/cli@6.2.2 build\n> tsup\n\n"}
+{"seconds": 0.3246181011199951, "stream": "stdout", "data": "CLI Building entry: src/index.ts\n"}
+{"seconds": 0.3247370719909668, "stream": "stdout", "data": "CLI Using tsconfig: tsconfig.json\n"}
+{"seconds": 0.3247640132904053, "stream": "stdout", "data": "CLI tsup v8.5.1\n"}
+{"seconds": 0.3247711658477783, "stream": "stdout", "data": "CLI Using tsup config: $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/cli/tsup.config.ts\n"}
+{"seconds": 0.3253509998321533, "stream": "stdout", "data": "CLI Target: node22\n"}
+{"seconds": 0.3303391933441162, "stream": "stdout", "data": "CLI Cleaning output folder\n"}
+{"seconds": 0.3307201862335205, "stream": "stdout", "data": "ESM Build start\n"}
+{"seconds": 0.6228559017181396, "stream": "stderr", "data": "\"collectConnectedServerSnapshot\" is imported from external module \"@mcpjam/sdk\" but never used in \"dist/index.js\".\n"}
+{"seconds": 0.7464048862457275, "stream": "stdout", "data": "ESM dist/index.js     1.19 MB\n"}
+{"seconds": 0.7464451789855957, "stream": "stdout", "data": "ESM dist/index.js.map 2.81 MB\n"}
+{"seconds": 0.7464830875396729, "stream": "stdout", "data": "ESM ⚡️ Build success in 415ms\n"}

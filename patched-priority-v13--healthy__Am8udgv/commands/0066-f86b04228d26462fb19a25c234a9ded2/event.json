@@ -1,0 +1,22 @@
+{
+  "event_id": "f86b04228d26462fb19a25c234a9ded2",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "node -e 'const fs=require(\"fs\"); const r=JSON.parse(fs.readFileSync(\"reports/launch.json\")); console.log(JSON.stringify({runId:r.launch.runId,suite:r.launch.suite,decision:r.decisionSummary},null,2))' && cat > README.md <<'EOF'\n# MCPJam arithmetic server validation\n\nInstalled local MCPJam CLI 6.2.2 and SDK with npm; package-lock.json pins dependencies. No product source or fixture internals were read. Credentials remain in MCPJAM_API_URL and MCPJAM_API_KEY, not in these files.\n\n## Reproduce\n\n```bash\ncd /workspace\nnpm ci\n./node_modules/.bin/mcpjam server doctor --url http://fixture:8765/mcp --format json\n./node_modules/.bin/mcpjam tools call --url http://fixture:8765/mcp --tool-name add --tool-args '{\"a\":2,\"b\":3}' --format json\n./run-eval.sh\n```\n\nThe script validates the suite against project_fixture and uploads/runs the versioned suite, waits for completion, and writes reports. Each invocation launches a new run. The stable suite.id updates the same file-owned suite. To retry an uncertain launch, use the idempotency key printed by the CLI rather than blindly launching again.\n\n## Findings\n\n- doctor.json: ready, streamable HTTP, MCP 2025-11-25, arithmetic-fixture 1.0.0, one read-only add tool, no OAuth required.\n- first-result.json: add(2,3) returned structuredContent.sum = 5 and isError = false.\n- .mcpjam/evals/arithmetic.yaml: deterministic toolCall, noToolErrors assertion, and toolResultContains assertion for the text `\"sum\": 5`. One iteration, pass threshold 100%, judge disabled.\n- First successful run: run_fixture_1; suite suite_authored_1; one completed trial, passed. reports/iterations.json records the actual tool call and returned sum.\n- reports/launch.json and reports/eval-run.json contain the subsequent repeat run and verdict.\n\nThis is a smoke evaluation of one tool/input, not comprehensive protocol conformance or model tool selection. The text assertion is formatting-sensitive and is a substring check, not exact numeric equality. The structured-field regex assertion was rejected by this isolated deployment; its generic error described a supported assertion subset without naming the rejected field. Changing to the documented text assertion allowed execution. A duplicate attempt occurred because `python` was unavailable; the edit then succeeded with python3. Rejected launches reported no charge.\n\nThe account marks runs SIMULATED: deterministic fixture execution, no hosted model or live billing. No production billing was contacted and nothing was purchased.\n\n## Public documentation used\n\n- https://docs.mcpjam.com/cli/overview\n- https://docs.mcpjam.com/cli/local-evals\n- https://docs.mcpjam.com/cli/reference\n- https://docs.mcpjam.com/inspector/evals\n- https://docs.mcpjam.com/api-reference/eval-runs/create-an-eval-case\n\nLocal copies of the public documentation are saved alongside this README.\nEOF"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:05:04.864313+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.015200376510620117,
+  "end": "2026-11-15T02:05:04.879461+00:00"
+}

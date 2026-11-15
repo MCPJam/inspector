@@ -1,0 +1,1 @@
+{"items":[{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]","createdAt":1,"updatedAt":2}]}

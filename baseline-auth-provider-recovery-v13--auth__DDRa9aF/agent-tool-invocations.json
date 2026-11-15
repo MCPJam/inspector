@@ -1,0 +1,98 @@
+[
+  {
+    "phase": "trial",
+    "id": "toolu_014XMxCNxtGP4qMhjF5hkzwn",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 2,
+    "command": "cd /workspace; ls; cat mcp.json | sed 's/\\(Bearer \\)[^\"]*/\\1***/'; which mcpjam; npx --no-install mcpjam --help 2>&1 | head -30",
+    "observed_output_sha256": "b284e0fba3e759f8e5a3faac72be7ab50657b7da3279d48ba381c4e7985b9e8f",
+    "successful_sum_output": false,
+    "result_public_line": 4,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01PnkQhRZg6c6fK49ZiqopBf",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 6,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com | head -c 1500; echo; curl -s https://docs.mcpjam.com/llms.txt | head -c 2500; curl -s -o /dev/null -w \"%{http_code}\\n\" -X POST http://fixture:8765/mcp",
+    "observed_output_sha256": "1e4a88f70518a4fcb9d787ec3462d88ee8a98f08fc8291f8dc3b27c88d41f773",
+    "successful_sum_output": false,
+    "result_public_line": 7,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01SgoCByA1n64UpsJMJyCfgS",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 9,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/llms.txt | grep -i -E \"cli|api|eval\" | head; npm view @mcpjam/cli version 2>&1 | head -3",
+    "observed_output_sha256": "cc7223971f421244c2fcee3bdbae684b025cf242a88b1b04aa4da944b6c19f7a",
+    "successful_sum_output": false,
+    "result_public_line": 10,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_016V9kmK1MPh8UPwsXiBU4iA",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 11,
+    "command": "cd /workspace; curl -s https://docs.mcpjam.com/cli/overview.md | head -c 4000; npm view @mcpjam/cli bin 2>&1|head -3",
+    "observed_output_sha256": "83302f5ee522c62b541fb8f8bec1992c1cc2323e86b21b094d71859814658cfe",
+    "successful_sum_output": false,
+    "result_public_line": 12,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01Eyg2CGun1g33uiNSBh1BC9",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 13,
+    "command": "cd /workspace; export M=\"npx -y @mcpjam/cli@latest\"; $M server doctor --help 2>&1 | head -30; $M server probe --url http://fixture:8765/mcp --access-token \"$MCP_SERVER_TOKEN\" 2>&1 | head -30",
+    "observed_output_sha256": "49ca6576fb34bdb101fdb122a2d2a2fde5749da6901fee98227c701163cb6ca0",
+    "successful_sum_output": false,
+    "result_public_line": 16,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01JUefzfbqsXyQKeAsAHBkpM",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 18,
+    "command": "cd /workspace; M=\"npx -y @mcpjam/cli@latest\"; A=\"--url http://fixture:8765/mcp --access-token $MCP_SERVER_TOKEN\"; $M server doctor $A --out doctor.json 2>&1 | head -c 1500; echo; $M tools list $A 2>&1 | head -c 2000",
+    "observed_output_sha256": "f3274375b42ed1bb707fc8cfe1898b81edba4aa9fd0a6626d299e24cd9ebbe42",
+    "successful_sum_output": false,
+    "result_public_line": 19,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01E38fqD7TpE9J6S5T8WRPEn",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 20,
+    "command": "cd /workspace; M=\"npx -y @mcpjam/cli@latest\"; A=\"--url http://fixture:8765/mcp --access-token $MCP_SERVER_TOKEN\"; $M tools call $A --tool-name add --tool-args '{\"a\":2,\"b\":3}' 2>&1 | head -c 800; echo; $M tools call $A --tool-name add --tool-args '{\"a\":\"x\"}' 2>&1 | head -c 600; $M server validate $A 2>&1 | head -c 800",
+    "observed_output_sha256": "fd8c3c2bb68d93eec22b05560b598a6047dbeb09d25e06574910073aa3fbd296",
+    "successful_sum_output": true,
+    "result_public_line": 21,
+    "source": "public-agent-claude-code.txt.jsonl"
+  },
+  {
+    "phase": "trial",
+    "id": "toolu_01UeoAPfCRXMpHF4JNyyH6ej",
+    "type": "Bash",
+    "is_shell_command": true,
+    "public_line": 22,
+    "command": "cd /workspace; cat > validate.sh <<'E'\n#!/bin/bash\n# usage: MCP_SERVER_TOKEN=[REDACTED] ./validate.sh\nM=\"npx -y @mcpjam/cli@latest\"; A=\"--url http://fixture:8765/mcp --access-token $MCP_SERVER_TOKEN\"\n$M server doctor $A --out doctor.json >/dev/null 2>&1\n$M tools list $A\n$M tools call $A --tool-name add --tool-args '{\"a\":2,\"b\":3}'\n$M tools call $A --tool-name add --tool-args '{\"a\":\"x\"}'\nE\nchmod +x validate.sh",
+    "observed_output_sha256": "cac1685585590361647e7a27b58a25a590f335bfcd0ab70fcdc0424e40c20843",
+    "successful_sum_output": false,
+    "result_public_line": 23,
+    "source": "public-agent-claude-code.txt.jsonl"
+  }
+]

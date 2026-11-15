@@ -1,0 +1,8 @@
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":4}
+{"valid":true,"file":".mcpjam/evals/arith.yaml","suite":{"id":"s_arith","name":"Arithmetic fixture","cases":1,"enabledCases":1},"findings":[]}
+MCPJAM_API_URL=<set>
+MCPJAM_TELEMETRY_DISABLED=<set>
+ANTHROPIC_MODEL=<set>
+ANTHROPIC_AUTH_TOKEN=<set>
+MCPJAM_API_KEY=<set>
+{"error":{"code":"OPTIONS_INVALID","message":"The MCPJam connection is unusable: baseUrl must be https:// — the platform credential is sent to it (a loopback http:// origin is allowed for local development).","details":{"phase":"setup","category":"usage"}}}

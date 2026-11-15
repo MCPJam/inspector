@@ -1,0 +1,22 @@
+{
+  "event_id": "7cefd40b0b7c47c1afe91448e3f16396",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "date -u\ncurl -sS https://docs.mcpjam.com/inspector/evals.md -o /workspace/mcpjam-eval/docs/evals.md\nrg -n -i 'credit|cost|fee|prompt|platform|usage|billing' /workspace/mcpjam-eval/docs/local-evals.md /workspace/mcpjam-eval/docs/evals.md | head -55\ncd /workspace/mcpjam-eval\npython3 - <<'PY'\nfrom api import call\ncall('/me',label='account-recheck')\ncall('/projects/project_fixture/eval-suites/suite_fixture/runs',label='runs-recheck')\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:35:36.877990+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.20586705207824707,
+  "end": "2026-11-15T01:35:37.083785+00:00"
+}

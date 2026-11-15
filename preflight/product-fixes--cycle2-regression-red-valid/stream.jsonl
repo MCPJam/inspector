@@ -1,0 +1,22 @@
+{"seconds": 0.7969241142272949, "stream": "stdout", "data": "\n"}
+{"seconds": 0.7969410419464111, "stream": "stdout", "data": " RUN  v4.1.12 $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/sdk\n\n"}
+{"seconds": 1.2582409381866455, "stream": "stdout", "data": " ❯ tests/mcp-conformance/http-rejection-wire.test.ts (6 tests | 2 failed) 42ms\n     × 'GET' 405 retains +0 schema violations 22ms\n     × still validates real JSON-RPC responses after a GET refusal 7ms\n"}
+{"seconds": 1.259660005569458, "stream": "stderr", "data": "\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯\n\n"}
+{"seconds": 1.2597780227661133, "stream": "stderr", "data": " FAIL  tests/mcp-conformance/http-rejection-wire.test.ts > HTTP rejection bodies and JSON-RPC schema validation > 'GET' 405 retains +0 schema violations\n"}
+{"seconds": 1.2599668502807617, "stream": "stderr", "data": "AssertionError: expected [ { …(3) } ] to have a length of +0 but got 1\n"}
+{"seconds": 1.2599761486053467, "stream": "stderr", "data": "\n- Expected\n+ Received\n\n- 0\n+ 1\n\n"}
+{"seconds": 1.2600359916687012, "stream": "stderr", "data": " ❯ tests/mcp-conformance/http-rejection-wire.test.ts:23:66\n"}
+{"seconds": 1.2612431049346924, "stream": "stderr", "data": "     21|     recorder.recordExchange(capture.exchanges[0]);\n     22|     const validator = new WireSchemaValidator({ protocolVersion: \"2025…\n     23|     expect(validator.validate(recorder.observations).violations).toHav…\n       |                                                                  ^\n     24|\n     25|     // Excluding a transport refusal from JSON-RPC grading must not er…\n"}
+{"seconds": 1.2612500190734863, "stream": "stderr", "data": "\n"}
+{"seconds": 1.2612898349761963, "stream": "stderr", "data": "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯\n\n"}
+{"seconds": 1.2612950801849365, "stream": "stderr", "data": " FAIL  tests/mcp-conformance/http-rejection-wire.test.ts > HTTP rejection bodies and JSON-RPC schema validation > still validates real JSON-RPC responses after a GET refusal\n"}
+{"seconds": 1.261336088180542, "stream": "stderr", "data": "AssertionError: expected [ { …(3) }, { …(4) } ] to have a length of 1 but got 2\n\n- Expected\n+ Received\n\n- 1\n+ 2\n\n"}
+{"seconds": 1.2613489627838135, "stream": "stderr", "data": " ❯ tests/mcp-conformance/http-rejection-wire.test.ts:50:31\n"}
+{"seconds": 1.2614209651947021, "stream": "stderr", "data": "     48|     for (const exchange of capture.exchanges) recorder.recordExchange(…\n     49|     const report = new WireSchemaValidator({ protocolVersion: \"2025-11…\n     50|     expect(report.violations).toHaveLength(1);\n       |                               ^\n     51|     expect(report.violations[0].definition).toBe(\"CallToolResult\");\n     52|     expect(report.violations[0].errors.join(\" \")).toContain(\"/content\"…\n\n"}
+{"seconds": 1.261430025100708, "stream": "stderr", "data": "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯\n\n"}
+{"seconds": 1.2615211009979248, "stream": "stdout", "data": "\n"}
+{"seconds": 1.2616219520568848, "stream": "stdout", "data": " Test Files  1 failed (1)\n"}
+{"seconds": 1.2616240978240967, "stream": "stdout", "data": "      Tests  2 failed | 4 passed (6)\n"}
+{"seconds": 1.2616369724273682, "stream": "stdout", "data": "   Start at  18:23:15\n"}
+{"seconds": 1.2616820335388184, "stream": "stdout", "data": "   Duration  453ms (transform 64ms, setup 17ms, import 164ms, tests 42ms, environment 0ms)\n"}
+{"seconds": 1.2617440223693848, "stream": "stdout", "data": "\n"}

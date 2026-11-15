@@ -1,0 +1,78 @@
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://127.0.0.1:18765/api/v1
+{"valid":true,"file":".mcpjam/evals/add.yaml","suite":{"id":"s_fixture_add","name":"Arithmetic fixture","cases":1,"enabledCases":1},"findings":[],"projectValidation":{"project":{"id":"project_fixture","name":"Fixture"},"targets":["the file's target.servers"],"valid":true,"findings":[]}}
+Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://127.0.0.1:18765/api/v1
+Eval idempotency key: 6ec61eed-48a7-435f-9d13-1324ce3a5bfc
+{"schemaVersion":1,"kind":"eval-run","passed":true,"verdict":"passed","summary":{"total":1,"passed":1,"failed":0,"byCategory":{"eval":{"total":1,"passed":1,"failed":0}}},"cases":[{"id":"run_fixture_1:suite_authored_1_case_0","title":"uses add for a sum","category":"eval","passed":true,"durationMs":1,"details":{"runId":"run_fixture_1","iterations":[{"id":"run_fixture_1_0","iterationNumber":1,"status":"completed","result":"passed","error":null}]}}],"durationMs":0,"metadata":{"runs":[{"id":"run_fixture_1","suiteId":"suite_authored_1","status":"completed","result":"passed","summary":{"total":1,"passed":1,"failed":0,"passRate":1},"iterationsComplete":true}],"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"suite":{"id":"suite_authored_1","name":"Arithmetic fixture"}},"decisionSummary":{"schemaVersion":1,"runId":"run_fixture_1","runStatus":"completed","diagnostics":{"items":[],"complete":true,"scannedIterations":1},"verdict":"passed","verdictSource":"legacy","counts":{"measurementUnit":"trial","total":1,"passed":1,"failed":0}}}
+{
+  "schemaVersion": 1,
+  "kind": "eval-run",
+  "passed": true,
+  "verdict": "passed",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "byCategory": {
+      "eval": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "run_fixture_1:suite_authored_1_case_0",
+      "title": "uses add for a sum",
+      "category": "eval",
+      "passed": true,
+      "durationMs": 1,
+      "details": {
+        "runId": "run_fixture_1",
+        "iterations": [
+          {
+            "id": "run_fixture_1_0",
+            "iterationNumber": 1,
+            "status": "completed",
+            "result": "passed",
+            "error": null
+          }
+        ]
+      }
+    }
+  ],
+  "durationMs": 0,
+  "metadata": {
+    "runs": [
+      {
+        "id": "run_fixture_1",
+        "suiteId": "suite_authored_1",
+        "status": "completed",
+        "result": "passed",
+        "summary": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1
+        },
+        "iterationsComplete": true
+      }
+    ],
+    "project": {
+      "id": "project_fixture",
+      "name": "Fixture",
+      "sensitive_value": "[REDACTED]"
+    },
+    "suite": {
+      "id": "suite_authored_1",
+      "name": "Arithmetic fixture"
+    }
+  },
+  "decisionSummary": {
+    "schemaVersion": 1,
+    "runId": "run_fixture_1",
+    "runStatus": "completed",
+    "diagnostics": {
+      "items": [],
+      "complete": true,
+      "scannedIt

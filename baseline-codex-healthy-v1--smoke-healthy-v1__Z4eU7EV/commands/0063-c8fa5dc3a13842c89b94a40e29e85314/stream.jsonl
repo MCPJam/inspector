@@ -1,0 +1,18 @@
+{"seconds": 0.03355288505554199, "stream": "stdout", "data": "/projects/{projectId}/eval-runs/{runId}/judge/backtest Preview draft judge grading on one recorded iteration\n"}
+{"seconds": 0.03390359878540039, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/validate Validate a server\n"}
+{"seconds": 0.03393411636352539, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/doctor Run the doctor\n"}
+{"seconds": 0.033995866775512695, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/check-oauth Check OAuth requirement\n/projects/{projectId}/servers/{serverId}/tools List tools\n/projects/{projectId}/servers/{serverId}/prompts List prompts\n"}
+{"seconds": 0.03402304649353027, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/resources List resources\n"}
+{"seconds": 0.03412318229675293, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/resources/read Read a resource\n/projects/{projectId}/servers/{serverId}/export Export a server snapshot\n/projects/{projectId}/servers/{serverId}/tools/call Call a tool\n"}
+{"seconds": 0.03414511680603027, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/prompts/get Render a prompt\n/projects/{projectId}/eval-runs Create an eval run (async)\n/projects/{projectId}/eval-runs/{runId}/cancel Cancel a run\n"}
+{"seconds": 0.034160614013671875, "stream": "stdout", "data": "/projects/{projectId}/eval-runs/{runId}/rerun Rerun a run's failed cases\n"}
+{"seconds": 0.03435039520263672, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/oauth/import-tokens Import OAuth tokens\n/projects/{projectId}/servers Save a server into a project\n"}
+{"seconds": 0.034391164779663086, "stream": "stdout", "data": "/projects/{projectId}/clients/{client}/servers Replace a client's servers\n/projects/{projectId}/eval-runs/{runId}/insights Request insights for an eval run\n"}
+{"seconds": 0.03444933891296387, "stream": "stdout", "data": "/projects/{projectId}/eval-runs/{runId}/judge Grade an eval run with LLM as Judge\n/projects/{projectId}/servers/{serverId}/readiness-runs/claude Start a Claude directory-readiness run\n/projects/{projectId}/servers/{serverId}/readiness-runs/openai Start an OpenAI plugin-directory readiness run\n/projects/{projectId}/servers/{serverId}/readiness-runs/muse Start a Muse connector readiness run\n/projects/{projectId}/servers/{serverId}/conformance-runs Start a persisted conformance run\n"}
+{"seconds": 0.03446555137634277, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/widgets/render Render an MCP App widget headlessly\n/projects/{projectId}/servers/{serverId}/widget-sessions Create a retained widget session\n"}
+{"seconds": 0.034471750259399414, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/action Act on a retained widget\n"}
+{"seconds": 0.034476518630981445, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/scripted-step Run a retained widget step\n"}
+{"seconds": 0.03448057174682617, "stream": "stdout", "data": "/projects/{projectId}/eval-runs/{runId}/gate-waivers Waive a run gate\n"}
+{"seconds": 0.0344843864440918, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/skills List server skills\n"}
+{"seconds": 0.034490346908569336, "stream": "stdout", "data": "/projects/{projectId}/servers/{serverId}/skills/get Get a server skill\n/projects/{projectId}/servers/{serverId}/skills/read-file Read a server skill's supporting file\n"}
+{"seconds": 0.03465867042541504, "stream": "stdout", "data": "/projects/{projectId}/eval-runs/{runId}/backtest Preview deterministic draft evaluators against stored evidence\n"}

@@ -1,0 +1,3 @@
+{"seconds": 0.418104887008667, "stream": "stderr", "data": "Using MCPJam Cloud as sk_…etic · project: flag (project_fixture) · http://fixture:8765/api/v1\n"}
+{"seconds": 0.49050045013427734, "stream": "stdout", "data": "reports/first-passing-run.json: run_fixture_1 passed\n"}
+{"seconds": 0.49056196212768555, "stream": "stdout", "data": "reports/run.json: run_fixture_2 passed\n"}

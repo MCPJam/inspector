@@ -1,0 +1,817 @@
+{
+  "cycle_2_targeted": {
+    "schema_version": 1,
+    "baseline_jobs": [
+      "patched-cycle2-auth-v13"
+    ],
+    "patched_jobs": [],
+    "rows": [
+      {
+        "run_id": "patched-cycle2-auth-v13--auth__3bkokhu",
+        "cohort": "cycle_2_targeted",
+        "agent": "claude-code",
+        "scenario": "auth",
+        "outcome": "passed",
+        "strict_reward": {
+          "reward": 1.0
+        },
+        "strict_success": true,
+        "final_phase": "trial",
+        "usable_product_trial": true,
+        "metrics_source": "verifier/metrics.json",
+        "metrics": {
+          "schema_version": 1,
+          "simulation": true,
+          "prompt": "C",
+          "task_success": true,
+          "first_meaningful_result": true,
+          "server_observed_successful_tool_call": true,
+          "time_to_first_result_seconds": 28.36040210723877,
+          "first_conformance_result": null,
+          "first_eval_completed": false,
+          "server_observed_simulated_eval": false,
+          "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+          "correct_diagnosis": null,
+          "successful_recovery": true,
+          "auth_refusal_count": 1,
+          "credit_refusal_count": 0,
+          "repeated_ineffective_requests": 0,
+          "state_preserved": null,
+          "duplicate_charges": 0,
+          "charge_count": 0,
+          "synthetic_credits_remaining": 20,
+          "human_handoff_correct": null,
+          "credit_cost_understanding": null,
+          "errors_explain_cause_action_actor": null,
+          "evidence_completeness": true,
+          "mcpjam_tool_event_ids": [
+            "6826495b452144d6ab3bca05e4115e35"
+          ],
+          "mcpjam_eval_event_ids": [],
+          "reproducible_artifacts": [
+            "mcp.json"
+          ],
+          "command_count": 17,
+          "reward": 1.0,
+          "request_count": 77,
+          "workspace_collected": true,
+          "command_evidence_collected": true
+        },
+        "native_shell_invocations": 5,
+        "commands_to_first_cli_tool_result": 5,
+        "concern_count": 1,
+        "assessment_flags": [],
+        "evidence": "../patched-cycle2-auth-v13--auth__3bkokhu/index.md"
+      },
+      {
+        "run_id": "patched-cycle2-auth-v13--auth__MV27c9o",
+        "cohort": "cycle_2_targeted",
+        "agent": "codex",
+        "scenario": "auth",
+        "outcome": "passed",
+        "strict_reward": {
+          "reward": 1.0
+        },
+        "strict_success": true,
+        "final_phase": "trial",
+        "usable_product_trial": true,
+        "metrics_source": "verifier/metrics.json",
+        "metrics": {
+          "schema_version": 1,
+          "simulation": true,
+          "prompt": "C",
+          "task_success": true,
+          "first_meaningful_result": true,
+          "server_observed_successful_tool_call": true,
+          "time_to_first_result_seconds": 105.42570900917053,
+          "first_conformance_result": null,
+          "first_eval_completed": false,
+          "server_observed_simulated_eval": true,
+          "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+          "correct_diagnosis": null,
+          "successful_recovery": true,
+          "auth_refusal_count": 1,
+          "credit_refusal_count": 0,
+          "repeated_ineffective_requests": 0,
+          "state_preserved": true,
+          "duplicate_charges": 0,
+          "charge_count": 1,
+          "synthetic_credits_remaining": 19,
+          "human_handoff_correct": null,
+          "credit_cost_understanding": null,
+          "errors_explain_cause_action_actor": null,
+          "evidence_completeness": true,
+          "mcpjam_tool_event_ids": [
+            "4c78389eccb34c92b4d826df4013088c",
+            "9f6a4057063640afadd4e3f785672c5a"
+          ],
+          "mcpjam_eval_event_ids": [],
+          "reproducible_artifacts": [
+            "mcp.json",
+            "validation/public-api.md",
+            "validation/server-inspection.md",
+            "validation/arithmetic-results.json",
+            "validation/tools-docs.md",
+            "validation/README.md",
+            "validation/add-live-trace.json",
+            "validation/validate.sh",
+            "validation/add-live.json"
+          ],
+          "command_count": 71,
+          "reward": 1.0,
+          "request_count": 358,
+          "workspace_collected": true,
+          "command_evidence_collected": true
+        },
+        "native_shell_invocations": 26,
+        "commands_to_first_cli_tool_result": null,
+        "concern_count": 1,
+        "assessment_flags": [
+          "simulated_eval_observed_but_strict_command_match_missing"
+        ],
+        "evidence": "../patched-cycle2-auth-v13--auth__MV27c9o/index.md"
+      }
+    ],
+    "groups": [
+      {
+        "cohort": "cycle_2_targeted",
+        "agent": "claude-code",
+        "scenario": "auth",
+        "sample_size": 1,
+        "attempt_count": 1,
+        "provider_blocked_count": 0,
+        "rates": {
+          "first_meaningful_result": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "server_observed_successful_tool_call": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "first_eval_completed": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "server_observed_simulated_eval": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "successful_recovery": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "state_preserved": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "evidence_completeness": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "correct_diagnosis": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "human_handoff_correct": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "credit_cost_understanding": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "errors_explain_cause_action_actor": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "strict_success": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "had_concern_note": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "duplicate_charges_observed": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          }
+        },
+        "descriptive_metrics": {
+          "native_shell_invocations": {
+            "median": 5,
+            "min": 5,
+            "max": 5,
+            "observed": 1,
+            "total": 1
+          },
+          "commands_to_first_cli_tool_result": {
+            "median": 5,
+            "min": 5,
+            "max": 5,
+            "observed": 1,
+            "total": 1
+          },
+          "time_to_first_direct_tester_tool_seconds": {
+            "median": 28.36040210723877,
+            "min": 28.36040210723877,
+            "max": 28.36040210723877,
+            "observed": 1,
+            "total": 1
+          },
+          "repeated_ineffective_requests": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "observed": 1,
+            "total": 1
+          }
+        },
+        "outcomes": {
+          "passed": 1
+        },
+        "run_ids": [
+          "patched-cycle2-auth-v13--auth__3bkokhu"
+        ]
+      },
+      {
+        "cohort": "cycle_2_targeted",
+        "agent": "codex",
+        "scenario": "auth",
+        "sample_size": 1,
+        "attempt_count": 1,
+        "provider_blocked_count": 0,
+        "rates": {
+          "first_meaningful_result": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "server_observed_successful_tool_call": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "first_eval_completed": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "server_observed_simulated_eval": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "successful_recovery": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "state_preserved": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "evidence_completeness": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "correct_diagnosis": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "human_handoff_correct": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "credit_cost_understanding": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "errors_explain_cause_action_actor": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "strict_success": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "had_concern_note": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "duplicate_charges_observed": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          }
+        },
+        "descriptive_metrics": {
+          "native_shell_invocations": {
+            "median": 26,
+            "min": 26,
+            "max": 26,
+            "observed": 1,
+            "total": 1
+          },
+          "commands_to_first_cli_tool_result": {
+            "median": null,
+            "min": null,
+            "max": null,
+            "observed": 0,
+            "total": 1
+          },
+          "time_to_first_direct_tester_tool_seconds": {
+            "median": 105.42570900917053,
+            "min": 105.42570900917053,
+            "max": 105.42570900917053,
+            "observed": 1,
+            "total": 1
+          },
+          "repeated_ineffective_requests": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "observed": 1,
+            "total": 1
+          }
+        },
+        "outcomes": {
+          "passed": 1
+        },
+        "run_ids": [
+          "patched-cycle2-auth-v13--auth__MV27c9o"
+        ]
+      }
+    ],
+    "limitations": [
+      "All Eval/credit outcomes are deterministic sandbox simulations, not live billing.",
+      "Final-phase metrics are selected once; blocked-step snapshots never count as separate trials.",
+      "Strict frozen reward and ledger-confirmed public-surface milestones are separate; no retrospective regrading.",
+      "Provider-blocked attempts remain visible but are excluded from usable product-trial rates. Null metrics are unknown, not failures; unknown counts are explicit.",
+      "Time begins at fixture initialization; it is descriptive and includes variable provider/container delays.",
+      "Native command counts include tester installation and compound shell invocations once; exclude Harbor startup and nested wrapper captures.",
+      "A concern note count measures observed statements, not severity, unique issue count, or human prevalence.",
+      "No statistical significance or causal improvement is inferred from these small samples."
+    ]
+  },
+  "heldout_discovery": {
+    "schema_version": 1,
+    "baseline_jobs": [
+      "heldout-discovery-v13"
+    ],
+    "patched_jobs": [],
+    "rows": [
+      {
+        "run_id": "heldout-discovery-v13--discovery__gvhHS8f",
+        "cohort": "heldout_discovery",
+        "agent": "codex",
+        "scenario": "healthy",
+        "outcome": "passed",
+        "strict_reward": {
+          "reward": 1.0
+        },
+        "strict_success": true,
+        "final_phase": "trial",
+        "usable_product_trial": true,
+        "metrics_source": "verifier/metrics.json",
+        "metrics": {
+          "schema_version": 1,
+          "simulation": true,
+          "prompt": "A",
+          "task_success": true,
+          "first_meaningful_result": true,
+          "server_observed_successful_tool_call": true,
+          "time_to_first_result_seconds": 65.02238464355469,
+          "first_conformance_result": null,
+          "first_eval_completed": false,
+          "server_observed_simulated_eval": false,
+          "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+          "correct_diagnosis": null,
+          "successful_recovery": null,
+          "auth_refusal_count": 0,
+          "credit_refusal_count": 0,
+          "repeated_ineffective_requests": 0,
+          "state_preserved": null,
+          "duplicate_charges": 0,
+          "charge_count": 0,
+          "synthetic_credits_remaining": 20,
+          "human_handoff_correct": null,
+          "credit_cost_understanding": null,
+          "errors_explain_cause_action_actor": null,
+          "evidence_completeness": true,
+          "mcpjam_tool_event_ids": [
+            "a59fd8593ff24c768b872746dfeeb93d",
+            "8f1b78c50f50468a9cbafe0e7505537e"
+          ],
+          "mcpjam_eval_event_ids": [],
+          "reproducible_artifacts": [
+            "mcp-check/cli-positive-trace.json",
+            "mcp-check/README.md",
+            "mcp-check/results/positive-trace.json",
+            "mcp-check/results/extra_property-trace.json",
+            "mcp-check/results/cancellation-trace.json",
+            "mcp-check/results/summary.json",
+            "mcp-check/results/wrong_type-trace.json",
+            "mcp-check/results/negative-trace.json",
+            "mcp-check/results/missing-trace.json",
+            "mcp-check/results/zero-trace.json",
+            "mcp-check/results/decimal-trace.json",
+            "mcp-check/docs/public-api.md",
+            "mcp-check/docs/server-inspection.md",
+            "mcp-check/docs/tools-resources-prompts.md"
+          ],
+          "command_count": 56,
+          "reward": 1.0,
+          "request_count": 402,
+          "workspace_collected": true,
+          "command_evidence_collected": true
+        },
+        "native_shell_invocations": 19,
+        "commands_to_first_cli_tool_result": null,
+        "concern_count": 1,
+        "assessment_flags": [],
+        "evidence": "../heldout-discovery-v13--discovery__gvhHS8f/index.md"
+      },
+      {
+        "run_id": "heldout-discovery-v13--discovery__pXszNVb",
+        "cohort": "heldout_discovery",
+        "agent": "claude-code",
+        "scenario": "healthy",
+        "outcome": "passed",
+        "strict_reward": {
+          "reward": 1.0
+        },
+        "strict_success": true,
+        "final_phase": "trial",
+        "usable_product_trial": true,
+        "metrics_source": "verifier/metrics.json",
+        "metrics": {
+          "schema_version": 1,
+          "simulation": true,
+          "prompt": "A",
+          "task_success": true,
+          "first_meaningful_result": true,
+          "server_observed_successful_tool_call": true,
+          "time_to_first_result_seconds": 25.170877695083618,
+          "first_conformance_result": null,
+          "first_eval_completed": false,
+          "server_observed_simulated_eval": false,
+          "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+          "correct_diagnosis": null,
+          "successful_recovery": null,
+          "auth_refusal_count": 0,
+          "credit_refusal_count": 0,
+          "repeated_ineffective_requests": 0,
+          "state_preserved": null,
+          "duplicate_charges": 0,
+          "charge_count": 0,
+          "synthetic_credits_remaining": 20,
+          "human_handoff_correct": null,
+          "credit_cost_understanding": null,
+          "errors_explain_cause_action_actor": null,
+          "evidence_completeness": true,
+          "mcpjam_tool_event_ids": [
+            "e864742c2bac4d368d0058065236ffdf"
+          ],
+          "mcpjam_eval_event_ids": [],
+          "reproducible_artifacts": [
+            "run.sh"
+          ],
+          "command_count": 17,
+          "reward": 1.0,
+          "request_count": 95,
+          "workspace_collected": true,
+          "command_evidence_collected": true
+        },
+        "native_shell_invocations": 4,
+        "commands_to_first_cli_tool_result": 4,
+        "concern_count": 2,
+        "assessment_flags": [],
+        "evidence": "../heldout-discovery-v13--discovery__pXszNVb/index.md"
+      }
+    ],
+    "groups": [
+      {
+        "cohort": "heldout_discovery",
+        "agent": "claude-code",
+        "scenario": "healthy",
+        "sample_size": 1,
+        "attempt_count": 1,
+        "provider_blocked_count": 0,
+        "rates": {
+          "first_meaningful_result": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "server_observed_successful_tool_call": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "first_eval_completed": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "server_observed_simulated_eval": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "successful_recovery": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "state_preserved": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "evidence_completeness": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "correct_diagnosis": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "human_handoff_correct": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "credit_cost_understanding": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "errors_explain_cause_action_actor": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "strict_success": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "had_concern_note": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "duplicate_charges_observed": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          }
+        },
+        "descriptive_metrics": {
+          "native_shell_invocations": {
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "observed": 1,
+            "total": 1
+          },
+          "commands_to_first_cli_tool_result": {
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "observed": 1,
+            "total": 1
+          },
+          "time_to_first_direct_tester_tool_seconds": {
+            "median": 25.170877695083618,
+            "min": 25.170877695083618,
+            "max": 25.170877695083618,
+            "observed": 1,
+            "total": 1
+          },
+          "repeated_ineffective_requests": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "observed": 1,
+            "total": 1
+          }
+        },
+        "outcomes": {
+          "passed": 1
+        },
+        "run_ids": [
+          "heldout-discovery-v13--discovery__pXszNVb"
+        ]
+      },
+      {
+        "cohort": "heldout_discovery",
+        "agent": "codex",
+        "scenario": "healthy",
+        "sample_size": 1,
+        "attempt_count": 1,
+        "provider_blocked_count": 0,
+        "rates": {
+          "first_meaningful_result": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "server_observed_successful_tool_call": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "first_eval_completed": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "server_observed_simulated_eval": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "successful_recovery": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "state_preserved": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "evidence_completeness": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "correct_diagnosis": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "human_handoff_correct": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "credit_cost_understanding": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "errors_explain_cause_action_actor": {
+            "positive": 0,
+            "observed": 0,
+            "total": 1,
+            "unknown": 1
+          },
+          "strict_success": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "had_concern_note": {
+            "positive": 1,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          },
+          "duplicate_charges_observed": {
+            "positive": 0,
+            "observed": 1,
+            "total": 1,
+            "unknown": 0
+          }
+        },
+        "descriptive_metrics": {
+          "native_shell_invocations": {
+            "median": 19,
+            "min": 19,
+            "max": 19,
+            "observed": 1,
+            "total": 1
+          },
+          "commands_to_first_cli_tool_result": {
+            "median": null,
+            "min": null,
+            "max": null,
+            "observed": 0,
+            "total": 1
+          },
+          "time_to_first_direct_tester_tool_seconds": {
+            "median": 65.02238464355469,
+            "min": 65.02238464355469,
+            "max": 65.02238464355469,
+            "observed": 1,
+            "total": 1
+          },
+          "repeated_ineffective_requests": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "observed": 1,
+            "total": 1
+          }
+        },
+        "outcomes": {
+          "passed": 1
+        },
+        "run_ids": [
+          "heldout-discovery-v13--discovery__gvhHS8f"
+        ]
+      }
+    ],
+    "limitations": [
+      "All Eval/credit outcomes are deterministic sandbox simulations, not live billing.",
+      "Final-phase metrics are selected once; blocked-step snapshots never count as separate trials.",
+      "Strict frozen reward and ledger-confirmed public-surface milestones are separate; no retrospective regrading.",
+      "Provider-blocked attempts remain visible but are excluded from usable product-trial rates. Null metrics are unknown, not failures; unknown counts are explicit.",
+      "Time begins at fixture initialization; it is descriptive and includes variable provider/container delays.",
+      "Native command counts include tester installation and compound shell invocations once; exclude Harbor startup and nested wrapper captures.",
+      "A concern note count measures observed statements, not severity, unique issue count, or human prevalence.",
+      "No statistical significance or causal improvement is inferred from these small samples."
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "bootstrap:claude-help",
+  "path": "bootstrap--claude-help",
+  "argv": [
+    "claude",
+    "--help"
+  ],
+  "start": "2026-11-15T01:12:48.441735+00:00",
+  "end": "2026-11-15T01:12:48.638888+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg",
+    "outcome-002.svg",
+    "outcome-003.svg",
+    "outcome-004.svg",
+    "outcome-005.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-001-002.svg",
+    "intermediate-001-003.svg",
+    "intermediate-001-004.svg",
+    "intermediate-001-005.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

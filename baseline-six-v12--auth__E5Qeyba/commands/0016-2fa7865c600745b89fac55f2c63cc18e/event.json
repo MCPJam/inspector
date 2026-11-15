@@ -1,0 +1,22 @@
+{
+  "event_id": "2fa7865c600745b89fac55f2c63cc18e",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json\ns=json.load(open('/workspace/validation/conformance.json'))\nprint('ROOT',list(s))\ndef walk(x):\n if isinstance(x,dict):\n  if x.get('status') in ['failed','error']: print(json.dumps(x,indent=2))\n  for v in x.values():walk(v)\n elif isinstance(x,list):\n  for v in x:walk(v)\nwalk(s)\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:40:31.757371+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.009841203689575195,
+  "end": "2026-11-15T01:40:31.767126+00:00"
+}

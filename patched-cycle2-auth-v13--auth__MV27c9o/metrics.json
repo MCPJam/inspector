@@ -1,0 +1,52 @@
+[
+  {
+    "source": "verifier/metrics.json",
+    "metrics": {
+      "schema_version": 1,
+      "simulation": true,
+      "prompt": "C",
+      "task_success": true,
+      "first_meaningful_result": true,
+      "server_observed_successful_tool_call": true,
+      "time_to_first_result_seconds": 105.42570900917053,
+      "first_conformance_result": null,
+      "first_eval_completed": false,
+      "server_observed_simulated_eval": true,
+      "eval_scope": "deterministic sandbox simulation, not a live hosted Eval",
+      "correct_diagnosis": null,
+      "successful_recovery": true,
+      "auth_refusal_count": 1,
+      "credit_refusal_count": 0,
+      "repeated_ineffective_requests": 0,
+      "state_preserved": true,
+      "duplicate_charges": 0,
+      "charge_count": 1,
+      "synthetic_credits_remaining": 19,
+      "human_handoff_correct": null,
+      "credit_cost_understanding": null,
+      "errors_explain_cause_action_actor": null,
+      "evidence_completeness": true,
+      "mcpjam_tool_event_ids": [
+        "4c78389eccb34c92b4d826df4013088c",
+        "9f6a4057063640afadd4e3f785672c5a"
+      ],
+      "mcpjam_eval_event_ids": [],
+      "reproducible_artifacts": [
+        "mcp.json",
+        "validation/public-api.md",
+        "validation/server-inspection.md",
+        "validation/arithmetic-results.json",
+        "validation/tools-docs.md",
+        "validation/README.md",
+        "validation/add-live-trace.json",
+        "validation/validate.sh",
+        "validation/add-live.json"
+      ],
+      "command_count": 71,
+      "reward": 1.0,
+      "request_count": 358,
+      "workspace_collected": true,
+      "command_evidence_collected": true
+    }
+  }
+]

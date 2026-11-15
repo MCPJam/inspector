@@ -1,0 +1,127 @@
+{"launch":{"project":{"id":"project_fixture","name":"Fixture","sensitive_value": "[REDACTED]"},"suite":{"id":"suite_authored_1","name":"Arithmetic smoke"},"outcome":"started","startedCount":1,"failedCount":0,"idempotencyKey":"8714c6d0-5309-4af3-98e9-8183af5953fb","targets":[{"status":"started","environment":null,"runId":"run_fixture_1","runStatus":"running","servers":[{"id":"server_fixture","name":"Arithmetic"}]}],"runId":"run_fixture_1","status":"running","servers":[{"id":"server_fixture","name":"Arithmetic"}],"environment":null},"runs":[{"id":"run_fixture_1","suiteId":"suite_authored_1","runNumber":1,"status":"completed","result":"passed","summary":{"total":1,"passed":1,"failed":0,"passRate":1},"source":"api","notes":"SIMULATED: deterministic fixture execution; no hosted model or live billing.","createdAt":1794708269263,"completedAt":1794708269263}],"decisionSummary":{"schemaVersion":1,"runId":"run_fixture_1","runStatus":"completed","diagnostics":{"items":[],"complete":true,"scannedIterations":1},"verdict":"passed","verdictSource":"legacy","counts":{"measurementUnit":"trial","total":1,"passed":1,"failed":0}}}
+{
+  "schemaVersion": 1,
+  "kind": "eval-run",
+  "passed": true,
+  "verdict": "passed",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "byCategory": {
+      "eval": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "run_fixture_1:suite_authored_1_case_0",
+      "title": "Adding 2 and 3 returns 5",
+      "category": "eval",
+      "passed": true,
+      "durationMs": 1,
+      "details": {
+        "runId": "run_fixture_1",
+        "iterations": [
+          {
+            "id": "run_fixture_1_0",
+            "iterationNumber": 1,
+            "status": "completed",
+            "result": "passed",
+            "error": null
+          }
+        ]
+      }
+    }
+  ],
+  "durationMs": 0,
+  "metadata": {
+    "runs": [
+      {
+        "id": "run_fixture_1",
+        "suiteId": "suite_authored_1",
+        "status": "completed",
+        "result": "passed",
+        "summary": {
+          "total": 1,
+          "passed": 1,
+          "failed": 0,
+          "passRate": 1
+        },
+        "iterationsComplete": true
+      }
+    ],
+    "project": {
+      "id": "project_fixture",
+      "name": "Fixture",
+      "sensitive_value": "[REDACTED]"
+    },
+    "suite": {
+      "id": "suite_authored_1",
+      "name": "Arithmetic smoke"
+    }
+  },
+  "decisionSummary": {
+    "schemaVersion": 1,
+    "runId": "run_fixture_1",
+    "runStatus": "completed",
+    "diagnostics": {
+      "items": [],
+      "complete": true,
+      "scannedIterations": 1
+    },
+    "verdict": "passed",
+    "verdictSource": "legacy",
+    "counts": {
+      "measurementUnit": "trial",
+      "total": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  }
+}
+Usage: mcpjam cloud eval iterations [options]
+
+List per-iteration results for an eval run (pass/fail, tool calls, tokens,
+latency)
+
+Options:
+  --run <id>              Eval run ID (from `eval run`)
+  --project <id-or-name>  Project name or ID (defaults to the most recently
+                          updated project)
+  --cursor <cursor>       Pagination cursor from a previous response
+  --limit <n>             Max iterations per page (1–200)
+  -h, --help              display help for command
+Usage: mcpjam cloud eval gate [options] [command]
+
+Apply a pass/fail policy to a finished eval run and set an exit code (0 pass or
+waived, 1 eval failure, 2 usage, 3 incomplete)
+
+Options:
+  --run <id>                                 Eval run ID (from `eval run`)
+  --project <id-or-name>                     Project name or ID (defaults to the most recently updated project)
+  --min-pass-rate-percent <0-100>            Minimum share of iterations that must pass, as a percentage
+  --no-gating-score-errors                   Fail if any required scorer errored during the run
+  --min-scorer-pass-rate <scorerId=percent>  Minimum pass rate for one scorer (repeatable) (default: [])
+  --min-mean-score <scorerId=0..1>           Minimum mean score for one scorer (repeatable) (default: [])
+  --baseline <runId>                         Baseline run ID to gate a regression delta against; mutually exclusive with --baseline-sha
+  --baseline-sha <sha>                       Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --baseline
+  --min-sample-size <n>                      Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline or --baseline-sha
+  --min-effect-size-percent <0-100>          Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline or --baseline-sha
+  --gate-deterministic-regressions           Fail if a deterministic required scorer flipped from passed to failed; requires --baseline or --baseline-sha
+  --max-p95-latency-increase-ms <ms>         Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline or --baseline-sha
+  --max-cost-usd <usd>                       Fail if the run's MCPJam-billed cost exceeded this many dollars; non-gateable when the run's cost is unknown or only partly measured
+  --max-cost-increase-percent <percent>      Fail if cost rose by more than this percentage of the baseline's; requires --baseline or --baseline-sha
+  --wait                                     Poll until the run reaches a terminal status
+  --wait-timeout <ms>                        Give up waiting after this many milliseconds (default 600000; a run held for its judge gets up to 31 more minutes unless this flag is set)
+  --reporter <json-summary|junit-xml|html>   Write a structured report to stdout instead of the default output
+  --out <path>                               Atomically write the structured report selected by --reporter (default: json-summary)
+  --no-suite-policy                          Skip the stored suite quality-gate; evaluate only the flag/base report
+  -h, --help                                 display help for command
+
+Commands:
+  waive [options]                            Override a FAILING run's gate until an expiry you name. Does not make the run pass: the run keeps its result, and the waiver is named in every report and check.
+  unwaive [options]                          Revoke a gate waiver, putting the gate and the GitHub Check Run back. Idempotent.

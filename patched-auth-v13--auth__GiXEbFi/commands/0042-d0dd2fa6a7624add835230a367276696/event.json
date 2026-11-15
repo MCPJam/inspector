@@ -1,0 +1,22 @@
+{
+  "event_id": "d0dd2fa6a7624add835230a367276696",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "npx --yes @mcpjam/cli --no-telemetry cloud projects capabilities --project project_fixture > /workspace/validation/project-capabilities.json; cat /workspace/validation/project-capabilities.json; npx --yes @mcpjam/cli --no-telemetry cloud projects status --project project_fixture > /workspace/validation/project-status.json; cat /workspace/validation/project-status.json; npx --yes @mcpjam/cli --no-telemetry protocol conformance --help"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:17:24.367481+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 2.058814525604248,
+  "end": "2026-11-15T02:17:26.426243+00:00"
+}

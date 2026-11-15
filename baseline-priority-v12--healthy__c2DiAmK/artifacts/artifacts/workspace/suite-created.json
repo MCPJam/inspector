@@ -1,0 +1,19 @@
+{
+  "suiteId": "suite_authored_5",
+  "name": "Arithmetic asserted result",
+  "servers": [
+    {
+      "id": "server_fixture"
+    }
+  ],
+  "hosts": [],
+  "caseUpsert": {
+    "committed": [
+      {
+        "id": "suite_authored_5_case_0",
+        "name": "add 2 and 3 returns 5"
+      }
+    ],
+    "failed": []
+  }
+}

@@ -1,0 +1,9 @@
+{"seconds": 164.16722297668457, "stream": "stdout", "data": "  1/1 Running trials... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:02:29 0:00:00\nadhoc • claude-code • sonnet\n┏━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Trials ┃ Exceptions ┃\n┡━━━━━━━━╇━━━━━━━━━━━━┩\n│      0 │          1 │\n└────────┴────────────┘\n\n"}
+{"seconds": 164.1684169769287, "stream": "stdout", "data": "┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓\n┃ Exception               ┃ Count ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩\n│ RewardFileNotFoundError │     1 │\n└─────────────────────────┴───────┘\n"}
+{"seconds": 164.16847205162048, "stream": "stdout", "data": "\n"}
+{"seconds": 164.16885781288147, "stream": "stdout", "data": "Job Info\n"}
+{"seconds": 164.1691119670868, "stream": "stdout", "data": "Total runtime: 2m 29s\n"}
+{"seconds": 164.16932892799377, "stream": "stdout", "data": "Results written to work/jobs/baseline-claude-auth-v11/result.json\n"}
+{"seconds": 164.1696388721466, "stream": "stdout", "data": "Inspect results by running `harbor view work/jobs`\n"}
+{"seconds": 164.17019701004028, "stream": "stdout", "data": "Share results by running `harbor upload work/jobs/baseline-claude-auth-v11`\n"}
+{"seconds": 164.17031383514404, "stream": "stdout", "data": "\n"}

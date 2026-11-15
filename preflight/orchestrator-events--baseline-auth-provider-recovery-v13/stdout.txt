@@ -1,0 +1,26 @@
+  1/1 Mean: 1.000 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:01:13 0:00:00
+adhoc • claude-code • claude-sonnet-5-5
+┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┓
+┃ Trials ┃ Exceptions ┃  Mean ┃
+┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━┩
+│      1 │          0 │ 1.000 │
+└────────┴────────────┴───────┘
+
+┏━━━━━━━━┳━━━━━━━┓
+┃ Reward ┃ Count ┃
+┡━━━━━━━━╇━━━━━━━┩
+│ 1.0    │     1 │
+└────────┴───────┘
+
+Job Info
+Total runtime: 1m 13s
+Results written to 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs/baseline-auth-provider-recovery-v13/result.json
+Inspect results by running `harbor view 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs`
+Share results by running `harbor upload 
+$USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/w
+ork/jobs/baseline-auth-provider-recovery-v13`
+

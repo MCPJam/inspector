@@ -1,0 +1,5 @@
+{"seconds": 0.6919605731964111, "stream": "stdout", "data": "{\"error\":{\"code\":\"USAGE_ERROR\",\"message\":\"Invalid suite definition: cases.0.steps.0.serverName: Invalid input: expected string, received undefined\"}}\n"}
+{"seconds": 0.6920125484466553, "stream": "stdout", "data": "\n"}
+{"seconds": 1.4139149188995361, "stream": "stdout", "data": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Eval suite \\\"Arithmetic add deterministic\\\" was not found in project \\\"Fixture\\\". Available: Arithmetic smoke (id: suite_fixture), Arithmetic add (id: suite_authored_1).\"}}\n"}
+{"seconds": 1.413952112197876, "stream": "stdout", "data": "\n"}
+{"seconds": 1.4143857955932617, "stream": "stderr", "data": "head: cannot open 'report.json' for reading: No such file or directory\n"}

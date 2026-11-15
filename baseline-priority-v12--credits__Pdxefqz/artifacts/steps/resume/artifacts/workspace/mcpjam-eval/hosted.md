@@ -1,0 +1,178 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Hosted App
+
+> Use MCPJam Inspector in the browser — no installation required
+
+MCPJam Inspector is available as a hosted web app at [app.mcpjam.com](https://app.mcpjam.com). Build, test, debug, and evaluate MCP servers and apps with frontier models — all from the web.
+
+> [card] [Open MCPJam Inspector](https://app.mcpjam.com)
+>
+> Launch the hosted inspector in your browser
+
+## Why use the hosted app?
+
+* **No installation** — Open a browser and start testing.
+* **Always up to date** — You're always on the latest version without running `npx @mcpjam/inspector@latest`.
+* **Shareable** — Share server URLs with your team. Everyone can inspect the same server without local setup.
+
+## Share your MCP server
+
+Send a link to your MCP server or app the same way you'd share a Google Doc. Anyone with a MCPJam account who opens it can immediately start chatting with the server right in their browser.
+
+Try it yourself with the [Excalidraw MCP server](https://app.mcpjam.com/shared/excalidraw/mN4lJGfKanjpnBdZvE-lL):
+
+[MCPJam Server Sharing](https://www.youtube.com/embed/a1yNishkCcA)
+
+## Quick start
+
+1. Go to [app.mcpjam.com](https://app.mcpjam.com)
+2. Click **Add server** and enter your MCP server's URL (must be HTTPS)
+3. Choose your authentication method (**Auto** is the default — connects without credentials and escalates to OAuth if the server requires it)
+4. Start inspecting tools, resources, and prompts
+
+## Usage limits
+
+The hosted app uses a daily credit system to power AI features like chat.
+
+* **Guests** get a free daily usage allowance. Higher-priced models are greyed out in the model picker with a "Sign in to use this model" tooltip — sign in to unlock them. The sidebar shows a progress bar with how much of your daily limit you've used and when it resets. When you reach the limit, you'll be prompted to sign in.
+* **Guest session limit**: The hosted app creates a guest session the first time you visit from a given network. If too many guest sessions have been created from your network in a single day, a banner appears: "Too many guest sessions from your network today. Sign in to continue." Signing in removes this restriction.
+* **Signed-in users** get **10×** the daily usage of a guest. Your daily usage and any paid credit balance are visible in the account menu at the bottom of the sidebar.
+* **Paid credits** can be topped up from the billing page and are shown alongside your daily limit in the account menu.
+* **Low credits warning** — when your credit balance drops to 10% or below, the sidebar credit meter turns red and shows a **Low credits** label.
+* **When credits run out**, only the free hosted models are locked. Models you access with your own API key (BYOK) remain available regardless of your credit balance.
+
+When your credit balance reaches zero, free models are grayed out in the model picker so you can see the limit before sending a message. Models from your own API keys remain available. If you have paid top-up credits, free models stay enabled even after your daily free allowance is exhausted.
+
+## Signing out
+
+Open the **account menu** at the bottom of the sidebar (click your avatar or email) and choose **Sign out**. You'll be returned to the public app as a guest, and any signed-in usage allowance is replaced by the guest allowance until you sign back in.
+
+OAuth tokens you connected while signed in remain in your hosted workspace and are restored the next time you sign in on the same account.
+
+## OAuth token reveal
+
+When you connect an OAuth server in the hosted app, your OAuth credentials are stored securely in Vault. You can inspect those tokens on demand from the server's **Auth** tab without them ever being written to `localStorage` or shared with other users.
+
+To reveal tokens:
+
+1. Open the **Servers** tab and click the server name to open its detail modal.
+2. Go to the **Auth** tab.
+3. Under **OAuth Tokens**, click **Reveal tokens**.
+4. Each token (access token, refresh token, ID token) is masked by default. Click the eye icon next to a token to reveal its value, or click the copy icon to copy it directly without revealing it.
+
+Expired tokens are automatically refreshed before being returned. Revealed values are kept component-local and are cleared when you close the modal.
+
+> [!NOTE]
+>
+> The **Reveal tokens** button only appears after the server has been synced to
+> your hosted workspace. If the button is not visible, disconnect and reconnect
+> the server to trigger a sync.
+
+## What's different
+
+The following features are not available in the hosted app. They are available when running MCPJam locally via [npx, Docker, or the desktop app](https://docs.mcpjam.com/installation.md).
+
+### HTTPS only
+
+The hosted app requires all MCP server connections to use **HTTPS**. If your server only supports HTTP, use the [local inspector](https://docs.mcpjam.com/installation.md) instead.
+
+### Connections come from MCPJam's servers
+
+The hosted app connects to your MCP server from MCPJam's servers, not from your machine. If your server only accepts known IP addresses, allow MCPJam's [published addresses](https://docs.mcpjam.com/hosted/network.md), or use the [local inspector](https://docs.mcpjam.com/installation.md), which connects from your own network.
+
+### No STDIO connections
+
+STDIO servers are not available in the hosted version of MCPJam. Use a Streamable HTTP endpoint instead, or switch to the [local inspector](https://docs.mcpjam.com/installation.md).
+
+### OAuth tokens can't auto-refresh for local authorization servers
+
+In hosted mode, the cloud backend handles token refresh on your behalf. If your MCP server's OAuth authorization server runs on a private address (localhost, a LAN IP, or a `.local`/`.internal` hostname), the cloud cannot reach it to refresh tokens after they expire.
+
+When you connect to such a server, the app shows a warning toast. You can continue using the server until the access token expires, but you'll need to re-run the OAuth flow manually each time. For fully-local setups, use the [local inspector](https://docs.mcpjam.com/installation.md) instead.
+
+### No tunneling
+
+Tunneling exposes a local MCP server over HTTPS for remote access. Since the hosted app connects to already-remote servers, tunneling is not applicable.
+
+### No Tracing tab
+
+The **Tracing** tab is not available in the hosted app. It is a live log of the JSON-RPC traffic between the Inspector and a server you are connected to, and it streams from the local Inspector process's RPC bus — which a hosted deployment does not run. Use the [local inspector](https://docs.mcpjam.com/installation.md) for the full log. In the hosted app, the JSON-RPC frames for a chat turn are captured and shown with that turn in the Playground instead.
+
+Getting eval traces OUT of the hosted app is a different thing, and it does work: open a completed run and use **Export traces** for an OTLP JSON file (see [Evals](https://docs.mcpjam.com/inspector/evals.md#exporting-traces)), or fetch the same projection from `GET /api/v1/trace-exports/otlp` in the [public API](https://docs.mcpjam.com/reference/public-api.md). Both use OpenInference semantic conventions and land in Arize Phoenix, Datadog, or any other OTLP-compatible backend.
+
+## Billing
+
+### Payment history
+
+The **Payment history** card on the org billing page lists your recent credit top-ups. Each row shows:
+
+| Column | Details |
+| - | - |
+| Date | When the top-up was processed |
+| Amount | Amount charged in USD |
+| Status | `Succeeded`, `Pending`, or `Failed` |
+| Receipt | Link to the Stripe-hosted receipt (opens in a new tab) |
+
+If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
+
+To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
+
+> [!NOTE]
+>
+> **Free plan organizations cannot purchase credits directly.** If your organization is on the Free plan, the Top up dialog shows a message that only an organization owner can upgrade the plan, with a **Compare plans** button. Clicking it closes the dialog and opens your organization's Plans settings so you can upgrade.
+
+> [!NOTE]
+>
+> **Desktop app:** When you confirm a top-up in the desktop app, checkout opens in your default system browser and the dialog closes automatically. Your credit balance updates in the app once the purchase completes — no redirect back into the app is required.
+
+### Spend budget
+
+An owner or admin can cap what the whole organization spends on MCPJam-billed
+work — chat, evals, judges and computer time — for each billing period, from
+**Organization → Budget**.
+
+* Set the cap in dollars, and choose the percentages to be warned at. The
+  default warns at 80%; reaching the cap always notifies, whether or not you
+  list it.
+* Warnings go to the organization's owners and admins in the notifications
+  bell, and to the owner by email.
+* **When the budget is reached**, new chat turns, eval runs and computer starts
+  are refused for the whole organization. The refusal says the budget is
+  reached and that an owner or admin can raise it — buying credits does not
+  clear it. Work already in flight finishes, and running computers keep going
+  until they hibernate.
+* A scheduled eval that hits the budget pauses its schedule rather than
+  retrying into the same cap every window; it resumes once you raise the cap or
+  the period rolls over.
+* Runs that use **your own API keys** are never counted against the budget and
+  never blocked by it. Neither is the free daily allowance, which is not
+  credits.
+* The window is your organization's own billing period: the subscription cycle
+  for team and enterprise plans, and the calendar month otherwise. Raising or
+  lowering the cap mid-period does not reset what has already been spent.
+
+Any member can see the budget and how much of it is left; only owners and
+admins can change it. Every change is recorded in the organization's audit log
+with who made it and what it was before.
+
+The same budget is readable and writable from the API at
+`/v1/organizations/{organizationId}/spend-budget`.
+
+### Managing billing details
+
+Organization owners on a paid plan see a **Manage billing** button on the billing page. Clicking it opens the Stripe portal where you can update payment methods, download invoices, add tax IDs, and review billing details. Only organization owners can access this portal.
+
+### Seat payment failures
+
+When someone you invited to a paid-seat organization signs up and the automatic seat charge fails or is cancelled, the org billing page shows a **Seat payment didn't go through** notice. As the org owner you can:
+
+* Click **Retry payment** to reopen the charge and complete payment (including any 3DS challenge).
+* Click **Remove invite** to remove the invite entirely if you no longer want to add that person.
+
+The invited member's organization appears greyed out in their sidebar until the seat is paid.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

@@ -1,0 +1,22 @@
+{
+  "event_id": "8e53fe66be5a4e0d8cb59487e3b0f3b8",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794707379024-n4azkr.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; curl -s -m 20 https://docs.mcpjam.com | head -c 1500; echo ----; echo $MCPJAM_API_URL; for p in usage credits billing; do echo \"== $p\"; curl -s -m 15 -H \"Authorization: Bearer $MCPJAM_API_KEY\" \"$MCPJAM_API_URL/$p?project=project_fixture\" | head -c 800; echo; done' < /dev/null && pwd -P >| /tmp/claude-0675-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:49:39.064146+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.14566421508789062,
+  "end": "2026-11-15T01:49:39.209747+00:00"
+}

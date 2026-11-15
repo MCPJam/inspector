@@ -1,0 +1,5 @@
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+- [Create an eval run (async)](https://docs.mcpjam.com/api-reference/eval-runs/create-an-eval-run-async.md): Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detach
+- [Get the pre-run disclosure for a suite launch plan](https://docs.mcpjam.com/api-reference/eval-runs/get-the-pre-run-disclosure-for-a-suite-launch-plan.md): What happens to a run's content BEFORE yo

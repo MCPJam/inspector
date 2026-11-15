@@ -1,0 +1,2 @@
+{"seconds": 0.6306538581848145, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":9}\n"}
+{"seconds": 1.208240270614624, "stream": "stdout", "data": "{\"status\":\"linked\",\"path\":\"/workspace/.mcpjam/project.json\",\"project\":{\"id\":\"project_fixture\",\"name\":\"Fixture\"},\"apiUrl\":\"http://fixture:8765/api/v1\"}\n"}

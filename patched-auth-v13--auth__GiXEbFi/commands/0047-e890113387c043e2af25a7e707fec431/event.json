@@ -1,0 +1,22 @@
+{
+  "event_id": "e890113387c043e2af25a7e707fec431",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport os,json,pathlib\nroot=pathlib.Path('/workspace/validation')\nleaks=[]\nfor p in root.rglob('*'):\n if p.is_file():\n  data=p.read_bytes()\n  for key in ['MCP_SERVER_TOKEN','MCPJAM_API_KEY']:\n   val=os.environ.get(key,'')\n   if val and val.encode() in data: leaks.append(str(p))\nprint('Credential value matches:',len(leaks))\nprint('Files preserved:',sum(p.is_file() for p in root.rglob('*')))\nchecks=json.load(open(root/'tool-checks.json'))\nprint('Tool checks:',sum(x['passed'] for x in checks),'/',len(checks))\nprint('Report:',(root/'REPORT.md').exists(),'Reproducer:',(root/'reproduce.sh').exists())\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:19:03.474951+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.011626720428466797,
+  "end": "2026-11-15T02:19:03.486503+00:00"
+}

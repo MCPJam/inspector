@@ -1,0 +1,2 @@
+{"seconds": 0.6731939315795898, "stream": "stdout", "data": "{\"error\":{\"code\":\"CREDENTIALS_MISSING\",\"message\":\"Model credentials are missing; nothing was run.\\n  model anthropic/claude-haiku-4.5: no anthropic API key was supplied for BYOK inference.\",\"details\":{\"phase\":\"setup\",\"category\":\"credentials\",\"problems\":[{\"model\":\"anthropic/claude-haiku-4.5\",\"message\":\"no anthropic API key was supplied for BYOK inference.\"}]}}}\n"}
+{"seconds": 0.6732399463653564, "stream": "stdout", "data": "claude-sonnet-5-5\n"}

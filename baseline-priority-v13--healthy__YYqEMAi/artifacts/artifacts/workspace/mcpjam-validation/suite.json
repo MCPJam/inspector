@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "2",
+  "mode": "agentWorkflow",
+  "reportingMode": "standard",
+  "suite": {
+    "id": "s_arithmetic_validation",
+    "name": "Arithmetic server regression"
+  },
+  "target": {
+    "servers": [
+      {
+        "name": "arithmetic-validation"
+      }
+    ]
+  },
+  "defaults": {
+    "judge": {
+      "enabled": false
+    },
+    "model": "anthropic/claude-haiku-4.5",
+    "iterations": 1,
+    "passThreshold": 1,
+    "validity": {}
+  },
+  "cases": [
+    {
+      "id": "c_add_2_3",
+      "title": "2 plus 3 returns 5",
+      "steps": [
+        {
+          "id": "call_add",
+          "kind": "toolCall",
+          "serverName": "arithmetic-validation",
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          }
+        },
+        {
+          "id": "assert_no_errors",
+          "kind": "assert",
+          "assertion": {
+            "type": "noToolErrors"
+          }
+        },
+        {
+          "id": "assert_sum",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultContains",
+            "toolName": "add",
+            "needle": "\"sum\": 5"
+          }
+        }
+      ]
+    }
+  ]
+}

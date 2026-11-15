@@ -1,0 +1,3 @@
+{"seconds": 0.0013275146484375, "stream": "stdout", "data": "mcp.json\n"}
+{"seconds": 0.0018165111541748047, "stream": "stdout", "data": "{\"mcpServers\":{\"arithmetic\":{\"url\":\"http://fixture:8765/mcp\"}}}\n"}
+{"seconds": 0.28392696380615234, "stream": "stdout", "data": "npm error npx canceled due to missing packages and no YES option: [\"@mcpjam/cli@6.2.2\"]\nnpm error A complete log of this run can be found in: /root/.npm/_logs/2026-11-15T02_19_30_853Z-debug-0.log\n"}

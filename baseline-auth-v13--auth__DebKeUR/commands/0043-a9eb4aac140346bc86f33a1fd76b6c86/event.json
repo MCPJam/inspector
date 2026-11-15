@@ -1,0 +1,22 @@
+{
+  "event_id": "a9eb4aac140346bc86f33a1fd76b6c86",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport os,json,urllib.request,urllib.error\nfrom pathlib import Path\nr=urllib.request.Request('http://fixture:8765/mcp',headers={'Authorization':'Bearer '+os.environ['MCP_SERVER_TOKEN'],'Accept':'text/event-stream','MCP-Protocol-Version':'2025-11-25'})\ntry:\n x=urllib.request.urlopen(r,timeout=10)\nexcept urllib.error.HTTPError as e: x=e\nv={'method':'GET','url':r.full_url,'status':x.status,'headers':dict(x.headers),'body':x.read().decode()}\nPath('/workspace/validation/authenticated-get.json').write_text(json.dumps(v,indent=2));print(json.dumps(v))\nroot=Path('/workspace/validation')\nsecrets=[os.environ.get(k,'') for k in ['MCP_SERVER_TOKEN','MCPJAM_API_KEY']]\nleaks=[]\nfor p in root.iterdir():\n if p.is_file():\n  content=p.read_text()\n  if any(secret and secret in content for secret in secrets):leaks.append(p.name)\nprint('Credential scan:', 'PASS' if not leaks else leaks)\nPY"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:17:42.538898+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.026721477508544922,
+  "end": "2026-11-15T02:17:42.565555+00:00"
+}

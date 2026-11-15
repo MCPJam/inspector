@@ -1,0 +1,43 @@
+{
+  "id": "bootstrap:harbor-claude-preflight",
+  "path": "bootstrap--harbor-claude-preflight",
+  "argv": [
+    "env",
+    "DOCKER_HOST=unix://$USER_HOME/.colima/default/docker.sock",
+    "work/venv/bin/harbor",
+    "run",
+    "--path",
+    "work/tasks/smoke-healthy",
+    "--agent",
+    "claude-code",
+    "--model",
+    "anthropic/claude-sonnet-4-6",
+    "--ak",
+    "version=2.1.323",
+    "--ak",
+    "max_turns=30",
+    "--ak",
+    "max_budget_usd=2",
+    "--n-concurrent",
+    "1",
+    "--n-attempts",
+    "1",
+    "--max-retries",
+    "0",
+    "--job-name",
+    "baseline-claude-healthy-preflight",
+    "--jobs-dir",
+    "work/jobs",
+    "--dry-run"
+  ],
+  "start": "2026-11-15T01:20:01.120723+00:00",
+  "end": "2026-11-15T01:20:04.888583+00:00",
+  "exit_status": 0,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

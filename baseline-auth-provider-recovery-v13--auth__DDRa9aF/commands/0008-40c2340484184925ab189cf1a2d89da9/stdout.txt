@@ -1,0 +1,10 @@
+mcp.json
+{"mcpServers":{"arithmetic":{"url":"http://fixture:8765/mcp"}}}
+npm error code E404
+npm error 404 Not Found - GET https://registry.npmjs.org/mcpjam - Not found
+npm error 404
+npm error 404  The requested resource 'mcpjam@*' could not be found or you do not have permission to access it.
+npm error 404
+npm error 404 Note that you can also install from a
+npm error 404 tarball, folder, http url, or git url.
+npm error A complete log of this run can be found in: /root/.npm/_logs/2026-11-15T02_19_27_960Z-debug-0.log

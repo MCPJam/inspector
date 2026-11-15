@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "2",
+  "mode": "agentWorkflow",
+  "reportingMode": "standard",
+  "suite": {
+    "id": "s_arithmetic_negative_control",
+    "name": "Arithmetic negative control"
+  },
+  "target": {
+    "servers": [
+      {
+        "name": "Arithmetic"
+      }
+    ]
+  },
+  "defaults": {
+    "judge": {
+      "enabled": false
+    },
+    "model": "openai/gpt-4.1-mini",
+    "iterations": 1,
+    "passThreshold": 1,
+    "validity": {}
+  },
+  "cases": [
+    {
+      "id": "c_add_17_25",
+      "title": "Add 17 and 25 to obtain 42",
+      "steps": [
+        {
+          "id": "s1",
+          "kind": "toolCall",
+          "serverName": "Arithmetic",
+          "toolName": "add",
+          "arguments": {
+            "a": 17,
+            "b": 25
+          }
+        },
+        {
+          "id": "a1",
+          "kind": "assert",
+          "assertion": {
+            "type": "toolResultContains",
+            "toolName": "add",
+            "needle": "43"
+          }
+        }
+      ]
+    }
+  ]
+}

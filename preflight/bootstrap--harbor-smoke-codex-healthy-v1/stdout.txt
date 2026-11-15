@@ -1,0 +1,20 @@
+  1/1 Running trials... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:06:38 0:00:00
+adhoc • codex • gpt-6.1-sol
+┏━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Trials ┃ Exceptions ┃
+┡━━━━━━━━╇━━━━━━━━━━━━┩
+│      0 │          1 │
+└────────┴────────────┘
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Exception               ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ RewardFileNotFoundError │     1 │
+└─────────────────────────┴───────┘
+
+Job Info
+Total runtime: 6m 38s
+Results written to work/jobs/baseline-codex-healthy-v1/result.json
+Inspect results by running `harbor view work/jobs`
+Share results by running `harbor upload work/jobs/baseline-codex-healthy-v1`
+

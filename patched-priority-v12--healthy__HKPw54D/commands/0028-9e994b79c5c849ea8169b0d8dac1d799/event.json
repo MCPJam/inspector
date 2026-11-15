@@ -1,0 +1,22 @@
+{
+  "event_id": "9e994b79c5c849ea8169b0d8dac1d799",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "cat > arithmetic.eval.yaml <<'EOF'\nschemaVersion: \"2\"\nmode: agentWorkflow\nreportingMode: standard\nsuite:\n  id: s_arithmetic_smoke\n  name: Arithmetic smoke\nproject: project_fixture\ntarget:\n  servers:\n    - name: Arithmetic\ndefaults:\n  judge:\n    enabled: false\n  model: anthropic/claude-haiku-4.5\n  iterations: 1\n  passThreshold: 1\n  validity: {}\ncases:\n  - id: c_add_two_three\n    title: Add 2 and 3 using the MCP tool\n    steps:\n      - id: prompt\n        kind: prompt\n        prompt: Use the add tool to add 2 and 3. Report the returned sum.\n      - id: call\n        kind: assert\n        assertion:\n          type: toolCalledWith\n          toolName: add\n          args:\n            args: {a: 2, b: 3}\n            argumentMatching: exact\n      - id: result\n        kind: assert\n        assertion:\n          type: toolResultMatches\n          toolName: add\n          path: /sum\n          patterns: ['^5$']\n      - id: errors\n        kind: assert\n        assertion:\n          type: noToolErrors\n      - id: answer\n        kind: assert\n        assertion:\n          type: responseContains\n          needle: '5'\nEOF\nnpx mcpjam cloud eval validate --file arithmetic.eval.yaml --format json > results/validation.json && cat results/validation.json && npx mcpjam cloud eval run --file arithmetic.eval.yaml --project project_fixture --wait --wait-timeout 60000 --out results/eval-report.json --format json > results/eval-launch.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:52:18.149169+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 1.017786979675293,
+  "end": "2026-11-15T01:52:19.166875+00:00"
+}

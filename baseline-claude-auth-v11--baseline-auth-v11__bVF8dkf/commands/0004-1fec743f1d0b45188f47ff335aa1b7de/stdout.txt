@@ -1,0 +1,13 @@
+Usage: mcpjam tools call [options]
+  --tool-name <tool>            Tool name
+  --name <tool>                 Alias for --tool-name
+  --tool-args <json>            Tool parameter object as JSON, @path, or - for
+  --params <json>               Alias for --tool-args
+  --tool-args-stdin             Read tool parameter JSON from stdin
+  --args <arg...>               Preferred stdio command arguments. Pass multiple
+== {"a":2,"b":3}
+{"content":[{"type":"text","text":"{\"sum\": 5}"}],"structuredContent":{"sum":5},"isError":false,"_durationMs":12}
+
+== {"a":"x"}
+{"content":[{"type":"text","text":"a and b must be finite numbers"}],"isError":true,"_durationMs":45}
+

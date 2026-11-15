@@ -1,0 +1,25 @@
+{
+  "id": "product-fixes:cycle2-regression-before",
+  "path": "product-fixes--cycle2-regression-before",
+  "argv": [
+    "node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "--project",
+    "sdk",
+    "sdk/tests/mcp-conformance/http-rejection-wire.test.ts"
+  ],
+  "start": "2026-11-15T02:22:57.278527+00:00",
+  "end": "2026-11-15T02:22:57.811123+00:00",
+  "exit_status": 1,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "product-fixes"
+}

@@ -1,0 +1,11 @@
+{
+  "httpStatus": 404,
+  "request": {
+    "path": "/projects/project_fixture/servers/server_fixture/doctor",
+    "body": {}
+  },
+  "response": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

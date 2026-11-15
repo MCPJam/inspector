@@ -1,0 +1,17 @@
+{
+  "httpStatus": 404,
+  "request": {
+    "path": "/projects/project_fixture/servers/server_fixture/conformance-runs",
+    "body": {
+      "suites": [
+        "protocol"
+      ],
+      "settings": "none",
+      "idempotencyKey": "arithmetic-check-20261115"
+    }
+  },
+  "response": {
+    "code": "NOT_FOUND",
+    "message": "Synthetic fixture does not implement this route."
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "response": {
+    "items": [
+      {
+        "id": "case_add",
+        "title": "add 2 and 3 returns 5",
+        "steps": [
+          {
+            "id": "add",
+            "kind": "toolCall",
+            "toolName": "add",
+            "arguments": {
+              "a": 2,
+              "b": 3
+            }
+          }
+        ],
+        "expectedOutput": "5"
+      }
+    ]
+  }
+}

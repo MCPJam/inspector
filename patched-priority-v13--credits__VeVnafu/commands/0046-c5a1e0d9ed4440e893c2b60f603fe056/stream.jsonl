@@ -1,0 +1,3 @@
+{"seconds": 30.056038856506348, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}"}
+{"seconds": 30.056135654449463, "stream": "stdout", "data": "\n"}
+{"seconds": 30.06641697883606, "stream": "stdout", "data": "{\"code\": \"NOT_FOUND\", \"message\": \"Synthetic fixture does not implement this route.\"}HTTP 404\n"}

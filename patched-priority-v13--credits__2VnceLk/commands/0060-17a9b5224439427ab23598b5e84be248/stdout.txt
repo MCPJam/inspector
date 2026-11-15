@@ -1,0 +1,301 @@
+/projects/{projectId}/eval-runs/{runId}/judge/backtest post
+/projects/{projectId}/eval-runs post
+/projects/{projectId}/eval-runs/{runId} get
+/projects/{projectId}/eval-runs/{runId}/decision-summary get
+/projects/{projectId}/eval-runs/{runId}/compare get
+/projects/{projectId}/eval-runs/{runId}/iterations get
+/projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/trace get
+/projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps get
+/projects/{projectId}/eval-runs/{runId}/cancel post
+/projects/{projectId}/eval-runs/{runId}/rerun-preview get
+/projects/{projectId}/eval-runs/{runId}/rerun post
+/projects/{projectId}/eval-suites/{suiteId}/runs get
+/projects/{projectId}/eval-suites/{suiteId}/revisions get
+/projects/{projectId}/eval-suites/{suiteId}/stage-analytics get
+/projects/{projectId}/eval-runs/{runId}/stage-analytics get
+/projects/{projectId}/eval-runs/{runId}/gate get
+/projects/{projectId}/eval-suites/{suiteId}/schedule patch
+/projects/{projectId}/servers/{serverId}/accounts parameters, get
+/projects/{projectId}/servers/{serverId}/accounts/{account} parameters, get, put, patch, delete
+/organizations/{organizationId}/spend-budget parameters, get, put, delete
+/projects/{projectId}/eval-suites/{suiteId}/environments post
+/projects/{projectId}/eval-suites get, post
+/projects/{projectId}/eval-suites/from-file post
+/projects/{projectId}/eval-suites/{suiteId} get, patch, delete
+/projects/{projectId}/eval-suites/{suiteId}/cases get, post
+/projects/{projectId}/eval-suites/{suiteId}/cases/batch post
+/projects/{projectId}/eval-suites/{suiteId}/cases/generate post
+/projects/{projectId}/eval-suites/{suiteId}/cases/import post
+/projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId} get
+/projects/{projectId}/eval-suites/{suiteId}/authoring/{jobId}/commit post
+/projects/{projectId}/eval-suites/{suiteId}/cases/{caseId} get, patch, delete
+/projects/{projectId}/studies/{studyId}/usage parameters, get
+/projects/{projectId}/eval-runs/{runId}/insights parameters, post
+/projects/{projectId}/eval-runs/{runId}/judge parameters, post
+/projects/{projectId}/eval-runs/{runId}/gate-waivers post, get
+/projects/{projectId}/eval-runs/{runId}/gate-waivers/{waiverId} delete
+/projects/{projectId}/eval-runs/{runId}/backtest post
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# MCPJam API
+
+> Programmatic access to the MCP servers in your MCPJam projects: diagnostics, tool calls, prompt rendering, and asynchronous eval runs.
+
+> [!WARNING]
+>
+> **The MCPJam API is in preview.** It works today and we use it ourselves, but
+> it has not been generally announced and the surface may change, including in
+> breaking ways, while we finish the design. Pin your integration to the
+> behaviors documented on this page, build a [tolerant
+> reader](#versioning--stability), and expect to revisit it. Feedback is very
+> welcome on [Discord](https://discord.gg/JEnDtz8X6z) or
+> [GitHub](https://github.com/MCPJam/inspector/issues).
+
+> [card] [Create an API key](https://app.mcpjam.com/settings/api-keys)
+>
+> Go straight to key management in the hosted app. If you're signed out,
+> you'll be asked to sign in and then land right back on the API keys page.
+
+The MCPJam API lets you operate the MCP servers saved in your
+[hosted](https://docs.mcpjam.com/hosted/overview.md) projects (from CI, scripts, or your own agents)
+without opening the UI.
+
+What you can do with it today:
+
+* **Discover your resources**: list your projects, their servers, eval
+  suites, and chat sessions, so every ID the other routes need is
+  self-serve
+* **Validate a server**: connect, initialize, and capture a capability snapshot
+* **Run the doctor**: the probe → connect → initialize → capabilities workflow
+* **Check OAuth requirements**: does this server need an OAuth grant?
+* **List tools, prompts, and resources**: the server's MCP primitives
+* **Call a tool / render a prompt**: execute primitives and get the MCP result back verbatim
+* **Read a resource** by URI
+* **Export a full snapshot**: tools, resources, and prompts as one JSON document
+* **Manage a project's clients**: list, read, **create** (from a built-in
+  template like `claude`/`chatgpt`/`cursor`, or from a full config), edit,
+  duplicate, and delete the named, reusable configurations that define how
+  MCPJam connects to and talks to your MCP servers. Edits are compare-and-set:
+  read the client, then send its `configId` back as `expectedConfigId` for a
+  config change and its `name` back as `expectedName` for a rename (a rename
+  does not rotate the config, so the config token cannot detect a concurrent
+  one), and a concurrent edit is rejected rather than silently reverted
+* **Manage a project's environments**: list, read, and archive the named
+  execution bundles (host + optional server group) that eval
+  suites and goals run against,
+  and **preview** what one resolves to before launching it
+* **List a project's studies**: name, access mode, attached servers, and
+  share link, and **read one study's settings**: model, system prompt,
+  tool-approval policy, and resolved servers
+* **Author eval suites**: create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
+* **Run eval suites asynchronously**: create a run from a saved suite, get a `202` + `runId`
+  immediately, then poll status, per-iteration results (tool calls, token
+  usage, latency), and full traces. Runs appear live in the hosted UI,
+  tagged `source: "api"`
+* **Manage a server's accounts**: complete OAuth yourself (e.g. the SDK's
+  `runOAuthLogin`, or your CI's own sign-in) and upload the token to a named
+  account; list, rename, choose the default, and delete accounts. Tokens are
+  write-only: no route returns one
+* **Run a headless agent turn**: send a message history, get back the
+  assistant reply, the platform operations it invoked, references to any
+  resources it created (eval suites), and token usage; the model is pinned
+  server-side and billed to the project
+* **Send feedback**: report a bug, a missing capability, or something
+  confusing to the MCPJam team at the moment you hit it; the same endpoint the
+  `send_feedback` MCP tool calls
+
+All endpoints operate on servers you have already added to a project in the
+hosted inspector. Managing API keys remains UI-only; see
+[Not in the API yet](#not-in-the-api-yet).
+
+## Base URL
+
+```text theme={"theme":"css-variables"}
+https://app.mcpjam.com/api/v1
+```
+
+The API is path-versioned. All routes on this page are relative to the base
+URL above.
+
+## Authentication
+
+Every request needs an MCPJam API key in the `Authorization` header:
+
+```bash theme={"theme":"css-variables"}
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/tools" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### Creating a key
+
+1. Open [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys)
+   in the hosted app (the card at the top of this page takes you there
+   directly).
+2. Click **Create API key**, name it, and pick the **organization** it will act in.
+3. Copy the key (`sk_…`) immediately; **it is shown exactly once** and never
+   stored by MCPJam in retrievable form.
+
+Keys can be revoked from the same page at any time. Revocation takes effect
+immediately.
+
+### Scope
+
+A key is bound to one MCPJam organization at creation and acts **as you,
+inside that organization**. Per-request authorization still applies: a call
+only succeeds if the key's owner can access that project and server. A key
+can never reach projects outside its organization.
+
+> [!NOTE]
+>
+> Two deliberate restrictions while in preview:
+>
+> * **API keys cannot manage API keys.** Requests to the key-management surface
+>   with an `sk_…` bearer fail with `403 FORBIDDEN`. Create and revoke keys in
+>   the UI.
+> * **Guest sessions cannot use the API.** Sign in to create keys.
+
+### Keep keys secret
+
+Treat an API key like a password:
+
+* Load it from an environment variable or secret manager; never commit it to
+  source control or ship it in client-side code.
+* Scope keys narrowly: one key per integration, named so you can tell them apart.
+* Rotate by creating a replacement key, switching traffic, then revoking the old one.
+* If a key leaks, revoke it immediately in
+  [**Settings → API keys**](https://app.mcpjam.com/settings/api-keys).
+
+If you see `401 UNAUTHORIZED` with `details.reason: "ORPHANED_KEY"`, the key
+is no longer bound to an organization and cannot be used; create a new key
+from [Settings](https://app.mcpjam.com/settings/api-keys).
+
+## Conventions
+
+**Requests.** Operations on servers are `POST` with a JSON body (most accept
+an empty `{}`). **Reads**, the catalog listings and eval-run polling, are
+`GET` and take their options (`cursor`, `limit`, filters) as query
+parameters.
+
+**Responses.** Three envelope shapes, used consistently:
+
+| Kind | Shape |
+| - | - |
+| Single resource | The resource object directly |
+| Collection | `{ "items": [...], "nextCursor": "..." }`; `nextCursor` omitted on the last page |
+| Error | `{ "code": "...", "message": "...", "details": {...} }` with a matching HTTP status |
+
+**Pagination.** Collections are cursor-based. Pass the previous response's
+`nextCursor` as `cursor` in the next request (body field on `POST` lists,
+query parameter on `GET` lists). Cursors are opaque; don't parse them.
+
+**Authoring vs running suites.** `POST /eval-suites` creates a runnable suite
+(the suite plus its test cases) **synchronously** and responds `201` with the
+`suiteId`, WITHOUT running anything; author once, run later. `POST /eval-runs`
+is the async counterpart: it validates and creates a run synchronously, then
+detaches execution and responds `202` with a `runId`. Poll
+`GET /eval-runs/{runId}` until `status` is `completed`, `failed`,
+`cancelled`, or `timed_out`.
+
+**IDs.** Every identifier the API takes is discoverable through the API
+itself: `GET /projects` lists your projects, `GET /projects/{projectId}/servers`
+lists each project's servers, and `GET /projects/{projectId}/eval-suites`
+lists its eval suites. Start from `GET /me` to confirm which account a key
+acts as.
+
+## Errors
+
+Errors always use the canonical body `{ code, message, details? }`. The `code`
+is stable and machine-readable; `message` is human-readable and may change;
+`details` is an optional, unstructured bag.
+
+| Code | HTTP | Meaning |
+| - | - | - |
+| `UNAUTHORIZED` | 401 | Missing, invalid, revoked, or orphaned key |
+| `OAUTH_REQUIRED` | 401 | The **target MCP server** needs an OAuth grant; distinct from a bad key |
+| `AUTH_REQUIRED` | 403 | The **target MCP server** allowed the connection and asked for sign-in on this call. `details.authChallenge` carries the parsed challenge. Your key is fine; see [Sign-in challenges](#sign-in-challenges) |
+| `FORBIDDEN` | 403 | Key is valid but not allowed to do this, or the **target MCP server** rejected the credentials MCPJam presented (retrying with a different MCPJam key will not help; reconnect or re-authorize the server) |
+| `VALIDATION_ERROR` | 400 | Malformed body or parameters |
+| `NOT_FOUND` | 404 | Unknown project, server, or resource |
+| `CONFLICT` | 409 | The resource isn't in a state that accepts this write, such as a stale `expectedRevision`, a duplicate name, or an environment that can't currently be launched. Re-read and retry |
+| `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
+| `RATE_LIMITED` | 429 | Too many requests; see [Rate limits](#rate-limits) |
+| `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
+| `TIMEOUT` | 504 | The target MCP server connected but didn't respond in time |
+| `INTERNAL_ERROR` | 500 | Something failed on our side |
+
+New error codes may be **added** over time; treat unknown codes as
+non-retryable failures unless the HTTP status says otherwise.
+
+### Sign-in challenges
+
+Some MCP servers allow the connection and ask for sign-in only on a protected
+call. The API never starts a sign-in. It reports the challenge instead:
+
+* **HTTP 401 from the MCP server** on `tools/call`: the API answers
+  `403 AUTH_REQUIRED`. `details.authChallenge` carries the parsed challenge:
+  its `source` (`http_401`), and the `error`, `requiredScope`, and
+  `resourceMetadataUrl` the server sent, when present.
+* **An `isError` result carrying `_meta["mcp/www_authenticate"]`** (the
+  ChatGPT convention): the call succeeds, and the `CallToolResult` is returned
+  unchanged with an additive `authChallenge` field (`source:
+  "tool_result_meta"`). A field the server already set under that name is never
+  overwritten.
+
+`AUTH_REQUIRED` is not `UNAUTHORIZED`: your MCPJam key is fine, so a different
+key will not help. Complete the OAuth flow for that server yourself, upload the
+token to one of its [accounts](#server-accounts), and call again. See
+[Mid-session sign-in](https://docs.mcpjam.com/inspector/lazy-authentication.md).
+
+## Rate limits
+
+Each key gets **60 requests per minute** sustained, with bursts up to **10**.
+Exceeding it returns `429 RATE_LIMITED` with a `Retry-After` header (in
+seconds):
+
+```http theme={"theme":"css-variables"}
+HTTP/1.1 429 Too Many Requests
+Retry-After: 7
+
+{ "code": "RATE_LIMITED", "message": "API key rate limit exceeded. Slow down and retry." }
+```
+
+Honor `Retry-After`, add jittered exponential backoff, and expect these limits
+to be tuned during the preview.
+
+Other `429`s, the per-minute brakes and daily budgets described with the
+endpoints below, carry `Retry-After` whenever the refusal knows when it
+lifts, which is the ordinary case. Treat it as a hint that is usually there
+rather than a guarantee: a refusal that reaches you without one still needs
+your backoff, so **never** block waiting for a header that may not come.
+
+## Endpoints
+
+Each endpoint is fully documented (request and response schemas, examples,
+and an interactive playground) under **Endpoints** in the sidebar.
+
+**Catalog**: discover the IDs everything else takes:
+
+| Endpoint | What it does |
+| - | - |
+| `GET /me` | The account behind the key |
+| `GET /organizations` | The organizations the caller belongs to, where `organizationId` comes from. A key is bound to one organization and only ever sees that one |
+| `GET /projects` | Projects the key can access (optionally `?organizationId=`) |
+| `GET /projects/{projectId}/servers` | The project's saved MCP servers |
+| `GET /projects/{projectId}/servers/{serverId}/revisions` | A server's stored revisions, newest first: captures of its tools and server info, recorded whenever they change (`?limit=&cursor=`) |
+| `GET /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}` | One revision: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent |
+| `GET /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff` | What changed since the revision before, or since `?from=`: tools added, removed and changed, and server info changes with both values. A field listed in `droppedFields.from` or `droppedFields.to` was not stored on that side, so a change to it is unknown |
+| `GET /projects/{projectId}/eval-suites` | The project's eval suites, with latest-run summaries |
+| `GET`, `POST /projects/{projectId}/clients` | List clients, or create one from a template or full config |
+| `GET`, `PATCH`, `DELETE /projects/{projectId}/clients/{client}` | Read, edit, or delete a client. The path segment takes a client **name or ID** |
+| `POST /projects/{projectId}/clients/{client}/servers` | Replace the client's server attachments (a replacement; omitted servers are detached) |
+| `POST /projects/{projectId}/clients/{client}/duplicate` | Copy a client's current config into a new client |
+| `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
+
+**Project environments**: the named execution bundles (one host, optionally a
+standalone server group) that eval suites and goals run against. Reads need
+project membership. Archiving needs project admin and is rev

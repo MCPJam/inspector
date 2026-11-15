@@ -1,0 +1,31 @@
+<!doctype html>
+<html
+  lang="en"
+  class="dark"
+  data-banner-state="visible"
+  data-assistant-state="closed"
+  data-page-mode="none"
+  data-current-path="/"
+>
+  <head>
+    <!-- AI agents: this page is available as Markdown at /index.md. Request it directly or send "Accept: text/markdown". The site index is at /llms.txt. -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>MCPJam Docs - MCPJam Inspector</title>
+    <script>(function(c){var P=c.primary,F=c.fallbacks,found,probes={},checks={},down,reported;window.__mintAssets=P;function owned(el){return !el.closest('#root')&&!el.hasAttribute('data-precedence')}function type(r){return (r.headers.get('content-type')||'').toLowerCase()}function fits(r,rest){var t=type(r),f=rest.split('?')[0];return r.ok&&(/\.css$/.test(f)?t.indexOf('text/css')>=0:/\.m?js$/.test(f)?/javascript|ecmascript/.test(t):t.indexOf('text/html')<0)}function broken(rest){return down?Promise.resolve(true):checks[rest]||(checks[rest]=fetch(P+rest).then(function(r){return !fits(r,rest)&&(!r.headers.has('x-mintlify-client-version')||type(r).indexOf('text/html')>=0)},function(){return false}).then(function(yes){if(yes)down=true;else delete checks[rest];return yes}))}function adopt(b){found=b;window.__mintAssets=b;var s=document.querySelectorAll('style');for(var i=0;i<s.length;i++)if(owned(s[i])&&s[i].textContent.indexOf(P)>=0)s[i].textContent=s[i].textContent.split(P).join(b);va----
+== usage
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+== credits
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+== billing
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+== cost
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}
+
+HTTP/1.1 404 Not Found
+Server: HarborSyntheticFixture/1 Python/3.11.2
+Date: Sun, 15 Nov 2026 02:12:21 GMT
+Content-Type: application/json
+Content-Length: 84
+
+{"code": "NOT_FOUND", "message": "Synthetic fixture does not implement this route."}

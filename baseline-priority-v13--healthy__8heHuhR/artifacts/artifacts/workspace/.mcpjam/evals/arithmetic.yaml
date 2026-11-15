@@ -1,0 +1,43 @@
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_arithmetic_smoke
+  name: Arithmetic smoke
+target:
+  servers:
+    - name: Arithmetic
+defaults:
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5
+  iterations: 1
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_add_two_three
+    title: Add 2 and 3 and return 5
+    steps:
+      - id: ask
+        kind: toolCall
+        toolName: add
+        serverName: Arithmetic
+        arguments: {a: 2, b: 3}
+      - id: args
+        kind: assert
+        assertion:
+          type: toolCalledWith
+          toolName: add
+          args:
+            args: {a: 2, b: 3}
+            argumentMatching: exact
+      - id: result
+        kind: assert
+        assertion:
+          type: toolResultContains
+          toolName: add
+          needle: '5'
+      - id: errors
+        kind: assert
+        assertion:
+          type: noToolErrors

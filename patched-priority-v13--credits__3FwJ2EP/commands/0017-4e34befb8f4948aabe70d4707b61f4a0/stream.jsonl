@@ -1,0 +1,3 @@
+{"seconds": 0.012972354888916016, "stream": "stdout", "data": "/workspace\n"}
+{"seconds": 0.01354360580444336, "stream": "stdout", "data": "total 8\ndrwxr-xr-x 2 root root 4096 Nov 15 01:18 .\ndrwxr-xr-x 1 root root 4096 Nov 15 02:05 ..\n"}
+{"seconds": 0.014126777648925781, "stream": "stdout", "data": "MCPJAM_API_URL=http://fixture:8765/api/v1\n"}

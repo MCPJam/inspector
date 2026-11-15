@@ -1,0 +1,20 @@
+11:Account-bound Cloud commands live under `mcpjam cloud`. Local MCP testing stays at the top level (`mcpjam server`, `mcpjam oauth login`, …). Credential flags `--api-key` / `--api-url` / `--api-header` are declared on `mcpjam cloud` and work befo
+608:| `--api-key`, `--api-url`, `--api-header`, `--project` | | MCPJam-hosted inference only; resolved only when a case needs it. |
+669:| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+803:| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1042:| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1150:| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1181:| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1206:| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1389:| `--api-url <url>` | No | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1450:| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1563:| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+1566:### `cloud eval create`
+1590:### `cloud eval run`
+1685:| `mcpjam cloud eval run` / `cases run` / `update` / `create` | A **client saved in your project** (`mcpjam cloud clients list`). |
+1689:deprecated alias for it — so `mcpjam cloud eval run --host claude` looks for a
+1851:mcpjam cloud eval run --file .mcpjam/evals/s_billing.yaml \
+2937:The report includes `credential.valid` (`true` / `false` / `null`), `deployment.valid`, and where the server came from in `deployment.source` and `deployment.description` (for example `set by your organization (locked)`). `null` means no credent
+3077:| `--api-url <url>` | The saved login's server, else `https://app.mcpjam.com/api/v1` | MCPJam API base URL. The value is saved with the session so later cloud commands target the same server without `--api-url`. Must be a valid `http(s)` URL; an
+3080:The `MCPJAM_API_URL` environment variable is equivalent to `--api-url`, and `MCPJAM_BASE_URL` names the same server in the older format, without `/api/v1`. An invalid value in any of them is a hard error (exit 2), and so is setting both variable
+3084:1. Explicit `--api-url` flag

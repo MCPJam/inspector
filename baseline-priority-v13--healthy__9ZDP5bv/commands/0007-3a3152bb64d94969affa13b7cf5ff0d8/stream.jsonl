@@ -1,0 +1,2 @@
+{"seconds": 0.7591350078582764, "stream": "stdout", "data": "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"sum\\\": 5}\"}],\"structuredContent\":{\"sum\":5},\"isError\":false,\"_durationMs\":4}\n"}
+{"seconds": 0.7591726779937744, "stream": "stdout", "data": "\n"}

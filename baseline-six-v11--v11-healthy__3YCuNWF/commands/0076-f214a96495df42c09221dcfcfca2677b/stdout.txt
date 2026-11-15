@@ -1,0 +1,24 @@
+Wrote to /workspace/package.json:
+
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
+
+
+
+added 153 packages, and audited 154 packages in 12s
+
+39 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities

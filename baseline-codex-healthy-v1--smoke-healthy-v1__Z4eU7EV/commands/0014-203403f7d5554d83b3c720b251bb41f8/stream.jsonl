@@ -1,0 +1,2 @@
+{"seconds": 0.02273392677307129, "stream": "stdout", "data": "{\"items\": [{\"id\": \"case_add\", \"suiteId\": \"suite_fixture\", \"title\": \"add 2 and 3 returns 5\"}]}"}
+{"seconds": 0.0489504337310791, "stream": "stdout", "data": "{\"runId\": \"run_fixture_1\", \"suiteId\": \"suite_fixture\", \"status\": \"running\", \"servers\": [{\"id\": \"server_fixture\", \"name\": \"Arithmetic\"}], \"environment\": null}"}

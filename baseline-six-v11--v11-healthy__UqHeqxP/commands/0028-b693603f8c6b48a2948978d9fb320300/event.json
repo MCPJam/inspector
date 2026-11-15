@@ -1,0 +1,22 @@
+{
+  "event_id": "b693603f8c6b48a2948978d9fb320300",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "source /logs/agent/sessions/shell-snapshots/snapshot-bash-1794706093281-lqxnat.sh 2>/dev/null || true && \\builtin shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'which'; \\builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd /workspace; export MCPJAM_TELEMETRY_DISABLED=1; sed -n 1590,1640p <(curl -s https://docs.mcpjam.com/cli/reference.md) | cut -c1-250; N=\"npx -y @mcpjam/cli@latest\"; $N cloud eval run --file .mcpjam/evals/arith.yaml --project project_fixture 2>&1 | head -30' < /dev/null && pwd -P >| /tmp/claude-f075-cwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:28:51.059655+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 1.5498027801513672,
+  "end": "2026-11-15T01:28:52.609363+00:00"
+}

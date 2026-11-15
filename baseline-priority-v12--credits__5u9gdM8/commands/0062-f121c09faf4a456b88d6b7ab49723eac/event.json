@@ -1,0 +1,22 @@
+{
+  "event_id": "f121c09faf4a456b88d6b7ab49723eac",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "pwd"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:49:35.498670+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.0008332729339599609,
+  "end": "2026-11-15T01:49:35.499432+00:00"
+}

@@ -1,0 +1,54 @@
+{
+  "runId": "run_fixture_3",
+  "suiteId": "suite_authored_4",
+  "id": "run_fixture_3",
+  "runNumber": 3,
+  "status": "completed",
+  "result": "passed",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "passRate": 1
+  },
+  "source": "api",
+  "notes": "SIMULATED: deterministic fixture execution; no hosted model or live billing.",
+  "createdAt": 1794708013796,
+  "completedAt": 1794708013796
+}
+{
+  "items": [
+    {
+      "id": "run_fixture_3_0",
+      "testCaseId": "suite_authored_4_case_0",
+      "title": "Add two and three",
+      "iterationNumber": 1,
+      "status": "completed",
+      "result": "passed",
+      "actualToolCalls": [
+        {
+          "toolName": "add",
+          "arguments": {
+            "a": 2,
+            "b": 3
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"sum\": 5}"
+              }
+            ],
+            "structuredContent": {
+              "sum": 5
+            },
+            "isError": false
+          }
+        }
+      ],
+      "expectedToolCalls": [],
+      "durationMs": 1,
+      "error": null
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "b0602ea87ff94b4fbf26240778fba0d8",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "mkdir -p /workspace/reports && cat > /workspace/arithmetic.eval.json <<'EOF'\n{\n  \"schemaVersion\": \"2\",\n  \"mode\": \"agentWorkflow\",\n  \"reportingMode\": \"standard\",\n  \"suite\": {\"id\": \"s_arithmetic_smoke\", \"name\": \"Arithmetic smoke\"},\n  \"target\": {\"servers\": [{\"name\": \"Arithmetic\"}]},\n  \"defaults\": {\n    \"judge\": {\"enabled\": false},\n    \"model\": \"openai/gpt-4.1-mini\",\n    \"iterations\": 1,\n    \"passThreshold\": 1,\n    \"validity\": {}\n  },\n  \"cases\": [{\n    \"id\": \"c_add_17_25\",\n    \"title\": \"Add 17 and 25 to obtain 42\",\n    \"steps\": [\n      {\"id\": \"s1\", \"kind\": \"prompt\", \"prompt\": \"Use the add tool to add 17 and 25. Report the result.\"},\n      {\"id\": \"a1\", \"kind\": \"assert\", \"assertion\": {\"type\": \"toolCalledWith\", \"toolName\": \"add\", \"args\": {\"a\": 17, \"b\": 25}}},\n      {\"id\": \"a2\", \"kind\": \"assert\", \"assertion\": {\"type\": \"noToolErrors\"}},\n      {\"id\": \"a3\", \"kind\": \"assert\", \"assertion\": {\"type\": \"toolResultMatchesSchema\", \"toolName\": \"add\", \"schema\": {\"type\": \"object\", \"properties\": {\"sum\": {\"const\": 42}}, \"required\": [\"sum\"]}}}\n    ]\n  }]\n}\nEOF\nnpx mcpjam cloud eval validate --file arithmetic.eval.json --project project_fixture --format json > reports/validation.json && cat reports/validation.json && npx mcpjam cloud eval run --file arithmetic.eval.json --project project_fixture --wait --wait-timeout 60000 --out reports/eval.json --format json > reports/launch.json"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:09:36.477301+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.45895838737487793,
+  "end": "2026-11-15T02:09:36.936187+00:00"
+}

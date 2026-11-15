@@ -1,0 +1,1 @@
+{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-03-26", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "arithmetic-fixture", "version": "1.0.0"}}}

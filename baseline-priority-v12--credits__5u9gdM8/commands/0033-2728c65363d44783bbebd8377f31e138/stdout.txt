@@ -1,0 +1,72 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.mcpjam.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Evaluate
+
+> Author test cases for your MCP server, run them across models, and gate pass/fail on deterministic assertions plus optional LLM-as-judge.
+
+A benchmark score doesn't tell you whether your server holds up in production. Evaluate lets you pin down the behaviors you care about — which tools fire, with what arguments, what the final answer looks like — and run them across the models your users actually use.
+
+## Requirements
+
+Evals are available to both signed-in users and guests. Guests authenticate automatically using their guest session, so no sign-in is required to run or generate tests.
+
+## How it's organized
+
+**1. Project**
+
+Holds your servers and your suites. Everything below lives in one project.
+
+**2. Suite**
+
+A group of cases plus the defaults they share: attached servers, models to run against, default assertions, judge config, and argument-matching mode.
+
+**3. Case**
+
+One scenario you want to verify — a prompt (or a sequence of prompts), the tools you expect to fire, an optional expected output, and the assertions that decide pass/fail.
+
+**4. Run**
+
+One execution of a suite. Produces **iterations** — one per case × model. Each iteration has its own transcript, tool calls, tokens, duration, and verdict.
+
+## Authoring a case
+
+Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open the case workspace. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
+
+### Case workspace
+
+The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
+
+**Left column — the case spine**
+
+Every case opens in the spine, however it was authored — in the app, through the CLI, or from an SDK suite file. The spine is a flat, ordered list of steps. Each step is one of:
+
+* **Prompt** — a user turn the model receives. The first prompt is always present; use **Add assertion or action** to add a second prompt for multi-turn cases.
+* **Interact** — a widget interaction (click, typing) recorded against a live widget.
+* **Assert** — an assertion that grades the case.
+
+Below the step list, an **Expected outcome** field holds the goal sentence the judge grades against.
+
+**Assertions**
+
+Use **Add assertion or action** to add an assertion, a second prompt, or an interact step. Each assertion row says what it checks, who wrote it, and what a miss does:
+
+* **Route** — answers "which tool should handle it?" and carries that answer's strictness: *Reach the tool* allows extra calls, *Exact route* requires the exact order with no extras. The route is always Required.
+* **Step N** — an assertion written as a step (what the CLI and the SDK produce). It is graded in place, at its position in the run, and is labelled by that position: a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level assertion.
+* **This case** — an assertion you added here. It is graded once, over the finished transcript.
+* **Suite** — a default the suite applies to every case. Read-only here, with a link to the suite's **Checks by stage** settings.
+
+The list reads as a checklist with progressive disclosure. An off row shows only its short name. Once on, clicking the name opens an inline editor showing the full criterion, the **Required / Advisory** role control, and any editable fields (thresholds, match criteria). Multiple editors can stay open at once. An assertion that carries a number (such as a latency budget) shows it under the name at rest.
+
+A row's **role** says what a miss does: **Required** fails the trial, **Advisory** shows the miss without failing it. The control appears when your deployment supports assertion policy; otherwise the role chip shows read-only with a tooltip explaining why it cannot be changed — for example, when the assertion is inherited from the suite, or when the backend does not yet support assertion policy.
+
+Because a failing required assertion halts the run, an assertion written as a step can leave later assertions unrun. The trial column marks those **Skipped**.
+
+**The route question**
+
+The answer here is what marks a case negative — never an inference from its steps:
+
+* **A named tool** — the case must take that route.
+* **No tool should be called** — a negative case. It passes only if the model called nothing. An assertion that requires a tool call contradicts this, and the spine says so.
+* **Any route** — the case names no route and is graded by its assertions. This is a normal positive case, and it is what most CLI- and SDK-author

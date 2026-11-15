@@ -1,0 +1,22 @@
+{
+  "event_id": "fab30d618c204cc4b64890716d6d6d79",
+  "argv": [
+    "/bin/bash",
+    "-lc",
+    "if [ -z \"${BASH_ENV-}\" ] && [ -n \"${HOME-}\" ] && [ -r \"$HOME/.bashrc\" ]; then\n  . \"$HOME/.bashrc\"\nfi\necho '# Snapshot file'\necho '# Unset all aliases to avoid conflicts with functions'\necho 'unalias -a 2>/dev/null || true'\nshopt -p || true\necho '# Functions'\ndeclare -f\necho ''\n\n__codex_snapshot_command() {\n  if command -v \"$1\" >/dev/null 2>&1; then\n    \"$@\"\n  else\n    command -p \"$@\"\n  fi\n}\nbash_opts=$(set -o | __codex_snapshot_command awk '$2==\"on\"{print $1}')\nbash_opt_count=$(printf '%s\\n' \"$bash_opts\" | __codex_snapshot_command sed '/^$/d' | __codex_snapshot_command wc -l | __codex_snapshot_command tr -d ' ')\necho \"# setopts $bash_opt_count\"\nif [ -n \"$bash_opts\" ]; then\n  printf 'set -o %s\\n' $bash_opts\nfi\necho ''\nprintf '\\0'\nalias_count=$(\\alias -p | __codex_snapshot_command wc -l | __codex_snapshot_command tr -d ' ')\necho \"# aliases $alias_count\"\n\\alias -p\necho ''\n\nprintf '\\0'\n(\n  while IFS= read -r __codex_snapshot_export_name; do\n    case \"$__codex_snapshot_export_name\" in\n      \"\"|[0-9]*|*[!A-Za-z0-9_]*|PWD|OLDPWD) continue ;;\n    esac\n    printf '%s\\0' \"$__codex_snapshot_export_name\"\n    declare -xp \"$__codex_snapshot_export_name\" 2>/dev/null || true\n    printf '\\0'\n  done < <(compgen -e)\n)\n\nprintf '\\0'\n\n"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T02:12:16.130992+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/installed-agent/codex-home/tmp/arg0/codex-arg05o7LPh:/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 0,
+  "signal": null,
+  "duration_seconds": 0.005658626556396484,
+  "end": "2026-11-15T02:12:16.136606+00:00"
+}

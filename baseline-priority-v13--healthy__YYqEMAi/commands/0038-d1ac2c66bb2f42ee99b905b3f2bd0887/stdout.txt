@@ -1,0 +1,1 @@
+Negative control CLI exit: 1

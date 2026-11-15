@@ -1,0 +1,47 @@
+{
+  "id": "bootstrap:harbor-smoke-dryrun",
+  "path": "bootstrap--harbor-smoke-dryrun",
+  "argv": [
+    "work/venv/bin/harbor",
+    "run",
+    "--path",
+    "work/tasks/smoke-healthy",
+    "--agent",
+    "codex",
+    "--model",
+    "openai/gpt-6.1-sol",
+    "--ak",
+    "version=0.160.0",
+    "--ak",
+    "reasoning_effort=medium",
+    "--ak",
+    "reasoning_summary=none",
+    "--ae",
+    "CODEX_FORCE_AUTH_JSON=1",
+    "--n-concurrent",
+    "1",
+    "--n-attempts",
+    "1",
+    "--max-retries",
+    "0",
+    "--job-name",
+    "baseline-codex-healthy-smoke",
+    "--jobs-dir",
+    "work/jobs",
+    "--dry-run"
+  ],
+  "start": "2026-11-15T01:19:20.390830+00:00",
+  "end": "2026-11-15T01:19:28.943051+00:00",
+  "exit_status": 1,
+  "complete": true,
+  "screenshots": [
+    "outcome-001.svg"
+  ],
+  "intermediate_screenshots": [
+    "intermediate-001-001.svg",
+    "intermediate-002-001.svg",
+    "intermediate-003-001.svg"
+  ],
+  "output_classes": [],
+  "source_group": "bootstrap"
+}

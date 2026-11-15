@@ -1,0 +1,28 @@
+✔ resolveCliDeployment prefers the flag over env over the default (1.670541ms)
+✔ an invalid --api-url hard-errors instead of falling back to prod (0.350375ms)
+✔ an invalid MCPJAM_API_URL hard-errors too (0.203041ms)
+✔ MCPJAM_API_URL and MCPJAM_BASE_URL naming two servers exit 2 (0.25225ms)
+✔ buildPlatformClient defaults to the API URL stored with the login (15.861292ms)
+✔ a saved login is never sent to another --api-url (3.140625ms)
+✔ a redirect from the API is refused and exits 2 (1.468291ms)
+✔ an sk_ API key does not inherit the stored login's URL (2.329125ms)
+✔ a stored login without apiUrl still defaults to prod (2.470542ms)
+✔ a usage-limit refusal keeps its code and exit, and carries when to retry (0.533959ms)
+✔ a failing request's id rides in details, beside the server's own (0.221084ms)
+✔ a request id with no server details still lands in details (0.076167ms)
+✔ a refusal carries its request id next to the retry guidance (0.058292ms)
+✔ an error without a request id keeps its details untouched (0.038125ms)
+✔ a platform fault with a request id says how to report it (0.042916ms)
+✔ a missing capability suggests the missing_capability kind (0.044083ms)
+✔ no report hint on a gateway failure, a client error, or without a request id (0.137666ms)
+✔ no report hint on the command that files reports (0.053541ms)
+✔ platform-fee recovery preserves the wire error and does not assume a role or plan (0.120792ms)
+✔ other forbidden errors never inherit platform-credit recovery (0.217167ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2060.152333

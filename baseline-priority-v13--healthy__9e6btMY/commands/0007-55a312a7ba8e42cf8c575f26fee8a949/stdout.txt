@@ -1,0 +1,1 @@
+{"error":{"code":"CREDENTIALS_MISSING","message":"Model credentials are missing; nothing was run.\n  model anthropic/claude-haiku-4.5: no anthropic API key was supplied for BYOK inference.","details":{"phase":"setup","category":"credentials","problems":[{"model":"anthropic/claude-haiku-4.5","message":"no anthropic API key was supplied for BYOK inference."}]}}}

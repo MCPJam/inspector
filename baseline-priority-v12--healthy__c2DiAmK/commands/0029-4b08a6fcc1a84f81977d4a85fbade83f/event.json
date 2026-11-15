@@ -1,0 +1,22 @@
+{
+  "event_id": "4b08a6fcc1a84f81977d4a85fbade83f",
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "python3 - <<'PY'\nimport json,urllib.request,os\nbase=os.environ['MCPJAM_API_URL']+'/projects/project_fixture';h={'Authorization':'Bearer '+os.environ['MCPJAM_API_KEY'],'Content-Type':'application/json'}\nrun=json.load(open('run-created.json'))['runId']\nfor path,name in [('/eval-runs/'+run,'run-status.json'),('/eval-runs/'+run+'/iterations','iterations.json')]:\n r=urllib.request.urlopen(urllib.request.Request(base+path,headers=h));d=json.load(r);json.dump(d,open(name,'w'),indent=2);print(name,d)\nb=json.load(open('minimal-suite.json'));b['name']='Arithmetic asserted result';b['tests'][0]['steps'].append({'id':'result','kind':'assert','assertion':{'type':'responseContains','needle':'5'}})\nr=urllib.request.urlopen(urllib.request.Request(base+'/eval-suites',data=json.dumps(b).encode(),headers=h));d=json.load(r);print('create',d);json.dump(b,open('suite.json','w'),indent=2);json.dump(d,open('suite-created.json','w'),indent=2)\nPY\npython3 run-eval.py"
+  ],
+  "cwd": "/workspace",
+  "start": "2026-11-15T01:47:53.239073+00:00",
+  "environment": {
+    "HOME": "/root",
+    "PATH": "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "XDG_CONFIG_HOME": "/root/.config",
+    "XDG_CACHE_HOME": "/root/.cache",
+    "MCPJAM_API_URL": "http://fixture:8765/api/v1"
+  },
+  "capture": "separate pipes; read-observation ordering; noninteractive",
+  "exit_status": 1,
+  "signal": null,
+  "duration_seconds": 0.07875299453735352,
+  "end": "2026-11-15T01:47:53.317744+00:00"
+}

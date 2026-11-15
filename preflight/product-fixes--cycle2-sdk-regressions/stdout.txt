@@ -1,0 +1,9 @@
+
+ RUN  v4.1.12 $USER_HOME/Documents/Codex/2026-11-14/build-and-run-a-lightweight-harbor/work/inspector/sdk
+
+
+ Test Files  4 passed (4)
+      Tests  54 passed (54)
+   Start at  18:23:43
+   Duration  1.20s (transform 655ms, setup 63ms, import 1.22s, tests 367ms, environment 0ms)
+

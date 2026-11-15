@@ -1,0 +1,4 @@
+API URL: http://fixture:8765/api/v1
+Key configured: True
+HTTP Error 403: Forbidden
+HTTP Error 404: Not Found
