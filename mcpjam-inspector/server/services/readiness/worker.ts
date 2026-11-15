@@ -236,7 +236,6 @@ async function readSubmissionAnswers(
 ): Promise<{
   flow: DirectoryFlow;
   answers: ReadinessRunSubmission["answers"];
-  pluginVersionId?: string;
 }> {
   const submission = await getReadinessRunSubmission(options.lease);
   const flow = getDirectoryFlow(submission.flowId);
@@ -252,11 +251,7 @@ async function readSubmissionAnswers(
       `This run's answers follow version ${submission.flowVersion} of the ${submission.flowId} form, and this server grades version ${flow.version}. Start the run again after MCPJam updates.`,
     );
   }
-  return {
-    flow,
-    answers: submission.answers,
-    pluginVersionId: submission.pluginVersionId,
-  };
+  return { flow, answers: submission.answers };
 }
 
 const NO_REVIEWER_ACCOUNT: ReadinessReviewerAccount = {
@@ -530,7 +525,10 @@ export async function executeHostedReadinessRun(
           findings: submission
             ? result.findings.map((finding) => ({
                 ...finding,
-                inputs: submissionFindingInputs(finding, submission),
+                inputs: submissionFindingInputs(finding, {
+                  ...submission,
+                  pluginVersionId: runPackage?.version.pluginVersionId,
+                }),
               }))
             : result.findings,
         }),
