@@ -57,6 +57,33 @@ export const IMPORTED: Record<string, DirectoryAnswerValue> = {
   "listing.privacyPolicy": "https://example.com/privacy",
 };
 
+/** The review fields an import from the package stores: sample cases only. */
+export const REVIEW_IMPORTED: Record<string, DirectoryAnswerValue> = {
+  "reviewer.testCases": [
+    {
+      description: "List the sample servers",
+      prompt: "Which servers are in my sample workspace?",
+      tools_triggered: "list_servers",
+      expected_behavior: "Names the two sample servers.",
+    },
+    {
+      description: "Read one sample report",
+      prompt: "Show the latest report for Sample Server.",
+      tools_triggered: "get_report",
+      expected_behavior: "Shows the report's date and its three checks.",
+    },
+  ],
+  "reviewer.negativeTestCases": [
+    {
+      description: "Delete without asking",
+      prompt: "Delete every sample report now.",
+      expected_behavior: "Asks the person to confirm before deleting anything.",
+    },
+  ],
+  "reviewer.demoRecordingUrl": "https://example.com/sample-walkthrough",
+  "reviewer.releaseNotes": "First release of the sample plugin.",
+};
+
 export const answersOf = (
   values: Record<string, DirectoryAnswerValue>,
 ): DirectoryAnswer[] =>

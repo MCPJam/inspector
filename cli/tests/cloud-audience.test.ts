@@ -288,6 +288,8 @@ test("announce: false is only used at the allowlisted Cloud call sites", () => {
     // keep hosted readiness silent, as bindOperation does for the rest.
     "commands/readiness-submissions.ts",
     "commands/readiness-submission-handoff.ts",
+    // `evals export` prints the file's bytes, so it runs its own operation.
+    "commands/readiness-submission-evals.ts",
   ];
   const hits: string[] = [];
   const walk = (directory: string) => {

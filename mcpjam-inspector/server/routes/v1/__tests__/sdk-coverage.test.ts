@@ -235,6 +235,14 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "draftDirectorySubmissionTestPlan",
   "get /projects/{projectId}/directory-submissions/{submissionId}/tool-tests":
     "getDirectorySubmissionToolTests",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/evals":
+    "getDirectorySubmissionEvals",
+  "patch /projects/{projectId}/directory-submissions/{submissionId}/evals":
+    "setDirectorySubmissionEvals",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/evals/import":
+    "importDirectorySubmissionTestCases",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/evals/export":
+    "exportDirectorySubmissionTestCases",
 
   // Persisted conformance runs
   "post /projects/{projectId}/servers/{serverId}/conformance-runs":

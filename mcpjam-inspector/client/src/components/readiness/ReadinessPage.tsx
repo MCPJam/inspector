@@ -17,6 +17,7 @@ import type { DirectoryReadinessState } from "@/hooks/use-directory-readiness-ru
 import { useDirectorySubmission } from "@/hooks/use-directory-submission";
 import { useTaskOwnerId } from "@/hooks/use-task-owner-id";
 import { useProjectMembers } from "@/hooks/useProjects";
+import { useDirectoryTestPlan } from "@/hooks/use-directory-test-plan";
 import { useProjectServers } from "@/hooks/useViews";
 import { routePaths } from "@/lib/app-navigation";
 import { useAppRouteContext } from "@/lib/app-route-context";
@@ -33,6 +34,8 @@ import { OpenAiPortal } from "./OpenAiPortal";
 import { PortalFrame } from "./PortalFrame";
 import { McpjamNote } from "./PortalWidgets";
 import { DIRECTORY_NAMES, RehearsalBar } from "./RehearsalBar";
+import { isConfirmed, recordConfirmed } from "./test-plan-consent";
+import { TestPlanConsentDialog } from "./TestPlanConsentDialog";
 import "./portal-theme.css";
 
 /** The flow each directory rehearses. */
@@ -350,11 +353,11 @@ export function ReadinessPage({
   const { flow, view, run } = session;
   // Set before the save is awaited, so a second press cannot start a second run.
   const starting = useRef(false);
-  const startRun = async () => {
+  const launch = async (testPlanRevision?: number) => {
     if (starting.current) return;
     starting.current = true;
     try {
-      await session.startRun();
+      await session.startRun(testPlanRevision);
     } finally {
       starting.current = false;
     }
@@ -370,6 +373,43 @@ export function ReadinessPage({
   const directory = view && flow ? flow.directory : choice;
   // A ChatGPT run grades a stored version of the plugin, so it needs one.
   const needsVersion = flow?.directory === "openai" && !view?.pluginVersionId;
+  // A run starts with the saved plan revision the run button names.
+  const plan = useDirectoryTestPlan({
+    projectId: projectId ?? "",
+    submissionId: projectId ? openId : null,
+    runKey: view
+      ? `${view.lastRunId ?? ""}:${view.resultsRunId ?? ""}:${run.status}`
+      : "",
+  });
+  const planRevision = plan.saved?.revision;
+  // The run waiting on the person, and the plan revision it would send.
+  const [confirming, setConfirming] = useState<{
+    submissionId: string;
+    revision: number;
+  } | null>(null);
+  const scope =
+    projectId && openId ? { projectId, submissionId: openId } : null;
+  const startRun = () => {
+    if (
+      scope &&
+      planRevision !== undefined &&
+      !isConfirmed(scope, planRevision)
+    ) {
+      setConfirming({ ...scope, revision: planRevision });
+    } else {
+      void launch(planRevision);
+    }
+  };
+  // Shown only while the saved plan is the revision the run would send, so
+  // what the person reads is what runs. A newer save hides it unanswered.
+  const saved = plan.saved;
+  const pending =
+    scope &&
+    saved &&
+    confirming?.submissionId === scope.submissionId &&
+    saved.revision === confirming.revision
+      ? { scope, saved }
+      : null;
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -428,6 +468,7 @@ export function ReadinessPage({
           flow={flow}
           view={view}
           session={session}
+          testPlan={plan}
           serverUrl={serverUrl}
           serverName={chosen.server.name}
           people={people}
@@ -471,7 +512,8 @@ export function ReadinessPage({
         canRun={Boolean(view) && run.status !== "unavailable" && !needsVersion}
         running={run.status === "running"}
         hasRun={Boolean(view?.lastRunId)}
-        onRun={() => void startRun()}
+        planRevision={planRevision}
+        onRun={startRun}
       />
       <div
         className={cn(
@@ -481,6 +523,18 @@ export function ReadinessPage({
       >
         {body}
       </div>
+      {pending ? (
+        <TestPlanConsentDialog
+          saved={pending.saved}
+          serverName={chosen?.server.name ?? ""}
+          onConfirm={() => {
+            setConfirming(null);
+            recordConfirmed(pending.scope, pending.saved.revision);
+            void launch(pending.saved.revision);
+          }}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
     </div>
   );
 }

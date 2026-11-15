@@ -398,6 +398,26 @@ describe("v1 directory submission test plans", () => {
       expect(mocks.query.mock.calls.some(([fn]) => nameOf(fn) === CALLS)).toBe(false);
     });
 
+    it("passes on the arguments a run drafted, as proposals, and only from its report", async () => {
+      const drafting = {
+        status: "completed",
+        drafts: [{ caseId: "search_docs#valid", arguments: { query: "pricing" }, rationale: "A query the docs answer." }],
+        undecided: [{ caseId: "delete_note#valid", reason: "needs_fixture" }],
+        dropped: { schema: 1, credential: 0 },
+        unsent: 2,
+        modelId: "model_1",
+      };
+      const toolTests = { planRevision: 2, status: "not-run", reason: "Not run.", ambiguous: [], tools: [], cleanup: [], drafting };
+      report = { status: 200, body: { findings: [], toolTests } };
+      queries[LIST] = () => [runRow(RUN, { status: "completed", hasReport: true, testPlanRevision: 2 })];
+      expect((await json(request("GET", `${ONE}/tool-tests`))).drafting).toEqual(drafting);
+      // Drafting an unreadable shape, or a run still going, carries none.
+      report = { status: 200, body: { findings: [], toolTests: { ...toolTests, drafting: { status: "completed", drafts: "all" } } } };
+      expect(await json(request("GET", `${ONE}/tool-tests`))).not.toHaveProperty("drafting");
+      queries[LIST] = () => [runRow(RUN, { testPlanRevision: 2 })];
+      expect(await json(request("GET", `${ONE}/tool-tests`))).not.toHaveProperty("drafting");
+    });
+
     it.each([
       ["no tool tests", {}],
       ["tool tests it cannot read", { toolTests: { status: "completed", tools: "all" } }],

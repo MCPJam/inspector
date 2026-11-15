@@ -9,6 +9,17 @@
  * run that opted into model observations also has the broker draft the
  * arguments the plan's cases lack, and reports the drafts unsent.
  *
+ * THE REVIEWER-ONLY RULE. The plan runs as the reviewer account and on no
+ * other credential: the saved server's is the requester's, often a staff
+ * member's (RP2). A run without a reviewer account lists and calls nothing
+ * and says why, as does one whose account the reviewer path's identity check
+ * found signed in as another account or organization: the plan's writes
+ * would land there. An identity it could not check does not stop the run.
+ * A case that uses a fixture the reviewer path looked up and did not find
+ * is not sent, and is reported blocked, naming it (RP5). A
+ * server the submission says needs no sign-in is tested as a directory's
+ * reviewer reaches it: with no credential at all, recording no account.
+ *
  * Every way this can fail short of a lost lease becomes a report that says
  * why, so the readiness grade beside it is kept.
  */
@@ -21,6 +32,8 @@ import {
   summarizeDirectoryToolTests,
   validateDirectoryTestPlan,
   type DirectoryDialOptions,
+  type DirectoryReviewerFixtureEvidence,
+  type DirectoryReviewerIdentityEvidence,
   type DirectoryTestCallRecord,
   type DirectoryTestPlan,
   type DirectoryTestPlanIssue,
@@ -35,6 +48,7 @@ import {
   readRunTestPlan,
   recordRunCall,
 } from "./call-ledger.js";
+import type { ReadinessReviewerAccount } from "./reviewer-path.js";
 import {
   ReadinessRunCancelledError,
   asRecord,
@@ -65,6 +79,17 @@ const unlisted = (error?: string) =>
   `The server's tool list could not be read in full${error ? ` (${error})` : ""}, so no tool was called. Check that the server is reachable, then start a new run.`;
 const MISMATCH =
   "The test plan does not match the tools the server lists now, so no tool was called. Fix the issues listed, save the plan, then start a new run.";
+const signInNeeded = (status: number) =>
+  `The server refused a connection with no credential (HTTP ${status}), but the submission says it needs no sign-in, so no tool was called. Correct the authentication answer, or let the server accept calls without sign-in, then start a new run.`;
+/** The identity check's outcomes that stop the plan: someone else's account. */
+const WRONG_REVIEWER: Partial<
+  Record<DirectoryReviewerIdentityEvidence["outcome"], string>
+> = {
+  "wrong-account":
+    "The reviewer account signed in as a different account than the submission names, so MCPJam made none of the test plan's calls. Rehearse the reviewer sign-in with the account the submission names, then start a new run.",
+  "wrong-tenant":
+    "The reviewer account answers for an organization other than the one the submission names, so MCPJam made none of the test plan's calls. Leave the reviewer account in only the organization or project the submission names, then start a new run.",
+};
 
 /** What a run's report says about its tool tests. */
 export interface DirectoryToolTestReport {
@@ -94,7 +119,15 @@ export interface RunDirectoryTestPlanOptions {
   target: string;
   /** The DNS-pinned transport. */
   fetchFn: typeof fetch;
-  mcpHeaders?: Record<string, string>;
+  /**
+   * The only credential the plan's calls use, or why the run has none. With
+   * `noSignIn`, the submission says the server needs no sign-in: no credential.
+   */
+  reviewer: ReadinessReviewerAccount | { noSignIn: true };
+  /** The reviewer path's fixture lookup, when it ran. */
+  fixtures?: DirectoryReviewerFixtureEvidence;
+  /** The reviewer path's identity check, when it ran. */
+  identity?: DirectoryReviewerIdentityEvidence;
   signal: AbortSignal;
   /** When the run must have finished. */
   deadlineAt: number;
@@ -133,11 +166,18 @@ async function testPlanReport(
     tools: [],
     cleanup: [],
   });
-  const { lease } = options;
+  const { lease, reviewer } = options;
   const ledger = await stopOr(readRunCallLedger(lease), lease);
   if (!ledger) return notRun(NOT_READ);
   const planRevision = ledger.testPlanRevision;
   if (planRevision === undefined) return undefined;
+  // The reviewer-only rule: with no reviewer account, nothing is even listed.
+  if ("missing" in reviewer) return notRun(reviewer.missing, planRevision);
+  const signedIn = "noSignIn" in reviewer ? undefined : reviewer;
+  // Nor as someone else. With no sign-in, no call carries the account.
+  const outcome = signedIn && options.identity?.outcome;
+  const wrongReviewer = outcome ? WRONG_REVIEWER[outcome] : undefined;
+  if (wrongReviewer) return notRun(wrongReviewer, planRevision);
   const saved = await stopOr(readRunTestPlan(lease), lease);
   if (saved === null) return notRun(unreadable(planRevision), planRevision);
   if (!saved) return notRun(notSaved(planRevision), planRevision);
@@ -147,7 +187,7 @@ async function testPlanReport(
   const dial: DirectoryDialOptions = {
     enteredUrl: options.target,
     fetchFn: options.fetchFn,
-    mcpHeaders: options.mcpHeaders,
+    mcpHeaders: signedIn?.mcpHeaders,
     signal: options.signal,
   };
   const session = await dialMcpServer(dial);
@@ -155,11 +195,19 @@ async function testPlanReport(
   const listing = session.tools;
   if (!session.initialize.ok || !listing?.complete) {
     const error = session.initialize.error ?? listing?.error;
-    return notRun(unlisted(error), planRevision);
+    // Refused with no credential: the answers and the server disagree.
+    const status = session.initialize.status ?? 0;
+    const refused = !signedIn && (status === 401 || status === 403);
+    const reason = refused ? signInNeeded(status) : unlisted(error);
+    return notRun(reason, planRevision);
   }
   const tools = listing.entries;
   const issues = checkPlan(plan, tools);
   if (!issues) return notRun(malformed(planRevision), planRevision);
+  const asReviewer = {
+    account: signedIn?.accountId ?? null,
+    missingFixtures: missingInPlan(plan, options.fixtures),
+  };
   // Before the sweep, and reported only. A case without arguments is an
   // issue that keeps the plan from running, so no sweep follows a pass with
   // anything to draft, and the pass may take the run's time up to finalizing.
@@ -173,7 +221,7 @@ async function testPlanReport(
   const drafted = drafting ? { drafting } : {};
   if (issues.length > 0) {
     const stopped = { by: "setup" as const, detail: MISMATCH };
-    const results = summarize(plan, tools, ledger.calls, stopped);
+    const results = summarize(plan, tools, ledger.calls, stopped, asReviewer);
     return {
       ...notRun(MISMATCH, planRevision),
       issues,
@@ -189,6 +237,7 @@ async function testPlanReport(
     plan,
     tools,
     ledger: ledger.calls,
+    ...asReviewer,
     send: (request) =>
       dialToolCall(
         { ...dial, timeoutMs },
@@ -206,7 +255,7 @@ async function testPlanReport(
     ...(options.now ? { now: options.now } : {}),
   });
   const { stopped, cleanup } = execution;
-  const results = summarize(plan, tools, execution.calls, stopped);
+  const results = summarize(plan, tools, execution.calls, stopped, asReviewer);
   const ambiguousCleanup = cleanup
     .filter((call) => call.phase === "ambiguous")
     .map((call) => call.callKey);
@@ -262,17 +311,45 @@ function checkPlan(
   }
 }
 
+/**
+ * The plan's existing fixtures the reviewer path looked up and did not find.
+ * The reviewer section names a resource as the plan does: by the fixture's
+ * id or by one of its values, ignoring case.
+ */
+function missingInPlan(
+  plan: DirectoryTestPlan,
+  lookup: DirectoryReviewerFixtureEvidence | undefined,
+): string[] {
+  const key = (name: string | number) => String(name).trim().toLowerCase();
+  const missing = new Set(
+    lookup?.fixtures.flatMap((entry) =>
+      entry.status === "missing" ? [key(entry.name)] : [],
+    ),
+  );
+  return plan.fixtures
+    .filter(
+      ({ id, origin, values }) =>
+        origin === "existing" &&
+        [id, ...Object.values(values ?? {})].some((name) =>
+          missing.has(key(name)),
+        ),
+    )
+    .map(({ id }) => id);
+}
+
 function summarize(
   plan: DirectoryTestPlan,
   tools: readonly DirectoryTestPlanTool[],
   calls: readonly DirectoryTestCallRecord[],
   stopped: SummarizeDirectoryToolTestsInput["stopped"],
+  reviewer: { account: string | null; missingFixtures: string[] },
 ): { tools: DirectoryToolTestResult[]; ambiguous: string[] } {
   const results = summarizeDirectoryToolTests({
     plan,
     tools,
     calls,
     ...(stopped ? { stopped } : {}),
+    ...reviewer,
   });
   const ambiguous = results.flatMap((tool) =>
     tool.cases

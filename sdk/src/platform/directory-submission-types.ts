@@ -140,7 +140,7 @@ export function directorySubmissionsPath(
   projectId: string,
   submissionId?: string,
   sub?: "runs" | "results" | "handoff" | "findings" | "export" | "events" | "snapshots"
-    | "test-plan" | "test-plan/draft" | "tool-tests"
+    | "test-plan" | "test-plan/draft" | "tool-tests" | "evals" | "evals/import" | "evals/export"
 ): string {
   const base = `/projects/${encodeURIComponent(projectId)}/directory-submissions`;
   if (submissionId === undefined) return base;

@@ -138,6 +138,8 @@ describe("useDirectorySubmission with a ChatGPT plugin", () => {
       SCOPE,
       "key_1",
       "ver_2",
+      // No test plan revision: the run was started without one.
+      undefined,
     );
   });
 

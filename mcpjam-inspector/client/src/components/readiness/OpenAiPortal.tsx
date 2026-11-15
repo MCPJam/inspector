@@ -1,7 +1,8 @@
 /**
  * The copy of ChatGPT's plugin page around one plugin submission: the
  * breadcrumb, the plugin's header with the portal's three status chips, the
- * "Metadata & Skills" and "MCPs" tabs, the version toolbar, and the Findings
+ * "Metadata & Skills" and "MCPs" tabs, the version toolbar with the "Review
+ * information" drawer and the "Submit for review" dialog, and the Findings
  * panel beside each tab. Labels come from the flow where it holds them; the
  * chrome no field carries is copied from the board's captures of the portal.
  *
@@ -35,16 +36,28 @@ import {
   useProjectPlugins,
 } from "@/hooks/usePluginImportApi";
 import { usePluginsEnabledState } from "@/hooks/usePluginsEnabled";
-import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
+import type {
+  SubmissionEvent,
+  SubmissionView,
+} from "@/lib/apis/directory-submissions-api";
 import { openResult } from "./McpjamChecks";
-import { Chip, OpenAiFindings } from "./OpenAiFindings";
+import { Chip, FindingsDot, OpenAiFindings } from "./OpenAiFindings";
 import { allHold, CONNECTION, OpenAiMcp } from "./OpenAiMcp";
 import { OpenAiMetadata, OpenAiSkills } from "./OpenAiMetadata";
+import { OpenAiReview } from "./OpenAiReview";
+import { OpenAiSubmit } from "./OpenAiSubmit";
 import { McpjamNote } from "./PortalWidgets";
 
-/** Results and issues of every step but MCPs show on the first tab. */
 const MCP = "mcp";
 const LISTING = "listing";
+const REVIEWER = "reviewer";
+const SUBMIT = "submit";
+/**
+ * Steps whose results and issues show in a place of their own: MCPs on its
+ * tab, the reviewer and submit steps in the drawer and the dialog. The rest
+ * show on the first tab.
+ */
+const OWN_PLACE: readonly string[] = [MCP, REVIEWER, SUBMIT];
 const TAB =
   "-mb-px h-auto flex-none rounded-none border-0 border-b-2 border-transparent px-0 pb-2 font-normal text-muted-foreground shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:font-medium data-[state=active]:text-foreground data-[state=active]:shadow-none dark:data-[state=active]:border-foreground dark:data-[state=active]:bg-transparent";
 
@@ -152,6 +165,8 @@ export function OpenAiPortal({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState(LISTING);
+  const [open, setOpen] = useState<string | null>(null);
+  const [recorded, setRecorded] = useState<SubmissionEvent | null>(null);
   // Only a plugin still in the project is read: an uninstalled one's
   // detail read fails, and that would take the page down.
   const live = useProjectPlugins(projectId);
@@ -167,10 +182,13 @@ export function OpenAiPortal({
   const listing = step(LISTING);
   const blocks = listing?.layout?.blocks ?? [];
   const findingsText = blocks.find((block) => block.widget === "findings")?.text ?? {};
-  const onTab = (id: string) => (id === MCP ? MCP : LISTING);
+  const onTab = (id: string) => (OWN_PLACE.includes(id) ? id : LISTING);
   const placed = (name: string) => view.steps.filter((entry) => onTab(entry.step) === name);
   const results = (name: string) => placed(name).flatMap((entry) => entry.findings);
   const issues = (name: string) => session.issues.filter((issue) => onTab(issue.step) === name);
+  const flagged = (name: string) => issues(name).length + results(name).filter(openResult).length > 0;
+  const review = step(REVIEWER);
+  const submit = step(SUBMIT);
   // The results are this version's only when the run that wrote them graded it.
   const run = session.run.run;
   const resultsRun = run && run.id === view.resultsRunId ? run : undefined;
@@ -252,12 +270,7 @@ export function OpenAiPortal({
           {[LISTING, MCP].map((id) => (
             <TabsTrigger key={id} value={id} className={TAB}>
               {step(id)?.title}
-              {issues(id).length + results(id).filter(openResult).length > 0 ? (
-                <>
-                  <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />
-                  <span className="sr-only">, has findings</span>
-                </>
-              ) : null}
+              {flagged(id) ? <FindingsDot /> : null}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -286,6 +299,19 @@ export function OpenAiPortal({
               {blocks.find((block) => block.text?.upload)?.text?.upload}
             </Button>
             <McpjamNote>Import a new version of this plugin on Connect.</McpjamNote>
+            <div className="ml-auto flex gap-2">
+              {review ? (
+                <Button type="button" variant="outline" size="sm" onClick={() => setOpen(REVIEWER)}>
+                  {review.title}
+                  {flagged(REVIEWER) ? <FindingsDot /> : null}
+                </Button>
+              ) : null}
+              {submit ? (
+                <Button type="button" size="sm" onClick={() => setOpen(SUBMIT)}>
+                  {submit.title}
+                </Button>
+              ) : null}
+            </div>
           </div>
           {session.pluginError || otherVersion ? (
             <p role="alert" className="px-8 pt-3 text-sm text-destructive">
@@ -344,6 +370,33 @@ export function OpenAiPortal({
           </div>
         </TabsContent>
       </Tabs>
+      {review ? (
+        <OpenAiReview
+          key={view.id}
+          flow={flow}
+          step={review}
+          view={view}
+          session={session}
+          issues={issues(REVIEWER)}
+          findings={results(REVIEWER)}
+          open={open === REVIEWER}
+          onClose={() => setOpen(null)}
+        />
+      ) : null}
+      {submit ? (
+        <OpenAiSubmit
+          key={view.id}
+          step={submit}
+          view={view}
+          session={session}
+          issues={issues(SUBMIT)}
+          findings={results(SUBMIT)}
+          recorded={recorded?.submissionId === view.id ? recorded : null}
+          onRecorded={setRecorded}
+          open={open === SUBMIT}
+          onClose={() => setOpen(null)}
+        />
+      ) : null}
     </div>
   );
 }

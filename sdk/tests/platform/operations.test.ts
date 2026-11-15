@@ -2470,6 +2470,10 @@ describe("operation catalog consistency", () => {
       },
     },
     get_directory_submission_tool_tests: { submission: "sub" },
+    get_directory_submission_evals: { submission: "sub" },
+    set_directory_submission_evals: { submission: "sub", suite: "suite", expectedRevision: 1 },
+    import_directory_submission_test_cases: { submission: "sub" },
+    export_directory_submission_test_cases: { submission: "sub" },
     start_conformance_run: { server: "s" },
     get_conformance_run: { run: "r" },
     list_conformance_runs: {},
@@ -2838,6 +2842,10 @@ describe("operation catalog consistency", () => {
       "import_directory_finding",
       // A new revision of the plan whose calls a run may make. It calls nothing.
       "save_directory_submission_test_plan",
+      // The eval suite holding a submission's test cases, and the cases a
+      // plugin package declares, written into it. Neither calls a tool.
+      "set_directory_submission_evals",
+      "import_directory_submission_test_cases",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",

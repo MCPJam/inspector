@@ -26,7 +26,11 @@ export const DIRECTORY_REVIEWER_FIELDS = [
   "fixtures",
 ] as const;
 
-/** The fixtures field's rows: the resource, and its lookup as `tool {"json": "arguments"}`. */
+/**
+ * The fixtures field's rows: the resource, and its lookup as
+ * `tool {"json": "arguments"}`. MCPJam's own list, not a portal's fixed
+ * rows, so it grows as it fills.
+ */
 export const DIRECTORY_REVIEWER_FIXTURE_PAIRS: NonNullable<
   DirectoryFlowField["pairs"]
 > = {
@@ -34,6 +38,7 @@ export const DIRECTORY_REVIEWER_FIXTURE_PAIRS: NonNullable<
   keys: ["fixture", "lookup"],
   placeholders: [["Sample Project", 'get_project {"name": "Sample Project"}']],
   maxRows: 20,
+  grow: true,
 };
 
 export interface DirectoryReviewerIdentitySpec {
@@ -147,6 +152,19 @@ export interface DirectoryReviewerRunInput {
   /** Absent for a run that grades no submission. */
   reviewerPath?: DirectoryReviewerPathEvidence;
   clientSignatures?: DirectoryClientSignatureEvidence;
+}
+
+/**
+ * Whether a submission says its server needs no sign-in, so a reviewer
+ * connects with no account. Only Claude's form asks; ChatGPT's leaves
+ * authentication to the package's `mcp.json`.
+ */
+export function directoryDeclaresNoSignIn(
+  answers: readonly DirectoryAnswer[]
+): boolean {
+  return answers.some(
+    ({ key, value }) => key === "authentication.requirement" && value === "none"
+  );
 }
 
 /** The step a flow keeps its reviewer section on: the one with `<step>.identityTool`. */
