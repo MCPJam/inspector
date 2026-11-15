@@ -32,7 +32,9 @@ describe("CombineFlow", () => {
     renderWithProviders(
       <CombineFlow requiredCount={3} explainStep="Ask why" />,
     );
-    expect(screen.getByText("3 required checks")).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "How results combine" }),
+    ).toHaveTextContent("3 required checks");
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByText("Ask why")).toBeInTheDocument();

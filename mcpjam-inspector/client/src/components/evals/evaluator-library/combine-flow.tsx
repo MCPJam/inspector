@@ -35,7 +35,11 @@ export function CombineFlow({
 }: CombineFlowProps) {
   const checks = `${requiredCount} required ${requiredCount === 1 ? "check" : "checks"}`;
   return (
-    <div className="flex flex-col gap-2" aria-label="How results combine">
+    <div
+      role="group"
+      aria-label="How results combine"
+      className="flex flex-col gap-2"
+    >
       {dependency ? (
         <div className="flex flex-wrap items-center gap-1.5">
           <Step>{`No ${CASE_FIELD_LABEL[dependency]} in the case`}</Step>
