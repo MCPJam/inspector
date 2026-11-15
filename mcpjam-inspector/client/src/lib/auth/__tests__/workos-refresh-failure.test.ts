@@ -89,10 +89,14 @@ describe("handleWorkosRefreshFailure", () => {
     handleWorkosRefreshFailure({ signIn });
 
     expect(signIn).toHaveBeenCalledTimes(1);
-    expect(mockState.track).toHaveBeenCalledTimes(1);
+    expect(
+      mockState.track.mock.calls.filter(
+        ([name]) => name === "workos_session_expired",
+      ),
+    ).toHaveLength(1);
     expect(mockState.track).toHaveBeenCalledWith(
-      "workos_session_expired",
-      expect.any(Object),
+      "signin_started",
+      expect.objectContaining({ location: "session-refresh" }),
     );
     expect(mockState.reportCaught).not.toHaveBeenCalled();
   });

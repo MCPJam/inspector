@@ -21,6 +21,7 @@ import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { WorkosAuthUnavailableDialog } from "./components/auth/WorkosAuthUnavailableDialog";
+import { SignInAttemptSettler } from "./components/auth/SignInAttemptSettler";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { installConvexAuthRecovery } from "./lib/convex-auth-recovery";
 import { AuthRecoveryBoundary } from "./components/AuthRecoveryBoundary";
@@ -483,6 +484,7 @@ if (isInIframe) {
         </ConvexProviderWithAuth>
       </HostedAuthEntry>
       <WorkosAuthUnavailableDialog />
+      <SignInAttemptSettler redirectUri={workosRedirectUri} />
     </AuthKitProvider>
   );
 

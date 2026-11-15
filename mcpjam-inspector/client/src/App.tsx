@@ -3928,7 +3928,7 @@ export default function App() {
     isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
-  usePostHogOrgContext(activeOrganizationId);
+  usePostHogOrgContext(activeOrganizationId, isFeedbackMember === true);
   useSentryOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
