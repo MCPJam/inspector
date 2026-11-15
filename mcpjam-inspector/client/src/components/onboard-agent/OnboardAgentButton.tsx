@@ -89,11 +89,11 @@ export function OnboardAgentButton() {
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
+        <Button
+          variant="outline"
           className={cn(
-            "hidden h-9 items-center gap-2.5 lg:flex rounded-full border border-chrome-control-border bg-background pr-1.5 pl-3.5 text-sm font-medium whitespace-nowrap text-card-foreground transition-shadow",
-            "hover:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] focus-visible:outline-none",
+            "hidden gap-2.5 rounded-full border-chrome-control-border pr-1.5 pl-3.5 text-card-foreground lg:inline-flex",
+            "hover:border-ring hover:bg-background hover:text-card-foreground",
             open && "border-ring ring-ring/30 ring-[3px]",
           )}
         >
@@ -108,7 +108,7 @@ export function OnboardAgentButton() {
               />
             ))}
           </span>
-        </button>
+        </Button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
