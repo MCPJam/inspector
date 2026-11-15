@@ -36,6 +36,7 @@
  * stopped is traffic to somebody else's server.
  */
 
+import { submissionFindingInputs } from "./submission-finding-inputs.js";
 import { logger } from "../../utils/logger.js";
 import { captureServerEventForActor } from "../../utils/analytics.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
@@ -235,6 +236,7 @@ async function readSubmissionAnswers(
 ): Promise<{
   flow: DirectoryFlow;
   answers: ReadinessRunSubmission["answers"];
+  pluginVersionId?: string;
 }> {
   const submission = await getReadinessRunSubmission(options.lease);
   const flow = getDirectoryFlow(submission.flowId);
@@ -250,7 +252,11 @@ async function readSubmissionAnswers(
       `This run's answers follow version ${submission.flowVersion} of the ${submission.flowId} form, and this server grades version ${flow.version}. Start the run again after MCPJam updates.`,
     );
   }
-  return { flow, answers: submission.answers };
+  return {
+    flow,
+    answers: submission.answers,
+    pluginVersionId: submission.pluginVersionId,
+  };
 }
 
 const NO_REVIEWER_ACCOUNT: ReadinessReviewerAccount = {
@@ -519,7 +525,15 @@ export async function executeHostedReadinessRun(
       // A graded package adds which stored version the findings are about:
       // its ids and the hash its bytes were checked against.
       {
-        ...redactConformanceReportForSharing(result),
+        ...redactConformanceReportForSharing({
+          ...result,
+          findings: submission
+            ? result.findings.map((finding) => ({
+                ...finding,
+                inputs: submissionFindingInputs(finding, submission),
+              }))
+            : result.findings,
+        }),
         ...(runPackage ? { gradedPluginVersion: runPackage.version } : {}),
         // Redacted where it is built, so the plan issues' codes stay readable.
         ...(toolTests ? { toolTests } : {}),
