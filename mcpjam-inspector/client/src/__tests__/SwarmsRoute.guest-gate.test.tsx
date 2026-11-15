@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectMembershipRole } from "../hooks/useProjects";
 
 const {
-  mockFlags,
   mockSwarmsTab,
   mockRouteContext,
   mockViewerRole,
@@ -17,10 +16,6 @@ const {
     isLoading: false,
   };
   return {
-    // Tri-state, like PostHog: `undefined` while flags hydrate. These tests
-    // are about the member-only gate, so the feature flag is ON by default and
-    // the flag gate itself is covered separately below.
-    mockFlags: { sandboxesEnabled: true as boolean | undefined },
     mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
     mockViewerRole,
     mockUseIsMemberActor: vi.fn(() => true as boolean | undefined),
@@ -43,9 +38,6 @@ vi.mock("react-router", async (importOriginal) => {
   return {
     ...actual,
     useOutletContext: () => mockRouteContext,
-    // Rendered outside a <Router> here, so stand it up as a marker — which
-    // also lets the flag test assert WHERE a blocked user is sent.
-    Navigate: ({ to }: { to: string }) => <div>{`redirected:${to}`}</div>,
   };
 });
 
@@ -55,17 +47,6 @@ vi.mock("@/hooks/use-is-member-actor", () => ({
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => mockUseAuth(),
 }));
-
-vi.mock("../hooks/useSandboxesEnabled", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("../hooks/useSandboxesEnabled")
-  >();
-  return {
-    ...actual,
-    useSandboxesEnabledState: () => mockFlags.sandboxesEnabled,
-    useSandboxesEnabled: () => mockFlags.sandboxesEnabled === true,
-  };
-});
 
 // Keep the real `canViewSwarms` decision + `EmptyState`; only the viewer-role
 // signal is controlled per test.
@@ -116,13 +97,7 @@ vi.mock("@codemirror/lint", () => ({
 
 import { SwarmsRoute } from "../App";
 
-/**
- * The route's redirect goes through `ScopedNavigate`, which carries the active
- * project into a project-owned target — so it needs a router context to read
- * the current location from. Mounting inside a `MemoryRouter` gives it one;
- * the `Navigate` marker mocked above still renders, and with no project in the
- * URL the target is the plain logical path these assertions expect.
- */
+/** The route reads router state, so it mounts inside a `MemoryRouter`. */
 function renderRoute(element: React.ReactElement) {
   return render(<MemoryRouter>{element}</MemoryRouter>);
 }
@@ -142,52 +117,10 @@ describe("SwarmsRoute member-only gate", () => {
     mockRouteContext.isAuthenticated = true;
     mockViewerRole.role = undefined;
     mockViewerRole.isLoading = false;
-    mockFlags.sandboxesEnabled = true;
     mockUseAuth.mockReturnValue({
       user: { email: "guest@example.com" },
       isLoading: false,
     });
-  });
-
-  // The sidebar filters the Swarms nav item on `sandboxes-enabled`, but the
-  // route itself was unguarded — a direct URL or stale bookmark mounted the
-  // whole surface (and fired its member-only queries) for flagged-out users.
-  it("redirects to servers when the sandboxes flag is off", () => {
-    mockFlags.sandboxesEnabled = false;
-
-    renderRoute(<SwarmsRoute />);
-
-    expect(screen.getByText("redirected:/servers")).toBeInTheDocument();
-    expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
-    expect(mockSwarmsTab).not.toHaveBeenCalled();
-  });
-
-  it("redirects a flagged-out guest too, instead of showing the preview", () => {
-    // The flag is the rollout control and runs BEFORE the preview: a visitor
-    // the flag excludes gets no surface at all, not a sign-up pitch for one.
-    mockFlags.sandboxesEnabled = false;
-    mockUseIsMemberActor.mockReturnValue(false);
-    mockUseAuth.mockReturnValue({ user: null, isLoading: false });
-
-    renderRoute(<SwarmsRoute />);
-
-    expect(screen.getByText("redirected:/servers")).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("gated-feature-swarms"),
-    ).not.toBeInTheDocument();
-    expect(mockSwarmsTab).not.toHaveBeenCalled();
-  });
-
-  it("renders nothing — and does not bounce — while the flag is still hydrating", () => {
-    // Redirecting on `undefined` would strand a flagged-in user who cold-loads
-    // /swarms directly, before PostHog has answered.
-    mockFlags.sandboxesEnabled = undefined;
-
-    renderRoute(<SwarmsRoute />);
-
-    expect(screen.queryByText(/redirected:/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
-    expect(mockSwarmsTab).not.toHaveBeenCalled();
   });
 
   it("bounds role loading to WorkOS identity hydrate, not Convex auth alone", () => {

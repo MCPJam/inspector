@@ -137,7 +137,7 @@ describe("filterByFeatureFlags", () => {
     ]);
   });
 
-  it("keeps Scenarios behind the existing sandboxes flag", () => {
+  it("keeps a billing-gated item behind its feature flag", () => {
     const sections = [
       {
         id: "connection",
@@ -146,7 +146,7 @@ describe("filterByFeatureFlags", () => {
             title: "Scenarios",
             url: "#scenarios",
             icon: FakeIcon,
-            featureFlag: "sandboxes-enabled",
+            featureFlag: "registry-enabled",
             billingFeature: "scenarios" as const,
           },
         ],
@@ -154,18 +154,18 @@ describe("filterByFeatureFlags", () => {
     ];
 
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items,
+      filterByFeatureFlags(sections, { "registry-enabled": true })[0].items,
     ).toEqual([
       {
         title: "Scenarios",
         url: "#scenarios",
         icon: FakeIcon,
-        featureFlag: "sandboxes-enabled",
+        featureFlag: "registry-enabled",
         billingFeature: "scenarios",
       },
     ]);
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": false }),
+      filterByFeatureFlags(sections, { "registry-enabled": false }),
     ).toHaveLength(0);
   });
 
@@ -517,54 +517,21 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
 });
 
 /**
- * Swarms and User Testing roll out on `sandboxes-enabled` in PostHog. The flag
- * decides whether the items exist; REEV-6's route gate then decides what a
- * visitor gets — a guest the preview, a member the real tab.
- *
- * The flag is deliberately NOT combined with sign-in here. Before REEV-6 the
- * sidebar resolved it as `flag && isAuthenticated`, which would hide the items
- * from exactly the signed-out visitors the preview was built for.
+ * Swarms and User Testing carry no feature flag. REEV-6's route gate decides
+ * what a visitor gets — a guest the preview, a member the real tab — so the
+ * sidebar has to show both items to a signed-out visitor too.
  */
-describe("Swarms and User Testing are flag-gated, not sign-in-gated (REEV-6)", () => {
+describe("Swarms and User Testing are not flag-gated or sign-in-gated (REEV-6)", () => {
   const MEASURE_ITEMS = ["User Testing", "Swarms"];
 
-  it("gates both items on sandboxes-enabled", () => {
-    const items = navigationSections
-      .flatMap((section) => section.items)
-      .filter((item) => MEASURE_ITEMS.includes(item.title));
-
-    expect(items).toHaveLength(2);
-    for (const item of items) {
-      expect(item.featureFlag).toBe("sandboxes-enabled");
-    }
-  });
-
-  it("hides both when the flag is off", () => {
-    const titles = filterByFeatureFlags(navigationSections, {
-      "sandboxes-enabled": false,
-    })
-      .flatMap((section) => section.items)
-      .map((item) => item.title);
-
-    for (const title of MEASURE_ITEMS) {
-      expect(titles).not.toContain(title);
-    }
-  });
-
-  it("shows both when the flag is on", () => {
-    const titles = filterByFeatureFlags(navigationSections, {
-      "sandboxes-enabled": true,
-    })
+  it("shows both items with no flag resolved", () => {
+    const titles = filterByFeatureFlags(navigationSections, {})
       .flatMap((section) => section.items)
       .map((item) => item.title);
 
     for (const title of MEASURE_ITEMS) {
       expect(titles).toContain(title);
     }
-  });
-
-  it("resolves the flag key before the nav renders", () => {
-    expect(SIDEBAR_RESOLVED_FLAG_KEYS).toContain("sandboxes-enabled");
   });
 
   // They stay CLICKABLE for a plan-locked org rather than disabled: the tab
