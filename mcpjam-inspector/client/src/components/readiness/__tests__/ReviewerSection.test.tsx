@@ -147,7 +147,7 @@ describe("ReviewerSection", () => {
     );
     expect(
       screen.getByText(
-        "MCPJam saves them as project secrets and doesn't show them again.",
+        "MCPJam keeps these credentials in the project's secrets and doesn't show them again.",
       ),
     ).toBeVisible();
     expect(within(region()).getByText("Not tested")).toBeVisible();
@@ -169,7 +169,7 @@ describe("ReviewerSection", () => {
     await status("Credentials saved; reviewer sign-in not tested");
     expect(
       screen.getByText(
-        `Saved as project secrets ${EMAIL_SECRET} and ${PASSWORD_SECRET}.`,
+        `Credentials saved in project secrets as ${EMAIL_SECRET} and ${PASSWORD_SECRET}.`,
       ),
     ).toBeVisible();
 
@@ -357,7 +357,9 @@ describe("ReviewerSection", () => {
     renderSection();
     await status("Credentials saved; reviewer sign-in not tested");
     expect(
-      screen.getByText("Saved as project secret MCPJAM_REVIEWER_PASSWORD."),
+      screen.getByText(
+        "Credentials saved in project secrets as MCPJAM_REVIEWER_PASSWORD.",
+      ),
     ).toBeVisible();
     await userEvent.click(
       screen.getByRole("button", { name: "Rehearse reviewer sign-in" }),
@@ -377,7 +379,7 @@ describe("ReviewerSection", () => {
     renderSection();
     expect(
       await screen.findByText(
-        "MCPJam saves them as your personal secrets and doesn't show them again. Only you can rehearse with them.",
+        "MCPJam keeps these credentials in your personal secrets and doesn't show them again. Only you can rehearse with them.",
       ),
     ).toBeVisible();
   });

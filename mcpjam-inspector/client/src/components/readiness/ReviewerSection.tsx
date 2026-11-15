@@ -144,8 +144,8 @@ function CredentialsForm({
       </fieldset>
       <p className="text-xs text-muted-foreground">
         {credentials.personal
-          ? "MCPJam saves them as your personal secrets and doesn't show them again. Only you can rehearse with them."
-          : "MCPJam saves them as project secrets and doesn't show them again."}
+          ? "MCPJam keeps these credentials in your personal secrets and doesn't show them again. Only you can rehearse with them."
+          : "MCPJam keeps these credentials in the project's secrets and doesn't show them again."}
       </p>
       {error ? (
         <p role="alert" className="text-sm text-destructive">
@@ -193,7 +193,7 @@ function CredentialsRow({
     body = (
       <>
         <p className="[overflow-wrap:anywhere]">
-          {`Saved as ${kind} ${names.length > 1 ? "secrets" : "secret"} ${names.join(" and ")}.`}
+          {`Credentials saved in ${kind} secrets as ${names.join(" and ")}.`}
         </p>
         <p className="text-muted-foreground">
           No screen, API or export returns them, so type the password into the
