@@ -35,6 +35,7 @@ import {
   harnessOrgUpstreamProfile,
 } from "@/shared/harness-gateway-model";
 import type { HarnessUpstreamProfile } from "@/shared/harness-model-support";
+import { accountLimitCode } from "@/shared/swarm-attempt-error";
 import {
   getCanonicalModelId,
   hostedProviderFromCanonicalId,
@@ -226,12 +227,14 @@ export class OrgLeaseTurn {
     if (!reservation.ok) {
       if (reservation.status >= 500) handBack();
       refuseRetiredBox(reservation);
+      // The organization's own limit (the native harness trial) keeps its
+      // code on every key, so each surface can say what to do about it.
+      const kept =
+        reservation.code &&
+        (this.selection || accountLimitCode(undefined, reservation.code));
       throw new HarnessInfraSetupError(reservation.error, {
         source: "sandbox_setup",
-        code:
-          this.selection && reservation.code
-            ? reservation.code
-            : "harness_box_reservation_failed",
+        code: kept ? reservation.code : "harness_box_reservation_failed",
         httpStatus: reservation.status,
       });
     }

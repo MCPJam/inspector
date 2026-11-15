@@ -11,6 +11,8 @@ import {
 import { describeAsSlug, describeError } from "@mcpjam/sdk/browser";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import type { MCPJamLimitSurface } from "@/stores/mcpjam-limit-dialog-store";
+import { useNativeHarnessLimitDialogStore } from "@/stores/native-harness-limit-dialog-store";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "@/shared/native-harness-trial";
 
 /**
  * The organization's admin-set spend budget is exhausted for the current
@@ -298,6 +300,24 @@ const hasFrontierSignInCode = (
   return Object.values(value).some((item) => hasFrontierSignInCode(item, seen));
 };
 
+const NATIVE_HARNESS_TRIAL_CODE_PATTERN = new RegExp(
+  `\\b${NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE}\\b`,
+);
+
+/**
+ * The organization's native harness trial is used up. Read from the code at
+ * any depth, and from the text around it: a refusal reaches here as a JSON
+ * body, as the runner's "<sentence> (<code>, HTTP <status>)", or as a stored
+ * attempt's code beside a sentence that no longer carries it. The code is no
+ * English phrase, so finding it anywhere is the refusal.
+ */
+const hasNativeHarnessTrialCode = (args: MCPJamLimitErrorInput): boolean =>
+  args.code === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE ||
+  [args.message, ...collectStringValues(args.details)].some(
+    (value) =>
+      typeof value === "string" && NATIVE_HARNESS_TRIAL_CODE_PATTERN.test(value),
+  );
+
 export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
   // Authentication gating is not credit exhaustion: do not mark the wallet empty.
   if (
@@ -309,6 +329,21 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     )
   ) {
     useFrontierSignInDialogStore.getState().open();
+    return true;
+  }
+  // Nor is the native harness trial: buying credits does not lift it.
+  if (hasNativeHarnessTrialCode(args)) {
+    const organizationId = findMCPJamLimitOrganizationId(args);
+    useNativeHarnessLimitDialogStore.getState().open(
+      {
+        ...(organizationId ? { organizationId } : {}),
+        ...(args.surface === "scenario" ? { surface: "scenario" } : {}),
+      },
+      [
+        ...(args.runId ? [`run:${args.runId}`] : []),
+        ...(args.swarmRunGroupId ? [`wave:${args.swarmRunGroupId}`] : []),
+      ],
+    );
     return true;
   }
   if (
