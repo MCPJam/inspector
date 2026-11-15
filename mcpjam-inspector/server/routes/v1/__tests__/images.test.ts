@@ -102,6 +102,7 @@ const ENV_ROW = {
 };
 // Same id, but owned by a DIFFERENT project — the scope guard must 404 it.
 const CROSS_PROJECT_ENV = { ...ENV_ROW, projectId: "other" };
+const P = "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/images";
 
 function mockQuery(map: Record<string, unknown>) {
   convexQueryMock.mockImplementation(async (fn: string) =>
@@ -200,7 +201,6 @@ describe("v1 images routes", () => {
       );
     });
 
-    const P = "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/images";
     it.each([
       ["list", "GET", P, undefined, "computerEnvironments:listEnvironments"],
       [
@@ -456,21 +456,42 @@ describe("v1 images routes", () => {
       });
     });
 
-    it("answers a gateway timeout on a build through the write translator, as before", async () => {
-      const answer = async (error: Error) => {
-        mockQuery({ "computerEnvironments:getEnvironment": ENV_ROW });
-        convexMutationMock.mockRejectedValueOnce(error);
-        const res = await request(
-          "POST",
-          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/images/env1/build",
-        );
-        return { status: res.status, body: await res.json() };
-      };
-      const body = "upstream request timeout";
-      expect(await answer(new ConvexHttpStatusError(504, body))).toEqual(
-        await answer(new Error(body)),
-      );
-    });
+    // Create and reset have no scope-guard read in front, so the mutation's
+    // own catch is the first to see an expired bearer.
+    it.each([
+      ["create", P, { name: "n", blueprint: "b" }],
+      ["build", `${P}/env1/build`, undefined],
+      [
+        "reset",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/computer/reset",
+        undefined,
+      ],
+    ])(
+      "answers a status error on %s by its status",
+      async (_label, path, body) => {
+        // By body text the write translator reads the 401 as 404 and the
+        // proxy's 500 as our own.
+        for (const [error, status, code] of [
+          [new ConvexHttpStatusError(401, "Unauthorized"), 401, "UNAUTHORIZED"],
+          [
+            new ConvexHttpStatusError(500, "500 Internal Server Error"),
+            502,
+            "SERVER_UNREACHABLE",
+          ],
+          [
+            new ConvexHttpStatusError(504, "upstream request timeout"),
+            504,
+            "TIMEOUT",
+          ],
+        ] as const) {
+          mockQuery({ "computerEnvironments:getEnvironment": ENV_ROW });
+          convexMutationMock.mockRejectedValueOnce(error);
+          const res = await request("POST", path, { body });
+          expect(res.status).toBe(status);
+          expect(((await res.json()) as { code?: string }).code).toBe(code);
+        }
+      },
+    );
 
     // Locks BOTH sides of the naming boundary: the PUBLIC response says
     // `imageId` (matching the OpenAPI ComputerAttached schema), while the

@@ -81,6 +81,15 @@ const AUTHENTICATION_FAILURE =
   /\b(unauthenticated|invalid token|token (has )?expired|expired token|jwt)\b/i;
 
 /**
+ * A gateway's or the client's timeout. It answers 504 TIMEOUT, the status and
+ * code the write translator gives it through `mapRuntimeError`, so a write
+ * catch that reads status errors here first still answers a timeout the same
+ * way.
+ */
+const TIMEOUT_FAILURE = /timed out|timeout/i;
+const TIMEOUT_STATUSES: ReadonlySet<number> = new Set([408, 504]);
+
+/**
  * The production-masked refusal on a SCOPING READ that otherwise reports
  * through the WRITE translator, answered as the 404 it is — or `undefined`
  * for anything else, so the caller's own translator keeps deciding.
@@ -381,9 +390,17 @@ export function translateConvexReadError(
         ? { slug }
         : {}),
   });
-  return new WebRouteError(
-    502,
-    ErrorCode.SERVER_UNREACHABLE,
-    "Upstream request failed",
-  );
+  const timedOut =
+    (error instanceof ConvexHttpStatusError &&
+      TIMEOUT_STATUSES.has(error.convexStatus)) ||
+    TIMEOUT_FAILURE.test(
+      error instanceof Error ? error.message : String(error),
+    );
+  return timedOut
+    ? new WebRouteError(504, ErrorCode.TIMEOUT, "Upstream request timed out")
+    : new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Upstream request failed",
+      );
 }

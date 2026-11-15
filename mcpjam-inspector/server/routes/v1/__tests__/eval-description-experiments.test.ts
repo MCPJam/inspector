@@ -264,6 +264,11 @@ describe("eval description experiments", () => {
         new ConvexHttpStatusError(500, "500 Internal Server Error"),
         502,
       ],
+      [
+        "a gateway's 504",
+        new ConvexHttpStatusError(504, "upstream request timeout"),
+        504,
+      ],
     ])(
       "answers %s on proposeDescriptionRewrite by its status",
       async (_label, error, status) => {
@@ -429,6 +434,11 @@ describe("eval description experiments", () => {
         "a proxy's 500",
         new ConvexHttpStatusError(500, "500 Internal Server Error"),
         502,
+      ],
+      [
+        "a gateway's 504",
+        new ConvexHttpStatusError(504, "upstream request timeout"),
+        504,
       ],
     ])(
       "answers %s on markLaunching by its status and releases the slot",

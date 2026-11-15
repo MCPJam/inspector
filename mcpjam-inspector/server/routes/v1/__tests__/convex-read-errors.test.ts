@@ -367,6 +367,27 @@ describe("translateConvexReadError", () => {
       redactedReadRefusalError(error, "Scenario not found"),
     ).toBeUndefined();
   });
+
+  it.each([
+    [
+      "a gateway's 504 page",
+      new ConvexHttpStatusError(504, "<html>504</html>"),
+    ],
+    ["a 408", new ConvexHttpStatusError(408, "")],
+    [
+      "a timeout body",
+      new ConvexHttpStatusError(502, "upstream request timeout"),
+    ],
+    ["a client timeout", new Error("Request timed out after 30000ms")],
+  ])("answers %s as 504 TIMEOUT, still logged", (_label, error) => {
+    const err = translateConvexReadError(error, { scope: "v1.test" });
+    expect([err.status, err.code, err.message]).toEqual([
+      504,
+      "TIMEOUT",
+      "Upstream request timed out",
+    ]);
+    expect(errorMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("translateConvexStatusError", () => {
