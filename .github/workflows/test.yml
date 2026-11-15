@@ -15,15 +15,19 @@ on:
   # all — not a pattern added by hand while some stack happens to be in flight,
   # which only works for the stack somebody remembered to name.
   pull_request:
-  # The merge queue tests the merged result before it lands on main; without
-  # this trigger the queue's required checks never report and entries time out.
+  # Release (release.yml) calls this on the commit it is about to ship, which
+  # catches a break that only shows when two separately green PRs meet.
   #
-  # There is deliberately no `push: main`. The queue moves main to the exact
-  # commit it just tested, so a push run would test that commit a second time.
-  # Release's gates find green runs by commit, not by event, so they count the
-  # queue's run, and warm-node-modules.yml saves on main the node_modules cache
-  # that PR runs restore.
-  merge_group:
+  # There is deliberately no `push: main`: every merge would run the whole
+  # suite again for a result that only matters when a release ships, and the
+  # release runs it then. warm-node-modules.yml saves on main the
+  # node_modules cache that PR runs restore.
+  workflow_call:
+    secrets:
+      BACKEND_PREVIEW_DISPATCH_TOKEN:
+        required: false
+      E2E_GUEST_SESSION_SHARED_SECRET:
+        required: false
 
 # Every job here runs untrusted-ish code — `npm ci` lifecycle scripts and the
 # test suites themselves. Pin the token to read-only so that stays true even if
@@ -56,7 +60,7 @@ env:
 jobs:
   authoring-mirror:
     name: Compare authoring contracts with backend
-    if: github.event_name == 'merge_group' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     # About 3x the slowest green run with a warm node_modules cache, so a cold
     # install still fits and a hung step fails in minutes instead of six hours.

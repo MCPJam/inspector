@@ -6,10 +6,9 @@ on:
   # below it until that one merges — never matched `main` and was never built
   # or linted.
   pull_request:
-  # The merge queue tests the merged result before it lands on main; without
-  # this trigger the queue's required checks never report and entries time out.
-  # No `push: main`, for the reason in test.yml.
-  merge_group:
+  # Release (release.yml) calls this on the commit it is about to ship. No
+  # `push: main`, for the reason in test.yml.
+  workflow_call:
 
 # A newer push to the same branch makes in-flight runs obsolete — cancel them
 # so superseded runs don't keep burning a runner. Matters more now that this
