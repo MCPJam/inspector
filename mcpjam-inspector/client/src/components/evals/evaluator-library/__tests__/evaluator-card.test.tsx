@@ -72,9 +72,9 @@ describe("EvaluatorCard", () => {
       />,
     );
     expect(screen.getByRole("article")).toHaveAttribute("aria-current", "true");
-    expect(
-      screen.getByLabelText("OWASP MCP Top 10: MCP06"),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("article")).toHaveTextContent(
+      "OWASP MCP Top 10: MCP06",
+    );
     expect(screen.getByText("Uses attack fixture")).toBeInTheDocument();
   });
 });
