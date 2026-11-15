@@ -34,6 +34,14 @@ interface NativeHarnessLimitDialogState {
   close: () => void;
   /** Closes the notice opened as `serial`; a newer one stays open. */
   closeNotice: (serial: number) => void;
+  /**
+   * What runs once the dialog has switched the project's clients, set by the
+   * Playground while its own last turn is the refusal: a new chat with the
+   * refused message in the composer, since a chat stays on the harness it
+   * started on.
+   */
+  afterSwitch: (() => void) | null;
+  setAfterSwitch: (afterSwitch: (() => void) | null) => void;
 }
 
 export const useNativeHarnessLimitDialogStore =
@@ -93,4 +101,6 @@ export const useNativeHarnessLimitDialogStore =
       set((state) =>
         serial === state.noticeSerial ? { notice: null } : state,
       ),
+    afterSwitch: null,
+    setAfterSwitch: (afterSwitch) => set({ afterSwitch }),
   }));

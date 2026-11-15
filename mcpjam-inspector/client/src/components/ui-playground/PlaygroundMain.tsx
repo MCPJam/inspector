@@ -340,6 +340,7 @@ import {
 import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useHarnessBoxPreparation } from "@/hooks/use-harness-box-preparation";
+import { useNativeHarnessHandoff } from "./use-native-harness-handoff";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
   getAppDraftInteractivity,
@@ -5840,6 +5841,12 @@ export function PlaygroundMain({
     }
     return "";
   }, [messages]);
+  useNativeHarnessHandoff({
+    error,
+    refusedText: lastUserMessageText,
+    startNewChat: handleNewChat,
+    setComposerInput: composer.setInput,
+  });
   const handleRetryLastMessage = useCallback(() => {
     if (
       !lastUserMessageText ||

@@ -37,6 +37,8 @@ describe("a harness client under the policy", () => {
     { hostId: "claude", harness: "claude-code" },
     { hostId: "codex", harness: "codex" },
     { hostId: "cursor", harness: "cursor" },
+    // A ChatGPT client paired with Codex: the vendor's loop, MCPJam's client.
+    { hostId: "chatgpt", agentLoop: "codex" },
     { hostId: "emulated" },
   ];
   const suite = {
@@ -90,6 +92,19 @@ describe("a harness client under the policy", () => {
     ).toEqual([
       "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
     ]);
+  });
+
+  it("judges a client on its vendor's agent loop by that harness too", () => {
+    expect(
+      problemsFor("chatgpt", "openai/gpt-5", org("openai/gpt-5", "conn_openai")),
+    ).toBeUndefined();
+    expect(
+      problemsFor(
+        "chatgpt",
+        "anthropic/claude-sonnet-4.5",
+        org("anthropic/claude-sonnet-4.5", "conn_anthropic"),
+      )?.[0],
+    ).toMatch(/can't run on Codex/);
   });
 
   it("says the same for an MCPJam-provided model, instead of the generic line", () => {
