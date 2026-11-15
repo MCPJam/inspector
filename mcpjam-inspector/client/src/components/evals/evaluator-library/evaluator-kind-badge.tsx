@@ -78,11 +78,8 @@ export function EvaluatorKindBadge(props: EvaluatorKindBadgeProps) {
 export function OwaspTag({ ids }: { ids: readonly OwaspId[] }) {
   if (ids.length === 0) return null;
   return (
-    <Badge
-      variant="outline"
-      className="font-mono text-muted-foreground"
-      aria-label={`OWASP MCP Top 10: ${ids.join(", ")}`}
-    >
+    <Badge variant="outline" className="font-mono text-muted-foreground">
+      <span className="sr-only">OWASP MCP Top 10: </span>
       {ids.join(" · ")}
     </Badge>
   );
