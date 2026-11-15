@@ -120,8 +120,10 @@ vi.mock("../ElicitationDialog", () => ({
 
 // Mock app navigation — the task_created success branch navigates to /tasks;
 // stub it so tests don't need a router mounted.
+const mockLocation = vi.hoisted(() => ({ state: undefined as unknown }));
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
+  useCurrentLocationState: () => mockLocation.state,
 }));
 
 // Mock ResizablePanelGroup to simplify rendering
@@ -462,6 +464,35 @@ describe("ToolsTab", () => {
           screen.getByRole("button", { name: /^run/i })
         ).toBeInTheDocument();
       });
+    });
+  });
+
+  describe("preselect from navigation", () => {
+    it("opens the named tool's form once the list loads", async () => {
+      mockLocation.state = { preselectTool: "second-tool" };
+      try {
+        mockListTools.mockResolvedValue({
+          tools: [
+            { name: "first-tool", inputSchema: { type: "object" } },
+            { name: "second-tool", inputSchema: { type: "object" } },
+          ],
+        });
+
+        render(
+          <ToolsTab
+            serverConfig={createServerConfig()}
+            serverName="test-server"
+          />,
+        );
+
+        await waitFor(() => {
+          expect(
+            screen.getByRole("button", { name: /^run/i }),
+          ).toBeInTheDocument();
+        });
+      } finally {
+        mockLocation.state = undefined;
+      }
     });
   });
 

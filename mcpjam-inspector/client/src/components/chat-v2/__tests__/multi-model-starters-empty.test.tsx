@@ -36,4 +36,23 @@ describe("MultiModelStarterPromptsBlock", () => {
     }
     expect(onStarterPrompt).toHaveBeenCalledTimes(STARTER_PROMPTS.length);
   });
+
+  it("adds a Run a tool chip only when given a handler", () => {
+    const onRunTool = vi.fn();
+    const { rerender } = render(
+      <MultiModelStarterPromptsBlock onStarterPrompt={vi.fn()} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Run a tool" }),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <MultiModelStarterPromptsBlock
+        onStarterPrompt={vi.fn()}
+        onRunTool={onRunTool}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run a tool" }));
+    expect(onRunTool).toHaveBeenCalledOnce();
+  });
 });

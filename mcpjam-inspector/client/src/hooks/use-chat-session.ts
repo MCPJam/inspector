@@ -205,6 +205,7 @@ import {
 } from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { trackChatToolCallsCompleted } from "@/lib/tool-call-telemetry";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   prepareLocalHarnessSendRequest,
@@ -4470,6 +4471,7 @@ export function useChatSession(
     onFinish: ({ isAbort, message, finishReason }) => {
       turnAuthorizationRenewal.stop();
       turnAbortedRef.current = isAbort;
+      trackChatToolCallsCompleted(message);
       lastFinishRef.current = {
         chatSessionId: chatSessionIdRef.current,
         finishReason,

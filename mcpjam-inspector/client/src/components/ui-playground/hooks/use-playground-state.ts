@@ -83,8 +83,7 @@ const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
 // the usable Playground instead of spinning forever. See issue #3352.
 const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
 
-export const PLAYGROUND_FIRST_RUN_PROMPT =
-  "What can this server do?";
+export { PLAYGROUND_FIRST_RUN_PROMPT } from "../first-run-prompt";
 
 type ExecutionInjectionWaiter = {
   expectedToolCallId?: string;
@@ -298,6 +297,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, []);
 
   const [fetchingTools, setFetchingTools] = useState(false);
+  // The server whose tools/list last answered, success or failure. An empty
+  // `tools` map cannot say "listed and empty" on its own.
+  const [toolsListedFor, setToolsListedFor] = useState<string | null>(null);
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -503,10 +505,12 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         setTools(dictionary);
         setToolsMetadata(data.toolsMetadata ?? {});
         toolsSettledKeyRef.current = toolsRequestKey;
+        setToolsListedFor(serverName);
       } catch (err) {
         if (seq !== toolsRequestSeqRef.current) return;
         console.error("Failed to fetch tools:", err);
         toolsFailedAtRevisionRef.current = requestRevision;
+        setToolsListedFor(serverName);
         setExecutionError(
           err instanceof Error ? err.message : "Failed to fetch tools",
         );
@@ -662,6 +666,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       toolsSettledKeyRef.current = null;
       toolsFailedAtRevisionRef.current = null;
       setFetchingTools(false);
+      setToolsListedFor(null);
     };
     // Only a different server clears the selection: a reconnect after
     // sign-in keeps the restored call on screen.
@@ -1151,6 +1156,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     toolsMetadata,
     selectedTool,
     fetchingTools,
+    toolsListed: !!serverName && toolsListedFor === serverName,
     fetchTools,
     setSelectedTool,
     formFields,

@@ -1,0 +1,89 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { UIMessage } from "ai";
+
+const { track } = vi.hoisted(() => ({ track: vi.fn() }));
+vi.mock("@/lib/analytics", () => ({ track }));
+vi.mock("@/lib/config", () => ({ HOSTED_MODE: true }));
+vi.mock("@/lib/telemetry-context", () => ({
+  currentTelemetryActor: () => "user_1",
+}));
+
+import {
+  trackChatToolCallsCompleted,
+  trackToolCallCompleted,
+} from "../tool-call-telemetry";
+
+function assistant(parts: unknown[]): UIMessage {
+  return { id: "m1", role: "assistant", parts } as UIMessage;
+}
+
+describe("tool_call_completed", () => {
+  beforeEach(() => {
+    track.mockClear();
+    localStorage.clear();
+  });
+
+  it("marks only the actor's first call as first_for_user", () => {
+    trackToolCallCompleted({ source: "tools_tab", isError: false });
+    trackToolCallCompleted({ source: "tools_tab", isError: true });
+
+    expect(track).toHaveBeenNthCalledWith(1, "tool_call_completed", {
+      location: "tools_tab",
+      source: "tools_tab",
+      is_error: false,
+      first_for_user: true,
+      hosted: true,
+    });
+    expect(track.mock.calls[1][1]).toMatchObject({
+      is_error: true,
+      first_for_user: false,
+    });
+  });
+
+  it("fires once per chat tool call id across repeated finishes", () => {
+    const message = assistant([
+      { type: "text", text: "Calling tools" },
+      {
+        type: "tool-search",
+        toolCallId: "call-a",
+        state: "output-available",
+        input: {},
+        output: { content: [] },
+      },
+      {
+        type: "dynamic-tool",
+        toolName: "get_issue",
+        toolCallId: "call-b",
+        state: "output-available",
+        input: {},
+        output: { content: [], isError: true },
+      },
+      {
+        type: "tool-wipe",
+        toolCallId: "call-c",
+        state: "output-error",
+        input: {},
+        errorText: "boom",
+      },
+      {
+        type: "tool-pending",
+        toolCallId: "call-d",
+        state: "input-available",
+        input: {},
+      },
+    ]);
+
+    trackChatToolCallsCompleted(message);
+    trackChatToolCallsCompleted(message);
+
+    expect(track).toHaveBeenCalledTimes(3);
+    expect(track.mock.calls.map(([, props]) => props.is_error)).toEqual([
+      false,
+      true,
+      true,
+    ]);
+    expect(track.mock.calls.every(([, props]) => props.source === "chat")).toBe(
+      true,
+    );
+  });
+});
