@@ -34,6 +34,7 @@ import {
   usageError,
   writeError,
 } from "./lib/output.js";
+import { installUsageHelp } from "./lib/activation-guidance.js";
 import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
 import { installProxyDispatcher } from "./lib/network-proxy.js";
 import { addGlobalOptions } from "./lib/server-config.js";
@@ -124,6 +125,8 @@ export async function main(
   registerMcpCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
 
+  const usageHelp = installUsageHelp(program);
+
   if (argv.length <= 2) {
     program.outputHelp();
     return {
@@ -165,7 +168,7 @@ export async function main(
         };
       }
 
-      writeError(usageError(error.message), format);
+      writeError(usageError(`${error.message} ${usageHelp()}`), format);
       captureCommandEvent(2, "USAGE_ERROR");
       await telemetry.flush();
       return {

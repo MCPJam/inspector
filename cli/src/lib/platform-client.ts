@@ -1,3 +1,4 @@
+import { PLATFORM_FEE_HELP } from "./activation-guidance.js";
 import {
   describePlatformRefusal,
   isPlatformApiError,
@@ -321,6 +322,17 @@ export function toCliError(
         "CI_OWNED_SUITE_READ_ONLY",
         `${error.message} If this run is syncing a suite file, make sure the file's ` +
           "`suite.id` still matches the suite it created — a renamed id no longer owns it.",
+        1,
+        withRequestId(error.details, error.requestId),
+      );
+    }
+    if (
+      error.code === "FORBIDDEN" &&
+      error.details?.reason === "PLATFORM_FEE_REQUIRED"
+    ) {
+      return cliError(
+        error.code,
+        `${error.message} ${PLATFORM_FEE_HELP}`,
         1,
         withRequestId(error.details, error.requestId),
       );

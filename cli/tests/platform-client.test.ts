@@ -365,3 +365,31 @@ test("no report hint on the command that files reports", () => {
   );
   assert.equal(error.message, "Something broke.");
 });
+
+
+test("platform-fee recovery preserves the wire error and does not assume a role or plan", () => {
+  const details = { reason: "PLATFORM_FEE_REQUIRED" };
+  const error = toCliError(new PlatformApiError("Platform fee required.", "FORBIDDEN", {
+    status: 403, details, requestId: "req_fee",
+  }));
+  assert.equal(error.code, "FORBIDDEN");
+  assert.equal(error.exitCode, 1);
+  assert.deepEqual(error.details, { ...details, requestId: "req_fee" });
+  assert.match(error.message, /platform-credit requirement, separate from iteration and model-step limits/);
+  assert.doesNotMatch(error.message, /changing iterations.*does not resolve/);
+  assert.match(error.message, /If you are the owner/);
+  assert.match(error.message, /If you are a member or cannot manage billing/);
+  assert.match(error.message, /top-ups may require an upgrade/);
+  assert.match(error.message, /enterprise arrangements may require support/);
+  assert.match(error.message, /only after the account issue is resolved/);
+  assert.match(error.message, /does not establish the available balance or expected cost/);
+});
+
+test("other forbidden errors never inherit platform-credit recovery", () => {
+  for (const reason of ["ORGANIZATION_SPEND_BUDGET_REACHED", "permission_denied", undefined]) {
+    const error = toCliError(new PlatformApiError("Access denied.", "FORBIDDEN", {
+      status: 403, details: { reason },
+    }));
+    assert.equal(error.message, "Access denied.");
+  }
+});

@@ -1,3 +1,4 @@
+import { EVAL_CREDIT_HELP } from "../lib/activation-guidance.js";
 import { planPlatformSuiteGradingUpdate } from "@mcpjam/sdk";
 import type { EvalGradingPolicyEdit } from "@mcpjam/sdk/contract";
 import type { ModelSelection } from "@mcpjam/sdk";
@@ -3520,6 +3521,7 @@ export function registerEvalCommands(program: Command): void {
 
   evals
     .command("run")
+    .addHelpText("after", EVAL_CREDIT_HELP)
     .description(
       "Start an eval run of an existing suite, or upload a versioned suite file and run it. " +
         "The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead."

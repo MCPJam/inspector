@@ -156,3 +156,33 @@ test("main keeps a dependency's console output off stdout", async () => {
     await server.stop();
   }
 });
+
+
+test("usage errors link to the failing command without echoing argument values", async () => {
+  const examples: [string[], string][] = [
+    [["cloud", "link", "--project", "private-project-value"], "mcpjam cloud link --help"],
+    [["cloud", "eval", "run", "--unknown", "private-project-value"], "mcpjam cloud eval run --help"],
+    [["not-a-command"], "mcpjam --help"],
+  ];
+  for (const [args, help] of examples) {
+    const run = await captureProcessOutput(() =>
+      main(["node", "mcpjam", ...args], { telemetry: telemetryDisabled }),
+    );
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /"USAGE_ERROR"/);
+    assert.ok(run.stderr.includes(help));
+    assert.doesNotMatch(run.stderr, /private-project-value/);
+  }
+});
+
+test("Eval help distinguishes missing credit data from run and step limits", async () => {
+  const run = await captureProcessOutput(() =>
+    main(["node", "mcpjam", "cloud", "eval", "run", "--help"], { telemetry: telemetryDisabled }),
+  );
+  assert.equal(run.result.exitCode, 0);
+  assert.match(run.stdout, /Organizations >/);
+  assert.match(run.stdout, /does not report the current/);
+  assert.match(run.stdout, /missing data is not zero/);
+  assert.match(run.stdout, /repetitions per case, not credits or model-step limits/);
+  assert.equal(run.stderr, "");
+});
