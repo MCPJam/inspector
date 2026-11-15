@@ -667,9 +667,11 @@ describe("MCPJamLimitDialog", () => {
       expect.objectContaining({
         organization_id: "org-1",
         billing_interval: "annual",
-        outcome: "checkout_opened",
-        failure_reason: null,
       }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_checkout_failed",
+      expect.anything(),
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -693,7 +695,7 @@ describe("MCPJamLimitDialog", () => {
     );
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     expect(trackMock).toHaveBeenCalledWith(
-      "plan_limit_checkout_clicked",
+      "plan_limit_checkout_failed",
       expect.objectContaining({
         outcome: "checkout_failed",
         failure_reason: "start_failed",

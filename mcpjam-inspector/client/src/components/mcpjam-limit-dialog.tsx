@@ -483,21 +483,25 @@ export function MCPJamLimitDialog() {
   const handleExplorePlans = () => navigateToBilling("explore_plans");
   const handleCheckout = async () => {
     setCheckoutFailed(false);
-    const result = await creditsUpgrade.start();
-    // The desktop app hands checkout to the system browser and asks to close.
-    if (result.shouldDismiss) dismiss();
-    if (result.failure) setCheckoutFailed(true);
-    track("plan_limit_checkout_clicked", {
+    const checkoutContext = {
       ...creditEventContext,
       organization_id: billingOrgId,
       billing_interval: creditsUpgrade.interval,
-      outcome: result.failure
-        ? "checkout_failed"
-        : result.redirected
-        ? "checkout_opened"
-        : "plan_changed",
-      failure_reason: result.failure ?? null,
-    });
+    };
+    // Sent before start(): a successful start navigates the tab away, and an
+    // event queued after that may never leave the page.
+    track("plan_limit_checkout_clicked", checkoutContext);
+    const result = await creditsUpgrade.start();
+    // The desktop app hands checkout to the system browser and asks to close.
+    if (result.shouldDismiss) dismiss();
+    if (result.failure) {
+      setCheckoutFailed(true);
+      track("plan_limit_checkout_failed", {
+        ...checkoutContext,
+        outcome: "checkout_failed",
+        failure_reason: result.failure,
+      });
+    }
   };
   const handleCreditsDismiss = () => {
     dismiss();
