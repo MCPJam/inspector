@@ -37,7 +37,7 @@ new EvalSuite(options?: EvalSuiteConfig)
 </Note>
 
 <Note>
-When an API key is available — via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable — all test results are consolidated into a single run and saved to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
+When an API key is available, via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable, all test results are consolidated into a single run and saved to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
 </Note>
 
 ### Example
@@ -362,7 +362,7 @@ precision(): number
 ```
 
 <Warning>
-  **Changed in 3.0.** These returned `accuracy()` — the suite's pass rate —
+  **Changed in 3.0.** These returned `accuracy()`, the suite's pass rate,
   under all three names. They now aggregate real tool-call counts and **throw**
   when no test in the suite declared `expectedToolCalls`. Tests without
   expectations are skipped in the aggregate rather than counted as perfect. See
@@ -395,7 +395,7 @@ unexpectedToolCallRate(): number
 ### falsePositiveRate()
 
 <Warning>
-  **Deprecated in 3.0** — use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
+  **Deprecated in 3.0**: use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
   It returned `failures / iterations`, which is the failure rate. Suites with no
   `expectedToolCalls` still get that legacy value; suites with expectations now
   delegate to `unexpectedToolCallRate()`.
@@ -536,8 +536,8 @@ console.log("✅ All quality gates passed");
 
 ### CI gate on per-case pass rates
 
-A per-test threshold asks the OTHER question — the one a hosted suite's
-**per-case pass rate** asks — and the two do not agree. Nine of ten tests
+A per-test threshold asks the OTHER question, the one a hosted suite's
+**per-case pass rate** asks, and the two do not agree. Nine of ten tests
 always passing and one always failing gives a suite accuracy of 0.9, which
 clears the gate above, while the tenth test's own rate is 0. Gate on whichever
 question you actually mean; a fraction is not a percentage of the other one.

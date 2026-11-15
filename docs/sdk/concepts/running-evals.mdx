@@ -174,15 +174,15 @@ await test.run(agent, {
 });
 ```
 
-See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
+See [Eval reporting: Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
 
 ### Predicate gate
 
-Predicates express richer pass/fail criteria than tool-call matching — without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
+Predicates express richer pass/fail criteria than tool-call matching, without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
 
-Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **required** predicate passes (`"gating"` is the legacy spelling of that role and is still accepted) — an **advisory** one is recorded and never fails the case, including when it could not be scored. A required check that could not be scored does hold the gate shut. An absent or empty list means no predicate gate.
+Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **required** predicate passes (`"gating"` is the legacy spelling of that role and is still accepted): an **advisory** one is recorded and never fails the case, including when it could not be scored. A required check that could not be scored does hold the gate shut. An absent or empty list means no predicate gate.
 
-The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at — Connection is measured by the runner; Discovery combines runner evidence with optional catalog assertions:
+The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at; Connection is measured by the runner. Discovery combines runner evidence with optional catalog assertions:
 
 | Type | Measures | What it checks |
 |------|----------|----------------|
@@ -235,11 +235,11 @@ The built-in predicate types. **Measures** is the link of the [user-value chain]
 }
 ```
 
-`toolResultMatches` is the same check on what came back: one tool result at a time, every pattern within that one result. `toolName` is optional there — omit it to read every tool's results — and `isError` results count like any other.
+`toolResultMatches` is the same check on what came back: one tool result at a time, every pattern within that one result. `toolName` is optional there, omit it to read every tool's results, and `isError` results count like any other.
 
-`path` is a JSON Pointer to one top-level key (`"/elements"`); omit it to match the whole arguments object, or the whole result. Both kinds count **matching** units: `min` and `max` count matching calls for `toolInputMatches` and matching results for `toolResultMatches`, never all of them. The default (`min` 1) means at least one matches, so one correct call among ten others still passes. `min: 0, max: 0` means none matches — not that the tool was never called; use `toolNeverCalled` for that. For "any of these", put the alternatives in one pattern (`Idea|Plan`). Patterns use a linear-time engine (re2js), so lookahead and backreferences are refused when the check is written. See [Matching tool input and output](/sdk/reference/eval-reporting#matching-tool-input-and-output).
+`path` is a JSON Pointer to one top-level key (`"/elements"`); omit it to match the whole arguments object, or the whole result. Both kinds count **matching** units: `min` and `max` count matching calls for `toolInputMatches` and matching results for `toolResultMatches`, never all of them. The default (`min` 1) means at least one matches, so one correct call among ten others still passes. `min: 0, max: 0` means none matches, not that the tool was never called. Use `toolNeverCalled` for that. For "any of these", put the alternatives in one pattern (`Idea|Plan`). Patterns use a linear-time engine (re2js), so lookahead and backreferences are refused when the check is written. See [Matching tool input and output](/sdk/reference/eval-reporting#matching-tool-input-and-output).
 
-When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
+When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass, since a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
 
 ### Standard checks
 
@@ -335,7 +335,7 @@ if (suite.accuracy() < 0.90) {
 
 ## Bring your own host
 
-`HostRunner` is the right starting point when you just need an LLM + tools + a model string. For richer setups — pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses for its Playground — start from a `Host` spec instead:
+`HostRunner` is the right starting point when you just need an LLM + tools + a model string. For richer setups (pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses for its Playground), start from a `Host` spec instead:
 
 ```typescript
 import { MCPClientManager, Host, EvalTest } from "@mcpjam/sdk";

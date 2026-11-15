@@ -5,7 +5,7 @@ icon: "book"
 ---
 
 <Warning>
-Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys and uploads through the [MCPJam public API](/reference/public-api) (`/api/v1/projects/:projectId/eval-ingest/*`). The legacy project API keys (`mcpjam_…`) and their `/sdk/v1/evals/*` endpoints are retired — old SDK versions pointing there receive `410 Gone`. Upgrade `@mcpjam/sdk` to keep uploading.
+Reporting authenticates with **MCPJam API keys (`sk_…`)** from Settings → API keys and uploads through the [MCPJam public API](/reference/public-api) (`/api/v1/projects/:projectId/eval-ingest/*`). The legacy project API keys (`mcpjam_…`) and their `/sdk/v1/evals/*` endpoints are retired; old SDK versions pointing there receive `410 Gone`. Upgrade `@mcpjam/sdk` to keep uploading.
 </Warning>
 
 The SDK provides APIs to save eval results to MCPJam for visualization in the CI Evals dashboard. Results can be saved automatically via `EvalTest`/`EvalSuite`, or manually using the APIs below.
@@ -28,10 +28,10 @@ Set `MCPJAM_BASE_URL` only when results should go to an MCPJam host other than t
 
 Uploaded iterations have a single boolean `passed` that drives pass rate on the dashboard. The SDK distinguishes:
 
-1. **Structural pass** — Your test returned `true`, or expected tool calls were satisfied (Inspector/UI flows use shared matching logic).
-2. **Tool execution** — The trace shows a real tool failure: MCP results with `isError: true`, timeline spans where a tool step ended in `error`, tool-result parts the UI would treat as errors, or a runner-level `iterationError` after a thrown tool step.
+1. **Structural pass**: Your test returned `true`, or expected tool calls were satisfied (Inspector/UI flows use shared matching logic).
+2. **Tool execution**: The trace shows a real tool failure: MCP results with `isError: true`, timeline spans where a tool step ended in `error`, tool-result parts the UI would treat as errors, or a runner-level `iterationError` after a thrown tool step.
 
-**Default behavior:** When the SDK **derives** `passed` from a trace (for example `EvalTest` / `EvalSuite` auto-save, [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result#toevalresult), `createEvalRunReporter` helpers, or Inspector suite runs), structural success is **not enough** if tool execution failed — the iteration is recorded as **failed** unless you opt out.
+**Default behavior:** When the SDK **derives** `passed` from a trace (for example `EvalTest` / `EvalSuite` auto-save, [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result#toevalresult), `createEvalRunReporter` helpers, or Inspector suite runs), structural success is **not enough** if tool execution failed; the iteration is recorded as **failed** unless you opt out.
 
 **Opt out:** set `failOnToolError: false` on [`MCPJamReportingConfig`](#mcpjamreportingconfig) (global for that reporter or auto-save), or pass it on specific helper options (`addFromPrompt` / `recordFromRun` / `RunToEvalResultsOptions`, etc.). Use this when you only care that the model *invoked* the right tools with the right arguments, not that every MCP call returned a success payload.
 
@@ -227,9 +227,9 @@ When `serverNames` is not set, the SDK infers it from the unique server IDs in t
 
 Uploaded runs can show **Replay this run** / server-side MCP replay when the ingest payload includes derived **`serverReplayConfigs`** (stored as **`hasServerReplayConfig`** on the run). In practice:
 
-- **HTTP MCP (`url`)** — Replay configs are built for typical streamable HTTP connections. **Stdio** transports **do not** produce entries from [`MCPClientManager.getServerReplayConfigs()`](/sdk/reference/mcp-client-manager); use HTTP when you need dashboard replay.
-- **`HostRunner` vs reporter** — Putting `mcpClientManager` on [`HostRunner`](/sdk/reference/host-runner) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
-- **Teardown order** — `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
+- **HTTP MCP (`url`)**: Replay configs are built for typical streamable HTTP connections. **Stdio** transports **do not** produce entries from [`MCPClientManager.getServerReplayConfigs()`](/sdk/reference/mcp-client-manager); use HTTP when you need dashboard replay.
+- **`HostRunner` vs reporter**: Putting `mcpClientManager` on [`HostRunner`](/sdk/reference/host-runner) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
+- **Teardown order**: `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
 
 **LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite's models.
 
@@ -374,7 +374,7 @@ Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJam
 | `tags` | `string[]` | No | Free-form tags attached to the run for filtering in the MCPJam dashboard |
 | `host` | `Host` | No | Explicit host snapshot override. The reporter prefers `iteration.hostSnapshot` (per-iteration capture from `HostRuntime`) and falls back to `executor.getHostSnapshot?.()`; supply `host` only when neither source is available. See [Run-level host snapshot](#run-level-host-snapshot) below. |
 
-The replay sources `agent` and `mcpClientManager` are fields of [`ReportEvalResultsInput`](#reportevalresultsinput), not of `MCPJamReportingConfig` — pass them on the reporting call itself.
+The replay sources `agent` and `mcpClientManager` are fields of [`ReportEvalResultsInput`](#reportevalresultsinput), not of `MCPJamReportingConfig`; pass them on the reporting call itself.
 
 ### Run-level host snapshot
 
@@ -392,13 +392,13 @@ POST /api/v1/projects/{projectId}/eval-ingest/runs/start
 
 **Source order (highest priority first):**
 
-1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime`. Reflects the bound `Host` state at the iteration's end. `EvalResultInput` does not carry this field, so uploads built from `EvalResultInput` use 2 or 3.
-2. `executor.getHostSnapshot?.()` — fallback for executors that don't expose per-iteration snapshots.
-3. `MCPJamReportingConfig.host` — explicit override.
+1. `iteration.hostSnapshot`: per-iteration capture from `HostRuntime`. Reflects the bound `Host` state at the iteration's end. `EvalResultInput` does not carry this field, so uploads built from `EvalResultInput` use 2 or 3.
+2. `executor.getHostSnapshot?.()`: fallback for executors that don't expose per-iteration snapshots.
+3. `MCPJamReportingConfig.host`: explicit override.
 
 **Mixed host snapshots.** The reporter only sends a run-level `{ hostConfig, hostConfigHash }` when all available iteration snapshots canonicalize to the same hash. Runs whose snapshots differ (e.g. mutating the bound `Host` between iterations) omit the pair.
 
-**Fail-safe omission.** Any error while resolving or canonicalizing the snapshot — malformed `hostSnapshot`, an executor that throws, non-canonicalizable host JSON — logs a warning and omits the wire pair rather than failing the eval upload. The body shape stays the same without it.
+**Fail-safe omission.** Any error while resolving or canonicalizing the snapshot (malformed `hostSnapshot`, an executor that throws, non-canonicalizable host JSON) logs a warning and omits the wire pair rather than failing the eval upload. The body shape stays the same without it.
 
 **Server ids.** Runtime server identifiers (`serverIds`, `optionalServerIds`, `serverConnectionOverrides`) are stripped before upload, so SDK ids like `"everything"` are never read as MCPJam server ids. The host config MCPJam stores for the run adds the suite's own servers, so its hash can differ from the uploaded `hostConfigHash`. Treat `hostConfigHash` as an integrity check on the upload, not as an identifier for the stored config.
 
@@ -457,11 +457,11 @@ Automatically detected when `ci` is omitted for supported CI services. An explic
 
 ### Predicate gate
 
-Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
+Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript (same transcript, same verdict), which makes it suitable as a CI release gate.
 
-Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **required** predicate passes. A check's `role` is `"required"` (legacy spelling: `"gating"`) or `"advisory"`; absent means required. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case, including when its `status` is `"error"`. A **required** check that could not be scored is the opposite: it holds the gate shut, because a check that never ran is not a check that passed (see [A predicate never passes by default](#a-predicate-never-passes-by-default)); its `onError` / `onSkipped` policy is what decides, and for a required role both default to `"fail"`. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **required** predicate passes. A check's `role` is `"required"` (legacy spelling: `"gating"`) or `"advisory"`; absent means required. A predicate authored `role: "advisory"`, which every observation kind must be, is recorded and surfaced, and never fails the case, including when its `status` is `"error"`. A **required** check that could not be scored is the opposite: it holds the gate shut, because a check that never ran is not a check that passed (see [A predicate never passes by default](#a-predicate-never-passes-by-default)); its `onError` / `onSkipped` policy is what decides, and for a required role both default to `"fail"`. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
-The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors` — read render observations that only a hosted run captures, and they fail closed. `EvalTest` therefore **rejects them at construction** rather than failing every iteration with a confusing reason; move those cases to a hosted suite.
+The three widget predicates (`widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`) read render observations that only a hosted run captures, and they fail closed. `EvalTest` therefore **rejects them at construction** rather than failing every iteration with a confusing reason; move those cases to a hosted suite.
 
 #### Predicate types
 
@@ -471,10 +471,10 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 |------|--------|----------|-------------|
 | `toolDescriptionsPresent` | `minLength?` | Discovery | Trimmed descriptions meet the minimum length (default 20). |
 | `toolAnnotationsPresent` | `require?` | Discovery | Every tool declares annotations; optionally require boolean readOnlyHint and destructiveHint. |
-| `toolNamesUnique` | — | Discovery | Raw tool names are unique within each server. |
-| `noDeprecatedToolExposed` | — | Discovery | No description marks itself deprecated. Heuristic; advisory only. |
-| `toolInputSchemasWellFormed` | — | Discovery | Every input schema has an object root and documented properties. |
-| `toolOutputSchemasPresent` | — | Discovery | Every tool declares an output schema; does not validate result conformance. |
+| `toolNamesUnique` | None | Discovery | Raw tool names are unique within each server. |
+| `noDeprecatedToolExposed` | None | Discovery | No description marks itself deprecated. Heuristic; advisory only. |
+| `toolInputSchemasWellFormed` | None | Discovery | Every input schema has an object root and documented properties. |
+| `toolOutputSchemasPresent` | None | Discovery | Every tool declares an output schema; does not validate result conformance. |
 | `toolCalledWith` | `toolName`, `args` ([`ArgMatcher`](#argmatcher)), `minCount?` | Selection | A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. |
 | `toolCalledAtLeastOnce` | `toolName` | Selection | `toolName` was called at least once (args irrelevant). |
 | `toolNeverCalled` | `toolName` | Selection | `toolName` was never called (forbidden-tool check). |
@@ -483,47 +483,47 @@ The **Measures** column is the link of the [user-value chain](/sdk/concepts/user
 | `responseContains` | `needle`, `caseSensitive?` | User value | The final assistant message contains `needle`. Case-insensitive by default. |
 | `responseMatches` | `pattern` | User value | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
 | `responseCloseTo` | `reference`, `maxDistance`, optional `caseSensitive`, `normalizeWhitespace` | User value | Normalized Unicode code-point edit distance; budget overflow is unscored, not a mismatch. |
-| `noToolErrors` | — | Response | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
-| `finalAssistantMessageNonEmpty` | — | User value | The final assistant message is a non-empty, non-whitespace string. |
+| `noToolErrors` | None | Response | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
+| `finalAssistantMessageNonEmpty` | None | User value | The final assistant message is a non-empty, non-whitespace string. |
 | `tokenBudgetUnder` | `tokens` | User value | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
 | `widgetRendered` | `toolName?` | User value | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
-| `widgetRenderLatencyUnder` | `ms`, `toolName?` | User value | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
+| `widgetRenderLatencyUnder` | `ms`, `toolName?` | User value | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered; an unrendered widget has no latency to check. |
 | `widgetNoConsoleErrors` | `toolName?` | User value | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
 | `turnCountUnder` | `turns` | User value | The iteration used strictly fewer than `turns` user turns. Fails when the transcript carries no turn count. |
-| `noEndingQuestion` | — | User value | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Advisory only — `role: "advisory"` is required and a required one is refused. |
+| `noEndingQuestion` | None | User value | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Advisory only; `role: "advisory"` is required and a required one is refused. |
 | `toolLatencyUnder` | `ms`, `toolName?` | Response | Every observed call in scope settled in strictly under `ms`. Reports `status: "error"` when the run captured no per-call timing. |
 | `toolResultContains` | `needle`, `caseSensitive?`, `toolName?` | Response | A tool result in scope contains `needle`, searched over the model-visible text and the structured payload. |
-| `toolResultMatches` | `patterns`, `toolName?`, `path?`, `flags?`, `min?`, `max?` | Response | A tool result in scope (every result, or only `toolName`'s) whose content matches **every** pattern — all within that one result — occurred at least `min` (default 1) and at most `max` times. `min` and `max` count **matching** results, not all results. See [Matching tool input and output](#matching-tool-input-and-output). |
-| `toolResultMatchesSchema` | `schema`, `toolName?` | Response | Every tool result in scope validates against the authored JSON Schema. Any JSON root — 2026-07-28 dropped the object-only restriction on `structuredContent`. |
+| `toolResultMatches` | `patterns`, `toolName?`, `path?`, `flags?`, `min?`, `max?` | Response | A tool result in scope (every result, or only `toolName`'s) whose content matches **every** pattern, all within that one result, occurred at least `min` (default 1) and at most `max` times. `min` and `max` count **matching** results, not all results. See [Matching tool input and output](#matching-tool-input-and-output). |
+| `toolResultMatchesSchema` | `schema`, `toolName?` | Response | Every tool result in scope validates against the authored JSON Schema. Any JSON root; 2026-07-28 dropped the object-only restriction on `structuredContent`. |
 | `toolResultSizeUnder` | `maxBytes`, `toolName?` | Response | Every tool result in scope is strictly under `maxBytes`, measured on what the server returned and **before** the transcript's own 64 000-character text cap. Bytes, not tokens. |
 | `argumentsMatchToolSchema` | `toolName?` | Tool call | Every call's arguments validate against the tool's declared `inputSchema`, classified as `missing-required`, `wrong-type`, `bad-enum` or `hallucinated-param`. A key merely absent from `properties` is legal and is reported, never failed. Schema validity does not establish that the arguments match the user's intent. |
 | `noRepeatedIdenticalCall` | `toolName?` | Tool call | **Observation.** No call repeated the one immediately before it with equal arguments. A poll loop and a transient retry are the same shape and both correct, so it is Advisory only. |
-| `toolInputMatches` | `toolName`, `patterns`, `path?`, `flags?`, `min?`, `max?` | Tool call | A call to `toolName` whose input matches **every** pattern — all within that one call — occurred at least `min` (default 1) and at most `max` times. `min` and `max` count **matching** calls, not all calls. See [Matching tool input and output](#matching-tool-input-and-output). |
+| `toolInputMatches` | `toolName`, `patterns`, `path?`, `flags?`, `min?`, `max?` | Tool call | A call to `toolName` whose input matches **every** pattern, all within that one call, occurred at least `min` (default 1) and at most `max` times. `min` and `max` count **matching** calls, not all calls. See [Matching tool input and output](#matching-tool-input-and-output). |
 | `toolCallCountUnder` | `count`, `toolName?` | Selection | Strictly fewer than `count` calls in scope. Total calls, which is not the same as calls before the right tool. |
 | `toolCalledBefore` | `toolName`, `beforeToolName` | Selection | Every call to `beforeToolName` was preceded by a call to `toolName`. Vacuously true when `beforeToolName` never ran. |
-| `noDeprecatedToolCalled` | — | Selection | **Observation.** No called tool's own description marks it deprecated. Anchored to self-deprecation, so "Replaces the deprecated `old_search` tool" does not fire. Advisory only. |
-| `noDestructiveToolCalled` | — | Selection | No called tool declares `annotations.destructiveHint`. Reports `status: "error"` when no tool in the inventory declares annotations at all. |
-| `toolErrorNamesInput` | `toolName?` | Response | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality — "Rate limited. Retry in 30 seconds." names nothing and is a good message. Advisory only. |
+| `noDeprecatedToolCalled` | None | Selection | **Observation.** No called tool's own description marks it deprecated. Anchored to self-deprecation, so "Replaces the deprecated `old_search` tool" does not fire. Advisory only. |
+| `noDestructiveToolCalled` | None | Selection | No called tool declares `annotations.destructiveHint`. Reports `status: "error"` when no tool in the inventory declares annotations at all. |
+| `toolErrorNamesInput` | `toolName?` | Response | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality; "Rate limited. Retry in 30 seconds." names nothing and is a good message. Advisory only. |
 | `fullPageHasContinuation` | `toolName?` | Response | **Observation.** A page whose length equals its requested limit carries recognized continuation metadata. A full page is not proof that more results exist, so this reports rather than fails. Advisory only. |
 
 #### Matching tool input and output
 
 `toolInputMatches` checks what went **into** a tool call, and `toolResultMatches` checks what came **out**. `toolCalledWith` compares argument values exactly, `argumentsMatchToolSchema` only checks that they are valid, and `toolResultContains` looks for one literal; these two ask whether a call's input, or a result's content, contains what it should.
 
-Both read one **unit** at a time — a call for `toolInputMatches`, a result for `toolResultMatches` — and share every field but `toolName`:
+Both read one **unit** at a time (a call for `toolInputMatches`, a result for `toolResultMatches`) and share every field but `toolName`:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `toolName` | `string` | `toolInputMatches`: required; calls to other tools are ignored. `toolResultMatches`: optional; omit it to read every tool's results. |
 | `patterns` | `string[]` (1–8, each 1–512 characters) | Regular expressions. A unit matches only when **every** pattern matches that same unit. For "any of these", use alternation inside one pattern (`Idea\|Plan`). Kept in authored order. |
 | `flags` | `"i" \| "m" \| "s" \| "im" \| "is" \| "ms" \| "ims"` | Applies to every pattern: `i` ignores case, `m` makes `^`/`$` match at line breaks, `s` lets `.` match a newline. |
-| `path` | `string` (2–257 characters) | A JSON Pointer ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) to **one** top-level key, such as `"/elements"`. Inside the key, `~1` stands for `/` and `~0` for `~`. When set, only that value is matched — a string as it is, anything else as canonical JSON — and a unit without the key does not match. Omit it to match the whole unit. `""` and `"/"` are refused. |
+| `path` | `string` (2–257 characters) | A JSON Pointer ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) to **one** top-level key, such as `"/elements"`. Inside the key, `~1` stands for `/` and `~0` for `~`. When set, only that value is matched (a string as it is, anything else as canonical JSON) and a unit without the key does not match. Omit it to match the whole unit. `""` and `"/"` are refused. |
 | `min` | `integer ≥ 0` | Fewest **matching** units. Default 1. `min: 0` requires `max`. |
 | `max` | `integer ≥ min` | Most **matching** units. At least 1 when `min` is omitted. |
 
-**What is matched.** For `toolInputMatches`, the whole arguments object as canonical JSON (sorted keys, no whitespace), or the argument at `path`. For `toolResultMatches`, the same content `toolResultContains` searches — the text, then `structuredContent`, then the JSON output part, with each JSON part as canonical JSON — or, with `path`, the value at that key in `structuredContent` (in the JSON output part when there is no `structuredContent`). Results with `isError: true` are read like any other; an error is still what the tool returned.
+**What is matched.** For `toolInputMatches`, the whole arguments object as canonical JSON (sorted keys, no whitespace), or the argument at `path`. For `toolResultMatches`, the same content `toolResultContains` searches (the text, then `structuredContent`, then the JSON output part, with each JSON part as canonical JSON) or, with `path`, the value at that key in `structuredContent` (in the JSON output part when there is no `structuredContent`). Results with `isError: true` are read like any other; an error is still what the tool returned.
 
-**Counting.** `min` and `max` count units that matched every pattern, never all units: matching calls for `toolInputMatches`, matching results for `toolResultMatches`. The default — `min` 1, no `max` — means "at least one matches": one correct call among ten others still passes. `min: 0, max: 0` means **none matches**; it does not mean the tool was never called, which is `toolNeverCalled`. Every reason names which case it hit: nothing to read (the tool was never called, or returned no results), N units and none matched all patterns, or N units and M matched when at most K were allowed.
+**Counting.** `min` and `max` count units that matched every pattern, never all units: matching calls for `toolInputMatches`, matching results for `toolResultMatches`. The default (`min` 1, no `max`) means "at least one matches": one correct call among ten others still passes. `min: 0, max: 0` means **none matches**; it does not mean the tool was never called, which is `toolNeverCalled`. Every reason names which case it hit: nothing to read (the tool was never called, or returned no results), N units and none matched all patterns, or N units and M matched when at most K were allowed.
 
 **One unit, all patterns.** The check below passes only when a single `create_view` call carries all three labels. Three diagrams with one label each is three calls with one match apiece, and fails:
 
@@ -551,7 +551,7 @@ The output side reads the same way. This passes when one `search` result's `titl
 
 **Engine.** Patterns run on [re2js](https://github.com/le0pard/re2js), a linear-time engine, so no pattern can stall a run: there is no lookahead, lookbehind or backreference, and a pattern that uses one is refused when the check is written. `patterns` replaces the usual lookahead idiom for "contains A and B". Named groups (`(?<name>…)`) are accepted.
 
-**Units that cannot be read.** The matched text is capped at 100,000 characters. A unit over that, one whose value cannot be serialized, or — for `toolResultMatches` without `path` — a result whose text was truncated for storage, is counted neither as a match nor as a non-match. `toolResultMatches` also cannot count results the run did not capture: when the capture is incomplete, a match it did read still proves `min`, and a count already over `max` still fails, but "no result matched" is not established. Whenever unread units could change the verdict, the row is `status: "error"` rather than a pass or a fail.
+**Units that cannot be read.** The matched text is capped at 100,000 characters. A unit over that, one whose value cannot be serialized, or, for `toolResultMatches` without `path`, a result whose text was truncated for storage, is counted neither as a match nor as a non-match. `toolResultMatches` also cannot count results the run did not capture: when the capture is incomplete, a match it did read still proves `min`, and a count already over `max` still fails, but "no result matched" is not established. Whenever unread units could change the verdict, the row is `status: "error"` rather than a pass or a fail.
 
 Reasons never print a value without its key, so a value under a sensitive key such as `apiKey` is redacted, and displayed patterns are scrubbed of token-shaped text and shortened. The stored check keeps the patterns you wrote.
 
@@ -576,8 +576,8 @@ A predicate that cannot be evaluated fails the case instead of silently passing.
 
 #### Observations may never gate
 
-Some kinds above are marked **Observation**. They are heuristics — a pattern
-that can be right about what it saw and still wrong about what it means — so
+Some kinds above are marked **Observation**. They are heuristics (a pattern
+that can be right about what it saw and still wrong about what it means), so
 they carry one rule everywhere: `role: "advisory"` is required, a required one is
 refused when the check is written, the authoring UI offers Advisory
 only, and they never enter `allGatingScorersPassed`.
@@ -587,7 +587,7 @@ only, and they never enter `allGatingScorersPassed`.
 The kinds that read tool results, per-call timings or the tool inventory report
 `status: "error"` when the run did not capture what they need. An error row
 carries no value, keeps its scorer in `unresolvedScorerIds`, and leaves its
-stage `notMeasured`. A gate with an unscored row does not pass — but nothing is
+stage `notMeasured`. A gate with an unscored row does not pass, but nothing is
 attributed to the server for a measurement we could not take.
 
 #### Example
@@ -662,7 +662,7 @@ try {
 } catch (err) {
   if (err instanceof EvalReportingError) {
     if (err.isReportingBackendIncompatible) {
-      // The destination predates @mcpjam/sdk 6 — upgrade it or switch baseUrl.
+      // The destination predates @mcpjam/sdk 6; upgrade it or switch baseUrl.
       console.error("Reporting backend needs upgrade:", err.message);
     } else if (err.isBillingLimitReached) {
       console.error("Billing limit reached");
@@ -707,7 +707,7 @@ It is on by default and there is nothing to configure. Details worth knowing:
 - **`?project=` may be absent.** The param carries the project MCPJam
   returned, falling back to a `project` you configured explicitly. The
   zero-config `"default"` sentinel is not a project ID, so it is omitted
-  rather than sent — the app then opens the run in your active project.
+  rather than sent; the app then opens the run in your active project.
 - **Nothing prints when there is no run to link to.** A failed upload, or a
   non-strict reporter falling back to locally-computed counts, prints
   nothing.

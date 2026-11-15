@@ -4,7 +4,7 @@ description: "What MCPJam's built-in host presets capture, and which fields to g
 icon: "plus-square"
 ---
 
-MCPJam ships built-in host presets for Claude, ChatGPT, Cursor, Copilot, and MCPJam itself. Each preset captures what a real host publishes during MCP `initialize` and `ui/initialize` — `clientInfo`, `hostInfo`, capability advertise, `hostContext` (theme, viewport, device, locale), and sandbox policy (CSP directives, permissions, allow-features). With a preset selected, a widget rendered in the [Playground](/inspector/playground) behaves the way it would in production under that host.
+MCPJam ships built-in host presets for Claude, ChatGPT, Cursor, Copilot, and MCPJam itself. Each preset captures what a real host publishes during MCP `initialize` and `ui/initialize`: `clientInfo`, `hostInfo`, capability advertise, `hostContext` (theme, viewport, device, locale), and sandbox policy (CSP directives, permissions, allow-features). With a preset selected, a widget rendered in the [Playground](/inspector/playground) behaves the way it would in production under that host.
 
 ## Field guide
 
@@ -25,7 +25,7 @@ When you mirror a host in your own [Client](/inspector/clients), capture each va
 <Warning>
   **Almost never set `restrictTo` on `sandbox.csp`.** SEP-1865 makes
   `restrictTo` an *intersection* with the view's declared `_meta.ui.csp`, not a
-  union. Adding the host's production allowlist here can only narrow widgets —
+  union. Adding the host's production allowlist here can only narrow widgets,
   never help them. A view declaring `connect-src https://api.example.com`
   silently goes to zero if your `restrictTo.connectDomains` doesn't list
   `api.example.com`. Use `mode: "declared"` and trust the view's CSP. The only
@@ -36,7 +36,7 @@ When you mirror a host in your own [Client](/inspector/clients), capture each va
 <Warning>
   **`mcpProfile.apps.mcpAppsOverrides` is what the host advertises for MCP
   Apps.** Listing capabilities the renderer doesn't actually implement misleads
-  widget authors — they'll gate on the advertised flag, hit a dead path at
+  widget authors, they'll gate on the advertised flag, hit a dead path at
   runtime, and blame their widget. If a capability's `listChanged` notifications
   aren't forwarded by the renderer yet, omit the sub-field.
 </Warning>
