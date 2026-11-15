@@ -18,11 +18,14 @@ function shouldShowNudge(): boolean {
   }
 }
 
-function markNudgeSeen() {
+function markNudgeSeen(): boolean {
   try {
     localStorage.setItem(DARK_DEFAULT_NUDGE_KEY, "1");
+    return true;
   } catch (error) {
+    // Unsaved means it would show on every load, so skip it instead.
     console.warn("Failed to persist dark default nudge:", error);
+    return false;
   }
 }
 
@@ -34,8 +37,7 @@ export function DarkDefaultNudge() {
   const navigate = useAppNavigate();
 
   useEffect(() => {
-    if (!shouldShowNudge()) return;
-    markNudgeSeen();
+    if (!shouldShowNudge() || !markNudgeSeen()) return;
     toast.custom(
       (id) => (
         <DarkDefaultNudgeCard
