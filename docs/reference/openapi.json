@@ -4032,7 +4032,7 @@
         "operationId": "deleteEvalSuite",
         "tags": ["Eval runs"],
         "summary": "Delete an eval suite",
-        "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send its file's `suite.id` as `declaredSuiteId` to delete as the file.",
+        "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) can be deleted too. The next suite-file sync or SDK report creates it again.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -7021,7 +7021,7 @@
         "operationId": "exportTracesOtlp",
         "tags": ["Catalog"],
         "summary": "Export project traces as OTLP/JSON",
-        "description": "Returns an OTLP `ExportTraceServiceRequest`. Pagination rides in RESPONSE HEADERS rather than the body so the payload stays a valid OTLP document: read `x-mcpjam-next-cursor` and feed it back as `cursor`, and treat `x-mcpjam-export-complete: true` as the end of the stream.\n\nThe OTLP body carries no session DTO, so `x-mcpjam-api-vocabulary: 2` changes nothing this route emits \u2014 it widens what `sourceTypes` accepts, so a caller can filter by the spelling its other reads answer with.",
+        "description": "Returns an OTLP `ExportTraceServiceRequest`. Pagination rides in RESPONSE HEADERS rather than the body so the payload stays a valid OTLP document: read `x-mcpjam-next-cursor` and feed it back as `cursor`, and treat `x-mcpjam-export-complete: true` as the end of the stream.\n\nThe OTLP body carries no session DTO, so `x-mcpjam-api-vocabulary: 2` changes nothing this route emits; it widens what `sourceTypes` accepts, so a caller can filter by the spelling its other reads answer with.",
         "parameters": [
           {
             "$ref": "#/components/parameters/apiVocabularyHeader"
@@ -12641,7 +12641,7 @@
         "name": "x-mcpjam-eval-vocabulary",
         "in": "header",
         "required": false,
-        "description": "Which vocabulary this request and its response speak. Absent means `1`, which is byte-for-byte today's contract: the same request fields, the same refusals, the same response projection. `2` is the canonical vocabulary. Any other value is a `400` with `code: \"VALIDATION_ERROR\"`.\n\nToday it decides one thing: the spelling of an evaluator's policy `role`. Vocabulary 1 accepts and returns `gating`; vocabulary 2 accepts both spellings and returns the canonical `required`. Sending `required` without the header is a `400`, deliberately \u2014 vocabulary 1 is not widened to meet vocabulary 2 half way, because a boundary that accepts a spelling it does not announce is one two implementations can disagree about.\n\nA response that varies by vocabulary sends `Vary: x-mcpjam-eval-vocabulary`.",
+        "description": "Which vocabulary this request and its response speak. Absent means `1`, which is byte-for-byte today's contract: the same request fields, the same refusals, the same response projection. `2` is the canonical vocabulary. Any other value is a `400` with `code: \"VALIDATION_ERROR\"`.\n\nToday it decides one thing: the spelling of an evaluator's policy `role`. Vocabulary 1 accepts and returns `gating`; vocabulary 2 accepts both spellings and returns the canonical `required`. Sending `required` without the header is a `400`, deliberately: vocabulary 1 is not widened to meet vocabulary 2 half way, because a boundary that accepts a spelling it does not announce is one two implementations can disagree about.\n\nA response that varies by vocabulary sends `Vary: x-mcpjam-eval-vocabulary`.",
         "schema": {
           "type": "string",
           "enum": ["1", "2"]
@@ -12652,7 +12652,7 @@
         "name": "x-mcpjam-api-vocabulary",
         "in": "header",
         "required": false,
-        "description": "Which spelling of the API's resource-noun VALUES this request and its response speak. Absent means `1`, byte-for-byte today's contract. `2` is the canonical vocabulary. Any other value is a `400` with `code: \"VALIDATION_ERROR\"`.\n\nThree nouns were renamed at this boundary \u2014 scenario \u2192 study, journey \u2192 goal, wave \u2192 swarm run. Operation names, routes, type names and field names each moved behind a deprecated alias, because a caller reaches them by a name it chose. A VALUE cannot: `sourceType` is one field with one string in it, and a client switching on `\"scenario\"` has no second name to fall back to. Under vocabulary 2 a session\u2019s `sourceType` reads `study`, a share\u2019s `resourceType` reads `study`, and a session\u2019s `parentRef.kind` reads `study` or `goalRun` with its id fields re-keyed to match.\n\nOn the way IN, a vocabulary-2 request may name a filter or a path segment by EITHER spelling; a vocabulary-1 request may use only the legacy one, because a boundary that accepts a spelling it does not announce is one two implementations can disagree about.\n\nA response that varies by vocabulary sends `Vary: x-mcpjam-api-vocabulary`. A SEPARATE header from `x-mcpjam-eval-vocabulary`, which is eval-scoped by name and moves on its own schedule.",
+        "description": "Which spelling of the API's resource-noun VALUES this request and its response speak. Absent means `1`, byte-for-byte today's contract. `2` is the canonical vocabulary. Any other value is a `400` with `code: \"VALIDATION_ERROR\"`.\n\nThree nouns were renamed at this boundary: scenario \u2192 study, journey \u2192 goal, wave \u2192 swarm run. Operation names, routes, type names and field names each moved behind a deprecated alias, because a caller reaches them by a name it chose. A VALUE cannot: `sourceType` is one field with one string in it, and a client switching on `\"scenario\"` has no second name to fall back to. Under vocabulary 2 a session\u2019s `sourceType` reads `study`, a share\u2019s `resourceType` reads `study`, and a session\u2019s `parentRef.kind` reads `study` or `goalRun` with its id fields re-keyed to match.\n\nOn the way IN, a vocabulary-2 request may name a filter or a path segment by EITHER spelling; a vocabulary-1 request may use only the legacy one, because a boundary that accepts a spelling it does not announce is one two implementations can disagree about.\n\nA response that varies by vocabulary sends `Vary: x-mcpjam-api-vocabulary`. A SEPARATE header from `x-mcpjam-eval-vocabulary`, which is eval-scoped by name and moves on its own schedule.",
         "schema": {
           "type": "string",
           "enum": ["1", "2"]
@@ -14740,7 +14740,7 @@
           },
           "managedBy": {
             "type": "string",
-            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it (name, settings, environments, schedule, models, skills, execution config and cases) from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected \u2014 deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it (name, settings, environments, schedule, models, skills, execution config and cases) from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected. Deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
             "enum": ["ci", "app"]
           },
           "name": {
@@ -17452,7 +17452,7 @@
       },
       "EvalSuiteSettings": {
         "type": "object",
-        "description": "A suite's grading configuration, as vocabulary 1 spells it. FOUR SEPARATE SETTINGS, and the first two are the ones most often confused: the PASS CRITERION (`minimumAccuracy`, one percentage over the whole run, OR `verdictPolicyDefaults.passThreshold`, a fraction each case must meet over its own iterations \u2014 `policy` says which decides this suite), the ITERATION RULE (`minimumIterations`, a floor that RAISES a case's own count, OR `verdictPolicyDefaults.repetitions`, a default that REPLACES it), the evaluators (`matchOptions`, `checks`, `judge`), and the QUALITY GATE, which asks whether a run regressed against a baseline rather than whether it met a bar. The four REQUIRED fields are the ones the DTO always emits: `minimumAccuracy` and `matchOptions` are nullable rather than absent \u2014 `null` is the suite's real state (no suite-wide threshold in effect, no match options set), not a stand-in for a default \u2014 and `judge` is fully resolved, so it is present even on a suite that configured nothing.",
+        "description": "A suite's grading configuration, as vocabulary 1 spells it. FOUR SEPARATE SETTINGS, and the first two are the ones most often confused: the PASS CRITERION (`minimumAccuracy`, one percentage over the whole run, OR `verdictPolicyDefaults.passThreshold`, a fraction each case must meet over its own iterations; `policy` says which decides this suite), the ITERATION RULE (`minimumIterations`, a floor that RAISES a case's own count, OR `verdictPolicyDefaults.repetitions`, a default that REPLACES it), the evaluators (`matchOptions`, `checks`, `judge`), and the QUALITY GATE, which asks whether a run regressed against a baseline rather than whether it met a bar. The four REQUIRED fields are the ones the DTO always emits: `minimumAccuracy` and `matchOptions` are nullable rather than absent (`null` is the suite's real state (no suite-wide threshold in effect, no match options set), not a stand-in for a default), and `judge` is fully resolved, so it is present even on a suite that configured nothing.",
         "properties": {
           "minimumAccuracy": {
             "type": ["number", "null"],
@@ -17620,7 +17620,7 @@
       },
       "EvalSuiteSettingsV2": {
         "type": "object",
-        "description": "As `EvalSuiteSettings`, spelled the way a client constructed with `evalVocabulary: 2` reads it: the suite-default rules are `defaultAssertions` and the per-case count is `verdictPolicyDefaults.iterations`. Same facts, canonical words. The four REQUIRED fields are the ones the DTO always emits: `minimumAccuracy` and `matchOptions` are nullable rather than absent \u2014 `null` is the suite's real state (no suite-wide threshold in effect, no match options set), not a stand-in for a default \u2014 and `judge` is fully resolved, so it is present even on a suite that configured nothing.",
+        "description": "As `EvalSuiteSettings`, spelled the way a client constructed with `evalVocabulary: 2` reads it: the suite-default rules are `defaultAssertions` and the per-case count is `verdictPolicyDefaults.iterations`. Same facts, canonical words. The four REQUIRED fields are the ones the DTO always emits: `minimumAccuracy` and `matchOptions` are nullable rather than absent (`null` is the suite's real state (no suite-wide threshold in effect, no match options set), not a stand-in for a default), and `judge` is fully resolved, so it is present even on a suite that configured nothing.",
         "properties": {
           "minimumAccuracy": {
             "type": ["number", "null"],
@@ -17862,7 +17862,7 @@
           },
           "managedBy": {
             "type": "string",
-            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it (name, settings, environments, schedule, models, skills, execution config and cases) from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected \u2014 deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it (name, settings, environments, schedule, models, skills, execution config and cases) from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected. Deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
             "enum": ["ci", "app"]
           },
           "name": {
@@ -20285,7 +20285,7 @@
       },
       "EvalSuspectedConditionVerdict": {
         "type": "object",
-        "description": "Which server-controlled condition is SUSPECTED of contributing to one observed friction pattern, from an advisory per-trial judge. REPORT-ONLY and NEVER a claim about cause: nothing here entered the trial\u2019s `result`, its stage chain or its `failureCategory`, and only a controlled rewrite that changes the suspected response and holds the rest comparable could establish causation. ABSENT means no judge ran \u2014 the trial predates it, nothing was flagged, or the deployment has it off.",
+        "description": "Which server-controlled condition is SUSPECTED of contributing to one observed friction pattern, from an advisory per-trial judge. REPORT-ONLY and NEVER a claim about cause: nothing here entered the trial\u2019s `result`, its stage chain or its `failureCategory`, and only a controlled rewrite that changes the suspected response and holds the rest comparable could establish causation. ABSENT means no judge ran: the trial predates it, nothing was flagged, or the deployment has it off.",
         "required": [
           "status",
           "gradingKey",
@@ -20301,12 +20301,12 @@
           "status": {
             "type": "string",
             "enum": ["scored", "skipped", "error"],
-            "description": "`scored` \u2014 a verdict was produced. `skipped` \u2014 the judge did not reach this trial; `reason` says why. `error` \u2014 the pass threw for this trial. A skipped or errored trial carries NO condition, so \u201cwe never looked\u201d is never rendered as \u201cwe looked and could not say\u201d."
+            "description": "`scored`: a verdict was produced. `skipped`: the judge did not reach this trial; `reason` says why. `error`: the pass threw for this trial. A skipped or errored trial carries NO condition, so \u201cwe never looked\u201d is never rendered as \u201cwe looked and could not say\u201d."
           },
           "reason": {
             "type": "string",
             "enum": ["spendBlocked", "traceIncomplete", "noEvidence", "cap"],
-            "description": "Present only when `status` is `skipped`. `spendBlocked` \u2014 the internal-LLM spend gate refused the call. `traceIncomplete` \u2014 a referenced trace blob could not be read. `noEvidence` \u2014 the judge\u2019s window could not be built, most often because the information call\u2019s result never reached the trace. `cap` \u2014 the run had more flagged trials than the per-run cap."
+            "description": "Present only when `status` is `skipped`. `spendBlocked`: the internal-LLM spend gate refused the call. `traceIncomplete`: a referenced trace blob could not be read. `noEvidence`: the judge\u2019s window could not be built, most often because the information call\u2019s result never reached the trace. `cap`: the run had more flagged trials than the per-run cap."
           },
           "condition": {
             "type": "string",
@@ -20331,7 +20331,7 @@
           "remediation": {
             "type": "string",
             "maxLength": 300,
-            "description": "ONE sentence naming a lever the SERVER OWNER controls. Absent for `unclear` and `responseWasClear`, which name no server problem to remediate, and absent from any verdict whose remediation named no server lever \u2014 that verdict is demoted to `unclear`."
+            "description": "ONE sentence naming a lever the SERVER OWNER controls. Absent for `unclear` and `responseWasClear`, which name no server problem to remediate, and absent from any verdict whose remediation named no server lever; that verdict is demoted to `unclear`."
           },
           "evidence": {
             "type": "object",
@@ -20739,7 +20739,7 @@
           },
           "idSource": {
             "type": "string",
-            "description": "`generated` ids are positional and UNSTABLE across config edits; only `explicit` ids may be referenced by a gate policy or tracked across runs. `platform` marks a scorer the platform owns rather than the suite author \u2014 the hosted judge \u2014 whose id is stable but not author-editable.",
+            "description": "`generated` ids are positional and UNSTABLE across config edits; only `explicit` ids may be referenced by a gate policy or tracked across runs. `platform` marks a scorer the platform owns rather than the suite author (the hosted judge), whose id is stable but not author-editable.",
             "enum": ["explicit", "generated", "platform"]
           },
           "scorerVersion": {
@@ -28412,7 +28412,7 @@
           "reasoningEffort": {
             "type": "string",
             "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-            "description": "First turn only \u2014 pinned to the session and reused on every continuation. Reasoning effort for the turn; wins over the effort a `hostId`'s saved selection carries, and is applied or refused by the rail the model runs on, never dropped. Which levels a model accepts is `supportedReasoningEfforts` on `GET /v1/models`. Mutually exclusive with `temperature`: an effort replaces the sampling temperature."
+            "description": "First turn only; it is pinned to the session and reused on every continuation. Reasoning effort for the turn; wins over the effort a `hostId`'s saved selection carries, and is applied or refused by the rail the model runs on, never dropped. Which levels a model accepts is `supportedReasoningEfforts` on `GET /v1/models`. Mutually exclusive with `temperature`: an effort replaces the sampling temperature."
           },
           "maxSteps": {
             "type": "integer",
@@ -31425,7 +31425,7 @@
                     "response",
                     "userValue"
                   ],
-                  "description": "The stage this observation was read from, and the only stage it is evidence ABOUT. `connection`: the server was reachable and the session initialized. `discovery`: its tools and resources were listed and readable. `selection`: the model chose the right tool for the request. `call`: the call was made with usable arguments. `response`: the server returned data the model could use. `userValue`: the user's actual request was satisfied."
+                  "description": "The stage this observation was read from, and the only stage it is evidence ABOUT. `connection` — the server was reachable and the session initialized. `discovery` — its tools and resources were listed and readable. `selection` — the model chose the right tool for the request. `call` — the call was made with usable arguments. `response` — the server returned data the model could use. `userValue` — the user's actual request was satisfied."
                 },
                 "unit": {
                   "type": "string",
@@ -31522,7 +31522,7 @@
                 "casePassRateBelowThreshold",
                 "allMeasuredCasesMetThreshold"
               ],
-              "description": "Why the verdict is what it is. The validity reasons are evaluated FIRST and make a run `inconclusive`; the task reasons decide `passed` / `failed` once validity holds. `configuredTrialsNotAttempted`: some configured trial never ran. `noGradeableTrials`: nothing in the suite was gradeable. `eligibleTrialsBelowMinimum`: the explicit `minEligibleTrials` was not reached. `completionRateBelowMinimum`: measured, and under the floor. `completionRateNotMeasured`: nothing was attempted, so the floor is unsatisfiable; a not-measured rate never passes one. `evaluatorErrorRateAboveMaximum`: the grader failed too often for the run to describe the server. `evaluatorErrorRateNotMeasured`: the same unsatisfiable case for the ceiling. `caseHasNoEligibleTrials`: a case graded nothing, which is inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold`: a case's own passing reason. `casePassRateBelowThreshold`: a case failed its threshold, and so therefore did the suite. `allMeasuredCasesMetThreshold`: the suite's only passing reason."
+              "description": "Why the verdict is what it is. The validity reasons are evaluated FIRST and make a run `inconclusive`; the task reasons decide `passed` / `failed` once validity holds. `configuredTrialsNotAttempted` — some configured trial never ran. `noGradeableTrials` — nothing in the suite was gradeable. `eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was not reached. `completionRateBelowMinimum` — measured, and under the floor. `completionRateNotMeasured` — nothing was attempted, so the floor is unsatisfiable; a not-measured rate never passes one. `evaluatorErrorRateAboveMaximum` — the grader failed too often for the run to describe the server. `evaluatorErrorRateNotMeasured` — the same unsatisfiable case for the ceiling. `caseHasNoEligibleTrials` — a case graded nothing, which is inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` — a case's own passing reason. `casePassRateBelowThreshold` — a case failed its threshold, and so therefore did the suite. `allMeasuredCasesMetThreshold` — the suite's only passing reason."
             }
           },
           "validity": {
@@ -32509,7 +32509,7 @@
                     "casePassRateBelowThreshold",
                     "allMeasuredCasesMetThreshold"
                   ],
-                  "description": "Why the verdict is what it is. The validity reasons are evaluated FIRST and make a run `inconclusive`; the task reasons decide `passed` / `failed` once validity holds. `configuredTrialsNotAttempted`: some configured trial never ran. `noGradeableTrials`: nothing in the suite was gradeable. `eligibleTrialsBelowMinimum`: the explicit `minEligibleTrials` was not reached. `completionRateBelowMinimum`: measured, and under the floor. `completionRateNotMeasured`: nothing was attempted, so the floor is unsatisfiable; a not-measured rate never passes one. `evaluatorErrorRateAboveMaximum`: the grader failed too often for the run to describe the server. `evaluatorErrorRateNotMeasured`: the same unsatisfiable case for the ceiling. `caseHasNoEligibleTrials`: a case graded nothing, which is inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold`: a case's own passing reason. `casePassRateBelowThreshold`: a case failed its threshold, and so therefore did the suite. `allMeasuredCasesMetThreshold`: the suite's only passing reason."
+                  "description": "Why the verdict is what it is. The validity reasons are evaluated FIRST and make a run `inconclusive`; the task reasons decide `passed` / `failed` once validity holds. `configuredTrialsNotAttempted` — some configured trial never ran. `noGradeableTrials` — nothing in the suite was gradeable. `eligibleTrialsBelowMinimum` — the explicit `minEligibleTrials` was not reached. `completionRateBelowMinimum` — measured, and under the floor. `completionRateNotMeasured` — nothing was attempted, so the floor is unsatisfiable; a not-measured rate never passes one. `evaluatorErrorRateAboveMaximum` — the grader failed too often for the run to describe the server. `evaluatorErrorRateNotMeasured` — the same unsatisfiable case for the ceiling. `caseHasNoEligibleTrials` — a case graded nothing, which is inconclusive even at `passThreshold: 0`. `casePassRateMetThreshold` — a case's own passing reason. `casePassRateBelowThreshold` — a case failed its threshold, and so therefore did the suite. `allMeasuredCasesMetThreshold` — the suite's only passing reason."
                 }
               },
               "required": [

@@ -664,7 +664,9 @@ reads the token from a file, an environment variable or stdin, and
 [CLI reference](/cli/reference#cloud-server-accounts-commands).
 
 The default is shared by every run that key starts, so don't run the same
-key's runs at the same time with different defaults.
+key's runs at the same time with different defaults. A suite that has saved
+accounts in its settings runs as those accounts and ignores the default, so
+check the suite's settings before relying on the default.
 
 ### Deleting an account
 

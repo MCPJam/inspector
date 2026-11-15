@@ -374,7 +374,7 @@ const r1 = await runtime.run("Who am I?");
 const r2 = await runtime.run("List my projects", { context: [r1] });
 ```
 
-**Eval reporting.** When you upload results to MCPJam and the reporter can resolve a host snapshot, it sends the canonical host config alongside the run (`{ hostConfig, hostConfigHash }`) so the run in the Evals UI shows the exact host you ran with. The snapshot comes from `executor.getHostSnapshot?.()`, falling back to `MCPJamReportingConfig.host`; result-only uploads with neither source omit the pair. The host config is recorded once per run, not per iteration.
+**Eval reporting.** When you upload results to MCPJam and the reporter can resolve a host snapshot, it sends the canonical host config alongside the run (`{ hostConfig, hostConfigHash }`) so the run in the Evals UI shows the host you ran with. The snapshot comes from `executor.getHostSnapshot?.()`, falling back to `MCPJamReportingConfig.host`; result-only uploads with neither source omit the pair. The host config is recorded once per run, when the report is built, not per iteration. If you mutate a `HostRuntime`'s host between iterations, the recorded config is the host at report time, which can differ from the one earlier iterations used. Keep the host fixed for the run, or use `HostRunner`, which snapshots once at construction, for an exact record.
 
 ## Generate evals from the Inspector
 
