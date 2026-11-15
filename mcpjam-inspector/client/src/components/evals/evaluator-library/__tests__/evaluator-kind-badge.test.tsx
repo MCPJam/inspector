@@ -26,8 +26,11 @@ describe("EvaluatorKindBadge", () => {
 describe("OwaspTag", () => {
   it("joins several ids and names the list for screen readers", () => {
     renderWithProviders(<OwaspTag ids={["MCP01", "MCP10"]} />);
-    const tag = screen.getByLabelText("OWASP MCP Top 10: MCP01, MCP10");
-    expect(tag).toHaveTextContent("MCP01 · MCP10");
+    const prefix = screen.getByText("OWASP MCP Top 10:");
+    expect(prefix).toHaveClass("sr-only");
+    expect(prefix.parentElement).toHaveTextContent(
+      "OWASP MCP Top 10: MCP01 · MCP10",
+    );
   });
 
   it("renders nothing without ids", () => {
