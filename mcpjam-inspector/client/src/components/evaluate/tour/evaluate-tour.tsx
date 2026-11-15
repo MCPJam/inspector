@@ -131,10 +131,12 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
 
   const showStop = (index: number) => {
     const root = rootRef.current;
-    const name = TOUR_STOPS[index]?.anchors[0];
-    // Short panes clip the mock screens; bring the spotlighted part into view.
-    if (root && name)
-      findAnchor(root, name)?.scrollIntoView?.({ block: "nearest" });
+    const anchors = TOUR_STOPS[index]?.anchors ?? [];
+    // Short panes clip the mock screens; bring the spotlighted parts into
+    // view, the first one last so it wins when they don't all fit.
+    for (const name of [...anchors].reverse()) {
+      if (root) findAnchor(root, name)?.scrollIntoView?.({ block: "nearest" });
+    }
     setStopIndex(index);
   };
 

@@ -28,10 +28,7 @@ function RunsChart() {
   const latestRate = passRate(latest);
   const latestPassed = latestRate >= EXAMPLE_THRESHOLD;
   return (
-    <div
-      data-tour-anchor="monitor-chart"
-      className="space-y-3 rounded-xl bg-card p-4"
-    >
+    <div className="space-y-3 rounded-xl bg-card p-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <p className="flex items-baseline gap-2">
           <span className="text-4xl font-semibold tracking-[-0.03em] text-foreground">
@@ -122,7 +119,10 @@ export function TourMonitorScreen() {
             </FakeButton>
           </div>
         </div>
-        <div className="rounded-xl border border-border">
+        <div
+          data-tour-anchor="monitor-runs"
+          className="rounded-xl border border-border"
+        >
           <div className="flex items-center justify-between px-4 py-2.5">
             <span className="text-sm font-medium text-foreground">Runs</span>
             <div className="flex gap-1.5">

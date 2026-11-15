@@ -1,13 +1,12 @@
 /**
- * Copy and anchors for the Evaluate tour. The tour walks the eval loop in five
- * stops on example data: Setup, Run, Diagnose, Experiment, Monitor. Each stop
- * shows a mock screen (see `tour-screens-*.tsx`); `anchors` name the
- * `data-tour-anchor` elements on that screen the coachmark spotlights and
- * points at.
+ * Copy and anchors for the Evaluate tour. The tour walks the eval loop in four
+ * stops on example data: Setup, Define, Experiment, Monitor. Each stop shows a
+ * mock screen (see `tour-screens-*.tsx` and `tour-screen-monitor.tsx`);
+ * `anchors` name the `data-tour-anchor` elements on that screen the coachmark
+ * spotlights and points at.
  */
 
-export type TourStopId =
-  "setup" | "run" | "diagnose" | "experiment" | "monitor";
+export type TourStopId = "setup" | "define" | "experiment" | "monitor";
 
 /** The mock screens. `create` is the form the cursor fills in first. */
 export type TourScreen = "create" | "setup" | "case" | "diagnose" | "monitor";
@@ -39,34 +38,24 @@ export const TOUR_STOPS: readonly TourStop[] = [
     advanceAnchor: "setup-describe",
   },
   {
-    id: "run",
-    label: "Run",
-    title: "Run prompts the same way your users would",
+    id: "define",
+    label: "Define",
+    title: "Run the prompts your users would",
     body: "Write what a user would ask and the outcome you expect. Press Run to see what happens.",
     screen: "case",
-    anchors: ["case-outcome"],
+    anchors: ["case-prompt", "case-outcome"],
     placement: "right",
     advanceAnchor: "case-run",
   },
   {
-    id: "diagnose",
-    label: "Diagnose",
-    title: "See exactly where it broke",
-    body: "Each iteration is checked in 6 steps. Open the one that failed to see what to fix in your server.",
+    id: "experiment",
+    label: "Experiment",
+    title: "See what broke, then try again",
+    body: "Each iteration is checked in 6 steps. Open the failed step to see the fix, change one thing and run again.",
     screen: "diagnose",
     anchors: ["diagnose-scorecard"],
     placement: "bottom",
-    advanceAnchor: "diagnose-case-crumb",
-  },
-  {
-    id: "experiment",
-    label: "Experiment",
-    title: "Change one thing, then run again",
-    body: "Edit the prompt, the expected outcome or your server, then run again and compare.",
-    screen: "case",
-    anchors: ["case-prompt", "case-run"],
-    placement: "right",
-    advanceAnchor: "case-suite-crumb",
+    advanceAnchor: "diagnose-suite-crumb",
   },
   {
     id: "monitor",
@@ -74,7 +63,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     title: "Once you set up your suite, this is home",
     body: "Every run lands here with key takeaways. After you change your server, check that you're still passing your set threshold.",
     screen: "monitor",
-    anchors: ["monitor-chart"],
+    anchors: ["monitor-runs"],
     placement: "bottom",
   },
 ];

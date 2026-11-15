@@ -20,12 +20,12 @@ import {
   TourBreadcrumb,
 } from "./tour-screen-chrome";
 
-function caseCrumbs(last: string, anchors: { suite?: string; case?: string }) {
+function caseCrumbs(last: string, suiteAnchor?: string) {
   return [
     { label: "Evaluate" },
-    { label: EXAMPLE_SUITE.name, anchor: anchors.suite },
+    { label: EXAMPLE_SUITE.name, anchor: suiteAnchor },
     { label: `Run #${EXAMPLE_ITERATION.runNumber}` },
-    { label: EXAMPLE_CASE.title, anchor: anchors.case },
+    { label: EXAMPLE_CASE.title },
     { label: last },
   ];
 }
@@ -63,7 +63,7 @@ export function TourCaseScreen() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TourBreadcrumb
-        crumbs={caseCrumbs("Edit test case", { suite: "case-suite-crumb" })}
+        crumbs={caseCrumbs("Edit test case")}
         trailing={<CaseTrailing />}
       />
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-4 py-5 sm:px-6">
@@ -189,9 +189,10 @@ export function TourDiagnoseScreen() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TourBreadcrumb
-        crumbs={caseCrumbs(`Iteration #${EXAMPLE_ITERATION.iteration}`, {
-          case: "diagnose-case-crumb",
-        })}
+        crumbs={caseCrumbs(
+          `Iteration #${EXAMPLE_ITERATION.iteration}`,
+          "diagnose-suite-crumb",
+        )}
         trailing={<CaseTrailing />}
       />
       <div className="min-h-0 flex-1 overflow-hidden px-4 py-5 sm:px-6">

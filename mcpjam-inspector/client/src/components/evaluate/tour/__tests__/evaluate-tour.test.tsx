@@ -127,8 +127,8 @@ describe("EvaluateTour", () => {
         expect(screen.getByText(TOUR_STOPS[1].title)).toBeInTheDocument(),
       );
       expect(scrolled).toEqual([
-        TOUR_STOPS[0].anchors[0],
-        TOUR_STOPS[1].anchors[0],
+        ...[...TOUR_STOPS[0].anchors].reverse(),
+        ...[...TOUR_STOPS[1].anchors].reverse(),
       ]);
       expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
     } finally {

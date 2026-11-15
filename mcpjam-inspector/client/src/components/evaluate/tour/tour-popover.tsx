@@ -79,7 +79,7 @@ export function TourPopover({
   );
 }
 
-/** "Setup → Run → Diagnose → Experiment → Monitor" with the current stop marked. */
+/** "Setup → Define → Experiment → Monitor" with the current stop marked. */
 function StopTrail({ current }: { current: number }) {
   return (
     <ol className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
