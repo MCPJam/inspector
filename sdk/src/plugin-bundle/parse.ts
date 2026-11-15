@@ -39,6 +39,11 @@ import {
   type NormalizedBundleEntry,
 } from "./paths.js";
 import {
+  findPluginRoot,
+  pathInPluginRoot,
+  reportPluginRootRefusals,
+} from "./plugin-root.js";
+import {
   parsePluginSkill,
   SKILL_FILE_NAME,
   SKILLS_DIR,
@@ -221,6 +226,7 @@ export async function parsePluginBundle(
     ...options?.limits,
   };
   const issues = new PluginIssueCollector();
+  const profile = options?.profile ?? "strict";
 
   // Phase 1 — archive/path safety. Must fail before any content read.
   const entries = await source.list();
@@ -231,10 +237,24 @@ export async function parsePluginBundle(
     issues.throwIfErrors();
   }
 
+  // The plugin root and its manifest, from paths alone (`plugin-root.ts`).
+  // Every path from here on is relative to that root; reads keep `sourcePath`.
+  const paths = new Set(validated.map(({ path }) => path));
+  const root = findPluginRoot(paths, profile);
+  reportPluginRootRefusals(root, profile, issues);
+  const location = root.manifest;
+  if (location === undefined || issues.hasErrors()) {
+    throw new PluginBundleError(issues.issues());
+  }
+  const rooted = validated.flatMap((entry) => {
+    const path = pathInPluginRoot(root.directory, entry.path);
+    return path === undefined ? [] : [{ ...entry, path }];
+  });
+
   // Phase 2 — load content and compute deterministic hashes.
   const files: LoadedFile[] = [];
   const byPath = new Map<string, LoadedFile>();
-  for (const entry of validated) {
+  for (const entry of rooted) {
     let bytes: Uint8Array;
     try {
       bytes = await source.readBytes(entry.sourcePath, limits.maxFileBytes);
@@ -281,11 +301,12 @@ export async function parsePluginBundle(
     .filter((file) => file.executable)
     .map((file) => file.path);
 
-  // Phase 3 — manifest: `plugin.json` at the bundle root (fixed location;
-  // nested plugin.json files are ordinary files, not manifests).
+  // Phase 3 — the manifest found in phase 1 (fixed locations; nested
+  // plugin.json files are ordinary files, not manifests).
   const filePaths: ReadonlySet<string> = new Set(byPath.keys());
   const resolved = resolveManifestSource({
-    profile: options?.profile ?? "strict",
+    profile,
+    location,
     filePaths,
     readJson: (path, collector) => {
       const file = byPath.get(path);
@@ -295,13 +316,15 @@ export async function parsePluginBundle(
     },
     issues,
   });
-  if (resolved === null) throw new PluginBundleError(issues.issues());
-  const { interpretation } = resolved;
+  const interpretation =
+    root.directory === ""
+      ? resolved.interpretation
+      : { ...resolved.interpretation, rootDirectory: root.directory };
   const manifestFile = byPath.get(interpretation.manifestPath);
   const { manifest, onboardingSkill } =
     resolved.record === null || manifestFile === undefined
       ? { manifest: null as NormalizedPluginManifest | null }
-      : normalizePluginManifest(resolved.record, { filePaths, issues });
+      : normalizePluginManifest(resolved.record, { filePaths, issues, profile });
   if (manifest === null || manifestFile === undefined) {
     throw new PluginBundleError(issues.issues());
   }

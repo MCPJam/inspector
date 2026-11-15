@@ -142,8 +142,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
 
 const broker = vi.hoisted(() => ({ start: vi.fn() }));
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => {
     broker.start();
@@ -154,6 +152,10 @@ vi.mock("../harness-model-broker.js", () => ({
       expiresAt: Date.now() + 60_000,
     };
   }),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 const RAW = { content: [{ type: "text", text: "raw from the server" }] };

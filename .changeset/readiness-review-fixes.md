@@ -1,0 +1,7 @@
+---
+"@mcpjam/sdk": minor
+---
+
+Claude connector answers: a new check, `claude.submission.other-answers`, reports every review-page issue no other check owns (such as a blank server URL or an answer to a field the flow no longer has), so each issue is reported exactly once. `listing.name` is held to 100 characters. A confirmation made under wording that has since changed no longer counts as standing behind a declaration. A placed result that read a changed answer is `stale` whether it was established or inconclusive, and a placement with `readsConfirmation: true` also goes stale when only an answer's origin changed. The Authentication answers are compared with the server only on conclusive evidence: a `none` answer fails when a tool call made without sign-in is refused, and a server error is not read as agreement. `claude.auth.prm-discoverable` stays violated for a challenge pointing at another origin even when no metadata request was answered. `directoryVerdict` accepts `blocking`, the directory's blocking check ids, and counts one the run never reported as unknown unless `warnOnly` names it.
+
+OpenAI: `openaiPolicySource` accepts `app-guidelines` again as a deprecated alias of `plugin-guidelines`. The portal-code validators read versions as semver.org 2.0.0 does, refuse an HTTPS URL whose authority is only a port, refuse a line break in the plugin's short description, and no longer let a stopped field hide a sibling key that contains a dot. `openaiIssuePortalCode` matches no inherited name such as `toString`.

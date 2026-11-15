@@ -28,6 +28,7 @@ import {
   Globe,
   Radio,
   Zap,
+  ClipboardCheck,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
@@ -133,6 +134,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "registry-enabled",
   "mcpjam-conformance",
   "mcpjam-compatibility",
+  "mcpjam-directory-readiness",
   "hosts-enabled",
   "home-page-enabled",
   "xaa",
@@ -357,6 +359,12 @@ export const navigationSections: NavSection[] = [
         // MCPJam-internal flag (same convention as `mcpjam-conformance`).
         featureFlag: "mcpjam-compatibility",
       },
+      {
+        title: "Readiness",
+        url: "/readiness",
+        icon: ClipboardCheck,
+        featureFlag: "mcpjam-directory-readiness",
+      },
     ],
   },
   {
@@ -551,6 +559,7 @@ export function MCPSidebar({
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
+  const readinessEnabled = useFeatureFlagEnabled("mcpjam-directory-readiness");
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled",
   );
@@ -663,6 +672,8 @@ export function MCPSidebar({
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
+      // Submissions belong to a project, like the rows below.
+      "mcpjam-directory-readiness": readinessEnabled === true && isAuthenticated,
       // Hosts/Connect and Home are fully rolled out; their nav visibility is
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
@@ -687,6 +698,7 @@ export function MCPSidebar({
       registryEnabled,
       conformanceEnabled,
       compatibilityEnabled,
+      readinessEnabled,
       xaaEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,

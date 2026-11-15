@@ -1,0 +1,195 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Error Patterns/Overview" />
+
+# Error Patterns
+
+Four surfaces carry errors in MCPJam. This page is for choosing between them.
+
+The four error checks drafted for DESIGN.md govern what a message *says*: E1 plain
+language, E2 precisely indicates the problem, E3 offers a way out, E4 consistent.
+**They are not in DESIGN.md yet.** They exist as a draft shared in Slack, and this
+page quotes that draft. A draft pull request
+([MCPJam/inspector#7336](https://github.com/MCPJam/inspector/pull/7336)) adds them
+to DESIGN.md and is not merged. They do not say where the message goes, and placement is where most weak error copy actually
+comes from: the message is thin because the container had no room for a cause or a
+step. Writing better sentences into a toast does not fix that.
+
+## Pick the surface
+
+Four questions, in order. The first that applies decides.
+
+| | Question | Surface |
+| --- | --- | --- |
+| **1** | Can the page render at all? | **Full-page error** |
+| **2** | Is the reader's own input wrong or missing? | **FieldError**, beside the control |
+| **3** | Does the message need a cause, a next step, or raw detail? | **ErrorCard** |
+| | None of the above, and it happened out of view in one line | **Toast** |
+
+Three notes on those.
+
+**Q2 is a hard rule, not a preference.** A validation message never goes in a toast.
+The reader is demonstrably looking at the form; the toast is demonstrably not, it
+leaves before they act, and it does not mark which of six fields to fix.
+
+**Every ErrorCard offers a way out.** Retry when trying again can work. When it
+cannot, a specific CTA such as "Sign in" or "Edit server", passed as `action`. Give
+it `density="card"` to keep the bordered card; left unset, an `action` switches the
+card to a compact one-line row made for server cards.
+
+**Q3 is where the default lives.** ErrorCard is the only surface with room for what
+failed, why, what to do, and the raw text a support ticket needs — and you hand it a
+thrown error and it does that work for you. Reach for it whenever the failure has a
+diagnosis.
+
+## Where Alert went
+
+Alert is not one of the four error surfaces.
+
+`Alert` is an empty box with a title slot and a description slot. It knows nothing
+about errors — you write every word yourself. `ErrorCard` is built for them: hand it
+a thrown error and it produces the title, the cause, the next steps, a Retry button
+and the raw text behind a toggle. When something has genuinely failed, ErrorCard is
+strictly the better tool, because it is the one that understands failures.
+
+**So `variant="destructive"` is not an error pattern.** Of the 14 destructive Alerts
+in the client, 8 print an error variable straight into the description, which is the
+job ErrorCard exists to do. (Whether that text is cleaned up before it reaches the
+Alert has not been traced.) The other 6 are written notices: a reset confirmation,
+a "Paused" status, and four "unavailable" or "could not load" messages.
+
+**Alert keeps its other 16 uses for notices.** "Billing decision required",
+"Resumed", "Suite environment update required", "Local server details are
+incomplete" — notices the product authors itself, where there is no thrown error and
+nothing failed. That is Alert's job, and it is a real one. The 16 have not all been
+read: at least one (`eval-export-modal.tsx`, "Could not prepare the agent prompt")
+reports a failure and belongs with the red ones.
+
+The short version: if something failed, use ErrorCard, whether the reader just
+pressed a button or a panel could not load. If the product is telling the reader
+something and nothing failed, use Alert.
+
+## The toast test
+
+A toast is the narrowest of the four. It needs all three of: the failure happened
+away from the reader's attention, the whole message fits in one line, and nothing is
+lost if it goes unread.
+
+The usable version of that: **an error toast stays up for eight seconds
+(`ERROR_TOAST_DURATION_MS` in `client/src/lib/toast.tsx`), so compare the time to act
+on the message against the time to read it.** "Couldn't save, retrying
+automatically" needs no action, so eight seconds is plenty. "Your API key is missing a
+required scope, add `tools:read` in Settings" needs a trip to another screen, and so
+cannot live in a toast however it is worded.
+
+Today the client has **444** `toast.error` calls in 134 files, against **19** uses of
+ErrorCard in 14 files (tests excluded). Toasts are by far the most common surface.
+Nobody has gone through those 444 to see how many belong elsewhere, so treat an
+existing `toast.error` as a prompt to ask the questions above, not as precedent.
+
+## Not covered yet: error boxes built by hand
+
+Some errors use none of the four surfaces. Two conformance components,
+`ConformanceConnectError` and `ConformanceProtocolConnection`, each draw their own
+red-tinted box with their own classes.
+
+A search for hand-built red-tinted, bordered elements finds 84 lines in 68 client
+files. That is a search count, not an audit: in a sample of 21, about 12 were error
+messages and the rest were badges, pills and status styles. They need a proper pass
+before this page can claim to describe how errors are shown today.
+
+## Two rules that are easy to miss
+
+**Alarm must be proportional.** Visual severity is a currency and it inflates. The
+real ErrorCard carries the scar: filling it red put a saturated panel inside a server
+card that already showed a red dot, a red "Failed" label and a red badge, so one
+recoverable state lit up four separate alarms and the surface read as broken rather
+than informative. It wears a hairline left rule now. Same idea as DESIGN.md's
+standing advice — prefer a border or a tonal step over a shadow; prefer space over
+either.
+
+**Our failure must not destroy their work.** A form that clears on a failed submit
+turns our problem into their problem. It is the clause in E3 that is easiest to skip
+and most expensive to get wrong, because nothing in the message looks wrong.
+
+## The patterns
+
+Each has its own page with a before/after. What is real and what is drawn:
+
+- **Real components:** ErrorCard, the toast wrapper, `FieldError` and `Alert`.
+- **Drawn for the page:** both full-page error stories (the real `RouteErrorScreen`
+  is not rendered), the server card in "One failure, one alarm", and the
+  coloured boxes on the open decisions page.
+
+Toast specimens are pinned open so they can be read; in the product they time out.
+
+The pages follow the same order as the questions above.
+
+1. **Full-page error** — the page cannot render, including the one case where
+   deliberate vagueness beats precision.
+2. **Inline validation** — the reader's input. Includes the hosted-STDIO case that
+   started this.
+3. **ErrorCard** — the default for anything with a diagnosis.
+4. **Toast** — background, one line, nothing lost if unread. Two stories rather than
+   two columns, because a toast is fixed to the viewport corner and the component is
+   identical either way — only the words change.
+
+Then, unnumbered because it is not an error surface: **Alert**, showing two
+failures that belong in an ErrorCard and two notices that are Alert's job.
+
+Last comes **Open decisions (not shipped)**: what the team has not decided yet, each
+with a recommendation. Nothing on that page is built.
+
+Every "before" carries a provenance tag. **Shipped** means the string is in the
+codebase. **Reported** means a teammate reported it and it is not in this repo.
+**Composite** means each phrasing appears in the client but not as that exact
+string. **Illustrative** means it was written for this page.
+
+Across the five pages, of 12 befores: none is Shipped, 1 is Reported, 4 are
+Composite and 7 are Illustrative. They demonstrate the rules; they are not a record
+of production copy.
+
+## Where the code lives
+
+| Pattern | Component | Lives in |
+| --- | --- | --- |
+| Full-page error | `RouteErrorScreen` and siblings | `client/src/components/` |
+| Inline | `FieldError` | `@mcpjam/design-system/field-error` |
+| ErrorCard | `ErrorCard` | `client/src/components/ui/error-card.tsx` |
+| Toast | `toast` wrapper over Sonner | `client/src/lib/toast.tsx` |
+| Non-error notices | `Alert` | `@mcpjam/design-system/alert` |
+
+Import `toast` from `@/lib/toast`, never from `sonner` directly — the wrapper is what
+gives error toasts a longer duration and a copy button.
+
+Two things worth knowing about that table:
+
+- **ErrorCard, the toast wrapper and the full-page screens live in the app, not the
+  design system.** Nothing outside the inspector can reuse them, and the design
+  system cannot import them to document them: the app depends on the design system,
+  so importing back is a cycle. That is why this Storybook lives in the app, where
+  stories can import the real components. Promoting ErrorCard into the design system
+  is open work; it imports five app-local modules.
+- **`FieldError` is new, and nothing uses it yet.** It exists because there was no
+  component for a message under a form field, so each one is written by hand and
+  `role="alert"` depends on the author remembering it. How many existing field
+  messages lack it has **not** been measured. An earlier version of this page gave a
+  figure of 88%; that came from counting every use of the red text class, most of
+  which are not field messages, and it should not be repeated.
+
+Also worth deleting rather than documenting: `design-system/src/components/form.tsx`
+ships a `FormMessage` for exactly this job and is imported nowhere in the repo, and
+`react-hook-form` is imported nowhere outside that file. It is a dead abstraction with a peer
+dependency attached.
+
+## The catalog
+
+Where an error has a real diagnosis, it belongs in
+`sdk/src/error-describer/catalog.ts` rather than as a fresh string at a call site. The
+catalog gives each known failure a title, a one-line explanation, its likely causes,
+its next steps and a docs anchor — E1–E3 expressed as a schema — and renders through
+ErrorCard.
+
+One catalog rule generalises to every message here: **state the cause once, and only
+when it is real.** Never pad a known cause out to a list of maybes; it makes the
+product read as unsure of its own state.

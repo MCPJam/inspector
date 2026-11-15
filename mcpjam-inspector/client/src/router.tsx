@@ -54,6 +54,7 @@ import App, {
   XAAFlowRoute,
 } from "./App";
 import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
+import { ReadinessRoute } from "./components/readiness/ReadinessPage";
 import LoadingScreen from "./components/LoadingScreen";
 import { getFirstRunOAuthReturnServerName } from "./lib/first-run-oauth-return";
 import { ProjectRouteBoundary } from "./components/routing/project-route-boundary";
@@ -187,6 +188,7 @@ const ROUTE_ELEMENTS: Record<
   "conformance/runs/:runId": { element: <ConformanceRunDetailRoute /> },
   "conformance/shared/:token": { element: <ConformanceSharedRoute /> },
   compatibility: { element: <CompatibilityRoute /> },
+  readiness: { element: <ReadinessRoute /> },
   "oauth-flow": { element: <OAuthFlowRoute /> },
   "xaa-flow": { element: <XAAFlowRoute /> },
   tracing: { element: <TracingRoute /> },

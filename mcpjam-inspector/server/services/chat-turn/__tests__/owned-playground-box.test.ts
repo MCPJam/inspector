@@ -67,6 +67,26 @@ describe("acquireOwnedPlaygroundHarnessBox", () => {
     await resources.dispose();
   });
 
+  it("tells the turn's recorder its box was prepared before Send, and only then", async () => {
+    const resources = new TurnResources(() => {});
+    const prepared = new TurnTiming();
+    m.acquire.mockResolvedValueOnce({ ...acquired(), prepared: true });
+    await acquireOwnedPlaygroundHarnessBox(resources, {
+      ...args,
+      timing: prepared,
+    });
+    expect(prepared.boxWasPrepared()).toBe(true);
+    const plain = new TurnTiming();
+    m.acquire.mockResolvedValueOnce(acquired());
+    await acquireOwnedPlaygroundHarnessBox(resources, {
+      ...args,
+      timing: plain,
+    });
+    expect(plain.boxWasPrepared()).toBe(false);
+    expect(m.acquire).toHaveBeenCalledWith(args);
+    await resources.dispose();
+  });
+
   it("gives a refused box nothing to release", async () => {
     const refusal = {
       ok: false,
@@ -112,6 +132,25 @@ describe("startPlaygroundBoxEarly", () => {
     );
     await takeEarly(early!);
     expect(timing.boxAcquisitionMs()).toBe(2_400);
+    await resources.dispose();
+  });
+
+  it("keeps an early booking's prepared box for the turn, whatever a later acquisition says", async () => {
+    const timing = new TurnTiming();
+    const resources = new TurnResources(() => {});
+    m.acquire.mockResolvedValueOnce({ ...acquired(), prepared: true });
+    const early = startPlaygroundBoxEarly(
+      resources,
+      "conversation",
+      { ...boxArgs, timing },
+      false,
+    );
+    await takeEarly(early!);
+    expect(timing.boxWasPrepared()).toBe(true);
+    // The backend says it once, on the call that took the box.
+    m.acquire.mockResolvedValueOnce(acquired());
+    await acquireOwnedPlaygroundHarnessBox(resources, { ...boxArgs, timing });
+    expect(timing.boxWasPrepared()).toBe(true);
     await resources.dispose();
   });
 

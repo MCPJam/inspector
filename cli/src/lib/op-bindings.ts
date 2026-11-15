@@ -403,7 +403,53 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_readiness_run: { command: "readiness status" },
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
+  resume_readiness_run: { command: "readiness resume" },
   get_readiness_report: { command: "readiness report" },
+  // `readiness flows` lists the flows, or shows the one it is given.
+  list_directory_flows: { command: "readiness flows" },
+  get_directory_flow: { command: "readiness flows" },
+  create_directory_submission: { command: "readiness submission create" },
+  list_directory_submissions: { command: "readiness submission list" },
+  get_directory_submission: { command: "readiness submission get" },
+  // `readiness submission gate` runs it too, with only `checkGate`.
+  update_directory_submission: { command: "readiness submission set" },
+  delete_directory_submission: { command: "readiness submission delete" },
+  start_directory_submission_run: { command: "readiness submission run" },
+  get_directory_submission_results: {
+    command: "readiness submission results",
+  },
+  // A submission's test plan; `readiness submission run --test-plan-revision`
+  // starts a run that makes its calls.
+  get_directory_submission_test_plan: { command: "readiness submission plan show" },
+  draft_directory_submission_test_plan: { command: "readiness submission plan draft" },
+  save_directory_submission_test_plan: { command: "readiness submission plan save" },
+  get_directory_submission_tool_tests: { command: "readiness submission plan results" },
+  // The eval suite holding a submission's test cases; `evals unlink` runs the
+  // link too, with `null` for what it clears.
+  get_directory_submission_evals: { command: "readiness submission evals show" },
+  set_directory_submission_evals: { command: "readiness submission evals link" },
+  import_directory_submission_test_cases: { command: "readiness submission evals import" },
+  export_directory_submission_test_cases: { command: "readiness submission evals export" },
+  // `readiness reviewer status` lists the attempts, or shows the one it is given.
+  create_reviewer_attempt: { command: "readiness reviewer start" },
+  list_reviewer_attempts: { command: "readiness reviewer status" },
+  get_reviewer_attempt: { command: "readiness reviewer status" },
+  resume_reviewer_attempt: { command: "readiness reviewer resume" },
+  cancel_reviewer_attempt: { command: "readiness reviewer cancel" },
+  // Resuming a submission from its id, and recording what happened in the
+  // directory itself.
+  get_directory_submission_handoff: { command: "readiness submission handoff" },
+  list_directory_submission_findings: {
+    command: "readiness submission findings",
+  },
+  get_directory_submission_finding: { command: "readiness submission finding" },
+  export_directory_submission: { command: "readiness submission export" },
+  list_directory_submission_events: { command: "readiness submission events" },
+  record_directory_submission_status: { command: "readiness submission status" },
+  record_directory_submission_snapshot: {
+    command: "readiness submission snapshot",
+  },
+  import_directory_finding: { command: "readiness submission import-finding" },
   // Hosted conformance, beside the local `mcpjam conformance` commands: those
   // grade what this machine reaches and record nothing in a project, these
   // run on the platform against a saved server and leave a run to poll.

@@ -647,6 +647,30 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    id: "readiness",
+    scope: "project",
+    canonicalPath: "/readiness",
+    routePatterns: ["readiness"],
+    navSegments: ["readiness"],
+    title: "Readiness",
+    purpose:
+      "Rehearse a directory submission for a saved server: fill a copy of the Claude connector portal and run MCPJam's checks on the answers and the server.",
+    userActivities: [
+      "Start or open a rehearsal for a saved server",
+      "Fill the portal's fields and read check results under them",
+      "Run the readiness checks",
+    ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Agents edit and run submissions through the directory submission operations, not the page.",
+    },
+    // Flag-gated: the atlas is static and cannot read
+    // `mcpjam-directory-readiness`, so advertising `/readiness` would send the
+    // agent to a page that redirects for everyone the flag excludes.
+    showInAtlas: false,
+  },
+  {
     id: "oauth-flow",
     scope: "project",
     canonicalPath: "/oauth-flow",

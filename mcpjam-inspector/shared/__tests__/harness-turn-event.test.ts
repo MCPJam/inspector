@@ -38,6 +38,13 @@ describe("harness_turn_completed at the strict analytics boundary", () => {
     expect(forwarded({ [field]: "something-else" })).toEqual({});
   });
 
+  it("forwards a first message on a box prepared before Send", () => {
+    expect(forwarded({ kind: "first", start: "prepared" })).toEqual({
+      kind: "first",
+      start: "prepared",
+    });
+  });
+
   it.each(HARNESS_TURN_DURATIONS)(
     "forwards %s as whole milliseconds only",
     (field) => {

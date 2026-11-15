@@ -173,6 +173,26 @@ describe("agent op registry", () => {
         // connection request reads the same way, and frees the slot it holds.
         "cancel_project_server_connection",
         "cancel_readiness_run",
+        // Its requester finishing a run a person already approved: it
+        // creates nothing, and only the requester gets past the backend.
+        "resume_readiness_run",
+        // Answers to a directory form: they spend nothing, and each records
+        // the agent as its author.
+        "create_directory_submission",
+        "update_directory_submission",
+        // A test plan revision: it calls nothing until a start names it.
+        "save_directory_submission_test_plan",
+        // A submission's eval suite and the cases a package declares: they
+        // call no tool until someone runs the suite.
+        "set_directory_submission_evals",
+        "import_directory_submission_test_cases",
+        // Stops a reviewer sign-in, as cancel_readiness_run stops a run.
+        "cancel_reviewer_attempt",
+        // What happened in the directory, as the user told it or as seen in
+        // the portal: append-only records that spend nothing.
+        "record_directory_submission_status",
+        "record_directory_submission_snapshot",
+        "import_directory_finding",
         "ensure_adhoc_environment",
         "name_environment",
         createEvalSuiteOperation.name,
@@ -895,6 +915,14 @@ describe("agent op registry", () => {
         client,
       }),
     ).toEqual(input);
+  });
+
+  it("says on a submission run's approval when it makes a test plan's calls", () => {
+    const describeRun = proposalMetaFor("start_directory_submission_run").description;
+    expect(describeRun({ submission: "sub_1" })).toBe("Run the checks for directory submission sub_1");
+    expect(describeRun({ submission: "sub_1", testPlanRevision: 3 })).toBe(
+      "Run the checks for directory submission sub_1, with the calls of its test plan revision 3",
+    );
   });
 
   it("freezes a directory install pin and endpoint at mint time", async () => {
@@ -2019,6 +2047,24 @@ describe("tier derives from operation.risk", () => {
         "direct. Gated for the reason start_claude_readiness_run is: a start " +
         "dials a third party's server and persists a project row.",
     },
+    start_directory_submission_run: {
+      tier: "gated",
+      reason:
+        "The same as start_claude_readiness_run: the optional model pass is " +
+        "platform-paid, so risk is none and would derive direct, but the run " +
+        "dials the submission's server and persists a project row.",
+    },
+    create_reviewer_attempt: {
+      tier: "gated",
+      reason:
+        "MCPJam runs the sign-in, so risk is none and would derive direct. " +
+        "Gated because it starts a run that signs in to the submission's " +
+        "server with the project's reviewer credentials.",
+    },
+    resume_reviewer_attempt: {
+      tier: "gated",
+      reason: "The same as create_reviewer_attempt: it starts the next run that signs in.",
+    },
     generate_eval_cases: {
       tier: "gated",
       reason:
@@ -2292,10 +2338,17 @@ const EXPECTED_PROMPT_NOTES = [
   '- When a readiness run reports `authMode: "headless"` and a lane\'s `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.',
   "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
   "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
+  "- `update_directory_submission` records you as the author of each answer you write. `confirm` states that a declaration (data handling, acknowledgments) is true: confirm one only when the user told you it is. A 409 names the `conflictingKeys` someone else changed since your `expectedRevision`; read the submission again before you reapply your change.",
+  "- `start_directory_submission_run` returns a RECEIPT. Poll `get_readiness_run` until it finishes, then read `get_directory_submission_results`, which places each finding under the portal step and field it belongs to.",
+  "- `save_directory_submission_test_plan` calls no tool. A run makes the plan's calls, destructive ones included, only when `start_directory_submission_run` names the plan's `revision` as `testPlanRevision`: name it only for a plan the user has reviewed.",
+  "- `create_reviewer_attempt` takes secret NAMES only. Never write a password into a call: ask the user to save it in the app as a materialized project secret whose name starts with `MCPJAM_REVIEWER_`, then pass that name.",
+  "- Given a directory submission's id or link, call `get_directory_submission_handoff` first: it says where the submission stands and lists `nextActions`, each an operation with the input to send. Do not ask the user again for anything it already holds.",
+  "- Record a directory status, snapshot or finding only as the user told you (`reported`) or as you saw it in the portal (`observed`), never inferred from MCPJam's own results. A record is never edited: to correct one, record a newer one.",
   "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
   "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
   "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
+  "- When `get_readiness_run` reports `resumable: true`, the run stopped on the server before it finished. Call `resume_readiness_run` once, then keep polling `get_readiness_run`. Only the person who started the run can resume it; if it is refused, say so and do not retry.",
   "- Before launching an eval run, `get_eval_run_disclosure` tells you (and lets you tell a human) what actually happens to the run's content — which models it calls, whether analyzers/judges fire and where their evidence goes, retention and region facts. It never gates the run; `run_eval_suite` already fetches and returns its own disclosure on `disclosure`, so call this separately only when you need it BEFORE deciding to launch.",
   "- When a suite's results change without an obvious cause, read `list_eval_suite_revisions` before blaming the server: it says who last edited the suite's settings, which stored fields moved, and when. A revision's `revisionNumber` is also what makes an edit safe — pass the one you read as `expectedRevisionNumber` on `update_eval_suite` and a suite someone else changed in between is refused instead of overwritten.",
   "- WHEN A RUN DOES NOT PASS, READ `decisionSummary` FIRST: it states the first failed stage in the user-value chain (connection → discovery → selection → call → response → userValue), the failure category, evidence scoped to that stage, and one next action. Authored step results (`get_eval_run_steps`) come second and a full trace (`get_eval_iteration_trace`) last — do not reconstruct the chain from raw tool calls when the summary already states it.",
