@@ -4,6 +4,7 @@
  * descriptor that starts the CLI from the verified pack, a literal flag passes
  * only as itself, and the CLI's cloud private home is the synthetic home.
  */
+import { normalize, sep } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../runtimes/index.js", async (importOriginal) => {
@@ -75,16 +76,17 @@ describe("an ACP bridge launch", () => {
         LAUNCHER, "--mcpjam-vendor-root", BUNDLE,
         "--workdir", `${SESSION}/work`,
         "--bridge-state-dir", `${HOME}/bridge-state`,
-        "--implementation-dir", `${OVERLAY}/implementation`,
+        "--implementation-dir", `${OVERLAY}${sep}implementation`,
         "--bridge-type", "stand-in",
       ],
       workingDirectory: SESSION,
-      files: [{ path: `${OVERLAY}/implementation/implementation.json`, content: expect.any(String) }],
+      files: [{ path: `${OVERLAY}${sep}implementation${sep}implementation.json`, content: expect.any(String) }],
     });
     if (result.kind !== "exec") return;
     expect(JSON.parse(result.files![0]!.content)).toEqual({
-      executablePath: `${BUNDLE}/vendor/node`,
-      args: [`${BUNDLE}/vendor/cli.js`, "acp"],
+      // Inputs stay POSIX; what the translator builds follows the host's separator.
+      executablePath: normalize(`${BUNDLE}${sep}vendor${sep}node`),
+      args: [normalize(`${BUNDLE}${sep}vendor${sep}cli.js`), "acp"],
       privateHome: false,
       envKeys: [],
     });

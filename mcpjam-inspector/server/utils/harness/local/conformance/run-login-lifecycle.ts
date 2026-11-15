@@ -72,14 +72,23 @@ const mark = (name: string) => {
   say(`+${marks[name]}ms ${name}`);
 };
 let owned: { supervisor: LocalHarnessSupervisor; sessionId: string } | null = null;
+/** This run's own consent grant, the only one it revokes. */
+let ownGrantId: string | undefined;
 
 function describe(error: unknown): string {
   if (error instanceof Error) return error.message;
   return typeof error === "string" ? error : JSON.stringify(error);
 }
 
+const isMissing = (error: unknown) => (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+
+/** Every file under `dir`. A directory that is gone has none; any other failure
+ *  fails the run, since a scan that could not finish must not certify anything. */
 async function filesUnder(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
+  const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch((error: unknown) => {
+    if (isMissing(error)) return [];
+    throw error;
+  });
   return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name));
 }
 
@@ -132,6 +141,7 @@ async function main() {
     policyVersion: LOCAL_HARNESS_POLICY_VERSION,
     scope: "attended",
   });
+  ownGrantId = grant.grantId;
   const availability = await resolveLocalHarnessAvailability({
     target,
     scope: "attended",
@@ -242,12 +252,16 @@ async function main() {
   const records = (await listProcessRecords()).length;
   if (records !== 0) failures.push(`${records} process registry record(s) survived Stop`);
   for (const file of [...(await filesUnder(sessionStateDir)), ...(await filesUnder(WORKSPACE))]) {
-    if ((await readFile(file, "utf8").catch(() => "")).includes(LOGIN_CANARY)) failures.push(`the login was written to ${file}`);
+    const text = await readFile(file, "utf8").catch((error: unknown) => {
+      if (!isMissing(error)) failures.push(`could not inspect ${file} for the login: ${describe(error)}`);
+      return "";
+    });
+    if (text.includes(LOGIN_CANARY)) failures.push(`the login was written to ${file}`);
   }
   const unexpected = (await readdir(WORKSPACE)).filter((entry) => !before.has(entry));
   if (unexpected.length > 0) failures.push(`the session left entries in the workspace: ${JSON.stringify(unexpected)}`);
 
-  await revokeLocalHarnessGrants();
+  if (ownGrantId) await revokeLocalHarnessGrants({ grantId: ownGrantId });
   process.stdout.write(`\n=====REPORT=====\n${JSON.stringify({ harness: HARNESS_ID, marks, errors: errors.slice(0, 5) }, null, 2)}\n`);
   if (failures.length > 0) throw new Error(`${HARNESS_ID} lifecycle assertions failed:\n  - ${failures.join("\n  - ")}`);
   say("PASS");
@@ -257,7 +271,10 @@ async function main() {
 main().catch(async (error: unknown) => {
   const current = owned;
   owned = null;
-  const cleanup = await Promise.allSettled([current?.supervisor.stopSession(current.sessionId), revokeLocalHarnessGrants()]);
+  const cleanup = await Promise.allSettled([
+    current?.supervisor.stopSession(current.sessionId),
+    ownGrantId ? revokeLocalHarnessGrants({ grantId: ownGrantId }) : undefined,
+  ]);
   const report = (line: string) => process.stderr.write(`[${HARNESS_ID}-lifecycle] ${line}\n`);
   report(`FAILED: ${error instanceof Error ? error.stack : String(error)}`);
   report(`marks: ${JSON.stringify(marks)}`);
