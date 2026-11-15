@@ -28,6 +28,9 @@ import { runOpenAIProfileChecks } from "./checks/profile.js";
  */
 
 import { enforceCapabilityGate } from "../directory-readiness/types.js";
+import { CHATGPT_PLUGIN_FLOW } from "../directory-readiness/flows/chatgpt-plugin.js";
+import type { DirectoryReviewerRunInput } from "../directory-readiness/reviewer/evidence.js";
+import { holdToReviewerAccount } from "../directory-readiness/reviewer/grade.js";
 import { rollUpLaneStatus as rollUpDirectoryLaneStatus } from "../directory-readiness/types.js";
 import {
   decideLaneStatus,
@@ -48,12 +51,14 @@ import {
   type DirectoryLazyAuthProbeEvidence,
 } from "../directory-readiness/lazy-auth.js";
 import { probeLazyAuthentication } from "../directory-readiness/lazy-auth-probe.js";
+import type { DirectoryDecisionScan } from "../directory-readiness/decisions/grade.js";
 import { NOT_REQUESTED_OBSERVATIONS } from "../directory-readiness/observations.js";
 import {
   mapOpenAIObservationsToFindings,
   type OpenAIObservationState,
 } from "./observations.js";
 import { OPENAI_POLICY_SNAPSHOT_DATE } from "./manifest.js";
+import { withPortalCode } from "./portal-codes/issue-codes.js";
 import { OPENAI_APP_HTML_MIME } from "./profile.js";
 import {
   readOpenAIPluginPackage,
@@ -70,11 +75,13 @@ import {
   type OpenAIAppsUiEvidence,
 } from "./checks/apps-ui.js";
 import { runOpenAIAuthChecks } from "./checks/auth.js";
+import { runOpenAIDecisionChecks } from "./checks/decisions.js";
 import { runOpenAIMcpSkillChecks } from "./checks/mcp-skills.js";
 import { runOpenAIMigrationChecks } from "./checks/migration.js";
 import { runOpenAIOptionalFeatureChecks } from "./checks/optional-features.js";
 import { runOpenAIPolicyChecks } from "./checks/policy.js";
 import { runOpenAIReleaseContractChecks } from "./checks/release-contract.js";
+import { runOpenAIReviewerChecks } from "./checks/reviewer.js";
 import { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
 import { runOpenAIEndpointChecks } from "./checks/endpoint.js";
 import { runOpenAIPackageChecks } from "./checks/package.js";
@@ -125,8 +132,10 @@ import type { PluginFileSource } from "../plugin-bundle/types.js";
  * Deliberately holds no functions, no streams and no client handles: an
  * evidence object that could not survive `JSON.stringify` would defeat the
  * split this module exists to make.
+ *
+ * A submission run also brings its reviewer path and client-signature probe.
  */
-export interface OpenAIReadinessEvidence {
+export interface OpenAIReadinessEvidence extends DirectoryReviewerRunInput {
   /** The endpoint or package the run graded, as the caller named it. */
   target: string;
   /** The DECLARED submission shape. Never inferred — see the module docblock. */
@@ -160,6 +169,8 @@ export interface OpenAIReadinessEvidence {
   toolListingComplete?: boolean;
   /** Why the tool listing is partial or absent, in plain words. */
   toolListingError?: string;
+  /** The server's `instructions` from `initialize`, which the model reads. */
+  instructions?: string;
   /** Skills advertised for import, when the run read them. */
   importedSkills?: OpenAISkillsEvidence;
   /** UI resources the server serves, and the screenshots that go with them. */
@@ -201,6 +212,8 @@ export interface OpenAIReadinessEvidence {
    * if it wanted to.
    */
   llmObservations?: OpenAIObservationState;
+  /** What the decision scan asked and the answers. Absent, the scan is off. */
+  decisionScan?: DirectoryDecisionScan;
 }
 
 const LANE_SUMMARIES: Record<OpenAIReadinessLane, string> = {
@@ -397,13 +410,14 @@ function readUiCspDomains(meta: Record<string, unknown> | undefined) {
 }
 
 /**
- * Everything a package says about ITSELF, for the guideline metadata rules.
+ * Everything a package says about ITSELF, for the guideline metadata rules
+ * and the decision scan's listing text.
  *
  * Collected here rather than in the check so the check stays a pure function of
  * named strings: it grades copy, and it should not have to know the shape of a
  * package to find it.
  */
-function packageSelfDescription(
+export function packageSelfDescription(
   evidence: OpenAIPluginPackageEvidence | undefined
 ): { field: string; text: string }[] {
   if (!evidence) return [];
@@ -528,9 +542,10 @@ export function gradeOpenAIReadiness(
       ? annotatedToolNames(evidence.tools)
       : evidence.annotatedTools;
 
-  const findings: OpenAIReadinessFinding[] = enforceCapabilityGate(
+  const graded: OpenAIReadinessFinding[] = enforceCapabilityGate(
     [
       ...serverFindings,
+      ...runOpenAIReviewerChecks(evidence, stamp),
       ...runOpenAIMcpSkillChecks(
         { mode: evidence.mode, evidence: evidence.importedSkills },
         stamp
@@ -559,6 +574,17 @@ export function gradeOpenAIReadiness(
         stamp
       ),
       ...optional.findings,
+      ...runOpenAIDecisionChecks(
+        evidence.decisionScan,
+        stamp,
+        shape.hasMcpServer
+          ? {
+              read: evidence.tools !== undefined,
+              complete: evidence.toolListingComplete,
+              error: evidence.toolListingError,
+            }
+          : undefined
+      ),
       ...runOpenAISubmissionChecks(
         {
           profile: parsedProfile.profile,
@@ -581,6 +607,11 @@ export function gradeOpenAIReadiness(
       ),
     ],
     evidence.capabilities
+  ).map(withPortalCode);
+  const findings = holdToReviewerAccount(
+    graded,
+    CHATGPT_PLUGIN_FLOW,
+    evidence.reviewerPath?.account
   );
 
   const badges: OpenAICapabilityBadge[] = optional.badges;
@@ -984,6 +1015,7 @@ export async function gatherOpenAIReadinessEvidence(
     tools,
     toolListingComplete,
     toolListingError: hasSuppliedTools ? undefined : dialled?.tools?.error,
+    instructions: dialled?.initialize.instructions,
     importedSkills,
     // THE DIALLED RESOURCES ARE USED, not discarded. Requesting them and then
     // returning only the caller's `appsUi` would leave the UI lane

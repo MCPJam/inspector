@@ -37,12 +37,44 @@ function fieldById(id: string): HostConfigFieldDef {
 }
 
 describe("HOST_CONFIG_SECTIONS", () => {
-  it("mirrors the three focus-dialog tabs in order", () => {
+  it("leads with MCP Protocol, then Agent, then Apps", () => {
     expect(HOST_CONFIG_SECTIONS.map((s) => s.id)).toEqual([
-      "agent",
       "protocol",
+      "agent",
       "apps",
     ]);
+  });
+});
+
+describe("client version row", () => {
+  const field = hostConfigField("clientInfo.version");
+  const withClientInfo = (clientInfo: Record<string, unknown>) =>
+    makeConfig({
+      mcpProfile: { profileVersion: 1, initialize: { clientInfo } },
+    } as Partial<HostConfigDtoV2>);
+
+  it("shows the name the client sends with its version", () => {
+    expect(field.read(withClientInfo({ name: "Sydney", version: "1.0.0" }))).toBe(
+      "Sydney 1.0.0"
+    );
+  });
+
+  it("shows whichever half the client sends, and nothing when neither", () => {
+    expect(field.read(withClientInfo({ name: "github/cli", version: "" }))).toBe(
+      "github/cli"
+    );
+    expect(field.read(withClientInfo({ version: "2.1.312" }))).toBe("2.1.312");
+    expect(field.read(makeConfig())).toBeUndefined();
+  });
+});
+
+describe("MCP Apps UI extension row", () => {
+  it("leads the MCP Apps section under its extension key", () => {
+    const apps = groupHostConfigFields().find((g) => g.section.id === "apps")!;
+    const first = apps.subsections[0]!;
+    expect(first.label).toBe("MCP Apps capabilities");
+    expect(first.fields[0]!.id).toBe("capabilities.uiExtension");
+    expect(first.fields[0]!.label).toBe("io.modelcontextprotocol/ui");
   });
 });
 

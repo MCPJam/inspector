@@ -1,0 +1,7 @@
+---
+"@mcpjam/cli": minor
+---
+
+`mcpjam readiness submission handoff <submission>` prints where a directory submission stands and what to do next, from its id alone, and lists each next action on stderr as the command that takes it. `findings <submission>` lists its stored findings a page at a time (`--status`, `--step`, `--lane`), and `--all` follows the pages to the end; `finding <submission> <checkId>` reads one with the observation behind it; `events <submission>` lists what was recorded about it (`--kind`). `export <submission>` prints the pack the team receives byte for byte as the API serves it, JSON or `--markdown`, and `--out <path>` saves it to a file, or in a folder under its own name.
+
+`status`, `snapshot` and `import-finding` record what happened in the directory itself: its stage (`--state`, with `--directory-label`, `--uncertain`, `--link`, `--reference`, `--detail` and `--evidence`), which server revision one copy of the catalog holds (`--label`, `--revision`, `--server`, `--captured-at`, `--note`), and what the directory said, read unchanged from `--text-file <path>` or from a pipe with `--text -` (`--via`, `--severity`, `--code`, `--submission-version`, `--received-at`, `--link`). Each is recorded as reported unless `--observed` is given, and a retry with the same `--idempotency-key` returns the event already recorded. Stdout carries only the result, progress and hints go to stderr, and `--json` prints JSON in a terminal too. No flag takes a secret's value.

@@ -16,6 +16,8 @@ const harnessState = vi.hoisted(() => ({
   /** Thrown once every part has gone out. */
   errorAfterParts: null as Error | null,
   afterFirstPart: null as (() => void) | null,
+  /** Resolve the stream once the turn's abort fires, without throwing. */
+  endOnAbort: false,
   claim: {
     stateVersion: 1,
     fingerprintChanged: false,
@@ -36,12 +38,21 @@ const harnessState = vi.hoisted(() => ({
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
     createSession = harnessState.createSession;
-    stream = vi.fn(async () => ({
+    stream = vi.fn(async (options?: { abortSignal?: AbortSignal }) => ({
       fullStream: (async function* () {
         if (harnessState.streamError) throw harnessState.streamError;
         for (const part of harnessState.streamParts) {
           yield part;
           harnessState.afterFirstPart?.();
+        }
+        if (harnessState.endOnAbort) {
+          const signal = options?.abortSignal;
+          if (signal && !signal.aborted) {
+            await new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+          }
+          return;
         }
         if (harnessState.errorAfterParts) throw harnessState.errorAfterParts;
       })(),
@@ -119,12 +130,27 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
+  })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+}));
+
+// An external-account runtime's turn asks whether the organization's key is
+// ready, then holds its box's reservation for the whole turn.
+vi.mock("../../computers/control-plane-client.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../computers/control-plane-client.js")
+  >()),
+  getHarnessCredentialReadiness: vi.fn(async () => ({
+    ok: true,
+    value: { readiness: "ready", modelAvailable: true },
   })),
 }));
 
@@ -139,6 +165,11 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 });
 
 import { runHarnessTurn } from "../run-harness-turn";
+import { heartbeatHarnessSessionState } from "../harness-session-state.js";
+import {
+  releaseHarnessBoxReservation,
+  reserveHarnessBox,
+} from "../harness-box-reservation.js";
 import { admitWarmChatManager } from "../warm-approval-binding.js";
 import {
   withWarmBridgeRuntime,
@@ -222,6 +253,8 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     harnessState.streamError = null;
     harnessState.errorAfterParts = null;
     harnessState.afterFirstPart = null;
+    harnessState.endOnAbort = false;
+    vi.mocked(heartbeatHarnessSessionState).mockResolvedValue("ok");
     harnessState.claim = {
       stateVersion: 1,
       fingerprintChanged: false,
@@ -231,7 +264,10 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     harnessState.adapter = {};
   });
 
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
 
   it("sends one event when a browser turn's response closes", async () => {
     const { sink, options } = turn("web");
@@ -330,6 +366,26 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     });
   });
 
+  it("reports a first message on a box prepared before Send as a prepared start", async () => {
+    harnessState.claim = {
+      stateVersion: 0,
+      fingerprintChanged: false,
+      state: null,
+    };
+    const { sink, options } = turn();
+    const timing = new TurnTiming({
+      harnessTurnEvent: sink as HarnessTurnEventSink,
+    });
+    // The route's acquisition took a box prepared before Send.
+    timing.markBoxPrepared();
+    await runToClose({ ...options, turnTiming: timing });
+    expect(onlyEvent(sink)).toMatchObject({
+      kind: "first",
+      start: "prepared",
+      fallback_reason: "none",
+    });
+  });
+
   it.each([
     [
       "a changed runtime",
@@ -424,6 +480,20 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     expect(onlyEvent(sink)).toMatchObject({ outcome: "failed" });
   });
 
+  it("sends one event for a turn that holds its box's reservation, and hands the box back", async () => {
+    harnessState.adapter = {
+      modelAccess: "external-account",
+      externalAccountCredentialEnv: ["CURSOR_API_KEY"],
+    };
+    vi.mocked(reserveHarnessBox).mockClear();
+    vi.mocked(releaseHarnessBoxReservation).mockClear();
+    const { sink, options } = turn();
+    await runToClose(options);
+    expect(reserveHarnessBox).toHaveBeenCalledTimes(1);
+    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    expect(onlyEvent(sink)).toMatchObject({ outcome: "completed" });
+  });
+
   it("sends one event for a stopped turn", async () => {
     const stop = new AbortController();
     harnessState.afterFirstPart = () => stop.abort();
@@ -433,6 +503,22 @@ describe("runHarnessTurn: harness_turn_completed", () => {
       outcome: "aborted",
       kind: "follow_up",
     });
+  });
+
+  it("reports a lease loss as failed when the stream ends without another part", async () => {
+    vi.useFakeTimers();
+    harnessState.endOnAbort = true;
+    harnessState.streamParts = [{ type: "text-delta", delta: "Hi." }];
+    harnessState.createSession.mockClear();
+    vi.mocked(heartbeatHarnessSessionState).mockResolvedValue("lost");
+    const { sink, options } = turn();
+    const closed = runToClose(options);
+    await vi.waitFor(() =>
+      expect(harnessState.createSession).toHaveBeenCalled(),
+    );
+    await vi.advanceTimersByTimeAsync(90_000);
+    await closed;
+    expect(onlyEvent(sink)).toMatchObject({ outcome: "failed" });
   });
 
   describe("on a box that keeps a warm agent", () => {

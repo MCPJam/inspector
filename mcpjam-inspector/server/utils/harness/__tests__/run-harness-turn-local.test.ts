@@ -158,14 +158,16 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -184,7 +186,11 @@ import {
 import { claimHarnessSessionState, commitHarnessSessionState, heartbeatHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
-import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
+import { startHarnessModelBroker } from "../harness-model-broker.js";
+import {
+  reserveHarnessBox,
+  renewHarnessBoxReservation,
+} from "../harness-box-reservation.js";
 
 vi.mock("../local/local-turn.js", () => ({
   prepareLocalHarnessTurn: vi.fn(async () => ({
@@ -367,6 +373,19 @@ describe("runHarnessTurn local continuity", () => {
       expect(pass).toHaveBeenCalledWith(expect.objectContaining({
         skillsBase: "/private/local/home/.claude/skills",
       }));
+    }
+  });
+
+  it("never asks a local runtime for a quiet start: the person's CLI settings stand", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", "true");
+    try {
+      await runHarnessTurn(baseOptions() as any, "none");
+      expect(harnessState.createRuntime).toHaveBeenCalled();
+      for (const [args] of harnessState.createRuntime.mock.calls as unknown as [Record<string, unknown>][]) {
+        expect(args).not.toHaveProperty("quietStartup");
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 

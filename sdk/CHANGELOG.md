@@ -1,5 +1,19 @@
 # `@mcpjam/sdk` changelog
 
+## 10.7.0
+
+### Minor Changes
+
+- [#7479](https://github.com/MCPJam/inspector/pull/7479) [`8c541e8`](https://github.com/MCPJam/inspector/commit/8c541e815e75ff771e0140fa7ab3f9e5a99ddb76) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Eight new built-in clients from the November probes: ChatGPT Desktop, ChatGPT Work, ChatGPT Work Desktop, Claude Code Desktop, Claude Code Web, Codex CLI, Muse and Grokbot. Each has a host template, a client style and a bundled catalog row. Codex CLI runs on the Codex harness and sits behind the same rollout flag as Codex.
+
+### Patch Changes
+
+- [#7485](https://github.com/MCPJam/inspector/pull/7485) [`13b5fba`](https://github.com/MCPJam/inspector/commit/13b5fba0c451c16923b0c832a01e81f3e77d73d4) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The chat sessions API now refuses a client that runs a vendor's agent loop instead of answering on MCPJam's emulated engine under that client's name. Use the client in the Playground, or choose a different client.
+
+- [#7437](https://github.com/MCPJam/inspector/pull/7437) [`a0b5a68`](https://github.com/MCPJam/inspector/commit/a0b5a680307967fa1329245cbf938c4db7b81ba7) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - The built-in host catalog matches the November probes. ChatGPT supports `downloadFile`, ChatGPT and Codex grant clipboard write and no longer load cdn.jsdelivr, unpkg or esm.sh without declaring them, Claude Desktop sends `toolInfo` and 12px safe-area insets, and Copilot, Cursor and Slack run Apps in a same-origin iframe. Host versions move to Codex 26.1103.60933, Cursor 3.29.9, Gemini ADK 2.14.0 and Claude Code 2.1.312.
+
+- [#7478](https://github.com/MCPJam/inspector/pull/7478) [`fff6ee6`](https://github.com/MCPJam/inspector/commit/fff6ee6e0a46dcfd999d433c7f63f67ec55af345) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - The built-in VS Code client now turns on Skills over MCP and runs MCP Apps in a same-origin frame, as the latest VS Code probe measured.
+
 ## 10.6.0
 
 ### Minor Changes

@@ -124,11 +124,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({
-    ok: true,
-    credentialRevision: harnessState.leaseRevision,
-  })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -140,6 +135,13 @@ vi.mock("../harness-model-broker.js", () => ({
       credentialRevision: harnessState.leaseRevision,
     },
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({
+    ok: true,
+    credentialRevision: harnessState.leaseRevision,
+  })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -154,10 +156,8 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { commitHarnessSessionState } from "../harness-session-state.js";
-import {
-  reserveHarnessBox,
-  startHarnessModelBroker,
-} from "../harness-model-broker.js";
+import { startHarnessModelBroker } from "../harness-model-broker.js";
+import { reserveHarnessBox } from "../harness-box-reservation.js";
 import { stampOrgCredentialRevision } from "../org-credential-continuity";
 import { classifyEvalInfraError } from "../../../services/evals/infra-error-classification";
 
