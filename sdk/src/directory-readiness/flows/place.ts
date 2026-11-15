@@ -21,7 +21,7 @@
 
 import { isDispositiveDirectoryFinding } from "../types.js";
 import type { DirectoryReadinessFinding } from "../types.js";
-import { withDirectoryFlowDefaults } from "./fields.js";
+import { directoryFlowField, withDirectoryFlowDefaults } from "./fields.js";
 import { validateDirectoryAnswers } from "./validate.js";
 import type {
   DirectoryAnswer,
@@ -75,6 +75,24 @@ export function directoryPlacementOf(
   );
 }
 
+/**
+ * The step and field a finding is shown under: its placement's, else its
+ * lane's step, else the flow's last step. One rule for every reader, so a
+ * findings page filtered by step agrees with the counts by step.
+ */
+export function directoryFindingPlace(
+  flow: DirectoryFlow,
+  finding: { id: string; lane: string }
+): { step: string; field?: string } {
+  const placement = directoryPlacementOf(flow, finding.id);
+  const wanted = placement?.step ?? flow.laneSteps[finding.lane];
+  const known = flow.steps.some((step) => step.id === wanted);
+  return {
+    step: known && wanted ? wanted : (flow.steps.at(-1)?.id ?? ""),
+    ...(placement?.field ? { field: placement.field } : {}),
+  };
+}
+
 export function placeDirectoryResults(
   input: PlaceDirectoryResultsInput
 ): PlacedStep[] {
@@ -86,28 +104,33 @@ export function placeDirectoryResults(
     })
   );
   const lacking = lackingDependencies(findings, placements);
-  const changed = input.gradedAnswers
-    ? changedKeys(flow, input.gradedAnswers, input.answers)
-    : new Set<string>();
-  const stepIds = new Set(flow.steps.map((step) => step.id));
+  const changed = (withConfirmation: boolean) =>
+    input.gradedAnswers
+      ? changedKeys(flow, input.gradedAnswers, input.answers, withConfirmation)
+      : new Set<string>();
+  const changedValues = changed(false);
+  const changedStanding = changed(true);
   const fallback = flow.steps[flow.steps.length - 1]?.id ?? "";
 
   const placed = findings.map((finding): PlacedFinding => {
     const placement = placements.get(finding.id);
-    const wanted = placement?.step ?? flow.laneSteps[finding.lane];
-    const step =
-      wanted !== undefined && stepIds.has(wanted) ? wanted : fallback;
+    const { step, field } = directoryFindingPlace(flow, finding);
     let evidenceStatus = statusOf(finding, placement, lacking);
+    const changedNow = placement?.readsConfirmation
+      ? changedStanding
+      : changedValues;
     const staleBecause = (placement?.reads ?? []).filter((key) =>
-      changed.has(key)
+      changedNow.has(key)
     );
-    if (evidenceStatus === "established" && staleBecause.length > 0) {
+    const current =
+      evidenceStatus === "established" || evidenceStatus === "inconclusive";
+    if (current && staleBecause.length > 0) {
       evidenceStatus = "stale";
     }
     return {
       finding,
       step,
-      ...(placement?.field ? { field: placement.field } : {}),
+      ...(field ? { field } : {}),
       evidenceStatus,
       ...(evidenceStatus === "stale" ? { staleBecause } : {}),
     };
@@ -117,9 +140,18 @@ export function placeDirectoryResults(
     on: input.on,
     savedSecrets: input.savedSecrets,
   });
+  const declared = new Set(
+    flow.steps.flatMap((step) => step.fields.map((field) => field.key))
+  );
   return flow.steps.map((step) => {
     const keys = new Set(step.fields.map((field) => field.key));
-    const fieldIssues = issues.filter((issue) => keys.has(issue.key));
+    // An issue for a key no step declares, such as an answer to a field the
+    // flow has since dropped, goes where an unplaced finding goes.
+    const fieldIssues = issues.filter(
+      (issue) =>
+        keys.has(issue.key) ||
+        (step.id === fallback && !declared.has(issue.key))
+    );
     const stepFindings = placed.filter((entry) => entry.step === step.id);
     return {
       step: step.id,
@@ -187,14 +219,24 @@ export function isUnsureModelFlag(finding: DirectoryReadinessFinding): boolean {
   );
 }
 
-/** Answer keys whose value or wording revision differs between two sets of stored answers. */
+/**
+ * Answer keys whose value or wording revision differs between two sets of
+ * stored answers, and with `withConfirmation` a declaration's origin too.
+ */
 function changedKeys(
   flow: DirectoryFlow,
   before: readonly DirectoryAnswer[],
-  after: readonly DirectoryAnswer[]
+  after: readonly DirectoryAnswer[],
+  withConfirmation: boolean
 ): Set<string> {
-  const then = fingerprints(withDirectoryFlowDefaults(flow, before));
-  const now = fingerprints(withDirectoryFlowDefaults(flow, after));
+  const print = (answers: readonly DirectoryAnswer[]) =>
+    fingerprints(
+      flow,
+      withDirectoryFlowDefaults(flow, answers),
+      withConfirmation
+    );
+  const then = print(before);
+  const now = print(after);
   return new Set(
     [...new Set([...then.keys(), ...now.keys()])].filter(
       (key) => then.get(key) !== now.get(key)
@@ -203,13 +245,25 @@ function changedKeys(
 }
 
 function fingerprints(
-  answers: readonly DirectoryAnswer[]
+  flow: DirectoryFlow,
+  answers: readonly DirectoryAnswer[],
+  withConfirmation: boolean
 ): Map<string, string> {
   return new Map(
-    answers.map((answer) => [
-      answer.key,
-      JSON.stringify([sortedRecords(answer.value), answer.wordingRevision]),
-    ])
+    answers.map((answer) => {
+      const standing =
+        withConfirmation && directoryFlowField(flow, answer.key)?.declaration
+          ? [answer.origin]
+          : [];
+      return [
+        answer.key,
+        JSON.stringify([
+          sortedRecords(answer.value),
+          answer.wordingRevision,
+          ...standing,
+        ]),
+      ];
+    })
   );
 }
 

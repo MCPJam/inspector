@@ -19,7 +19,7 @@ import type {
 import type { ClaudeAnswerEvidence } from "../answers.js";
 import { claudePolicySource } from "../manifest.js";
 import type { ClaudeReadinessFinding } from "../types.js";
-import type { ClaudeAuthEvidence } from "./auth.js";
+import { challengesProtectedCall, type ClaudeAuthEvidence } from "./auth.js";
 import { describeUnconfirmed, NO_ANSWERS } from "./declarations.js";
 import {
   notApplicable,
@@ -83,6 +83,7 @@ const DEFINITIONS = [
 ];
 
 const PAIRS = "useCases.pairs";
+const PREREQUISITES = "useCases.prerequisites";
 const REQUIREMENT = "authentication.requirement";
 const CLIENT = "authentication.oauthClient";
 const INSTRUCTIONS = "testLaunch.instructions";
@@ -96,6 +97,16 @@ const DATA_KEYS = [
   "dataHandling.apiOwnership",
   "dataHandling.healthData",
   "dataHandling.sponsored",
+];
+
+/** Every answer whose portal issues a check here reports. */
+export const CLAUDE_ANSWER_STEP_KEYS: readonly string[] = [
+  PAIRS,
+  PREREQUISITES,
+  ...COMPANY_KEYS,
+  REQUIREMENT,
+  CLIENT,
+  ...DATA_KEYS,
 ];
 
 const MCPJAM_CHECK = "This is an MCPJam check.";
@@ -218,12 +229,26 @@ export function compareAuthAnswersWithServer(
   const conflicts: string[] = [];
   const unseen: string[] = [];
 
+  // Read as runClaudeAuthChecks reads it: a refused tool call is sign-in.
+  const challengedCall = challengesProtectedCall(auth);
+  const signsIn =
+    probe?.status === 401 ||
+    challengedCall ||
+    (auth?.prm !== undefined && auth.prm.discoveredVia !== "not-found");
   if (!probe) {
     unseen.push("the server's answer to a request without sign-in");
-  } else if (requirement.value === "none" && probe.status === 401) {
-    conflicts.push(
-      `${said(REQUIREMENT, requirement)}, but the server refused a request made without sign-in. Choose ${choice("always")} or ${choice("when-asked")}.`
-    );
+  } else if (requirement.value === "none") {
+    if (probe.status === 401) {
+      conflicts.push(
+        `${said(REQUIREMENT, requirement)}, but the server refused a request made without sign-in. Choose ${choice("always")} or ${choice("when-asked")}.`
+      );
+    } else if (challengedCall) {
+      conflicts.push(
+        `${said(REQUIREMENT, requirement)}, but the server asked for sign-in when a tool was called without it. Choose ${choice("always")} or ${choice("when-asked")}.`
+      );
+    } else if (!probe.servedWithoutCredentials) {
+      unseen.push("the server answer a request without sign-in");
+    }
   } else if (
     requirement.value === "always" &&
     probe.servedWithoutCredentials &&
@@ -233,6 +258,8 @@ export function compareAuthAnswersWithServer(
     conflicts.push(
       `${said(REQUIREMENT, requirement)}, but the server answered without sign-in and publishes no OAuth metadata, so Claude cannot sign users in. Choose ${choice("none")} or ${choice("when-asked")}, or publish Protected Resource Metadata.`
     );
+  } else if (!signsIn) {
+    unseen.push("the server ask for sign-in");
   }
 
   // A preregistered client works with any authorization server.
@@ -348,7 +375,7 @@ function useCasesFinding(
   return gradeOwnedAnswers(
     USE_CASES,
     answers,
-    [PAIRS, "useCases.prerequisites"],
+    [PAIRS, PREREQUISITES],
     stamp,
     {
       useCases: rows.filter((row) => has(row, first) && has(row, second))

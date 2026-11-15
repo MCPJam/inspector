@@ -96,6 +96,12 @@ describe("MCPJam's issue ids", () => {
     ]);
   });
 
+  it("match nothing an object inherits", () => {
+    for (const id of ["toString", "constructor", "__proto__"]) {
+      expect(openaiIssuePortalCode(id), id).toBeUndefined();
+    }
+  });
+
   it("match a code in the same family as the id", () => {
     // A cheap guard against a mapping pasted onto the wrong line.
     const families: Record<string, RegExp> = {

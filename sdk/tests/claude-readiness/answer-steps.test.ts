@@ -242,6 +242,66 @@ describe("authentication against the server's sign-in", () => {
     expect(outage.status).toBe("not-evaluated");
   });
 
+  it("flags None when a tool call made without sign-in was refused", () => {
+    const none = completeAnswers([
+      answer("authentication.requirement", "none"),
+    ]);
+    const lazy = (
+      outcome: "unauthorized" | "succeeded"
+    ): ClaudeAuthEvidence => ({
+      enteredUrl: SERVER,
+      unauthenticated: served,
+      prm: { discoveredVia: "not-found", fetchError: "answered 404" },
+      lazyAuthProbe: {
+        attempted: true,
+        protocolVersion: "2025-06-18",
+        eraNote: "sample",
+        protectedCall: {
+          toolName: "read_order",
+          selectedBy: "named",
+          schemes: { schemes: [], source: "unresolved" },
+          outcome,
+        },
+      },
+    });
+    const refused = submission(id, none, lazy("unauthorized"));
+    expect(refused.status).toBe("violated");
+    expect(refused.remediation).toBe(
+      "Authentication requirement says None, but the server asked for sign-in when a tool was called without it. Choose Always required or Required when the server asks."
+    );
+    expect(submission(id, none, lazy("succeeded")).status).toBe("satisfied");
+  });
+
+  it("compares nothing on evidence that does not settle it", () => {
+    // A server error is neither served without sign-in nor a refusal.
+    const failing: ClaudeAuthEvidence = {
+      enteredUrl: SERVER,
+      unauthenticated: {
+        status: 500,
+        representsProtectedOperation: false,
+        servedWithoutCredentials: false,
+      },
+    };
+    const none = submission(
+      id,
+      completeAnswers([answer("authentication.requirement", "none")]),
+      failing
+    );
+    expect(none.status).toBe("not-evaluated");
+    expect(none.notEvaluatedReason).toBe(
+      "this run did not see the server answer a request without sign-in, so the Authentication answers were not compared with the server"
+    );
+    const preregistered = submission(
+      id,
+      completeAnswers([answer("authentication.oauthClient", "anthropic-held")]),
+      failing
+    );
+    expect(preregistered.status).toBe("not-evaluated");
+    expect(preregistered.notEvaluatedReason).toBe(
+      "this run did not see the server ask for sign-in, so the Authentication answers were not compared with the server"
+    );
+  });
+
   it("names the answer it needs when the client is blank", () => {
     const finding = submission(
       id,

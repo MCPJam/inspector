@@ -227,6 +227,41 @@ describe("pattern", () => {
     ).toEqual(["plugin_support_url_format"]);
   });
 
+  it("reads versions as semver.org 2.0.0 does", () => {
+    const version = (value: string) =>
+      codes(upload(manifest({ version: value })));
+    for (const valid of [
+      "0.0.0",
+      "1.2.3",
+      "10.20.30",
+      "1.0.0-alpha.1",
+      "1.0.0-0.3.7",
+      "1.0.0-x-y-z.--",
+      "1.0.0+build.20261114",
+      "1.0.0-rc.1+001",
+    ]) {
+      expect(version(valid), valid).toEqual([]);
+    }
+    for (const invalid of [
+      "01.2.3",
+      "1.0.0-alpha..1",
+      "1.0.0+..",
+      "1.0.0-01",
+    ]) {
+      expect(version(invalid), invalid).toEqual(["plugin_version_not_semver"]);
+    }
+  });
+
+  it("refuses an HTTPS URL whose authority is only a port", () => {
+    const homepage = (value: string) =>
+      codes(upload(manifest({ homepage: value })));
+    expect(homepage("https://:443")).toEqual(["plugin_homepage_format"]);
+    expect(homepage("https://:443/path")).toEqual(["plugin_homepage_format"]);
+    expect(homepage("https://[::1]")).toEqual([]);
+    expect(homepage("https://[::1]:8443/docs")).toEqual([]);
+    expect(homepage("https://example.com:443")).toEqual([]);
+  });
+
   it("refuses an MCP server mention in a starter prompt at submission", () => {
     const prompts = (defaultPrompt: string[]) =>
       submission(manifest({}, { defaultPrompt }));
@@ -293,6 +328,13 @@ describe("supported text", () => {
     expect(submission(manifest({}, { longDescription: "One.\nTwo." }))).toEqual(
       []
     );
+    expect(upload(manifest({}, { shortDescription: "Find\nnotes" }))).toEqual([
+      {
+        code: "plugin_short_description_character_unsupported",
+        field: "interface.shortDescription",
+        observed: "a line break",
+      },
+    ]);
     expect(
       codes(submission(manifest({}, { capabilities: ["Find\nnotes"] })))
     ).toEqual(["plugin_capability_invalid"]);
@@ -333,6 +375,26 @@ describe("the other documents", () => {
       "app_entry_wrong_type",
       "app_id_format",
       "app_entry_required_wrong_type",
+    ]);
+  });
+
+  it("reads a key holding a dot as one key, not a path", () => {
+    expect(
+      validateOpenAIPortalDocument("app-config", {
+        apps: { notes: 3, "notes.backup": { id: "bad" } },
+      })
+    ).toEqual([
+      {
+        code: "app_entry_wrong_type",
+        field: "apps.notes",
+        observed: "number",
+        expected: "object",
+      },
+      {
+        code: "app_id_format",
+        field: "apps.notes.backup.id",
+        observed: "bad",
+      },
     ]);
   });
 

@@ -126,8 +126,21 @@ export const OPENAI_EXTERNAL_POLICY_PAGES = [
   },
 ] as const;
 
+/**
+ * Old slugs a caller may still pass, and the page each now names. Accepted by
+ * {@link openaiPolicySource}, and never pinned or cited.
+ */
+const DEPRECATED_PAGES = {
+  /** @deprecated Renamed `plugin-guidelines`, where the old URL redirects. */
+  "app-guidelines": "plugin-guidelines",
+} as const satisfies Record<
+  string,
+  (typeof OPENAI_PLUGINS_POLICY_PAGES)[number]
+>;
+
+/** A plugins page, or a deprecated slug that names one. */
 export type OpenAIPluginsPolicyPage =
-  (typeof OPENAI_PLUGINS_POLICY_PAGES)[number];
+  (typeof OPENAI_PLUGINS_POLICY_PAGES)[number] | keyof typeof DEPRECATED_PAGES;
 export type OpenAIExternalPolicyPage =
   (typeof OPENAI_EXTERNAL_POLICY_PAGES)[number]["page"];
 
@@ -136,7 +149,19 @@ export type OpenAIPolicyPage =
   | OpenAIPluginsPolicyPage
   | OpenAIExternalPolicyPage;
 
-export const OPENAI_POLICY_PAGES: readonly OpenAIPolicyPage[] = [
+function isDeprecated(
+  page: OpenAIPolicyPage
+): page is keyof typeof DEPRECATED_PAGES {
+  return Object.hasOwn(DEPRECATED_PAGES, page);
+}
+
+/** A page the corpus pins: {@link OpenAIPolicyPage} without deprecated slugs. */
+type PinnedPolicyPage = Exclude<
+  OpenAIPolicyPage,
+  keyof typeof DEPRECATED_PAGES
+>;
+
+export const OPENAI_POLICY_PAGES: readonly PinnedPolicyPage[] = [
   ...OPENAI_PLUGINS_POLICY_PAGES,
   ...OPENAI_EXTERNAL_POLICY_PAGES.map((entry) => entry.page),
 ];
@@ -145,7 +170,7 @@ export const OPENAI_POLICY_PAGES: readonly OpenAIPolicyPage[] = [
 export type OpenAIPolicyPageFormat = "markdown" | "html";
 
 export interface OpenAIPolicySourceEntry {
-  page: OpenAIPolicyPage;
+  page: PinnedPolicyPage;
   url: string;
   /**
    * The exact bytes the sync hashes. For the plugins corpus this is the `.md`
@@ -171,7 +196,7 @@ export interface OpenAIPolicySourceEntry {
  * reorganised page; a dead `#anchor` helps nobody.
  */
 export interface OpenAIPolicySourceRef {
-  page: OpenAIPolicyPage;
+  page: PinnedPolicyPage;
   section: string;
   url: string;
   revision: string | null;
@@ -190,7 +215,7 @@ const PAGE_REVISIONS: Partial<Record<OpenAIPolicyPage, string>> = {};
 
 const ENTRIES: OpenAIPolicySourceEntry[] = [
   ...OPENAI_PLUGINS_POLICY_PAGES.map((page) => ({
-    page: page as OpenAIPolicyPage,
+    page,
     url: `${OPENAI_PLUGINS_DOCS_BASE_URL}/${page}`,
     revisionUrl: `${OPENAI_PLUGINS_DOCS_BASE_URL}/${page}.md`,
     format: "markdown" as const,
@@ -198,7 +223,7 @@ const ENTRIES: OpenAIPolicySourceEntry[] = [
     snapshotDate: OPENAI_POLICY_SNAPSHOT_DATE,
   })),
   ...OPENAI_EXTERNAL_POLICY_PAGES.map((entry) => ({
-    page: entry.page as OpenAIPolicyPage,
+    page: entry.page,
     url: entry.url,
     revisionUrl: entry.url,
     format: "html" as const,
@@ -209,10 +234,10 @@ const ENTRIES: OpenAIPolicySourceEntry[] = [
 
 /** The manifest, keyed by page. Total over {@link OPENAI_POLICY_PAGES}. */
 export const OPENAI_POLICY_MANIFEST: Readonly<
-  Record<OpenAIPolicyPage, OpenAIPolicySourceEntry>
+  Record<PinnedPolicyPage, OpenAIPolicySourceEntry>
 > = Object.freeze(
   Object.fromEntries(ENTRIES.map((entry) => [entry.page, entry])) as Record<
-    OpenAIPolicyPage,
+    PinnedPolicyPage,
     OpenAIPolicySourceEntry
   >,
 );
@@ -228,7 +253,8 @@ export function openaiPolicySource(
   page: OpenAIPolicyPage,
   section: string,
 ): OpenAIPolicySourceRef {
-  const entry = OPENAI_POLICY_MANIFEST[page];
+  const entry =
+    OPENAI_POLICY_MANIFEST[isDeprecated(page) ? DEPRECATED_PAGES[page] : page];
   return {
     page: entry.page,
     section,

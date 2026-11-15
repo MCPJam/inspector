@@ -31,7 +31,6 @@ import { readLocalHarnessAuthorization } from "./authorization.js";
 import { logger } from "../../logger.js";
 import type { HarnessAuth, HarnessId } from "../registry.js";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
-import { startLoopbackModelBroker } from "../harness-model-broker.js";
 import type { HarnessOrgLeaseUpstream } from "../harness-org-lease.js";
 import {
   resolveLocalHarnessAvailability,
@@ -39,8 +38,9 @@ import {
   type LocalHarnessLaunchPlan,
 } from "./availability.js";
 import { resolveNodeLauncher } from "./node-launcher.js";
-import { openTurnCredential, revokeLease, type TurnCredential } from "./turn-credential.js";
+import { openTurnCredential, type TurnCredential } from "./turn-credential.js";
 import { noteRuntimeLaunch, readRuntimeInstallStatus } from "./runtime-install.js";
+import { takeTurnRuntimeStatus } from "./turn-runtime-status.js";
 import {
   reserveRuntimeUse,
   type RuntimeOperationKey,
@@ -53,14 +53,25 @@ import {
   type SupportedLocalHarnessId,
 } from "./targets.js";
 import {
-  claimParkedLocalSession,
+  hasLocalTurnPark,
   hasParkedLocalSession,
   invalidateParkedLocalSession,
   noteParkedLocalSessionEnded,
   parkLocalSession,
+  parkLocalTurn,
   releaseParkedLocalSession,
+  type ParkedLocalSession,
   type ParkInvalidationReason,
 } from "./approval-park.js";
+import {
+  adoptKeptLocalTurn,
+  adoptParkedLocalTurn,
+  reportEndedKeptRuntime,
+  runtimeStillSelected,
+  type LiveLocalRuntime,
+} from "./parked-runtime.js";
+import { bridgeGenerationOf, type KeptRuntimeTurn } from "./kept-runtime.js";
+import type { KeptRuntimeOutcome } from "../harness-turn-event.js";
 import { localRuntime } from "./runtimes/index.js";
 import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
 import {
@@ -160,19 +171,43 @@ export interface PreparedLocalHarnessTurn {
    * Park this live runtime on a human approval instead of tearing it down
    * (`approval-park.ts`). Holds model traffic and revokes the lease now; the
    * tree, bridge, relay and gateway port stay up until a decision, a Stop, the
-   * idle TTL or a process death. Returns false when it could not park (the
-   * session was ended meanwhile) — the caller then tears down as usual.
+   * idle TTL or a process death. Returns the park, for this turn's own late
+   * Stop (`endParkIfWaiting`), or null when it could not park (the session
+   * was ended meanwhile) — the caller then tears down as usual.
    *
    * Only meaningful for a harness whose pending approval lives in the process
-   * (Codex app-server). After a successful park the caller must NOT run
-   * `teardown`: the parked record owns cleanup from here.
+   * (`liveApprovalRuntime`: Claude Code, Codex and GitHub Copilot CLI). After
+   * a successful park the caller must NOT run `teardown`: the parked record
+   * owns cleanup from here.
    */
   park: (args: {
     /** The live process generation: the bridge token of the suspended turn. */
     generation: string;
     pendingApprovalIds: readonly string[];
     ttlMs?: number;
-  }) => boolean;
+  }) => ParkedLocalSession | null;
+  /**
+   * Keep this runtime for the conversation's next turn instead of tearing it
+   * down, after a turn that completed (`kept-runtime.ts`). Holds traffic,
+   * revokes the lease and resolves the park like `park`. Resolves null,
+   * keeping nothing, when the turn made a call that can leave a process
+   * running, the process carries materialized secrets, its pack is no longer
+   * the one a fresh turn would select or an install is in flight, or the
+   * registry declines (`parkLocalTurn`); the caller then tears down as usual.
+   * After a park the caller must NOT run `teardown`.
+   */
+  parkTurn: (args: {
+    /** What the turn asked for (`keptLocalRuntimeTurn`). */
+    kept: KeptRuntimeTurn;
+    /** The state the turn commits, which names the live bridge. */
+    resumeState: unknown;
+    /** The lane state version that commit produces. */
+    stateVersion: number;
+    /** Every tool call the turn made, as the turn observed them. */
+    toolCalls: readonly { toolName: string; serverId?: string }[];
+  }) => Promise<ParkedLocalSession | null>;
+  /** Adopted from a turn park: resume from the live bridge, not from disk. */
+  keptRuntime?: boolean;
   /** A continuation finished without pausing again: give cleanup back to
    *  this turn's own teardown. No-op when nothing was parked. */
   unpark: () => void;
@@ -232,6 +267,10 @@ export interface PrepareLocalHarnessTurnArgs {
     generation: string;
     approvalIds: readonly string[];
   };
+  /** Set when this turn may adopt the runtime its lane's last turn kept. */
+  keptRuntime?: KeptRuntimeTurn;
+  /** Hears whether a runtime the lane's last turn kept was adopted, or why not. */
+  onKeptRuntime?: (outcome: KeptRuntimeOutcome) => void;
   scope?: "attended" | "unattended";
   /** Materialized project secrets; runtime-owned credential names are refused. */
   scopedEnv?: Readonly<Record<string, string>>;
@@ -270,7 +309,15 @@ export async function prepareLocalHarnessTurn(
   // A decision for an approval a live runtime is parked on: hand that runtime
   // to this turn, or refuse. Never replay the approval into a fresh process.
   if (args.approvalContinuation) {
-    return adoptParkedLocalTurn(args, harnessId);
+    return adoptParkedLocalTurn(args, harnessId, args.approvalContinuation);
+  }
+  const autoApproveRefused = args.scope !== "unattended" && args.requireToolApproval === false &&
+    !(await readLocalHarnessAuthorization(args.target.actingUserId, args.target.machineId, args.projectId, harnessId))?.autoApproveAcknowledgedAt;
+  // The runtime this conversation's last turn kept: adopted only by a turn
+  // that may run at all; otherwise ended below, and the turn starts fresh.
+  if (!autoApproveRefused && hasLocalTurnPark(args.sessionId)) {
+    const kept = await adoptKeptLocalTurn(args, harnessId);
+    if (kept.ok) return kept;
   }
   // A NEW prompt on a session still parked on an approval supersedes the
   // pending decision: the action it was waiting on will not run, and the
@@ -278,11 +325,10 @@ export async function prepareLocalHarnessTurn(
   if (hasParkedLocalSession(args.sessionId)) {
     await invalidateParkedLocalSession(args.sessionId, "superseded");
   }
-  if (args.scope !== "unattended" && args.requireToolApproval === false) {
-    const authorization = await readLocalHarnessAuthorization(args.target.actingUserId, args.target.machineId, args.projectId, harnessId);
-    if (!authorization?.autoApproveAcknowledgedAt) {
-      return { ok: false, status: "auto-approve-consent-required", message: "Allow commands without asking before turning Tool Approval off on this computer." };
-    }
+  // Nothing was adopted: say why the runtime the lane names is gone, if it was kept.
+  reportEndedKeptRuntime(args);
+  if (autoApproveRefused) {
+    return { ok: false, status: "auto-approve-consent-required", message: "Allow commands without asking before turning Tool Approval off on this computer." };
   }
   const verifyStartedAt = Date.now();
 
@@ -292,8 +338,10 @@ export async function prepareLocalHarnessTurn(
   // SELECTED per build (desired, or the permitted previous while an update is
   // in flight or after a rollback), preferring the runtime this target's grant
   // names while it is still selectable — so an update that activated in the
-  // background does not refuse this turn; the client renews onto it.
-  const runtimeStatus = await readRuntimeInstallStatus({
+  // background does not refuse this turn; the client renews onto it. Read once
+  // a turn: a target readiness just minted comes with the selection its
+  // runtime was resolved from.
+  const runtimeStatus = takeTurnRuntimeStatus(args.target) ?? await readRuntimeInstallStatus({
     harnessId,
     preferRuntimeId: args.target.runtimeId,
   });
@@ -451,6 +499,9 @@ async function prepareWithReservedRuntime(outer: {
     installedAdapterVersion:
       args.installedAdapterVersion ??
       localRuntime(harnessId).installedAdapterVersion(),
+    // The provider re-verifies the runtime right before it spawns the bridge
+    // (`assertCanStart`), so this turn verifies it once, at exec.
+    runtimeVerifiedAtSpawn: true,
   });
   if (!availability.available) {
     return {
@@ -603,6 +654,9 @@ async function prepareWithReservedRuntime(outer: {
 
     let treeStopped = false;
     const teardownOnce = onceAsync(async () => {
+      // A park record holding this runtime goes with it, whichever path ends
+      // it (a kept runtime's turn whose key was replaced, `org-key-preparation.ts`).
+      releaseParkedLocalSession(args.sessionId, live);
       try {
         sessionRecord.gateway?.revoke();
         await sessionRecord.gateway?.close();
@@ -669,11 +723,32 @@ async function prepareWithReservedRuntime(outer: {
       runtimeId: plan.runtime.runtimeId,
       workspaceGrantId: plan.target.workspaceGrantId,
       credentialKind: credential.kind,
+      runtimeDigest: runtimeStatus.digest,
+      restartWallClock: () => supervisor.restartWallClock(args.sessionId),
       rebindLease: (next) => {
         credential.rebind(next);
         sessionRecord.brokerRunId = next.runId;
       },
       revokeCurrentLease: () => credential.revoke(),
+    };
+    // What every park of this runtime shares: ONE owner for cleanup (the
+    // registry, which revokes the gateway and the lease, stops the tree and
+    // releases the runtime together), a liveness probe, and the hold.
+    const parkedEnd = async (reason: ParkInvalidationReason) => {
+      logger.info("[local-harness] ending parked session", {
+        sessionId: args.sessionId,
+        reason,
+      });
+      await endLocalHarnessSession(args.sessionId);
+    };
+    const isAlive = () => supervisor.liveProcessCount(args.sessionId) > 0;
+    const holdModelTraffic = () => {
+      // Nothing is generated while nothing is asked of it, and the lease is
+      // not kept live across a wait: a fresh one is minted, after re-checking
+      // authorization, when a decision or the next turn arrives. A login has
+      // nothing to hold.
+      credential.hold();
+      mcpPlane?.hold();
     };
     const prepared: PreparedLocalHarnessTurn = {
       plan,
@@ -711,23 +786,52 @@ async function prepareWithReservedRuntime(outer: {
           pendingApprovalIds: parkArgs.pendingApprovalIds,
           resources: live,
           ...(parkArgs.ttlMs !== undefined ? { ttlMs: parkArgs.ttlMs } : {}),
-          // ONE owner for cleanup: the registry, which revokes the gateway and
-          // the lease, stops the tree and releases the runtime together.
-          end: async (reason: ParkInvalidationReason) => {
-            logger.info("[local-harness] ending parked session", {
-              sessionId: args.sessionId,
-              reason,
-            });
-            await endLocalHarnessSession(args.sessionId);
-          },
-          isAlive: () => supervisor.liveProcessCount(args.sessionId) > 0,
-          holdModelTraffic: () => {
-            // A held gateway's lease is revoked: a fresh one is minted, after
-            // re-checking authorization, when a decision lands.
-            credential.hold();
-            mcpPlane?.hold();
-          },
+          end: parkedEnd,
+          isAlive,
+          holdModelTraffic,
         }),
+      parkTurn: async ({ kept, resumeState, stateVersion, toolCalls }) => {
+        // A runtime on a login is never kept: adopting a kept runtime mints a
+        // lease for its gateway, and a login that idles runs out within the hour.
+        if (credential.kind !== "gateway") return null;
+        const generation = bridgeGenerationOf(resumeState);
+        // Never kept with materialized secrets in its environment: an idle
+        // process would hold them for as long as it waits.
+        if (generation === undefined || Object.keys(args.scopedEnv ?? {}).length > 0) return null;
+        // Nor after a turn that ran a command or anything else that can leave
+        // a process behind, approved or not: the next turn would inherit it
+        // (a shell it could drive) without asking. An MCP call names a server.
+        const keeping = localRuntime(harnessId).keptBetweenTurns;
+        if (!keeping || toolCalls.some((call) => call.serverId === undefined && keeping.processTools.includes(call.toolName))) return null;
+        // Nor on a pack a fresh turn would not select, or one an install in
+        // flight may replace: the next turn starts on what is current. A
+        // selection that cannot be read keeps nothing; the turn's commit is
+        // never put at risk for it.
+        const selected = await readRuntimeInstallStatus({ harnessId }).then(
+          (status) => runtimeStillSelected(status, runtimeStatus.digest),
+          (error: unknown) => {
+            logger.warn("[local-harness] runtime selection unreadable; not keeping the runtime", {
+              error: error instanceof Error ? error.name : typeof error,
+            });
+            return false;
+          },
+        );
+        if (!selected) return null;
+        return parkLocalTurn<LiveLocalRuntime>({
+          sessionId: args.sessionId,
+          generation,
+          userId: args.target.actingUserId,
+          projectId: args.projectId,
+          harnessId,
+          runtimeDigest: runtimeStatus.digest,
+          stateVersion,
+          fingerprint: kept.fingerprint,
+          resources: live,
+          end: parkedEnd,
+          isAlive,
+          holdModelTraffic,
+        });
+      },
       unpark: () => releaseParkedLocalSession(args.sessionId),
     };
     live.prepared = prepared;
@@ -739,236 +843,6 @@ async function prepareWithReservedRuntime(outer: {
     await abandonLocalSetup({ credential, sessionId: args.sessionId });
     throw error;
   }
-}
-
-/** A live local runtime, as a parked approval holds it. */
-interface LiveLocalRuntime {
-  prepared: PreparedLocalHarnessTurn;
-  userId: string;
-  projectId: string;
-  runtimeId: string;
-  workspaceGrantId: string;
-  credentialKind: TurnCredential["kind"];
-  /** Bind a fresh lease to the SAME gateway (same port, same capability). */
-  rebindLease: (next: { runId: string; lease: string; bearer: string; getCleanupAuthorization?: () => Promise<string> }) => void;
-  revokeCurrentLease: () => Promise<void>;
-}
-
-/**
- * Hand a runtime parked on an approval to the turn delivering the decision.
- *
- * The claim is synchronous and exactly-once (`approval-park.ts`). Everything
- * after it re-establishes AUTHORITY rather than assuming it survived the wait:
- * the availability gate runs again (kill switch, actor, consent, workspace,
- * runtime identity), and the model lease — revoked at the pause — is replaced
- * by a fresh one bound to the gateway the process already knows. Any failure
- * there ends the parked session: a decision that cannot be delivered under
- * current authority is not delivered at all.
- */
-async function adoptParkedLocalTurn(
-  args: PrepareLocalHarnessTurnArgs,
-  harnessId: SupportedLocalHarnessId,
-): Promise<LocalHarnessTurnPreparation> {
-  const claim = claimParkedLocalSession<LiveLocalRuntime>({
-    sessionId: args.sessionId,
-    generation: args.approvalContinuation!.generation,
-    userId: args.target.actingUserId,
-    projectId: args.projectId,
-    approvalIds: args.approvalContinuation!.approvalIds,
-  });
-  if (!claim.ok) {
-    return { ok: false, status: `approval-${claim.reason}`, message: claim.message };
-  }
-  const live = claim.parked.resources;
-  live.prepared.sandbox.forbidNewProcesses();
-  const fail = async (
-    reason: ParkInvalidationReason,
-    status: string,
-    message: string,
-  ): Promise<LocalHarnessTurnPreparation> => {
-    await invalidateParkedLocalSession(args.sessionId, reason);
-    return { ok: false, status, message };
-  };
-  const verifyStartedAt = Date.now();
-
-  const runtimeStatus = await readRuntimeInstallStatus({
-    harnessId,
-    preferRuntimeId: args.target.runtimeId,
-  });
-  if (runtimeStatus.state !== "ready") {
-    return fail(
-      "authorization-revoked",
-      "runtime-unavailable",
-      "The local runtime holding this approval is no longer installed; the " +
-        "pending action will not run.",
-    );
-  }
-  const availability = await resolveLocalHarnessAvailability({
-    target: {
-      kind: "local-native",
-      harnessId,
-      machineId: args.target.machineId,
-      workspaceGrantId: args.target.workspaceGrantId,
-      runtimeId: args.target.runtimeId,
-      permissionProfile: args.target.permissionProfile,
-      policyVersion: args.target.policyVersion,
-    },
-    actor: args.actor,
-    scope: args.scope,
-    userId: args.target.actingUserId,
-    projectId: args.projectId,
-    grantToken: args.target.grantToken,
-    runtimeRoot: runtimeStatus.runtimeRoot,
-    runtimeDigest: runtimeStatus.digest,
-    installedAdapterVersion:
-      args.installedAdapterVersion ??
-      localRuntime(harnessId).installedAdapterVersion(),
-  });
-  if (!availability.available) {
-    return fail("authorization-revoked", availability.status, availability.message);
-  }
-  const plan = availability.plan;
-  // The parked process runs ONE runtime against ONE workspace. A decision
-  // re-authorized for anything else is not a decision about this process.
-  if (
-    plan.runtime.runtimeId !== live.runtimeId ||
-    plan.target.workspaceGrantId !== live.workspaceGrantId
-  ) {
-    return fail(
-      "authorization-revoked",
-      "approval-runtime-changed",
-      "The runtime or workspace changed while this approval was waiting; " +
-        "the pending action will not run.",
-    );
-  }
-  const permissionMode = args.scope !== "unattended" || args.requireToolApproval
-    ? ("allow-reads" as const)
-    : plan.permissionMode;
-  if (permissionMode !== live.prepared.permissionMode) {
-    return fail(
-      "authorization-revoked",
-      "approval-permission-changed",
-      "The permission this session was approved under changed while the " +
-        "approval was waiting; the pending action will not run.",
-    );
-  }
-
-  const identity = await readLocalInstanceIdentity();
-  const keyId = identity.keyId ?? getRegisteredKeyId();
-  if (keyId === null) {
-    return fail(
-      "authorization-revoked",
-      "consent-required",
-      "This installation is no longer registered for local execution.",
-    );
-  }
-  if (live.credentialKind === "runtime-login") {
-    // Nothing to renew. A lease is minted again below because the backend can
-    // refuse it; a login is already in the parked process, cannot be taken
-    // back, and runs out within the hour whatever is decided here.
-    if (claim.parked.state !== "continuing" || !claim.parked.isAlive()) {
-      return fail(
-        "process-died",
-        "approval-process-died",
-        "The local runtime holding this approval stopped while the decision " +
-          "was being delivered; the pending action will not run.",
-      );
-    }
-    logger.info("[local-harness] parked session re-adopted for an approval", {
-      sessionId: args.sessionId,
-      approvals: args.approvalContinuation!.approvalIds.length,
-    });
-    return {
-      ok: true,
-      prepared: {
-        ...live.prepared,
-        plan,
-        sessionStateExists: true,
-        timings: { localRuntimeVerifyMs: Date.now() - verifyStartedAt, localGatewayReadyMs: 0 },
-      },
-    };
-  }
-  const gatewayStartedAt = Date.now();
-  const broker = await startLoopbackModelBroker({
-    projectId: args.projectId,
-    evalIterationId: args.evalIterationId,
-    journeyRunId: args.journeyRunId,
-    targetId: args.targetId,
-    sessionIdx: args.sessionIdx,
-    hostId: args.hostId,
-    harnessId: args.harnessId,
-    modelId: args.modelId,
-    machineId: identity.machineId,
-    keyId,
-    runId: args.runId,
-    ...(args.maxOutputTokens !== undefined
-      ? { maxOutputTokens: args.maxOutputTokens }
-      : {}),
-    // The re-adopted runtime keeps running on the same organization key it
-    // started on; a key replaced while the approval waited fails the
-    // renewal rather than silently switching accounts under a live session.
-    ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
-    bearer: args.bearer,
-    ...(args.signal ? { signal: args.signal } : {}),
-  });
-  if (!broker.ok) {
-    return fail("renewal-failed", "broker-unavailable", broker.error);
-  }
-  if (
-    live.prepared?.orgUpstream &&
-    broker.orgUpstream?.credentialRevision !==
-      live.prepared.orgUpstream.credentialRevision
-  ) {
-    await revokeLease(broker.runId, args.bearer);
-    return fail(
-      "renewal-failed",
-      "byok-connection-changed",
-      "The organization's provider key was replaced while the approval was " +
-        "waiting; the pending action will not run.",
-    );
-  }
-  // The awaits above are a window in which the parked tree can die or a Stop
-  // can land. Re-check before binding the fresh lease: delivering the decision
-  // to a bridge that had to be respawned could approve an action nobody saw.
-  if (claim.parked.state !== "continuing" || !claim.parked.isAlive()) {
-    await revokeLease(broker.runId, args.bearer);
-    return fail(
-      "process-died",
-      "approval-process-died",
-      "The local runtime holding this approval stopped while the decision " +
-        "was being delivered; the pending action will not run.",
-    );
-  }
-  try {
-    live.rebindLease({ runId: broker.runId, lease: broker.lease, bearer: args.bearer, getCleanupAuthorization: args.getCleanupAuthorization });
-  } catch (error) {
-    await revokeLease(broker.runId, args.bearer);
-    return fail(
-      "renewal-failed",
-      "gateway-unavailable",
-      `The renewed model lease could not be bound: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  logger.info("[local-harness] parked session re-adopted for an approval", {
-    sessionId: args.sessionId,
-    approvals: args.approvalContinuation!.approvalIds.length,
-  });
-  return {
-    ok: true,
-    prepared: {
-      ...live.prepared,
-      plan,
-      sessionStateExists: true,
-      brokerRunId: broker.runId,
-      ...(broker.orgUpstream ? { orgUpstream: broker.orgUpstream } : {}),
-      timings: {
-        localRuntimeVerifyMs: gatewayStartedAt - verifyStartedAt,
-        localGatewayReadyMs: Date.now() - gatewayStartedAt,
-      },
-    },
-  };
 }
 
 /**

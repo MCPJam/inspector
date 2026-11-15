@@ -33,29 +33,30 @@ Test your MCP tools by manually invoking them with custom parameters:
 - **Elicitation support** - Handle elicitation requests from tools with a spec-complete form dialog
 - **Multi-round input** - Tools that return `input_required` (MCP 2026-07-28) collect the needed input through the same dialog and retry automatically
 - **Save requests** - Save frequently used tool invocations for quick testing
-- **Quality badges** - See per-tool quality indicators in the sidebar for tools with definition issues
+
+Saved requests are stored in your browser's local storage and accessible from the Saved Requests tab.
 
 ### Elicitation requests
 
 When a tool triggers an MCP elicitation request, a dialog appears asking you to provide additional input. The dialog renders a form built from the server's schema and supports the full MCP elicitation subset:
 
-- **Field labels and defaults** — Fields show the schema `title` when provided (the raw property key stays visible alongside it). Schema `default` values are pre-filled automatically.
-- **Field types** — Strings, numbers, integers, booleans (checkbox), single-select dropdowns, and multi-select checkbox lists are all rendered natively. Fields with `format: email`, `uri`, `date`, or `date-time` use the matching browser input type.
-- **Inline validation** — Clicking **Accept** validates all fields before submitting. Required fields, numeric `minimum`/`maximum`, string `minLength`/`maxLength`, `pattern`, and format constraints are all checked. Errors appear under the relevant field and block submission until resolved.
-- **Server identity** — The dialog header identifies which server is requesting information. When the server supplies both a name and an ID, both are shown — the ID is the trusted anchor and is always visible.
-- **Unsupported shapes** — Nested objects and other schema shapes outside the MCP elicitation spec fall back to a plain JSON textarea so you can still answer by hand.
+- **Field labels and defaults**: Fields show the schema `title` when provided (the raw property key stays visible alongside it). Schema `default` values are pre-filled automatically.
+- **Field types**: Strings, numbers, integers, booleans (checkbox), single-select dropdowns, and multi-select checkbox lists are all rendered natively. Fields with `format: email`, `uri`, `date`, or `date-time` use the matching browser input type.
+- **Inline validation**: Clicking **Accept** validates all fields before submitting. Required fields, numeric `minimum`/`maximum`, string `minLength`/`maxLength`, `pattern`, and format constraints are all checked. Errors appear under the relevant field and block submission until resolved.
+- **Server identity**: The dialog header identifies which server is requesting information. When the server supplies both a name and an ID, both are shown. The ID is the trusted anchor and is always visible.
+- **Unsupported shapes**: Nested objects and other schema shapes outside the MCP elicitation spec fall back to a plain JSON textarea so you can still answer by hand.
 
-**Decline** and **Cancel** are always available and bypass validation — they send the corresponding action to the server without any parameters.
+**Decline** and **Cancel** are always available and bypass validation. They send the corresponding action to the server without any parameters.
 
 ### Multi-round input (MCP 2026-07-28 `input_required`)
 
 When a tool call returns an `input_required` result (MCP 2026-07-28 §12), the inspector collects the embedded elicitation input through the same dialog and automatically retries the original call with your answers. This is distinct from the legacy `elicitation/create` flow:
 
-- **Dialog title** — shows "Operation Needs Input" (vs "Elicitation Request" for legacy requests).
-- **Dialog header** — reads "[server] needs input to continue" (vs "[server] is requesting information").
-- **Multiple keys per round** — if the server embeds more than one input request in a single round, the dialog walks through them one at a time and submits all answers together.
-- **Automatic retry** — after you respond, the inspector retries the original `tools/call` with your answers attached. You do not need to re-invoke the tool manually.
-- **Decline and Cancel** — send the corresponding action back to the server; the server decides whether to abort or continue.
+- **Dialog title**: shows "Operation Needs Input" (vs "Elicitation Request" for legacy requests).
+- **Dialog header**: reads "[server] needs input to continue" (vs "[server] is requesting information").
+- **Multiple keys per round**: if the server embeds more than one input request in a single round, the dialog walks through them one at a time and submits all answers together.
+- **Automatic retry**: after you respond, the inspector retries the original `tools/call` with your answers attached. You do not need to re-invoke the tool manually.
+- **Decline and Cancel**: send the corresponding action back to the server; the server decides whether to abort or continue.
 
 This behavior applies to local connections. The inspector must be connected to the server before the tool is invoked; the `elicitation` capability is advertised at connect time.
 
@@ -85,19 +86,6 @@ What the Tools tab does depends on the client you are emulating:
 
 See [Mid-session sign-in](/inspector/lazy-authentication) for the per-host settings, the Connect card, and how to test your server with the CLI.
 
-### Tool quality badges
-
-When enabled, each tool in the sidebar may display a small badge showing the number of quality findings for that tool:
-
-| Badge color | Meaning |
-|-------------|---------|
-| Red | A spec-level error (for example, `inputSchema` missing or not an object) |
-| Amber | A quality warning (for example, undocumented parameters, a description referencing a parameter not in the schema, or a `required` name missing from `properties`) |
-
-Hover over a badge to see the full list of findings. Tools with no issues show no badge.
-
-Saved requests are stored in your browser's local storage and accessible from the Saved Requests tab.
-
 ## Resources
 
 Inspect your MCP server's resources:
@@ -121,9 +109,9 @@ The panel branches on the negotiated protocol era:
 
 The server supports a single `subscriptions/listen` stream. Because a listen filter is immutable for the life of a subscription, changing the desired filter closes the current stream and opens a new one automatically. The panel shows:
 
-- **Desired filter** — checkboxes for `tools/list_changed`, `prompts/list_changed`, and `resources/list_changed`, plus per-URI watch toggles for each resource. Toggling any checkbox posts the new desired interests; the coordinator performs the close and reopen.
-- **Stream details** — status (`Opening`, `Active`, `Closed by server (graceful)`, `Connection lost (remote close)`, `Cancelled locally`, `Error`), the MCP subscription id and whether it was `reported` or `observed`, the requested filter next to the acknowledged filter, any interests the server did not honor, the close reason, and the re-listen attempt count.
-- **Cancel stream** — ends the current stream as a local abort.
+- **Desired filter**: checkboxes for `tools/list_changed`, `prompts/list_changed`, and `resources/list_changed`, plus per-URI watch toggles for each resource. Toggling any checkbox posts the new desired interests; the coordinator performs the close and reopen.
+- **Stream details**: status (`Opening`, `Active`, `Closed by server (graceful)`, `Connection lost (remote close)`, `Cancelled locally`, `Error`), the MCP subscription id and whether it was `reported` or `observed`, the requested filter next to the acknowledged filter, any interests the server did not honor, the close reason, and the re-listen attempt count.
+- **Cancel stream**: ends the current stream as a local abort.
 
 **Legacy era (`resources/subscribe`)**
 
@@ -145,7 +133,7 @@ Both eras append a History log below the stream list. Each entry records the kin
 | `notification` | A subscription notification arrived |
 | `rejected` | A notification arrived for an interest the server did not agree to send |
 
-Graceful and remote closes are always distinct entries — they are never flattened into a single "disconnected" event. Rejected notifications are shown rather than silently dropped, so you can see the absence the server chose.
+Graceful and remote closes are always distinct entries. They are never flattened into a single "disconnected" event. Rejected notifications are shown rather than silently dropped, so you can see the absence the server chose.
 
 ## Prompts
 
@@ -169,7 +157,7 @@ The JSON-RPC logger helps you debug your MCP server implementation and understan
 
 ### Inline HTTP headers
 
-When you expand an outgoing JSON-RPC frame (a request sent to the server), a collapsed **HTTP headers** section appears below the JSON body. Expanding it shows the full HTTP exchange — request headers, response status, and any `Mcp-*` headers the server mirrored back.
+When you expand an outgoing JSON-RPC frame (a request sent to the server), a collapsed **HTTP headers** section appears below the JSON body. Expanding it shows the full HTTP exchange: request headers, response status, and any `Mcp-*` headers the server mirrored back.
 
 The collapsed row names the first disagreement without requiring you to open anything: for example, `mcp-name disagrees with the body` tells you which header caused a routing failure before you inspect the exchange in detail. The row turns red when the exchange returned a 4xx/5xx status or the connection failed at the transport level.
 

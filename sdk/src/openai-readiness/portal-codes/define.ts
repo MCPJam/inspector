@@ -190,15 +190,23 @@ export const PROMPTS = "interface.defaultPrompt";
 /** A string counts as a list of one prompt. */
 export const PROMPT = "interface.defaultPrompt[]";
 
-/** A version such as `1.0.0`, with optional pre-release and build parts. */
-export const SEMVER =
-  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+/**
+ * A version such as `1.0.0`, with optional pre-release and build parts: the
+ * semver.org 2.0.0 grammar, so no leading zeros and no empty identifiers.
+ */
+const SEMVER_NUMBER = "(?:0|[1-9]\\d*)";
+const SEMVER_PRERELEASE_ID = `(?:${SEMVER_NUMBER}|\\d*[A-Za-z-][0-9A-Za-z-]*)`;
+export const SEMVER = new RegExp(
+  `^${SEMVER_NUMBER}\\.${SEMVER_NUMBER}\\.${SEMVER_NUMBER}` +
+    `(?:-${SEMVER_PRERELEASE_ID}(?:\\.${SEMVER_PRERELEASE_ID})*)?` +
+    "(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+);
 
 /** `#RRGGBB`. */
 export const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
 /**
  * The page: "HTTPS URLs must include a host and contain no embedded
- * credentials".
+ * credentials". An authority that starts with `:` is a port with no host.
  */
-export const HTTPS_URL = /^https:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/i;
+export const HTTPS_URL = /^https:\/\/(?!:)[^\s/?#@]+(?:[/?#]\S*)?$/i;

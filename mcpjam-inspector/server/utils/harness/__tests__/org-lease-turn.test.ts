@@ -3,14 +3,18 @@ import type { ModelSelection } from "@mcpjam/sdk/browser";
 
 const broker = vi.hoisted(() => ({
   reserveHarnessBox: vi.fn(),
+  releaseHarnessBoxReservation: vi.fn(),
   startHarnessModelBroker: vi.fn(),
   failedTurnEvidence: vi.fn(),
   prepareLocalHarnessTurn: vi.fn(),
 }));
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: broker.reserveHarnessBox,
   startHarnessModelBroker: broker.startHarnessModelBroker,
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: broker.reserveHarnessBox,
+  releaseHarnessBoxReservation: broker.releaseHarnessBoxReservation,
 }));
 vi.mock("../harness-org-lease.js", () => ({
   failedTurnEvidence: broker.failedTurnEvidence,
@@ -67,6 +71,7 @@ async function leaseBox(org: OrgLeaseTurn) {
 
 beforeEach(() => {
   broker.reserveHarnessBox.mockReset();
+  broker.releaseHarnessBoxReservation.mockReset();
   broker.startHarnessModelBroker.mockReset();
   broker.failedTurnEvidence.mockReset();
   broker.prepareLocalHarnessTurn.mockReset();
@@ -127,6 +132,51 @@ describe("OrgLeaseTurn on MCPJam's key", () => {
     expect(error).toMatchObject({
       evidence: { code: "harness_box_reservation_failed" },
     });
+  });
+});
+
+describe("OrgLeaseTurn on a box a preparation left uncertain", () => {
+  const RETIRED = {
+    ok: false as const,
+    status: 409,
+    error: "The box was retired.",
+    code: "box_retired",
+  };
+  const ARGS = {
+    box: BOX,
+    harnessId: "claude-code" as const,
+    modelId: "m",
+    runId: "r",
+    bearer: "b",
+  };
+  const RETRY = {
+    message:
+      "This conversation's computer was replaced. Send your message again.",
+    evidence: { source: "sandbox_setup", code: "box_retired", httpStatus: 409 },
+  };
+
+  it.each([undefined, ORG_SELECTION])(
+    "ends the claim typed and retryable, on either key: %j",
+    async (selection) => {
+      broker.reserveHarnessBox.mockResolvedValue(RETIRED);
+      const error = await turn(selection)
+        .reserve(ARGS)
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(HarnessInfraSetupError);
+      expect(error).toMatchObject(RETRY);
+      // Refused, so the backend made no claim to hand back.
+      expect(broker.releaseHarnessBoxReservation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ends the lease start typed and retryable", async () => {
+    broker.startHarnessModelBroker.mockResolvedValue(RETIRED);
+    const error = await turn()
+      .start(ARGS)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(HarnessInfraSetupError);
+    expect(error).toMatchObject(RETRY);
+    expect(broker.startHarnessModelBroker).toHaveBeenCalledTimes(1);
   });
 });
 
