@@ -9,8 +9,8 @@ export type GhostCursorHandle = {
   position: () => TourPoint;
 };
 
-const EASE = "cubic-bezier(0.45, 0, 0.2, 1)";
-const CLICK_MS = 420;
+const EASE = "cubic-bezier(0.65, 0, 0.35, 1)";
+const CLICK_MS = 520;
 
 function translate(point: TourPoint): string {
   return `translate(${point.x}px, ${point.y}px)`;

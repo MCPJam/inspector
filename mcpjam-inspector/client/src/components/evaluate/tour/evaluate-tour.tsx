@@ -6,7 +6,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   TOUR_EXAMPLE_SUITE_NAME,
   TOUR_STOPS,
@@ -44,6 +44,10 @@ export function EvaluateTour({ tour }: { tour: EvaluateTourController }) {
 }
 
 type StageScreen = "intro" | TourScreen;
+
+const SCREEN_FADE_MS = 450;
+const COACHMARK_FADE_MS = 250;
+const EASE_IN_OUT = [0.4, 0, 0.2, 1] as const;
 
 function TourScreenView({
   screen,
@@ -125,7 +129,7 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
       await driver.click();
       setScreen("create");
       await driver.settle();
-      await driver.pause(250);
+      await driver.pause(SCREEN_FADE_MS);
       await driver.moveTo("create-name");
       await driver.click();
       await driver.type(TOUR_EXAMPLE_SUITE_NAME, setTypedName);
@@ -134,7 +138,7 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
       await driver.click();
       setScreen("setup");
       await driver.settle();
-      await driver.pause(200);
+      await driver.pause(SCREEN_FADE_MS);
       setStopIndex(0);
     });
   };
@@ -152,12 +156,12 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
     rootRef.current?.focus({ preventScroll: true });
     setStopIndex(null);
     void play(origin, async (driver) => {
-      await driver.pause(120);
+      await driver.pause(COACHMARK_FADE_MS);
       await driver.moveTo(advanceAnchor);
       await driver.click();
       setScreen(target.id);
       await driver.settle();
-      await driver.pause(200);
+      await driver.pause(SCREEN_FADE_MS);
       setStopIndex(stopIndex + 1);
     });
   };
@@ -176,7 +180,14 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
     skip();
   };
 
-  const fade = reducedMotion ? 0 : 0.2;
+  const screenFade = {
+    duration: reducedMotion ? 0 : SCREEN_FADE_MS / 1000,
+    ease: EASE_IN_OUT,
+  };
+  const coachmarkFade = {
+    duration: reducedMotion ? 0 : COACHMARK_FADE_MS / 1000,
+    ease: EASE_IN_OUT,
+  };
 
   return (
     <div
@@ -188,49 +199,66 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
       role="region"
       data-testid="evaluate-tour"
     >
-      {screen === "intro" ? (
-        <motion.div
-          className="absolute inset-0 flex items-center justify-center bg-overlay/70"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: fade }}
-        >
-          <TourIntroCard titleId={titleId} onStart={start} onSkip={skip} />
-        </motion.div>
-      ) : (
-        <>
+      <AnimatePresence initial={!reducedMotion}>
+        {screen === "intro" ? (
+          <motion.div
+            key="intro"
+            className="absolute inset-0 flex items-center justify-center bg-overlay/70"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={screenFade}
+          >
+            <TourIntroCard titleId={titleId} onStart={start} onSkip={skip} />
+          </motion.div>
+        ) : (
           <motion.div
             key={screen}
             inert
             className="absolute inset-0 bg-background"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: fade }}
+            initial={{ opacity: 0, scale: 0.995 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            transition={screenFade}
             data-testid={`evaluate-tour-screen-${screen}`}
           >
             <TourScreenView screen={screen} typedName={typedName} />
           </motion.div>
-          {stop ? (
-            <TourSpotlight rects={rects} />
-          ) : (
-            <div className="absolute inset-0" aria-hidden />
-          )}
-          {stop && stopIndex !== null && rects[0] ? (
-            <TourPopover
-              anchor={rects[0]}
-              bounds={bounds}
-              placement={stop.placement}
-              labelledBy={titleId}
-            >
-              <StopCoachmarkContent
-                stop={stop}
-                index={stopIndex}
-                titleId={titleId}
-                onNext={next}
-                onSkip={skip}
-              />
-            </TourPopover>
-          ) : null}
+        )}
+      </AnimatePresence>
+      {screen === "intro" ? null : (
+        <>
+          <div className="absolute inset-0" aria-hidden />
+          <AnimatePresence>
+            {stop && stopIndex !== null ? (
+              <motion.div
+                key={stop.id}
+                className="absolute inset-0"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={coachmarkFade}
+              >
+                <TourSpotlight rects={rects} />
+                {rects[0] ? (
+                  <TourPopover
+                    anchor={rects[0]}
+                    bounds={bounds}
+                    placement={stop.placement}
+                    labelledBy={titleId}
+                  >
+                    <StopCoachmarkContent
+                      stop={stop}
+                      index={stopIndex}
+                      titleId={titleId}
+                      onNext={next}
+                      onSkip={skip}
+                    />
+                  </TourPopover>
+                ) : null}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </>
       )}
       <TourGhostCursor ref={cursorRef} />

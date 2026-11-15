@@ -22,8 +22,8 @@ export type TourDriver = {
   settle: () => Promise<void>;
 };
 
-const MOVE_MS = 650;
-const TYPE_MS = 45;
+const MOVE_MS = 900;
+const TYPE_MS = 55;
 
 function frame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
