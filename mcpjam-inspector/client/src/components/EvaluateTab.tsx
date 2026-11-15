@@ -107,6 +107,8 @@ import {
   isCiOwnedSuite,
 } from "@/lib/evals/is-ci-owned-suite";
 import { agentRunIterations } from "./evaluate/suite-run-iterations";
+import { EvaluateTour } from "./evaluate/tour/evaluate-tour";
+import { useEvaluateTour } from "./evaluate/tour/use-evaluate-tour";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -606,6 +608,16 @@ function EvaluateTabContent({
   // opening the picker on an empty list. A tap while suites load waits.
   const hasNoSuites =
     !overviewQueries.isOverviewLoading && visibleSuites.length === 0;
+  // Auto-opens once on an empty landing, and only past the sign-in and
+  // project gates, where the overlay can actually render.
+  const evaluateTour = useEvaluateTour({
+    autoOpenEligible:
+      !isLoading &&
+      (isDirectGuest || (isAuthenticated && Boolean(projectId))) &&
+      route.type === "list" &&
+      hasNoSuites,
+    onComplete: handleOpenCreateSuite,
+  });
   useEffect(() => {
     // The picker lives on the list. Leaving it (Back while suites load)
     // drops the pending action, or Create suite would open over another
@@ -1667,6 +1679,7 @@ function EvaluateTabContent({
       user={user}
       projectId={projectId}
       isDirectGuest={isDirectGuest}
+      overlay={<EvaluateTour tour={evaluateTour} />}
       header={
         route.type === "create" ? undefined : (
           <EvalsHeader
@@ -1711,6 +1724,11 @@ function EvaluateTabContent({
             landingView={landingView}
             onLandingViewChange={setLandingView}
             onEvaluateClick={handleNavigateToEvalList}
+            onStartTour={
+              route.type === "list"
+                ? () => evaluateTour.open("replay")
+                : undefined
+            }
             isDetail={Boolean(hasDetailRoute) || route.type === "eval-server"}
             parentCrumb={
               route.type === "test-edit" && route.fromEvalServer
