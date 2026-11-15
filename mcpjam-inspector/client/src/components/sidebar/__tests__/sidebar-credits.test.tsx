@@ -57,6 +57,20 @@ vi.mock("@/hooks/use-swarm-sponsorship-allowance", () => ({
   useSwarmSponsorshipAllowance: () => allowanceState,
 }));
 
+let nativeTrialState: { remaining: number; granted: number } | null = null;
+let nativeHarnessEnabled = true;
+const nativeTrialMock = vi.fn((organizationId: string | null) =>
+  organizationId ? nativeTrialState : null,
+);
+vi.mock("@/hooks/use-native-harness-trial", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/use-native-harness-trial")>()),
+  useNativeHarnessTrial: (organizationId: string | null) =>
+    nativeTrialMock(organizationId),
+}));
+vi.mock("@/hooks/useNativeHarnessEnabled", () => ({
+  useNativeHarnessEnabled: () => nativeHarnessEnabled,
+}));
+
 vi.mock("@/hooks/useOrganizationBilling", () => ({
   useOrganizationBillingStatus: () => billingStatusState,
   isPaidPlan: (plan: string) => plan !== "free",
@@ -123,6 +137,9 @@ describe("SidebarCredits", () => {
     isLoadingState = false;
     evalQuotaState = undefined;
     allowanceState = null;
+    nativeTrialState = null;
+    nativeHarnessEnabled = true;
+    nativeTrialMock.mockClear();
     billingStatusState = { effectivePlan: "free" };
   });
 
@@ -181,6 +198,44 @@ describe("SidebarCredits", () => {
     expect(row).toHaveTextContent("Sponsored swarm conversations");
     expect(row).toHaveTextContent("412 / 500 remaining");
     expect(row).not.toHaveTextContent(/free|guarantee/i);
+  });
+
+  it("shows the native harness turns left beside the sponsored row", () => {
+    allowanceState = { remaining: 412, granted: 500 };
+    nativeTrialState = { remaining: 12, granted: 20 };
+    renderCredits();
+
+    const row = screen.getByTestId("sidebar-usage-native-harness-turns");
+    expect(row).toHaveTextContent("Native harness turns");
+    expect(row).toHaveTextContent("12 / 20 remaining");
+    expect(
+      screen.getByRole("button", { name: "About Native harness turns" }),
+    ).toBeInTheDocument();
+    expect(nativeTrialMock).toHaveBeenCalledWith("org_a");
+    // After the sponsored row, as the two allowances read together.
+    expect(
+      screen
+        .getByTestId("sidebar-usage-swarm-sponsored")
+        .compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows no native harness row for a paid plan", () => {
+    renderCredits();
+    expect(
+      screen.queryByTestId("sidebar-usage-native-harness-turns"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("neither reads nor shows the trial for someone who can run no native harness", () => {
+    nativeHarnessEnabled = false;
+    nativeTrialState = { remaining: 12, granted: 20 };
+    renderCredits();
+
+    expect(nativeTrialMock).toHaveBeenCalledWith(null);
+    expect(
+      screen.queryByTestId("sidebar-usage-native-harness-turns"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows no sponsored row when sponsorship does not apply here", () => {
