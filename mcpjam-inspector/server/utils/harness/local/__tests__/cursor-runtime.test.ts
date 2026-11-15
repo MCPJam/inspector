@@ -4,7 +4,7 @@
  * bridge's launch (`bridge-launch.ts`) and its private home.
  */
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, normalize, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 import { CURSOR_CLI_CHECKSUMS } from "../../cursor-bootstrap.js";
@@ -107,17 +107,18 @@ describe("the ACP bridge launch", () => {
         LAUNCHER, "--mcpjam-vendor-root", BUNDLE,
         "--workdir", `${SESSION}/cursor-s1`,
         "--bridge-state-dir", `${HOME}/bridge-state`,
-        "--implementation-dir", `${OVERLAY}/implementation`,
+        "--implementation-dir", `${OVERLAY}${sep}implementation`,
         "--bridge-type", "cursor",
       ],
       workingDirectory: SESSION,
-      files: [{ path: `${OVERLAY}/implementation/implementation.json`, content: expect.any(String) }],
+      files: [{ path: `${OVERLAY}${sep}implementation${sep}implementation.json`, content: expect.any(String) }],
     });
     if (result.kind !== "exec") return;
-    const vendor = `${BUNDLE}/node_modules/@anysphere/agent-cli-runtime`;
+    // Inputs stay POSIX; what the translator builds follows the host's separator.
+    const vendor = `${BUNDLE}${sep}node_modules${sep}@anysphere${sep}agent-cli-runtime`;
     expect(JSON.parse(result.files![0]!.content)).toEqual({
-      executablePath: `${vendor}/node`,
-      args: ["--use-system-ca", `${vendor}/index.js`, "--disable-auto-update", "acp"],
+      executablePath: normalize(`${vendor}${sep}node`),
+      args: ["--use-system-ca", normalize(`${vendor}${sep}index.js`), "--disable-auto-update", "acp"],
       privateHome: false,
       envKeys: [],
     });
