@@ -6,6 +6,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@mcpjam/design-system/tabs";
 import { cn } from "@mcpjam/design-system/cn";
 import { track } from "@/lib/analytics";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -109,54 +115,53 @@ export function OnboardAgentButton() {
         sideOffset={8}
         className="w-[400px] overflow-hidden rounded-xl p-0"
       >
-        <div
-          role="tablist"
-          aria-label="Onboard your agent"
-          className="flex gap-1 border-b border-border px-2 pt-1.5"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected
-            className="h-8 border-b-2 border-primary px-2.5 text-sm font-medium text-card-foreground"
+        <Tabs defaultValue="cli" className="gap-0">
+          <TabsList
+            aria-label="Onboard your agent"
+            className="h-auto w-full justify-start rounded-none border-b border-border bg-transparent p-0 px-2 pt-1.5"
           >
-            MCPJam CLI
-          </button>
-        </div>
-        <div role="tabpanel" aria-label="MCPJam CLI">
-          <div className="flex flex-col gap-2.5 px-3.5 py-3">
-            <p className="text-sm text-muted-foreground">
-              Have your coding agent drive everything in MCPJam.
-            </p>
-            {CLI_STEPS.map(({ id, label, command }) => (
-              <div key={id} className="flex flex-col gap-1.5">
-                <span className="text-xs text-muted-foreground">{label}</span>
-                <CommandRow id={id} command={command} />
-              </div>
-            ))}
-          </div>
-          {CLI_LINKS.map(({ id, label, hint, href }) => (
-            <a
-              key={id}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() =>
-                track("onboard_agent_link_clicked", {
-                  location: "header",
-                  link: id,
-                })
-              }
-              className="flex items-center gap-2.5 border-t border-border px-3.5 py-2.5 text-sm text-card-foreground hover:bg-accent"
+            <TabsTrigger
+              value="cli"
+              className="h-8 flex-none rounded-none border-0 border-b-2 border-transparent px-2.5 text-card-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none dark:text-card-foreground dark:data-[state=active]:border-primary dark:data-[state=active]:bg-transparent"
             >
-              <span className="flex-1">{label}</span>
-              <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
-                {hint}
-                <ArrowUpRight className="size-3" aria-hidden />
-              </span>
-            </a>
-          ))}
-        </div>
+              MCPJam CLI
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="cli">
+            <div className="flex flex-col gap-2.5 px-3.5 py-3">
+              <p className="text-sm text-muted-foreground">
+                Have your coding agent drive everything in MCPJam.
+              </p>
+              {CLI_STEPS.map(({ id, label, command }) => (
+                <div key={id} className="flex flex-col gap-1.5">
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <CommandRow id={id} command={command} />
+                </div>
+              ))}
+            </div>
+            {CLI_LINKS.map(({ id, label, hint, href }) => (
+              <a
+                key={id}
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() =>
+                  track("onboard_agent_link_clicked", {
+                    location: "header",
+                    link: id,
+                  })
+                }
+                className="flex items-center gap-2.5 border-t border-border px-3.5 py-2.5 text-sm text-card-foreground hover:bg-accent"
+              >
+                <span className="flex-1">{label}</span>
+                <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                  {hint}
+                  <ArrowUpRight className="size-3" aria-hidden />
+                </span>
+              </a>
+            ))}
+          </TabsContent>
+        </Tabs>
       </PopoverContent>
     </Popover>
   );
