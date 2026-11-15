@@ -1108,10 +1108,11 @@ export async function driveHostedEvalTurn(
     // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
     // page on the provider-owned ones that verdict declines. A model with no
     // private provider is the user's to fix, and the engine already reported
-    // it as such.
+    // it as such. A harness turn carries the backend's code only in `infra`.
+    const engineCode = lastEngineError?.code ?? lastEngineError?.infra?.code;
     if (
-      lastEngineError?.code === "provider_empty_response" ||
-      lastEngineError?.code === "policy_no_zdr_endpoint"
+      engineCode === "provider_empty_response" ||
+      engineCode === "policy_no_zdr_endpoint"
     ) {
       logger.warn(logLine);
     } else {

@@ -854,6 +854,10 @@ export function describeStreamErrorChunkFailure(
     return describeAsSlug("provider/not_allowlisted", detail);
   if (code === FALLBACK_PROHIBITED_CODE)
     return describeAsSlug("provider/fallback_prohibited", detail);
+  // The provider refused the privacy flags after the 200. Read by status alone
+  // the 422 is `internal/unknown`; the fix is the same as on the HTTP path.
+  if (code === NO_ZDR_ENDPOINT_CODE)
+    return describeAsSlug("provider/no_zdr_endpoint", detail);
   if (isMcpjamOwnedFailureCode(code)) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
   }

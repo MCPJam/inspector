@@ -551,6 +551,7 @@ function resolveSlug(error: unknown): {
   if (platformCode === "GENERATION_FAILED") return { slug: "generation/invalid_output", rawCode: platformCode };
   if (platformCode === "platform_free_budget_exhausted") return { slug: "provider/mcpjam_platform_budget", rawCode: platformCode };
   if (platformCode === "account_suspended") return { slug: "account/suspended", rawCode: platformCode };
+  if (platformCode === "policy_no_zdr_endpoint") return { slug: "provider/no_zdr_endpoint", rawCode: platformCode };
   // The organization AI-key policy's refusals, ahead of the status branches:
   // they arrive as 403/422/503, which read by status alone would become "your
   // MCP server rejected the token" or an outage.

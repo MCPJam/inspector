@@ -288,6 +288,17 @@ describe("describeStreamErrorChunkFailure", () => {
     expect(originOf(normalized)).toBe("ambiguous");
   });
 
+  it("reads a mid-stream policy_no_zdr_endpoint chunk as the user's model choice", () => {
+    const normalized = describeStreamErrorChunkFailure(
+      422,
+      "the provider refused the zero-retention / no-training flags for openai/gpt-5",
+      "policy_no_zdr_endpoint",
+    );
+
+    expect(normalized.slug).toBe("provider/no_zdr_endpoint");
+    expect(originOf(normalized)).toBe("user_config");
+  });
+
   it.each(["mcpjam_api_error", "mcpjam_rate_limit", "mcpjam_config_error"])(
     "owns a mid-stream failure whose code names us (%s)",
     (code) => {
