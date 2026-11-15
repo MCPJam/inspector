@@ -434,17 +434,11 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Set up your server" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Connection refused");
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to connect to MCP server",
+      "Nothing is listening on the host and port the server URL points at.",
     );
-    expect(screen.queryByText("Connection refused")).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "View technical details" }),
-    );
-    expect(screen.getByText("Connection refused")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Hide technical details" }),
-    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Edit URL" })).toBeVisible();
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "   " },
     });
@@ -1195,9 +1189,7 @@ describe("FirstRunOnboardingOverlay", () => {
         bearerToken: "secret-token",
       }),
     );
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to connect to MCP server",
-    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Unauthorized (401)");
   });
 
   it("keeps authorization in place until a selected bearer token is provided", async () => {
@@ -1407,14 +1399,10 @@ describe("FirstRunOnboardingOverlay", () => {
       screen.getByRole("button", { name: "Connect my own server" })
         .parentElement,
     ).toHaveClass("flex", "justify-center");
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to connect to MCP server",
-    );
-    expect(screen.queryByText("Service unavailable")).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "View technical details" }),
-    );
-    expect(screen.getByText("Service unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Connection failed");
+    expect(screen.getByText("Service unavailable")).toBeVisible();
+    // The demo screen's own retry is its one primary action.
+    expect(screen.queryByTestId("error-card-action")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try demo again" }));
     expect(onConnectDemo).toHaveBeenCalledOnce();
     fireEvent.click(

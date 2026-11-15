@@ -14,7 +14,8 @@
  */
 import type { Dispatch } from "react";
 import type { AppAction } from "@/state/app-types";
-import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import { originOf, type MCPServerConfig } from "@mcpjam/sdk/browser";
+import { describeConnectFailure } from "@/lib/connect-failure";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
 import { OAUTH_AUTHORIZATION_CANCELLED_MESSAGE } from "@/lib/hosted-oauth-resume";
@@ -79,7 +80,13 @@ export function createConnectOutcomeTracker(now: () => number = Date.now) {
         const attempt = pending.get(action.name);
         pending.delete(action.name);
         const isSuccess = action.type === "CONNECT_SUCCESS";
-        const rawCode = isSuccess ? undefined : action.normalized?.rawCode;
+        // Every failure carries a slug and an origin, even one that reached
+        // the client as bare text: the connect phase files it under
+        // `connect/unclassified` rather than leaving the slug off.
+        const failure = isSuccess
+          ? undefined
+          : describeConnectFailure(action.error, action.normalized);
+        const rawCode = failure?.rawCode;
         track("server_connect_outcome", {
           outcome: isSuccess ? "success" : classifyConnectFailure(action),
           flow: attempt?.flow ?? "background",
@@ -87,8 +94,8 @@ export function createConnectOutcomeTracker(now: () => number = Date.now) {
           transport: isSuccess
             ? transportOf(action.config)
             : (attempt?.transport ?? null),
-          ...(!isSuccess && action.normalized?.slug
-            ? { error_slug: action.normalized.slug }
+          ...(failure
+            ? { error_slug: failure.slug, error_origin: originOf(failure) }
             : {}),
           ...(typeof rawCode === "number" ? { http_status: rawCode } : {}),
           ...(attempt ? { duration_ms: now() - attempt.startedAt } : {}),

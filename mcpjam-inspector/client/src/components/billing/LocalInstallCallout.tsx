@@ -1,3 +1,5 @@
+import { DESKTOP_APP_DOWNLOAD_URL } from "@/lib/hosted-connect-precheck";
+
 export function LocalInstallCallout() {
   if (import.meta.env.VITE_MCPJAM_HOSTED_MODE !== "true") return null;
   return (
@@ -12,7 +14,7 @@ export function LocalInstallCallout() {
       </p>
       <a
         className="text-sm underline"
-        href="https://github.com/MCPJam/inspector/releases/latest"
+        href={DESKTOP_APP_DOWNLOAD_URL}
         target="_blank"
         rel="noopener noreferrer"
       >
