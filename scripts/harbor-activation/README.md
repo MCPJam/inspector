@@ -29,6 +29,11 @@ account never calls Stripe, Convex, hosted inference, or production billing.
 Eval execution is deterministic arithmetic; prompt/model execution is explicitly
 unsupported. One synthetic unit is a fixture counter, **not an MCPJam price**.
 
+Archive requests and package hashes record actual build delivery. One held-out
+`npm install --prefix` path bypassed the fixture registry and used public npm;
+that run is discovery evidence with an unverified source commit, not patched
+treatment evidence. See [COVERAGE.md](COVERAGE.md) and the final evidence record.
+
 ## Reproduce
 
 See [REPRODUCE.md](REPRODUCE.md) for the complete baseline/patched matrix,

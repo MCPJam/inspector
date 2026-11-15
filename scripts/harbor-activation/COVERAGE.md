@@ -64,3 +64,25 @@ but do not support product prevalence or before/after success claims.
 
 The fresh-agent sample is a usability signal. It is neither a controlled human
 study nor a statistical estimate of activation or conversion.
+
+## Final supplemental observations
+
+The final Codex recovery retest actually ran the protocol conformance suite:
+14/14 applicable checks passed, with 30 explicitly not applicable to the selected
+protocol/capabilities. Baseline and cycle-one Codex recovery runs had 13/14,
+including the GET/405 false schema failure fixed in cycle two. This is one
+fixture and one final fresh-agent exposure, not full transport conformance.
+
+Both held-out A trials produced reproducible validation work; neither observed
+journey naturally reached an Eval. Claude used the pinned final build. Codex's
+`npm install --prefix` used public npm CLI6.2.2/SDK10.7.0 rather than the fixture
+registry; its exact source commit is unverified. Preserve it as public discovery
+evidence, not proof of the final patch. Lockfile URLs/integrity and the absence
+of fixture archive requests expose that distinction. A future benchmark should
+pin npm configuration independently of installation prefix and revalidate it.
+
+Held-out checks also exposed fixture overflow and extra-argument handling
+defects. They remain fixture findings; no third fix cycle was performed. Do not
+infer unsupported product features from unsupported simulated execution or API
+routes. Product plan combinations remain untested unless their contract proves
+they are not applicable.
