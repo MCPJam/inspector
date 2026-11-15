@@ -145,7 +145,7 @@ export function ConformanceSpotlight({
     >
       <FeatureSpotlightAnchor>{children}</FeatureSpotlightAnchor>
       <FeatureSpotlightContent>
-        <Badge>New</Badge>
+        <Badge variant="secondary">New</Badge>
         <FeatureSpotlightTitle>
           Check your server against the MCP spec
         </FeatureSpotlightTitle>

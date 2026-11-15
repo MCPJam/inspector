@@ -59,7 +59,7 @@ function Spotlit({
 function ConformanceCopy() {
   return (
     <>
-      <Badge>New</Badge>
+      <Badge variant="secondary">New</Badge>
       <FeatureSpotlightTitle>
         Check your server against the MCP spec
       </FeatureSpotlightTitle>

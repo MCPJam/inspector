@@ -10,7 +10,7 @@ import { cn } from "../cn";
  * focus and never traps it. Built on Radix Popover: Escape and an outside
  * click both close it, and the caller decides what closing means. Title and
  * description wrap balanced and pretty so no line strands a single word.
- * Mark it new with the design-system `Badge` above the title.
+ * Mark it new with a `secondary` design-system `Badge` above the title.
  */
 
 const SpotlightTitleContext = React.createContext<string | undefined>(
