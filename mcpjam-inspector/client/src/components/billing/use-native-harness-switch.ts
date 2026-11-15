@@ -14,6 +14,8 @@ import { effectiveHarnessId } from "@/shared/harness-descriptors";
  */
 interface SwitchResult {
   switched: number;
+  /** Older deployments only report the total. */
+  switchedHostIds?: string[];
   skipped: number;
   skippedReasons?: {
     client_locked_by_study?: number;
@@ -60,16 +62,21 @@ export function switchedClientsMessage(result: SwitchResult): string {
  * harness moves to MCPJam Harness. `switchCount` is how many that is for a
  * project admin, and zero for anyone else, who cannot change clients.
  * `projectId` is the Convex project, or null to offer no switch at all.
- * `switchClients` resolves true only when a client moved: with none moved,
+ * `switchClients` returns the result only when a client moved: with none moved,
  * the person is still out of turns and the dialog should stay.
  */
 export function useNativeHarnessSwitch(projectId: string | null): {
   switchCount: number;
   isSwitching: boolean;
-  switchClients: () => Promise<boolean>;
+  switchClients: () => Promise<SwitchResult | null>;
 } {
   const { isAuthenticated } = useConvexAuth();
-  const { hosts } = useHostList({ isAuthenticated, projectId });
+  // The mutation covers every project client, including private study backing.
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId,
+    includePrivateBacking: true,
+  });
   const { canManage } = useCanManageProjectClients({
     isAuthenticated,
     projectId,
@@ -81,13 +88,13 @@ export function useNativeHarnessSwitch(projectId: string | null): {
   ).length;
 
   const switchClients = async () => {
-    if (!projectId || isSwitching) return false;
+    if (!projectId || isSwitching) return null;
     setIsSwitching(true);
     try {
       const result = await switchProject({ projectId });
       if (result.switched > 0) toast.success(switchedClientsMessage(result));
       else toast.info(switchedClientsMessage(result));
-      return result.switched > 0;
+      return result.switched > 0 ? result : null;
     } catch (error) {
       toast.error(
         convexErrMessage(
@@ -95,7 +102,7 @@ export function useNativeHarnessSwitch(projectId: string | null): {
           "Could not switch this project's clients to MCPJam Harness. Try again.",
         ),
       );
-      return false;
+      return null;
     } finally {
       setIsSwitching(false);
     }

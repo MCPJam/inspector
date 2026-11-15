@@ -12,6 +12,7 @@ const REFUSAL = new Error(
 );
 
 const afterSwitch = () => useNativeHarnessLimitDialogStore.getState().afterSwitch;
+const SWITCHED = { projectId: "project_a", switchedHostIds: ["client_a"] };
 
 function renderHandoff(error: Error | undefined, started = true) {
   const startNewChat = vi.fn(async () => started);
@@ -20,6 +21,9 @@ function renderHandoff(error: Error | undefined, started = true) {
     ({ error: current }: { error: Error | undefined }) =>
       useNativeHarnessHandoff({
         error: current,
+        projectId: "project_a",
+        hostId: "client_a",
+        chatSessionId: "chat_a",
         refusedText: "List my open tickets",
         startNewChat,
         setComposerInput,
@@ -44,7 +48,7 @@ describe("useNativeHarnessHandoff", () => {
   it("starts a new chat with the refused message once the dialog switches", async () => {
     const { startNewChat, setComposerInput } = renderHandoff(REFUSAL);
 
-    act(() => afterSwitch()?.());
+    act(() => afterSwitch()?.(SWITCHED));
 
     await waitFor(() =>
       expect(setComposerInput).toHaveBeenCalledWith("List my open tickets"),
@@ -55,9 +59,21 @@ describe("useNativeHarnessHandoff", () => {
   it("leaves the composer alone when the person keeps the current chat", async () => {
     const { startNewChat, setComposerInput } = renderHandoff(REFUSAL, false);
 
-    act(() => afterSwitch()?.());
+    act(() => afterSwitch()?.(SWITCHED));
 
     await waitFor(() => expect(startNewChat).toHaveBeenCalled());
+    expect(setComposerInput).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { projectId: "project_b", switchedHostIds: ["client_b"] },
+    { projectId: "project_a", switchedHostIds: ["another_client"] },
+  ])("keeps the refused chat when the switch did not move its client (%j)", (result) => {
+    const { startNewChat, setComposerInput } = renderHandoff(REFUSAL);
+
+    act(() => afterSwitch()?.(result));
+
+    expect(startNewChat).not.toHaveBeenCalled();
     expect(setComposerInput).not.toHaveBeenCalled();
   });
 
