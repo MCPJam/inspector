@@ -13,6 +13,12 @@ import { HOSTED_MODE } from "../config.js";
 import { isOriginCaptureHandled } from "./error-capture-stamp.js";
 import { sentryIdentityMetadata } from "./sentry-request-identity.js";
 import { withConsoleIds } from "./console-log-ids.js";
+import { inspect } from "node:util";
+import {
+  hasDeliveredSecrets,
+  scrubDeliveredSecrets,
+  scrubDeliveredSecretsDeep,
+} from "../../shared/delivered-secret-registry.js";
 
 function withIdentityCapture(capture: () => void): void {
   if (isTrackingDisabled()) return;
@@ -36,6 +42,28 @@ function withIdentityCapture(capture: () => void): void {
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
 const shouldLog = () => isVerbose() || isDev();
+
+/**
+ * A console argument with every credential the backend delivered replaced
+ * (`delivered-secret-registry.ts`). Returned untouched when it holds none, so
+ * an ordinary error still prints as itself, cause chain and all.
+ */
+function consoleSafe(value: unknown): unknown {
+  if (!hasDeliveredSecrets()) return value;
+  if (typeof value === "string") return scrubDeliveredSecrets(value);
+  if (value === null || typeof value !== "object") return value;
+  const printed = inspect(value);
+  const scrubbed = scrubDeliveredSecrets(printed);
+  return scrubbed === printed ? value : scrubbed;
+}
+
+/**
+ * The first of several console arguments, scrubbed, with `%` escaped: a `%j`
+ * in it would print a later object in full, past what `consoleSafe` read.
+ */
+function consoleFirst(line: string): string {
+  return String(consoleSafe(line)).replace(/%/g, "%%");
+}
 
 /**
  * Print a misconfiguration the operator has to fix on stderr when the logger
@@ -159,6 +187,7 @@ export function captureOriginErrorToSentry(
   withIdentityCapture(() =>
     Sentry.captureException(error, {
       ...options,
+      extra: scrubDeliveredSecretsDeep(options.extra),
       ...identity,
       tags: { ...options.tags, ...identity.tags },
     }),
@@ -200,7 +229,7 @@ export const logger = {
       // The final Sentry transport reconstructs approved diagnostics.
       withIdentityCapture(() =>
         Sentry.captureException(captured, {
-          extra: { message, ...context },
+          extra: scrubDeliveredSecretsDeep({ message, ...context }),
           ...sentryIdentityMetadata(),
         }),
       );
@@ -209,7 +238,10 @@ export const logger = {
     ingestToAxiom("error", message, context, error);
 
     if (shouldLog()) {
-      console.error(withConsoleIds(message, context), error);
+      console.error(
+        consoleFirst(withConsoleIds(message, context)),
+        consoleSafe(error),
+      );
     }
   },
 
@@ -232,7 +264,7 @@ export const logger = {
     ingestToAxiom("warn", message, context);
 
     if (shouldLog()) {
-      console.warn(withConsoleIds(message, context));
+      console.warn(consoleSafe(withConsoleIds(message, context)));
     }
   },
 
@@ -247,7 +279,7 @@ export const logger = {
     ingestToAxiom("info", message, context);
 
     if (shouldLog()) {
-      console.log(withConsoleIds(message, context));
+      console.log(consoleSafe(withConsoleIds(message, context)));
     }
   },
 
@@ -260,7 +292,11 @@ export const logger = {
   debug(message: string, ...args: unknown[]) {
     ingestToAxiom("debug", message, args.length ? { args } : undefined);
     if (shouldLog()) {
-      console.log(message, ...args);
+      console.log(
+        ...(args.length
+          ? [consoleFirst(message), ...args.map(consoleSafe)]
+          : [consoleSafe(message)]),
+      );
     }
   },
 

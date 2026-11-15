@@ -17,6 +17,7 @@ import {
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
+import { scrubDeliveredSecretsDeep } from "../../shared/delivered-secret-registry.js";
 import {
   resolveFeatureFlagSource,
   rolloutAnswerWithoutPostHog,
@@ -159,7 +160,7 @@ export function captureServerEventForActor(
       event,
       distinctId: actor.distinctId,
       properties: {
-        ...properties,
+        ...scrubDeliveredSecretsDeep(properties),
         // Retry-dedupe key: posthog-node may resend on transient failures.
         $insert_id: randomUUID(),
         platform: serverPlatform(),

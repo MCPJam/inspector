@@ -148,6 +148,7 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
         projectId: "project-1",
         serverId: "server-1",
         serverName: "Asana",
+        connectionId: "cred-1",
       },
     });
 
@@ -156,6 +157,20 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
       "X-Convex-Stored": "yes",
       Authorization: "Bearer old-hosted-token",
     });
+  });
+
+  it("does not attach onUnauthorized when the refresh would name no account", () => {
+    // Unpinned, a refresh after the server moved could return another
+    // account's token.
+    const config: any = toMCPServerConfig(httpHostedOAuthAuth, {
+      refreshContext: {
+        bearerToken: "bearer-token",
+        projectId: "project-1",
+        serverId: "server-1",
+        serverName: "Asana",
+      },
+    });
+    expect(config.onUnauthorized).toBeUndefined();
   });
 
   it("does not attach onUnauthorized when no refreshContext is supplied", () => {
@@ -212,10 +227,12 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
       expect(init?.headers).toEqual({
         "Content-Type": "application/json",
         Authorization: "Bearer bearer-token",
+        "x-mcpjam-delivery-contract": "1",
       });
       expect(JSON.parse(init?.body)).toEqual({
         projectId: "project-1",
         serverId: "server-1",
+        connectionId: "cred-1",
         // The local resolver runs on the user's own machine, so it declares
         // that — which is what lets the backend hand back the material to
         // refresh an authorization server it cannot reach itself.
@@ -234,6 +251,7 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
         projectId: "project-1",
         serverId: "server-1",
         serverName: "Asana",
+        connectionId: "cred-1",
       },
     });
 
@@ -268,6 +286,7 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
         projectId: "project-1",
         serverId: "server-1",
         serverName: "Asana",
+        connectionId: "cred-1",
       },
     });
 
@@ -366,6 +385,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       secretsBoundOrigin?: string;
     };
     oauthAccessToken: string | null;
+    oauthCredentialId?: string;
   }) {
     return new Response(
       JSON.stringify({
@@ -377,6 +397,9 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             permissions: { chatOnly: false },
             serverConfig: payload.serverConfig,
             oauthAccessToken: payload.oauthAccessToken,
+            ...(payload.oauthCredentialId
+              ? { oauthCredentialId: payload.oauthCredentialId }
+              : {}),
           },
         },
       }),
@@ -400,7 +423,11 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       }
       if (url.endsWith("/web/oauth/force-refresh")) {
         return new Response(
-          JSON.stringify({ accessToken: "refreshed-token" }),
+          JSON.stringify({
+            accessToken: "refreshed-token",
+            credentialId: "cred-1",
+            boundOrigins: ["https://hosted.example.com"],
+          }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         );
       }
@@ -422,6 +449,73 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     expect(config.onUnauthorized).toEqual(expect.any(Function));
     // Two outbound calls: authorize-batch-local, then force-refresh.
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a recovered token bound to another origin than the server's", async () => {
+    // The server moved between the authorize answer and the refresh: the
+    // refreshed token is for the new address and must not reach the old one.
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-1",
+          serverConfig: {
+            transportType: "http",
+            url: "https://hosted.example.com/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return Response.json({
+          accessToken: "moved-token",
+          credentialId: "cred-1",
+          boundOrigins: ["https://moved.example.com"],
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(fakeContext, "bearer-xyz", "proj-1", "srv-1", {
+        serverDisplayName: "Excalidraw",
+      }),
+    ).rejects.toMatchObject({
+      status: 401,
+      message: expect.stringContaining('"Excalidraw" now points at another address'),
+    });
+  });
+
+  it("does not send a recovered token whose origins the backend left out", async () => {
+    // The recovery names no account, so only the origins can tie the token
+    // to this connection; an answer without them is not trusted.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any) =>
+        String(input).endsWith("/web/authorize-batch-local")
+          ? authorizeBatchLocalResponse({
+              serverId: "srv-1",
+              serverConfig: {
+                transportType: "http",
+                url: "https://hosted.example.com/mcp",
+                useOAuth: true,
+              },
+              oauthAccessToken: null,
+            })
+          : Response.json({ accessToken: "unplaced-token", credentialId: "cred-1" }),
+      ),
+    );
+
+    await expect(
+      resolveLocalServerForConnect(fakeContext, "bearer-xyz", "proj-1", "srv-1", {
+        serverDisplayName: "Excalidraw",
+      }),
+    ).rejects.toMatchObject({
+      status: 401,
+      message: expect.stringContaining("could not confirm which address"),
+    });
   });
 
   it("refreshes a private authorization server itself when the backend says it cannot", async () => {
@@ -658,6 +752,40 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     });
   });
 
+  it.each([
+    ["bound to another origin", { boundOrigins: ["https://moved.example.com"] }],
+    ["with no origins", {}],
+  ])(
+    "discover (tokenless auto): a recovered token %s is refused, not swapped for a bare connect",
+    async (_label, origins) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: any) =>
+          String(input).endsWith("/web/authorize-batch-local")
+            ? authorizeBatchLocalResponse({
+                serverId: "srv-auto-4",
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://open.example.com/mcp",
+                  authMethod: "auto",
+                },
+                oauthAccessToken: null,
+              })
+            : Response.json({ accessToken: "moved-token", ...origins }),
+        ),
+      );
+
+      await expect(
+        resolveLocalServerForConnect(fakeContext, "bearer-xyz", "proj-1", "srv-auto-4", {
+          serverDisplayName: "Open Server",
+        }),
+      ).rejects.toMatchObject({
+        status: 401,
+        details: expect.objectContaining({ originRefused: true }),
+      });
+    },
+  );
+
   it("discover (auto with a stored token): rides the oauth rails with the refresh hook", async () => {
     const fetchMock = vi.fn(async (input: any) => {
       const url = String(input);
@@ -670,6 +798,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             authMethod: "auto",
           },
           oauthAccessToken: "stored-token",
+          oauthCredentialId: "cred-1",
         });
       }
       throw new Error(`Unexpected fetch ${url}`);
@@ -1430,7 +1559,11 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
         }
         if (url.endsWith("/web/oauth/force-refresh")) {
           return new Response(
-            JSON.stringify({ accessToken: "refreshed-token" }),
+            JSON.stringify({
+              accessToken: "refreshed-token",
+              credentialId: "cred-1",
+              boundOrigins: ["https://oauth.example.com"],
+            }),
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }

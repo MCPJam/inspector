@@ -25,6 +25,10 @@ export interface AuthorizedOAuthConnection extends OAuthConnection {
   /** Canonical per-account timestamp, including the legacy createdAt fallback. */
   credentialAuthorizedAt?: number;
   accessToken?: string | null;
+  /** Origins `accessToken` may be sent to; absent from older backends. */
+  boundOrigins?: string[];
+  /** Absent: the person's own sign-in. */
+  accountKind?: "shared" | "uploaded";
   unavailableReason?: string;
   /**
    * Built by the Inspector from the authorize result's default credential, not

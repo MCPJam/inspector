@@ -56,6 +56,8 @@ vi.mock("convex/browser", () => ({
 }));
 
 const SERVER_URL = "https://mcp.example.test/mcp";
+/** Where the stored header was saved, so it goes with every request. */
+const SERVER_ORIGIN = new URL(SERVER_URL).origin;
 const MARKER = /UNEXPECTED_MARKER/;
 const ALLOWED_RESPONSE_HEADERS = new Set([
   "content-type",
@@ -168,6 +170,7 @@ function authorizeResponse(): Response {
       url: SERVER_URL,
       useOAuth: false,
       headers: CONFIGURED_HEADERS,
+      boundOrigins: [SERVER_ORIGIN],
     },
   });
 }
@@ -186,6 +189,7 @@ function authorizeBatchResponse(serverIds: string[]): Response {
             transportType: "http",
             url: SERVER_URL,
             headers: CONFIGURED_HEADERS,
+            boundOrigins: [SERVER_ORIGIN],
           },
         },
       ]),
@@ -576,18 +580,29 @@ describe("local MCP routes", () => {
     expect(payload.message).toContain("UNEXPECTED_MARKER_BODY");
   });
 
-  it("web tools/list: returns the exchange log as recorded", async () => {
-    upstream.current = mcpServer;
+  it("web tools/list: returns the exchange log unprojected, stored credential headers redacted", async () => {
+    const sent: Array<string | null> = [];
+    upstream.current = async (request) => {
+      sent.push(request.headers.get("x-tenant-secret"));
+      return mcpServer(request);
+    };
     const res = await post(routes.web, "/api/web/tools/list", target);
     expect(res.status).toBe(200);
+    expect(sent).toContain("UNEXPECTED_MARKER_CONFIG");
     const payload = (await res.json()) as any;
-    const headers = payload._httpLogs.map(
-      (event: any) => event.exchange.request.headers,
-    );
-    expect(headers).toContainEqual(
+    const exchanges = payload._httpLogs.map((event: any) => event.exchange);
+    expect(
+      exchanges.map((exchange: any) => exchange.response?.headers),
+    ).toContainEqual(
       expect.objectContaining({
-        "x-tenant-secret": "UNEXPECTED_MARKER_CONFIG",
+        "x-upstream-trace": "UNEXPECTED_MARKER_HEADER",
       }),
     );
+    expect(
+      exchanges.map((exchange: any) => exchange.request.headers),
+    ).toContainEqual(
+      expect.objectContaining({ "x-tenant-secret": "<redacted>" }),
+    );
+    expect(JSON.stringify(payload)).not.toContain("UNEXPECTED_MARKER_CONFIG");
   });
 });
