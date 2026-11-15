@@ -54,7 +54,7 @@ describe("ProbeRow", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Expected 401, got 200")).toBeInTheDocument();
-    expect(screen.getByLabelText("unexpected")).toBeInTheDocument();
+    expect(screen.getByText("Unexpected:")).toHaveClass("sr-only");
     expect(screen.getByText("How to fix")).toBeInTheDocument();
     expect(screen.getByText(/\$OTHER_TOKEN/)).toBeInTheDocument();
   });

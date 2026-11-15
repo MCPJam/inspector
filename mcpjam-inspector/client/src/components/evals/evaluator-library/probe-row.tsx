@@ -147,10 +147,13 @@ export function ProbeRow({
                     )}
                   >
                     {step.passed ? (
-                      <Check aria-label="as expected" className="size-3" />
+                      <Check aria-hidden className="size-3" />
                     ) : (
-                      <X aria-label="unexpected" className="size-3" />
+                      <X aria-hidden className="size-3" />
                     )}
+                    <span className="sr-only">
+                      {step.passed ? "As expected:" : "Unexpected:"}
+                    </span>
                   </span>
                   <div className="text-sm">
                     {step.label}
