@@ -20,6 +20,7 @@ import {
   OPENAI_FIELD_LIMITS,
   OPENAI_SUBMISSION_TEST_CASES as CASES,
 } from "../../openai-readiness/profile.js";
+import { DIRECTORY_REVIEWER_FIXTURE_PAIRS } from "../reviewer/evidence.js";
 import data from "./chatgpt-plugin.json" with { type: "json" };
 import {
   placementsFrom,
@@ -90,6 +91,29 @@ const RULES: Record<FieldKey, FieldRules> = {
   // An account in more than one organization needs the steps to pick one.
   "reviewer.signInSteps": opt("textarea", {
     requiredWith: ["reviewer.tenant"],
+  }),
+  // MCPJam's own reviewer check, beside the portal's credentials.
+  "reviewer.identityTool": opt("text", {
+    requiredWith: [
+      "reviewer.expectedIdentity",
+      "reviewer.expectedOrganization",
+    ],
+  }),
+  "reviewer.identityArgs": opt("text"),
+  "reviewer.expectedIdentityPath": opt("text", {
+    requiredWith: ["reviewer.expectedIdentity"],
+  }),
+  "reviewer.expectedIdentity": opt("text", {
+    requiredWith: ["reviewer.expectedIdentityPath"],
+  }),
+  "reviewer.expectedOrganizationPath": opt("text", {
+    requiredWith: ["reviewer.expectedOrganization"],
+  }),
+  "reviewer.expectedOrganization": opt("text", {
+    requiredWith: ["reviewer.expectedOrganizationPath"],
+  }),
+  "reviewer.fixtures": opt("pairs", {
+    pairs: DIRECTORY_REVIEWER_FIXTURE_PAIRS,
   }),
   // Exactly five and three for an MCP server's first review.
   "reviewer.testCases": req("rows", {

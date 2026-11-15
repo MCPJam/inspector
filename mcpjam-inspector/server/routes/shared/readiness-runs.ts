@@ -33,6 +33,8 @@ import {
   executeHostedReadinessRun,
   type ExecuteHostedReadinessOptions,
 } from "../../services/readiness/worker.js";
+import { rehearseReviewerSignInLive } from "../../services/readiness/reviewer-sign-in-live.js";
+import type { ReadinessReviewerAccount } from "../../services/readiness/reviewer-path.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 
@@ -113,6 +115,8 @@ export interface StartHostedReadinessRunInput {
    * refuses one that is not the current revision, then freezes it.
    */
   testPlanRevision?: number;
+  /** The submission's reviewer account, authorized as itself (`reviewerAccountForRun`). */
+  reviewer?: ReadinessReviewerAccount;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -266,6 +270,7 @@ export async function startHostedReadinessRun(
         ...(input.reviewerAttemptId
           ? { reviewerAttemptId: input.reviewerAttemptId }
           : {}),
+        ...(input.reviewer ? { reviewer: input.reviewer } : {}),
         analyticsActor: input.analyticsActor,
       },
       input.authorized,
@@ -283,23 +288,35 @@ export async function startHostedReadinessRun(
   };
 }
 
+/** The headers an authorize exchange's account sends on MCP requests. */
+export function readinessMcpHeaders(
+  authorized: AuthorizedReadinessServer,
+): Record<string, string> {
+  return {
+    ...(authorized.serverConfig.headers ?? {}),
+    ...(authorized.oauthAccessToken
+      ? { authorization: `Bearer ${authorized.oauthAccessToken}` }
+      : {}),
+  };
+}
+
 /**
  * Execute a run in this process, detached, on a lease this node holds, with
  * the credentials of the authorize exchange that let it start or resume.
  */
 export function executeHostedReadinessRunDetached(
-  run: Omit<ExecuteHostedReadinessOptions, "mcpHeaders" | "fetchFn">,
+  run: Omit<
+    ExecuteHostedReadinessOptions,
+    "mcpHeaders" | "fetchFn" | "reviewerSignIn"
+  >,
   authorized: AuthorizedReadinessServer,
 ): void {
-  const headers: Record<string, string> = {
-    ...(authorized.serverConfig.headers ?? {}),
-  };
-  if (authorized.oauthAccessToken) {
-    headers.authorization = `Bearer ${authorized.oauthAccessToken}`;
-  }
+  const headers = readinessMcpHeaders(authorized);
 
   void executeHostedReadinessRun({
     ...run,
+    // Run only on a reviewer attempt the worker joined.
+    reviewerSignIn: rehearseReviewerSignInLive,
     // The saved credential goes only on MCP requests to the endpoint. The
     // SDK keeps it off discovery, including authorization-server metadata
     // on an origin the server chooses.
@@ -384,6 +401,8 @@ export function toReadinessRunDto(
     submissionRevision: run.submissionRevision ?? null,
     // The stored plugin version a ChatGPT plugin submission's run grades.
     pluginVersionId: run.pluginVersionId ?? null,
+    // The test plan revision whose calls the run makes.
+    testPlanRevision: run.testPlanRevision ?? null,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };

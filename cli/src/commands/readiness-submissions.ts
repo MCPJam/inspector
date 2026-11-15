@@ -48,6 +48,7 @@ import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
 import { collectRepeated } from "./readiness-lazy-auth.js";
 import { registerSubmissionHandoffCommands } from "./readiness-submission-handoff.js";
+import { registerTestPlanCommands } from "./readiness-test-plans.js";
 
 type Options = PlatformOptions & {
   project?: string;
@@ -77,6 +78,7 @@ type RunOptions = Options & {
   wait?: boolean;
   aiObservations?: boolean;
   pluginVersion?: string;
+  testPlanRevision?: number;
 };
 
 type GateOptions = Options & { failOn: string[]; warnOnly: string[]; clear?: boolean };
@@ -276,6 +278,7 @@ async function runSubmission(submission: string, command: Command): Promise<void
     includeLlmObservations: options.aiObservations ? true : undefined,
     idempotencyKey: options.idempotencyKey,
     pluginVersionId: options.pluginVersion,
+    testPlanRevision: options.testPlanRevision,
   };
   const start = startDirectorySubmissionRunOperation;
   const started = await runPlatformOperation(options, globals.timeout, (context) => start.execute(input, context), extras);
@@ -422,6 +425,11 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
       .option("--wait", "Wait for the run to end, then exit 0 ready, 1 not ready or 3 incomplete")
       .option("--ai-observations", "Add optional model observations, included with MCPJam")
       .option("--plugin-version <id>", "The stored plugin version to grade. Required for a ChatGPT plugin submission")
+      .option(
+        "--test-plan-revision <n>",
+        "Also make the calls of the saved test plan at this revision, from `plan show`. It must be the current one.",
+        (value: string) => parsePositiveInteger(value, "--test-plan-revision")
+      )
       .option("--idempotency-key <key>", "Replay guard: a retry returns the run already started")
   );
   run.action((id: string, _options: RunOptions, command: Command) =>
@@ -482,4 +490,6 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
   });
 
   registerSubmissionHandoffCommands(submission);
+
+  registerTestPlanCommands(submission);
 }

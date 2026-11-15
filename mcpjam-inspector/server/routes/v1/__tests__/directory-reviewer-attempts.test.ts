@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
-import { CLAUDE_CONNECTOR_FLOW } from "@mcpjam/sdk";
+import { CHATGPT_PLUGIN_FLOW, CLAUDE_CONNECTOR_FLOW } from "@mcpjam/sdk";
 
 const {
   validateGuestTokenMock,
@@ -383,6 +383,55 @@ describe("v1 reviewer attempts", () => {
         projectId: "p2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       });
       expect((await request("POST", `${ONE}/cancel`)).status).toBe(404);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a ChatGPT plugin submission", () => {
+    const PLUGIN_VERSION = "pvxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    const PLUGIN_ROW = {
+      ...ROW,
+      directory: "openai",
+      flowId: CHATGPT_PLUGIN_FLOW.id,
+      flowVersion: CHATGPT_PLUGIN_FLOW.version,
+      pluginId: "plgxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      pluginVersionId: PLUGIN_VERSION,
+    };
+
+    it("starts and resumes its attempt's run on the plugin version saved on the submission", async () => {
+      queries["directorySubmissions:getDirectorySubmission"] = () => PLUGIN_ROW;
+      queries["directoryReviewerAttempts:getDirectoryReviewerAttempt"] =
+        () => ({ ...ATTEMPT, state: "waiting-for-person" });
+      const started = await request("POST", BASE, {
+        passwordSecretName: PASSWORD_SECRET,
+      });
+      expect(started.status).toBe(201);
+      expect((await request("POST", `${ONE}/resume`)).status).toBe(202);
+      const graded = {
+        readinessKind: "openai",
+        submissionMode: "mcp-uploaded-skills",
+        pluginVersionId: PLUGIN_VERSION,
+      };
+      expect(calls("claudeReadinessRuns:requestReadinessRun")).toEqual([
+        expect.objectContaining(graded),
+        expect.objectContaining(graded),
+      ]);
+    });
+
+    it("refuses one with no saved version before any attempt is created or resumed", async () => {
+      queries["directorySubmissions:getDirectorySubmission"] = () => ({
+        ...PLUGIN_ROW,
+        pluginVersionId: undefined,
+      });
+      for (const [path, body] of [
+        [BASE, { passwordSecretName: PASSWORD_SECRET }],
+        [`${ONE}/resume`, undefined],
+      ] as const) {
+        const res = await request("POST", path, body);
+        expect(res.status).toBe(400);
+        const { message } = (await res.json()) as { message: string };
+        expect(message).toContain("no plugin version saved");
+      }
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
   });

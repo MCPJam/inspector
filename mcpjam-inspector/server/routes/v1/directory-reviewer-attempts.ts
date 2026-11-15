@@ -30,6 +30,7 @@ import {
 import {
   ATTEMPT_NOT_FOUND,
   readReviewerAttempt,
+  reviewerAccountForRun,
   reviewerAttemptFunctions as fn,
 } from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
@@ -132,6 +133,26 @@ function savedServerOf(row: Submission): string {
 }
 
 /**
+ * What the attempt's run grades beside the server. A ChatGPT plugin
+ * submission's run grades the plugin version saved on the submission, checked
+ * before an attempt is created or resumed so a refusal leaves none open.
+ */
+function gradedPackage(row: Submission) {
+  if (flowOf(row).directory !== "openai") return {};
+  if (!row.pluginVersionId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "This ChatGPT plugin submission has no plugin version saved, so its run has nothing to grade. Choose the plugin version on the submission, then start the sign-in again.",
+    );
+  }
+  return {
+    submissionMode: "mcp-uploaded-skills" as const,
+    pluginVersionId: row.pluginVersionId,
+  };
+}
+
+/**
  * Start the run that works on the attempt. Its key comes from the attempt, so
  * a replayed start finds the run the first one started instead of signing in
  * twice. A start that fails leaves the attempt open, and names it.
@@ -143,8 +164,13 @@ async function startAttemptRun(
   attempt: Attempt,
   authorized: AuthorizedReadinessServer,
   runKey: string,
+  token: string,
 ) {
   const flow = flowOf(row);
+  const graded = gradedPackage(row);
+  const reviewer = await reviewerAccountForRun(convex, row.id, (connectionId) =>
+    authorizeServer(c, token, row.projectId, savedServerOf(row), { connectionId }),
+  );
   try {
     const receipt = await startHostedReadinessRun({
       convex,
@@ -154,14 +180,16 @@ async function startAttemptRun(
       idempotencyKey: runKey,
       includeLlmObservations: false,
       submissionId: row.id,
+      ...graded,
       reviewerAttemptId: attempt.id,
       authorized,
+      reviewer,
       analyticsActor: readinessAnalyticsActor(c, row.projectId),
       translateError: (error) => translateConvexWriteError(error, { resource: "Readiness run" }),
     });
     captureServerEvent(c, "directory_readiness_run_started_server", {
       readiness_kind: flow.directory,
-      submission_mode: null,
+      submission_mode: graded.submissionMode ?? null,
       flow_id: flow.id,
       include_llm_observations: false,
       deduped: receipt.deduped,
@@ -182,7 +210,9 @@ reviewerAttempts.post(BASE, async (c) => {
   const token = await getConvexBearerForRequest(c);
   const convex = createConvexClient(token);
   const row = await readSubmission(convex, projectId, submissionId);
-  // Before anything is written: a server the caller cannot use leaves no attempt.
+  // Before anything is written: a server the caller cannot use, or a plugin
+  // with no version to grade, leaves no attempt.
+  gradedPackage(row);
   const authorized = await authorizeServer(c, token, projectId, savedServerOf(row));
   let created: Attempt & { replayed?: true };
   try {
@@ -198,7 +228,7 @@ reviewerAttempts.post(BASE, async (c) => {
   // A replay of an attempt that has since ended starts nothing.
   const run =
     attempt.state === "running"
-      ? await startAttemptRun(c, convex, row, attempt, authorized, `reviewer-attempt:${attempt.id}`)
+      ? await startAttemptRun(c, convex, row, attempt, authorized, `reviewer-attempt:${attempt.id}`, token)
       : null;
   return v1Resource(c, { attempt, run, ...(replayed ? { replayed } : {}) }, 201);
 });
@@ -235,6 +265,7 @@ reviewerAttempts.post(`${ONE}/resume`, async (c) => {
   const convex = createConvexClient(token);
   const row = await readSubmission(convex, scope.projectId, scope.submissionId);
   await readReviewerAttempt(convex, scope, attemptId, translateRead);
+  gradedPackage(row);
   const authorized = await authorizeServer(c, token, scope.projectId, savedServerOf(row));
   let attempt: Attempt;
   try {
@@ -243,7 +274,7 @@ reviewerAttempts.post(`${ONE}/resume`, async (c) => {
     throw attemptWriteError(error);
   }
   const runKey = `reviewer-attempt:${attempt.id}:${attempt.resumedAt ?? attempt.updatedAt}`;
-  const run = await startAttemptRun(c, convex, row, attempt, authorized, runKey);
+  const run = await startAttemptRun(c, convex, row, attempt, authorized, runKey, token);
   return v1Resource(c, { attempt, run }, 202);
 });
 

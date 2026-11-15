@@ -73,6 +73,7 @@ import {
   type BrowserSecretRegistry,
 } from "./secret-registry";
 import { resolveActSecrets } from "./secret-substitution";
+import { armNavigationStop, isStopTarget } from "./navigation-stop";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -865,7 +866,37 @@ export class ChromiumDriver implements BrowserDriver {
     command: BrowserCommand,
     context?: CommandContext,
   ): Promise<BrowserCommandResult> {
-    return this.barrier.run(() => this.executeInBarrier(command, context));
+    return this.barrier.run(() => this.executeStopping(command, context));
+  }
+
+  /**
+   * Stop a top-level navigation to the command's `stopAt` page while it runs
+   * (`navigation-stop`). A stop that cannot be armed fails the command before
+   * it acts, rather than letting that page load.
+   */
+  private async executeStopping(
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> {
+    const target = command.stopAt;
+    const kind = command.action.kind;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const page =
+      (kind === "navigate" || kind === "act") && isStopTarget(target)
+        ? this.tabs.get(tabId)?.page
+        : undefined;
+    const cdp = page ? await page.cdp() : null;
+    if (!cdp || !isStopTarget(target)) {
+      return this.executeInBarrier(command, context);
+    }
+    const stop = await armNavigationStop(cdp, target);
+    try {
+      const result = await this.executeInBarrier(command, context);
+      const stoppedAt = stop.stopped();
+      return stoppedAt ? { ...result, stoppedAt } : result;
+    } finally {
+      await stop.disarm();
+    }
   }
 
   private async executeInBarrier(

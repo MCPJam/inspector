@@ -30,7 +30,10 @@ import {
   startHostedReadinessRun,
   toReadinessRunDto,
 } from "../shared/readiness-runs.js";
-import { runnableReviewerAttemptId } from "../shared/reviewer-attempts.js";
+import {
+  reviewerAccountForRun,
+  runnableReviewerAttemptId,
+} from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
@@ -377,7 +380,8 @@ directorySubmissions.delete(ONE, async (c) => {
 
 /**
  * Grade the submission's saved server with its answers frozen at this
- * revision, and for a ChatGPT plugin the stored version the body names. The
+ * revision, and for a ChatGPT plugin the stored version the body names. A
+ * `testPlanRevision` adds that plan's calls, and must be the current one. The
  * server is authorized exactly as the readiness start does, and the directory
  * comes from the submission's flow, never the body.
  */
@@ -395,7 +399,8 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
       ? undefined
       : idParam(body.pluginVersionId, "pluginVersionId", VERSION_NOT_FOUND),
   );
-  if (!row.serverId) {
+  const serverId = row.serverId;
+  if (!serverId) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -410,7 +415,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
   const receipt = await startHostedReadinessRun({
     convex,
     projectId,
-    serverId: row.serverId,
+    serverId,
     publisher: flow.directory,
     idempotencyKey: key,
     includeLlmObservations: body.includeLlmObservations === true,
@@ -418,7 +423,10 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     ...graded,
     ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
     testPlanRevision: body.testPlanRevision,
-    authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
+    authorized: await authorizeServer(c, convexAuthToken, projectId, serverId),
+    reviewer: await reviewerAccountForRun(convex, submissionId, (connectionId) =>
+      authorizeServer(c, convexAuthToken, projectId, serverId, { connectionId }),
+    ),
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>
       translateConvexWriteError(error, { resource: "Readiness run" }),
@@ -456,8 +464,8 @@ directorySubmissions.get(`${ONE}/results`, async (c) => {
   });
 });
 
-/** The run `runId` names, if it graded this submission and completed. */
-async function readCompleteRun(
+/** The run `runId` names, if it graded this submission. */
+export async function readSubmissionRun(
   convex: ConvexHttpClient,
   row: Submission,
   runId: string,
@@ -473,6 +481,16 @@ async function readCompleteRun(
   if (!run || run.submissionId !== row.id) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_NOT_FOUND);
   }
+  return run;
+}
+
+/** The run `runId` names, if it graded this submission and completed. */
+async function readCompleteRun(
+  convex: ConvexHttpClient,
+  row: Submission,
+  runId: string,
+): Promise<RunRow> {
+  const run = await readSubmissionRun(convex, row, runId);
   if (run.status !== "completed") {
     throw new WebRouteError(
       409,

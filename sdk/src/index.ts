@@ -785,6 +785,18 @@ export * from "./directory-readiness/flows/index.js";
 export * from "./directory-readiness/test-plan/index.js";
 // The decision scan: question ids, rule candidates, the request, grading.
 export * from "./directory-readiness/decisions/index.js";
+// The reviewer path. Gathering it dials, so that half is Node-only.
+export * from "./directory-readiness/reviewer/index.js";
+export {
+  checkDirectoryReviewerIdentity,
+  connectDirectoryReviewer,
+  directoryReviewerReadRefusal,
+  gatherDirectoryReviewerPath,
+  lookupDirectoryReviewerFixtures,
+  readDirectoryJsonPath,
+} from "./directory-readiness/reviewer/gather.js";
+export type { DirectoryReviewerClient } from "./directory-readiness/reviewer/gather.js";
+export { probeDirectoryClientSignatures } from "./directory-readiness/reviewer/client-signatures.js";
 // What a submission's reader resumes from, and the pack its team receives.
 export * from "./directory-readiness/handoff.js";
 export * from "./directory-readiness/handoff-markdown.js";

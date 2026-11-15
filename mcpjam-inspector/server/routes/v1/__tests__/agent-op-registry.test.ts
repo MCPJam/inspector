@@ -180,6 +180,8 @@ describe("agent op registry", () => {
         // the agent as its author.
         "create_directory_submission",
         "update_directory_submission",
+        // A test plan revision: it calls nothing until a start names it.
+        "save_directory_submission_test_plan",
         // Stops a reviewer sign-in, as cancel_readiness_run stops a run.
         "cancel_reviewer_attempt",
         // What happened in the directory, as the user told it or as seen in
@@ -909,6 +911,14 @@ describe("agent op registry", () => {
         client,
       }),
     ).toEqual(input);
+  });
+
+  it("says on a submission run's approval when it makes a test plan's calls", () => {
+    const describeRun = proposalMetaFor("start_directory_submission_run").description;
+    expect(describeRun({ submission: "sub_1" })).toBe("Run the checks for directory submission sub_1");
+    expect(describeRun({ submission: "sub_1", testPlanRevision: 3 })).toBe(
+      "Run the checks for directory submission sub_1, with the calls of its test plan revision 3",
+    );
   });
 
   it("freezes a directory install pin and endpoint at mint time", async () => {
@@ -2326,6 +2336,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
   "- `update_directory_submission` records you as the author of each answer you write. `confirm` states that a declaration (data handling, acknowledgments) is true: confirm one only when the user told you it is. A 409 names the `conflictingKeys` someone else changed since your `expectedRevision`; read the submission again before you reapply your change.",
   "- `start_directory_submission_run` returns a RECEIPT. Poll `get_readiness_run` until it finishes, then read `get_directory_submission_results`, which places each finding under the portal step and field it belongs to.",
+  "- `save_directory_submission_test_plan` calls no tool. A run makes the plan's calls, destructive ones included, only when `start_directory_submission_run` names the plan's `revision` as `testPlanRevision`: name it only for a plan the user has reviewed.",
   "- `create_reviewer_attempt` takes secret NAMES only. Never write a password into a call: ask the user to save it in the app as a materialized project secret whose name starts with `MCPJAM_REVIEWER_`, then pass that name.",
   "- Given a directory submission's id or link, call `get_directory_submission_handoff` first: it says where the submission stands and lists `nextActions`, each an operation with the input to send. Do not ask the user again for anything it already holds.",
   "- Record a directory status, snapshot or finding only as the user told you (`reported`) or as you saw it in the portal (`observed`), never inferred from MCPJam's own results. A record is never edited: to correct one, record a newer one.",

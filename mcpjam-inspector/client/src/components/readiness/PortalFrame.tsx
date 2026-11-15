@@ -38,6 +38,7 @@ import { RecordStatusDialog } from "./RecordStatusDialog";
 import { DIRECTORY_NAMES } from "./RehearsalBar";
 import { OpenEvidence } from "./ShowEvidence";
 import { StatusPanel } from "./SubmissionStatus";
+import { ReviewerPath } from "./ReviewerSection";
 
 function StepBody({
   flow,
@@ -355,6 +356,12 @@ export function PortalFrame({
                 onConfirm={session.confirm}
               />
             )}
+            <ReviewerPath
+              flow={flow}
+              step={step}
+              view={view}
+              session={session}
+            />
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <Button
                 type="button"

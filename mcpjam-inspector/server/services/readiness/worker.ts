@@ -47,6 +47,7 @@ import {
   heartbeatReadinessRun,
   joinReviewerAttempt,
   ReadinessSubmissionUnreadableError,
+  recordReviewerAttempt,
   requestManagedObservations,
   requestReadinessDecisions,
   type ReadinessClaimRefusal,
@@ -54,6 +55,10 @@ import {
   type ReadinessLease,
   type ReadinessRunSubmission,
 } from "./backend-client.js";
+import type {
+  ReviewerAttemptView,
+  ReviewerSignInOutcome,
+} from "./reviewer-sign-in.js";
 import {
   ReadinessLeaseLostError,
   ReadinessRunCancelledError,
@@ -61,11 +66,13 @@ import {
   type DirectoryReadinessResult,
   type ReadinessPublisher,
 } from "./runner.js";
+import { requestTestArgumentDrafts } from "./test-argument-drafts.js";
 import { runDirectoryTestPlan } from "./test-plan-run.js";
 import {
   ReadinessPackageUnreadableError,
   readRunPackage,
 } from "./run-package.js";
+import type { ReadinessReviewerAccount } from "./reviewer-path.js";
 import {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
@@ -74,6 +81,7 @@ import {
   isMuseReadinessResult,
   redactConformanceReportForSharing,
   type DirectoryFeatureClaim,
+  type DirectoryFlow,
   type DirectoryLazyAuthProbeConfig,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
@@ -120,6 +128,22 @@ export interface ExecuteHostedReadinessOptions {
    * takes no attempt, so the run joins it before anything dials.
    */
   reviewerAttemptId?: string;
+  /**
+   * Rehearses the reviewer's sign-in on the attempt the run joined, before
+   * grading. The routes inject the live rehearsal, so a run without one, and
+   * a test, never reserves a desktop.
+   */
+  reviewerSignIn?: (input: {
+    lease: ReadinessLease;
+    attemptId: string;
+    attempt: ReviewerAttemptView;
+    signal: AbortSignal;
+  }) => Promise<ReviewerSignInOutcome>;
+  /**
+   * The reviewer account the start authorized as itself: the only credential
+   * reviewer checks use. A submission run without one blocks them with why.
+   */
+  reviewer?: ReadinessReviewerAccount;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -206,7 +230,10 @@ export function summarizeReadinessResult(
  */
 async function readSubmissionAnswers(
   options: ExecuteHostedReadinessOptions,
-): Promise<ReadinessRunSubmission["answers"]> {
+): Promise<{
+  flow: DirectoryFlow;
+  answers: ReadinessRunSubmission["answers"];
+}> {
   const submission = await getReadinessRunSubmission(options.lease);
   const flow = getDirectoryFlow(submission.flowId);
   if (flow?.directory !== options.publisher) {
@@ -221,8 +248,13 @@ async function readSubmissionAnswers(
       `This run's answers follow version ${submission.flowVersion} of the ${submission.flowId} form, and this server grades version ${flow.version}. Start the run again after MCPJam updates.`,
     );
   }
-  return submission.answers;
+  return { flow, answers: submission.answers };
 }
+
+const NO_REVIEWER_ACCOUNT: ReadinessReviewerAccount = {
+  missing:
+    "This run was started without the reviewer account. Start a new run from the submission.",
+};
 
 /**
  * Whether the run's declared shape includes an uploaded package. A hosted
@@ -239,19 +271,58 @@ function gradesPackage(options: ExecuteHostedReadinessOptions): boolean {
 }
 
 /**
- * Join the reviewer attempt the run carries. An attempt it cannot join (ended,
- * held by another run) leaves the run grading the submission without it.
+ * Join the reviewer attempt the run carries, and rehearse its sign-in. An
+ * attempt it cannot join (ended, held by another run) leaves the run grading
+ * the submission without it.
  */
-async function joinAttempt(options: ExecuteHostedReadinessOptions): Promise<void> {
+async function joinAndRehearse(
+  options: ExecuteHostedReadinessOptions,
+  signal: AbortSignal,
+): Promise<ReviewerSignInOutcome | undefined> {
   const attemptId = options.reviewerAttemptId;
-  if (!attemptId) return;
+  if (!attemptId) return undefined;
   const join = await joinReviewerAttempt(options.lease, attemptId);
-  if (join.joined) return;
-  logger.warn("[readiness] the run did not join its reviewer attempt", {
-    runId: options.lease.runId,
+  if (!join.joined) {
+    logger.warn("[readiness] the run did not join its reviewer attempt", {
+      runId: options.lease.runId,
+      attemptId,
+      reason: join.reason,
+    });
+    return undefined;
+  }
+  if (!join.attempt || !options.reviewerSignIn) return undefined;
+  return options.reviewerSignIn({
+    lease: options.lease,
     attemptId,
-    reason: join.reason,
+    attempt: join.attempt,
+    signal,
   });
+}
+
+/** A run that stops for a person ends with this; the attempt says what to do. */
+const WAITING_FOR_PERSON =
+  "The reviewer sign-in reached a step only a person can finish, so this run stopped. Finish that step, then resume the reviewer attempt.";
+
+/**
+ * End a connected attempt as passed once the run has graded with it, and
+ * before the finalize releases the lease the write needs.
+ */
+async function passAttempt(lease: ReadinessLease, attemptId: string) {
+  try {
+    await recordReviewerAttempt(lease, attemptId, {
+      outcome: "passed",
+      detail:
+        "MCPJam signed in as the reviewer, connected the reviewer account and graded the submission.",
+    });
+  } catch (error) {
+    if (error instanceof ReadinessLeaseLostError) throw error;
+    // The attempt was cancelled or taken over meanwhile; the grade stands.
+    logger.warn("[readiness] the reviewer attempt was not ended", {
+      runId: lease.runId,
+      attemptId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /**
@@ -338,8 +409,15 @@ export async function executeHostedReadinessRun(
       terminal = { outcome: "abandoned", terminalReason: refusal };
       return;
     }
-    await joinAttempt(options);
-    const submissionAnswers = options.submissionId
+    const signIn = await joinAndRehearse(options, controller.signal);
+    if (signIn?.kind === "waiting-for-person") {
+      // The attempt now waits for a person, who resumes it with a new run, so
+      // this one ends here and frees its slot.
+      await failReadinessRun(lease, "waiting_for_person", WAITING_FOR_PERSON);
+      terminal = { outcome: "blocked", terminalReason: "waiting_for_person" };
+      return;
+    }
+    const submission = options.submissionId
       ? await readSubmissionAnswers(options)
       : undefined;
     const runPackage = gradesPackage(options)
@@ -359,7 +437,15 @@ export async function executeHostedReadinessRun(
         ? { claimedFeatures: options.claimedFeatures }
         : {}),
       // As stored: the grader merges the flow's defaults itself.
-      ...(submissionAnswers ? { submissionAnswers } : {}),
+      ...(submission
+        ? {
+            submissionAnswers: submission.answers,
+            reviewer: {
+              ...submission,
+              account: options.reviewer ?? NO_REVIEWER_ACCOUNT,
+            },
+          }
+        : {}),
       ...(runPackage ? { pluginPackage: runPackage } : {}),
       // The requester's opt-in decides whether a requester exists AT ALL. A
       // runner with no requester structurally cannot spend, which is a
@@ -383,9 +469,16 @@ export async function executeHostedReadinessRun(
           mcpHeaders: options.mcpHeaders,
           signal: controller.signal,
           deadlineAt: startedAtMs + RUN_DEADLINE_MS,
+          // The same opt-in: drafting sends the tools' text to a model.
+          requestDrafts: options.includeLlmObservations
+            ? (request) => requestTestArgumentDrafts(lease, request)
+            : undefined,
         })
       : undefined;
 
+    if (signIn?.kind === "connected" && options.reviewerAttemptId) {
+      await passAttempt(lease, options.reviewerAttemptId);
+    }
     await finalizeReadinessRun(
       lease,
       summarizeReadinessResult(result, options.sdkVersion),
