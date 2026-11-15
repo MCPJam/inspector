@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 export const RUNNER_LIMITS = [
   "Runs in a sandbox with no network or file system",
   "60 s limit per evaluator",
-  "A throw becomes an error result, never a low score",
+  "If your code fails to run, the result is an error, not a low score",
   "score must be a number from 0 to 1",
 ] as const;
 
