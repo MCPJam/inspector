@@ -156,7 +156,7 @@ export function TourCaseScreen() {
             <span className="w-7 shrink-0" aria-hidden />
             <div
               data-tour-anchor="case-outcome"
-              className="min-w-0 flex-1 space-y-2 rounded-xl border border-border bg-card p-4"
+              className="scroll-my-4 min-w-0 flex-1 space-y-2 rounded-xl border border-border bg-card p-4"
             >
               <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <Target className="h-4 w-4" aria-hidden />
