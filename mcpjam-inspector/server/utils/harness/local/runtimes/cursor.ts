@@ -127,6 +127,9 @@ export const cursorLocalRuntime: LocalRuntime<"cursor"> = {
   // Cursor runs shell commands, and on Windows its installer requires Git for
   // Windows for them.
   gitBashOnWindows: true,
+  // A runtime on a login is never kept: adopting a kept runtime renews a
+  // lease for its gateway, and a login that idles runs out within the hour.
+  keptBetweenTurns: null,
   acp: {
     implementationDirFlag: "--implementation-dir",
     // As Cursor's own launchers run it: its Node with `index.js`, and on
