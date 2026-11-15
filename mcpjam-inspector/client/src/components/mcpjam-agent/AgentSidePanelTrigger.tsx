@@ -72,7 +72,7 @@ export function AgentSidePanelTrigger() {
           aria-label="Ask MCPJam"
           aria-pressed={isOpen}
           onClick={onClick}
-          className="h-9 gap-1.5 px-2.5"
+          className="gap-1.5 px-2.5"
         >
           <MessageCircle className="h-4 w-4" aria-hidden />
           <span>Ask MCPJam</span>

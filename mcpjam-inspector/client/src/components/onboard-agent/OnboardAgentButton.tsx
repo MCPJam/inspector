@@ -91,8 +91,9 @@ export function OnboardAgentButton() {
       <PopoverTrigger asChild>
         <Button
           variant="outline"
+          size="sm"
           className={cn(
-            "hidden gap-2.5 rounded-full border-chrome-control-border pr-1.5 pl-3.5 text-card-foreground lg:inline-flex",
+            "hidden gap-2 rounded-full border-chrome-control-border pr-1.5 pl-3 text-card-foreground lg:inline-flex",
             "hover:border-ring hover:bg-background hover:text-card-foreground",
             open && "border-ring ring-ring/30 ring-[3px]",
           )}
@@ -104,7 +105,7 @@ export function OnboardAgentButton() {
                 key={hostId}
                 src={getHostLogoSrc(hostId)}
                 alt={label}
-                className="size-5 rounded-md object-contain"
+                className="size-4.5 rounded object-contain"
               />
             ))}
           </span>
