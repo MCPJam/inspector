@@ -256,6 +256,27 @@ const KNOWN_UNDOCUMENTED = new Set([
   "patch /projects/{projectId}/directory-submissions/{submissionId}",
   "delete /projects/{projectId}/directory-submissions/{submissionId}",
   "post /projects/{projectId}/directory-submissions/{submissionId}/runs",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/handoff",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/findings",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/findings/{checkId}",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/export",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/events",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/events",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/snapshots",
+  // A submission's reviewer sign-in attempts, gated with it.
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/resume",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/cancel",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/test-plan",
+  "put /projects/{projectId}/directory-submissions/{submissionId}/test-plan",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/test-plan/draft",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/tool-tests",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/evals",
+  "patch /projects/{projectId}/directory-submissions/{submissionId}/evals",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/evals/import",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/evals/export",
   // Features that are not yet on for everyone. docs/README.md keeps a feature
   // off the public docs until its flag is on for everyone the page is for.
   // Document each group when its rollout finishes.

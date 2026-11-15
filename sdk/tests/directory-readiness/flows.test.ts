@@ -113,6 +113,13 @@ describe("field keys", () => {
       "dataHandling.sponsored",
       "testLaunch.instructions",
       "testLaunch.selfTested",
+      "testLaunch.identityTool",
+      "testLaunch.identityArgs",
+      "testLaunch.expectedIdentityPath",
+      "testLaunch.expectedIdentity",
+      "testLaunch.expectedOrganizationPath",
+      "testLaunch.expectedOrganization",
+      "testLaunch.fixtures",
       "compliance.acknowledgments",
       "compliance.additionalNotes",
     ]);
@@ -186,6 +193,8 @@ describe("field rules", () => {
     expect(field("useCases.pairs")?.pairs?.maxRows).toBe(
       CLAUDE_SUBMISSION_LIMITS.useCasesMax
     );
+    // The portal shows all three rows at once, empty or not.
+    expect(field("useCases.pairs")?.pairs?.grow).toBeUndefined();
     expect(field("compliance.acknowledgments")).toMatchObject({
       minItems: 7,
       control: "checkbox-group",
