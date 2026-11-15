@@ -63,6 +63,7 @@ export type AppRouteEntry =
 
 export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "redeem", kind: "special", scope: "public", standalone: true, note: "Conference card confirmation outside onboarding and project chrome." },
+  { path: "access-requests/:requestId", kind: "special", scope: "global", note: "Where an approver answers a project access request from the bell or the email." },
   {
     path: "settings/appearance",
     kind: "screen",

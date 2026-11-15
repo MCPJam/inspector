@@ -392,6 +392,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "v1",
   "mcp",
   "about",
+  "access-requests",
   "api-keys",
   "appearance",
   "audit-log",
