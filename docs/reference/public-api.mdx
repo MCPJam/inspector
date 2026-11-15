@@ -49,8 +49,8 @@ What you can do with it today:
   config change and its `name` back as `expectedName` for a rename — a rename
   does not rotate the config, so the config token cannot detect a concurrent
   one — and a concurrent edit is rejected rather than silently reverted
-- **Manage a project's environments** — list, read, create, edit, archive, and
-  restore the named execution bundles (host + optional server group) that eval
+- **Manage a project's environments** — list, read, and archive the named
+  execution bundles (host + optional server group) that eval
   suites and goals run against,
   and **preview** what one resolves to before launching it
 - **List a project's studies** — name, access mode, attached servers, and
@@ -264,20 +264,17 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
 
 **Project environments** — the named execution bundles (one host, optionally a
-standalone server group) that eval suites and goals run against. Reads need project membership; **every write
-needs project admin**. Writes are revisioned: pass the `revision` you last read
-back as `expectedRevision`, and a stale value returns `CONFLICT` (409) instead
-of overwriting a concurrent edit.
+standalone server group) that eval suites and goals run against. Reads need
+project membership. Archiving needs project admin and is revisioned: pass the
+`revision` you last read back as `expectedRevision`, and a stale value returns
+`CONFLICT` (409).
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET`, `POST /projects/{projectId}/environments` | List environments (`?includeArchived=true` to include archived ones), or create one |
-| `GET`, `PATCH /projects/{projectId}/environments/{environmentId}` | Read one environment, or edit it (send `null` to clear `serverAttachmentId`) |
+| `GET /projects/{projectId}/environments` | List environments (`?includeArchived=true` to include archived ones) |
+| `GET /projects/{projectId}/environments/{environmentId}` | Read one environment |
 | `GET /projects/{projectId}/environments/{environmentId}/resolve` | Preview the host config and closed server set this environment resolves to right now |
-| `POST /projects/{projectId}/environments/{environmentId}/archive` | Archive it — reversible, and frees the name for a new one |
-| `POST /projects/{projectId}/environments/{environmentId}/restore` | Restore an archived environment |
-
-Archiving keeps the environment. Restoring it re-checks the name.
+| `POST /projects/{projectId}/environments/{environmentId}/archive` | Archive it. The environment is kept, and its name is freed for a new one |
 
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
 

@@ -14754,7 +14754,7 @@
           },
           "environment": {
             "type": "object",
-            "description": "LEGACY server bag, kept as rollback data, plus the suite's sandbox-image pin. Unrelated to `environmentIds`.",
+            "description": "LEGACY server bag, kept as rollback data. Unrelated to `environmentIds`.",
             "properties": {
               "servers": {
                 "type": "array",
@@ -14865,11 +14865,6 @@
                   "type": "string",
                   "minLength": 1
                 }
-              },
-              "computerEnvironment": {
-                "type": ["string", "null"],
-                "minLength": 1,
-                "description": "Sandbox-image name or id. `null` clears the pin (runs fall back to the provider's default base image). Enumerate the choices with `list_sandbox_images`."
               }
             }
           },
@@ -17881,7 +17876,7 @@
           },
           "environment": {
             "type": "object",
-            "description": "LEGACY server bag, kept as rollback data, plus the suite's sandbox-image pin. Unrelated to `environmentIds`.",
+            "description": "LEGACY server bag, kept as rollback data. Unrelated to `environmentIds`.",
             "properties": {
               "servers": {
                 "type": "array",
@@ -22140,11 +22135,6 @@
                   "type": "string",
                   "minLength": 1
                 }
-              },
-              "computerEnvironment": {
-                "type": ["string", "null"],
-                "minLength": 1,
-                "description": "Sandbox-image name or id. `null` clears the pin (runs fall back to the provider's default base image). Enumerate the choices with `list_sandbox_images`."
               }
             }
           },
@@ -23398,7 +23388,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Project-shared skill IDs."
+            "description": "Skill IDs."
           },
           "versionPins": {
             "type": "array",
@@ -23732,7 +23722,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The closed non-plugin server set."
+            "description": "The closed server set."
           },
           "effectiveServerIds": {
             "type": "array",
@@ -29931,7 +29921,7 @@
           },
           "republishedChecks": {
             "type": "integer",
-            "description": "GitHub Check Runs brought back in line by this write. A published check is a persisted verdict, not a live read, so `0` on a repository with checks connected means the status that gates the merge did not move."
+            "description": "Published check results brought back in line by this write. A published check is a stored verdict, not a live read, so `0` means no gating check status changed."
           },
           "waiver": {
             "$ref": "#/components/schemas/GateWaiver"
