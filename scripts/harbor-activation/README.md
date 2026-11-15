@@ -31,6 +31,9 @@ unsupported. One synthetic unit is a fixture counter, **not an MCPJam price**.
 
 ## Reproduce
 
+See [REPRODUCE.md](REPRODUCE.md) for the complete baseline/patched matrix,
+including the no-agent preflight and held-out discovery run.
+
 Run from the repository root with Node 24.22.1, Python 3.12+, Docker and Docker
 Compose. Harbor's official [agent integrations](https://docs.harborframework.com/agents/pre-integrated-agents),
 [task format](https://docs.harborframework.com/tasks/overview), and installed

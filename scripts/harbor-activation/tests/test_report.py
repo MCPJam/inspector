@@ -210,6 +210,44 @@ class EvidencePublicationTests(unittest.TestCase):
             self.assertIn('../job--trial/index.md', text)
             self.assertIn('../job--trial/commands/001/event.json', text)
 
+    def test_schema_type_object_is_not_private_reasoning(self):
+        schema = {'type': {'type': 'string'}, 'properties': [{'type': ['string', 'null']}]}
+        self.assertEqual(report.public_object(schema), schema)
+        text = json.dumps(schema) + '\n'
+        self.assertIn('properties', report.apply_slice(text, 0, len(text), report.edits_for(text)))
+
+    def test_native_provider_oauth_failure_is_not_harness_or_product_auth(self):
+        native = {'exception_info': {'exception_type': 'UnknownApiError',
+                  'exception_message': '{"api_error_status":401,"api_error_origin":"first_party","result":"OAuth access token expired"}'}}
+        self.assertEqual(report.classify(native, False), 'provider-blocked')
+        product = {'exception_info': {'exception_type': 'UnknownApiError', 'exception_message': 'MCP server returned 401'}}
+        self.assertEqual(report.classify(product, False), 'harness-invalid')
+
+    def test_audit_handles_nested_serialization_and_empty_html_env_values(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / 'outcome.svg'
+            path.write_text('TOKEN=&quot;&quot;\\nNEXT_TOKEN=[REDACTED]')
+            self.assertTrue(report.privacy_audit([path], root)['passed'])
+            path.write_text('TOKEN=&quot;opaque-leak-value&quot;')
+            self.assertFalse(report.privacy_audit([path], root)['passed'])
+            text = json.dumps({'data': json.dumps({'data': 'TOKEN=\nOTHER=visible\n'})})
+            path = root / 'stdout.txt'
+            path.write_text(text)
+            self.assertTrue(report.privacy_audit([path], root)['passed'])
+
+    def test_cycle2_list_appendix_is_labeled_and_linked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            out = root / 'out'
+            out.mkdir()
+            source = root / 'cycle2-conformance-comparison.json'
+            source.write_text(json.dumps([{'event_directory': 'before-conformance-get405', 'score': 87.5}]))
+            report.publish_analysis([source], out)
+            value = json.loads((out / 'analysis' / source.name).read_text())
+            self.assertIn('cycle-2', value['publication_note'])
+            self.assertEqual(value['source_document'][0]['published_event_link'], '../preflight/product-fixes--before-conformance-get405/event.json')
+
     def test_finalized_run_is_immutable(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

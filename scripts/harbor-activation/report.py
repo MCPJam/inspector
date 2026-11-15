@@ -44,9 +44,9 @@ def redact(text):
 
 def public_object(value):
     if isinstance(value, list):
-        return [public_object(v) for v in value if not (isinstance(v, dict) and v.get('type') in PRIVATE_TYPES)]
+        return [public_object(v) for v in value if not (isinstance(v, dict) and isinstance(v.get('type'), str) and v['type'] in PRIVATE_TYPES)]
     if isinstance(value, dict):
-        if value.get('type') in PRIVATE_TYPES:
+        if isinstance(value.get('type'), str) and value['type'] in PRIVATE_TYPES:
             return {'type': 'private_reasoning_removed'}
         return {k: '[REDACTED]' if SECRET_KEY.match(k) and v else public_object(v)
                 for k, v in value.items() if k not in PRIVATE_KEYS}
@@ -218,15 +218,19 @@ def public_cli(path):
 def classify(result, invalid):
     if invalid:
         return 'harness-invalid'
-    exceptions = [(result.get('exception_info') or {}).get('exception_type', '')]
-    exceptions += [(step.get('exception_info') or {}).get('exception_type', '') for step in result.get('step_results') or []]
-    exceptions = [e for e in exceptions if e]
-    provider = ['Auth', 'Credential', 'Provider', 'RateLimit']
-    if any('AgentTimeout' not in e and not any(word in e for word in provider) for e in exceptions):
+    records = [result.get('exception_info')] + [step.get('exception_info') for step in result.get('step_results') or []]
+    records = [record for record in records if record]
+    provider_names = ['Auth', 'Credential', 'Provider', 'RateLimit']
+    def provider_exception(record):
+        kind = record.get('exception_type', '')
+        message = record.get('exception_message', '')
+        native_auth = kind == 'UnknownApiError' and 'api_error_origin' in message and 'first_party' in message and bool(re.search(r'api_error_status["\\\s:]+401', message))
+        return any(word in kind for word in provider_names) or native_auth
+    if any('AgentTimeout' not in record.get('exception_type', '') and not provider_exception(record) for record in records):
         return 'harness-invalid'
-    if any('AgentTimeout' in e for e in exceptions):
+    if any('AgentTimeout' in record.get('exception_type', '') for record in records):
         return 'timed-out'
-    if exceptions:
+    if records:
         return 'provider-blocked'
     if result.get('reward_valid') is False:
         return 'harness-invalid'
@@ -404,7 +408,7 @@ def publish_trial(trial, out, invalid=False):
                'product_failure_attribution': None, 'collection': collection, 'comparison_eligible': not invalid,
                'first_cli_tool_result': first_cli_result(invocations, events, target, metrics),
                'native_command_count_scope': 'Unique agent Bash/command_execution invocations in phase order, including tester install commands; excludes Harbor startup and nested shells. Compound shell invocation counts once.'}
-    if str(result.get('task_name', '')).endswith('/credits'):
+    if str(result.get('task_name', '')).split('/')[-1] == 'credits':
         summary['collection_timing_note'] = ('Step artifacts are collected after the orchestrator account-resolution hook. '
             'A blocked-step snapshot may already contain account resolution applied after the agent stopped. '
             'Use refusal/request timestamps and captured output for temporal attribution, not snapshot presence alone.')
@@ -415,8 +419,7 @@ def publish_trial(trial, out, invalid=False):
         if 'verifier' in source.parts:
             name = '-'.join(source.relative_to(trial).parts)
             text = source.read_text(errors='replace')
-            invocations += [{**invocation, 'source': name} for invocation in phase_invocations]
-        (target / name).write_text(apply_slice(text, 0, len(text), edits_for(text)))
+            (target / name).write_text(apply_slice(text, 0, len(text), edits_for(text)))
     lines = [f'# {run_id}', '', f'Outcome: **{summary["outcome"]}**. Concern notes: {len(concerns)}. Shell capture events: {len(events)}; actual agent shell invocations: {summary["agent_shell_invocation_count"]}.', '', '[Results](result.json) · [Metrics](metrics.json) · [Concerns](concerns.jsonl) · [Agent tool invocations](agent-tool-invocations.json)', '', 'Capture events include nested wrapper shells and are not a user-command denominator. Legacy verifier `command_count` is also a capture-event count.', '']
     lines += ['The outcome above reflects Harbor errors and the frozen strict reward. A zero reward alone does not establish a product failure.', '']
     if summary.get('collection_timing_note'):
@@ -532,8 +535,11 @@ def privacy_audit(paths, root):
                 assignment_text = '\n'.join(strings(values))
             except ValueError:
                 pass
+        assignment_text = html.unescape(assignment_text)
+        assignment_text = re.sub(r'\\+n', '\n', assignment_text)
+        assignment_text = re.sub(r'\\+([\"\'])', r'\1', assignment_text)
         exposed = [match for match in SECRET_ASSIGNMENT.finditer(assignment_text)
-                   if not next((v for v in match.groups()[1:] if v is not None), '').startswith(('[', '$'))]
+                   if (value := next((v for v in match.groups()[1:] if v is not None), '')) and not value.startswith(('[', '$'))]
         if exposed:
             counts['secret_assignments'] += len(exposed)
             findings.append({'file': str(path.relative_to(root)), 'category': 'secret_assignments', 'count': len(exposed)})
@@ -567,6 +573,7 @@ def publish_analysis(sources, out):
         for event in load(path, []):
             event_paths.setdefault(event['id'], '../' + path.parent.name + '/' + event['path'] + '/event.json')
     def remap(text):
+        text = re.sub(r'outputs/evidence/(harness-validation|bootstrap|product-fixes)/([\w-]+)', r'../preflight/\1--\2/event.json', text)
         return re.sub(r'work/jobs/([^/\s`"]+)/([^/\s`".,]+)(?:/[^\s`"),]+)?',
                       lambda m: '../' + m[1] + '--' + m[2] + '/index.md', redact(text))
     for source in sources:
@@ -581,18 +588,23 @@ def publish_analysis(sources, out):
                     return [walk(v) for v in item]
                 if isinstance(item, dict):
                     item = {k: walk(v) for k, v in item.items()}
+                    if item.get('event_directory'):
+                        item['published_event_link'] = '../preflight/product-fixes--' + item['event_directory'] + '/event.json'
                     if 'evidence_event_ids' in item:
                         item['published_event_links'] = [event_paths[e] for e in item['evidence_event_ids'] if e in event_paths]
                     return item
                 return item
             value = walk(value)
-            value['publication_note'] = 'Preliminary, noncomparative v1.2 observations. Invalid benchmark assertion fixture; excluded from improvement denominators. Raw trajectory references map to run indexes containing public-only CLI projections; raw private trajectories are not published.'
+            if not isinstance(value, dict):
+                value = {'source_document': value}
+            value['publication_note'] = ('Controlled cycle-2 reproduction derived from captured output; separate from fresh-user trial rates.' if source.name.startswith('cycle2-') else 'Independent qualitative review; frozen strict rewards are unchanged. Raw trajectory references map to public-only projections via run indexes.' if source.name.startswith('final-') else 'Preliminary, noncomparative v1.2 observations. Invalid benchmark assertion fixture; excluded from improvement denominators. Raw trajectory references map to run indexes containing public-only CLI projections; raw private trajectories are not published.')
             text = json.dumps(value, indent=2)
         else:
             text = remap(source.read_text())
             text = re.sub(r'`(\.\./[^`]+/index\.md)`', r'[Published run evidence](\1)', text)
             text = re.sub(r'`([a-f0-9]{32})`', lambda m: '[' + m[1] + '](' + event_paths[m[1]] + ')' if m[1] in event_paths else m[0], text)
-            text = ('> Preliminary, noncomparative v1.2 observations. The assertion fixture was invalid; exclude these results from improvement denominators. Raw trajectory references link to run indexes with public-only projections; private trajectories are not published.\n\n' + text)
+            note = ('Independent qualitative review; frozen strict rewards are unchanged. Raw trajectory references map to public-only projections via run indexes.' if source.name.startswith('final-') else 'Harness validation review, separate from fresh-user observations.' if 'v13' in source.name else 'Preliminary, noncomparative v1.2 observations. The assertion fixture was invalid; exclude these results from improvement denominators. Raw trajectory references link to run indexes with public-only projections; private trajectories are not published.')
+            text = '> ' + note + '\n\n' + text
         (target / source.name).write_text(text)
     (target / 'index.md').write_text('# Independent analysis appendix\n\n' + '\n'.join(f'- [{p.name}]({p.name})' for p in sorted(target.iterdir()) if p.name != 'index.md') + '\n')
 
@@ -604,7 +616,13 @@ def main():
     parser.add_argument('--job', action='append', default=[])
     parser.add_argument('--invalid-job', action='append', default=[])
     parser.add_argument('--replace', action='store_true')
+    parser.add_argument('--resume-publication', action='store_true', help='Skip existing finalized runs only after verifying their complete hash manifest')
     parser.add_argument('--bootstrap', type=Path, action='append', default=[], help='Additive orchestrator capture root; repeat for each source group')
+    parser.add_argument('--gallery', action='store_true', help='Build observed-error and controlled before/after gallery')
+    parser.add_argument('--targeted-job', action='append', default=[])
+    parser.add_argument('--heldout-job', action='append', default=[])
+    parser.add_argument('--compare-baseline-job', action='append', default=[])
+    parser.add_argument('--compare-patched-job', action='append', default=[])
     parser.add_argument('--analysis-source', type=Path, action='append', default=[], help='Sanitized independent analysis appendix with remapped evidence links')
     parser.add_argument('--versions', type=Path, help='Orchestrator version/starting-state metadata JSON')
     parser.add_argument('--redact-file', type=Path, help='Private JSON array of literal identifiers; read in memory, never copied')
@@ -634,13 +652,23 @@ def main():
             target = args.out / (job.name + '--' + trial.name)
             if target.exists() and args.replace:
                 shutil.rmtree(target)
+            if target.exists() and args.resume_publication:
+                manifest = load(target / 'sha256.json')
+                if not manifest or any(not (target / name).is_file() or hashlib.sha256((target / name).read_bytes()).hexdigest() != digest for name, digest in manifest.items()):
+                    raise ValueError(f'Cannot resume over incomplete or changed report: {target}')
+                continue
             summary = publish_trial(trial, args.out, job.name in args.invalid_job)
             if summary:
                 print(json.dumps({k: summary[k] for k in ['run_id', 'outcome', 'capture_event_count', 'agent_shell_invocation_count', 'concern_count']}))
+    from task_metadata import publish_task_metadata
+    publish_task_metadata(args.jobs, args.out, public_object, redact)
     if args.analysis_source:
         publish_analysis(args.analysis_source, args.out)
     summaries = [load(p) for p in sorted(args.out.glob('*/summary.json'))]
     (args.out / 'summaries.json').write_text(json.dumps(summaries, indent=2))
+    if args.compare_baseline_job or args.compare_patched_job or args.targeted_job or args.heldout_job:
+        from compare import write_comparison
+        write_comparison(args.out, args.compare_baseline_job, args.compare_patched_job, args.targeted_job, args.heldout_job)
     concerns = ''.join(p.read_text() for p in sorted(args.out.glob('*/concerns.jsonl')))
     (args.out / 'concerns.jsonl').write_text(concerns)
     classes = {}
@@ -649,13 +677,16 @@ def main():
             for code in event.get('output_classes', []):
                 classes.setdefault(code, []).append({'run': path.parent.name, 'event_id': event['id'], 'evidence': path.parent.name + '/' + event['path'] + '/event.json'})
     (args.out / 'observed-output-classes.json').write_text(json.dumps(classes, indent=2))
-    index = ['# Harbor activation evidence', '', 'All screenshots are rendered from captured transcripts. They are not native terminal photographs. Recorded outcomes reflect Harbor errors and frozen strict rewards; zero reward is not proof of a product failure. Per-run assessment flags expose known construct limits without changing rewards.', '', '[Orchestrator preflight events](preflight/index.md) · [Version and starting-state record](versions.json) · [Independent analysis](analysis/index.md)', '',
+    index = ['# Harbor activation evidence', '', 'All screenshots are rendered from captured transcripts. They are not native terminal photographs. Recorded outcomes reflect Harbor errors and frozen strict rewards; zero reward is not proof of a product failure. Per-run assessment flags expose known construct limits without changing rewards.', '', '[Task instructions/configuration/hashes](task-metadata/index.md) · [Orchestrator preflight events](preflight/index.md) · [Version and starting-state record](versions.json) · [Independent analysis](analysis/index.md) · [Baseline/patched comparison](comparison/index.md) · [Observed errors and before/after](gallery/representative-error-gallery.md)', '',
              '## Capture limits', '', 'Separate stdout/stderr pipes preserve each stream. Cross-stream ordering is recorder observation order. Events correspond to shell tool invocations; compound-command child exit statuses are not separately observed. Redirected output is present only when subsequently observed or explicitly collected. Missing exit metadata remains incomplete. No PTY was used for these noninteractive trials. Private reasoning, native sessions, authentication stores and sensitive values are excluded from publishable evidence. This inventory covers observed output, not every possible product state.', '',
              '| Run | Agent | Outcome | Capture events | Agent shell invocations | Concerns |', '| --- | --- | --- | ---: | ---: | ---: |']
     index += [f'| [{s["run_id"]}]({s["run_id"]}/index.md) | {(s.get("agent") or {}).get("name")} | {s["outcome"]} | {s.get("capture_event_count", s.get("command_events"))} | {s.get("agent_shell_invocation_count", "uncomputed")} | {s["concern_count"]} |' for s in summaries]
     (args.out / 'index.md').write_text('\n'.join(index) + '\n')
+    if args.gallery:
+        from gallery import write_gallery
+        write_gallery(args.out, render)
     publishable = [args.out / name for name in ['index.md', 'summaries.json', 'concerns.jsonl', 'observed-output-classes.json', 'versions.json']]
-    for directory in [args.out / 'preflight', args.out / 'analysis', *[args.out / s['run_id'] for s in summaries]]:
+    for directory in [args.out / 'preflight', args.out / 'analysis', args.out / 'comparison', args.out / 'gallery', args.out / 'task-metadata', *[args.out / s['run_id'] for s in summaries]]:
         publishable += [p for p in directory.rglob('*') if p.is_file()]
     # Upload only this allowlist. In particular, the original bootstrap input
     # directory may predate privacy fixes and must remain local.
@@ -666,6 +697,8 @@ def main():
     publication = {str(p.relative_to(args.out)): hashlib.sha256(p.read_bytes()).hexdigest() for p in publishable if p.exists()}
     (args.out / 'publication-manifest.json').write_text(json.dumps(publication, indent=2))
     print(json.dumps({'privacy_audit': audit['passed'], 'scanned_files': audit['scanned_files'], 'matches_by_category': audit['matches_by_category'], 'in_memory_secret_values': discovered_secrets}))
+    if not audit['passed']:
+        raise SystemExit(2)
 
 
 if __name__ == '__main__':
