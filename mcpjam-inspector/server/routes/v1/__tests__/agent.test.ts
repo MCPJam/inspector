@@ -2,6 +2,18 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import * as routeHelpers from "../../../services/evals/route-helpers.js";
+import { resolveAgentModel } from "../../../utils/agent-model.js";
+
+vi.mock("../../../utils/agent-model.js", async () => {
+  const constants = await import("../../../../shared/mcpjam-agent-model.js");
+  return {
+    resolveAgentModel: vi.fn(async () => ({
+      modelDefinition: constants.MCPJAM_AGENT_MODEL_DEFINITION,
+      routingSelection: constants.MCPJAM_AGENT_MODEL_SELECTION,
+      billingFeature: constants.MCPJAM_AGENT_BILLING_FEATURE,
+    })),
+  };
+});
 
 // Covers the v1 agent-turn surface: auth/guest gating, schema limits, the
 // deployment guard, engine failure → code mapping, the per-org concurrency
@@ -476,6 +488,40 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(engineOpts.maxSteps).toBe(AGENT_MAX_STEPS);
   });
 
+  it("runs the org model without a platform claim even when the hosted catalog is unavailable", async () => {
+    const base = await resolveAgentModel({
+      projectId: "project-1",
+      isGuest: false,
+    });
+    const selection = {
+      ...base.routingSelection,
+      source: "org" as const,
+      modelId: "openai/gpt-6-astra",
+      nativeModelId: "gpt-6-astra",
+      connectionRef: { kind: "orgProvider" as const, id: "connection-1" },
+    };
+    vi.mocked(resolveAgentModel).mockResolvedValueOnce({
+      modelDefinition: {
+        ...base.modelDefinition,
+        id: selection.modelId,
+        provider: "openai",
+        hosted: false,
+      },
+      routingSelection: selection,
+      billingFeature: undefined,
+    });
+    isHostedCatalogModelMock.mockReturnValue(false);
+    const res = await turnRequest(makeApp(), OK_BODY);
+    expect(res.status).toBe(200);
+    expect(
+      resolveTurnRuntimeMock.mock.calls.at(-1)?.[0].modelSelection,
+    ).toEqual(selection);
+    const engine = runUnifiedAssistantTurnMock.mock.calls.at(-1)?.[0];
+    expect(engine.modelDefinition.id).toBe(selection.modelId);
+    expect(engine.runtime.extraBodyFields.billingFeature).toBeUndefined();
+    expect(engine.maxSteps).toBe(AGENT_MAX_STEPS);
+  });
+
   it("keeps whatever else the runtime resolver put on the body", async () => {
     // The claim is merged in, not substituted for the resolver's own fields.
     resolveTurnRuntimeMock.mockResolvedValueOnce({
@@ -501,7 +547,7 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(res.status).toBe(200);
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0];
     expect(prepareOpts.selectedServers).toEqual([]);
-    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(prepareOpts.skills).toBeUndefined();
   });
 
   it("selects the docs server when the preflight succeeds", async () => {

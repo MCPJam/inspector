@@ -31,6 +31,63 @@ const product = {
 };
 
 describe("strict PostHog reconstruction", () => {
+  it.each(["hosted", "self_hosted"])("retains closed launch-health outcomes through the strict relay for %s", (deployment) => {
+    const event = {
+      ...product,
+      event: "extension_launch_completed",
+      properties: {
+        ...product.properties,
+        location: "host_workspace",
+        launch_kind: "settings",
+        host_profile: "codex",
+        outcome: "failure",
+        failure_stage: "execution",
+        deployment,
+        source: "client",
+        operationId: secret,
+        serverId: secret,
+        error: secret,
+      },
+    };
+    const result = applyEventPolicy(event, CONSERVATIVE_TELEMETRY_POLICY, null);
+    expect(result).toEqual({
+      event: "extension_launch_completed",
+      timestamp: expect.any(String),
+      uuid: expect.any(String),
+      properties: {
+        token: expect.stringMatching(/^phc_/),
+        app_version: expect.stringMatching(/^\d+\.\d+\.\d+/),
+        distinct_id: "strict",
+        $process_person_profile: false,
+        $geoip_disable: true,
+        location: "host_workspace",
+        launch_kind: "settings",
+        host_profile: "codex",
+        outcome: "failure",
+        failure_stage: "execution",
+        deployment,
+        source: "client",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it("rejects free-form, unknown or missing launch-health values", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "extension_launch_completed",
+      properties: {
+        location: secret, launch_kind: "invented", host_profile: secret,
+        outcome: "invented", failure_stage: secret, deployment: secret,
+        source: "server", error: secret,
+      },
+    });
+    expect(result).toBeNull();
+    expect(rebuildStrictPostHogEvent({
+      event: "extension_launch_completed",
+      properties: { location: "host_workspace", deployment: "hosted" },
+    })).toBeNull();
+  });
+
   it("retains an approved product signal and drops unknown envelope and SDK fields", () => {
     const result = rebuildStrictPostHogEvent(product);
     expect(result).toEqual({
@@ -62,6 +119,36 @@ describe("strict PostHog reconstruction", () => {
     "toString",
   ])("drops %s", (event) => {
     expect(rebuildStrictPostHogEvent({ ...product, event })).toBeNull();
+  });
+
+  it.each([
+    "conformance_tab",
+    "score_runner",
+    "compat_page",
+    "compat_detail_modal",
+  ])("keeps a conformance run started from %s", (location) => {
+    const result = rebuildStrictPostHogEvent({
+      event: "conformance_run_triggered",
+      properties: {
+        location,
+        run_source: "ui",
+        source: "client",
+        server_url: secret,
+      },
+    });
+    expect(result?.properties).toMatchObject({ location, run_source: "ui" });
+    expect(result?.properties).not.toHaveProperty("source");
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it("drops a conformance run_source or location the app never sends", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "conformance_run_triggered",
+      properties: { location: "chat_tab", run_source: "cli" },
+    });
+    expect(result?.event).toBe("conformance_run_triggered");
+    expect(result?.properties).not.toHaveProperty("location");
+    expect(result?.properties).not.toHaveProperty("run_source");
   });
 
   it.each([NaN, Infinity, -1, 1.5, 1_000_001, secret])(
@@ -110,5 +197,72 @@ describe("strict PostHog reconstruction", () => {
         "full",
       ),
     ).toBeNull();
+  });
+});
+
+describe("strict app launches", () => {
+  const launch = {
+    ...product,
+    event: "app_launched",
+    properties: {
+      ...product.properties,
+      location: "app",
+      is_authenticated: true,
+      platform: "web",
+      deployment: "hosted",
+      launch_trigger: "timeout",
+      policy_wait_ms: 10_000,
+      user_agent: secret,
+      version: secret,
+    },
+  };
+
+  it("counts a launch captured before the content grant, with closed fields only", () => {
+    const result = applyEventPolicy(launch, CONSERVATIVE_TELEMETRY_POLICY, null);
+    expect(result).toEqual({
+      event: "app_launched",
+      timestamp: expect.any(String),
+      uuid: expect.any(String),
+      properties: {
+        token: expect.stringMatching(/^phc_/),
+        app_version: expect.stringMatching(/^\d+\.\d+\.\d+/),
+        distinct_id: "strict",
+        $process_person_profile: false,
+        $geoip_disable: true,
+        location: "app",
+        is_authenticated: true,
+        platform: "web",
+        deployment: "hosted",
+        launch_trigger: "timeout",
+        policy_wait_ms: 10_000,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it("attributes a signed-in strict launch to the relay's actor id", () => {
+    const result = rebuildStrictPostHogEvent(launch, "user_01ACTOR");
+    expect(result).toMatchObject({ properties: { distinct_id: "user_01ACTOR" } });
+  });
+
+  it("drops launch values outside the catalog", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "app_launched",
+      properties: {
+        location: secret,
+        is_authenticated: "true",
+        platform: secret,
+        deployment: secret,
+        launch_trigger: secret,
+        policy_wait_ms: 1.5,
+      },
+    });
+    expect(result?.properties).not.toHaveProperty("location");
+    expect(result?.properties).not.toHaveProperty("is_authenticated");
+    expect(result?.properties).not.toHaveProperty("platform");
+    expect(result?.properties).not.toHaveProperty("deployment");
+    expect(result?.properties).not.toHaveProperty("launch_trigger");
+    expect(result?.properties).not.toHaveProperty("policy_wait_ms");
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
   });
 });

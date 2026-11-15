@@ -24,6 +24,10 @@ function copySandboxProxy(): Plugin {
       src: "server/routes/apps/mcp-apps/sandbox-proxy.html",
       dest: "sandbox-proxy.html",
     },
+    {
+      src: "server/utils/webmcp-view/third-party/ext-apps-LICENSE",
+      dest: "ext-apps-LICENSE",
+    },
   ];
 
   return {

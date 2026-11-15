@@ -26,6 +26,7 @@
  */
 
 import { specTypeSchemas } from "@modelcontextprotocol/client";
+import { z } from "zod/v4";
 import type { InputRequests, InputResponses } from "./tasks-ext-types.js";
 import type { ClientCapabilityOptions } from "./types.js";
 import type { ElicitationContentValidator } from "./mrtr-driver.js";
@@ -140,6 +141,39 @@ const TASK_INPUT_REQUEST_SCHEMAS: Record<TaskInputMethod, CanonicalSchema> = {
   "roots/list": specTypeSchemas.ListRootsRequest,
   "sampling/createMessage": specTypeSchemas.CreateMessageRequest,
 };
+
+const embeddedUrlRequest = z.object({
+  mode: z.literal("url"),
+  message: z.string(),
+  url: z.string().url(),
+  elicitationId: z.string().optional(),
+});
+
+/** Embedded URL consent has no legacy completion notification or required ID. */
+export function validateEmbeddedClientRequest(
+  method: TaskInputMethod,
+  params: unknown
+): { ok: true } | { ok: false; detail: string } {
+  if (
+    method === "elicitation/create" &&
+    typeof params === "object" &&
+    params !== null &&
+    "mode" in params &&
+    params.mode === "url"
+  ) {
+    const result = embeddedUrlRequest.safeParse(params);
+    return result.success
+      ? { ok: true }
+      : {
+          ok: false,
+          detail: result.error.issues[0]?.message ?? "invalid URL request",
+        };
+  }
+  return validateCanonical(TASK_INPUT_REQUEST_SCHEMAS[method], {
+    method,
+    params,
+  });
+}
 
 // Sampling accepts either result flavor: plain, or the tool-use variant the
 // modern spec allows a sampling handler to produce.
@@ -438,16 +472,13 @@ export async function collectTaskInputResponses(args: {
 
     // Canonical shape, judged against the FULL request (`params` presence
     // rules differ per method: `roots/list` may omit them, `elicitation/create`
-    // may not) — the SAME schema the upstream client applies before a
-    // standalone handler runs. The raw `request.params` is validated rather
+    // may not). Embedded URL consent omits the legacy completion ID.
+    // The raw `request.params` is validated rather
     // than the `{}`-defaulted copy, so an absent params object is judged as
     // absent. After the declaration gate deliberately: "you never declared
     // this capability" is the more actionable verdict for a request that is
     // both undeclared and malformed.
-    const canonical = validateCanonical(TASK_INPUT_REQUEST_SCHEMAS[method], {
-      method,
-      params: request.params,
-    });
+    const canonical = validateEmbeddedClientRequest(method, request.params);
     if (!canonical.ok) {
       rejections.push({
         inputKey: key,

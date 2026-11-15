@@ -26,6 +26,15 @@ import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/intern
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 import { resolveFrozenRunGradingMode } from "./grading-mode.js";
 import { prepareClientKeyRun } from "./org-policy-client-keys.js";
+import {
+  fetchRunPinnedSkillsWithRetry,
+  shouldSkipExecution,
+} from "../../routes/shared/evals.js";
+import {
+  buildPinnedSkillSource,
+  type BuiltPinnedSkillSource,
+} from "./pinned-skill-source.js";
+import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -51,6 +60,8 @@ export type PreparedSuiteReplayFromRunResult = {
   runId: string;
   sourceRunId: string;
   recorder: SuiteRunRecorder;
+  deduped?: boolean;
+  status?: string;
   execute: () => Promise<void>;
   cleanup: () => Promise<void>;
 };
@@ -144,6 +155,9 @@ export async function prepareSuiteReplayFromRun(
       hostConfig: runHostConfigSnapshot,
       gradingEngine: runGradingEngine,
       environmentRef,
+      pluginVersions: runPluginVersions = [],
+      deduped,
+      status,
     } = await startSuiteRunWithRecorder({
       convexClient,
       suiteId: replayMetadata.suiteId,
@@ -161,6 +175,13 @@ export async function prepareSuiteReplayFromRun(
       toolSnapshot,
       toolSnapshotDebug,
     });
+    if (deduped === true) {
+      return {
+        suiteId: replayMetadata.suiteId, runId, sourceRunId, recorder, deduped, status,
+        execute: async () => { throw new Error(`Eval run ${runId} already has an executor. Read its existing result.`); },
+        cleanup: () => replayManager.disconnectAllServers(),
+      };
+    }
     const replayHostConfig =
       runHostConfigSnapshot ??
       (await loadSuiteHostConfig(convexClient, replayMetadata.suiteId));
@@ -182,6 +203,23 @@ export async function prepareSuiteReplayFromRun(
     if (refusal) {
       await failRunBeforeExecution(convexClient, recorder, runId, { reason: refusal });
       throw new Error(refusal);
+    }
+    // Like an eval run, a replay whose frozen skill can't be fetched stops
+    // here, before its first model call, rather than run without it.
+    let frozenSkills: BuiltPinnedSkillSource;
+    try {
+      frozenSkills = await replayRunSkills({
+        convexClient,
+        runId,
+        pluginVersions: runPluginVersions,
+        serverIds: replayServerIds,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason: reason.slice(0, 500),
+      });
+      throw error;
     }
     const suiteInjectOpenAiCompat =
       resolveOpenAiCompatForHostConfig(replayHostConfig);
@@ -256,6 +294,8 @@ export async function prepareSuiteReplayFromRun(
             : { projectEnvironmentUnresolvedReason:
                 "Replaying this run does not carry its Project Environment through to the runner. Update the backend and retry." }),
           ...(replayToolPolicy ? { toolPolicy: replayToolPolicy } : {}),
+          pinnedSkillSource: frozenSkills.pinnedSkillSource,
+          pinnedHarnessSkills: frozenSkills.pinnedHarnessSkills,
         });
       },
       cleanup: () => replayManager.disconnectAllServers(),
@@ -267,6 +307,33 @@ export async function prepareSuiteReplayFromRun(
 }
 
 /**
+ * A replay's frozen skills. The backend freezes them when it starts the
+ * replay run (its source run's pins and plugin versions, copied, unless the
+ * replay asked for the suite's current config), so they are read from the
+ * replay run itself and prepared as an eval run prepares its own. A run that
+ * pinned none gets an empty set, never the project's skills as they are now.
+ */
+export async function replayRunSkills(args: {
+  convexClient: Parameters<typeof fetchRunPinnedSkillsWithRetry>[0];
+  runId: string;
+  pluginVersions: readonly RunPinnedPluginVersion[];
+  serverIds: readonly string[];
+}): Promise<BuiltPinnedSkillSource> {
+  const pins = await fetchRunPinnedSkillsWithRetry(
+    args.convexClient,
+    args.runId,
+  );
+  return buildPinnedSkillSource({
+    pins: pins ?? [],
+    pluginVersions: args.pluginVersions,
+    // A replay connects the servers its source run stored, not plugin
+    // servers; a plugin skill's ref comes from the versions alone.
+    pluginServers: [],
+    effectiveServerIds: args.serverIds,
+  });
+}
+
+/**
  * Full suite replay used by synchronous `/replay-run` callers.
  */
 export async function executeSuiteReplayFromRun(
@@ -274,13 +341,13 @@ export async function executeSuiteReplayFromRun(
 ): Promise<ExecuteSuiteReplayFromRunResult> {
   const prepared = await prepareSuiteReplayFromRun(params);
   try {
-    await prepared.execute();
+    if (!shouldSkipExecution(prepared)) await prepared.execute();
     return {
       success: true,
       suiteId: prepared.suiteId,
       runId: prepared.runId,
       sourceRunId: prepared.sourceRunId,
-      message: "Replay completed successfully.",
+      message: prepared.deduped === true ? "An existing replay run was found. Read its status for the result." : "Replay completed successfully.",
     };
   } finally {
     await prepared.cleanup();

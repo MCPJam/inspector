@@ -16,6 +16,16 @@ resources.post("/list", async (c) =>
   ),
 );
 
+resources.post("/templates/list", async (c) =>
+  withEphemeralConnection(c, resourcesListSchema, (manager, body) =>
+    manager.listResourceTemplates(
+      body.serverId,
+      body.cursor !== undefined ? { cursor: body.cursor } : undefined,
+      { cacheMode: "bypass" },
+    ),
+  ),
+);
+
 resources.post("/read", async (c) =>
   // Hosted DIRECT resources/read (§12.3). Suspends to the continuation store on
   // an `input_required` round (returning a pending outcome) instead of blocking;

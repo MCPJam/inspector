@@ -2,9 +2,10 @@ import { serverCheckQueue } from "@/lib/server-check-queue";
 import { useEffect } from "react";
 import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
+import { appReducer } from "@/state/app-reducer";
 import {
   buildElectronMcpCallbackUrl,
   shouldRetryOAuthConnectionFailure,
@@ -127,8 +128,14 @@ vi.mock("@/state/mcp-api", () => ({
   getInitializationInfo: getInitializationInfoMock,
 }));
 
+const hasAuthChallengeAwaitingCallbackMock = vi.hoisted(() =>
+  vi.fn((_serverName: string) => false),
+);
 vi.mock("@/state/oauth-orchestrator", () => ({
   ensureAuthorizedForReconnect: vi.fn(),
+  // The OAuth callback settles the sign-in ledger.
+  markAuthChallengeSignedIn: vi.fn(() => 0),
+  hasAuthChallengeAwaitingCallback: hasAuthChallengeAwaitingCallbackMock,
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", async (importOriginal) => {
@@ -2180,6 +2187,23 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("");
+  });
+
+  it("still leaves a denied callback when settling it fails", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?error=access_denied&error_description=User%20denied%20access",
+    );
+    hasAuthChallengeAwaitingCallbackMock.mockImplementationOnce(() => {
+      throw new Error("ledger unavailable");
+    });
+
+    renderUseServerState(vi.fn());
+
+    await waitFor(() => expect(window.location.pathname).toBe("/servers"));
+    expect(window.location.search).toBe("");
   });
 
   it("marks the pending server as failed when token exchange fails after redirect", async () => {
@@ -4748,6 +4772,99 @@ describe("syncServerToConvex name-collision recovery", () => {
     url: "https://example.com/mcp",
   };
 
+  it.each([true, false])("does not confirm or publish a rename when configuration saving rejects (save-only=%s)", async (saveOnly) => {
+    mockHostedMode.mockReturnValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const row = { ...siblingRow, _id: "srv_demo", projectId: "project_default" };
+    mockUpdateServer.mockRejectedValueOnce(new Error("Save rejected"));
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+      activeProjectServersFlat: [row],
+    });
+    let outcome: ServerUpdateResult | undefined;
+    await act(async () => {
+      try {
+        outcome = await result.current.handleUpdate("demo-server", {
+          name: "Renamed", type: "http", url: "https://example.com/mcp", useOAuth: false,
+        }, saveOnly);
+      } catch (error) {
+        expect(error).toEqual(new Error("Save rejected"));
+      }
+    });
+    if (!saveOnly) expect(outcome).toEqual({ ok: false, serverName: "demo-server" });
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" }));
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "UPSERT_SERVER", name: "Renamed" }));
+    expect(toastSuccess).not.toHaveBeenCalledWith("Server configuration updated");
+  });
+
+  it("confirms a saved rename even when the subsequent connection fails", async () => {
+    mockHostedMode.mockReturnValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    mockUpdateServer.mockResolvedValueOnce("srv_demo");
+    testConnectionMock.mockResolvedValueOnce({ success: false, error: "MCP unavailable" });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+      activeProjectServersFlat: [{ ...siblingRow, _id: "srv_demo", projectId: "project_default" }],
+    });
+    let outcome: ServerUpdateResult | undefined;
+    await act(async () => {
+      outcome = await result.current.handleUpdate("demo-server", {
+        name: "Renamed", type: "http", url: "https://example.com/mcp", useOAuth: false,
+      });
+    });
+    expect(mockUpdateServer).toHaveBeenCalledWith(expect.objectContaining({ serverId: "srv_demo", name: "Renamed" }));
+    expect(outcome).toEqual({ ok: true, serverName: "Renamed" });
+    expect(dispatch).toHaveBeenCalledWith({ type: "REMOVE_SERVER", name: "demo-server" });
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "CONNECT_FAILURE", name: "Renamed" }));
+  });
+
+  it("reports imported configuration saves independently of connection success", async () => {
+    const onConfigSaved = vi.fn();
+    testConnectionMock.mockResolvedValueOnce({ success: false, error: "MCP unavailable" });
+    const { result } = renderUseServerState(vi.fn());
+    await act(async () => {
+      await result.current.handleConnect({ name: "Imported", type: "http", url: "https://example.com/mcp", useOAuth: false }, { onConfigSaved });
+    });
+    expect(onConfigSaved).toHaveBeenCalledTimes(1);
+    mockHostedMode.mockReturnValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    mockCreateServerIfMissing.mockRejectedValueOnce(new Error("Save rejected"));
+    const hosted = renderUseServerState(vi.fn(), appState, { isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false });
+    onConfigSaved.mockClear();
+    await act(async () => {
+      await hosted.result.current.handleConnect({ name: "Imported", type: "http", url: "https://example.com/mcp", useOAuth: false }, { onConfigSaved });
+    });
+    expect(onConfigSaved).not.toHaveBeenCalled();
+  });
+
+  it("replaces the old local project member on a full reconnect rename", async () => {
+    const dispatch = vi.fn();
+    const initial = createAppState();
+    const { result } = renderUseServerState(dispatch, initial);
+    await act(async () => {
+      await result.current.handleUpdate("demo-server", { name: "Renamed", type: "http", url: "https://example.com/mcp", useOAuth: false });
+    });
+    const final = dispatch.mock.calls.reduce((state, [action]) => appReducer(state, action), initial);
+    expect(final.projects.default.servers).toHaveProperty("Renamed");
+    expect(final.projects.default.servers).not.toHaveProperty("demo-server");
+  });
+
+  it("retains every local imported server when independent saves share the same render snapshot", async () => {
+    const dispatch = vi.fn();
+    const initial = createAppState();
+    const { result } = renderUseServerState(dispatch, initial);
+    await act(async () => {
+      await Promise.all(["X", "Y"].map((name) => result.current.handleConnect({ name, type: "http", url: "https://example.com/mcp", useOAuth: false })));
+    });
+    const final = dispatch.mock.calls.reduce((state, [action]) => appReducer(state, action), initial);
+    expect(Object.keys(final.projects.default.servers)).toEqual(["demo-server", "X", "Y"]);
+  });
+
   it("handleUpdate reports the refusal instead of toasting a save that never happened", async () => {
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";
@@ -5896,13 +6013,11 @@ describe("useServerState XAA identity pair — shared save semantics across all 
       const action = dispatch.mock.calls
         .map(([a]) => a)
         .find(
-          (a): a is Extract<AppAction, { type: "UPDATE_PROJECT" }> =>
-            a.type === "UPDATE_PROJECT"
+          (a): a is Extract<AppAction, { type: "UPDATE_PROJECT_SERVER" }> =>
+            a.type === "UPDATE_PROJECT_SERVER"
         );
       expect(action).toBeDefined();
-      return (action!.updates.servers as Record<string, ServerWithName>)[
-        "xaa-server"
-      ];
+      return action!.server;
     };
 
     await act(async () => {
@@ -5924,6 +6039,83 @@ describe("useServerState XAA identity pair — shared save semantics across all 
     entry = findProjectServerEntry();
     expect(entry.xaaSubject).toBe("");
     expect(entry.xaaEmail).toBe("");
+  });
+});
+
+// A stdio server's command is approved from a MANUAL check: the
+// check queue flags a job automatic from a one-shot mark the auto-connect hook
+// sets, and a mark left behind (the hook marked a server `ensureServersReady`
+// found already connected) made the next explicit connect silent — Save &
+// Connect answered "Connection failed" instead of asking. User-initiated
+// paths assert manual intent themselves.
+describe("manual connect intent", () => {
+  let markManual: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    markManual = vi.spyOn(serverCheckQueue, "markManual");
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: null,
+    } as any);
+  });
+
+  afterEach(() => {
+    markManual.mockRestore();
+  });
+
+  function disconnectedAppState() {
+    const appState = createAppState();
+    appState.projects.default.servers["demo-server"].connectionStatus =
+      "disconnected";
+    appState.servers["demo-server"].connectionStatus = "disconnected";
+    return appState;
+  }
+
+  it("ensureServersReady promotes a project server to a manual check", async () => {
+    const { result } = renderUseServerState(vi.fn(), disconnectedAppState());
+
+    await act(async () => {
+      await result.current.ensureServersReady(["demo-server"]);
+    });
+
+    expect(markManual).toHaveBeenCalledWith("project_default", "demo-server");
+  });
+
+  it("ensureServersReady leaves an automatic check automatic", async () => {
+    const { result } = renderUseServerState(vi.fn(), disconnectedAppState());
+
+    await act(async () => {
+      await result.current.ensureServersReady(["demo-server"], {
+        automatic: true,
+      });
+    });
+
+    expect(markManual).not.toHaveBeenCalled();
+  });
+
+  it("handleReconnect promotes the server to a manual check", async () => {
+    const { result } = renderUseServerState(vi.fn(), disconnectedAppState());
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server");
+    });
+
+    expect(markManual).toHaveBeenCalledWith("project_default", "demo-server");
+  });
+
+  it("handleConnect promotes the server to a manual check", async () => {
+    testConnectionMock.mockResolvedValueOnce({ success: true, initInfo: null });
+    const { result } = renderUseServerState(vi.fn());
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      } as any);
+    });
+
+    expect(markManual).toHaveBeenCalledWith("project_default", "demo-server");
   });
 });
 

@@ -269,6 +269,19 @@ export function describeHostedOAuthFailure(
   }
 
   if (
+    code === "refresh_token_unavailable" ||
+    details?.refreshTokenUnavailable === true
+  ) {
+    return {
+      kind: "declined",
+      title: "Sign in again",
+      detail: [
+        "This server cannot renew your saved sign-in. Connect again to continue.",
+      ],
+      action: "reconnect",
+    };
+  }
+  if (
     code === "refresh_token_invalid" ||
     details?.refreshTokenInvalid === true
   ) {

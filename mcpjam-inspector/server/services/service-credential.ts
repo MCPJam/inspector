@@ -62,6 +62,24 @@ export function hasServiceCredential(env: Env = process.env): boolean {
 }
 
 /**
+ * Headers that tell the backend a credential request comes from the hosted
+ * Inspector. The backend's credential broker classifies a request carrying
+ * the service token in this header as managed delivery: the tokens it
+ * returns stay in this process. Without it every hosted request reads as an
+ * export to a user's machine, which an organization's export-deny policy and
+ * hosted-only accounts refuse. Hosted mode only (a local Inspector holds no
+ * service credential, and its requests are exports), and only on calls whose
+ * tokens never leave this server.
+ */
+export function hostedCredentialDeliveryHeaders(
+  hosted: boolean,
+  env: Env = process.env,
+): Record<string, string> {
+  const token = hosted ? getServiceCredential(env) : null;
+  return token ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: token } : {};
+}
+
+/**
  * Human name of the `sk_…` API-key bearer path, shared by every site that
  * needs the credential to act for a key (validation, delegated-token mint,
  * acting-as calls) so the hosted-only answer reads the same everywhere.

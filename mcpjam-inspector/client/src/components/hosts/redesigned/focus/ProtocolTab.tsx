@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
@@ -14,15 +14,20 @@ import {
 import { Switch } from "@mcpjam/design-system/switch";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
+  AUTH_CHALLENGE_ACTIONS,
   clearTasksPolicy,
   describeInvalidTasksPolicy,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
+  MCP_SKILLS_EXTENSION_ID,
   protocolVersionLabel,
+  readEventsHostSetting,
   readTasksPolicy,
   readXaaEnterprisePolicy,
   setTasksPolicy,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
   withXaaEnterprisePolicy,
   withoutXaaEnterprisePolicy,
   XAA_MCP_EXTENSION,
@@ -35,12 +40,20 @@ import {
   type McpProtocolVersion,
 } from "@/lib/client-config-v2";
 import type {
+  AuthChallengeAction,
   MrtrSupport,
   PaginationTraversalMode,
   ToolParamHeaderMirroring,
+  ToolResultAuthChallengeTrigger,
+  UnauthorizedChallengeTrigger,
 } from "@mcpjam/sdk/browser";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
+import {
+  ProtocolAuthChallengeSection,
+  type AuthChallengeKnob,
+} from "./ProtocolAuthChallengeSection";
+import { EventsHostSupportSection } from "./EventsHostSupportSection";
 
 /**
  * "auto" is a stored selection policy, NOT a wire literal. The SDK negotiates
@@ -90,6 +103,16 @@ const TASKS_POLICY_VALUE: Partial<Record<TasksPolicy, TasksPolicyChoice>> = {
   on: "on",
   off: "off",
 };
+
+/** Narrow an untrusted JSON value to one of a closed set of literals. */
+function closedEnumValue<T extends string>(
+  allowed: readonly T[],
+  raw: unknown,
+): T | undefined {
+  return typeof raw === "string" && (allowed as readonly string[]).includes(raw)
+    ? (raw as T)
+    : undefined;
+}
 
 /**
  * `MCP_PROTOCOL_VERSIONS` is ordered oldest-first; the dropdown lists
@@ -242,6 +265,15 @@ type ProtocolDoc = {
     listens?: boolean;
     refetches?: boolean;
   };
+  /**
+   * Mid-session sign-in knobs. Absent → the SDK default for each, written
+   * back as absence for the same hash reason as the knobs above. Map onto
+   * the same-named `mcpProfile` fields.
+   */
+  unauthorizedChallenge?: AuthChallengeAction;
+  unauthorizedChallengeTrigger?: UnauthorizedChallengeTrigger;
+  toolResultAuthChallenge?: AuthChallengeAction;
+  toolResultAuthChallengeTrigger?: ToolResultAuthChallengeTrigger;
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -260,6 +292,13 @@ type ProtocolDoc = {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function profileExtensionsError(parsed: unknown): string | null {
+  return isPlainObject(parsed) && parsed.extensions !== undefined &&
+    !isPlainObject(parsed.extensions)
+    ? "MCP profile extensions must be a JSON object. Replace this value with { } or remove the extensions field."
+    : null;
 }
 
 function findAuthorizationKey(
@@ -322,6 +361,22 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
     doc.toolListChanged = { ...toolListChanged };
   }
 
+  // Same only-when-set rule for the mid-session sign-in knobs.
+  if (draft.mcpProfile?.unauthorizedChallenge !== undefined) {
+    doc.unauthorizedChallenge = draft.mcpProfile.unauthorizedChallenge;
+  }
+  if (draft.mcpProfile?.unauthorizedChallengeTrigger !== undefined) {
+    doc.unauthorizedChallengeTrigger =
+      draft.mcpProfile.unauthorizedChallengeTrigger;
+  }
+  if (draft.mcpProfile?.toolResultAuthChallenge !== undefined) {
+    doc.toolResultAuthChallenge = draft.mcpProfile.toolResultAuthChallenge;
+  }
+  if (draft.mcpProfile?.toolResultAuthChallengeTrigger !== undefined) {
+    doc.toolResultAuthChallengeTrigger =
+      draft.mcpProfile.toolResultAuthChallengeTrigger;
+  }
+
   if (
     draft.clientCapabilities &&
     Object.keys(draft.clientCapabilities).length > 0
@@ -347,51 +402,32 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
 }
 
 /**
- * Whether the draft's stored clientCapabilities advertise the MCP
- * Enterprise-Managed Authorization extension. `extensions` is freeform
- * JSON, so guard for a plain object before the key check — presence of
- * the key is the signal, whatever its value.
+ * Whether the draft's stored clientCapabilities advertise the extension
+ * `extensionId`. `extensions` is freeform JSON, so guard for a plain object
+ * before the key check — presence of the key is the signal, whatever its
+ * value.
  */
-export function hasEmaExtension(
+export function hasClientExtension(
   capabilities: Record<string, unknown> | undefined,
+  extensionId: string,
 ): boolean {
   const exts = capabilities?.extensions;
   return (
     isPlainObject(exts) &&
-    Object.prototype.hasOwnProperty.call(exts, XAA_MCP_EXTENSION)
+    Object.prototype.hasOwnProperty.call(exts, extensionId)
   );
 }
 
 /**
- * Advertise the EMA extension in the stored clientCapabilities. Unlike the
- * Apps tab's `withMcpUiExtension` (which resets to the default payload),
- * a pre-existing value object is preserved — same `?? {}` semantics as the
- * server's connect-time `withXaaExtensionCapability` merge, so toggling
- * never clobbers a hand-edited payload.
+ * Advertise the extension `extensionId` in the stored clientCapabilities.
+ * Unlike the Apps tab's `withMcpUiExtension` (which resets to the default
+ * payload), a pre-existing value object is preserved — same `?? {}` semantics
+ * as the server's connect-time extension merges, so toggling never clobbers
+ * a hand-edited payload.
  */
-export function withEmaExtension(prev: HostConfigInputV2): HostConfigInputV2 {
-  const nextCaps: Record<string, unknown> = {
-    ...(prev.clientCapabilities ?? {}),
-  };
-  const exts: Record<string, unknown> = isPlainObject(nextCaps.extensions)
-    ? { ...nextCaps.extensions }
-    : {};
-  exts[XAA_MCP_EXTENSION] = exts[XAA_MCP_EXTENSION] ?? {};
-  nextCaps.extensions = exts;
-  return { ...prev, clientCapabilities: nextCaps };
-}
-
-/**
- * Stop advertising the EMA extension. Touches ONLY the extensions map:
- * sibling extensions are preserved, a now-empty `extensions` container is
- * dropped (an empty `extensions: {}` on a config that never had the key
- * reads as a diff to the deep-equal dirty check), and `clientCapabilities`
- * itself always stays an object — the canonicalizer requires it. Mistral's
- * inert `extensions: {}` marker is restored the same way
- * `withoutMcpUiExtension` restores it.
- */
-export function withoutEmaExtension(
+export function withClientExtension(
   prev: HostConfigInputV2,
+  extensionId: string,
 ): HostConfigInputV2 {
   const nextCaps: Record<string, unknown> = {
     ...(prev.clientCapabilities ?? {}),
@@ -399,7 +435,31 @@ export function withoutEmaExtension(
   const exts: Record<string, unknown> = isPlainObject(nextCaps.extensions)
     ? { ...nextCaps.extensions }
     : {};
-  delete exts[XAA_MCP_EXTENSION];
+  exts[extensionId] = exts[extensionId] ?? {};
+  nextCaps.extensions = exts;
+  return { ...prev, clientCapabilities: nextCaps };
+}
+
+/**
+ * Stop advertising the extension `extensionId`. Touches ONLY the extensions
+ * map: sibling extensions are preserved, a now-empty `extensions` container is
+ * dropped (an empty `extensions: {}` on a config that never had the key reads
+ * as a diff to the deep-equal dirty check), and `clientCapabilities` itself
+ * always stays an object — the canonicalizer requires it. Mistral's inert
+ * `extensions: {}` marker is restored the same way `withoutMcpUiExtension`
+ * restores it.
+ */
+export function withoutClientExtension(
+  prev: HostConfigInputV2,
+  extensionId: string,
+): HostConfigInputV2 {
+  const nextCaps: Record<string, unknown> = {
+    ...(prev.clientCapabilities ?? {}),
+  };
+  const exts: Record<string, unknown> = isPlainObject(nextCaps.extensions)
+    ? { ...nextCaps.extensions }
+    : {};
+  delete exts[extensionId];
   if (Object.keys(exts).length > 0) {
     nextCaps.extensions = exts;
   } else {
@@ -409,6 +469,23 @@ export function withoutEmaExtension(
     nextCaps.extensions = {};
   }
   return { ...prev, clientCapabilities: nextCaps };
+}
+
+/** The MCP Enterprise-Managed Authorization extension, via the helpers above. */
+export function hasEmaExtension(
+  capabilities: Record<string, unknown> | undefined,
+): boolean {
+  return hasClientExtension(capabilities, XAA_MCP_EXTENSION);
+}
+
+export function withEmaExtension(prev: HostConfigInputV2): HostConfigInputV2 {
+  return withClientExtension(prev, XAA_MCP_EXTENSION);
+}
+
+export function withoutEmaExtension(
+  prev: HostConfigInputV2,
+): HostConfigInputV2 {
+  return withoutClientExtension(prev, XAA_MCP_EXTENSION);
 }
 
 /**
@@ -504,7 +581,7 @@ export function applyJsonToDraft(
   parsed: unknown,
   prev: HostConfigInputV2,
 ): HostConfigInputV2 | null {
-  if (!isPlainObject(parsed)) return null;
+  if (!isPlainObject(parsed) || profileExtensionsError(parsed)) return null;
 
   // clientInfo — require both name and version, like the form did. A bare
   // `{}` or partial object collapses to "not set", matching the persisted
@@ -580,6 +657,25 @@ export function applyJsonToDraft(
       toolCallCancellation = parsedCancellation;
     }
   }
+
+  // Same closed-enum collapse for the mid-session sign-in knobs, against the
+  // SDK's own literal lists so a new value never needs a second edit here.
+  const unauthorizedChallenge = closedEnumValue(
+    AUTH_CHALLENGE_ACTIONS,
+    parsed.unauthorizedChallenge,
+  );
+  const unauthorizedChallengeTrigger = closedEnumValue(
+    UNAUTHORIZED_CHALLENGE_TRIGGERS,
+    parsed.unauthorizedChallengeTrigger,
+  );
+  const toolResultAuthChallenge = closedEnumValue(
+    AUTH_CHALLENGE_ACTIONS,
+    parsed.toolResultAuthChallenge,
+  );
+  const toolResultAuthChallengeTrigger = closedEnumValue(
+    TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+    parsed.toolResultAuthChallengeTrigger,
+  );
 
   let toolListChangedParsed: HostConfigMcpProfileV1["toolListChanged"];
   if (isPlainObject(parsed.toolListChanged)) {
@@ -664,6 +760,10 @@ export function applyJsonToDraft(
       mrtrSupport,
       toolCallCancellation,
       toolListChanged: toolListChangedParsed,
+      unauthorizedChallenge,
+      unauthorizedChallengeTrigger,
+      toolResultAuthChallenge,
+      toolResultAuthChallengeTrigger,
       extensions: profileExtensions,
       // `apps` is owned by the Apps tab (including the widget tool-result
       // policy that used to be edited here); this view must pass it through
@@ -698,6 +798,14 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
+  const extensionsError = useMemo(() => {
+    try {
+      return profileExtensionsError(JSON.parse(content));
+    } catch {
+      // The JSON editor already reports syntax errors in its status bar.
+      return null;
+    }
+  }, [content]);
   // Every known version has its own entry, so a stored pin shows itself
   // rather than collapsing onto a neighbour. Only genuinely unknown values
   // (hand-edited junk, a version retired from the SDK) fall back to
@@ -860,7 +968,9 @@ export function ProtocolTab({
     });
   };
 
-  const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
+  const setConformanceKnob = <
+    K extends "paginationTraversal" | "mrtrSupport" | AuthChallengeKnob,
+  >(
     key: K,
     next: HostConfigMcpProfileV1[K] | undefined,
   ) => {
@@ -950,6 +1060,11 @@ export function ProtocolTab({
   // is stranded with tasks disabled and no UI left to re-enable them.
   const tasksFlagEnabled = useFeatureFlagEnabled("mcp-tasks");
   const showTasksPolicy = tasksFlagEnabled === true || tasksPolicy !== "unset";
+  // Shown with Events, and always once a setting is saved, so a client is
+  // never left with a delivery setting nobody can see or change.
+  const eventsFlagEnabled = useFeatureFlagEnabled("mcp-events-enabled");
+  const showEventsDelivery =
+    eventsFlagEnabled === true || readEventsHostSetting(draft).kind !== "unset";
   const fTasksPolicy = hostConfigField("tasksPolicy");
   const setTasksPolicyChoice = (next: TasksPolicyChoice) => {
     onDraftChange((prev) =>
@@ -973,8 +1088,23 @@ export function ProtocolTab({
     onDraftChange((prev) => withElicitation(prev, { url: next }));
   };
 
+  // Skills over MCP (SEP-2640) is a wire extension like elicitation, so it is
+  // derived per render from the stored capabilities for the same reason.
+  const fSkillsExtension = hostConfigField("capabilities.skillsExtension");
+  const skillsExtensionOn = hasClientExtension(
+    draft.clientCapabilities,
+    MCP_SKILLS_EXTENSION_ID,
+  );
+  const setSkillsExtensionOn = (next: boolean) => {
+    onDraftChange((prev) =>
+      next
+        ? withClientExtension(prev, MCP_SKILLS_EXTENSION_ID)
+        : withoutClientExtension(prev, MCP_SKILLS_EXTENSION_ID),
+    );
+  };
+
   return (
-    <div className="flex h-full min-h-[480px] flex-col gap-3">
+    <div className="flex flex-col gap-3">
       <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
         <div className="flex items-center gap-3">
           <span
@@ -1260,6 +1390,11 @@ export function ProtocolTab({
             </div>
           </div>
         </div>
+        <ProtocolAuthChallengeSection
+          profile={draft.mcpProfile}
+          onChange={setConformanceKnob}
+          readOnly={readOnly}
+        />
         {showPolicyToggle && (
           <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
             <div className="min-w-0">
@@ -1334,6 +1469,13 @@ export function ProtocolTab({
             </Select>
           </div>
         )}
+        {showEventsDelivery && (
+          <EventsHostSupportSection
+            draft={draft}
+            onDraftChange={onDraftChange}
+            readOnly={readOnly}
+          />
+        )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -1371,10 +1513,29 @@ export function ProtocolTab({
             </div>
           ) : null}
         </div>
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              {fSkillsExtension.label}
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Advertises the Skills over MCP extension. When enabled, chat can
+              load the skills a server serves, after checking each file against
+              the server&apos;s manifest. Applies on the next connect.
+            </p>
+          </div>
+          <Switch
+            checked={skillsExtensionOn}
+            onCheckedChange={setSkillsExtensionOn}
+            disabled={readOnly}
+            aria-label={fSkillsExtension.label}
+          />
+        </div>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-80 shrink-0 flex-col">
         <JsonEditor
           rawContent={content}
+          error={extensionsError}
           onRawChange={onRawChange}
           mode={effectiveJsonMode}
           onModeChange={readOnly ? undefined : setJsonMode}

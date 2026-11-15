@@ -107,6 +107,19 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+/** A 200 stream whose only step finishes empty, with the given usage. */
+function emptyStepResponse(finishReason: string, outputTokens: number) {
+  const finish = {
+    type: "finish",
+    finishReason,
+    totalUsage: { inputTokens: 7, outputTokens, totalTokens: 7 + outputTokens },
+  };
+  return new Response(`data: ${JSON.stringify(finish)}\n\ndata: [DONE]\n\n`, {
+    status: 200,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
 function traceErrors() {
   return writtenChunks
     .filter((c) => c?.type === "data-trace-event" && c.data?.type === "error")
@@ -268,6 +281,33 @@ describe("Ask MCPJam engine failures reach Sentry", () => {
     expect(captured().tags.page_class).toBe("incident");
   });
 
+  it("captures an empty reply the provider generated nothing for as routine", async () => {
+    global.fetch = vi.fn().mockResolvedValue(emptyStepResponse("other", 0));
+    const { reporter } = realReporter();
+
+    await runTurn(agent(reporter));
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(captured().tags).toMatchObject({
+      surface: "mcpjam_agent",
+      page_class: "routine",
+      agent_failure_code: "provider_empty_response",
+    });
+  });
+
+  it("captures an empty reply that lost generated tokens as an incident", async () => {
+    global.fetch = vi.fn().mockResolvedValue(emptyStepResponse("stop", 50));
+    const { reporter } = realReporter();
+
+    await runTurn(agent(reporter));
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(captured().tags).toMatchObject({
+      page_class: "incident",
+      agent_failure_code: "provider_empty_response",
+    });
+  });
+
   it("does not capture an abort", async () => {
     const controller = new AbortController();
     global.fetch = vi.fn().mockImplementation(async () => {
@@ -301,5 +341,24 @@ describe("Ask MCPJam engine failures reach Sentry", () => {
     // And its trace events are byte-identical: no `captured` field.
     expect(traceErrors()).toHaveLength(1);
     expect(traceErrors()[0]).not.toHaveProperty("captured");
+  });
+
+  it("does not page on a Playground empty reply the provider generated nothing for", async () => {
+    global.fetch = vi.fn().mockResolvedValue(emptyStepResponse("other", 0));
+    const { reporter } = realReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("still pages on a Playground empty reply that lost generated tokens", async () => {
+    global.fetch = vi.fn().mockResolvedValue(emptyStepResponse("stop", 50));
+    const { reporter } = realReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(captured().tags).toMatchObject({ error_origin: "mcpjam" });
   });
 });

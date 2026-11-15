@@ -4,6 +4,7 @@ import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { useCompareSelections } from "@/hooks/use-compare-selections";
 import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
+import { useSingleFlight } from "@/hooks/use-single-flight";
 import {
   compareSelectionForRow,
   mergePickedRows,
@@ -25,6 +26,7 @@ import {
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
+import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
@@ -35,7 +37,6 @@ import {
   OrgAiRefusalHandoffProvider,
   orgAiRefusalHandoff,
 } from "@/contexts/org-ai-refusal-context";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
@@ -122,17 +123,22 @@ import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
+  getChatHistoryState,
+  type ChatHistoryStateSession,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
+import {
+  presendStateIsCurrent,
+  withPresendSyncTimeout,
+} from "@/lib/chat-history-presend";
 import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { HOSTED_MODE } from "@/lib/config";
-import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
@@ -159,8 +165,7 @@ import {
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
 import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
 
 interface ChatTabProps {
@@ -277,9 +282,8 @@ export function ChatTabV2({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
     []
   );
@@ -424,20 +428,8 @@ export function ChatTabV2({
         .filter((serverId): serverId is string => !!serverId),
     [selectedConnectedServerNames, serversByName]
   );
-  const hostedOAuthTokens = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        selectedConnectedServerNames,
-        (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token
-      ),
-    [selectedConnectedServerNames, serversByName, appState.servers]
-  );
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedScenarioId
-    ? undefined
-    : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
@@ -507,6 +499,7 @@ export function ChatTabV2({
     urlElicitationRequired,
     dismissUrlElicitationRequired,
     autoResumeNotice,
+    harnessStartupPhase,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     // A scenario / share-link turn runs the host's own config; the visitor's
@@ -519,7 +512,6 @@ export function ChatTabV2({
       ...hostedContext,
       projectId: effectiveHostedProjectId,
       selectedServerIds: effectiveHostedSelectedServerIds,
-      oauthTokens: effectiveHostedOAuthTokens,
     },
     executionConfig,
     // Phase 3: forward the resolved chat-tab host style so direct
@@ -876,6 +868,8 @@ export function ChatTabV2({
     ]
   );
 
+  const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, effectiveHostedProjectId);
+
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
       if (!showHistoryRail) {
@@ -888,11 +882,17 @@ export function ChatTabV2({
 
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
+          const detail = await getChatHistoryState({
             sessionId: activeHistorySessionId ?? undefined,
             chatSessionId,
             projectId: effectiveHostedProjectId ?? undefined,
           });
+          if (
+            !isCurrentHistoryTarget({ chatSessionId, projectId: effectiveHostedProjectId }) ||
+            detail.session.chatSessionId !== chatSessionId
+          ) {
+            return null;
+          }
           setActiveHistorySessionId(detail.session._id);
           setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
@@ -923,6 +923,7 @@ export function ChatTabV2({
       chatSessionId,
       effectiveHostedProjectId,
       hasConversationMessages,
+      isCurrentHistoryTarget,
       markHistorySessionRead,
       showHistoryRail,
       syncResumedVersion,
@@ -989,9 +990,21 @@ export function ChatTabV2({
   ]);
 
   const ensureThreadReadyForSend = useCallback(async () => {
-    let detail: ChatHistoryDetailSession | null = null;
+    if (
+      presendStateIsCurrent({
+        activeHistorySessionId,
+        chatSessionId,
+        live: reactiveHistorySession,
+        resumedVersion,
+        visibility: pendingDirectVisibility,
+      })
+    ) {
+      return true;
+    }
+    const target = { chatSessionId, projectId: effectiveHostedProjectId };
+    let detail: ChatHistoryStateSession | null = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
     } catch (error) {
       console.error(
         "[ChatTabV2] Failed to sync chat history before send",
@@ -1002,6 +1015,11 @@ export function ChatTabV2({
     }
     if (detail) {
       return true;
+    }
+    // Another thread opened while the read was in flight: this send belonged
+    // to the one that closed, so drop it rather than detach the open thread.
+    if (!isCurrentHistoryTarget(target)) {
+      return false;
     }
 
     if (activeHistorySessionId) {
@@ -1014,8 +1032,14 @@ export function ChatTabV2({
     return true;
   }, [
     activeHistorySessionId,
+    chatSessionId,
     detachHistorySession,
+    effectiveHostedProjectId,
+    isCurrentHistoryTarget,
+    pendingDirectVisibility,
+    reactiveHistorySession,
     refreshCurrentHistorySession,
+    resumedVersion,
   ]);
 
   const handleSelectThread = useCallback(
@@ -1194,8 +1218,11 @@ export function ChatTabV2({
         session._id === activeHistorySessionId
       ) {
         try {
+          const target = { chatSessionId, projectId: effectiveHostedProjectId };
           const detail = await refreshCurrentHistorySession();
-          if (!detail) {
+          // No row is "no longer shared" only while that thread is still the
+          // open one; a read that outlived it says nothing about the new one.
+          if (!detail && isCurrentHistoryTarget(target)) {
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread."
             );
@@ -1205,7 +1232,14 @@ export function ChatTabV2({
         }
       }
     },
-    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession]
+    [
+      activeHistorySessionId,
+      chatSessionId,
+      detachHistorySession,
+      effectiveHostedProjectId,
+      isCurrentHistoryTarget,
+      refreshCurrentHistorySession,
+    ]
   );
 
   const previousSelectedServerNamesRef = useRef(selectedServerNames);
@@ -1707,21 +1741,6 @@ export function ChatTabV2({
     setWidgetStateQueue([]);
   }, [status, widgetStateQueue, setMessages]);
 
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      }
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context)
-      );
-    },
-    []
-  );
-
   const activeElicitation = elicitationQueue[0] ?? null;
 
   // Elicitation SSE listener
@@ -1899,11 +1918,15 @@ export function ChatTabV2({
   // surfaces on failures where resending is the whole fix (see the
   // `canRetryLastMessage` gate below), so we don't risk firing this on
   // unrelated retryable errors.
+  // One send at a time for the composer and Retry (see `onSubmit`).
+  const composerSend = useSingleFlight();
   const handleRetryLastMessage = useCallback(() => {
     const text = lastSentUserMessageRef.current;
     if (!text) return;
-    sendMessage({ text, metadata: outgoingSenderMetadata });
-  }, [sendMessage, outgoingSenderMetadata]);
+    void composerSend.run(() =>
+      sendMessage({ text, metadata: outgoingSenderMetadata }),
+    );
+  }, [sendMessage, outgoingSenderMetadata, composerSend.run]);
 
   // Rewind to a past user message and re-run the turn from edited text. The
   // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
@@ -2276,8 +2299,7 @@ export function ChatTabV2({
     signUp();
   };
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitComposer = async () => {
     const hasContent =
       input.trim() ||
       mcpPromptResults.length > 0 ||
@@ -2331,7 +2353,8 @@ export function ChatTabV2({
           single_model_send: true,
         });
         lastSentUserMessageRef.current = input;
-        sendMessage({
+        // Held until dispatch, so the lock covers the hosted preflight too.
+        await sendMessage({
           text: input,
           files,
           metadata: outgoingSenderMetadata,
@@ -2348,12 +2371,15 @@ export function ChatTabV2({
     }
   };
 
-  const handleStarterPrompt = async (prompt: string) => {
-    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
-    if (composerDisabled || sendBlocked) {
-      setInput(prompt);
-      return;
-    }
+  // One submit at a time: the history sync above runs with the draft still in
+  // the box, where a second Enter would send it again. `preventDefault` stays
+  // first so a refused submit never falls through to a native form submit.
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await composerSend.run(submitComposer);
+  };
+
+  const sendStarterPrompt = async (prompt: string) => {
     const threadReady = await ensureThreadReadyForSend();
     if (!threadReady) {
       return;
@@ -2376,16 +2402,31 @@ export function ChatTabV2({
         single_model_send: true,
       });
       lastSentUserMessageRef.current = prompt;
-      sendMessage({
+      // Held until dispatch: the chips stay on screen through the hosted
+      // preflight inside sendMessage, and a second click there would send.
+      const sent = await sendMessage({
         text: prompt,
         metadata: outgoingSenderMetadata,
         widgetModelContext: modelContextQueue,
       });
+      if (!sent) return;
       setModelContextQueue([]);
     }
     setInput("");
     revokeFileAttachmentUrls(fileAttachments);
     setFileAttachments([]);
+  };
+
+  const handleStarterPrompt = (prompt: string) => {
+    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
+    if (composerDisabled || sendBlocked) {
+      setInput(prompt);
+      return;
+    }
+    // Shares the composer's lock: the chip clears the composer, so one
+    // clicked while a submit is being prepared would wipe that submit's
+    // attachments and the submit would still send its draft.
+    void composerSend.run(() => sendStarterPrompt(prompt));
   };
 
   /**
@@ -2407,6 +2448,7 @@ export function ChatTabV2({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    isSubmitting: composerSend.pending,
     placeholder,
     currentModel: selectedModel,
     availableModels,
@@ -2809,7 +2851,6 @@ export function ChatTabV2({
                             ...hostedContext,
                             projectId: effectiveHostedProjectId,
                             selectedServerIds: effectiveHostedSelectedServerIds,
-                            oauthTokens: effectiveHostedOAuthTokens,
                           }}
                           onOAuthRequired={handleOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
@@ -2960,6 +3001,7 @@ export function ChatTabV2({
                     <div className="relative flex-1 min-h-0">
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
+                          harnessStartupPhase={harnessStartupPhase}
                           chatSessionId={chatSessionId}
                           messages={messages}
                           sendFollowUpMessage={(text: string) => {

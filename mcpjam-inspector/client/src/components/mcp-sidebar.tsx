@@ -1,3 +1,5 @@
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -24,8 +26,15 @@ import {
   Cable,
   MessagesSquare,
   Globe,
+  Radio,
+  Zap,
+  ClipboardCheck,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import {
+  EVENTS_FEATURE_FLAG,
+  useEventsEnabledState,
+} from "@/hooks/useEventsEnabled";
 import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -70,7 +79,10 @@ import {
 } from "@/lib/hosted-tab-policy";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
-import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "@/hooks/useWebmcpInspectorEnabled";
+import {
+  WEBMCP_INSPECTOR_FEATURE_FLAG,
+  useWebmcpInspectorEnabledState,
+} from "@/hooks/useWebmcpInspectorEnabled";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
   useOrganizationBillingStatus,
@@ -122,6 +134,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "registry-enabled",
   "mcpjam-conformance",
   "mcpjam-compatibility",
+  "mcpjam-directory-readiness",
   "hosts-enabled",
   "home-page-enabled",
   "xaa",
@@ -129,6 +142,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "unified-sessions-enabled",
   "evaluate-enabled",
   WEBMCP_INSPECTOR_FEATURE_FLAG,
+  EVENTS_FEATURE_FLAG,
 ] as const;
 
 /**
@@ -165,14 +179,13 @@ export function filterByFeatureFlags(
 export function applyBillingGateNavState(
   sections: NavSection[],
   options: {
-    billingUiEnabled: boolean;
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
   },
 ): NavSection[] {
-  const { billingUiEnabled, gateDenied, enforcementActive } = options;
-  if (!billingUiEnabled || !enforcementActive) {
+  const { gateDenied, enforcementActive } = options;
+  if (!enforcementActive) {
     return sections;
   }
 
@@ -239,6 +252,16 @@ export const navigationSections: NavSection[] = [
         title: "Playground",
         url: "/playground",
         icon: MessageCircle,
+      },
+      {
+        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
+        // to Playground because it is the unattended version of the same
+        // thing: a model with the project's servers, reacting to an event
+        // instead of a message.
+        title: "Triggers",
+        url: "/triggers",
+        icon: Zap,
+        featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
         title: "Environments",
@@ -326,6 +349,7 @@ export const navigationSections: NavSection[] = [
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
         // this is an internal-only flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-conformance",
+        badge: "New",
       },
       {
         title: "Compatibility",
@@ -333,6 +357,12 @@ export const navigationSections: NavSection[] = [
         icon: Boxes,
         // MCPJam-internal flag (same convention as `mcpjam-conformance`).
         featureFlag: "mcpjam-compatibility",
+      },
+      {
+        title: "Readiness",
+        url: "/readiness",
+        icon: ClipboardCheck,
+        featureFlag: "mcpjam-directory-readiness",
       },
     ],
   },
@@ -362,6 +392,12 @@ export const navigationSections: NavSection[] = [
         title: "Tasks",
         url: "/tasks",
         icon: ListTodo,
+      },
+      {
+        title: "Events",
+        url: "/events",
+        icon: Radio,
+        featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
         // Tools a live web PAGE registers, rather than an MCP server — the
@@ -490,10 +526,8 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
-  billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
-  onBeforeSignOut?: () => void | Promise<void>;
 }
 
 export function MCPSidebar({
@@ -511,10 +545,8 @@ export function MCPSidebar({
   onSwitchOrganization,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
-  billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
-  onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
@@ -524,17 +556,15 @@ export function MCPSidebar({
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const projectEnvironmentsEnabled = useFeatureFlagEnabled(
-    "project-environments-enabled",
-  );
+  const readinessEnabled = useFeatureFlagEnabled("mcpjam-directory-readiness");
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled",
   );
   const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
-  const webmcpInspectorEnabled = useFeatureFlagEnabled(
-    WEBMCP_INSPECTOR_FEATURE_FLAG,
-  );
+  const eventsEnabled = useEventsEnabledState();
+  const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
+  const projectEnvironmentsEnabled = useProjectEnvironmentsVisible(useIsMemberActor());
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
   // (`user` is null and `isAuthenticated` is false even for signed-in users).
@@ -607,12 +637,9 @@ export function MCPSidebar({
   }, [canOpenInviteDialog]);
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
-    { enabled: billingUiEnabled && !!activeProject?.organizationId },
   );
   const trialActive =
-    billingUiEnabled &&
-    trialBilling?.trialStatus === "active" &&
-    !!trialBilling.trialEndsAt;
+    trialBilling?.trialStatus === "active" && !!trialBilling.trialEndsAt;
   const handleTrialUpgradeClick = () => {
     if (!activeProject?.organizationId) return;
     appNavigate(`/organizations/${activeProject.organizationId}/billing`);
@@ -639,13 +666,14 @@ export function MCPSidebar({
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
+      // Submissions belong to a project, like the rows below.
+      "mcpjam-directory-readiness": readinessEnabled === true && isAuthenticated,
       // Hosts/Connect and Home are fully rolled out; their nav visibility is
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
       xaa: xaaEnabled === true,
-      "project-environments-enabled":
-        projectEnvironmentsEnabled === true && isAuthenticated,
+      "project-environments-enabled": projectEnvironmentsEnabled,
       // Project-scoped like the two above: the feed needs a project, and
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":
@@ -653,9 +681,10 @@ export function MCPSidebar({
       // Project-scoped like the rows above: every screen behind it needs a
       // project to resolve suites against.
       "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
-      // Deployment-specific Browser rollout; local guests are eligible too.
-      // Hosted execution retains its server-side sign-in/entitlement checks.
+      // Hosted: the backend's availability answer, flag and readiness both.
+      // Local: the local Browser rollout, which local guests may be in too.
       [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
+      [EVENTS_FEATURE_FLAG]: eventsEnabled === true,
     }),
     [
       learningEnabled,
@@ -663,11 +692,13 @@ export function MCPSidebar({
       registryEnabled,
       conformanceEnabled,
       compatibilityEnabled,
+      readinessEnabled,
       xaaEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
       evaluateEnabled,
       webmcpInspectorEnabled,
+      eventsEnabled,
       isAuthenticated,
     ],
   );
@@ -895,7 +926,6 @@ export function MCPSidebar({
           {isAuthenticated && user && activeOrganizationId ? (
             <SidebarCredits
               organizationId={activeOrganizationId}
-              billingUiEnabled={billingUiEnabled}
               onExplorePlans={() =>
                 appNavigate(
                   buildOrganizationPath(activeOrganizationId, "billing"),
@@ -930,7 +960,7 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          <SidebarUser onBeforeSignOut={onBeforeSignOut} />
+          <SidebarUser />
         </SidebarFooter>
       </Sidebar>
       {!authResolving && (

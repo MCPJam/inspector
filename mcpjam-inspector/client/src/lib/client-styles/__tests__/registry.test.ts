@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   CHATGPT_HOST_STYLE,
   CLAUDE_HOST_STYLE,
@@ -37,6 +38,13 @@ describe("host-styles registry", () => {
     expect(findHostStyle("perplexity")).toBe(PERPLEXITY_HOST_STYLE);
     expect(findHostStyle("notion")).toBe(NOTION_HOST_STYLE);
     expect(findHostStyle("vscode")).toBe(VSCODE_HOST_STYLE);
+  });
+
+  it("keeps the Microsoft 365 widget runtime scoped to its host", () => {
+    const cli = findHostStyle("copilot-cli");
+    expect(cli?.mcp.protocolOverride).toBe(UIType.MCP_APPS);
+    expect(cli?.mcp.compatRuntime?.openaiApps).toBeUndefined();
+    expect(COPILOT_HOST_STYLE.mcp.compatRuntime?.openaiApps).toBe(true);
   });
 
   it("returns undefined for unknown ids", () => {
@@ -140,9 +148,9 @@ describe("host-styles registry", () => {
       message: { text: {} },
       downloadFile: {},
     });
-    // ChatGPT keeps serverResources / logging, but the probe reports no
-    // downloadFile support. Model context and messages advertise every
-    // content type in OpenAI's Supported Content table, not just text.
+    // ChatGPT keeps serverResources / logging and advertises downloadFile.
+    // Model context and messages advertise every content type in OpenAI's
+    // Supported Content table, not just text.
     expect(getHostCapabilitiesForStyle("chatgpt")).toEqual({
       openLinks: {},
       serverTools: {},
@@ -156,6 +164,7 @@ describe("host-styles registry", () => {
         structuredContent: {},
       },
       message: { text: {}, image: {}, resourceLink: {}, resource: {} },
+      downloadFile: {},
     });
   });
 

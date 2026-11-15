@@ -1,16 +1,9 @@
+import { readNativeForwardingResult, type NativeForwardingSelection } from "./forwarding/native-turn.js";
+import type { ForwardingOwner } from "./forwarding/execution-control.js";
 import { inspectorAiRequestHeaders } from "../ai-request-headers.js";
 /**
- * Header-broker start/revoke client — the ONLY harness credential delivery
- * path since COMP-23 (the raw-key `harness-model-credential.ts` client, which
- * returned a real unmetered key to inject into the sandbox env, was removed).
- *
- * The broker NEVER hands the inspector a lease. Convex mints it, locks the
- * sandbox's egress to the proxy host, and installs it into E2B's egress header
- * transform — so the lease is injected OUTSIDE the VM and the inspector/sandbox
- * never hold it. We get back only the proxy base URL + runId; the harness CLIs
- * run with DUMMY local creds pointed at that proxy.
- *
- * Backed by `convex/http.ts:/web/harness/model-broker/{start,revoke}`.
+ * Broker credentials stay in the E2B network transform. The sandbox receives
+ * dummy credentials and the proxy endpoint.
  */
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
@@ -33,17 +26,18 @@ import {
  * pinned) it evaluates as an unknown version. Pairs with
  * MCPJam/mcpjam-backend#1614, which accepts the optional field.
  */
-function harnessRuntimeVersionField(
+export function harnessRuntimeVersionField(
   harnessId: HarnessId,
 ): { harnessRuntimeVersion?: string } {
   const version = harnessPinnedVersion(harnessId);
   return version ? { harnessRuntimeVersion: version } : {};
 }
 /**
- * Every registered harness id — reserve/renew/release are taken by EVERY
- * harness, brokered or not: an external-account harness still runs its CLI in
- * the customer's box, so it claims that box for the span of a turn's
- * preparation exactly like a brokered one does.
+ * Every registered harness id — reserve/renew/release
+ * (`harness-box-reservation.ts`) are taken by EVERY harness, brokered or not:
+ * an external-account harness still runs its CLI in the customer's box, so it
+ * claims that box for the span of a turn's preparation exactly like a
+ * brokered one does.
  *
  * `startHarnessModelBroker` is typed the same but must never be REACHED for an
  * external-account harness. Three things stop it, and none of them is this
@@ -63,17 +57,16 @@ export type HarnessBrokerStartResult =
       delivery: "e2b-network-transform";
       /** Present exactly when the lease runs on the org's own key. */
       orgUpstream?: HarnessOrgLeaseUpstream;
+      forwarding?: { owners: ForwardingOwner[]; origin: string };
     }
   | {
       ok: false;
       status: number;
       error: string;
-      /**
-       * The backend's machine code, when it sent one (`spend_budget_reached`,
-       * `free_tier_model_restricted`, …), so a caller can type the failure
-       * instead of reading the prose.
-       */
+      /** The backend's machine code (`spend_budget_reached`, …), to type it by. */
       code?: string;
+      /** While a box preparation holds the box: when its claim lapses. */
+      reservationExpiresAt?: number;
     };
 
 /**
@@ -159,7 +152,7 @@ export type HarnessBrokerBox =
  * the project and the scope are fields of the `computer` arm, so the sandbox
  * path has no branch that could emit them and no way to regress into one.
  */
-function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown> {
+export function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown> {
   return box.kind === "computer"
     ? {
         projectId: box.projectId,
@@ -192,6 +185,7 @@ export async function startHarnessModelBroker(args: {
    * is refused (`byok_connection_changed`) if the key was replaced since.
    */
   expectedCredentialRevision?: string;
+  nativeForwarding?: NativeForwardingSelection;
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -222,6 +216,7 @@ export async function startHarnessModelBroker(args: {
       body: JSON.stringify({
         ...boxRequestFields(args.box),
         harnessId: args.harnessId,
+        ...(args.nativeForwarding ? { nativeForwarding: args.nativeForwarding } : {}),
         ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         ...(args.runId ? { runId: args.runId } : {}),
@@ -294,10 +289,17 @@ export async function startHarnessModelBroker(args: {
       ...(!response.ok && typeof payload?.code === "string"
         ? { code: payload.code }
         : {}),
+      ...numberField(payload, "reservationExpiresAt"),
     };
   }
 
+  const forwarding = readNativeForwardingResult(payload, args.nativeForwarding);
+  if (forwarding === null) {
+    await revokeHarnessModelBroker({ runId: payload.runId, ...(args.box.kind === "computer" ? { projectId: args.box.projectId } : {}), bearer: args.bearer });
+    return { ok: false, status: 502, error: "Native forwarding owner binding was not confirmed." };
+  }
   return {
+    ...(forwarding ? { forwarding } : {}),
     ok: true,
     runId: payload.runId,
     expiresAt: payload.expiresAt,
@@ -584,214 +586,8 @@ export async function revokeHarnessModelBroker(args: {
   }
 }
 
-export type HarnessBoxReservationResult =
-  | {
-      ok: true;
-      expiresAt?: number;
-      /**
-       * For an org selection: the hashed credential revision the turn is
-       * being prepared for. Handed back to the start, which refuses if the
-       * organization's key was replaced in between.
-       */
-      credentialRevision?: string;
-    }
-  | { ok: false; status: number; error: string; code?: string };
-
-/**
- * Claim a box for the span of a turn's PREPARATION — waking it and installing
- * the harness runtime, all of which happens before the lease exists and
- * therefore outside the protection of the lease's own per-box fence. The lease
- * consumes this claim when it is minted (matched on `runId`).
- *
- * A missing endpoint is a hard failure. Continuing without a claim would
- * silently restore the preparation race this endpoint exists to close, so an
- * inspector must be rolled out only after the reservation-capable backend.
- */
-export async function reserveHarnessBox(args: {
-  box: HarnessBrokerBox;
-  harnessId: HarnessId;
-  modelId: string;
-  runId: string;
-  /** See `startHarnessModelBroker`: an org selection is checked here first. */
-  modelSelection?: ModelSelection | null;
-  bearer: string;
-  signal?: AbortSignal;
-}): Promise<HarnessBoxReservationResult> {
-  let url: string;
-  try {
-    url = new URL(
-      "/web/harness/model-broker/reserve",
-      getConvexHttpUrl()
-    ).toString();
-  } catch (err) {
-    logger.error("[harness-model-broker] missing reserve endpoint config", err);
-    return {
-      ok: false,
-      status: 500,
-      error: "Harness model-broker endpoint is not configured",
-    };
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...inspectorAiRequestHeaders("harness"),
-        authorization: bearerHeader(args.bearer),
-      },
-      body: JSON.stringify({
-        ...boxRequestFields(args.box),
-        // The same harness + model the lease will name: the backend authorizes a
-        // reservation exactly as it authorizes a lease, which for an ephemeral
-        // box means checking both against what the run actually pinned.
-        harnessId: args.harnessId,
-        ...harnessRuntimeVersionField(args.harnessId),
-        modelId: args.modelId,
-        runId: args.runId,
-        // An org selection is resolved HERE, before the box installs
-        // anything: a disabled or mismatched connection fails early.
-        ...leaseSelectionField(args.modelSelection),
-      }),
-      signal: args.signal,
-    });
-  } catch (err) {
-    logger.error("[harness-model-broker] reserve network error", err);
-    return {
-      ok: false,
-      status: 502,
-      error: "Failed to reach harness model-broker endpoint",
-    };
-  }
-
-  const payload: any = await response.json().catch(() => null);
-  if (!response.ok || payload?.ok !== true) {
-    return {
-      ok: false,
-      status: response.status,
-      error:
-        typeof payload?.error === "string"
-          ? payload.error
-          : `Couldn't reserve the computer (${response.status})`,
-      ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
-    };
-  }
-  return {
-    ok: true,
-    ...(typeof payload.expiresAt === "number"
-      ? { expiresAt: payload.expiresAt }
-      : {}),
-    ...(args.modelSelection?.source === "org" &&
-    typeof payload.credentialRevision === "string"
-      ? { credentialRevision: payload.credentialRevision }
-      : {}),
-  };
-}
-
-/** Renew the preparation claim before its crash-recovery TTL elapses. */
-export async function renewHarnessBoxReservation(args: {
-  box: HarnessBrokerBox;
-  harnessId: HarnessId;
-  modelId: string;
-  runId: string;
-  bearer: string;
-  signal?: AbortSignal;
-}): Promise<{ ok: boolean; expiresAt?: number }> {
-  let url: string;
-  try {
-    url = new URL(
-      "/web/harness/model-broker/reserve/renew",
-      getConvexHttpUrl()
-    ).toString();
-  } catch {
-    return { ok: false };
-  }
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...inspectorAiRequestHeaders("harness"),
-        authorization: bearerHeader(args.bearer),
-      },
-      body: JSON.stringify({
-        ...boxRequestFields(args.box),
-        harnessId: args.harnessId,
-        modelId: args.modelId,
-        runId: args.runId,
-      }),
-      signal: args.signal,
-    });
-    const payload: any = await response.json().catch(() => null);
-    if (!response.ok || payload?.ok !== true) {
-      logger.error(
-        `[harness-model-broker] reservation renewal returned ${response.status}`
-      );
-      return { ok: false };
-    }
-    return {
-      ok: true,
-      ...(typeof payload.expiresAt === "number"
-        ? { expiresAt: payload.expiresAt }
-        : {}),
-    };
-  } catch (err) {
-    logger.error(
-      "[harness-model-broker] reservation renewal network error",
-      err
-    );
-    return { ok: false };
-  }
-}
-
-/**
- * Hand a claimed box back after a failed or aborted preparation. Best-effort:
- * the reservation's TTL is the real guarantee, and a turn that dies without
- * releasing must not wedge the box for longer than that.
- */
-export async function releaseHarnessBoxReservation(args: {
-  box: HarnessBrokerBox;
-  harnessId: HarnessId;
-  modelId: string;
-  runId: string;
-  bearer: string;
-  signal?: AbortSignal;
-}): Promise<{ ok: boolean }> {
-  let url: string;
-  try {
-    url = new URL(
-      "/web/harness/model-broker/reserve/release",
-      getConvexHttpUrl()
-    ).toString();
-  } catch {
-    return { ok: false };
-  }
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...inspectorAiRequestHeaders("harness"),
-        authorization: bearerHeader(args.bearer),
-      },
-      body: JSON.stringify({
-        ...boxRequestFields(args.box),
-        harnessId: args.harnessId,
-        modelId: args.modelId,
-        runId: args.runId,
-      }),
-      signal: args.signal,
-    });
-    if (!response.ok) {
-      logger.warn(
-        `[harness-model-broker] reservation release returned ${response.status}`
-      );
-      return { ok: false };
-    }
-    return { ok: true };
-  } catch (err) {
-    logger.error("[harness-model-broker] reservation release network error", err);
-    return { ok: false };
-  }
+/** `{ [key]: n }` when the answer carries the number `n` there; else nothing. */
+export function numberField<K extends string>(payload: unknown, key: K): Partial<Record<K, number>> {
+  const value: unknown = typeof payload === "object" && payload ? Reflect.get(payload, key) : undefined;
+  return typeof value === "number" ? ({ [key]: value } as Record<K, number>) : {};
 }

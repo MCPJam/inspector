@@ -216,6 +216,28 @@ describe("capability derivation", () => {
     expect(body.can.deleteAnyEvalSuite).toBe(true);
   });
 
+  it("reports whether the caller can start conformance runs, only when the backend says", async () => {
+    queryMock.mockResolvedValue(
+      row({
+        features: {
+          sandboxes: { flagEnabled: true, mode: "enforce", enforced: false },
+          conformance: { enabled: false },
+        },
+      })
+    );
+    const reported = (await (await get()).json()) as {
+      features: Record<string, unknown>;
+    };
+    expect(reported.features.conformance).toEqual({ enabled: false });
+
+    // A backend that predates the field: unknown, so absent rather than off.
+    queryMock.mockResolvedValue(row());
+    const absent = (await (await get()).json()) as {
+      features: Record<string, unknown>;
+    };
+    expect(absent.features).not.toHaveProperty("conformance");
+  });
+
   it("does not answer 200 when the safety read itself fails", async () => {
     // The degrade-to-ungated path is for a projection that is PRESENT but
     // lagging. A read that failed outright knows nothing, and answering it

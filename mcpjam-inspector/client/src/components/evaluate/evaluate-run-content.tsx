@@ -26,10 +26,8 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
-import {
-  evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
-} from "@/lib/evals/eval-decision-summary-store";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 import { unifyTriageRows } from "../evals/ai-triage-helpers";
 import { useServerQuality } from "../evals/use-server-quality";
@@ -58,6 +56,8 @@ import { CombinedRunContent } from "./combined-run-content";
 import { launchRuns } from "./run-results-matrix-model";
 import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
+import { useCaseResultLinks } from "./run-result-pages/result-page-links";
+import { useRunScrollMemory } from "./run-result-pages/run-view-memory";
 
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
@@ -113,7 +113,7 @@ export function SingleRunContent({
   const active =
     Boolean(projectId) &&
     decisionSummaryEnabled &&
-    isTerminalEvalRunStatus(run.status);
+    isEvalRunTerminalStatus(run.status);
 
   const detail = useEvalRunDecisionDetail({
     projectId,
@@ -209,7 +209,7 @@ export function SingleRunContent({
   // run or an in-flight read would give it.
   const errorBreakdown = useMemo(
     () =>
-      isTerminalEvalRunStatus(run.status) &&
+      isEvalRunTerminalStatus(run.status) &&
       (!active ||
         (!["disabled", "loading"].includes(detail.status) &&
           !["disabled", "loading"].includes(chains.status)))
@@ -229,7 +229,11 @@ export function SingleRunContent({
       chains.status,
     ],
   );
-  useRunErrorBreakdownToast(String(run._id), errorBreakdown);
+  useRunErrorBreakdownToast(
+    String(run._id),
+    errorBreakdown,
+    projectId ?? undefined,
+  );
 
   const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
   const descriptionExperiment = useEvalDescriptionExperiment({
@@ -366,6 +370,11 @@ export function SingleRunContent({
     [onOpenIteration, iterations],
   );
 
+  const caseResultLinks = useCaseResultLinks(run);
+  const scroll = useRunScrollMemory(
+    caseResultLinks.viewMemoryRunId,
+    iterations.length > 0,
+  );
   const inRunPageHeader = useEvaluateRunPageHeaderActions(
     canOpenFailingTrace || improvePrompt
       ? {
@@ -379,6 +388,7 @@ export function SingleRunContent({
 
   return (
     <div
+      {...scroll}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
       data-testid="evaluate-run-content"
     >
@@ -437,6 +447,7 @@ export function SingleRunContent({
         <RunResultsMatrix
           onEditCase={onEditCase}
           onEditEvaluator={onEditEvaluator}
+          {...caseResultLinks}
           key={run._id}
           run={run}
           suiteName={suiteName}

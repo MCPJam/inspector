@@ -78,6 +78,37 @@ describe("release critical path", () => {
     expect(JSON.stringify(notify.jobs)).toContain("inspector_bake_moved");
   });
 
+  it("deploys the webapp after the backend and the npm build, without waiting for the local harness gate or npm", () => {
+    const { jobs } = workflow("release");
+    const deploy = jobs["deploy-webapp"];
+    expect(deploy.needs).toEqual(expect.arrayContaining(["preflight", "build-packages", "deploy-backend-prod"]));
+    expect(deploy.needs).not.toContain("publish-packages");
+    expect(deploy.needs).not.toContain("local-harness-contract");
+    const gate = String(deploy.if).replace(/\s+/g, " ");
+    expect(gate).toContain("!cancelled()");
+    expect(gate).toContain("needs.build-packages.result == 'success'");
+    expect(gate).toContain("( !fromJSON(inputs.deploy_backend_prod) || needs.deploy-backend-prod.result == 'success' )");
+    // The satellites still follow the webapp, and the release page every deploy.
+    expect(jobs["deploy-slack-app"].needs).toContain("deploy-webapp");
+    expect(jobs.finalize.needs).toEqual(expect.arrayContaining(["deploy-webapp", "deploy-slack-app"]));
+  });
+
+  it("builds the Docker image while the gates run, and tags it only once npm has the version", () => {
+    const { jobs } = workflow("release");
+    expect(jobs["docker-release"].needs).toBe("preflight");
+    expect(jobs["docker-release"].with.stage).toBe("build");
+    expect(jobs["docker-publish"].needs).toEqual(["preflight", "publish-packages", "docker-release"]);
+    expect(jobs["docker-publish"].with.stage).toBe("publish");
+    expect(String(jobs["docker-publish"].if)).toContain("needs.publish-packages.result == 'success'");
+    expect(jobs["announce-finish"].needs).toContain("docker-publish");
+    const docker = workflow("docker-release");
+    const push = docker.jobs.build.steps.find((step: any) => step.id === "push");
+    expect(push.with.outputs).toContain("push-by-digest=true");
+    expect(push.with.tags).toBeUndefined();
+    expect(String(docker.jobs.build.if)).toContain("inputs.stage != 'publish'");
+    expect(String(docker.jobs.publish.if)).toContain("inputs.stage != 'build'");
+  });
+
   it("runs every Ubuntu release job on RELEASE_RUNNER when it is set", () => {
     const { jobs } = workflow("release");
     const ubuntu = Object.entries(jobs).filter(([, job]: [string, any]) => typeof job["runs-on"] === "string");
@@ -172,7 +203,10 @@ describe("packs are part of starting a release", () => {
         declared.add(key);
       }
     }
-    expect([...declared].filter((path) => !filters.some((filter) => filter.test(path)))).toEqual([]);
+    expect(
+      [...declared].filter((path) => !filters.some((filter) => filter.test(path))),
+      "add these to the push paths of local-harness-pack-prebuild.yml",
+    ).toEqual([]);
   });
 
   it("never lets an approval of an older version PR cover new pins", () => {
@@ -299,10 +333,101 @@ describe("pack release boundaries", () => {
     expect(finalizeFiles).toContain("runtime-contract");
   });
 
+  it("reuses evidence an earlier trusted run produced, and runs conformance itself only when there is none", () => {
+    const { jobs } = workflow("release");
+    const lookup = jobs["local-harness-evidence-lookup"];
+    expect(lookup.needs).toBe("preflight");
+    expect(lookup.permissions).toEqual({ contents: "read", actions: "read" });
+    const find = lookup.steps.find((step: any) => step.id === "find");
+    expect(find.with.script).toContain("findReleaseEvidence");
+    expect(find.with.script).toContain("computeConformanceInputsDigest");
+    for (const name of ["local-harness-evidence", "local-harness-evidence-permitted"]) {
+      expect(jobs[name].needs, name).toContain("local-harness-evidence-lookup");
+      expect(String(jobs[name].if), name).toContain("needs.local-harness-evidence-lookup.outputs.run_id == ''");
+      expect(String(jobs[name].if), name).toContain("!cancelled()");
+      expect(jobs[name].with.certified_only, name).toBe(true);
+    }
+    // Either way the same gate checks the records, and evidence made here is
+    // marked for the next release to find.
+    const contract = jobs["local-harness-contract"];
+    const downloads = contract.steps.filter((step: any) => String(step.uses).startsWith("actions/download-artifact"));
+    expect(downloads.map((step: any) => step.with["run-id"] ?? "")).toEqual([
+      "",
+      "${{ needs.local-harness-evidence-lookup.outputs.run_id }}",
+    ]);
+    const marker = contract.steps.find((step: any) => step.with?.name === "${{ needs.local-harness-evidence-lookup.outputs.name }}");
+    expect(String(marker.if)).toContain("run_id == ''");
+  });
+
+  it("produces the release's evidence when a releasable commit lands, against the packs a release selects", () => {
+    const evidence = workflow("local-harness-release-evidence");
+    expect(evidence.on.push.branches).toEqual(["main"]);
+    const { jobs } = evidence;
+    const plan = jobs.plan.steps.map((step: any) => `${step.run ?? ""}${step.with?.script ?? ""}`).join("\n");
+    expect(plan).toContain("release-plan.mjs");
+    expect(plan).toContain("local-harness-release-packs.mjs");
+    expect(plan).toContain("findReleaseEvidence");
+    for (const name of ["evidence", "evidence-permitted"]) {
+      expect(jobs[name].uses, name).toBe("./.github/workflows/local-harness-conformance.yml");
+      expect(jobs[name].with.certified_only, name).toBe(true);
+    }
+    // The marker means complete evidence: only after every selected pack passed.
+    const record = String(jobs.record.if).replace(/\s+/g, " ");
+    expect(record).toContain("needs.evidence.result == 'success'");
+    expect(record).toContain("(needs.evidence-permitted.result == 'success' || needs.evidence-permitted.result == 'skipped')");
+    expect(jobs.record.steps.find((step: any) => step.with?.name)?.with.name).toBe("${{ needs.plan.outputs.name }}");
+    // The release reads its packs from the same script.
+    const preflight = workflow("release").jobs.preflight.steps.find((step: any) => step.id === "local_harness_packs");
+    expect(preflight.run).toContain("local-harness-release-packs.mjs");
+  });
+
+  it("translates the pack's x64 Node before a darwin-x64 session starts the bridge's clock", () => {
+    const { jobs } = workflow("local-harness-conformance");
+    for (const [name, harness] of [["scenarios", "claude-code"], ["codex-scenarios", "codex"]] as const) {
+      const steps: any[] = jobs[name].steps;
+      const translate = steps.findIndex((step) => step.name === "Translate the pack's x64 Node");
+      expect(steps[translate]?.if, name).toBe("matrix.node_arch == 'x64' && runner.os == 'macOS'");
+      expect(steps[translate].run, name).toBe(`arch -x86_64 "$RUNNER_TEMP/conformance/runtime/${harness}/bin/node" --version`);
+      const packSteps = steps.flatMap((step, index) =>
+        /scripts\/(prepare-published-harness-conformance|build-local-harness-pack)\.mjs/.test(step.run ?? "") ? [index] : [],
+      );
+      expect(packSteps, name).toHaveLength(2);
+      expect(translate, name).toBeGreaterThan(Math.max(...packSteps));
+      expect(translate, name).toBeLessThan(steps.findIndex((step) => /conformance\/run-[a-z-]+\.m?ts/.test(step.run ?? "")));
+    }
+  });
+
+  it("builds the adapter once and hands it to every platform leg", () => {
+    const { jobs } = workflow("local-harness-conformance");
+    const unit = jobs.unit.steps.map((step: any) => step.run ?? "").join("\n");
+    expect(unit).toMatch(/npm run build:sdk[\s\S]*npm run pretest[\s\S]*tar -czf/);
+    const handOff = jobs.unit.steps.find((step: any) => String(step.with?.name ?? "").startsWith("conformance-adapter-build-"));
+    for (const name of ["scenarios", "windows", "codex-scenarios", "runtime-scenarios"]) {
+      const steps = jobs[name].steps;
+      expect(steps.map((step: any) => step.run ?? "").join("\n"), name).not.toMatch(/npm run (build:sdk|pretest)/);
+      const download = steps.find((step: any) => String(step.uses).startsWith("actions/download-artifact"));
+      expect(download?.with.name, name).toBe(handOff.with.name);
+      expect(jobs[name].needs, name).toContain("unit");
+    }
+  });
+
+  it("plans a called run as a workflow_call, not as its caller's push", () => {
+    const { plan } = workflow("local-harness-conformance").jobs;
+    // A called run's github.workflow_ref names its caller: the push-started
+    // evidence run, the pack prebuild, or a release.
+    expect(plan.env.EVENT).toBe(
+      "${{ contains(github.workflow_ref, '/.github/workflows/local-harness-conformance.yml@') && github.event_name || 'workflow_call' }}",
+    );
+    for (const step of plan.steps) {
+      expect(JSON.stringify(step), step.name ?? step.id ?? step.uses).not.toContain("github.event_name");
+    }
+    expect(plan.steps.find((step: any) => step.name === "Fetch main's previous tip").if).toBe("env.EVENT == 'push'");
+  });
+
   it("records conformance evidence in every leg, and plans PR legs against the pinned packs", () => {
     const { jobs } = workflow("local-harness-conformance");
     expect(jobs.plan.steps.some((step: any) => /plan-local-harness-conformance\.mjs/.test(step.run ?? ""))).toBe(true);
-    for (const name of ["scenarios", "windows", "codex-scenarios"]) {
+    for (const name of ["scenarios", "windows", "codex-scenarios", "runtime-scenarios"]) {
       const steps = jobs[name].steps;
       expect(steps.some((step: any) => /write-conformance-evidence\.mjs/.test(step.run ?? "")), name).toBe(true);
       expect(

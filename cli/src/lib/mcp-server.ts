@@ -3,6 +3,7 @@ import {
   getVerifiedServerSkill,
   isServerSkillRefusalError,
   listServerSkillCatalog,
+  parseToolResultAuthChallenge,
   probeMcpServer,
   readVerifiedServerSkillFile,
   runServerDoctor,
@@ -15,7 +16,11 @@ import {
   registerSkillsSurface,
 } from "./skills-surface.js";
 import { z } from "zod";
-import { normalizeCliError, usageError } from "./output.js";
+import {
+  authChallengeHint,
+  normalizeCliError,
+  usageError,
+} from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
 import { summarizeServerDoctorTarget } from "./server-doctor.js";
 import { listToolsWithMetadata } from "./server-ops.js";
@@ -210,6 +215,21 @@ export function deriveServerName(
       return candidate;
     }
   }
+}
+
+/**
+ * A completed result that carries a ChatGPT-style sign-in challenge
+ * (`_meta["mcp/www_authenticate"]`) gets the parsed challenge beside it, so a
+ * caller does not have to know where that host puts it. The result itself is
+ * unchanged.
+ */
+function withToolResultAuthChallenge(result: unknown): unknown {
+  const challenge = parseToolResultAuthChallenge(result);
+  if (!challenge || !result || typeof result !== "object") return result;
+  return {
+    ...(result as Record<string, unknown>),
+    _authChallenge: { ...challenge, hint: authChallengeHint(challenge) },
+  };
 }
 
 function toToolResult(payload: unknown) {
@@ -531,7 +551,9 @@ export function createMcpJamMcpServer(
     async ({ server: name, tool, arguments: args }) =>
       runTool(async () => {
         requireConnected(name);
-        return manager.executeTool(name, tool, args ?? {});
+        return withToolResultAuthChallenge(
+          await manager.executeTool(name, tool, args ?? {}),
+        );
       }),
   );
 

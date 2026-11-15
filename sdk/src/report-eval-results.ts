@@ -18,6 +18,11 @@ import type {
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
+import {
+  isMcpjamDeploymentError,
+  MCPJAM_CLOUD_BASE_URL,
+} from "./deployment/address.js";
+import { resolveDeployment } from "./deployment/resolve.js";
 import { buildAppPermalink } from "./platform/permalinks.js";
 import { writeGithubActionReceipt } from "./github-action-receipt.js";
 import {
@@ -41,6 +46,10 @@ import {
   definitionsForDeployment,
 } from "./contract/policy-spelling.js";
 import type { ScorerRole } from "./contract/types.js";
+import {
+  evalRunStatusSchema,
+  isEvalRunTerminalStatus,
+} from "./contract/eval-lifecycle.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
@@ -62,8 +71,6 @@ const RESULT_ENVELOPE_SLACK = 4096;
  * bytes as text, so nothing that displays the widget changes.
  */
 const WIDGET_HTML_STORAGE_CONTENT_TYPE = "text/plain; charset=utf-8";
-
-export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
 
 /**
  * Where results land. `default` resolves server-side to the API key org's
@@ -163,12 +170,12 @@ function resolveApiKey(
   return input.apiKey ?? process.env.MCPJAM_API_KEY;
 }
 
+/** Throws `McpjamDeploymentError` when the configured address is refused. */
 function resolveBaseUrl(
   input: Pick<ReportEvalResultsInput, "baseUrl">
 ): string {
-  return trimTrailingSlash(
-    input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL
-  );
+  return resolveDeployment({ baseUrl: input.baseUrl, credential: "api-key" })
+    .baseUrl;
 }
 
 function resolveProject(
@@ -247,7 +254,7 @@ export function buildRunUrl(
     // `baseUrl` is where CI REPORTS to, and every deployment serves the app
     // from the same origin — so it is the right app origin here. Passed
     // explicitly either way: the builder reads no configuration of its own.
-    const appOrigin = new URL(config.baseUrl ?? DEFAULT_MCPJAM_BASE_URL).origin;
+    const appOrigin = new URL(config.baseUrl ?? MCPJAM_CLOUD_BASE_URL).origin;
     url = projectId
       ? buildAppPermalink(
           {
@@ -356,10 +363,6 @@ function toEvalReportingError(
 
 function getByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
-}
-
-function trimTrailingSlash(value: string): string {
-  return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -541,7 +544,7 @@ function describeIncompatibleReportingBackend(rawMessage: string): string {
     `so the WHOLE report was refused rather than the field ignored — no results ` +
     `were filed, and this is a reporting failure, not an eval verdict. Upgrade ` +
     `the reporting backend to one that accepts declared case ids (MCPJam-hosted ` +
-    `app.mcpjam.com does), or point \`baseUrl\` at one that is. Backend said: ` +
+    `${new URL(MCPJAM_CLOUD_BASE_URL).host} does), or point \`baseUrl\` at one that is. Backend said: ` +
     rawMessage
   );
 }
@@ -703,16 +706,7 @@ function validateReportingResponse(
   if (body.reused !== undefined && typeof body.reused !== "boolean") invalid();
   if (
     body.status !== undefined &&
-    (typeof body.status !== "string" ||
-      ![
-        "pending",
-        "running",
-        "grading",
-        "completed",
-        "failed",
-        "cancelled",
-        "timed_out",
-      ].includes(body.status))
+    !evalRunStatusSchema.safeParse(body.status).success
   )
     invalid();
   if (
@@ -755,9 +749,7 @@ function validateReportingResponse(
   }
   if (!path.endsWith("runs/start")) {
     if (!body.status || !body.result || !body.summary) invalid();
-    const terminal = ["completed", "failed", "cancelled", "timed_out"].includes(
-      String(body.status)
-    );
+    const terminal = isEvalRunTerminalStatus(body.status);
     if (terminal ? !isEvalRunVerdict(body.result) : body.result !== "pending")
       invalid();
   }
@@ -830,6 +822,7 @@ async function requestWithRetry<T>(
       }
     );
   } catch (error) {
+    if (isMcpjamDeploymentError(error)) throw error;
     if (error instanceof ReportingHttpError) {
       const normalized = normalizeRejection(error.body);
       throw new EvalReportingError(normalized.message, {
@@ -952,6 +945,7 @@ async function uploadIngestArtifact(
       }
     );
   } catch (error) {
+    if (isMcpjamDeploymentError(error)) throw error;
     if (error instanceof ReportingHttpError) {
       const normalized = normalizeRejection(error.body);
       throw new EvalReportingError(normalized.message, {
@@ -1318,6 +1312,9 @@ export async function reportEvalResults(
   try {
     return await reportEvalResultsInternal(input);
   } catch (error) {
+    // A refused address is configuration, not a reporting failure: nothing
+    // was sent, and there is nothing for Sentry to learn from it.
+    if (isMcpjamDeploymentError(error)) throw error;
     await captureEvalReportingFailure(
       error,
       buildFailureContext(input, "reportEvalResults")
@@ -1332,6 +1329,9 @@ export async function reportEvalResultsSafely(
   try {
     return await reportEvalResultsInternal(input);
   } catch (error) {
+    // Never downgraded to a warning: a refused address is a decision about
+    // where results may go, and a warning would read as a flaky upload.
+    if (isMcpjamDeploymentError(error)) throw error;
     await captureEvalReportingFailure(
       error,
       buildFailureContext(input, "reportEvalResultsSafely")
@@ -1388,7 +1388,8 @@ async function resolveTargetCapabilities(
     );
     config.capabilitiesCache = response?.capabilities ?? null;
   } catch (error) {
-    if (config.signal?.aborted) throw error;
+    // A refused redirect is not a target that cannot answer.
+    if (config.signal?.aborted || isMcpjamDeploymentError(error)) throw error;
     config.capabilitiesCache = null;
   }
   return config.capabilitiesCache;

@@ -9,6 +9,10 @@ import {
   OPENAI_APPS_FULL_SURFACE,
 } from "./built-ins";
 import { HostIndicatorDispatch } from "./indicators/client-indicator-dispatch";
+import {
+  buildHostCapabilities,
+  SPEC_DEFAULT_HOST_CAPABILITIES,
+} from "@/shared/host-style-capabilities";
 import type {
   ChatUiOverride,
   EffectiveCompatRuntime,
@@ -18,21 +22,10 @@ import type {
   HostStyleId,
   HostThemeMode,
   IndicatorDef,
-  ResolvedMcpAppsCapabilities,
 } from "./types";
 
-/**
- * Last-resort fallback used when no host style resolves (e.g., the caller
- * passed an unknown id and we don't want to silently inherit Claude's
- * capability blob). Mirrors the "advertise nothing" position from the SEP —
- * widgets that gate on optional fields will treat them as unsupported.
- *
- * `sandbox` is intentionally omitted; it's per-resource runtime data.
- */
-export const SPEC_DEFAULT_HOST_CAPABILITIES: Omit<
-  McpUiHostCapabilities,
-  "sandbox"
-> = {};
+export { buildHostCapabilities, SPEC_DEFAULT_HOST_CAPABILITIES };
+
 
 const registry = new Map<HostStyleId, HostStyleDefinition>();
 
@@ -82,70 +75,6 @@ export function getHostStyleOrDefault(
   return findHostStyle(id) ?? DEFAULT_HOST_STYLE;
 }
 
-/**
- * Build the `HostCapabilities` blob advertised in `ui/initialize` from a
- * resolved per-dimension matrix plus optional preset-only augment/replacement
- * detail. This is the single derivation point for advertisement — the matrix
- * is the source of truth (per the foundation PR's D1 decision).
- *
- * Every advertised field is matrix-controlled:
- *   - `openLinks` / `serverTools` / `serverResources` / `logging` /
- *     `updateModelContext` / `message` — advertised when the matrix
- *     sets `true`. (`openLinks` and `serverTools` are conventionally on
- *     for every built-in preset, but staying matrix-controlled lets
- *     legacy `hostCapabilitiesOverride: {}` migrate to a truly empty
- *     advertised blob without the resolver silently re-adding them.)
- *   - `downloadFile` — matrix-controlled. When the row is true the wire
- *     blob carries `downloadFile: {}` and the renderer wires
- *     `bridge.ondownloadfile`. Off for honest-no-claims presets.
- *   - `sandbox` — NOT added here; the renderer composes it separately
- *     via `resolveSandboxCsp` / `resolveSandboxPermissions` and adds it
- *     onto the advertised blob before passing to AppBridge.
- *
- * `augment` carries preset-specific sub-fields merged onto a matrix-derived
- * key (for example Cursor's `listChanged: false`). `replacement` carries an
- * exact typed value that must replace the generic matrix-derived shape (for
- * example VS Code's non-text updateModelContext set). Neither can add a key
- * the matrix omitted.
- */
-export function buildHostCapabilities(
-  matrix: ResolvedMcpAppsCapabilities,
-  augment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>,
-  replacement?: Partial<Omit<McpUiHostCapabilities, "sandbox">>
-): Omit<McpUiHostCapabilities, "sandbox"> {
-  const caps: Omit<McpUiHostCapabilities, "sandbox"> = {};
-  if (matrix.openLinks) caps.openLinks = {};
-  if (matrix.serverTools) caps.serverTools = {};
-  if (matrix.serverResources) caps.serverResources = {};
-  if (matrix.logging) caps.logging = {};
-  if (matrix.updateModelContext) caps.updateModelContext = { text: {} };
-  if (matrix.message) caps.message = { text: {} };
-  if (matrix.downloadFile) caps.downloadFile = {};
-  if (augment) {
-    for (const [key, value] of Object.entries(augment) as Array<
-      [
-        keyof Omit<McpUiHostCapabilities, "sandbox">,
-        Omit<McpUiHostCapabilities, "sandbox">[keyof Omit<
-          McpUiHostCapabilities,
-          "sandbox"
-        >]
-      ]
-    >) {
-      if (caps[key] === undefined) continue;
-      (caps as Record<string, unknown>)[key] = {
-        ...(caps[key] as object),
-        ...(value as object),
-      };
-    }
-  }
-  if (replacement) {
-    for (const [key, value] of Object.entries(replacement)) {
-      if ((caps as Record<string, unknown>)[key] === undefined) continue;
-      (caps as Record<string, unknown>)[key] = value;
-    }
-  }
-  return caps;
-}
 
 /**
  * Resolve the `HostCapabilities` blob this host style advertises before

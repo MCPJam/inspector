@@ -130,6 +130,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "provider/mcpjam_limit": "user_config",
   "provider/mcpjam_platform_budget": "user_config",
   "account/suspended": "user_config",
+  // The guest input cap refused the request before any provider work. Signing
+  // in, or sending less, is the fix.
+  "account/guest_input_too_large": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   "provider/mcpjam_limit_insufficient": "user_config",
@@ -148,6 +151,11 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // The MCP server under test answered with an HTTP error status. Recognized
   // only from an MCP transport error, so the answer is the server's own.
   "server/http_error": "user_server",
+  // The server under test presented a certificate Node.js would not accept.
+  // Recognized only from the sentence a proxy route writes once it knows the
+  // request went to that server, never from the TLS code, which MCPJam's own
+  // hops produce too.
+  "transport/tls_untrusted": "user_server",
   // "Enable the required client capability in the connection's Client
   // settings" — a toggle the user owns.
   "jsonrpc/missing_required_client_capability": "user_config",
@@ -444,11 +452,13 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Wrong host/port in the server URL.",
       "Firewall is silently dropping packets.",
+      "Your network allows outbound traffic only through a proxy.",
       "Server is overloaded and never accepted the connection.",
     ],
     [
       "Verify the URL is reachable from your machine (e.g. `curl`).",
       "Check firewall / VPN rules.",
+      "From the MCPJam CLI behind a corporate proxy, set `HTTPS_PROXY` to it, and list hosts that must connect directly in `NO_PROXY`.",
     ],
     "etimedout",
   ),
@@ -526,6 +536,23 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     "socket-hang-up",
   ),
+  "transport/tls_untrusted": entry(
+    "transport/tls_untrusted",
+    "TLS certificate not trusted",
+    "The server presented a TLS certificate that Node.js could not verify, so no request reached it.",
+    [
+      "The certificate comes from a private or corporate CA that Node.js does not trust.",
+      "The server does not send its intermediate certificates.",
+      "The certificate is self-signed, expired, or issued for a different hostname.",
+      "A TLS-inspecting proxy or antivirus replaces the server's certificate.",
+    ],
+    [
+      "Fix the certificate on the server: renew it, send the full chain, and match the hostname.",
+      "If the error suggests `--use-system-ca`, start the inspector with `NODE_OPTIONS=--use-system-ca` so Node.js trusts your system's CAs.",
+      "Or point Node.js at the CA file with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.",
+    ],
+    "tls-certificate-not-trusted"
+  ),
 
   // --- Auth ---
   "auth/http_401": entry(
@@ -540,6 +567,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Re-authenticate using the Reconnect button on the server card.",
       "If using OAuth, run through the OAuth flow again from Servers.",
+      "From the CLI, sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`.",
     ],
     "unauthorized-401",
   ),
@@ -925,6 +953,25 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "account/suspended", "Account suspended",
     "This account has been suspended by MCPJam.", ["Support has suspended this account."],
     ["Contact founders@mcpjam.com for support."], "account-suspended", "warning",
+  ),
+  // The backend's `guest_input_too_large` code (HTTP 413). Retrying sends the
+  // same request, so each next step makes it smaller or lifts the cap.
+  "account/guest_input_too_large": entry(
+    "account/guest_input_too_large",
+    "Request too large for a guest",
+    "This request is larger than MCPJam allows for guests. Sign in to remove the limit, or send less.",
+    [
+      "Connected servers add their tool definitions to every request, and those count toward the guest limit.",
+      "A tool returned a large result, and it is sent back to the model with the next request.",
+      "The conversation has grown past the guest limit.",
+    ],
+    [
+      "Sign in to remove the guest limit.",
+      "Have the tool return less, or disconnect servers this request doesn't need.",
+      "In chat, start a new chat or shorten the conversation.",
+    ],
+    "request-too-large-for-a-guest",
+    "warning",
   ),
   "provider/mcpjam_limit": entry(
     "provider/mcpjam_limit",

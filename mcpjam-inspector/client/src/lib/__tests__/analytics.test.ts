@@ -18,7 +18,8 @@ vi.mock("../PosthogUtils", () => ({
   standardEventProps: standardEventPropsMock,
 }));
 
-import { track } from "../analytics";
+import { track, retryPersonProfile } from "../analytics";
+import * as telemetry from "../telemetry-context";
 
 describe("track()", () => {
   afterEach(() => {
@@ -189,4 +190,39 @@ describe("track()", () => {
     vi.doUnmock("../PosthogUtils");
     vi.resetModules();
   });
+});
+
+
+describe("retryPersonProfile", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["full", "strict", "wrong-actor", "id-only"] as const)(
+    "honors the current actor and privacy grant (%s)",
+    (scenario) => {
+      vi.spyOn(telemetry, "currentTelemetryActor").mockReturnValue(
+        scenario === "wrong-actor" ? "another-user" : "member",
+      );
+      vi.spyOn(telemetry, "currentTelemetryCaptureContext").mockReturnValue({
+        projectIds: ["project"], organizationIds: [],
+        policy: {
+          recording: "off",
+          content: scenario === "strict" ? "strict" : "full",
+          identity: scenario === "id-only" ? "id_only" : "full",
+        },
+      });
+      const capture = vi.fn();
+      retryPersonProfile({ capture }, {
+        deployment: "hosted", email: "member@example.test", name: "Member",
+      }, "member");
+      if (scenario === "strict" || scenario === "wrong-actor") {
+        expect(capture).not.toHaveBeenCalled();
+      } else {
+        expect(capture).toHaveBeenCalledExactlyOnceWith("$set", {}, {
+          $set: scenario === "id-only"
+            ? { deployment: "hosted" }
+            : { deployment: "hosted", email: "member@example.test", name: "Member" },
+        });
+      }
+    },
+  );
 });

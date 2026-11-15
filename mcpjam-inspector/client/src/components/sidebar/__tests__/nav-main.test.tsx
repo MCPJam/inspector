@@ -1,11 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
 let mockSidebarOpen = true;
+let mockIsMobile = false;
 
 vi.mock("@/components/ui/sidebar", () => ({
-  useSidebar: () => ({ open: mockSidebarOpen }),
+  useSidebar: () => ({ open: mockSidebarOpen, isMobile: mockIsMobile }),
   SidebarGroup: ({ children }: any) => <div>{children}</div>,
   SidebarGroupContent: ({ children }: any) => <div>{children}</div>,
   // Forwards className: what NavMain passes IS the thing under test.
@@ -26,15 +28,33 @@ vi.mock("@/components/ui/sidebar", () => ({
   },
 }));
 
-vi.mock("@mcpjam/design-system/tooltip", () => ({
-  Tooltip: ({ children }: any) => <div>{children}</div>,
-  TooltipTrigger: ({ children }: any) => <>{children}</>,
-  TooltipContent: ({ children }: any) => <div>{children}</div>,
-}));
-
-vi.mock("@/components/learn-more/LearnMoreHoverCard", () => ({
-  LearnMoreHoverCard: ({ tabId, children, disabledMessage }: any) => (
-    <div data-testid={`learn-more-${tabId}`}>
+// The card's own behavior is covered in sidebar-item-hover-card.test.tsx;
+// here only what NavMain hands it matters.
+vi.mock("../sidebar-item-hover-card", () => ({
+  SidebarItemHoverCard: ({
+    title,
+    badge,
+    tabId,
+    onExpand,
+    disabledMessage,
+    labelVisible,
+    children,
+  }: {
+    title: string;
+    badge?: string;
+    tabId?: string;
+    onExpand?: unknown;
+    disabledMessage?: string;
+    labelVisible?: boolean;
+    children: ReactNode;
+  }) => (
+    <div
+      data-testid={`hover-card-${title}`}
+      data-tab-id={tabId}
+      data-badge={badge}
+      data-has-expand={String(!!onExpand)}
+      data-label-visible={String(!!labelVisible)}
+    >
       {disabledMessage && (
         <span data-testid="disabled-message">{disabledMessage}</span>
       )}
@@ -50,18 +70,16 @@ const FakeIcon = () => null;
 describe("NavMain", () => {
   beforeEach(() => {
     mockSidebarOpen = true;
+    mockIsMobile = false;
   });
 
-  it("shows learn-more hover card for disabled items with learn-more content", () => {
+  it("wraps a disabled item in its hover card with the disabled message", () => {
     const onItemClick = vi.fn();
 
     render(
       <NavMain
         items={[
           {
-            // Any nav item whose url maps to a learn-more entry with a preview
-            // video works here; Playground is one (Skills used to be, before it
-            // moved out of the sidebar into the Servers tab switcher).
             title: "Playground",
             url: "#playground",
             icon: FakeIcon,
@@ -74,12 +92,14 @@ describe("NavMain", () => {
       />
     );
 
-    // Should show learn-more hover card with disabled message
-    expect(screen.getByTestId("learn-more-playground")).toBeInTheDocument();
+    expect(screen.getByTestId("hover-card-Playground")).toHaveAttribute(
+      "data-tab-id",
+      "playground"
+    );
     expect(screen.getByTestId("disabled-message")).toHaveTextContent(
       HOSTED_LOCAL_ONLY_TOOLTIP
     );
-    // No native title attribute (double tooltip fix)
+    // No native title attribute: it would be a second tooltip.
     expect(
       screen.queryByTitle(HOSTED_LOCAL_ONLY_TOOLTIP)
     ).not.toBeInTheDocument();
@@ -91,10 +111,12 @@ describe("NavMain", () => {
     expect(onItemClick).not.toHaveBeenCalled();
   });
 
-  it("shows plain tooltip for disabled items without learn-more content", () => {
+  it("wraps every item, with or without learn-more content", () => {
     render(
       <NavMain
         items={[
+          { title: "Servers", url: "#servers", icon: FakeIcon },
+          { title: "Scenarios", url: "#scenarios", icon: FakeIcon },
           {
             title: "SomeDisabled",
             url: "#no-learn-more",
@@ -103,34 +125,86 @@ describe("NavMain", () => {
             disabledTooltip: "Not available",
           },
         ]}
-        learnMore={{ onExpand: vi.fn() }}
       />
     );
 
-    expect(
-      screen.queryByTestId("learn-more-no-learn-more")
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Not available")).toBeInTheDocument();
-    expect(screen.queryByTitle("Not available")).not.toBeInTheDocument();
+    expect(screen.getByTestId("hover-card-Servers")).toBeInTheDocument();
+    expect(screen.getByTestId("hover-card-Scenarios")).toBeInTheDocument();
+    expect(screen.getByTestId("hover-card-SomeDisabled")).toContainElement(
+      screen.getByText("Not available")
+    );
   });
 
-  it("falls back to tooltip for disabled items when learnMore is not provided", () => {
-    render(
-      <NavMain
-        items={[
-          {
-            title: "Skills",
-            url: "#skills",
-            icon: FakeIcon,
-            disabled: true,
-            disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
-          },
-        ]}
-      />
+  it("gives the button no tooltip of its own, collapsed or expanded", () => {
+    for (const open of [true, false]) {
+      mockSidebarOpen = open;
+      const { unmount } = render(
+        <NavMain
+          items={[
+            { title: "Servers", url: "#servers", icon: FakeIcon },
+            {
+              title: "Locked",
+              url: "#locked",
+              icon: FakeIcon,
+              disabled: true,
+              disabledTooltip: "Not available",
+            },
+          ]}
+          learnMore={{ onExpand: vi.fn() }}
+        />
+      );
+
+      for (const name of ["Servers", "Locked"]) {
+        expect(screen.getByRole("button", { name })).not.toHaveAttribute(
+          "data-tooltip"
+        );
+      }
+      unmount();
+    }
+  });
+
+  it("tells the card the label is visible only when the rail shows it", () => {
+    const items = [{ title: "Servers", url: "#servers", icon: FakeIcon }];
+
+    mockSidebarOpen = false;
+    const { rerender } = render(<NavMain items={items} />);
+    expect(screen.getByTestId("hover-card-Servers")).toHaveAttribute(
+      "data-label-visible",
+      "false"
     );
 
-    expect(screen.queryByTestId("learn-more-skills")).not.toBeInTheDocument();
-    expect(screen.getByText(HOSTED_LOCAL_ONLY_TOOLTIP)).toBeInTheDocument();
+    mockSidebarOpen = true;
+    rerender(<NavMain items={[...items]} />);
+    expect(screen.getByTestId("hover-card-Servers")).toHaveAttribute(
+      "data-label-visible",
+      "true"
+    );
+
+    // The mobile sheet shows labels whatever the desktop rail's state.
+    mockSidebarOpen = false;
+    mockIsMobile = true;
+    rerender(<NavMain items={[...items]} />);
+    expect(screen.getByTestId("hover-card-Servers")).toHaveAttribute(
+      "data-label-visible",
+      "true"
+    );
+  });
+
+  it("passes the badge and, only with learn more on, the expand handler", () => {
+    const items = [
+      { title: "Swarms", url: "#swarms", icon: FakeIcon, badge: "New" },
+    ];
+
+    const { rerender } = render(<NavMain items={items} />);
+    const card = screen.getByTestId("hover-card-Swarms");
+    expect(card).toHaveAttribute("data-badge", "New");
+    expect(card).toHaveAttribute("data-has-expand", "false");
+
+    rerender(<NavMain items={items} learnMore={{ onExpand: vi.fn() }} />);
+    expect(screen.getByTestId("hover-card-Swarms")).toHaveAttribute(
+      "data-has-expand",
+      "true"
+    );
   });
 
   it("still handles clicks for enabled items", () => {
@@ -170,53 +244,6 @@ describe("NavMain", () => {
       screen.getByRole("button", { name: "Scenarios" })
     ).toBeInTheDocument();
     expect(screen.queryByText("Plan upgrade required")).not.toBeInTheDocument();
-  });
-
-  it("only wraps tabs that have preview videos", () => {
-    render(
-      <NavMain
-        items={[
-          {
-            title: "Servers",
-            url: "#servers",
-            icon: FakeIcon,
-          },
-          {
-            title: "Scenarios",
-            url: "#scenarios",
-            icon: FakeIcon,
-          },
-        ]}
-        learnMore={{ onExpand: vi.fn() }}
-      />
-    );
-
-    expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("learn-more-scenarios")
-    ).not.toBeInTheDocument();
-  });
-
-  it("suppresses the built-in collapsed tooltip when learn more is handling it", () => {
-    mockSidebarOpen = false;
-
-    render(
-      <NavMain
-        items={[
-          {
-            title: "Servers",
-            url: "#servers",
-            icon: FakeIcon,
-          },
-        ]}
-        learnMore={{ onExpand: vi.fn() }}
-      />
-    );
-
-    expect(screen.getByRole("button", { name: "Servers" })).not.toHaveAttribute(
-      "data-tooltip"
-    );
-    expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
   });
 });
 

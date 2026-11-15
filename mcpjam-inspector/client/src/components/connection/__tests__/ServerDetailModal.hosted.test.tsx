@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 const mockFetchHostedOAuthTokens = vi.hoisted(() => vi.fn());
+const mockFetchServerSecretKeys = vi.hoisted(() => vi.fn());
+const mockFetchServerSecrets = vi.hoisted(() => vi.fn());
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: { email: "tester@example.com" } }),
@@ -43,6 +45,12 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 vi.mock("@/lib/apis/hosted-oauth-tokens-api", () => ({
   fetchHostedOAuthTokens: (...args: unknown[]) =>
     mockFetchHostedOAuthTokens(...args),
+}));
+
+vi.mock("@/lib/apis/server-secrets-api", () => ({
+  fetchServerSecretKeys: (...args: unknown[]) =>
+    mockFetchServerSecretKeys(...args),
+  fetchServerSecrets: (...args: unknown[]) => mockFetchServerSecrets(...args),
 }));
 
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
@@ -210,5 +218,56 @@ describe("ServerDetailModal hosted reconnect", () => {
     expect(
       await screen.findByText("No hosted OAuth credential found"),
     ).toBeInTheDocument();
+  });
+
+  it("hides a revealed bearer token again after a save in Config", async () => {
+    const user = userEvent.setup();
+    mockFetchServerSecretKeys.mockResolvedValue({
+      envKeys: [],
+      headerKeys: ["Authorization"],
+    });
+    mockFetchServerSecrets.mockResolvedValue({
+      env: null,
+      headers: { Authorization: "Bearer old-token" },
+    });
+    const onSubmit = vi.fn().mockResolvedValue({
+      ok: true,
+      serverName: "test-server",
+    });
+
+    const { container } = render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          authMethod: "bearer",
+          hasBearerToken: true,
+          hasHeaders: true,
+        })}
+        onSubmit={onSubmit}
+        defaultTab="authorization"
+        projectId="jh7abc123def456ghi789jk"
+        hostedServerId="server_123"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reveal token" }));
+    expect(
+      await screen.findByRole("button", { name: "Reveal Token" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit in Config" }));
+    const nameInput = screen.getByDisplayValue("test-server");
+    await user.clear(nameInput);
+    await user.type(nameInput, "renamed-server");
+    fireEvent.submit(container.ownerDocument.querySelector("form")!);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("tab", { name: "Auth" }));
+    expect(
+      await screen.findByRole("button", { name: "Reveal token" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reveal Token" }),
+    ).not.toBeInTheDocument();
   });
 });

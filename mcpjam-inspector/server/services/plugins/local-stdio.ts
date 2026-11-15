@@ -318,6 +318,7 @@ export async function preparePluginStdioLaunch(args: {
   try {
     const materialized = await args.cache.materialize(identity, {
       source: args.source,
+      profile: "openai-compatible",
     });
     root = materialized.root;
   } catch (error) {
@@ -355,6 +356,7 @@ export async function preparePluginStdioLaunch(args: {
     try {
       const materialized = await args.cache.materialize(identity, {
         source: downloaded,
+        profile: "openai-compatible",
       });
       root = materialized.root;
     } catch (retryError) {

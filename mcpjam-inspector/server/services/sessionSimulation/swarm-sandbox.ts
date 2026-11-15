@@ -30,6 +30,7 @@ import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import type { TrustedSandboxBinding } from "../../utils/built-in-tools/registry.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { parseBrowserToolPolicy } from "../evals/browser-tool-policy.js";
+import { accountLimitCode } from "../../../shared/swarm-attempt-error.js";
 
 /** The catalog id for the browser tool set (mirrors the backend catalog). */
 const BROWSER_TOOL_ID = "browser";
@@ -122,16 +123,16 @@ export function targetWantsHarnessBox(
 export function targetWantsBrowser(
   target: PinnedHostExecutionSpec,
   /**
-   * Can THIS replica advertise a hosted browser at all — the env flag and the
-   * backend's own gate, exactly as `resolveHostTools` reads them? DEFAULTS TO
+   * Can THIS replica advertise a hosted browser at all — the backend's
+   * exposure verdict, exactly as `resolveHostTools` reads it? DEFAULTS TO
    * TRUE so a caller that does not know keeps the old behaviour.
    *
    * The two decisions happen in different places: the desktop box is
-   * provisioned before the tool resolver runs, so a replica with
-   * `HOSTED_BROWSER_TOOLS_ENABLED` off would pay for a desktop for the life of
+   * provisioned before the tool resolver runs, so a replica whose verdict
+   * says the browser is not exposable would pay for a desktop for the life of
    * the attempt and then suppress every tool that box exists for. The backend
    * refuses its own half (`desktop_not_advertised`, `desktop_unavailable`) but
-   * cannot see an inspector-side env flag.
+   * does not refuse a reservation on `exposable: false`.
    */
   hostedBrowserAvailable = true
 ): boolean {
@@ -191,11 +192,11 @@ export function sandboxIntentFor(
   // pin and the two pin branches below do not apply to it. Deliberately BEFORE
   // them, and deliberately not conditioned on a pin either way: a target that
   // pins an environment AND wants a browser still asks for the desktop, and
-  // the backend refuses it with a sentence the attempt surfaces
-  // (`desktop_pin_conflict`). One place decides that conflict, so the message
-  // an author reads is the same on the eval and journey surfaces — and
-  // quietly downgrading here would hand the session a browser that cannot
-  // start, with nothing saying why.
+  // the backend either pairs it with the pinned box (`pairBrowser`) or refuses
+  // it with a sentence the attempt surfaces (`desktop_pin_conflict`). One place
+  // decides that, so the answer an author gets is the same on the eval and
+  // journey surfaces — and quietly downgrading here would hand the session a
+  // browser that cannot start, with nothing saying why.
   if (targetWantsBrowser(target, hostedBrowserAvailable)) {
     return { kind: "provision", runtimeKind: "desktop-browser" };
   }
@@ -233,6 +234,8 @@ export function sandboxIntentFor(
 
 export interface ProvisionedAttemptSandbox {
   binding: TrustedSandboxBinding;
+  /** The desktop Browser runs on when `binding` is a pinned terminal box. */
+  browserBinding?: TrustedSandboxBinding;
   sandboxRowId: string;
   /** The same box as the harness attaches to it. */
   harnessBinding: HarnessBoxBinding;
@@ -278,11 +281,12 @@ export async function provisionAttemptSandbox(
     ...(args.signal ? { signal: args.signal } : {}),
   });
   if (!acquired.ok) return acquired.refusal;
-  const { binding, release } = acquired.box;
+  const { binding, browserBinding, release } = acquired.box;
   return {
     ok: true,
     sandbox: {
       sandboxRowId: binding.sandboxRowId,
+      ...(browserBinding ? { browserBinding } : {}),
       binding: {
         sandboxId: binding.sandboxId,
         // The CONTROL-PLANE row, which a browser session is recorded against
@@ -325,8 +329,9 @@ async function provisionAttemptBox(
         runId: args.runId,
         targetId: args.targetId,
         sessionIdx: args.sessionIdx,
+        // `pairBrowser` lets a pinned image keep its own box beside the desktop.
         ...(args.runtimeKind === "desktop-browser"
-          ? { runtimeKind: "desktop-browser" as const }
+          ? { runtimeKind: "desktop-browser" as const, pairBrowser: true }
           : {}),
         signal,
       });
@@ -341,9 +346,13 @@ async function provisionAttemptBox(
         // reuse answers with the row's own kind, and a browser on a terminal
         // image would fail with nothing saying why.
         const bootedKind = result.value.runtimeKind ?? "terminal";
+        // A terminal box WITH a paired desktop is the pinned image plus
+        // Browser's own box, which is what a pinned browser target asked for.
+        const pairedBrowser = result.value.browser;
         if (
           args.runtimeKind === "desktop-browser" &&
-          bootedKind !== "desktop-browser"
+          bootedKind !== "desktop-browser" &&
+          !pairedBrowser
         ) {
           // FAIL, do not downgrade. The registry suppresses `browser` for a
           // terminal binding, so accepting this box would run the whole session
@@ -372,6 +381,14 @@ async function provisionAttemptBox(
             sandboxId: result.value.sandboxId,
             runtimeKind: bootedKind,
             ...(result.value.workdir ? { workdir: result.value.workdir } : {}),
+            ...(pairedBrowser
+              ? {
+                  browser: {
+                    sandboxRowId: pairedBrowser.sandboxRowId,
+                    sandboxId: pairedBrowser.sandboxId,
+                  },
+                }
+              : {}),
           },
         };
       }
@@ -388,8 +405,16 @@ async function provisionAttemptBox(
       // An `ok`-but-unusable body reaches here too and is likewise transient.
       const status = result.ok ? 0 : result.status;
       const retryable = status === 503 || status === 0;
+      // The organization's own limit (the native harness trial) keeps its
+      // code: the runner stops the whole run on it, not just this session.
+      const accountLimit = result.ok
+        ? undefined
+        : accountLimitCode(undefined, result.code);
       last = {
-        code: status === 503 ? "sandbox_at_capacity" : "sandbox_error",
+        code:
+          status === 503
+            ? "sandbox_at_capacity"
+            : (accountLimit ?? "sandbox_error"),
         message: result.ok
           ? "The control plane returned an incomplete provisioning response."
           : describeAttemptSandboxRefusal(result),

@@ -89,7 +89,7 @@ export function reportProfile(
 }
 
 /**
- * Surface the readiness channel (SHOULD/RECOMMENDED/MAY advice) for a human.
+ * Surface the readiness channel (SHOULD/MAY advice) for a human.
  * Advice lives beside the verdict, never inside it: it goes to stderr like
  * {@link reportIncomplete}, affects no exit code, and is read structurally so
  * an older `@mcpjam/sdk` (no `readiness`) simply prints nothing.

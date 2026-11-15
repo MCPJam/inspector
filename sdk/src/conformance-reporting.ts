@@ -9,9 +9,11 @@ import {
   scoreFromOAuthResult,
   scoreFromProtocolResult,
   scoreFromTasksResult,
+  scorableOAuthIds,
   type ConformanceScore,
 } from "./conformance-score.js";
 import { deepJsonSafe } from "./json-safe.js";
+import { readinessAdvisoryFields } from "./conformance-report-advisories.js";
 import { redactForTelemetry } from "./telemetry-redaction.js";
 import type { ConformanceProfileStamp } from "./conformance-profile.js";
 import type {
@@ -164,9 +166,10 @@ export interface ConformanceReport {
   durationMs: number;
   groups: ConformanceReportGroup[];
   /**
-   * Ungraded statements. Absent for the conformance suites, which have none;
-   * present for readiness, whose experience-insights lane is entirely
-   * advisory. Adding an OPTIONAL field keeps `schemaVersion` at 1 — an older
+   * Ungraded statements. For the conformance suites, their SHOULD/MAY advice
+   * (`readiness` warnings), absent when a run raised none; for readiness, its
+   * experience-insights lane, which is entirely advisory. Saved with the report
+   * so a run reopened from history can still list its advice. Adding an OPTIONAL field keeps `schemaVersion` at 1 — an older
    * consumer reading a readiness report ignores it and still gets a valid
    * report, which is the property a version bump would otherwise be asserting.
    */
@@ -316,6 +319,7 @@ function reportCaseFromCheck(
 
 function reportCaseFromOAuthStep(
   step: OAuthConformanceStepResult,
+  unscoredIds?: ReadonlySet<string>
 ): ConformanceReportCase {
   const output = summarizeHttpAttempts(step);
   return {
@@ -323,6 +327,7 @@ function reportCaseFromOAuthStep(
     title: step.title || step.step,
     category: "oauth",
     status: step.status,
+    ...(unscoredIds?.has(step.step) ? { pending: true } : {}),
     durationMs: step.durationMs,
     description: step.summary,
     ...(step.error?.message ? { error: step.error.message } : {}),
@@ -463,15 +468,20 @@ function oauthGroupFromResult(
   result: OAuthConformanceResult,
   title: string,
   index: number,
+  unscoredIds?: ReadonlySet<string>,
+  /** The flow's verdict once its unscored steps are out; see `oauthVerdict`. */
+  passed: boolean = result.passed
 ): ConformanceReportGroup {
   return {
     id: `oauth-${index + 1}`,
     title,
     target: result.serverUrl,
-    passed: result.passed,
+    passed,
     durationMs: result.durationMs,
     summary: result.summary,
-    cases: result.steps.map(reportCaseFromOAuthStep),
+    cases: result.steps.map((step) =>
+      reportCaseFromOAuthStep(step, unscoredIds)
+    ),
   };
 }
 
@@ -582,6 +592,12 @@ function createProtocolReport(
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
       ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `mcp-${index + 1}`,
+        }))
+      ),
     };
   }
 
@@ -595,6 +611,9 @@ function createProtocolReport(
     ...(result.profile ? { profile: result.profile } : {}),
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "mcp-1" },
+    ]),
   };
 }
 
@@ -613,6 +632,12 @@ function createAppsReport(
       groups: result.results.map((entry, index) =>
         appsGroupFromResult(entry, entry.label, index),
       ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `apps-${index + 1}`,
+        }))
+      ),
     };
   }
 
@@ -625,42 +650,116 @@ function createAppsReport(
     score: scoreFromAppsResult(result),
     durationMs: result.durationMs,
     groups: [appsGroupFromResult(result, "MCP Apps Conformance", 0)],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "apps-1" },
+    ]),
+  };
+}
+
+/** What only the OAuth report reads. */
+export interface OAuthReportOptions {
+  /**
+   * Steps left out of the score. They still run with the flow and stay in
+   * the report, marked `pending`, so a reader sees them unscored.
+   */
+  oauthUnscoredCheckIds?: readonly string[];
+}
+
+/**
+ * A flow's verdict once its unscored steps are out. With none left out it is
+ * the flow's own; otherwise the filtered score decides, so a failure in an
+ * unscored step cannot fail the report its score passes. A not-applicable
+ * flow keeps its own verdict: it judged nothing either way.
+ */
+function oauthVerdict(
+  result: OAuthConformanceResult,
+  score: ConformanceScore,
+  filtered: boolean
+): { passed: boolean; outcome?: string; incompleteReason?: string } {
+  if (!filtered || result.outcome === "not-applicable") {
+    return {
+      passed: result.passed,
+      outcome: result.outcome,
+      ...(result.incompleteReason
+        ? { incompleteReason: result.incompleteReason }
+        : {}),
+    };
+  }
+  return {
+    passed: score.outcome === "passed",
+    outcome: score.outcome,
+    ...(score.outcome === "incomplete" && result.incompleteReason
+      ? { incompleteReason: result.incompleteReason }
+      : {}),
   };
 }
 
 function createOAuthReport(
   result: OAuthConformanceResult | OAuthConformanceSuiteResult,
+  options?: OAuthReportOptions
 ): ConformanceReport {
+  const unscoredCheckIds = scorableOAuthIds(options?.oauthUnscoredCheckIds);
+  const unscoredIds = new Set(unscoredCheckIds);
+  const filtered = unscoredIds.size > 0;
+  const scoreOptions = { unscoredCheckIds };
   if ("results" in result) {
+    const scores = result.results.map((entry) =>
+      scoreFromOAuthResult(entry, scoreOptions)
+    );
+    const verdicts = result.results.map((entry, index) =>
+      oauthVerdict(entry, scores[index]!, filtered)
+    );
+    const outcome = suiteOutcomeFields(verdicts);
     return {
       schemaVersion: 1,
       kind: "oauth-conformance",
       name: result.name,
-      passed: result.passed,
-      ...suiteOutcomeFields(result.results),
-      score: pooledConformanceScore(result.results.map(scoreFromOAuthResult)),
+      // From the published outcome, which reads a not-applicable flow as
+      // passed even though the flow's own `passed` is false.
+      passed: filtered ? outcome.outcome === "passed" : result.passed,
+      ...outcome,
+      score: pooledConformanceScore(scores),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
-        oauthGroupFromResult(entry, entry.label, index),
+        oauthGroupFromResult(
+          entry,
+          entry.label,
+          index,
+          unscoredIds,
+          verdicts[index]!.passed
+        )
+      ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `oauth-${index + 1}`,
+        }))
       ),
     };
   }
 
+  const score = scoreFromOAuthResult(result, scoreOptions);
+  const verdict = oauthVerdict(result, score, filtered);
   return {
     schemaVersion: 1,
     kind: "oauth-conformance",
     name: "OAuth Conformance",
-    passed: result.passed,
-    ...outcomeFields(result),
-    score: scoreFromOAuthResult(result),
+    passed: verdict.passed,
+    ...outcomeFields(verdict),
+    score,
     durationMs: result.durationMs,
     groups: [
       oauthGroupFromResult(
         result,
         `${result.protocolVersion}/${result.registrationStrategy}`,
         0,
+        unscoredIds,
+        verdict.passed
       ),
     ],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "oauth-1" },
+    ]),
   };
 }
 
@@ -1022,9 +1121,11 @@ export function toConformanceReport(
 ): ConformanceReport;
 export function toConformanceReport(
   result: OAuthConformanceResult,
+  options?: OAuthReportOptions
 ): ConformanceReport;
 export function toConformanceReport(
   result: OAuthConformanceSuiteResult,
+  options?: OAuthReportOptions
 ): ConformanceReport;
 export function toConformanceReport(
   result: MCPAppsConformanceResult,
@@ -1046,9 +1147,11 @@ export function toConformanceReport(
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,
+  options?: OAuthReportOptions
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,
+  options?: OAuthReportOptions
 ): ConformanceReport {
   // First: readiness is not a suite, and every discriminator below is written
   // for suite shapes.
@@ -1079,6 +1182,9 @@ export function toConformanceReport(
       groups: [
         appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks"),
       ],
+      ...readinessAdvisoryFields([
+        { readiness: result.readiness, group: "tasks-1" },
+      ]),
     };
   }
 
@@ -1087,7 +1193,7 @@ export function toConformanceReport(
   }
 
   if (isOAuthSingleResult(result) || isOAuthSuiteResult(result)) {
-    return createOAuthReport(result);
+    return createOAuthReport(result, options);
   }
 
   throw new Error("Unsupported conformance result shape");
@@ -1208,9 +1314,33 @@ function renderConformanceTestSuite(
   return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${properties}${cases}\n  </testsuite>`;
 }
 
+/** One report's `<testsuite>` elements and tallies, without the document root. */
+export interface ConformanceJUnitSuites {
+  name: string;
+  tests: number;
+  failures: number;
+  skipped: number;
+  durationMs: number;
+  /** Zero or more `<testsuite>` elements, newline-joined. */
+  xml: string;
+}
+
 export function renderConformanceReportJUnitXml(
   report: ConformanceReport,
 ): string {
+  const suites = renderConformanceReportJUnitSuites(report);
+  const time = (suites.durationMs / 1000).toFixed(3);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${escapeXml(suites.name)}" tests="${suites.tests}" failures="${suites.failures}" skipped="${suites.skipped}" time="${time}">\n${suites.xml}\n</testsuites>\n`;
+}
+
+/**
+ * The body of {@link renderConformanceReportJUnitXml}, for a document that
+ * holds several reports under one `<testsuites>` root: a second XML prolog or
+ * root element would make the whole file unparseable.
+ */
+export function renderConformanceReportJUnitSuites(
+  report: ConformanceReport
+): ConformanceJUnitSuites {
   const redactedReport = renderConformanceReportJson(report);
   const tests = redactedReport.groups.reduce(
     (sum, group) => sum + group.cases.length,
@@ -1233,9 +1363,6 @@ export function renderConformanceReportJUnitXml(
       ).length,
     0,
   );
-  const time = (redactedReport.durationMs / 1000).toFixed(3);
-  const name = escapeXml(redactedReport.name);
-
   const advisories = redactedReport.advisories ?? [];
   const suites = redactedReport.groups
     .map((group) =>
@@ -1259,5 +1386,12 @@ export function renderConformanceReportJUnitXml(
         )}\n    </properties>\n  </testsuite>`
       : "";
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}${orphanSuite}\n</testsuites>\n`;
+  return {
+    name: redactedReport.name,
+    tests,
+    failures,
+    skipped,
+    durationMs: redactedReport.durationMs,
+    xml: `${suites}${orphanSuite}`,
+  };
 }

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, cleanup, act } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, cleanup, act, screen, fireEvent, waitFor } from "@testing-library/react";
 import {
   MrtrElicitationHost,
   __resetMrtrHostElection,
@@ -156,4 +156,23 @@ describe("MrtrElicitationHost — single-active-dialog election", () => {
     );
     expect(document.body.querySelectorAll('[role="dialog"]').length).toBe(0);
   });
+});
+
+
+it("renders an extended manual form and keeps zero/false on submission", async () => {
+  const respond = vi.spyOn(useMrtrElicitationStore.getState(), "respond").mockResolvedValue();
+  render(<MrtrElicitationHost />);
+  ingest({ ...FORM_ROUND, requests: [{
+    key: "review", mode: "form", message: "Manual extended review", pluginForm: true,
+    requestedSchema: { type: "object", properties: {
+      revision: { type: "integer", title: "Revision", default: 0 },
+      approved: { type: "boolean", title: "Approved", default: false },
+    }, required: ["revision", "approved"] },
+  }] });
+  expect(screen.getByLabelText(/Revision/)).toHaveValue(0);
+  fireEvent.click(screen.getByRole("button", { name: /^Accept$/i }));
+  await waitFor(() => expect(respond).toHaveBeenCalledWith("op-1", {
+    review: { action: "accept", content: { revision: 0, approved: false } },
+  }));
+  respond.mockRestore();
 });

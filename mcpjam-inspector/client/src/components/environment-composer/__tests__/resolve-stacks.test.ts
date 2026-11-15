@@ -1442,24 +1442,17 @@ describe("resolveComposerEnvironments — reusing a named row across efforts", (
   });
 });
 
-describe("resolveComposerEnvironments — a client that signs in with its own account", () => {
-  const cursorKey = (overrides: Record<string, unknown> = {}) => ({
-    secretId: "sec-1",
-    name: "CURSOR_API_KEY",
-    delivery: "brokered" as const,
-    sharing: "user" as const,
-    brokerHosts: ["api2.cursor.sh"],
-    brokerHeader: "authorization",
-    brokerTemplate: "Bearer {}",
-    ...overrides,
-  });
+describe("resolveComposerEnvironments — a client on the organization's Cursor key", () => {
   const harnessOf =
     (byHost: Record<string, string | null>) => async (hostId: string) =>
       byHost[hostId] ? { harnessId: byHost[hostId]! } : null;
   const compose = (hostIds: string[]) =>
     composeState({ hostIds, serverAttachmentId: "group-1" });
+  const stacksOf = (ensure: unknown) =>
+    (ensure as { mock: { calls: Array<Array<{ stacks: unknown[] }>> } }).mock
+      .calls[0]![0].stacks as Array<Record<string, unknown>>;
 
-  it("mints a Cursor cell with the key's grant, and a Claude Code cell without one", async () => {
+  it("mints a Cursor cell like any other, granting no secret for its key", async () => {
     const ensure = ensureReturning(["env-cursor", "env-claude"]);
     await resolveComposerEnvironments({
       ...base,
@@ -1470,74 +1463,36 @@ describe("resolveComposerEnvironments — a client that signs in with its own ac
         "cursor-host": "cursor",
         "claude-host": "claude-code",
       }),
-      projectSecrets: [cursorKey()],
     });
-    const stacks = (ensure as unknown as { mock: { calls: any[][] } }).mock
-      .calls[0]![0].stacks as Array<Record<string, unknown>>;
-    const byHost = Object.fromEntries(stacks.map((s) => [s.hostId, s]));
-    expect(byHost["cursor-host"]!.secretSelection).toEqual({
-      mode: "explicit",
-      secretIds: ["sec-1"],
-    });
-    expect("secretSelection" in byHost["claude-host"]!).toBe(false);
+    for (const stack of stacksOf(ensure)) {
+      expect("secretSelection" in stack).toBe(false);
+    }
   });
 
-  it("refuses to mint a Cursor cell when the project has no key, saying what to add", async () => {
+  it("refuses a Cursor client for User Testing before minting anything", async () => {
     const ensure = ensureReturning(["env-cursor"]);
     await expect(
       resolveComposerEnvironments({
         ...base,
-        state: compose(["cursor-host"]),
+        state: compose(["claude-host", "cursor-host"]),
         liveEnvironments: [],
         ensureAdhocEnvironments: ensure,
-        loadHostHarness: harnessOf({ "cursor-host": "cursor" }),
-        projectSecrets: [],
+        loadHostHarness: harnessOf({
+          "cursor-host": "cursor",
+          "claude-host": "claude-code",
+        }),
+        refuseOrgKeyClients: true,
       }),
     ).rejects.toMatchObject({
-      code: "MISSING_CREDENTIAL",
-      message: expect.stringMatching(/CURSOR_API_KEY/),
+      code: "CLIENT_UNSUPPORTED",
+      message:
+        "Cursor CLI runs only in the Playground, evals and swarms. " +
+        "Choose a different client for this study.",
     });
     expect(ensure).not.toHaveBeenCalled();
   });
 
-  it("refuses rather than guesses while the secrets are still loading", async () => {
-    await expect(
-      resolveComposerEnvironments({
-        ...base,
-        state: compose(["cursor-host"]),
-        liveEnvironments: [],
-        ensureAdhocEnvironments: ensureReturning(["env-cursor"]),
-        loadHostHarness: harnessOf({ "cursor-host": "cursor" }),
-        projectSecrets: undefined,
-      }),
-    ).rejects.toBeInstanceOf(ComposerResolveError);
-  });
-
-  it("refuses where the people running it are not the composer, however the key is shared", async () => {
-    const personal = [cursorKey({ sharing: "user" })];
-    const args = {
-      ...base,
-      state: compose(["cursor-host"]),
-      liveEnvironments: [],
-      loadHostHarness: harnessOf({ "cursor-host": "cursor" }),
-      projectSecrets: personal,
-    };
-    // Fine for the composer's own runs…
-    await resolveComposerEnvironments({
-      ...args,
-      ensureAdhocEnvironments: ensureReturning(["env-cursor"]),
-    });
-    // …not for a study whose testers would never receive it.
-    await expect(
-      resolveComposerEnvironments({
-        ...args,
-        ensureAdhocEnvironments: ensureReturning(["env-cursor"]),
-        requireSharedExternalCredential: true,
-      }),
-    ).rejects.toMatchObject({ code: "MISSING_CREDENTIAL" });
-  });
-
-  it("refuses, never guesses, when a client's harness can't be read", async () => {
+  it("refuses for User Testing, never guesses, when a client's harness can't be read", async () => {
     const ensure = ensureReturning(["env-cursor"]);
     await expect(
       resolveComposerEnvironments({
@@ -1548,23 +1503,9 @@ describe("resolveComposerEnvironments — a client that signs in with its own ac
         loadHostHarness: async () => {
           throw new Error("network down");
         },
-        projectSecrets: [cursorKey()],
+        refuseOrgKeyClients: true,
       }),
     ).rejects.toMatchObject({ code: "CLIENT_UNREADABLE" });
     expect(ensure).not.toHaveBeenCalled();
-  });
-
-  it("leaves every other client exactly as it was: no harness read result, no grant", async () => {
-    const ensure = ensureReturning(["env-plain"]);
-    await resolveComposerEnvironments({
-      ...base,
-      state: compose(["plain-host"]),
-      liveEnvironments: [],
-      ensureAdhocEnvironments: ensure,
-      projectSecrets: undefined,
-    });
-    const stack = (ensure as unknown as { mock: { calls: any[][] } }).mock
-      .calls[0]![0].stacks[0];
-    expect("secretSelection" in stack).toBe(false);
   });
 });

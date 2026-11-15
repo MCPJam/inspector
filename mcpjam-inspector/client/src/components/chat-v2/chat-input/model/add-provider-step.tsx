@@ -13,7 +13,7 @@ export function AddProviderStep({ onAdd }: { onAdd?: () => void }) {
       variant="outline"
       size="sm"
       className="h-7 text-xs"
-      onClick={onAdd}
+      onClick={() => onAdd()}
     >
       Add a provider
     </Button>
@@ -26,17 +26,21 @@ export function AddProviderStep({ onAdd }: { onAdd?: () => void }) {
 
 /**
  * A search that matched no model: says why it isn't listed and, when known,
- * what to do. Off the key policy a missing `onAdd` says nothing about who the
- * viewer is, so no admin pointer is shown then.
+ * what to do. `onAdd` is the picker's own organization's handoff, or `null`
+ * when that organization offers this viewer none. Off the key policy, nothing
+ * known about the viewer means no admin pointer either.
  */
 export function ModelSearchEmpty({
   query,
   requireOrgKeys,
   onAdd,
+  leaveTo,
 }: {
   query: string;
   requireOrgKeys?: boolean;
-  onAdd?: () => void;
+  onAdd: (() => void) | null;
+  /** Closes the picker, then runs the handoff. */
+  leaveTo: (handoff?: () => void) => void;
 }) {
   return (
     <div className="space-y-2 px-3">
@@ -44,9 +48,13 @@ export function ModelSearchEmpty({
       <p className="text-[11px] text-muted-foreground">
         {requireOrgKeys
           ? "Only models from your organization's providers are listed."
-          : "Only models MCPJam runs and models from your organization's providers are listed."}
+          : "Only models MCPJam runs and models from your providers are listed."}
       </p>
-      {onAdd || requireOrgKeys ? <AddProviderStep onAdd={onAdd} /> : null}
+      {onAdd ? (
+        <AddProviderStep onAdd={() => leaveTo(onAdd)} />
+      ) : requireOrgKeys ? (
+        <AddProviderStep />
+      ) : null}
     </div>
   );
 }
@@ -57,7 +65,7 @@ export function ManageOrgModelsLink({ onClick }: { onClick: () => void }) {
     <div className="border-t px-2 py-1.5">
       <button
         type="button"
-        onClick={onClick}
+        onClick={() => onClick()}
         className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         Manage organization models

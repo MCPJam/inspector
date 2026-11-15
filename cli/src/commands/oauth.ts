@@ -1,12 +1,16 @@
 import {
   reportIncomplete,
+  reportReadiness,
   reportScore,
 } from "../lib/conformance-exit-code.js";
 import {
+  MCP_OAUTH_READINESS_IDS,
   type OAuthConformanceConfig,
+  type OAuthConformanceSuiteConfig,
   type OAuthConformanceSuiteResult,
   type OAuthLoginConfig,
   type OAuthVerificationConfig,
+  type RunConformanceOAuthConfig,
   OAuthConformanceTest,
   OAuthConformanceSuite,
   executeDebugOAuthProxy,
@@ -46,6 +50,7 @@ import {
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
 import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { readInputSource } from "../lib/json-input.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import {
@@ -142,6 +147,7 @@ export interface OAuthCommandOptions {
   verifyTools?: boolean;
   verifyCallTool?: string;
   conformanceChecks?: boolean;
+  adviceId?: string[];
   printUrl?: boolean;
   credentialsOut?: string;
 }
@@ -159,6 +165,30 @@ interface OAuthProxyCommandOptions {
    * hosted app would do with the same URL.
    */
   httpsOnly?: boolean;
+}
+
+/**
+ * The OAuth flow flags `oauth conformance` and `conformance run` share, so a
+ * run of every suite signs in the way the OAuth command does alone.
+ */
+export function addOAuthFlowOptions(command: Command): Command {
+  return command
+    .option(
+      "--client-metadata-url <url>",
+      "Client metadata URL used for CIMD registration",
+    )
+    .option("--redirect-url <url>", "OAuth redirect URL to use for the flow")
+    .option("--scopes <scopes>", "Space-separated scope string")
+    .option(
+      "--step-timeout <ms>",
+      "Per-step timeout in milliseconds",
+      (value: string) => parsePositiveInteger(value, "Step timeout"),
+      30_000,
+    )
+    .option(
+      "--print-url",
+      "In interactive mode, print the consent URL to stderr instead of launching a browser",
+    );
 }
 
 export function registerOAuthCommands(program: Command): void {
@@ -324,43 +354,33 @@ export function registerOAuthCommands(program: Command): void {
       }
     });
 
-  oauth
-    .command("conformance")
-    .description("Run OAuth conformance against an HTTP MCP server")
-    .requiredOption("--url <url>", "MCP server URL")
-    .requiredOption(
-      "--protocol-version <version>",
-      "OAuth protocol version: 2025-03-26, 2025-06-18, 2025-11-25, or 2026-07-28",
-    )
-    .requiredOption(
-      "--registration <strategy>",
-      "Registration strategy: dcr, preregistered, or cimd",
-    )
-    .option(
-      "--auth-mode <mode>",
-      "Authorization mode: headless, interactive, or client_credentials",
-      "interactive",
-    )
-    .option(
-      "--header <header>",
-      'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
-      (value: string, previous: string[] = []) => [...previous, value],
-      [],
-    )
-    .option("--client-id <id>", "OAuth client ID")
-    .option("--client-secret <secret>", "OAuth client secret")
-    .option(
-      "--client-metadata-url <url>",
-      "Client metadata URL used for CIMD registration",
-    )
-    .option("--redirect-url <url>", "OAuth redirect URL to use for the flow")
-    .option("--scopes <scopes>", "Space-separated scope string")
-    .option(
-      "--step-timeout <ms>",
-      "Per-step timeout in milliseconds",
-      (value: string) => parsePositiveInteger(value, "Step timeout"),
-      30_000,
-    )
+  addOAuthFlowOptions(
+    oauth
+      .command("conformance")
+      .description("Run OAuth conformance against an HTTP MCP server")
+      .requiredOption("--url <url>", "MCP server URL")
+      .requiredOption(
+        "--protocol-version <version>",
+        "OAuth protocol version: 2025-03-26, 2025-06-18, 2025-11-25, or 2026-07-28",
+      )
+      .requiredOption(
+        "--registration <strategy>",
+        "Registration strategy: dcr, preregistered, or cimd",
+      )
+      .option(
+        "--auth-mode <mode>",
+        "Authorization mode: headless, interactive, or client_credentials",
+        "interactive",
+      )
+      .option(
+        "--header <header>",
+        'HTTP header in "Key: Value" format. Repeat to send multiple headers.',
+        (value: string, previous: string[] = []) => [...previous, value],
+        [],
+      )
+      .option("--client-id <id>", "OAuth client ID")
+      .option("--client-secret <secret>", "OAuth client secret"),
+  )
     .option(
       "--verify-tools",
       "After OAuth succeeds, verify the token by listing MCP tools",
@@ -371,7 +391,13 @@ export function registerOAuthCommands(program: Command): void {
     )
     .option(
       "--conformance-checks",
-      "Run additional OAuth negative checks (invalid client, invalid redirect, token format) after the main flow",
+      "Deprecated: the OAuth negative checks now always run. Accepted and ignored.",
+    )
+    .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
     )
     .option(
       "--credentials-out <path>",
@@ -383,10 +409,6 @@ export function registerOAuthCommands(program: Command): void {
       "Fail if reporting is configured but the UI record cannot be written",
     )
     .option(
-      "--print-url",
-      "In interactive mode, print the consent URL to stderr instead of launching a browser",
-    )
-    .option(
       "--reporter <reporter>",
       "Structured reporter output: json-summary or junit-xml",
     )
@@ -394,7 +416,13 @@ export function registerOAuthCommands(program: Command): void {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const format = getOAuthConformanceFormat(command, reporter);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
-      const result = await new OAuthConformanceTest(config).run();
+      // The CLI counts the run itself, under its own opt-outs.
+      const test = new OAuthConformanceTest({
+        ...config,
+        __suppressTelemetry: true,
+      });
+      captureConformanceRunEvent();
+      const result = await test.run();
       let credentialsFilePath: string | undefined;
       let credentialsFileError: unknown;
 
@@ -427,6 +455,7 @@ export function registerOAuthCommands(program: Command): void {
       // incomplete run gets the same third exit code as every other suite —
       // "we never established anything" is a different failure from "the
       // server violated the spec", and a human must not have to dig for why.
+      reportReadiness(result, command);
       reportIncomplete(result, command);
       await maybeUploadSingleSuite({
         suiteKind: "oauth",
@@ -470,7 +499,9 @@ export function registerOAuthCommands(program: Command): void {
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const format = getOAuthConformanceFormat(command, reporter);
-      const config = loadOAuthSuiteConfig(options.config as string);
+      const config = withDefaultOAuthConformanceChecks(
+        loadOAuthSuiteConfig(options.config as string),
+      );
 
       if (options.verifyTools || options.verifyCallTool) {
         const cliVerification: OAuthVerificationConfig = {
@@ -489,7 +520,12 @@ export function registerOAuthCommands(program: Command): void {
         };
       }
 
-      const suite = new OAuthConformanceSuite(config);
+      // The CLI counts the run itself, under its own opt-outs.
+      const suite = new OAuthConformanceSuite({
+        ...config,
+        __suppressTelemetry: true,
+      });
+      captureConformanceRunEvent();
       const result = await suite.run();
       const credentialsResultIndex = findCredentialsResultIndex(result);
       let credentialsFilePath: string | undefined;
@@ -522,6 +558,7 @@ export function registerOAuthCommands(program: Command): void {
       }
       for (const run of result.results) {
         reportScore(scoreFromOAuthResult(run), command, run.label);
+        reportReadiness(run, command);
         reportIncomplete(run, command);
       }
       // Worst-of the flows, matching the shared ordering: a violation (1)
@@ -613,24 +650,47 @@ export function registerOAuthCommands(program: Command): void {
 
 export function buildOAuthConformanceConfig(
   options: OAuthCommandOptions,
-  defaults?: {
-    defaultAuthMode?: "headless" | "interactive" | "client_credentials";
-  },
+  defaults?: OAuthFlowConfigDefaults,
 ): OAuthConformanceConfig {
+  return buildOAuthFlowConfig(
+    options,
+    parseRequiredRegistrationStrategy(options.registration),
+    defaults,
+  );
+}
+
+interface OAuthFlowConfigDefaults {
+  defaultAuthMode?: "headless" | "interactive" | "client_credentials";
+  /** How the auth mode flag is named in errors. Defaults to `--auth-mode`. */
+  authModeFlag?: string;
+}
+
+/**
+ * The OAuth suite's config from its flags. The caller parses the registration:
+ * `oauth conformance` requires one, while `conformance run` defaults to
+ * `"auto"`, which the SDK settles once the run has its protocol version.
+ */
+export function buildOAuthFlowConfig<
+  Registration extends RunConformanceOAuthConfig["registrationStrategy"],
+>(
+  options: Omit<OAuthCommandOptions, "registration">,
+  registrationStrategy: Registration,
+  defaults?: OAuthFlowConfigDefaults,
+): Omit<OAuthConformanceConfig, "registrationStrategy"> & {
+  registrationStrategy: Registration;
+} {
   const serverUrl = options.url.trim();
   assertValidUrl(serverUrl, "server URL");
 
   const protocolVersion = parseRequiredProtocolVersion(options.protocolVersion);
-  const registrationStrategy = parseRequiredRegistrationStrategy(
-    options.registration,
-  );
   const authMode = parseAuthMode(
     options.authMode ?? defaults?.defaultAuthMode ?? "interactive",
   );
+  const authModeFlag = defaults?.authModeFlag ?? "--auth-mode";
 
   if (options.printUrl && authMode !== "interactive") {
     throw usageError(
-      "--print-url only applies to --auth-mode interactive. Headless and client_credentials modes do not open a browser.",
+      `--print-url only applies to ${authModeFlag} interactive. Headless and client_credentials modes do not open a browser.`,
     );
   }
 
@@ -645,7 +705,7 @@ export function buildOAuthConformanceConfig(
 
   if (authMode === "client_credentials" && registrationStrategy === "cimd") {
     throw usageError(
-      "--auth-mode client_credentials cannot be used with --registration cimd. CIMD is a browser-based registration flow and only works with --auth-mode headless or --auth-mode interactive. For client_credentials, use --registration dcr or --registration preregistered instead.",
+      `${authModeFlag} client_credentials cannot be used with --registration cimd. CIMD is a browser-based registration flow and only works with ${authModeFlag} headless or ${authModeFlag} interactive. For client_credentials, use --registration dcr or --registration preregistered instead.`,
     );
   }
 
@@ -678,10 +738,31 @@ export function buildOAuthConformanceConfig(
     assertValidUrl(redirectUrl, "redirect URL");
   }
 
+  // A blank id is a mistake, not an omitted flag: dropping it would run every
+  // advice instead of the one asked for.
+  if (options.adviceId?.some((id) => !id.trim())) {
+    throw usageError("--advice-id needs an advice id.");
+  }
+  const readinessIds = options.adviceId;
+  const invalidReadinessIds = (readinessIds ?? []).filter(
+    (id) => !(MCP_OAUTH_READINESS_IDS as readonly string[]).includes(id),
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_OAUTH_READINESS_IDS.join(", ")}`,
+    );
+  }
+
   const customHeaders = parseHeadersOption(options.header);
   const client: NonNullable<OAuthConformanceConfig["client"]> = {};
 
-  if (registrationStrategy === "preregistered" && clientId) {
+  // Auto picks pre-registered credentials when they are here, as `oauth login`
+  // does, so it has to see them.
+  if (
+    (registrationStrategy === "preregistered" ||
+      registrationStrategy === "auto") &&
+    clientId
+  ) {
     client.preregistered = {
       clientId,
       ...(clientSecret ? { clientSecret } : {}),
@@ -725,7 +806,33 @@ export function buildOAuthConformanceConfig(
     redirectUrl,
     stepTimeout: options.stepTimeout ?? 30_000,
     verification,
-    oauthConformanceChecks: options.conformanceChecks ?? false,
+    // Always on, like the UI's OAuth run: checking that the server rejects
+    // bad input is half of OAuth conformance. `--conformance-checks` is kept
+    // only so existing scripts still parse.
+    oauthConformanceChecks: true,
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as OAuthConformanceConfig["readinessIds"],
+        }
+      : {}),
+  };
+}
+
+/**
+ * Turn the negative checks on for every flow the suite file says nothing
+ * about, matching `oauth conformance`. A file that sets
+ * `oauthConformanceChecks: false` in `defaults` or on a flow keeps it.
+ */
+export function withDefaultOAuthConformanceChecks(
+  config: OAuthConformanceSuiteConfig,
+): OAuthConformanceSuiteConfig {
+  return {
+    ...config,
+    defaults: {
+      ...config.defaults,
+      oauthConformanceChecks: config.defaults?.oauthConformanceChecks ?? true,
+    },
   };
 }
 
@@ -951,7 +1058,7 @@ export function buildOAuthLoginSnapshotConfig(
 
 function buildAuthConfig(
   authMode: "headless" | "interactive" | "client_credentials",
-  registrationStrategy: OAuthCommandOptions["registration"],
+  registrationStrategy: RunConformanceOAuthConfig["registrationStrategy"],
   clientId: string | undefined,
   clientSecret: string | undefined,
 ): NonNullable<OAuthConformanceConfig["auth"]> {

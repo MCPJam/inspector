@@ -15,7 +15,7 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import type { ProjectClientConfig } from "@/lib/client-config";
 import { getEffectiveProjectConnectionDefaults } from "@/lib/client-config";
-import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
@@ -27,6 +27,12 @@ import {
   type PendingCredentialClear,
 } from "@/lib/credential-origin";
 import { parseCommandInput } from "@/lib/command-input";
+import {
+  getRedactedConfigFlag,
+  isAuthorizationHeader,
+  resolveServerAuth,
+  splitAuthorizationHeader,
+} from "../server-auth";
 import {
   getConfidentialCimdBlockReason,
   validateOAuthClientId,
@@ -110,35 +116,6 @@ function createHeaderEntry(key = "", value = ""): HeaderEntry {
     key,
     value,
   };
-}
-
-function isAuthorizationHeader(key: string): boolean {
-  return key.trim().toLowerCase() === "authorization";
-}
-
-function getAuthorizationHeaderValue(
-  headers?: Record<string, unknown>,
-): string | undefined {
-  if (!headers) {
-    return undefined;
-  }
-
-  for (const [key, value] of Object.entries(headers)) {
-    if (isAuthorizationHeader(key) && typeof value === "string") {
-      return value;
-    }
-  }
-
-  return undefined;
-}
-
-function getRedactedConfigFlag(
-  config: unknown,
-  flag: "hasEnv" | "hasHeaders" | "hasBearerToken",
-): boolean {
-  return (
-    !!config && typeof config === "object" && (config as any)[flag] === true
-  );
 }
 
 function toComparableHeaders(
@@ -268,9 +245,6 @@ export function useServerForm(
       const config = server.config;
       const isHttpServer = "url" in config;
 
-      // For HTTP servers, check OAuth from multiple sources like the original
-      let hasOAuth = false;
-      let hasServerOAuth = false;
       let scopes: string[] = [];
       let protocolModeValue: ServerFormOAuthProtocolMode =
         DEFAULT_OAUTH_PROTOCOL_MODE;
@@ -283,19 +257,9 @@ export function useServerForm(
       let clientCapabilitiesOverrideValue: Record<string, unknown> | undefined;
 
       if (isHttpServer) {
-        // Check if OAuth is configured by looking at multiple sources:
-        // 1. Check if server has oauth tokens
-        // 2. Check if there's stored OAuth data
-        const hasOAuthTokens = server.oauthTokens != null;
         // Bind stored-credential reads to the exact server URL so a reused
         // server name can't surface a previous authorization server's data.
         const httpServerUrl = config.url ? config.url.toString() : undefined;
-        const hasStoredOAuthConfig = hasOAuthConfig(server.name, httpServerUrl);
-        hasServerOAuth =
-          server.useOAuth === true ||
-          hasOAuthTokens ||
-          server.oauthFlowProfile != null;
-        hasOAuth = hasServerOAuth || hasStoredOAuthConfig;
 
         const storedOAuthConfig = localStorage.getItem(
           `mcp-oauth-config-${server.name}`,
@@ -386,51 +350,9 @@ export function useServerForm(
         server.config.command ?? "",
         server.config.args ?? [],
       );
-      const authorizationHeader = isHttpServer
-        ? getAuthorizationHeaderValue(
-            config.requestInit?.headers as Record<string, unknown> | undefined,
-          )
-        : undefined;
-      const normalizedAuthorizationHeader = authorizationHeader?.trim();
-      const hasBearer =
-        typeof normalizedAuthorizationHeader === "string" &&
-        normalizedAuthorizationHeader.toLowerCase().startsWith("bearer ");
-      const bearerTokenValue = hasBearer
-        ? normalizedAuthorizationHeader.slice("bearer ".length)
-        : "";
-      // Redacted configs strip the Authorization header but set hasBearerToken.
-      // Treat that as a bearer server whose token is stored-but-hidden, the
-      // same way hasClientSecret / hasHeaders flag other stripped secrets.
-      const hasStoredBearerTokenValue =
-        isHttpServer &&
-        !hasBearer &&
-        (server.hasBearerToken === true ||
-          getRedactedConfigFlag(config, "hasBearerToken"));
-      // The CANONICAL authMethod wins over the derived booleans (see
-      // feedback: canonical-wins-every-read-site) — a persisted "auto" must
-      // display as Automatic, not as whichever flow it currently derives to.
-      // On legacy rows XAA is checked FIRST: an XAA server keeps
-      // `useOAuth === false`, so without this branch it would fall through to
-      // the "oauth" catch-all and a save would silently rewrite it to OAuth.
-      const canonicalAuthType =
-        server.authMethod === "auto" ||
-        server.authMethod === "oauth" ||
-        server.authMethod === "xaa" ||
-        server.authMethod === "bearer" ||
-        server.authMethod === "none"
-          ? server.authMethod
-          : undefined;
-      const resolvedAuthType: ServerFormAuthType =
-        canonicalAuthType ??
-        (server.useXaa === true
-          ? "xaa"
-          : hasServerOAuth
-            ? "oauth"
-            : hasBearer || hasStoredBearerTokenValue
-              ? "bearer"
-              : hasOAuth
-                ? "oauth"
-                : "none");
+      const { method: resolvedAuthType, bearer } = resolveServerAuth(server);
+      const bearerTokenValue = bearer?.kind === "value" ? bearer.token : "";
+      const hasStoredBearerTokenValue = bearer?.kind === "stored";
       const timeoutValue =
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
           ? String(config.timeout)
@@ -754,26 +676,11 @@ export function useServerForm(
   const revealStoredHeaders = (
     headers: Record<string, string> | null | undefined,
   ) => {
-    const entries = Object.entries(headers ?? {});
-    // Only a bearer-auth server pulls its Authorization header into the bearer
-    // field. OAuth/none servers keep Authorization as a normal custom header
-    // (e.g. Basic auth, or an OAuth access token surfaced as a header), so we
-    // don't silently switch their auth type or strip the row.
-    const authorizationValue = entries.find(([key]) =>
-      isAuthorizationHeader(key),
-    )?.[1];
-    const revealedBearerToken =
-      authType === "bearer" &&
-      typeof authorizationValue === "string" &&
-      authorizationValue.startsWith("Bearer ")
-        ? authorizationValue.replace("Bearer ", "")
-        : undefined;
-    const nextCustomHeaders = entries
-      .filter(
-        ([key]) =>
-          !(revealedBearerToken !== undefined && isAuthorizationHeader(key)),
-      )
-      .map(([key, value]) => createHeaderEntry(key, String(value)));
+    const { bearerToken: revealedBearerToken, entries } =
+      splitAuthorizationHeader(authType, headers);
+    const nextCustomHeaders = entries.map(([key, value]) =>
+      createHeaderEntry(key, String(value)),
+    );
     setCustomHeaders(nextCustomHeaders);
     setHasStoredHeaders(false);
     setHeadersRevealed(true);

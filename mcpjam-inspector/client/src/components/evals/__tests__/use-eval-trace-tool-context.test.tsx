@@ -157,9 +157,6 @@ describe("useEvalTraceToolContext", () => {
       expect.arrayContaining(["alpha", "server-alpha"]),
     );
     expect(result.current.hostedSelectedServerIds).toEqual(["server-alpha"]);
-    expect(result.current.hostedOAuthTokens).toEqual({
-      "server-alpha": "oauth-alpha",
-    });
   });
 
   it("treats hosted readiness errors as transient and retries on the next trigger", async () => {

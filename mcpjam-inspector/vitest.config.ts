@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     // Telemetry catalogs are build outputs: fresh before the run and before
     // every watch rerun, however Vitest was started.
-    globalSetup: ["../scripts/generate-telemetry-catalogs.mjs"],
+    globalSetup: ["../scripts/generate-telemetry-catalogs.mjs", "./scripts/patch-harness-approvals.mjs"],
     projects: [
       {
         extends: "./server/vitest.config.ts",

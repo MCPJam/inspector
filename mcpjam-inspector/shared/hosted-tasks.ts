@@ -22,6 +22,14 @@ export const HOSTED_TASK_BATCH_LIMIT = 50;
 /** Route-side alias for {@link HOSTED_TASK_BATCH_LIMIT}. */
 export const HOSTED_TASK_BATCH_MAX = HOSTED_TASK_BATCH_LIMIT;
 
+/** A saved Task's account and wire, never the caller's current defaults. */
+export interface TaskRequestTarget {
+  connectionId?: string;
+  wire?: "legacy" | "extension";
+  ownerScope?: string;
+  sourceExecutions?: Record<string, string>;
+}
+
 /**
  * Server-side task age at which the client stops tracking a handle even if it
  * was never resolved: task IDs are bearer-ish and unbounded growth in
@@ -52,6 +60,8 @@ export type RegistryTaskStatus =
  * and the live `tasks/get` read stays the source of truth.
  */
 export interface RegistryTaskEntry {
+  sourceExecutionId?: string;
+  connectionId?: string;
   wire: "legacy" | "extension";
   taskId: string;
   lastKnownStatus: RegistryTaskStatus;

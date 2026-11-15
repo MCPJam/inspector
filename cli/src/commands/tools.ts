@@ -8,7 +8,11 @@ import type { HttpExchangeLogEvent, MCPServerConfig } from "@mcpjam/sdk";
 // The mirrored-header vocabulary, from the SDK that builds the headers — a
 // local copy of "which header names are Mcp-Param-*" or of the sentinel
 // decoder would be a second answer to a question the wire already settled.
-import { classifyMcpHeader, decodeMcpHeaderValue } from "@mcpjam/sdk";
+import {
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
+  parseToolResultAuthChallenge,
+} from "@mcpjam/sdk";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
@@ -72,6 +76,7 @@ import {
   resolveHostFromOptions,
 } from "../lib/host-resolve.js";
 import {
+  authChallengeHint,
   cliError,
   normalizeCliError,
   setProcessExitCode,
@@ -171,6 +176,41 @@ export function parseMcpHeaderOption(
  * them. stdio emits nothing here, which is correct — mirroring is Streamable
  * HTTP only.
  */
+/** The URL a sign-in hint should name, when the target is an HTTP server. */
+function targetUrlForHint(config: MCPServerConfig): string | undefined {
+  return "url" in config && typeof config.url === "string"
+    ? config.url
+    : undefined;
+}
+
+/**
+ * A completed result carrying a ChatGPT-style sign-in challenge
+ * (`_meta["mcp/www_authenticate"]`) gets `_authChallenge` beside it, parsed,
+ * with the command that signs in. Same object-only rule as `_durationMs`.
+ */
+function attachToolResultAuthChallenge<T>(
+  payload: T,
+  result: unknown,
+  serverUrl: string | undefined,
+): T {
+  const challenge = parseToolResultAuthChallenge(result);
+  if (
+    !challenge ||
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    return payload;
+  }
+  return {
+    ...(payload as Record<string, unknown>),
+    _authChallenge: {
+      ...challenge,
+      hint: authChallengeHint(challenge, serverUrl),
+    },
+  } as T;
+}
+
 function createMcpParamHeaderProbe(): {
   httpLogger: (event: HttpExchangeLogEvent) => void;
   mirrored: () => Record<string, string> | undefined;
@@ -1022,7 +1062,11 @@ export function registerToolsCommands(program: Command): void {
       validationResult && !validationResult.passed,
     );
     const toolResultError = isCallToolResultError(result);
-    const resultWithDuration = attachCliDurationMs(result, toolCallDurationMs);
+    const resultWithDuration = attachToolResultAuthChallenge(
+      attachCliDurationMs(result, toolCallDurationMs),
+      result,
+      targetUrlForHint(config),
+    );
 
     let outputPayload = resultWithDuration;
     let debugOutputPayload: unknown = outputPayload;

@@ -262,6 +262,28 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    id: "triggers",
+    scope: "project",
+    canonicalPath: "/triggers",
+    routePatterns: ["triggers"],
+    navSegments: ["triggers"],
+    title: "Triggers",
+    purpose:
+      "Run an agent unattended on MCPJam's hosted runner whenever a subscribed MCP event arrives, and review each run.",
+    userActivities: [
+      "Create a trigger on an event subscription with instructions, a model and budgets",
+      "Enable, disable, edit or delete a trigger",
+      "Browse a trigger's run history and a run's tool calls, result and parked reason",
+    ],
+    hasSnapshotProvider: false,
+    agentTools: {
+      kind: "none",
+      reason:
+        "Triggers spend money and act unattended on a member's credentials; configuring them stays a deliberate human action.",
+    },
+    showInAtlas: true,
+  },
+  {
     // The surface id stays `scenarios` — it keys the billing feature, the
     // agent tool group, and the Convex tables. Only the product name and the
     // URL changed.
@@ -371,7 +393,8 @@ export const APP_SURFACES = [
       "evals",
       "evals/create",
       "evals/suite/:suiteId",
-      "evals/suite/:suiteId/edit",
+      "evals/suite/:suiteId/settings",
+      "evals/suite/:suiteId/settings/evaluators",
       "evals/suite/:suiteId/runs/:runId",
       "evals/suite/:suiteId/test/:testId",
       "evals/suite/:suiteId/test/:testId/edit",
@@ -379,7 +402,8 @@ export const APP_SURFACES = [
       "evals/runs/create",
       "evals/runs/commit/:commitSha",
       "evals/runs/suite/:suiteId",
-      "evals/runs/suite/:suiteId/edit",
+      "evals/runs/suite/:suiteId/settings",
+      "evals/runs/suite/:suiteId/settings/evaluators",
       "evals/runs/suite/:suiteId/runs/:runId",
       "evals/runs/suite/:suiteId/test/:testId",
       "evals/runs/suite/:suiteId/test/:testId/edit",
@@ -420,9 +444,12 @@ export const APP_SURFACES = [
       "evaluate/create",
       "evaluate/eval-server/:serverId",
       "evaluate/suite/:suiteId",
-      "evaluate/suite/:suiteId/edit",
+      "evaluate/suite/:suiteId/settings",
+      "evaluate/suite/:suiteId/settings/evaluators",
       "evaluate/suite/:suiteId/runs/:runId",
       "evaluate/suite/:suiteId/runs/:runId/compare",
+      "evaluate/suite/:suiteId/runs/:runId/cases/:caseId",
+      "evaluate/suite/:suiteId/runs/:runId/cases/:caseId/iterations/:iterationId",
       "evaluate/suite/:suiteId/test/:testId",
       "evaluate/suite/:suiteId/test/:testId/edit",
     ],
@@ -522,6 +549,31 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    id: "events",
+    scope: "project",
+    canonicalPath: "/events",
+    routePatterns: ["events"],
+    navSegments: ["events"],
+    title: "Events",
+    purpose:
+      "Inspect the MCP Events (draft extension) a connected server declares, subscribe to them, and watch deliveries arrive live.",
+    userActivities: [
+      "Check whether the selected server declares capabilities.events",
+      "Browse a server's event types and their input and payload schemas",
+      "Subscribe to an event by poll, push or webhook under the draft or ChatGPT profile",
+      "Pause, resume, remove or rotate the secret of a subscription",
+      "Watch the live delivery feed and rejected deliveries",
+      "Send a simulated event to a subscription",
+    ],
+    hasSnapshotProvider: false,
+    agentTools: {
+      kind: "none",
+      reason:
+        "Subscriptions register webhooks and hold credentials-bound upstream state; creating or removing them stays a deliberate human action while the extension is a draft.",
+    },
+    showInAtlas: true,
+  },
+  {
     id: "skills",
     scope: "project",
     canonicalPath: "/skills",
@@ -593,6 +645,30 @@ export const APP_SURFACES = [
         "Read-only review of a server's host compatibility; nothing to operate, but snapshot-only for observability so the agent can see which servers and hosts are on the matrix.",
     },
     showInAtlas: true,
+  },
+  {
+    id: "readiness",
+    scope: "project",
+    canonicalPath: "/readiness",
+    routePatterns: ["readiness"],
+    navSegments: ["readiness"],
+    title: "Readiness",
+    purpose:
+      "Rehearse a directory submission for a saved server: fill a copy of the Claude connector portal and run MCPJam's checks on the answers and the server.",
+    userActivities: [
+      "Start or open a rehearsal for a saved server",
+      "Fill the portal's fields and read check results under them",
+      "Run the readiness checks",
+    ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Agents edit and run submissions through the directory submission operations, not the page.",
+    },
+    // Flag-gated: the atlas is static and cannot read
+    // `mcpjam-directory-readiness`, so advertising `/readiness` would send the
+    // agent to a page that redirects for everyone the flag excludes.
+    showInAtlas: false,
   },
   {
     id: "oauth-flow",

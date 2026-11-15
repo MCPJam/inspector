@@ -13,27 +13,9 @@
  */
 import type {
   PlatformEvalIterationReport,
-  PlatformEvalIterationReportUnavailableReason,
 } from "@mcpjam/sdk/platform";
 
-/**
- * Total by construction: a reason the producer adds without a label here is a
- * compile error, and the producer narrows anything it does not know to
- * `analysis_unavailable`, so the wire cannot outrun this table at runtime.
- */
-const UNAVAILABLE_LABELS: Record<
-  PlatformEvalIterationReportUnavailableReason,
-  string
-> = {
-  trace_too_large: "This iteration's trace was too large to analyze.",
-  context_too_large:
-    "This iteration's recorded failures were too large to analyze together.",
-  budget: "The analysis budget for this run was spent before this iteration.",
-  missing_trace: "Nothing was recorded for this iteration to analyze.",
-  extraction_rejected:
-    "The explanation this iteration produced could not be traced back to the recorded evidence, so it was discarded.",
-  analysis_unavailable: "AI explanations are unavailable for this iteration.",
-};
+import { reportUnavailableMessage } from "@/components/shared/report-unavailability";
 
 export type ReportAvailability =
   | { kind: "ready" }
@@ -65,7 +47,7 @@ export function reportAvailability(
   if (report.status === "failed")
     return {
       kind: "unavailable",
-      line: UNAVAILABLE_LABELS[report.reason ?? "analysis_unavailable"],
+      line: reportUnavailableMessage(report.reason ?? "analysis_unavailable", "iteration"),
     };
   if (report.status === "stale")
     return {

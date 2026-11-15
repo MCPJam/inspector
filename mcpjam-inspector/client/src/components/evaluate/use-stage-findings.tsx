@@ -18,9 +18,9 @@ import { useMemo } from "react";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import {
   evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
   type EvalDecisionSummaryStore,
 } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
 import {
@@ -100,7 +100,7 @@ export function useStageFindings({
   // anyway spends a request per poll to be told so — the same gate
   // `RunDecisionSummarySection` applies, so the two callers share cache entries
   // rather than racing each other into different ones.
-  const terminal = isTerminalEvalRunStatus(run?.status);
+  const terminal = isEvalRunTerminalStatus(run?.status);
   /**
    * The CALLER's switch, kept apart from the run's lifecycle.
    *

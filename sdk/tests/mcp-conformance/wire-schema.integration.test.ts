@@ -92,12 +92,13 @@ describe("wire-schema-valid against production-shaped defects", { timeout: 20_00
     expect(check.error?.message).toContain("/id");
   });
 
-  it("keeps the failure OUT of the verdict while the check is pending", async () => {
-    // The whole reason PR 1 landed first: a new MUST check finding a real
-    // violation must not retroactively fail a server that was green.
+  it("fails the verdict now that the profile scores it", async () => {
+    // Pending until v2026-11-01.1, so a violation could not fail a server
+    // that was green before the check existed. Promotion is what makes it
+    // count.
     const { result } = await runAgainst({ omitCacheHints: true });
-    expect(result.profile?.pendingCheckIds).toContain("wire-schema-valid");
-    expect(result.outcome).not.toBe("failed");
+    expect(result.profile?.pendingCheckIds).not.toContain("wire-schema-valid");
+    expect(result.outcome).toBe("failed");
   });
 
   it("stamps the schema digest onto the run's profile", async () => {

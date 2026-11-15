@@ -159,7 +159,6 @@ describe("trust rules match the standalone path", () => {
             mode: "url",
             message: "Continue in your browser.",
             url: "https://example.test/consent",
-            elicitationId: "e1",
           },
         },
       } as never,
@@ -167,6 +166,33 @@ describe("trust rules match the standalone path", () => {
     expect(result.rejections[0]).toMatchObject({
       reason: "unsupported-elicitation-mode",
     });
+  });
+
+  it("collects embedded URL consent without a legacy elicitation ID", async () => {
+    const elicitation = vi.fn<NonNullable<TaskInputHandlers["elicitation"]>>(
+      async () => ({ action: "accept" })
+    );
+    const result = await collectTaskInputResponses({
+      options: {
+        declaredCapabilities: { elicitation: { url: {} } },
+        handlers: { elicitation },
+      },
+      taskId: "task-1",
+      serverId: "srv",
+      inputRequests: {
+        consent: {
+          method: "elicitation/create",
+          params: {
+            mode: "url",
+            message: "Continue",
+            url: "https://example.test/consent",
+          },
+        },
+      },
+    });
+    expect(result.rejections).toEqual([]);
+    expect(result.responses).toEqual({ consent: { action: "accept" } });
+    expect(elicitation.mock.calls[0]?.[0]).not.toHaveProperty("elicitationId");
   });
 
   it("validates accepted elicitation content against its own requestedSchema", async () => {

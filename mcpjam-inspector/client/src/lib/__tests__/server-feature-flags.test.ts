@@ -164,7 +164,7 @@ describe("server-evaluated feature flags", () => {
     it("evaluates a signed-in actor through its access token", async () => {
       const posthog = { updateFlags: vi.fn() };
       vi.mocked(fetch).mockResolvedValueOnce(
-        flagsResponse({ "billing-entitlements-ui": true }),
+        flagsResponse({ "learn-more-enabled": true }),
       );
 
       await refreshServerFeatureFlagsForActor(posthog, {
@@ -175,7 +175,7 @@ describe("server-evaluated feature flags", () => {
 
       expect(requestedAuthorization()).toBe("Bearer access-token");
       expect(posthog.updateFlags).toHaveBeenCalledWith({
-        "billing-entitlements-ui": true,
+        "learn-more-enabled": true,
       });
     });
 

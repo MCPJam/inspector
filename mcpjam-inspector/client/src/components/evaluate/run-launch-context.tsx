@@ -28,7 +28,7 @@ import {
   targetKeySuffix,
 } from "@/lib/eval-target-key";
 
-function Fact({
+export function Fact({
   label,
   children,
 }: {

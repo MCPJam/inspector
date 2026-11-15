@@ -70,6 +70,7 @@ import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
 import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
 import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
+import type { SyntheticHostSessionAdapter } from "../runner.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 import { logger } from "../../../utils/logger.js";
 
@@ -159,6 +160,51 @@ describe("swarm single-host runner — attempt ordering", () => {
       "run:synth_run-1_host-1_1",
       "succeeded:1:synth_run-1_host-1_1",
     ]);
+  });
+
+  it("applies the pinned host style under sparse MCP Apps overrides", async () => {
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            hostStyle: "chatgpt",
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    // ChatGPT's preset plus the override, not only the override's own keys.
+    // Messages carrying every OpenAI content type (not just text) is
+    // ChatGPT-specific, and so is `downloadFile` among these presets.
+    expect(adapter.runtime.hostCapabilities).toMatchObject({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+      downloadFile: {},
+      message: { text: {}, image: {}, resourceLink: {}, resource: {} },
+    });
+  });
+
+  it("advertises only the override's own keys while the snapshot has no host style", async () => {
+    // Runs created before the backend pins hostStyle onto swarm targets.
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    expect(adapter.runtime.hostCapabilities).toEqual({ serverResources: {} });
   });
 
   it("passes the pinned host runtime + swarm persist attribution into the shared core", async () => {
@@ -866,6 +912,131 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     }
   });
 
+  describe("a swarm mixing Cursor and Claude Code", () => {
+    // Cursor runs on the customer's own Cursor account: its spend or credit
+    // wording is Cursor's, never MCPJam's cap.
+    const CURSOR = {
+      ...HOST,
+      harness: "cursor" as const,
+      modelId: "cursor/auto",
+    };
+    const CLAUDE_CODE = { ...HOST_2, harness: "claude-code" as const };
+    const terminals = () =>
+      reportAttemptMock.mock.calls
+        .map((c) => c[2] as any)
+        .filter((a) => a.status !== "running");
+    const stoppedRun = () =>
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ) || terminals().some((t) => t.errorCode === "spend_cap_exceeded");
+    const run = async (failingHost: string, failure: Record<string, unknown>) => {
+      reportAttemptMock.mockClear();
+      finalizePendingAttemptsMock.mockClear();
+      runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+        adapter.persist.hostId === failingHost
+          ? failure
+          : { outcome: "succeeded" },
+      );
+      await startJourneyRun(
+        baseOpts({ hosts: [CURSOR, CLAUDE_CODE], sessionsPerTarget: 2 }),
+      );
+    };
+
+    it("a Cursor target stops it only on MCPJam's own refusal, coded or in MCPJam's words", async () => {
+      for (const [failure, stops] of [
+        // The simulated user runs on MCPJam: its refusal carries MCPJam's code.
+        [
+          {
+            outcome: "failed",
+            errorMessage:
+              'swarm-agent https://example.test/journey-execution/persona-next-turn failed (402): {"code":"billing_limit_reached","error":"Your organization\'s credit limit was reached."}',
+          },
+          true,
+        ],
+        // The same refusal with its code lost: MCPJam's own sentence.
+        [
+          {
+            outcome: "failed",
+            errorMessage:
+              "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+          },
+          true,
+        ],
+        [
+          {
+            outcome: "rate_limited",
+            errorMessage:
+              "This organization's spend budget is reached. An owner or admin can raise it in Organization → Budget.",
+          },
+          true,
+        ],
+        // Cursor's own account wording ends that target or session only.
+        [
+          {
+            outcome: "rate_limited",
+            errorMessage: "Spend limit reached for this team.",
+          },
+          false,
+        ],
+        [
+          {
+            outcome: "failed",
+            errorMessage: "Insufficient credits on this account.",
+          },
+          false,
+        ],
+      ] as const) {
+        await run("host-1", failure);
+        expect(stoppedRun(), failure.errorMessage).toBe(stops);
+        if (!stops) {
+          expect(
+            terminals().filter(
+              (t) => t.hostId === "host-2" && t.status === "succeeded",
+            ),
+          ).toHaveLength(2);
+        }
+      }
+    });
+
+    it("the same wording on the Claude Code target still stops it", async () => {
+      await run("host-2", {
+        outcome: "rate_limited",
+        errorMessage: "Spend limit reached for this team.",
+      });
+      expect(stoppedRun()).toBe(true);
+    });
+  });
+
+  it("stops the whole run on a native turn refused for the used-up trial", async () => {
+    // The message the runner composes for a harness turn's lease refusal.
+    runSyntheticHostSessionMock.mockImplementation(
+      async (adapter: SyntheticHostSessionAdapter) =>
+        adapter.persist.hostId === "host-1"
+          ? {
+              outcome: "failed",
+              errorMessage:
+                "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness. (native_harness_trial_exhausted, HTTP 403)",
+            }
+          : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
+    );
+
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ errorCode: "spend_cap_exceeded" }),
+    );
+    const refused = reportAttemptMock.mock.calls
+      .map((c) => c[2] as Record<string, unknown>)
+      .find((a) => a.hostId === "host-1" && a.status !== "running");
+    expect(refused).toMatchObject({
+      errorCode: "native_harness_trial_exhausted",
+    });
+  });
+
   it("recognizes every user-owned backend denial code as an account limit", () => {
     // `isAccountLimit` keeps its own list rather than importing this one: that
     // one answers who is at fault, this one whether another host could escape
@@ -1568,7 +1739,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(bySession.get("synth_run-1_env_envB_0")).toBe("envB");
   });
 
-  it("delivers pinned skill BODIES to the session runtime (authoritative array), and an empty pin set as []", async () => {
+  it("delivers pinned skill BODIES to the session runtime (authoritative set), and an empty pin set as an empty one", async () => {
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
@@ -1581,12 +1752,24 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     const a = adapters.find(
       (x) => x.chatSessionId === "synth_run-1_env_envA_0",
     );
-    expect(a.runtime.pinnedSkills).toHaveLength(1);
-    expect(a.runtime.pinnedSkills[0]).toMatchObject({
+    // The copy a harness writes to its box, and the pin every turn plans from:
+    // the snapshot's row joined with the fetched body.
+    expect(a.runtime.pinnedSkillSource.harnessSkills).toHaveLength(1);
+    expect(a.runtime.pinnedSkillSource.harnessSkills[0]).toMatchObject({
       name: "sk-one",
       contentHash: "hash-1",
       content: "# body",
     });
+    expect(a.runtime.pinnedSkillSource.pins).toEqual([
+      {
+        skillId: "sk1",
+        name: "sk-one",
+        description: "d",
+        contentHash: "hash-1",
+        sharing: "project",
+        content: "# body",
+      },
+    ]);
     // Persist attribution carries the targetId (chat-ingestion echo).
     expect(a.persist.targetId).toBe("target-a");
 
@@ -1607,9 +1790,141 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     const b = adapters.find(
       (x) => x.chatSessionId === "synth_run-1_env_envB_0",
     );
-    // Skill-less env target: authoritative EMPTY array — NEVER undefined
+    // Skill-less env target: an authoritative EMPTY set — NEVER undefined
     // (undefined would fall back to the live pool).
-    expect(b.runtime.pinnedSkills).toEqual([]);
+    expect(b.runtime.pinnedSkillSource.pins).toEqual([]);
+    expect(b.runtime.pinnedSkillSource.harnessSkills).toEqual([]);
+  });
+
+  it("downloads the pinned supporting file before the swarm starts its sessions", async () => {
+    const file = {
+      path: "scripts/check.sh",
+      contentHash: "file-hash",
+      size: 9,
+      url: "data:text/plain,echo%20test",
+    };
+    fetchPinnedSkillMock.mockResolvedValue({
+      ...pinnedArtifact("hash-1"),
+      files: [file],
+    });
+
+    await startJourneyRun(baseOpts({ hosts: [ENV_TARGET_A], sessionsPerTarget: 1 }));
+
+    const session = runSyntheticHostSessionMock.mock.calls[0]?.[0];
+    expect(session?.runtime.pinnedSkillSource.harnessSkills[0].files).toEqual([
+      { path: file.path, mimeType: "text/plain", content: "echo test" },
+    ]);
+    const [supporting] = session.runtime.pinnedSkillSource.set.standaloneSkills[0].files;
+    expect(new TextDecoder().decode(await supporting.read())).toBe("echo test");
+  });
+
+  it("addresses a plugin's skill by the target's pinned plugin version", async () => {
+    fetchPinnedSkillMock.mockResolvedValue({
+      name: "summarize",
+      description: "d",
+      content: "# summarize",
+      contentHash: "hash-plugin",
+    });
+    const pluginTarget = {
+      ...ENV_TARGET_A,
+      pluginVersions: [
+        { pluginId: "plg_acme", pluginVersionId: "plv_acme_1", name: "acme" },
+      ],
+      pinnedSkills: [
+        {
+          skillId: "sk_summarize",
+          name: "summarize",
+          description: "d",
+          contentHash: "hash-plugin",
+          modelRef: "acme/summarize",
+          sharing: "project" as const,
+          channels: ["plugin" as const],
+        },
+      ],
+    };
+
+    await startJourneyRun(
+      baseOpts({ hosts: [pluginTarget], sessionsPerTarget: 1 }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    expect(
+      adapter.runtime.pinnedSkillSource.set.pluginSkills.map(
+        (skill: any) => skill.ref,
+      ),
+    ).toEqual(["acme/summarize"]);
+  });
+
+  it("gives each target its own server's pin when two servers serve the same skill", async () => {
+    // Byte-identical skills from two servers share a hash; their server and
+    // URI are what tell the pins apart.
+    const capture = (serverId: string, serverLabel: string, slug: string) => ({
+      serverSkillId: `ss_${serverId}`,
+      serverSkillVersionId: `ssv_${serverId}`,
+      serverId,
+      serverLabel,
+      skillUri: "skill://search",
+      serverSkillVersionNumber: 1,
+      serverSkillCapturedAt: 1_700_000_000_000,
+      name: "search",
+      description: "Search the docs.",
+      contentHash: "hash-search",
+      modelRef: `${slug}/search`,
+      sharing: "project" as const,
+      channels: ["mcp-server" as const],
+    });
+    fetchPinnedSkillMock.mockImplementation(async () => ({
+      name: "search",
+      description: "Search the docs.",
+      content: "# Search",
+      contentHash: "hash-search",
+    }));
+    const targetA = {
+      ...ENV_TARGET_A,
+      pinnedSkills: [capture("srv_a", "Docs A", "docs-a")],
+    };
+    const targetB = {
+      ...ENV_TARGET_A,
+      targetId: "target-b",
+      environmentRef: { environmentId: "envB", name: "Env B", revision: 1 },
+      pinnedSkills: [capture("srv_b", "Docs B", "docs-b")],
+    };
+
+    await startJourneyRun(
+      baseOpts({ hosts: [targetA, targetB], sessionsPerTarget: 1 }),
+    );
+
+    // One fetch per server, each naming its own: the cache never hands one
+    // server's pin to the other target.
+    expect(fetchPinnedSkillMock).toHaveBeenCalledTimes(2);
+    for (const [targetId, serverId] of [
+      ["target-a", "srv_a"],
+      ["target-b", "srv_b"],
+    ]) {
+      expect(fetchPinnedSkillMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          targetId,
+          contentHash: "hash-search",
+          serverSkill: { serverId, skillUri: "skill://search" },
+        }),
+      );
+    }
+    const servedTo = (environmentId: string) =>
+      runSyntheticHostSessionMock.mock.calls
+        .map((c) => c[0] as SyntheticHostSessionAdapter)
+        .find(
+          (adapter) =>
+            adapter.chatSessionId === `synth_run-1_env_${environmentId}_0`,
+        )
+        ?.runtime.pinnedSkillSource?.set.serverSkills.map((skill) => [
+          skill.serverId,
+          skill.serverLabel,
+          skill.ref,
+        ]);
+    expect(servedTo("envA")).toEqual([["srv_a", "Docs A", "docs-a/search"]]);
+    expect(servedTo("envB")).toEqual([["srv_b", "Docs B", "docs-b/search"]]);
   });
 
   it("caches pinned bodies by (projectId, contentHash): one fetch even across two targets pinning the same hash", async () => {
@@ -1659,11 +1974,11 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(executed.filter((id) => id.includes("env_envB"))).toHaveLength(2);
   });
 
-  it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkills undefined", async () => {
+  it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkillSource undefined", async () => {
     await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 1 }));
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     // Legacy: undefined (live-pool semantics downstream), and no pinned fetch.
-    expect(adapter.runtime.pinnedSkills).toBeUndefined();
+    expect(adapter.runtime.pinnedSkillSource).toBeUndefined();
     expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
   });
 
@@ -1885,6 +2200,20 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
     ).toBe("org_spend_cap");
   });
 
+  // A declined card refuses every call until the card or the balance changes,
+  // so it halts the run like any exhaustion. The runner gets the backend's
+  // sentences without the code, so the words alone must say so.
+  it("halts the run on a declined card", () => {
+    const declined =
+      "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits. Update your payment method in billing and turn auto-reload back on, or top up to keep going.";
+    expect(
+      classifyRateLimit(declined, {
+        code: "user_rate_limit",
+        refusalReason: "auto_topup_declined",
+      }),
+    ).toBe("org_spend_cap");
+  });
+
   // What a stored row or a flattened error keeps: the backend's sentence, with
   // no JSON, no structured reason and no hint. Blaming the user's provider for
   // it (or halting the whole run as a spend cap) would both be wrong.
@@ -2076,6 +2405,37 @@ describe("target setup before claims", () => {
       }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+  it("stores why a failed setup stopped the target instead of a bare prerequisites code", async () => {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      if (target.targetId !== "bad") return record;
+      throw new SwarmSetupError(
+        { ...record, status: "failed", readiness: "unavailable", reason: "timeout" },
+        undefined,
+        new Error("aborted"),
+      );
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    const bad = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.targetId === "bad" && a.status !== "running");
+    expect(bad).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "prerequisites_unavailable",
+        errorMessage: expect.stringContaining("Setup ran out of time"),
+      }),
+    ]);
   });
   it("stores a setup that could not sign in to the server as that sign-in failure, and does not retry it", async () => {
     const { SwarmSetupError } = await import("../swarm-setup-turn");

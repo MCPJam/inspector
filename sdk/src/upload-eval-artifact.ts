@@ -8,6 +8,7 @@ import {
   parseJUnitXmlArtifact,
   parseVitestJsonArtifact,
 } from "./artifact-parsers/index.js";
+import { isMcpjamDeploymentError } from "./deployment/address.js";
 import { reportEvalResultsInternal } from "./report-eval-results.js";
 import { captureEvalReportingFailure } from "./sentry.js";
 
@@ -116,6 +117,9 @@ export async function uploadEvalArtifact(
       results,
     });
   } catch (error) {
+    // A refused address is configuration, not a reporting failure: nothing
+    // was sent, and there is nothing for Sentry to learn from it.
+    if (isMcpjamDeploymentError(error)) throw error;
     await captureEvalReportingFailure(error, {
       apiKey: input.apiKey ?? process.env.MCPJAM_API_KEY,
       artifactFormat: input.format,

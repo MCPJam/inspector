@@ -22,7 +22,129 @@ export function mergePageToolAttributionMetadata(
   };
 }
 
+/**
+ * Marks a tool call the model emitted but that was rejected before it ran
+ * (an unknown name, or input the schema refused). The engine keeps the call
+ * and its error result in history so the model can read the error and retry;
+ * the mark is how the backend-history scrub tells such a call from one whose
+ * tool has since disappeared.
+ */
+export function markRejectedToolCallMetadata(
+  metadata: unknown,
+): McpToolOriginProviderMetadata {
+  const base = toProviderMetadata(metadata);
+  return {
+    ...base,
+    mcpjam: { ...base.mcpjam, rejectedToolCall: true },
+  };
+}
+
+export function isRejectedToolCallMetadata(metadata: unknown): boolean {
+  return (
+    isRecord(metadata) &&
+    isRecord(metadata.mcpjam) &&
+    metadata.mcpjam.rejectedToolCall === true
+  );
+}
+
 export type McpToolOriginProviderMetadata = Record<string, JSONObject>;
+
+export type McpWidgetExecutionContext = {
+  owner: {
+    kind: "chat";
+    userId: string;
+    serverId: string;
+    harnessSessionId: string;
+    connectionId?: string;
+  };
+  parentExecutionId: string;
+};
+
+export function mergeMcpWidgetContext(
+  metadata: unknown,
+  context: McpWidgetExecutionContext | undefined,
+  delivery?: "native" | "bridge",
+) {
+  const base = toProviderMetadata(metadata);
+  return context
+    ? {
+        ...base,
+        mcpjam: {
+          ...base.mcpjam,
+          widgetContext: context,
+          ...(delivery
+            ? {
+                upstreamMcpClient: delivery === "bridge" ? "mcpjam" : "harness",
+                mcpDelivery: delivery,
+              }
+            : {}),
+        },
+      }
+    : metadata;
+}
+
+export function readMcpWidgetContext(
+  metadata: unknown,
+): McpWidgetExecutionContext | undefined {
+  if (!isRecord(metadata) || !isRecord(metadata.mcpjam)) return;
+  const value = metadata.mcpjam.widgetContext;
+  if (
+    !isRecord(value) ||
+    typeof value.parentExecutionId !== "string" ||
+    !isRecord(value.owner)
+  )
+    return;
+  const owner = value.owner;
+  if (
+    owner.kind !== "chat" ||
+    typeof owner.userId !== "string" ||
+    typeof owner.serverId !== "string" ||
+    typeof owner.harnessSessionId !== "string" ||
+    (owner.connectionId !== undefined && typeof owner.connectionId !== "string")
+  )
+    return;
+  return {
+    parentExecutionId: value.parentExecutionId,
+    owner: {
+      kind: "chat",
+      userId: owner.userId,
+      serverId: owner.serverId,
+      harnessSessionId: owner.harnessSessionId,
+      ...(typeof owner.connectionId === "string"
+        ? { connectionId: owner.connectionId }
+        : {}),
+    },
+  };
+}
+
+/** Presentation is signed separately and grants no widget execution authority. */
+export function hasMcpResultPresentation(metadata: unknown): boolean {
+  return !!readMcpWidgetContext(metadata) ||
+    (isRecord(metadata) && isRecord(metadata.mcpjam) && metadata.mcpjam.resultPresentation === true);
+}
+
+export function mergeMcpOriginalResult(
+  metadata: unknown,
+  result: unknown,
+): McpToolOriginProviderMetadata | undefined {
+  const base = toProviderMetadata(metadata);
+  if (!hasMcpResultPresentation(base) || result === undefined)
+    return Object.keys(base).length ? base : undefined;
+  return toProviderMetadata({
+    ...base,
+    mcpjam: { ...base.mcpjam, originalResult: result },
+  });
+}
+
+export function readMcpOriginalResult(metadata: unknown): unknown {
+  if (
+    !isRecord(metadata) ||
+    !isRecord(metadata.mcpjam) ||
+    !hasMcpResultPresentation(metadata)
+  )
+    return;
+  return metadata.mcpjam.originalResult;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -193,13 +315,20 @@ export interface McpConnectionAttribution {
   connectionId: string;
   label: string;
   profileId?: string;
+  /**
+   * The server's only login (see `AuthorizedOAuthConnection.implicit`).
+   * Server-side bindings still see it; tool-call metadata never carries it.
+   */
+  implicit?: true;
 }
 export function mergeMcpToolConnectionMetadata(
   metadata: unknown,
   connection: McpConnectionAttribution | undefined,
 ) {
   const base = toProviderMetadata(metadata);
-  if (!connection || base.mcpjam?.connection)
+  // An implicit login is not an account choice: stamping it would mark every
+  // single-account call as "ran on a specific account" (and disable Run).
+  if (!connection || connection.implicit || base.mcpjam?.connection)
     return Object.keys(base).length ? base : undefined;
   return { ...base, mcpjam: { ...base.mcpjam, connection: { ...connection } } };
 }
@@ -215,12 +344,14 @@ export function toolConnectionAttribution(
           connectionId: string;
           label: string;
           profile?: { id: string };
+          implicit?: boolean;
         };
         _connectionForCall?: (id: string) => {
           serverId: string;
           connectionId: string;
           label: string;
           profile?: { id: string };
+          implicit?: boolean;
         };
       }
     | undefined;
@@ -234,6 +365,7 @@ export function toolConnectionAttribution(
         connectionId: c.connectionId,
         label: c.label,
         ...(c.profile ? { profileId: c.profile.id } : {}),
+        ...(c.implicit ? { implicit: true as const } : {}),
       }
     : undefined;
 }

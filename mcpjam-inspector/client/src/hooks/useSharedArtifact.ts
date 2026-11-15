@@ -153,9 +153,7 @@ export function useSharedArtifact({
       // Conformance links minted before the shareable layer are stateless
       // HMAC tokens: they were never registered in `shareResources`, so the
       // redeem above can never find them. Without this, deploying the new
-      // viewer would kill every conformance share link already in the wild —
-      // and, while the management flag is off, the legacy toggle keeps
-      // minting exactly those links, so sharing would mint dead links.
+      // viewer would kill every conformance share link already in the wild.
       if (resourceType === "conformanceRun") {
         const legacy = await loadLegacyConformanceArtifact(token);
         if (legacy) {

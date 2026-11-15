@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   bootBrowserd,
+  BROWSERD_READY_TIMEOUT_MS,
   DISPLAY_GEOMETRY,
   XVNC_LOOPBACK_PORT,
   type BrowserdSandbox,
@@ -153,6 +154,32 @@ describe("bootBrowserd", () => {
     const fake = fakeSandbox();
     const p = bootBrowserd(fake.sandbox, { ...OPTS, readyTimeoutMs: 20 });
     await expect(p).rejects.toThrow(/within 20ms/);
+  });
+
+  describe("the default deadline", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("waits out a slow first Chromium launch", async () => {
+      // A fresh box's first launch measured up to 38s. The old 30s deadline
+      // failed exactly those opens.
+      const fake = fakeSandbox();
+      const p = bootBrowserd(fake.sandbox, OPTS);
+      await vi.advanceTimersByTimeAsync(45_000);
+      fake.emit(READY());
+      await expect(p).resolves.toMatchObject({ bootId: "boot-1" });
+    });
+
+    it("still gives up, and reaps the daemon, at the deadline", async () => {
+      const fake = fakeSandbox();
+      const p = bootBrowserd(fake.sandbox, OPTS);
+      const failed = expect(p).rejects.toThrow(
+        `within ${BROWSERD_READY_TIMEOUT_MS}ms`,
+      );
+      await vi.advanceTimersByTimeAsync(BROWSERD_READY_TIMEOUT_MS);
+      await failed;
+      expect(fake.state.kills).toBeGreaterThanOrEqual(1);
+    });
   });
 
   it("gives the daemon a DISPLAY — Chromium is headed and E2B shells inherit no image ENV", async () => {

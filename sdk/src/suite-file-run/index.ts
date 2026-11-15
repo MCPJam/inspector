@@ -40,6 +40,7 @@ export type { LocalEvalRunMetadata, LocalEvalRunReport } from "./report.js";
 export type {
   McpjamInferenceConnection,
   RunSuiteFileOptions,
+  SuiteFileAuthRequired,
   SuiteFileCaseRun,
   SuiteFileImportApproval,
   SuiteFileInferenceMode,

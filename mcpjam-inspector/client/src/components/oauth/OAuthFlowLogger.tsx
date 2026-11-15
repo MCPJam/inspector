@@ -461,12 +461,14 @@ export function OAuthFlowLogger({
                       : "Refresh Tokens"}
                   </Button>
                 )}
-                {actions?.onContinue && (
+                {actions && (actions.onContinue || actions.continueLabel) && (
                   <Button
                     size="sm"
                     onClick={actions.onContinue}
                     disabled={
-                      actions.continueDisabled || actions.continuePending
+                      !actions.onContinue ||
+                      actions.continueDisabled ||
+                      actions.continuePending
                     }
                     aria-busy={actions.continuePending || undefined}
                     className="h-7"
@@ -474,11 +476,6 @@ export function OAuthFlowLogger({
                     {actions.continuePending
                       ? "Continuing..."
                       : actions.continueLabel || "Continue"}
-                  </Button>
-                )}
-                {!actions?.onContinue && actions?.continueLabel && (
-                  <Button size="sm" disabled={true} className="h-7">
-                    {actions.continueLabel}
                   </Button>
                 )}
               </div>

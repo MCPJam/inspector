@@ -36,7 +36,7 @@ export function NativeSettingsEditor({
   actions?:
     | readonly NativeSettingsAction[]
     | (() => readonly NativeSettingsAction[]);
-  onAction?: (tool: string) => void;
+  onAction?: (tool: string, button: HTMLButtonElement) => void;
   actionPending?: string;
   actionResult?: { tool: string; text: string; failed: boolean };
   appActionsAvailable?: boolean;
@@ -127,7 +127,9 @@ export function NativeSettingsEditor({
                         Boolean(busy) ||
                         Boolean(actionPending)
                       }
-                      onClick={() => onAction?.(item.tool)}
+                      onClick={(event) =>
+                        onAction?.(item.tool, event.currentTarget)
+                      }
                       title={
                         result
                           ? result.text

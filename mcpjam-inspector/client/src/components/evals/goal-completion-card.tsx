@@ -64,6 +64,11 @@ export interface GoalCompletionCardProps {
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
 }
 
 export function GoalCompletionCard({
@@ -80,6 +85,7 @@ export function GoalCompletionCard({
   embedded = false,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
 }: GoalCompletionCardProps) {
   const completedRun = run.status === "completed";
 
@@ -346,6 +352,7 @@ export function GoalCompletionCard({
                 selectionsSupported={saveSelections}
                 requireOrgKeys={requireOrgKeys}
                 onManageOrgProviders={onManageOrgProviders}
+                onAddProvider={onAddProvider}
                 availableModels={availableModels}
                 managedDefaultModelId={DEFAULT_JUDGE_MODEL}
                 onChange={(row) => {

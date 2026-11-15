@@ -55,6 +55,23 @@ export async function prepareMobileApp(
             },
           ],
         },
+        // Startup reads the handshake details of every server listed above
+        // as connected, so the card and Overview survive a page reload.
+        [`/api/mcp/servers/init-info/${server.name}`]: {
+          success: true,
+          serverId: server.name,
+          initInfo: {
+            protocolVersion: "2025-11-25",
+            transport: "streamable-http",
+            serverVersion: { name: server.name, version: "1.0.0" },
+            serverCapabilities: {
+              tools: {},
+              resources: {},
+              prompts: {},
+              tasks: {},
+            },
+          },
+        },
         "/api/mcp/resources/list": {
           resources: [
             {
@@ -137,9 +154,6 @@ export async function prepareMobileApp(
       url.pathname === "/" &&
       url.searchParams.has("token"),
     (socket) => socket.send(JSON.stringify({ type: "connected" })),
-  );
-  await context.route(`${origin}/api/mcp/mrtr/stream**`, (route) =>
-    route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" }),
   );
   await context.route(`${origin}/api/mcp/subscriptions/stream**`, (route) =>
     route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" }),

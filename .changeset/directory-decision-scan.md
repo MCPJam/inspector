@@ -1,0 +1,7 @@
+---
+"@mcpjam/sdk": minor
+---
+
+Directory readiness gains the SDK half of the decision scan, off by default. `DIRECTORY_DECISION_QUESTIONS` mirrors the backend's question catalog: `claude.decision.cross-tool-direction`, `openai.decision.fair-play`, `openai.decision.secret-seeking` and `both.decision.annotation-matches-behaviour`, each with its verdicts (the violation first) and the inputs it reads. `findDecisionCandidates(directory, { tools, instructions, listing })` proposes the text a decision model should judge, `selectDecisionItems` builds the request (only the inputs each question reads, unique keys, likeliest violations first, at most 24 questions), and `gradeDecisionAnswers` keeps a verdict only when its quote occurs verbatim in the candidate's text, counting the rest as dropped. A violation at or above the confidence threshold is violated; an `unsure` answer, or any answer below the threshold, is inconclusive and never a pass. Each question becomes one finding with its citation and each candidate's field, quote, verdict and confidence.
+
+Claude and OpenAI runs now report these checks in every run (`decisionScan` on the run's input carries the request, the answers and the threshold), placed on Claude's Compliance and Tools steps and ChatGPT's MCPs step. Until a confidence threshold is set they are not evaluated, say why, and `directoryVerdict` lists them apart instead of waiting on them. `directoryVerdict` also counts a gated check whose evidence is inconclusive as undetermined rather than passed.

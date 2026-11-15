@@ -140,6 +140,11 @@ export interface ToolBehavior {
    * the extension; a plain result otherwise (tasks.md:61).
    */
   mode: "sync" | "task";
+  /** Require one ordinary MRTR round before creating the task. */
+  beforeTask?: {
+    inputRequests: Record<string, unknown>;
+    requestState: string;
+  };
   /** The plain result for `"sync"` mode (and for undeclared `"task"` calls). */
   result?: Record<string, unknown>;
   /** The lifecycle served for `"task"` mode. Must be non-empty. */
@@ -202,6 +207,16 @@ export interface ExtensionTasksMisbehavior {
   omitStatusPayload?: boolean;
   /** Serve a fabricated task for an unknown id instead of `-32602`. */
   answerUnknownTaskId?: boolean;
+  /**
+   * Merge these members into the `tasks/update` acknowledgement — violates
+   * tasks.md:377, which requires an empty result.
+   */
+  updateAckExtras?: Record<string, unknown>;
+  /**
+   * Answer `tasks/update` with this value as the whole `result` — a non-object
+   * is not an empty result at all (tasks.md:377).
+   */
+  updateAckOverride?: unknown;
 }
 
 export interface ExtensionTasksFixtureOptions {
@@ -794,6 +809,9 @@ export async function serveExtensionTasksFixture(
             }),
           };
         }
+        if (behavior.beforeTask && params?.requestState !== behavior.beforeTask.requestState) {
+          return { resultType: "input_required", ...behavior.beforeTask };
+        }
         const entry = createTask(name as string, behavior);
         // `CreateTaskResult = Result & Task` — flat, and bare `Task` fields
         // only (no inputRequests/result/error).
@@ -844,7 +862,11 @@ export async function serveExtensionTasksFixture(
         }
         // An EMPTY, eventually-consistent acknowledgement (tasks.md:374-381):
         // the observable status does not move until a later `tasks/get`.
-        return { ...taskResultTypeField() };
+        if ("updateAckOverride" in misbehavior) {
+          // Deliberately off-type: the point is a result that is not an object.
+          return misbehavior.updateAckOverride as Record<string, unknown>;
+        }
+        return { ...taskResultTypeField(), ...misbehavior.updateAckExtras };
       }
 
       case "tasks/cancel": {

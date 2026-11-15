@@ -1,7 +1,14 @@
+import { pluginOperationRequest, pluginOperationAuthorization } from "../../../shared/plugin-operation-authorization.js";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
+import { preparePluginOperation, bindPluginOperation, cancelPluginOperation, receiptOnlyPorts } from "../../services/plugin-host/operation-authorization.js";
+import { assertPluginInstanceBindingCurrent } from "../../services/plugin-host/request-runtime.js";
 import { Hono, type Context } from "hono";
 import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 import { z } from "zod";
-import { pluginModelContextParamsSchema } from "../../../shared/plugin-model-context.js";
+import {
+  pluginModelContextParamsSchema,
+  type PluginContextLimits,
+} from "../../../shared/plugin-model-context.js";
 import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import type { PluginInstanceIdentity } from "../../services/plugin-host/instances.js";
 import type { PluginWorkspaceAdmission } from "../../services/plugin-host/admission.js";
@@ -16,6 +23,7 @@ import {
   findListingMetaForUri,
 } from "../../utils/ui-resource-meta.js";
 import { viewOriginLabelForConfig } from "../../utils/view-origin-label.js";
+import { openOwnedLocalFile } from "../../services/plugin-host/open-local-file.js";
 const scope = z.strictObject({
   projectId: z.string().min(1).max(256),
   pluginWorkspace: z.unknown(),
@@ -24,6 +32,7 @@ const handle = scope.extend({
   instanceToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
 const call = handle.extend({
+  authorization: pluginOperationAuthorization.optional(),
   invocationId: z.string().uuid(),
   params: z.strictObject({
     name: z.string().min(1).max(256),
@@ -32,6 +41,11 @@ const call = handle.extend({
   approval: z
     .strictObject({ id: z.string().max(4096), approved: z.boolean() })
     .optional(),
+  resume: z.strictObject({
+    continuationId: z.string().min(1).max(256),
+    round: z.number().int().positive(),
+    responsesBlobId: z.string().min(1).max(512),
+  }).optional(),
 });
 const denied = () => new PluginInvocationError("MODEL_APP_UNAVAILABLE");
 export function pluginModelAppRoutes(ports: {
@@ -54,7 +68,7 @@ export function pluginModelAppRoutes(ports: {
     ports.route(c, async () => {
       const body = handle.parse(await c.req.json());
       const { actor, bearer, admission } = await ports.admitted(c, body);
-      const record = modelApps.get(body.instanceToken, actor);
+      const record = await modelApps.restore(body.instanceToken, actor, c.req.raw.signal);
       const runtime = createPluginRequestRuntime(
         c,
         admission,
@@ -64,6 +78,7 @@ export function pluginModelAppRoutes(ports: {
         { ownedForms: false },
       );
       const signal = AbortSignal.any([c.req.raw.signal, record.abort.signal]);
+      const fence = modelApps.fence(body.instanceToken, actor, signal);
       try {
         const source = await runtime.resolve(record.toolName, signal);
         if (
@@ -94,8 +109,9 @@ export function pluginModelAppRoutes(ports: {
           throw denied();
         const fresh = await runtime.resolve(record.toolName, signal);
         if (fresh.revision !== record.revision) throw denied();
-        await admission.revalidate({ signal });
-        modelApps.get(body.instanceToken, actor);
+        // The App's durable control beside the final admission read: a close
+        // or expiry on any replica refuses this open.
+        await fence(() => admission.revalidate({ signal }));
         signal.throwIfAborted();
         return c.json({
           instanceToken: body.instanceToken,
@@ -106,6 +122,9 @@ export function pluginModelAppRoutes(ports: {
           toolTitle: source.tool.title ?? source.tool.name,
           toolMetadata: source.tool._meta,
           appToolsEnabled: fresh.appToolsEnabled,
+          resourcesEnabled: fresh.resourcesEnabled,
+          localFilesAvailable: !!fresh.localFileTargetContract &&
+            fresh.extensions?.capabilities.localFiles !== false && fresh.extensions?.capabilities.fileViewers !== false,
           contextEnabled: fresh.contextEnabled,
           messageEnabled: fresh.messageEnabled,
           contextSnapshot: record.context.snapshot(
@@ -114,6 +133,17 @@ export function pluginModelAppRoutes(ports: {
           ),
           widgetContent: {
             ...widgetContent,
+            sourceReceipt: await sandboxSourceReceipt(
+              c,
+              {
+                serverId: record.owner.owner.serverId,
+                resourceUri: record.resourceUri,
+                toolCallId: record.owner.owner.instanceId,
+              },
+              widgetContent.html,
+              widgetContent.csp,
+              body.projectId,
+            ),
             permissive: false,
             injectedOpenAiCompat: false,
             viewOriginLabel: viewOriginLabelForConfig(
@@ -151,7 +181,7 @@ export function pluginModelAppRoutes(ports: {
               : handle;
         const body = schema.parse(raw);
         const { actor, bearer, admission } = await ports.admitted(c, body);
-        const record = modelApps.get(body.instanceToken, actor);
+        const record = await modelApps.restore(body.instanceToken, actor, c.req.raw.signal);
         const runtime = createPluginRequestRuntime(
           c,
           admission,
@@ -164,59 +194,149 @@ export function pluginModelAppRoutes(ports: {
           { ownedForms: false },
         );
         const signal = AbortSignal.any([c.req.raw.signal, record.abort.signal]);
-        try {
+        const fence = modelApps.fence(body.instanceToken, actor, signal);
+        // The client's policy as this request first resolved it.
+        let limits: PluginContextLimits | undefined;
+        const authorize = async () => {
           const fresh = await runtime.resolve(record.toolName, signal);
+          limits ??= fresh.modelContextPolicy;
           if (
             !fresh.contextEnabled ||
             fresh.revision !== record.revision ||
             pluginResourceUri(fresh.tool._meta) !== record.resourceUri
           )
             throw denied();
-          await admission.revalidate({ signal });
-          modelApps.get(body.instanceToken, actor);
+          await fence(() => admission.revalidate({ signal }));
           signal.throwIfAborted();
+        };
+        try {
           const id = record.owner.owner.instanceId;
           const generation = record.owner.owner.generation;
-          // All admission awaits finish before this synchronous, bounded mutation.
-          if (action === "read")
-            return c.json(record.context.snapshot(id, generation));
-          if (action === "remove-all")
+          if (action === "read") {
+            await authorize();
             return c.json(
-              record.context.removeAll(id, generation, {
-                operationId: raw.operationId,
-                basis: raw.basis,
-              }),
+              modelApps.get(body.instanceToken, actor).context.snapshot(id, generation),
             );
-          const result = record.context.update(id, generation, {
-            operationId: raw.operationId,
-            sequence: raw.sequence,
-            params: raw.params,
-            ...(raw.attach === "user" ? { attach: "user" as const } : {}),
-          });
-          return c.json({
-            ...result,
-            snapshot: record.context.snapshot(id, generation),
-          });
+          }
+          // The write is a compare-and-set on the live control, so a close
+          // after this fence refuses it.
+          await authorize();
+          const changed = await modelApps.changeContext(
+            body.instanceToken,
+            actor,
+            action === "remove-all"
+              ? {
+                  kind: "remove-all",
+                  request: { operationId: raw.operationId, basis: raw.basis },
+                }
+              : {
+                  kind: "update",
+                  request: {
+                    operationId: raw.operationId,
+                    sequence: raw.sequence,
+                    params: raw.params,
+                    ...(raw.attach === "user" ? { attach: "user" as const } : {}),
+                  },
+                  limits,
+                },
+            signal,
+          );
+          if (action === "update")
+            return c.json({ ...changed.result, snapshot: changed.snapshot });
+          if (!("outcome" in changed.result)) throw denied();
+          // The stored snapshot, not the candidate's: it is what a read returns.
+          return c.json({ outcome: changed.result.outcome, snapshot: changed.snapshot });
         } finally {
           await runtime.release();
         }
       }),
     );
   }
+  router.post("/resources", (c) =>
+    ports.route(c, async () => {
+      const body = handle.extend({
+        operation: z.discriminatedUnion("method", [
+          z.strictObject({ method: z.literal("resources/read"), uri: z.string().min(1), _meta: z.record(z.string(), z.unknown()).optional() }),
+          z.strictObject({ method: z.enum(["resources/list", "resources/templates/list"]), cursor: z.string().optional() }),
+        ]),
+      }).parse(await c.req.json());
+      const { actor, bearer, admission } = await ports.admitted(c, body);
+      const record = await modelApps.restore(body.instanceToken, actor, c.req.raw.signal);
+      const runtime = createPluginRequestRuntime(c, admission, bearer,
+        { hostId: record.owner.hostId, serverId: record.owner.owner.serverId }, record.owner, { ownedForms: false });
+      const signal = AbortSignal.any([c.req.raw.signal, record.abort.signal]);
+      const fence = modelApps.fence(body.instanceToken, actor, signal);
+      try {
+        const source = await runtime.resolve(record.toolName, signal);
+        if (source.revision !== record.revision || !source.resourcesEnabled) throw denied();
+        await fence(() => admission.revalidate({ signal }));
+        signal.throwIfAborted();
+        const serverId = record.owner.owner.serverId;
+        const operation = body.operation;
+        const result = operation.method === "resources/read"
+          ? await source.manager.readResource(serverId, { uri: operation.uri, ...(operation._meta ? { _meta: operation._meta } : {}) }, { signal })
+          : operation.method === "resources/list"
+            ? await source.manager.listResources(serverId, operation.cursor !== undefined ? { cursor: operation.cursor } : undefined, { signal, cacheMode: "bypass" })
+            : await source.manager.listResourceTemplates(serverId, operation.cursor !== undefined ? { cursor: operation.cursor } : undefined, { signal, cacheMode: "bypass" });
+        const fresh = await runtime.resolve(record.toolName, signal);
+        if (fresh.revision !== record.revision || !fresh.resourcesEnabled) throw denied();
+        await fence(() => admission.revalidate({ signal }));
+        signal.throwIfAborted();
+        return c.json(result);
+      } finally {
+        await runtime.release();
+      }
+    }),
+  );
+  router.post("/files/open", (c) =>
+    ports.route(c, async () => {
+      const body = handle.extend({ path: z.string().min(1).max(4096) }).parse(await c.req.json());
+      const { actor, bearer, admission } = await ports.admitted(c, body);
+      const record = await modelApps.restore(body.instanceToken, actor, c.req.raw.signal);
+      const runtime = createPluginRequestRuntime(c, admission, bearer,
+        { hostId: record.owner.hostId, serverId: record.owner.owner.serverId },
+        record.owner, { ownedForms: false });
+      const signal = AbortSignal.any([c.req.raw.signal, record.abort.signal]);
+      const fence = modelApps.fence(body.instanceToken, actor, signal);
+      const verify = async () => {
+        const source = await runtime.resolve(record.toolName, signal);
+        await fence(() => admission.revalidate({ signal }));
+        if (source.revision !== record.revision || pluginResourceUri(source.tool._meta) !== record.resourceUri)
+          throw denied();
+        signal.throwIfAborted();
+      };
+      try {
+        await verify();
+        return c.json(await openOwnedLocalFile({
+          current: await runtime.catalog(signal), actorId: actor.actorId,
+          projectId: actor.projectId, serverId: record.owner.owner.serverId,
+          bearer, path: body.path, signal, verify,
+        }));
+      } finally { await runtime.release(); }
+    }),
+  );
   router.post("/call", (c) =>
     ports.route(c, async () => {
       const body = call.parse(await c.req.json());
       const { actor, bearer, admission } = await ports.admitted(c, body);
-      const record = modelApps.get(body.instanceToken, actor);
+      const record = await modelApps.restore(body.instanceToken, actor, c.req.raw.signal);
+      // Every authorization reads the App's durable control beside its
+      // admission read, so a close or expiry on any replica refuses dispatch.
+      const fence = modelApps.fence(body.instanceToken, actor,
+        AbortSignal.any([c.req.raw.signal, record.abort.signal]));
+      const authorization = await bindPluginOperation(c, record.owner,
+        { invocationId: body.invocationId, params: body.params, origin: "app" }, body.authorization,
+        AbortSignal.any([c.req.raw.signal, record.abort.signal]));
+      try {
       const runtime = createPluginRequestRuntime(
         c,
         admission,
         bearer,
         { hostId: record.owner.hostId, serverId: record.owner.owner.serverId },
         record.owner,
-        { ownedForms: false },
       );
       return await invokePluginRequest(c, {
+    receiptOnly: authorization.receiptOnly,
         actor,
         owner: record.owner.owner,
         admission,
@@ -225,16 +345,17 @@ export function pluginModelAppRoutes(ports: {
         invocationId: body.invocationId,
         params: body.params,
         approval: body.approval,
+        resume: body.resume,
         assertLive: () => {
           modelApps.get(body.instanceToken, actor);
         },
-        resolve: async (name, signal, read) => {
+        resolve: async (name, signal) => {
           // Source and requested tool must come from the same freshly authorized
           // catalog. Resolving them separately doubles every admission fence.
           const tools = await runtime.resolveTools(
             [record.toolName, name],
             signal,
-            read,
+            fence,
           );
           const source = tools.get(record.toolName)!;
           if (
@@ -253,29 +374,40 @@ export function pluginModelAppRoutes(ports: {
         },
         invoke: (invocationPorts, params) =>
           record.invoker.invoke(
-            invocationPorts,
+            receiptOnlyPorts(invocationPorts, authorization.receiptOnly),
             "app",
             body.invocationId,
             params,
             AbortSignal.any([c.req.raw.signal, record.abort.signal]),
           ),
       });
+      } finally { authorization.dispose(); }
     }),
   );
   router.post("/renew", (c) =>
     ports.route(c, async () => {
-      const body = handle.parse(await c.req.json());
-      const { actor } = await ports.admitted(c, body);
-      return c.json({
-        status: "renewed",
-        expiresAt: modelApps.renew(body.instanceToken, actor),
+      const body = handle.extend({ operation: pluginOperationRequest.optional(), cancelAuthorization: pluginOperationAuthorization.optional() }).parse(await c.req.json());
+      const { actor, admission, bearer } = await ports.admitted(c, body);
+      let operationAuthorization;
+      const renewed = await modelApps.renew(body.instanceToken, actor, c.req.raw.signal, async (record) => {
+        // A lease never outlives the App's host binding, as for retained Apps.
+        await assertPluginInstanceBindingCurrent({ admission, bearer, instance: record.owner, signal: c.req.raw.signal });
+        if (body.cancelAuthorization) await cancelPluginOperation(c, body.cancelAuthorization, record.owner);
+        if (body.operation) {
+          if (body.operation.kind !== "call" || !body.operation.params) throw denied();
+          operationAuthorization = await preparePluginOperation(c, record.owner,
+            { invocationId: body.operation.invocationId, params: body.operation.params, origin: "app" },
+            body.operation.requestId, record.abort.signal);
+        }
       });
+      return c.json({ status: renewed.renewed ? "renewed" : "unchanged", expiresAt: renewed.expiresAt,
+        ...(operationAuthorization ? { operationAuthorization } : {}) });
     }),
   );
   router.post("/close", (c) =>
     ports.route(c, async () => {
       const body = handle.parse(await c.req.json());
-      modelApps.close(body.instanceToken, await ports.cleanup(c, body));
+      await modelApps.close(body.instanceToken, await ports.cleanup(c, body), c.req.raw.signal);
       return c.json({ closed: true });
     }),
   );

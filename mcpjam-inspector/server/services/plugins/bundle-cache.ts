@@ -50,6 +50,7 @@ import {
   parsePluginBundle,
   type ParsedPluginBundle,
   type PluginFileSource,
+  type PluginParserProfile,
 } from "@mcpjam/sdk/plugin-bundle";
 import { logger } from "../../utils/logger.js";
 import { createDirectoryPluginFileSource } from "./bundle-file-sources.js";
@@ -160,14 +161,16 @@ export class PluginBundleCache {
    */
   async materialize(
     identity: PluginBundleIdentity,
-    options?: { source?: PluginFileSource }
+    options?: { source?: PluginFileSource; profile?: PluginParserProfile }
   ): Promise<MaterializedPluginBundle> {
     const root = this.entryPath(identity);
     const cached = await directoryExists(root);
 
     if (cached) {
       try {
-        const parsed = await this.verifyEntry(root, identity.bundleHash);
+        const parsed = await this.verifyEntry(
+          root, identity.bundleHash, options?.profile,
+        );
         return { root, bundleHash: identity.bundleHash, parsed };
       } catch (error) {
         if (!options?.source) throw error;
@@ -191,7 +194,7 @@ export class PluginBundleCache {
       );
     }
 
-    const parsed = await parseOrThrow(options.source);
+    const parsed = await parseOrThrow(options.source, options.profile);
     // Check BEFORE writing: content that does not match the pin never touches
     // the cache, not even under a temp name.
     if (parsed.bundleHash !== identity.bundleHash) {
@@ -206,7 +209,9 @@ export class PluginBundleCache {
     try {
       await extractInto(tempRoot, options.source);
       // Verify what actually landed on disk, not what we believed we wrote.
-      const verified = await this.verifyEntry(tempRoot, identity.bundleHash);
+      const verified = await this.verifyEntry(
+        tempRoot, identity.bundleHash, options.profile,
+      );
       try {
         await rename(tempRoot, root);
       } catch (error) {
@@ -216,7 +221,9 @@ export class PluginBundleCache {
         // already be running from.
         if (!(await directoryExists(root))) throw error;
         await rm(tempRoot, { recursive: true, force: true });
-        const adopted = await this.verifyEntry(root, identity.bundleHash);
+        const adopted = await this.verifyEntry(
+          root, identity.bundleHash, options.profile,
+        );
         return { root, bundleHash: identity.bundleHash, parsed: adopted };
       }
       return { root, bundleHash: identity.bundleHash, parsed: verified };
@@ -234,9 +241,12 @@ export class PluginBundleCache {
    */
   async verifyEntry(
     root: string,
-    expectedBundleHash: string
+    expectedBundleHash: string,
+    profile?: PluginParserProfile,
   ): Promise<ParsedPluginBundle> {
-    const parsed = await parseOrThrow(createDirectoryPluginFileSource(root));
+    const parsed = await parseOrThrow(
+      createDirectoryPluginFileSource(root), profile,
+    );
     if (parsed.bundleHash !== expectedBundleHash) {
       throw new PluginBundleCacheError(
         "hash_mismatch",
@@ -312,10 +322,11 @@ export class PluginBundleCache {
 }
 
 async function parseOrThrow(
-  source: PluginFileSource
+  source: PluginFileSource,
+  profile?: PluginParserProfile,
 ): Promise<ParsedPluginBundle> {
   try {
-    return await parsePluginBundle(source);
+    return await parsePluginBundle(source, { profile });
   } catch (error) {
     throw new PluginBundleCacheError(
       "invalid_bundle",

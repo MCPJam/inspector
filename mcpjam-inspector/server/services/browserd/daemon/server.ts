@@ -13,7 +13,11 @@ import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { CommandQueue } from "./command-queue";
 import { CommandLedger } from "./command-ledger";
-import { BrowserdRequestHandler, type DaemonResponse } from "./request-handler";
+import {
+  BrowserdRequestHandler,
+  type BrowserdHandlerDeps,
+  type DaemonResponse,
+} from "./request-handler";
 import {
   createFrameStreamHost,
   type FrameStreamHost,
@@ -245,6 +249,8 @@ export function buildBrowserdStack(
     captureTypedText?: boolean;
     /** Export the persistent profile while the command queue is drained. */
     profileExport?: () => Promise<Uint8Array>;
+    /** Serves workspace ports on this box's loopback (hosted desktop only). */
+    preview?: BrowserdHandlerDeps["preview"];
   } & DaemonServerOptions,
 ): BrowserdStack {
   const bootId = config.bootId ?? randomUUID();
@@ -306,6 +312,7 @@ export function buildBrowserdStack(
       : {}),
     ...(config.recorder ? { recorder: config.recorder } : {}),
     ...(config.profileExport ? { profileExport: config.profileExport } : {}),
+    ...(config.preview ? { preview: config.preview } : {}),
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,

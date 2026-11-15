@@ -252,6 +252,7 @@ export function TranscriptThread({
   displayMode,
   onDisplayModeChange,
   onToolApprovalResponse,
+  onForwardingToolApprovalResponse,
   toolRenderOverrides,
   showInlineEdit = true,
   minimalMode = false,
@@ -284,17 +285,17 @@ export function TranscriptThread({
   // assistant bubble (the "footer" treatment). MCPJam shares the claude
   // visual family for bubbles but owns its own footer indicator.
   const resolvedIndicatorHostStyle = useResolvedHostStyleForIndicator(
-    model.provider
+    model.provider,
   );
   const isClaudeFamily = usesClaudeInlineStreamingFooter(
-    resolvedIndicatorHostStyle
+    resolvedIndicatorHostStyle,
   );
   const isMcpjamHost = usesMcpjamInlineStreamingFooter(
-    resolvedIndicatorHostStyle
+    resolvedIndicatorHostStyle,
   );
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
-    [highlightedMessageIds]
+    [highlightedMessageIds],
   );
   const appToolInvocationsByParentId = useMemo(() => {
     const grouped = new Map<string, AppToolInvocation[]>();
@@ -491,19 +492,15 @@ export function TranscriptThread({
         const isLatestAssistantMessage =
           message.role === "assistant" &&
           message.id === lastRenderableMessageId;
-        const claudeFooterMode =
-          isClaudeFamily && isLatestAssistantMessage
-            ? isLoading
-              ? "animated"
-              : "static"
-            : "none";
+        const claudeFooterActive =
+          isClaudeFamily && isLatestAssistantMessage && isLoading;
         const mcpjamFooterActive =
           isMcpjamHost && isLatestAssistantMessage && isLoading;
         const messageToolCallIds = getMessageToolCallIds(message);
         const messageAppToolInvocations =
           messageToolCallIds.size > 0
             ? Array.from(messageToolCallIds).flatMap(
-                (id) => appToolInvocationsByParentId.get(id) ?? []
+                (id) => appToolInvocationsByParentId.get(id) ?? [],
               )
             : [];
 
@@ -520,7 +517,7 @@ export function TranscriptThread({
             className={cn(
               (isFocused || isHighlighted) &&
                 "relative rounded-xl border border-primary/30 bg-primary/5 p-2",
-              className
+              className,
             )}
             style={
               shouldUseContentVisibility && !isFocused && !isHighlighted
@@ -585,6 +582,10 @@ export function TranscriptThread({
               displayMode={displayMode}
               onDisplayModeChange={onDisplayModeChange}
               onToolApprovalResponse={onToolApprovalResponse}
+              onForwardingToolApprovalResponse={
+                onForwardingToolApprovalResponse
+              }
+              isStreaming={isLoading && isLatestAssistantMessage}
               toolRenderOverrides={toolRenderOverrides}
               showInlineEdit={showInlineEdit}
               minimalMode={minimalMode}
@@ -592,7 +593,7 @@ export function TranscriptThread({
               widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
-              claudeFooterMode={claudeFooterMode}
+              claudeFooterActive={claudeFooterActive}
               mcpjamFooterActive={mcpjamFooterActive}
               renderUserMessageActions={renderUserMessageActions}
               // Per-turn ratings (inherited from MessageView's props), minus

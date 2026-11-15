@@ -1,17 +1,18 @@
+import { serveSandboxViewDocument } from "../apps/mcp-apps/view-document.js";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
+import { sandboxViewAdmissionRoutes } from "../apps/mcp-apps/view-admissions.js";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import { readResourceDisplayHints } from "@mcpjam/sdk/widget-runtime";
 import { Hono } from "hono";
 import { z } from "zod";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import {
-  buildSandboxProxyFrameAncestors,
-  renderSandboxProxyHtml,
-} from "../apps/mcp-apps/sandbox-proxy-html.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { logger } from "../../utils/logger.js";
 import {
   canSkipListingLookup,
   findListingMetaForUri,
   resolveUiResourceMeta,
+  uiDisplayHintFields,
 } from "../../utils/ui-resource-meta.js";
 import { viewOriginLabelForConfig } from "../../utils/view-origin-label.js";
 import {
@@ -24,6 +25,7 @@ import {
 } from "./auth.js";
 
 const apps = new Hono();
+apps.route("/mcp-apps", sandboxViewAdmissionRoutes());
 
 const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
 // Mimetypes accepted by the hosted-mode widget-content route. Mirrors
@@ -51,7 +53,7 @@ function extractHtmlFromResourceContent(content: unknown): string {
 
 // ── Schemas ─────────────────────────────────────────────────────────
 
-const mcpAppsWidgetContentSchema = projectServerSchema.extend({
+export const mcpAppsWidgetContentSchema = projectServerSchema.extend({
   resourceUri: z.string().min(1),
   toolInput: z.record(z.string(), z.unknown()).default({}),
   toolOutput: z.unknown().optional(),
@@ -77,32 +79,9 @@ const mcpAppsWidgetContentSchema = projectServerSchema.extend({
   viewParams: z.record(z.string(), z.unknown()).optional(),
 });
 
-// ── Sandbox Proxy Routes ─────────────────────────────────────────────
+/** Shared content construction after the caller has authorized its own connection. */
+export async function buildMcpAppsWidgetContent(manager: MCPClientManager, body: z.infer<typeof mcpAppsWidgetContentSchema>, signal?: AbortSignal) {
 
-/**
- * Hosted auth exception:
- * These sandbox-proxy HTML routes intentionally do not require bearer auth.
- * They are bootstrap documents for sandboxed iframe runtimes and contain no
- * project/user data by themselves. All data-bearing widget routes remain
- * authenticated POST APIs.
- */
-apps.get("/mcp-apps/sandbox-proxy", (c) => {
-  c.header("Content-Type", "text/html; charset=utf-8");
-  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  // Same list the proxy pins its host origin against — see
-  // sandbox-proxy-html.ts for why these two must not drift.
-  c.header("Content-Security-Policy", buildSandboxProxyFrameAncestors());
-  c.res.headers.delete("X-Frame-Options");
-  return c.body(renderSandboxProxyHtml());
-});
-
-// ── MCP Apps Widget Content ──────────────────────────────────────────
-
-apps.post("/mcp-apps/widget-content", async (c) =>
-  withEphemeralConnection(
-    c,
-    mcpAppsWidgetContentSchema,
-    async (manager, body) => {
       if (body.template && !body.template.startsWith("ui://")) {
         throw new WebRouteError(
           400,
@@ -116,7 +95,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
 
       const resourceResult = await manager.readResource(body.serverId, {
         uri: resolvedResourceUri,
-      });
+      }, { signal });
 
       const contents = (resourceResult as any)?.contents || [];
       const content = contents[0];
@@ -185,6 +164,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         domain: declaredDomain,
         metadataSource,
         metadataSources,
+        ...uiDisplayHints
       } = resolveUiResourceMeta({
         contentMeta: resourceMeta,
         listingMeta,
@@ -228,6 +208,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
           resourceMeta,
           listingMeta,
         ),
+        ...uiDisplayHintFields(uiDisplayHints),
         declaredDomain,
         viewOriginLabel: viewOriginLabelForConfig(
           manager.getServerConfig?.(body.serverId),
@@ -246,6 +227,31 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         // used different sources); `metadataSources` reports per field.
         metadataSource,
         metadataSources,
+      };
+}
+
+// ── Sandbox Proxy Routes ─────────────────────────────────────────────
+
+/**
+ * Hosted auth exception:
+ * These sandbox-proxy HTML routes intentionally do not require bearer auth.
+ * They are bootstrap documents for sandboxed iframe runtimes and contain no
+ * project/user data by themselves. All data-bearing widget routes remain
+ * authenticated POST APIs.
+ */
+apps.get("/mcp-apps/sandbox-proxy", serveSandboxViewDocument);
+
+// ── MCP Apps Widget Content ──────────────────────────────────────────
+
+apps.post("/mcp-apps/widget-content", async (c) =>
+  withEphemeralConnection(
+    c,
+    mcpAppsWidgetContentSchema,
+    async (manager, body) => {
+      const result = await buildMcpAppsWidgetContent(manager, body, c.req.raw.signal);
+      return {
+        ...result,
+        sourceReceipt: await sandboxSourceReceipt(c, { serverId: body.serverId, resourceUri: body.template || body.resourceUri, toolCallId: body.toolId }, result.html, result.csp, body.projectId),
       };
     },
   ),

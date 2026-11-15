@@ -23,6 +23,7 @@ import type {
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
+import { extractToolErrors, markFailedToolCalls } from "@/shared/eval-matching";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread, TRANSCRIPT_COLUMN_CLASS } from "@/components/chat-v2/thread";
@@ -59,11 +60,13 @@ import { buildAppToolInvocationsFromBrowserSteps } from "./widget-tool-calls-to-
 import type { TestStep } from "@/shared/steps";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import { ToolCallsDiffView } from "./tool-calls-diff-view";
+import { TraceToolCallAccounts } from "./run-accounts-context";
 import {
   TraceRawView,
   type TraceRawRequestPayloadHistory,
 } from "./trace-raw-view";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
+import type { TraceDetailPlacement } from "./use-trace-detail-direction";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import type {
   HostConfigDtoV2,
@@ -110,6 +113,10 @@ function withNewRowsOpen(
 export type TraceViewerEvalToolCall = {
   toolName: string;
   arguments: Record<string, any>;
+  /** The call's id, when the run recorded one; joins it to its result. */
+  toolCallId?: string;
+  /** The trace records this call as failed. */
+  failed?: boolean;
 };
 
 interface TraceViewerProps {
@@ -176,6 +183,8 @@ interface TraceViewerProps {
   hideToolbar?: boolean;
   /** Let the active panel fill the available height instead of clamping to a max height. */
   fillContent?: boolean;
+  /** Where the trace timeline puts its span detail; see `TraceTimeline`. */
+  traceDetailPlacement?: TraceDetailPlacement;
   /** Hide transcript reveal controls when the parent shell owns chat mode separately. */
   hideTranscriptRevealControls?: boolean;
   /**
@@ -431,6 +440,7 @@ export function TraceViewer({
   activeHost,
   hostSnapshot,
   mcpToolResultImageRendering,
+  traceDetailPlacement = "below",
 }: TraceViewerProps) {
   const persistedRequestPayloads = useMemo(
     () => readTraceRequestPayloads(trace),
@@ -470,6 +480,22 @@ export function TraceViewer({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
+  // Marked from the trace's own failure records, so the diff reads an
+  // identical call after a failed one as its retry, as the verdict did.
+  const gradedActualToolCalls = useMemo(
+    () =>
+      markFailedToolCalls(
+        actualToolCalls,
+        extractToolErrors({
+          messages: getTraceMessages(trace).map(({ role, content }) => ({
+            role,
+            content,
+          })),
+          spans: getRecordedSpans(trace),
+        }),
+      ),
+    [actualToolCalls, trace]
+  );
   const turnRuntimeByPromptIndex = useMemo(
     () => getTraceTurnRuntimeByPromptIndex(trace),
     [trace]
@@ -618,9 +644,9 @@ export function TraceViewer({
     [preparedTrace, trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
 
-  // Frozen replay: when simply VIEWING a completed run, show each widget's
-  // RECORDED screenshot instead of a live re-render — which drifts to the
-  // widget's default state once its MCP server is gone. While a widget is armed
+  // Frozen replay: when simply VIEWING a completed run, show the live App from
+  // its saved copy, and the RECORDED screenshot only when the run clicked inside
+  // that App (or there is no saved copy). While a widget is armed
   // for recording, keep widgets live: the record flow needs the real widget and
   // a reachable server (which then shows real data, so no drift). Non-eval
   // surfaces carry no `browserObservations`, so this is a no-op there.
@@ -1036,6 +1062,7 @@ export function TraceViewer({
                   recordedSpans?.length ? 0 : traceMessages.length
                 }
                 transcriptMessages={traceMessages}
+                projectedMessages={!!trace && !Array.isArray(trace) && "projectedMessages" in trace && trace.projectedMessages === true}
                 traceStartedAtMs={traceStartedAtMs}
                 traceEndedAtMs={traceEndedAtMs}
                 onRevealInTranscript={
@@ -1063,6 +1090,7 @@ export function TraceViewer({
                 }
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
                 fillContent={fillContent}
+                detailPlacement={traceDetailPlacement}
               />
             </div>
           </Suspense>
@@ -1173,7 +1201,7 @@ export function TraceViewer({
             {toolsCompareLayout === "diff" ? (
               <ToolCallsDiffView
                 expected={expectedToolCalls}
-                actual={actualToolCalls}
+                actual={gradedActualToolCalls}
                 isLoading={isLoading}
                 headerTrailing={toolsCompareLayoutToggle}
               />
@@ -1248,15 +1276,19 @@ export function TraceViewer({
     </div>
   );
 
+  // The transcript's tool cards name the account their call ran on.
+  const labelled = (
+    <TraceToolCallAccounts spans={recordedSpans}>{content}</TraceToolCallAccounts>
+  );
   return hostSnapshot !== undefined ? (
     <HostStyledShell
       hostSnapshot={hostSnapshot}
       activeHost={activeHost ?? null}
       className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
     >
-      {content}
+      {labelled}
     </HostStyledShell>
   ) : (
-    content
+    labelled
   );
 }

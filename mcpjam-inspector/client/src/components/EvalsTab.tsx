@@ -75,6 +75,7 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import { cancelEvalRunForAgent } from "./evals/agent-cancel-eval-run";
 import type {
   CancelEvalRunInspectorCommand,
   DeleteEvalSuiteInspectorCommand,
@@ -87,6 +88,7 @@ import {
   CI_OWNED_REASON_COPY,
   isCiOwnedSuite,
 } from "@/lib/evals/is-ci-owned-suite";
+import { agentRunIterations } from "./evaluate/suite-run-iterations";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -172,6 +174,7 @@ function EvalsTabContent({
     availableModels,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: projectId ?? null,
@@ -810,6 +813,13 @@ function EvalsTabContent({
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
         const entry = resolveSuiteEntry(payload.suite, "lifecycle");
+        const iterations = agentRunIterations(entry.suite, payload.iterations);
+        if (iterations === null) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'iterations' must be a whole number from 1 to 10.",
+          );
+        }
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -829,35 +839,27 @@ function EvalsTabContent({
             "Another suite run is already starting — wait for it to launch.",
           );
         }
-        // The SAME quota-gated wrapper the Run button uses. Launch failures
-        // inside it surface as toasts, so this reports "requested".
-        await handleRerunWithQuota(entry.suite);
+        // Use the Run button's quota gate, but return launch refusals to the
+        // agent so it cannot report an iteration count for a refused run.
+        await handleRerunWithQuota(entry.suite, {
+          iterationOverride: iterations,
+          throwOnFailure: true,
+        });
         return {
           status: "run_requested",
           suiteId: entry.suite._id,
           suiteName: suiteDisplayName(entry.suite),
+          iterations,
           note: "Observe progress with ui_snapshot_app.",
         };
       },
       cancelEvalRun: async (command) => {
         requireAgentOperable();
         const { payload } = command as CancelEvalRunInspectorCommand;
-        const run = resolveRun(payload.runId);
-        if (run.status !== "pending" && run.status !== "running") {
-          return {
-            status: "already_finished",
-            runId: run._id,
-            runStatus: run.status,
-          };
-        }
-        if (latestHandlersRef.current.cancellingRunId) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            "Another run cancellation is already in progress.",
-          );
-        }
-        await latestHandlersRef.current.handleCancelRun(run._id);
-        return { status: "cancel_requested", runId: run._id };
+        return cancelEvalRunForAgent(
+          resolveRun(payload.runId),
+          latestHandlersRef.current,
+        );
       },
       generateEvalTests: async (command) => {
         requireAgentOperable();
@@ -1282,6 +1284,7 @@ function EvalsTabContent({
           availableModels={availableModels}
           requireOrgKeys={requireOrgKeys}
           onManageOrgProviders={onManageOrgProviders}
+          onAddProvider={onAddProvider}
           route={route}
           userMap={userMap}
           projectId={projectId}

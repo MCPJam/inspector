@@ -20,7 +20,7 @@ export function RunHistoryTable({
     <Table
       {...props}
       className={cn(
-        "min-w-[800px] text-xs [&_thead]:bg-muted/55 [&_th]:h-9 [&_th]:px-[18px] [&_th]:text-[10px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-[0.04em] [&_th]:text-muted-foreground [&_td]:px-[18px] [&_td]:py-2.5 [&_tr]:border-border/50 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-muted/35 [&_tbody_tr:focus-visible]:bg-muted/35 [&_tbody_tr:focus-visible]:outline-ring",
+        "min-w-[800px] text-xs [&_thead]:bg-muted/55 [&_th]:h-9 [&_th]:px-[18px] [&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-[0.06em] [&_th]:text-foreground [&_td]:px-[18px] [&_td]:py-2.5 [&_tr]:border-border/50 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-muted/35 [&_tbody_tr:focus-visible]:bg-muted/35 [&_tbody_tr:focus-visible]:outline-ring",
         className,
       )}
     />

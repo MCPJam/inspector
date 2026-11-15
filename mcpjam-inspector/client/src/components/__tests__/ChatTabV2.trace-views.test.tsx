@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatTabV2 } from "../ChatTabV2";
 import { track } from "@/lib/analytics";
+import { attachmentsToFileUIParts } from "@/components/chat-v2/chat-input/attachments/file-utils";
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -65,10 +66,6 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/lib/session-token", () => ({
   addTokenToUrl: (url: string) => url,
   authFetch: vi.fn(),
-}));
-
-vi.mock("@/lib/oauth/oauth-tokens", () => ({
-  buildOAuthTokensByServerId: vi.fn(() => ({})),
 }));
 
 vi.mock("@/state/app-state-context", () => ({
@@ -417,6 +414,97 @@ describe("ChatTabV2 trace views", () => {
           { prompt: "Starter chip prompt", location: "chat_tab" },
         ],
       ]);
+    });
+
+    it("ignores the chip while a composer submit is still converting its files", async () => {
+      let convert!: (parts: []) => void;
+      vi.mocked(attachmentsToFileUIParts).mockReturnValueOnce(
+        new Promise((done) => {
+          convert = done;
+        }),
+      );
+      render(<ChatTabV2 {...defaultProps} />);
+      const composer = () =>
+        mockChatInput.mock.calls.at(-1)?.[0] as {
+          onChange: (value: string) => void;
+          onChangeFileAttachments: (files: unknown[]) => void;
+          onSubmit: (event: { preventDefault: () => void }) => Promise<void>;
+        };
+      act(() => composer().onChange("draft with a file"));
+      act(() =>
+        composer().onChangeFileAttachments([
+          {
+            id: "f1",
+            file: new File(["x"], "note.txt", { type: "text/plain" }),
+          },
+        ]),
+      );
+
+      await act(async () => {
+        void composer().onSubmit({ preventDefault: () => {} });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      });
+      await act(async () => convert([]));
+
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "draft with a file" }),
+      );
+    });
+    it("sends the chip's prompt once when it is clicked again before the send is dispatched", async () => {
+      // The hosted preflight inside sendMessage: nothing is dispatched yet,
+      // so the chips are still on screen.
+      let dispatch!: (sent: boolean) => void;
+      vi.mocked(mockUseChatSession.sendMessage).mockImplementationOnce(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      render(<ChatTabV2 {...defaultProps} />);
+
+      const chip = screen.getByRole("button", { name: "Starter chip" });
+      await act(async () => {
+        fireEvent.click(chip);
+      });
+      await waitFor(() =>
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+      );
+      await act(async () => {
+        fireEvent.click(chip);
+      });
+      await act(async () => dispatch(true));
+      await act(async () => {});
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores the chip until a typed message is dispatched", async () => {
+      let dispatch!: (sent: boolean) => void;
+      vi.mocked(mockUseChatSession.sendMessage).mockImplementationOnce(
+        () => new Promise<boolean>((done) => (dispatch = done)),
+      );
+      render(<ChatTabV2 {...defaultProps} />);
+      const composer = () =>
+        mockChatInput.mock.calls.at(-1)?.[0] as {
+          onChange: (value: string) => void;
+          onSubmit: (event: { preventDefault: () => void }) => Promise<void>;
+        };
+      act(() => composer().onChange("typed first"));
+
+      await act(async () => {
+        void composer().onSubmit({ preventDefault: () => {} });
+      });
+      await waitFor(() =>
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      });
+      await act(async () => dispatch(true));
+      await act(async () => {});
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "typed first" }),
+      );
     });
   });
 

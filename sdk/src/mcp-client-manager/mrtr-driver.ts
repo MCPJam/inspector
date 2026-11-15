@@ -10,8 +10,8 @@
  * ## Why a serializable stepper (not just an async loop)
  *
  * Hosted MCPJam is horizontally scaled: a modern `input_required` can arrive
- * mid-tool-execution while a worker holds an SSE stream open, and §12.5.2
- * forbids blocking a worker while a human thinks. The loop is therefore split
+ * mid-tool-execution while a worker holds an SSE stream open. Durable
+ * suspension is a platform choice. The loop is therefore split
  * into a **pure data state** ({@link MrtrOperationState}) and pure step
  * functions ({@link executeInputRequiredLeg} / {@link
  * resumeInputRequiredOperation}). A local/CLI surface layers the convenience
@@ -157,9 +157,25 @@ export type MrtrLegResult<TResult> =
  * cache) and their own retry/timeout wrappers; the driver is the inner leaf.
  */
 export type MrtrLegSender<TResult = unknown> = (
-  request: { readonly method: MrtrMethod; readonly params: Record<string, unknown> },
-  ctx: { readonly round: number; readonly signal?: AbortSignal }
+  request: {
+    readonly method: MrtrMethod;
+    readonly params: Record<string, unknown>;
+  },
+  ctx: {
+    readonly opId?: string;
+    readonly round: number;
+    readonly signal?: AbortSignal;
+  }
 ) => Promise<TResult | InputRequiredResult>;
+
+/** Host authorization around each actual attempt, including retry attempts. */
+export type MrtrLegMiddleware = <T>(args: {
+  operationId: string;
+  round: number;
+  request: Parameters<MrtrLegSender>[0];
+  signal?: AbortSignal;
+  send: () => Promise<T>;
+}) => Promise<T>;
 
 /**
  * Validates collected elicitation content against the request's
@@ -525,7 +541,7 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
       : undefined;
   const params = buildRetryParams(state, safeResponses);
 
-  const raw = await sender({ method: state.method, params }, { round: state.round, signal });
+  const raw = await sender({ method: state.method, params }, { opId: state.opId, round: state.round, signal });
 
   if (!isInputRequiredResult(raw)) {
     return { status: "complete", result: raw as TResult };

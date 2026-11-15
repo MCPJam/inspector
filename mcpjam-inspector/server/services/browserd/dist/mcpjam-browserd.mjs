@@ -16,7 +16,19 @@ var BROWSERD_WEBMCP_FEATURES = [
    * not a protocol bump, so deploys don't kill live browsers. Without it the
    * server must refuse placeholders: an old daemon would type them literally.
    */
-  "secret-placeholders"
+  "secret-placeholders",
+  /**
+   * A `secrets` entry may carry `origins`, and is then typed only on a page at
+   * one of them. Without it the server must not send such an entry: an old
+   * daemon ignores `origins` and would type the value on any page.
+   */
+  "secret-origins",
+  /**
+   * A command's `stopAt` stops a top-level navigation to that page before it
+   * is sent, and returns its URL as `stoppedAt`. Without it the server must
+   * not rely on one: an old daemon ignores `stopAt` and lets the page load.
+   */
+  "navigation-stop"
 ];
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
@@ -79,6 +91,11 @@ var BROWSERD_ERROR_CODES = [
   "secret_unresolved",
   /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
   "secret_too_short",
+  /**
+   * A secret limited to some origins was typed on a page outside them, or a
+   * reviewer credential arrived with no origins; nothing was typed.
+   */
+  "secret_origin_refused",
   /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.
@@ -1092,6 +1109,73 @@ function computeStateToken(inputs) {
 // server/services/browserd/daemon/request-handler.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 
+// server/utils/secrets/reviewer-secrets.ts
+var REVIEWER_SECRET_PREFIX = "MCPJAM_REVIEWER_";
+function isReviewerSecretName(name) {
+  return name.startsWith(REVIEWER_SECRET_PREFIX);
+}
+
+// server/services/browserd/daemon/secret-substitution.ts
+function originOf(url) {
+  try {
+    const { origin, protocol } = new URL(url ?? "");
+    return /^https?:$/.test(protocol) ? origin : void 0;
+  } catch {
+    return void 0;
+  }
+}
+var isWebOrigin = (value) => originOf(value) === value;
+function requireAllowedOrigin(secret, pageUrl) {
+  const allowed = secret.origins ?? (isReviewerSecretName(secret.name) ? [] : void 0);
+  const origin = originOf(pageUrl);
+  if (!allowed || origin && allowed.includes(origin)) return;
+  const detail = allowed.length ? `"${secret.name}" can be typed only on ${allowed.join(", ")}, and this page is ${origin ?? "not on a web origin"}, so nothing was typed. Open the sign-in page on that origin, then type it there.` : `"${secret.name}" is a reviewer credential sent with no sign-in origin, so nothing was typed. Only MCPJam's reviewer sign-in can type it.`;
+  throw new Error(formatBrowserdError("secret_origin_refused", detail));
+}
+function resolveActSecrets(action, secrets, pageUrl) {
+  const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
+  const sent = new Map((secrets ?? []).map((s) => [s.name, s]));
+  const texts = [
+    ...action.value === void 0 ? [] : [action.value],
+    ...(action.fields ?? []).flatMap(
+      (field) => typeof field.value === "string" ? [field.value] : []
+    )
+  ];
+  for (const name of new Set(texts.flatMap(secretNamesIn))) {
+    const secret = values.get(name);
+    if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
+      throw new Error(
+        formatBrowserdError(
+          "secret_too_short",
+          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too short to hide reliably in what the page shows back; nothing was typed. Ask the user to type it themselves.`
+        )
+      );
+    }
+    const limited = sent.get(name);
+    if (limited) requireAllowedOrigin(limited, pageUrl);
+  }
+  const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
+  const fields = action.fields?.map(
+    (field) => typeof field.value === "string" ? { ...field, value: substituteSecrets(field.value, values) } : field
+  );
+  if (value === null || fields?.some((field) => field.value === null)) {
+    throw new Error(
+      formatBrowserdError(
+        "secret_unresolved",
+        "this act referenced a {{secret:NAME}} the browser was not given a value for; nothing was typed. Check the name, and that the secret is set for this environment."
+      )
+    );
+  }
+  const valueChanged = value !== void 0 && value !== action.value;
+  const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
+  if (!valueChanged && !fieldsChanged) return action;
+  return {
+    ...action,
+    ...value === void 0 ? {} : { value },
+    ...fields === void 0 ? {} : { fields }
+  };
+}
+
 // server/services/browserd/daemon/auth.ts
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 function presentedBearer(headerValue2) {
@@ -1108,9 +1192,277 @@ function constantTimeEquals(a, b) {
   return timingSafeEqual(digestA, digestB);
 }
 
+// server/services/browserd/daemon/workspace-preview.ts
+import http from "node:http";
+import net from "node:net";
+import tls from "node:tls";
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { PassThrough } from "node:stream";
+var WORKSPACE_PREVIEW_FEATURE = "workspace-preview-v1";
+var ROUTING_HEADERS = /* @__PURE__ */ new Set(["e2b-sandbox-id", "e2b-sandbox-port"]);
+var HEADER_VALUE = /^[\x20-\x7e]{0,4096}$/;
+function parsePreviewGrant(body) {
+  if (typeof body !== "object" || body === null) return void 0;
+  const { port, upstreamUrl, upstreamHeaders, key } = body;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535)
+    return void 0;
+  if (typeof key !== "string" || !/^[0-9a-f]{64}$/.test(key)) return void 0;
+  if (typeof upstreamUrl !== "string") return void 0;
+  let url;
+  try {
+    url = new URL(upstreamUrl);
+  } catch {
+    return void 0;
+  }
+  if (!["ws:", "wss:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+    return void 0;
+  const headers = {};
+  if (upstreamHeaders !== void 0) {
+    if (typeof upstreamHeaders !== "object" || upstreamHeaders === null) return void 0;
+    for (const [name, value] of Object.entries(upstreamHeaders)) {
+      if (!ROUTING_HEADERS.has(name.toLowerCase()) || typeof value !== "string" || !HEADER_VALUE.test(value))
+        return void 0;
+      headers[name] = value;
+    }
+  }
+  return { port, upstreamUrl: url.toString(), upstreamHeaders: headers, key };
+}
+function previewRequestRefusal(headers, port, grantedPorts) {
+  const host2 = (headers.host ?? "").toLowerCase();
+  if (host2 !== `localhost:${port}` && host2 !== `127.0.0.1:${port}` && host2 !== `[::1]:${port}`)
+    return "host";
+  const site = headers["sec-fetch-site"];
+  const origin = headers.origin;
+  const granted = (value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && grantedPorts.has(Number(url.port));
+    } catch {
+      return false;
+    }
+  };
+  if (site === "cross-site") return "cross-site";
+  if (site === "same-site" && !(origin && granted(origin))) return "cross-site";
+  if (origin && origin !== "null" && !granted(origin)) return "origin";
+  return void 0;
+}
+function openTunnel(grant) {
+  const url = new URL(grant.upstreamUrl);
+  const secure = url.protocol === "wss:";
+  const port = Number(url.port) || (secure ? 443 : 80);
+  const path = `${url.pathname.replace(/\/+$/, "")}/tunnel?port=${grant.port}`;
+  const head = [
+    `GET ${path} HTTP/1.1`,
+    `Host: ${url.host}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Version: 13",
+    `Sec-WebSocket-Key: ${randomBytes2(16).toString("base64")}`,
+    `x-mcpjam-preview-key: ${grant.key}`,
+    ...Object.entries(grant.upstreamHeaders).map(([k, v]) => `${k}: ${v}`)
+  ].join("\r\n");
+  return new Promise((resolve2, reject) => {
+    const socket = secure ? tls.connect({ host: url.hostname, servername: url.hostname, port }) : net.connect(port, url.hostname);
+    socket.once(
+      secure ? "secureConnect" : "connect",
+      () => socket.write(`${head}\r
+\r
+`)
+    );
+    let buf = Buffer.alloc(0);
+    const onData = (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      const end = buf.indexOf("\r\n\r\n");
+      if (end < 0) {
+        if (buf.length > 16384) socket.destroy(new Error("tunnel_handshake_too_large"));
+        return;
+      }
+      socket.off("data", onData);
+      const status = buf.subarray(0, buf.indexOf("\r\n")).toString("latin1");
+      if (!/^HTTP\/1\.1 101 /.test(status)) {
+        socket.destroy();
+        reject(new Error(status.includes(" 502 ") ? "app_not_listening" : "tunnel_refused"));
+        return;
+      }
+      socket.setTimeout(0);
+      socket.off("close", onClose);
+      const rest = buf.subarray(end + 4);
+      if (rest.length) socket.unshift(rest);
+      resolve2(socket);
+    };
+    const onClose = () => reject(new Error("tunnel_closed"));
+    socket.on("data", onData);
+    socket.once("close", onClose);
+    socket.once("error", reject);
+    socket.setTimeout(15e3, () => socket.destroy(new Error("tunnel_timeout")));
+  });
+}
+var notListening = (port) => `<!doctype html><title>Nothing on port ${port}</title><p>Nothing is running on port ${port} on this conversation's computer. Start your app, then reload.</p>`;
+var WorkspacePreviewRelay = class {
+  ports = /* @__PURE__ */ new Map();
+  /** Every accepted connection, upgraded ones included, so shutdown can end them. */
+  sockets = /* @__PURE__ */ new Set();
+  /** Grants run one at a time: two navigations to a new port must not race to listen. */
+  queue = Promise.resolve();
+  granted() {
+    return new Set(this.ports.keys());
+  }
+  /** Serve `grant.port`, or repoint an existing listener at a new upstream. */
+  grant(grant) {
+    const run = this.queue.then(() => this.grantNow(grant));
+    this.queue = run.then(
+      () => "done",
+      () => "done"
+    );
+    return run;
+  }
+  async grantNow(grant) {
+    const existing = this.ports.get(grant.port);
+    if (existing) {
+      if (existing.grant.upstreamUrl !== grant.upstreamUrl || existing.grant.key !== grant.key) {
+        existing.agent.destroy();
+        existing.grant = grant;
+        existing.agent = this.agentFor(existing);
+      }
+      return { ok: true, port: grant.port };
+    }
+    const relay = { grant, servers: [], agent: new http.Agent() };
+    relay.agent = this.agentFor(relay);
+    const server = this.serverFor(relay);
+    try {
+      await listen(server, grant.port, "127.0.0.1");
+    } catch {
+      relay.agent.destroy();
+      return { ok: false, error: "port_unavailable" };
+    }
+    relay.servers.push(server);
+    const v6 = this.serverFor(relay);
+    if (await listen(v6, grant.port, "::1").then(() => true, () => false))
+      relay.servers.push(v6);
+    this.ports.set(grant.port, relay);
+    return { ok: true, port: grant.port };
+  }
+  async close() {
+    const all = [...this.ports.values()];
+    this.ports.clear();
+    for (const socket of this.sockets) socket.destroy();
+    await Promise.all(
+      all.flatMap((relay) => {
+        relay.agent.destroy();
+        return relay.servers.map(
+          (server) => new Promise((done) => server.close(() => done()))
+        );
+      })
+    );
+  }
+  agentFor(relay) {
+    class TunnelAgent extends http.Agent {
+      createConnection(_options, callback) {
+        openTunnel(relay.grant).then(
+          (socket) => callback?.(null, socket),
+          (error) => {
+            const unused = new PassThrough();
+            unused.destroy();
+            callback?.(error, unused);
+          }
+        );
+        return void 0;
+      }
+    }
+    return new TunnelAgent({ keepAlive: true, maxSockets: 8 });
+  }
+  serverFor(relay) {
+    const port = relay.grant.port;
+    const server = http.createServer((req, res) => {
+      if (previewRequestRefusal(req.headers, port, this.granted())) {
+        res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+        res.end("This preview only answers requests from its own pages.");
+        return;
+      }
+      const replayable = req.method === "GET" || req.method === "HEAD";
+      let upstream;
+      const forward = (retried) => {
+        const attempt = http.request(
+          {
+            agent: relay.agent,
+            method: req.method,
+            path: req.url,
+            headers: req.headers,
+            setHost: false
+          },
+          (answer2) => {
+            res.writeHead(answer2.statusCode ?? 502, answer2.rawHeaders);
+            answer2.pipe(res);
+            answer2.once("close", () => {
+              if (!answer2.complete) res.destroy();
+            });
+          }
+        );
+        upstream = attempt;
+        attempt.on("error", (error) => {
+          if (!retried && replayable && attempt.reusedSocket && error.code === "ECONNRESET" && !res.headersSent && !res.destroyed)
+            return forward(true);
+          if (res.headersSent || res.destroyed) return void res.destroy();
+          const idle = error.message === "app_not_listening";
+          res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+          res.end(idle ? notListening(port) : "The conversation's computer did not answer. Reload to try again.");
+        });
+        if (replayable) attempt.end();
+        else req.pipe(attempt);
+      };
+      forward(false);
+      res.once("close", () => {
+        if (!res.writableFinished) upstream.destroy();
+      });
+    });
+    server.on("connection", (socket) => {
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
+    });
+    server.on("upgrade", (req, client, head) => {
+      let gone = false;
+      client.on("error", () => client.destroy());
+      client.once("close", () => {
+        gone = true;
+      });
+      if (previewRequestRefusal(req.headers, port, this.granted())) {
+        client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+      }
+      openTunnel(relay.grant).then(
+        (tunnel) => {
+          if (gone) return void tunnel.destroy();
+          const lines = [`${req.method} ${req.url} HTTP/1.1`];
+          for (let i = 0; i < req.rawHeaders.length; i += 2)
+            lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+          tunnel.write(`${lines.join("\r\n")}\r
+\r
+`);
+          if (head.length) tunnel.write(head);
+          tunnel.pipe(client);
+          client.pipe(tunnel);
+          tunnel.on("error", () => client.destroy());
+          client.once("close", () => tunnel.destroy());
+        },
+        () => client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+      );
+    });
+    return server;
+  }
+};
+function listen(server, port, host2) {
+  return new Promise((resolve2, reject) => {
+    server.once("error", reject);
+    server.listen(port, host2, () => {
+      server.off("error", reject);
+      resolve2();
+    });
+  });
+}
+
 // server/services/browserd/daemon/video-recorder.ts
 import { spawn } from "node:child_process";
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes3 } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 var MIN_RECORD_FPS = 1;
@@ -1210,7 +1562,7 @@ function createVideoRecorder(options) {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const statFile = options.statFile ?? (async (path) => stat(path));
   const now = options.now ?? Date.now;
-  const nonce = options.nonce ?? randomBytes2(4).toString("hex");
+  const nonce = options.nonce ?? randomBytes3(4).toString("hex");
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
   let take;
@@ -1578,16 +1930,22 @@ var MOTION_ACTIONS = /* @__PURE__ */ new Set([
   "act"
 ]);
 var MAX_COMMAND_SECRETS = 32;
+var MAX_SECRET_ORIGINS = 8;
 var SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
+function readSecretOrigins(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, MAX_SECRET_ORIGINS).filter((origin) => typeof origin === "string" && isWebOrigin(origin));
+}
 function readCommandSecrets(raw) {
   if (!Array.isArray(raw)) return void 0;
   const secrets = [];
   for (const entry of raw.slice(0, MAX_COMMAND_SECRETS)) {
     if (typeof entry !== "object" || entry === null) continue;
-    const { name, value } = entry;
+    const { name, value, origins } = entry;
     if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
     if (typeof value !== "string" || value.length === 0) continue;
-    secrets.push({ name, value });
+    const limit = origins === void 0 ? {} : { origins: readSecretOrigins(origins) };
+    secrets.push({ name, value, ...limit });
   }
   return secrets.length > 0 ? secrets : void 0;
 }
@@ -1612,6 +1970,7 @@ var BrowserdRequestHandler = class {
   captureTypedText;
   recorder;
   profileExport;
+  preview;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -1651,7 +2010,8 @@ var BrowserdRequestHandler = class {
     this.authority = deps.authority ?? "lease";
     this.features = [
       "sharp-stream-v1",
-      .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES])
+      .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES]),
+      ...deps.preview ? [WORKSPACE_PREVIEW_FEATURE] : []
     ];
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
@@ -1661,6 +2021,7 @@ var BrowserdRequestHandler = class {
     this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
     this.profileExport = deps.profileExport;
+    this.preview = deps.preview;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -1867,6 +2228,18 @@ var BrowserdRequestHandler = class {
         return { status: 405, headers: { allow: "POST" } };
       }
       return this.handleViewport(req);
+    }
+    if (req.path === "/v1/preview" && this.preview) {
+      if (req.method !== "POST") return { status: 405, headers: { allow: "POST" } };
+      let grant;
+      try {
+        grant = parsePreviewGrant(JSON.parse(req.body || "null"));
+      } catch {
+        grant = void 0;
+      }
+      if (!grant) return { status: 400, body: { error: "invalid_grant" } };
+      const result = await this.preview.grant(grant);
+      return result.ok ? { status: 200, body: { ok: true, port: result.port } } : { status: 409, body: { error: result.error } };
     }
     return { status: 404 };
   }
@@ -3049,6 +3422,7 @@ function createFrameStreamHost(handler, options = {}) {
     }
     let ended = false;
     let stallTimer;
+    let startupTimer;
     let beatTimer;
     let unsubscribe;
     let release;
@@ -3069,6 +3443,7 @@ function createFrameStreamHost(handler, options = {}) {
       if (ended) return;
       ended = true;
       timers.clearTimer(stallTimer);
+      timers.clearTimer(startupTimer);
       timers.clearTimer(beatTimer);
       unsubscribe?.();
       release?.();
@@ -3087,6 +3462,7 @@ function createFrameStreamHost(handler, options = {}) {
         stallTimer = timers.setTimer(() => {
           if (ended) return;
           ended = true;
+          timers.clearTimer(startupTimer);
           timers.clearTimer(beatTimer);
           unsubscribe?.();
           release?.();
@@ -3105,6 +3481,7 @@ function createFrameStreamHost(handler, options = {}) {
       if (ended) return;
       ended = true;
       timers.clearTimer(stallTimer);
+      timers.clearTimer(startupTimer);
       timers.clearTimer(beatTimer);
       unsubscribe?.();
       release?.();
@@ -3124,10 +3501,15 @@ function createFrameStreamHost(handler, options = {}) {
       return;
     }
     release = gate.release;
+    startupTimer = timers.setTimer(
+      () => end("video_unavailable"),
+      options.videoStartupMs ?? 1e4
+    );
     unsubscribe = encoder.subscribe((unit) => {
       if (ended) return;
       gate.revalidate();
       if (ended) return;
+      if (unit.key) timers.clearTimer(startupTimer);
       const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({
@@ -3465,6 +3847,7 @@ function parseViewportPolicy(value) {
 // shared/secret-shape-redaction.ts
 var authHeaderLike = () => /\b(authorization["']?\s*:\s*)["']?[^\n\r"'`]+/gi;
 var tokenLike = () => /\bBearer\s+[A-Za-z0-9._~\-+/=]+\b/gi;
+var localSessionProtocolLike = () => /(?<![A-Za-z0-9])mcpjam-session\.[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_-])/g;
 var skKeyLike = () => /\bsk-(?:[A-Za-z0-9]+-)*[A-Za-z0-9]{16,}\b/g;
 var providerTokenLike = () => /(?<![A-Za-z0-9])(?:ghs_[A-Za-z0-9_.-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_.-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|A[KS]IA[0-9A-Z]{16}(?![A-Za-z0-9])|hf_[A-Za-z0-9]{30,}|gsk_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]{20,})/g;
 var jwtLike = () => /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
@@ -3484,7 +3867,7 @@ function redactSecretShapes(text, replacement = "[redacted]") {
 var SECRET_PLACEHOLDER = /\{\{secret:([A-Z_][A-Z0-9_]*)\}\}/g;
 function redactSegment(text, replacement) {
   if (!text) return text;
-  return text.replace(authHeaderLike(), `$1${replacement}`).replace(tokenLike(), `Bearer ${replacement}`).replace(jwtLike(), replacement).replace(urlBasicAuthLike(), `$1${replacement}@`).replace(skKeyLike(), replacement).replace(providerTokenLike(), replacement).replace(secretParamLike(), `$1${replacement}`);
+  return text.replace(authHeaderLike(), `$1${replacement}`).replace(tokenLike(), `Bearer ${replacement}`).replace(localSessionProtocolLike(), replacement).replace(jwtLike(), replacement).replace(urlBasicAuthLike(), `$1${replacement}@`).replace(skKeyLike(), replacement).replace(providerTokenLike(), replacement).replace(secretParamLike(), `$1${replacement}`);
 }
 
 // server/services/browserd/daemon/shape-redaction.ts
@@ -3750,7 +4133,8 @@ function buildBrowserdStack(driver, config) {
     ...config.captureTypedText ? { captureTypedText: true } : {},
     ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
     ...config.recorder ? { recorder: config.recorder } : {},
-    ...config.profileExport ? { profileExport: config.profileExport } : {}
+    ...config.profileExport ? { profileExport: config.profileExport } : {},
+    ...config.preview ? { preview: config.preview } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
@@ -5031,14 +5415,14 @@ async function selectOptionOnNode(cdp, backendNodeId, value, label) {
       return "ok";
     }`
   });
-  const answer = outcome?.result?.value ?? "";
-  if (answer === "ok") return;
-  if (answer === "not_select") {
+  const answer2 = outcome?.result?.value ?? "";
+  if (answer2 === "ok") return;
+  if (answer2 === "not_select") {
     throw new Error(
       `target_not_found: ${label} is not a <select>; use click or type instead`
     );
   }
-  const offered = answer.startsWith("no_option:") ? answer.slice(10) : "";
+  const offered = answer2.startsWith("no_option:") ? answer2.slice(10) : "";
   throw new Error(
     `target_not_found: ${label} has no option matching "${value}"` + (offered ? `; it offers: ${offered}` : "")
   );
@@ -5464,45 +5848,63 @@ function createBrowserSecretRegistry() {
   };
 }
 
-// server/services/browserd/daemon/secret-substitution.ts
-function resolveActSecrets(action, secrets) {
-  const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
-  const texts = [
-    ...action.value === void 0 ? [] : [action.value],
-    ...(action.fields ?? []).flatMap(
-      (field) => typeof field.value === "string" ? [field.value] : []
-    )
-  ];
-  for (const name of new Set(texts.flatMap(secretNamesIn))) {
-    const secret = values.get(name);
-    if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
-      throw new Error(
-        formatBrowserdError(
-          "secret_too_short",
-          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too short to hide reliably in what the page shows back; nothing was typed. Ask the user to type it themselves.`
-        )
-      );
-    }
+// server/services/browserd/daemon/navigation-stop.ts
+function isStopTarget(value) {
+  if (typeof value !== "string" || /[*?\\#]/.test(value)) return false;
+  try {
+    return /^https?:$/.test(new URL(value).protocol);
+  } catch {
+    return false;
   }
-  const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
-  const fields = action.fields?.map(
-    (field) => typeof field.value === "string" ? { ...field, value: substituteSecrets(field.value, values) } : field
-  );
-  if (value === null || fields?.some((field) => field.value === null)) {
-    throw new Error(
-      formatBrowserdError(
-        "secret_unresolved",
-        "this act referenced a {{secret:NAME}} the browser was not given a value for; nothing was typed. Check the name, and that the secret is set for this environment."
-      )
+}
+var isAt = (url, target) => url === target || url.startsWith(`${target}?`) || url.startsWith(`${target}#`);
+var watches = /* @__PURE__ */ new WeakMap();
+async function answer(cdp, slot, payload) {
+  const paused = payload;
+  const watch = slot.current;
+  const url = paused.request?.url ?? "";
+  const stop = watch !== void 0 && watch.stopped === void 0 && paused.frameId === watch.mainFrame && isAt(url, watch.target);
+  if (stop) watch.stopped = url;
+  try {
+    await cdp.send(
+      stop ? "Fetch.failRequest" : "Fetch.continueRequest",
+      stop ? { requestId: paused.requestId, errorReason: "Aborted" } : { requestId: paused.requestId }
     );
+  } catch {
   }
-  const valueChanged = value !== void 0 && value !== action.value;
-  const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
-  if (!valueChanged && !fieldsChanged) return action;
+}
+async function armNavigationStop(cdp, target) {
+  let slot = watches.get(cdp);
+  if (!slot) {
+    const created = {};
+    cdp.on("Fetch.requestPaused", (payload) => {
+      void answer(cdp, created, payload);
+    });
+    watches.set(cdp, created);
+    slot = created;
+  }
+  const tree = await cdp.send("Page.getFrameTree");
+  const watch = { target, mainFrame: tree.frameTree?.frame?.id };
+  const owner = slot;
+  owner.current = watch;
+  await cdp.send("Fetch.enable", {
+    patterns: [
+      {
+        urlPattern: `${target}*`,
+        resourceType: "Document",
+        requestStage: "Request"
+      }
+    ]
+  });
   return {
-    ...action,
-    ...value === void 0 ? {} : { value },
-    ...fields === void 0 ? {} : { fields }
+    stopped: () => watch.stopped,
+    disarm: async () => {
+      if (owner.current === watch) owner.current = void 0;
+      try {
+        await cdp.send("Fetch.disable");
+      } catch {
+      }
+    }
   };
 }
 
@@ -5874,7 +6276,7 @@ var MAX_EARLY_RESPONSES = 16;
 var MAX_SETTLED_IDS = 32;
 var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
 var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
-function originOf(url) {
+function originOf2(url) {
   try {
     return new URL(url).origin;
   } catch {
@@ -6492,7 +6894,7 @@ var WebMcpBridge = class {
       description: tool.description ?? "",
       ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
       ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
-      origin: originOf(this.frames.get(tool.frameId) ?? ""),
+      origin: originOf2(this.frames.get(tool.frameId) ?? ""),
       isMainFrame: tool.frameId === this.mainFrameId,
       registrationSeq,
       registrationKind: tool.backendNodeId !== void 0 ? "declarative" : tool.stackTrace ? "imperative" : "unknown"
@@ -7716,7 +8118,30 @@ var ChromiumDriver = class {
    * true for all of them at once — including the ones added later.
    */
   async execute(command, context) {
-    return this.barrier.run(() => this.executeInBarrier(command, context));
+    return this.barrier.run(() => this.executeStopping(command, context));
+  }
+  /**
+   * Stop a top-level navigation to the command's `stopAt` page while it runs
+   * (`navigation-stop`). A stop that cannot be armed fails the command before
+   * it acts, rather than letting that page load.
+   */
+  async executeStopping(command, context) {
+    const target = command.stopAt;
+    const kind = command.action.kind;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const page = (kind === "navigate" || kind === "act") && isStopTarget(target) ? this.tabs.get(tabId)?.page : void 0;
+    const cdp = page ? await page.cdp() : null;
+    if (!cdp || !isStopTarget(target)) {
+      return this.executeInBarrier(command, context);
+    }
+    const stop = await armNavigationStop(cdp, target);
+    try {
+      const result = await this.executeInBarrier(command, context);
+      const stoppedAt = stop.stopped();
+      return stoppedAt ? { ...result, stoppedAt } : result;
+    } finally {
+      await stop.disarm();
+    }
   }
   async executeInBarrier(command, context) {
     if (command.source !== "manual" && command.action.kind !== "webmcp_cancel" && !negotiateViewport(this.viewportPolicy, command).ok) {
@@ -7801,8 +8226,13 @@ var ChromiumDriver = class {
         return this.observe(tabId, action, permit);
       case "act": {
         let resolved = action;
+        const page = this.tabs.get(tabId)?.page;
         try {
-          resolved = resolveActSecrets(action, context?.secrets);
+          resolved = resolveActSecrets(
+            action,
+            context?.secrets,
+            page && safeUrl(page)
+          );
         } catch (error) {
           return {
             ok: false,
@@ -9688,7 +10118,7 @@ function safeUrl(page) {
 // server/services/browserd/local/egress-proxy.ts
 import { createServer as createServer2, request } from "node:http";
 import { connect } from "node:net";
-import { randomBytes as randomBytes3, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { randomBytes as randomBytes4, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 
 // server/services/browserd/local/security-policy.ts
 import { networkInterfaces } from "node:os";
@@ -9922,7 +10352,7 @@ function pinnedAddressOptions(addresses) {
 }
 async function startLocalBrowserProxy(policy) {
   const username = "browser";
-  const password = randomBytes3(32).toString("hex");
+  const password = randomBytes4(32).toString("hex");
   const expected = Buffer.from(
     `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
   );
@@ -10691,10 +11121,10 @@ async function launchBrowserdContext(options) {
     await policy.assertActive();
   }
   if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
-    const { rm } = await import("node:fs/promises");
+    const { rm: rm2 } = await import("node:fs/promises");
     const { join: join4 } = await import("node:path");
     for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
-      await rm(join4(options.userDataDir, "Default", cache), {
+      await rm2(join4(options.userDataDir, "Default", cache), {
         recursive: true,
         force: true
       });
@@ -10751,11 +11181,35 @@ async function launchBrowserdContext(options) {
         ...userAgent ? { userAgent } : {}
       })
     };
+    const launchProfileContext = async (contextMode) => {
+      const cleared = await clearStaleSingletonLock(options.userDataDir);
+      if (cleared.heldBy) {
+        throw new Error(
+          `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+        );
+      }
+      const context = await chromium.launchPersistentContext(
+        options.userDataDir,
+        {
+          ...launchArgs,
+          acceptDownloads: false,
+          permissions: [],
+          ...contextOptionsFor({
+            contextMode,
+            surface,
+            ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
+          })
+        }
+      );
+      return await finish(context);
+    };
     if (options.contextMode === "ephemeral") {
+      if (options.profileImported)
+        return await launchProfileContext("ephemeral");
       const browser = await chromium.launch(launchArgs);
-      let context2;
+      let context;
       try {
-        context2 = await browser.newContext({
+        context = await browser.newContext({
           acceptDownloads: false,
           permissions: [],
           // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
@@ -10768,28 +11222,9 @@ async function launchBrowserdContext(options) {
         });
         throw error;
       }
-      return await finish(context2, () => browser.close());
+      return await finish(context, () => browser.close());
     }
-    const cleared = await clearStaleSingletonLock(options.userDataDir);
-    if (cleared.heldBy) {
-      throw new Error(
-        `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
-      );
-    }
-    const context = await chromium.launchPersistentContext(
-      options.userDataDir,
-      {
-        ...launchArgs,
-        acceptDownloads: false,
-        permissions: [],
-        ...contextOptionsFor({
-          contextMode: "persistent",
-          surface,
-          ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
-        })
-      }
-    );
-    return await finish(context);
+    return await launchProfileContext("persistent");
   } catch (error) {
     await proxy?.close();
     throw error;
@@ -10855,250 +11290,8 @@ function adaptContext(context, options = {}) {
   };
 }
 
-// server/services/browserd/daemon/main.ts
-import { mkdirSync } from "node:fs";
-import { execFile } from "node:child_process";
-import { readFile as readFile2, unlink as unlink2 } from "node:fs/promises";
-
-// server/services/browserd/daemon/display-resize.ts
-function displayGeometryFor(size, options = {}) {
-  const dpr = options.deviceScaleFactor ?? 1;
-  const even = (value) => {
-    const scaled = Math.round(value * dpr);
-    return scaled % 2 === 0 ? scaled : scaled + 1;
-  };
-  return {
-    width: even(size.width),
-    height: even(size.height),
-    depth: options.depth ?? 24
-  };
-}
-function shellSafeDisplay(display) {
-  return /^:[0-9]+(\.[0-9]+)?$/.test(display) ? display : null;
-}
-async function resizeHostedDisplay(deps, next, previous) {
-  const display = shellSafeDisplay(deps.display);
-  if (!display) {
-    return {
-      ok: false,
-      reason: `refusing to resize a display named ${JSON.stringify(
-        deps.display
-      )}`,
-      restored: true
-    };
-  }
-  const geometry = displayGeometryFor(next, {
-    ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
-  });
-  const applyDisplay = async (size) => {
-    const { width, height } = size;
-    if (![width, height].every(
-      (value) => Number.isInteger(value) && value >= 32 && value <= 32768
-    )) {
-      return { ok: false, reason: "invalid display geometry" };
-    }
-    const mode = `mcpjam-${width}x${height}`;
-    const clock = ((width + 160) * (height + 45) * 60 / 1e6).toFixed(3);
-    const randr = `xrandr --display ${display}`;
-    const command = [
-      `${randr} --newmode ${mode} ${clock} ${width} ${width + 48} ${width + 80} ${width + 160} ${height} ${height + 3} ${height + 6} ${height + 45} 2>/dev/null || true`,
-      `${randr} --addmode VNC-0 ${mode} &&`,
-      `${randr} --output VNC-0 --mode ${mode} --fb ${width}x${height} &&`,
-      `${randr} --current | awk '$1 == "VNC-0" && $2 == "connected" && $3 == "${width}x${height}+0+0" { found = 1 } END { exit !found }'`
-    ].join("\n");
-    try {
-      const result = await deps.run(command);
-      return result.exitCode === 0 ? { ok: true } : {
-        ok: false,
-        reason: result.stderr?.trim() || `xrandr exited ${result.exitCode} resizing to ${size.width}x${size.height}`
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        reason: error instanceof Error ? error.message : String(error)
-      };
-    }
-  };
-  const restore = async () => {
-    const back = displayGeometryFor(previous, {
-      ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
-    });
-    const result = await applyDisplay(back);
-    if (!result.ok) return false;
-    let pageRestored = true;
-    await deps.resizePage?.(previous).catch(() => {
-      pageRestored = false;
-    });
-    if (!pageRestored) return false;
-    await deps.restartEncoder?.(previous).catch(() => {
-    });
-    return true;
-  };
-  const display_ = await applyDisplay(geometry);
-  if (!display_.ok) {
-    return {
-      ok: false,
-      reason: display_.reason ?? "the display refused the new size",
-      restored: await restore()
-    };
-  }
-  try {
-    await deps.resizePage?.(next);
-    await deps.restartEncoder?.(next);
-  } catch (error) {
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-      restored: await restore()
-    };
-  }
-  return { ok: true, applied: next };
-}
-
-// server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-var DEFAULT_ON_FEATURES = [
-  "a11yFrames",
-  "scrollableMarkers"
-];
-var OPT_IN_FEATURES = [
-  "keystrokeTyping"
-];
-function namedIn(raw) {
-  return new Set(
-    (raw ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
-  );
-}
-function parseBrowserdFeatures(env = process.env) {
-  const enabled = namedIn(env.MCPJAM_BROWSERD_FEATURES);
-  const disabled = namedIn(env.MCPJAM_BROWSERD_DISABLE_FEATURES);
-  const features = {};
-  for (const name of DEFAULT_ON_FEATURES) {
-    if (!disabled.has(name)) features[name] = true;
-  }
-  for (const name of OPT_IN_FEATURES) {
-    if (enabled.has(name) && !disabled.has(name)) features[name] = true;
-  }
-  return features;
-}
-var DEFAULT_BROWSERD_PORT = 8791;
-var DEFAULT_BROWSERD_HOST = "0.0.0.0";
-var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
-var DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
-function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
-  const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
-  const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
-  const token = supplied.length > 0 ? supplied : tokenFile ? mintToken(tokenFile) : "";
-  if (token.length === 0) {
-    throw new Error(
-      "MCPJAM_BROWSERD_TOKEN is required \u2014 refusing to start an unauthenticated browser daemon on a public host"
-    );
-  }
-  const rawPort = env.MCPJAM_BROWSERD_PORT;
-  const port = rawPort === void 0 ? DEFAULT_BROWSERD_PORT : Number(rawPort);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error(
-      `MCPJAM_BROWSERD_PORT must be a valid port (1-65535), got ${rawPort}`
-    );
-  }
-  const headless = env.MCPJAM_BROWSERD_HEADLESS === "true";
-  return {
-    token,
-    port,
-    host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
-    userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
-    headless,
-    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
-    // Only the exact string opts in. An unset or misspelled value keeps the
-    // persistent profile — the mode a human's logins depend on — rather than
-    // silently wiping state because a typo read as "ephemeral".
-    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
-    // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
-    // for the video encoder, and a headless Chromium draws on no display at
-    // all — so the daemon would advertise `h264`, spawn a grab of an empty X
-    // screen, and hand every watcher a picture of nothing. The two are
-    // contradictory rather than merely unusual, so the one that decides
-    // whether there is a picture wins.
-    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
-    // NEVER WITHOUT KIOSK on a hosted box, and the guard is the same shape as
-    // kiosk's own: a display that resized under a Chromium that is not filling
-    // it leaves the page one size and the capture another, which is the exact
-    // disagreement between the number and the picture this whole path exists
-    // to prevent.
-    viewportPolicy: parseViewportPolicy(env.MCPJAM_BROWSERD_VIEWPORT_POLICY),
-    deviceScaleFactor: readDeviceScaleFactor(env),
-    recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
-    recordMaxBytes: readRecordMaxBytes(env),
-    // Only the exact string disables it, matching every other switch here: a
-    // typo must not silently cost a run its evidence.
-    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
-    ...tokenFile ? { tokenFile } : {},
-    ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
-    // Only a daemon that had to mint its own token was started by the box.
-    startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
-  };
-}
-function readDeviceScaleFactor(env) {
-  const raw = Number(env.MCPJAM_BROWSERD_DPR);
-  if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
-  return raw;
-}
-function readRecordMaxBytes(env) {
-  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
-  if (!Number.isFinite(raw) || raw < 1)
-    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
-  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
-}
-function defaultMintToken(path) {
-  const token = randomBytes4(32).toString("hex");
-  writeFileSync(path, token, { encoding: "utf8", mode: 384 });
-  chmodSync(path, 384);
-  return token;
-}
-function announcedFeatures(config, env = process.env) {
-  const features = [];
-  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
-    features.push("h264");
-  }
-  if (config.recordingEnabled) features.push("record");
-  return features;
-}
-function extraArgsFor(config) {
-  const args = [];
-  if (config.windowSize) args.push(`--window-size=${config.windowSize}`);
-  if (config.kiosk) {
-    args.push("--kiosk", "--start-fullscreen", "--window-position=0,0");
-    if (!config.windowSize) {
-      args.push("--window-size=1024,768");
-    }
-  }
-  if (config.deviceScaleFactor !== 1 && config.contextMode === "persistent") {
-    args.push(`--force-device-scale-factor=${config.deviceScaleFactor}`);
-  }
-  return args;
-}
-function formatReadyLine(host2, port, bootId, protocolVersion) {
-  return JSON.stringify({
-    event: "listening",
-    host: host2,
-    port,
-    bootId,
-    ...protocolVersion === void 0 ? {} : { protocolVersion }
-  });
-}
-function readBundleHash(argv = process.argv, hashFile = defaultHashFile) {
-  const entry = argv[1];
-  if (!entry) return void 0;
-  try {
-    return hashFile(entry);
-  } catch {
-    return void 0;
-  }
-}
-function defaultHashFile(path) {
-  return createHash2("sha256").update(readFileSync(path)).digest("hex");
-}
+// server/services/browserd/daemon/prepare-browser-profile.ts
+import { readFile as readFile2, rm } from "node:fs/promises";
 
 // server/services/browserd/profile-archive.ts
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -11118,8 +11311,63 @@ var EXCLUDED_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
   "singletoncookie",
   "singletonsock"
 ]);
+var PRIVATE_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
+  "login data",
+  "login data for account",
+  "affiliation database",
+  "web data",
+  "account web data",
+  "autofillstrikedatabase",
+  "autofillaimodelcache",
+  "history",
+  "media history",
+  "visited links",
+  "top sites",
+  "shortcuts",
+  "favicons",
+  "network action predictor",
+  "dips",
+  "bookmarks",
+  "accountbookmarks",
+  "encryptedbookmarks2",
+  "encryptedaccountbookmarks2",
+  "network persistent state",
+  "transportsecurity",
+  "reporting and nel",
+  "site characteristics database",
+  "download service",
+  "platform notifications",
+  "segmentation platform",
+  "segmentation_platform",
+  "feature engagement tracker",
+  "trust tokens",
+  "conversions",
+  "shared dictionary",
+  "accounts",
+  "gcm store",
+  "sessions",
+  "current session",
+  "last session",
+  "current tabs",
+  "last tabs",
+  "sync data",
+  "extensions",
+  "extension state",
+  "extension activity",
+  "extension rules",
+  "extension scripts",
+  "extension cookies",
+  "local extension settings",
+  "sync extension settings",
+  "managed extension settings"
+]);
+var STORE_COPY_SUFFIX = /(?:-journal|-wal|-shm|\.bak|\.tmp|\.old|~)+$/;
+function isExcludedProfileSegment(segment) {
+  const base = segment.toLowerCase().replace(STORE_COPY_SUFFIX, "");
+  return EXCLUDED_PROFILE_SEGMENTS.has(base) || PRIVATE_PROFILE_SEGMENTS.has(base);
+}
 function isExcludedProfilePath(path) {
-  return path.split(/[\\/]+/).some((segment) => EXCLUDED_PROFILE_SEGMENTS.has(segment.toLowerCase()));
+  return path.split(/[\\/]+/).some(isExcludedProfileSegment);
 }
 function assertSafeArchivePath(path) {
   const normalized = path.replaceAll("\\", "/");
@@ -11206,7 +11454,9 @@ async function collectProfileEntries(profileDir, currentDir, entries, uncompress
     }
     if (!stat2.isFile()) continue;
     if (uncompressedBytes.value + stat2.size > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
-      throw new Error("browser profile archive exceeds the expanded size limit");
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
     }
     const contents = await readFile(absolutePath);
     const header = makeTarHeader(
@@ -11372,6 +11622,272 @@ async function importBrowserProfileArchive(profileDir, archive, options = {}) {
   }
 }
 
+// server/services/browserd/daemon/prepare-browser-profile.ts
+async function prepareBrowserProfile(config) {
+  if (!config.profileArchivePath) return false;
+  try {
+    try {
+      const archive = await readFile2(config.profileArchivePath);
+      await importBrowserProfileArchive(
+        config.userDataDir,
+        new Uint8Array(archive)
+      );
+    } finally {
+      await rm(config.profileArchivePath, { force: true });
+    }
+  } catch (cause) {
+    throw new Error(
+      "Saved profile could not be loaded. Save the profile again and retry.",
+      { cause }
+    );
+  }
+  return true;
+}
+
+// server/services/browserd/daemon/main.ts
+import { mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+
+// server/services/browserd/daemon/display-resize.ts
+function displayGeometryFor(size, options = {}) {
+  const dpr = options.deviceScaleFactor ?? 1;
+  const even = (value) => {
+    const scaled = Math.round(value * dpr);
+    return scaled % 2 === 0 ? scaled : scaled + 1;
+  };
+  return {
+    width: even(size.width),
+    height: even(size.height),
+    depth: options.depth ?? 24
+  };
+}
+function shellSafeDisplay(display) {
+  return /^:[0-9]+(\.[0-9]+)?$/.test(display) ? display : null;
+}
+async function resizeHostedDisplay(deps, next, previous) {
+  const display = shellSafeDisplay(deps.display);
+  if (!display) {
+    return {
+      ok: false,
+      reason: `refusing to resize a display named ${JSON.stringify(
+        deps.display
+      )}`,
+      restored: true
+    };
+  }
+  const geometry = displayGeometryFor(next, {
+    ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+  });
+  const applyDisplay = async (size) => {
+    const { width, height } = size;
+    if (![width, height].every(
+      (value) => Number.isInteger(value) && value >= 32 && value <= 32768
+    )) {
+      return { ok: false, reason: "invalid display geometry" };
+    }
+    const mode = `mcpjam-${width}x${height}`;
+    const clock = ((width + 160) * (height + 45) * 60 / 1e6).toFixed(3);
+    const randr = `xrandr --display ${display}`;
+    const command = [
+      `${randr} --newmode ${mode} ${clock} ${width} ${width + 48} ${width + 80} ${width + 160} ${height} ${height + 3} ${height + 6} ${height + 45} 2>/dev/null || true`,
+      `${randr} --addmode VNC-0 ${mode} &&`,
+      `${randr} --output VNC-0 --mode ${mode} --fb ${width}x${height} &&`,
+      `${randr} --current | awk '$1 == "VNC-0" && $2 == "connected" && $3 == "${width}x${height}+0+0" { found = 1 } END { exit !found }'`
+    ].join("\n");
+    try {
+      const result = await deps.run(command);
+      return result.exitCode === 0 ? { ok: true } : {
+        ok: false,
+        reason: result.stderr?.trim() || `xrandr exited ${result.exitCode} resizing to ${size.width}x${size.height}`
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error)
+      };
+    }
+  };
+  const restore = async () => {
+    const back = displayGeometryFor(previous, {
+      ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+    });
+    const result = await applyDisplay(back);
+    if (!result.ok) return false;
+    let pageRestored = true;
+    await deps.resizePage?.(previous).catch(() => {
+      pageRestored = false;
+    });
+    if (!pageRestored) return false;
+    await deps.restartEncoder?.(previous).catch(() => {
+    });
+    return true;
+  };
+  const display_ = await applyDisplay(geometry);
+  if (!display_.ok) {
+    return {
+      ok: false,
+      reason: display_.reason ?? "the display refused the new size",
+      restored: await restore()
+    };
+  }
+  try {
+    await deps.resizePage?.(next);
+    await deps.restartEncoder?.(next);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+      restored: await restore()
+    };
+  }
+  return { ok: true, applied: next };
+}
+
+// server/services/browserd/daemon/config.ts
+import { createHash as createHash2, randomBytes as randomBytes5 } from "node:crypto";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+var DEFAULT_ON_FEATURES = [
+  "a11yFrames",
+  "scrollableMarkers"
+];
+var OPT_IN_FEATURES = [
+  "keystrokeTyping"
+];
+function namedIn(raw) {
+  return new Set(
+    (raw ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
+  );
+}
+function parseBrowserdFeatures(env = process.env) {
+  const enabled = namedIn(env.MCPJAM_BROWSERD_FEATURES);
+  const disabled = namedIn(env.MCPJAM_BROWSERD_DISABLE_FEATURES);
+  const features = {};
+  for (const name of DEFAULT_ON_FEATURES) {
+    if (!disabled.has(name)) features[name] = true;
+  }
+  for (const name of OPT_IN_FEATURES) {
+    if (enabled.has(name) && !disabled.has(name)) features[name] = true;
+  }
+  return features;
+}
+var DEFAULT_BROWSERD_PORT = 8791;
+var DEFAULT_BROWSERD_HOST = "0.0.0.0";
+var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+var DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
+function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
+  const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
+  const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
+  const token = supplied.length > 0 ? supplied : tokenFile ? mintToken(tokenFile) : "";
+  if (token.length === 0) {
+    throw new Error(
+      "MCPJAM_BROWSERD_TOKEN is required \u2014 refusing to start an unauthenticated browser daemon on a public host"
+    );
+  }
+  const rawPort = env.MCPJAM_BROWSERD_PORT;
+  const port = rawPort === void 0 ? DEFAULT_BROWSERD_PORT : Number(rawPort);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(
+      `MCPJAM_BROWSERD_PORT must be a valid port (1-65535), got ${rawPort}`
+    );
+  }
+  const headless = env.MCPJAM_BROWSERD_HEADLESS === "true";
+  return {
+    token,
+    port,
+    host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
+    userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
+    headless,
+    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
+    // Only the exact string opts in. An unset or misspelled value keeps the
+    // persistent profile — the mode a human's logins depend on — rather than
+    // silently wiping state because a typo read as "ephemeral".
+    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
+    // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
+    // for the video encoder, and a headless Chromium draws on no display at
+    // all — so the daemon would advertise `h264`, spawn a grab of an empty X
+    // screen, and hand every watcher a picture of nothing. The two are
+    // contradictory rather than merely unusual, so the one that decides
+    // whether there is a picture wins.
+    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
+    // NEVER WITHOUT KIOSK on a hosted box, and the guard is the same shape as
+    // kiosk's own: a display that resized under a Chromium that is not filling
+    // it leaves the page one size and the capture another, which is the exact
+    // disagreement between the number and the picture this whole path exists
+    // to prevent.
+    viewportPolicy: parseViewportPolicy(env.MCPJAM_BROWSERD_VIEWPORT_POLICY),
+    deviceScaleFactor: readDeviceScaleFactor(env),
+    recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+    recordMaxBytes: readRecordMaxBytes(env),
+    // Only the exact string disables it, matching every other switch here: a
+    // typo must not silently cost a run its evidence.
+    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
+    ...tokenFile ? { tokenFile } : {},
+    ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
+    // Only a daemon that had to mint its own token was started by the box.
+    startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
+  };
+}
+function readDeviceScaleFactor(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_DPR);
+  if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
+  return raw;
+}
+function readRecordMaxBytes(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
+  if (!Number.isFinite(raw) || raw < 1)
+    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
+}
+function defaultMintToken(path) {
+  const token = randomBytes5(32).toString("hex");
+  writeFileSync(path, token, { encoding: "utf8", mode: 384 });
+  chmodSync(path, 384);
+  return token;
+}
+function announcedFeatures(config, env = process.env) {
+  const features = [];
+  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
+    features.push("h264");
+  }
+  if (config.recordingEnabled) features.push("record");
+  return features;
+}
+function extraArgsFor(config) {
+  const args = [];
+  if (config.windowSize) args.push(`--window-size=${config.windowSize}`);
+  if (config.kiosk) {
+    args.push("--kiosk", "--start-fullscreen", "--window-position=0,0");
+    if (!config.windowSize) {
+      args.push("--window-size=1024,768");
+    }
+  }
+  if (config.deviceScaleFactor !== 1 && config.contextMode === "persistent") {
+    args.push(`--force-device-scale-factor=${config.deviceScaleFactor}`);
+  }
+  return args;
+}
+function formatReadyLine(host2, port, bootId, protocolVersion) {
+  return JSON.stringify({
+    event: "listening",
+    host: host2,
+    port,
+    bootId,
+    ...protocolVersion === void 0 ? {} : { protocolVersion }
+  });
+}
+function readBundleHash(argv = process.argv, hashFile = defaultHashFile) {
+  const entry = argv[1];
+  if (!entry) return void 0;
+  try {
+    return hashFile(entry);
+  } catch {
+    return void 0;
+  }
+}
+function defaultHashFile(path) {
+  return createHash2("sha256").update(readFileSync(path)).digest("hex");
+}
+
 // server/services/browserd/daemon/main.ts
 function log(message) {
   process.stderr.write(`[mcpjam-browserd] ${message}
@@ -11405,17 +11921,10 @@ function displayHeight(config) {
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
-  if (config.profileArchivePath && config.contextMode === "persistent") {
-    const archive = await readFile2(config.profileArchivePath);
-    await importBrowserProfileArchive(
-      config.userDataDir,
-      new Uint8Array(archive)
-    );
-    await unlink2(config.profileArchivePath).catch(() => {
-    });
-  }
+  const profileImported = await prepareBrowserProfile(config);
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
+    profileImported,
     headless: config.headless,
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode,
@@ -11503,8 +12012,10 @@ async function main() {
     });
     return { width, height };
   };
+  const preview = new WorkspacePreviewRelay();
   const stack = buildBrowserdStack(driver, {
     token: config.token,
+    preview,
     lease,
     // Read ONCE, at boot: the file cannot change under a running process in
     // any way that would make a later read more truthful, and hashing a
@@ -11549,6 +12060,7 @@ async function main() {
     await recorder?.finalize({ graceMs: 2e3 }).catch(() => {
     });
     video?.dispose();
+    await preview.close();
     stack.server.close();
     await driver.close().catch(() => {
     });

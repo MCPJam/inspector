@@ -126,9 +126,12 @@ export type CacheEventLogger = (event: CacheHitEvent) => void;
  *  - `"auto"` — unconfigured connection (always probed);
  *  - `"modern-pin"` — an explicit modern (`2026-07-28`) pin;
  *  - `"legacy"` — the exact legacy `initialize` handshake, from an explicit
- *    legacy pin.
+ *    legacy pin;
+ *  - `"legacy-first"` — an unpinned connection set to Cursor CLI's handshake
+ *    (`HttpServerConfig.versionNegotiation`).
  */
-export type ConfiguredNegotiationMode = "auto" | "modern-pin" | "legacy";
+export type ConfiguredNegotiationMode =
+  "auto" | "modern-pin" | "legacy" | "legacy-first";
 
 /**
  * One connection-attempt outcome, emitted by the manager for Phase 5
@@ -561,6 +564,13 @@ export type HttpServerConfig = BaseServerConfig & {
    * passed to `MCPClientManager`.
    */
   mcpProtocolVersion?: import("./mcp-protocol-version.js").McpProtocolVersion;
+  /**
+   * How an UNPINNED connection negotiates, in place of Auto. `"legacy-first"`
+   * reproduces Cursor CLI: the 2025 `initialize` first, and 2026-07-28 only
+   * when the server refuses it with `-32022` naming that revision. Inert while
+   * `mcpProtocolVersion` is set. See `version-negotiation.ts`.
+   */
+  versionNegotiation?: import("./version-negotiation.js").VersionNegotiationPreference;
 
   // Discriminator fields - these should never be set for HTTP
   command?: never;
@@ -638,6 +648,11 @@ export interface LiveClientState extends BaseClientState {
   connectPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
   retryPromise?: Promise<import("./managed-mcp-client.js").ManagedMcpClient>;
   initializedClientCapabilities?: ClientCapabilityOptions;
+  /**
+   * The last 401/403 challenge seen on this HTTP connection. Read back when an
+   * auth provider's error dropped the header.
+   */
+  authChallengeRecorder?: import("./http-error-fetch.js").AuthChallengeRecorder;
 }
 
 // ============================================================================

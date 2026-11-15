@@ -7,6 +7,8 @@ import type {
   Project,
   ConnectionStatus,
 } from "@/state/app-types";
+import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { AppInstance } from "@mcpjam/widget-react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 // Counter for generating unique IDs
@@ -268,4 +270,20 @@ export function createMany<T>(
   count: number,
 ): T[] {
   return Array.from({ length: count }, (_, i) => factory(i));
+}
+
+/** A real bridge keeps app-tool fixtures on the public typed interface. */
+export function makeAppInstance(overrides: Partial<AppInstance> = {}): AppInstance {
+  return {
+    bridgeId: uniqueId("bridge"),
+    chatSessionId: "chat-1",
+    parentToolCallId: "call-1",
+    serverId: "srv-1",
+    appName: "Chess",
+    surface: "inline",
+    bridge: new AppBridge(null, { name: "test", version: "1" }, {}),
+    tools: [{ name: "make_move", inputSchema: { type: "object", properties: { san: { type: "string" } } } }],
+    registeredAtMs: 0,
+    ...overrides,
+  };
 }

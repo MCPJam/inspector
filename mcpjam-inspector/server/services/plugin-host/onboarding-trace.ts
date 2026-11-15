@@ -8,6 +8,7 @@ import { PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE } from "../../../shared/plugin
 import type { RequestEventMap } from "../../utils/log-events.js";
 import { logger } from "../../utils/logger.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
+import type { OnboardingTurnPhase } from "../../../shared/onboarding-trace.js";
 
 /**
  * Where one plugin onboarding turn got to, in the order a turn reaches them:
@@ -19,14 +20,7 @@ import { getRequestLogger } from "../../utils/request-logger.js";
  * - `first_output`: the first text, reasoning or tool call.
  * - `terminal`: the turn finished, failed or was cancelled.
  */
-export type OnboardingTurnPhase =
-  | "admission"
-  | "authorization"
-  | "connection"
-  | "tools"
-  | "model"
-  | "first_output"
-  | "terminal";
+export type { OnboardingTurnPhase } from "../../../shared/onboarding-trace.js";
 
 /** How long a turn runs before its watchdog records where it stopped. */
 export const ONBOARDING_TURN_WATCHDOG_MS = 60_000;

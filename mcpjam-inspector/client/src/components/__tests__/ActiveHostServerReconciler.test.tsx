@@ -145,7 +145,7 @@ describe("ActiveHostServerReconciler — auto-connect preference", () => {
       { _id: "srv-alpha", name: "alpha" },
       { _id: "srv-beta", name: "beta" },
     ];
-    localStorage.removeItem(AUTO_CONNECT_SERVERS_KEY);
+    localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, "true");
   });
 
   it("connects every catalog server when Auto-connect is on, regardless of the host's serverIds", async () => {
@@ -169,7 +169,9 @@ describe("ActiveHostServerReconciler — auto-connect preference", () => {
     });
 
     await flush();
-    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"], {
+      automatic: true,
+    });
   });
 
   it("waits to establish the host scope until persisted selection hydrates", async () => {
@@ -193,7 +195,9 @@ describe("ActiveHostServerReconciler — auto-connect preference", () => {
 
     await flush();
 
-    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"], {
+      automatic: true,
+    });
   });
 
   it("connects the catalog even when no host is active (fresh project)", async () => {
@@ -214,7 +218,9 @@ describe("ActiveHostServerReconciler — auto-connect preference", () => {
     });
 
     await flush();
-    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"], {
+      automatic: true,
+    });
   });
 
   it("does not auto-connect anything when Auto-connect is off", async () => {

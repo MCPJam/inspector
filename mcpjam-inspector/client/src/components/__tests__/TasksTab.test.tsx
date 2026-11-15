@@ -23,6 +23,7 @@ const mockUpdateTask = vi.fn();
 vi.mock("@/lib/apis/mcp-tasks-api", () => ({
   listTasks: (...args: unknown[]) => mockListTasks(...args),
   getTask: (...args: unknown[]) => mockGetTask(...args),
+  getTasksBatch: vi.fn().mockResolvedValue({ wire: "extension", tasks: [] }),
   getTaskResult: (...args: unknown[]) => mockGetTaskResult(...args),
   cancelTask: (...args: unknown[]) => mockCancelTask(...args),
   getLatestProgress: (...args: unknown[]) => mockGetLatestProgress(...args),

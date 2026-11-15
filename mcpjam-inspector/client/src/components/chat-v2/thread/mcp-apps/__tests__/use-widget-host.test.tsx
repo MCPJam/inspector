@@ -1,3 +1,5 @@
+import { useBoundWidgetResources } from "../../bound-widget-resources";
+import { readResource } from "@/lib/apis/mcp-resources-api";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import { renderHook } from "@testing-library/react";
@@ -9,6 +11,10 @@ import {
 } from "@/contexts/widget-surface-context";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { useWidgetHost } from "../use-widget-host";
+import { SavedClientProvider } from "@/contexts/saved-client-context";
+import { useHostContextStore } from "@/stores/client-context-store";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 
 // Pin HOSTED_MODE off so the listResourceTemplates guard is exercised purely via
 // the web-managed-servers context (the security-sensitive boundary concern).
@@ -21,6 +27,9 @@ vi.mock("@/lib/config", () => ({
   VIEW_MOUNT_MODE: "write",
   VIEW_SUBDOMAINS_ENABLED: false,
 }));
+
+const boundFetch = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/session-token", () => ({ authFetch: boundFetch }));
 
 // Isolate the hook from the api/network layer.
 const listResourceTemplatesMock = vi.fn();
@@ -39,9 +48,13 @@ function makeWrapper(opts: {
   webManaged?: boolean;
   scenario?: boolean;
   surface?: WidgetSurface;
+  savedClient?: HostSnapshot;
 }) {
   return ({ children }: { children: React.ReactNode }) => {
     let node = <>{children}</>;
+    if (opts.savedClient) {
+      node = <SavedClientProvider value={opts.savedClient}>{node}</SavedClientProvider>;
+    }
     if (opts.surface !== undefined) {
       node = (
         <WidgetSurfaceProvider value={opts.surface}>
@@ -78,11 +91,39 @@ function makeWrapper(opts: {
 }
 
 describe("useWidgetHost", () => {
+  it("isolates saved context and CSP from ambient settings, including empty context", () => {
+    useHostContextStore.getState().applyHostTemplate({ locale: "de-DE", timeZone: "Europe/Berlin" });
+    useUIPlaygroundStore.getState().setMcpAppsCspMode("permissive");
+    const client: HostSnapshot = {
+      hostStyle: "claude",
+      hostContext: {
+        locale: "fr-FR", timeZone: "Europe/Paris", theme: "dark",
+        availableDisplayModes: ["inline"],
+        deviceCapabilities: { hover: false, touch: true },
+        safeAreaInsets: { top: 12, right: 0, bottom: 0, left: 0 },
+      },
+      mcpProfile: { version: 1, apps: { sandbox: { csp: { mode: "declared" } } } },
+    };
+    const a = renderHook(() => useWidgetHost(), { wrapper: makeWrapper({ savedClient: client }) });
+    const b = renderHook(() => useWidgetHost(), { wrapper: makeWrapper({ savedClient: { hostStyle: "chatgpt" } }) });
+    expect(a.result.current.environment).toMatchObject({
+      sharedHostStyle: "claude", draftHostContext: client.hostContext,
+      playgroundLocale: "fr-FR", playgroundTimeZone: "Europe/Paris",
+      playgroundCapabilities: { hover: false, touch: true },
+      playgroundSafeAreaInsets: { top: 12 }, scenarioHostTheme: "dark",
+    });
+    expect(a.result.current.surface.playgroundCspMode).toBe("widget-declared");
+    expect(b.result.current.environment).toMatchObject({
+      sharedHostStyle: "chatgpt", draftHostContext: {}, playgroundLocale: "en-US",
+      playgroundTimeZone: "UTC", playgroundCapabilities: { hover: true, touch: false },
+    });
+    expect(b.result.current.surface.playgroundCspMode).toBe("permissive");
+  });
   beforeEach(() => {
     listResourceTemplatesMock.mockReset();
   });
 
-  describe("services.listResourceTemplates (host-owned guard)", () => {
+  describe("services.listResourceTemplates (surface routing)", () => {
     it("delegates to the api when the surface is not web-managed", async () => {
       const templates = [{ uriTemplate: "ui://widget/{id}", name: "tpl" }];
       listResourceTemplatesMock.mockResolvedValue(templates);
@@ -94,18 +135,19 @@ describe("useWidgetHost", () => {
       await expect(
         result.current.services.listResourceTemplates("server-1"),
       ).resolves.toEqual(templates);
-      expect(listResourceTemplatesMock).toHaveBeenCalledWith("server-1");
+      expect(listResourceTemplatesMock).toHaveBeenCalledWith("server-1", { forceHosted: false });
     });
 
-    it("throws and never hits the api on web-managed surfaces", async () => {
+    it("uses the hosted API on web-managed surfaces", async () => {
+      listResourceTemplatesMock.mockResolvedValue([]);
       const { result } = renderHook(() => useWidgetHost(), {
         wrapper: makeWrapper({ webManaged: true }),
       });
 
       await expect(
         result.current.services.listResourceTemplates("server-1"),
-      ).rejects.toThrow(/Browsing resource templates isn’t available in MCPJam’s hosted web app/);
-      expect(listResourceTemplatesMock).not.toHaveBeenCalled();
+      ).resolves.toEqual([]);
+      expect(listResourceTemplatesMock).toHaveBeenCalledWith("server-1", { forceHosted: true });
     });
   });
 
@@ -138,4 +180,50 @@ describe("useWidgetHost", () => {
       expect(result.current.surface.kind).toBe("scenario");
     });
   });
+});
+
+
+it("binds initial widget loading and subsequent reads to the producer, with no ambient fallback", async () => {
+  const context = { owner: { kind: "chat" as const, userId: "user", serverId: "original", connectionId: "account-a", harnessSessionId: "lane" }, parentExecutionId: "source" };
+  const Wrapper = makeWrapper({ webManaged: true });
+  const { result, unmount } = renderHook(() => {
+    const host = useWidgetHost(); const bind = useBoundWidgetResources(context);
+    if (!bind) throw new Error("Missing resource binding");
+    return bind(host);
+  }, { wrapper: ({ children }) => <React.StrictMode><Wrapper>{children}</Wrapper></React.StrictMode> });
+  boundFetch.mockResolvedValueOnce(new Response(JSON.stringify({ html: "<p>Original account</p>", csp: { connectDomains: ["https://fixture.test"] } })));
+  await expect(result.current.services.fetchWidgetContent({ serverId: "original", resourceUri: "ui://app", toolInput: {}, toolOutput: {}, toolId: "call", toolName: "app", theme: "light", cspMode: "widget-declared", injectOpenAiCompat: false })).resolves.toMatchObject({ html: "<p>Original account</p>", csp: { connectDomains: ["https://fixture.test"] } });
+  expect(JSON.parse(boundFetch.mock.calls[0][1].body)).toEqual({ context, operation: { method: "widget/content", request: expect.objectContaining({ serverId: "original", resourceUri: "ui://app" }) } });
+  boundFetch.mockResolvedValueOnce(new Response(JSON.stringify({ error: "revoked" }), { status: 409 }));
+  await expect(result.current.services.readResource("original", "test://record")).rejects.toThrow("no longer available");
+  expect(readResource).not.toHaveBeenCalled();
+  expect(JSON.parse(boundFetch.mock.calls[1][1].body).context.owner.connectionId).toBe("account-a");
+  const signal = boundFetch.mock.calls[0][1].signal;
+  unmount();
+  await Promise.resolve();
+  expect(signal.aborted).toBe(true);
+});
+
+it.each([2, null])("refuses an unsupported or malformed retained source instead of using ambient resources (%s)", async version => {
+  const {retainedResourceProofFor} = await import("@/shared/retained-app-resources");
+  const proof = retainedResourceProofFor({toolCallId: "call", toolName: "qa_read", input: {}, output: {_meta: {"mcpjam/retainedResourceSource": version === null ? null : {version}}}}, {mcpjam: {presentationSig: "proof"}});
+  if (!proof) throw Error("A reserved source must retain its binding boundary");
+  const {result} = renderHook(() => {const base = useWidgetHost();const bind = useBoundWidgetResources(proof);return {bound: !!bind, host: bind ? bind(base) : base};}, {wrapper: makeWrapper({})});
+  expect(result.current.bound).toBe(true);
+  await expect(result.current.host.services.readResource("original", "test://record")).rejects.toThrow();
+  await expect(result.current.host.services.fetchWidgetContent({serverId: "original", resourceUri: "ui://app"})).rejects.toThrow();
+  expect(readResource).not.toHaveBeenCalled();
+  expect(boundFetch).not.toHaveBeenCalled();
+});
+
+
+it("keeps a retained source with a missing tool identity out of ambient resource APIs", async () => {
+  const {retainedResourceProofFor} = await import("@/shared/retained-app-resources");
+  const proof = retainedResourceProofFor({toolName:"qa_read",input:undefined,output:{_meta:{"mcpjam/retainedResourceSource":{version:1,toolCallId:"original-call",profile:"profile",attestation:"proof",digest:"digest",projectId:"project",chatSessionId:"chat",owner:{kind:"chat",userId:"user",serverId:"original",harnessSessionId:"lane"}}}}},{});
+  if (!proof) throw Error("Source boundary was lost");
+  const {result}=renderHook(()=>{const base=useWidgetHost();const bind=useBoundWidgetResources(proof);return {bound:!!bind,host:bind?bind(base):base};},{wrapper:makeWrapper({})});
+  expect(result.current.bound).toBe(true);
+  await expect(result.current.host.services.readResource("original","test://record")).rejects.toThrow();
+  expect(readResource).not.toHaveBeenCalled();
+  expect(boundFetch).not.toHaveBeenCalled();
 });

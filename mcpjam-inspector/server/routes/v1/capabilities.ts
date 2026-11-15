@@ -55,6 +55,8 @@ type CapabilitiesRow = {
       mode: "off" | "dark" | "enforce";
       enforced: boolean;
     };
+    /** Absent from backends that do not report it yet. */
+    conformance?: { enabled: boolean };
   };
   plan: {
     name: string;
@@ -298,6 +300,14 @@ capabilities.get("/projects/:projectId/capabilities", async (c) => {
           ? { reason: sandboxesOf(row).reason }
           : {}),
       },
+      /**
+       * Whether this caller can start conformance runs. Reported only when
+       * the backend says; absent means unknown, not off. Reads of existing
+       * runs never need it.
+       */
+      ...(row.features?.conformance
+        ? { conformance: { enabled: row.features.conformance.enabled } }
+        : {}),
     },
     plan: row.plan,
     /**

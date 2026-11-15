@@ -12,7 +12,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-// @ts-expect-error — plain ESM helper shared with the release smoke script.
 import { runLocalTestSmoke } from "./support/local-test-smoke.mjs";
 
 const CLI_ENTRY = fileURLToPath(new URL("../dist/index.js", import.meta.url));

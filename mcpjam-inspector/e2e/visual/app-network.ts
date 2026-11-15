@@ -1,8 +1,12 @@
 import { renderSandboxProxyHtml } from "../../server/routes/apps/mcp-apps/sandbox-proxy-html";
+import { sandboxViewHeaders } from "../../server/utils/sandbox-view-response";
+import { buildCSP } from "../../server/utils/sandbox-csp-policy";
+import { createHash } from "node:crypto";
 import type { BrowserContext, Route, WebSocketRoute } from "@playwright/test";
 import { FIXED_TIME, mutations, queries, responses } from "./app-data";
 
 const ORIGIN = "http://127.0.0.1:6289";
+type VisualView = { admissionId: string; htmlSha256: string; hostOrigin: string };
 type Message = {
   type: string;
   baseVersion: number;
@@ -88,6 +92,7 @@ async function serveHttp(
   failures: string[],
   fixture: AppFixture,
   origin: string,
+  views: Map<string, VisualView>,
 ) {
   const url = new URL(route.request().url());
   if (
@@ -105,15 +110,35 @@ async function serveHttp(
         ? { models: [] }
         : { version: "0.0.0" },
     });
-  if (
-    url.hostname === "sandbox.visual.invalid" &&
-    url.pathname.endsWith("/sandbox-proxy")
-  )
+  const document = views.get(url.origin);
+  if (document && url.pathname.endsWith("/sandbox-proxy") &&
+      url.searchParams.get("view_token") === document.admissionId)
     return route.fulfill({
-      contentType: "text/html",
-      body: renderSandboxProxyHtml(),
+      headers: sandboxViewHeaders(`${buildCSP()}, frame-ancestors ${origin}`),
+      body: renderSandboxProxyHtml(document),
     });
   if (url.origin === origin) {
+    const admissionPath = "/api/web/apps/mcp-apps/view-admissions";
+    if (url.pathname === admissionPath && route.request().method() === "POST") {
+      const input = route.request().postDataJSON();
+      if (input.hostOrigin !== origin || typeof input.html !== "string" ||
+          typeof input.viewInstanceId !== "string" ||
+          !/^[a-f0-9-]{36}$/.test(input.viewInstanceId))
+        return route.fulfill({ status: 400, json: { message: "Invalid visual App admission" } });
+      const admissionId = input.viewInstanceId;
+      const viewOrigin = `https://${admissionId}.sandbox.visual.invalid`;
+      const htmlSha256 = createHash("sha256").update(input.html).digest("hex");
+      views.set(viewOrigin, { admissionId, htmlSha256, hostOrigin: origin });
+      return route.fulfill({ json: {
+        admissionId, htmlSha256, expiresAt: FIXED_TIME + 2 * 60 * 60_000,
+        proxyUrl: `${viewOrigin}/api/apps/mcp-apps/sandbox-proxy?view_token=${admissionId}`,
+      } });
+    }
+    if (url.pathname.startsWith(`${admissionPath}/`) && route.request().method() === "DELETE") {
+      const admissionId = url.pathname.slice(admissionPath.length + 1);
+      views.delete(`https://${admissionId}.sandbox.visual.invalid`);
+      return route.fulfill({ status: 204 });
+    }
     if (
       !fixture.signedIn &&
       url.pathname === "/user_management/authenticate" &&
@@ -179,6 +204,7 @@ export async function prepareApp(
       { name: "workos-has-session", value: "1", url: origin },
     ]);
   const failures: string[] = [];
+  const views = new Map<string, VisualView>();
   context.on("page", (page) =>
     page.on("pageerror", (error) => failures.push(error.message)),
   );
@@ -218,9 +244,19 @@ export async function prepareApp(
     },
   );
   await context.route("**/*", (route) =>
-    serveHttp(route, failures, fixture, origin),
+    serveHttp(route, failures, fixture, origin, views),
   );
   await context.routeWebSocket("**/*", (socket) => {
+    const url = new URL(socket.url());
+    if (url.origin === origin.replace(/^http/, "ws") && url.pathname === "/api/web/mcp/mrtr/stream") {
+      socket.send(JSON.stringify({ type: "snapshot_start" }));
+      socket.send(JSON.stringify({ type: "snapshot_end" }));
+      socket.onMessage(() => {
+        failures.push("Unexpected response to an empty local form fixture");
+        socket.close();
+      });
+      return;
+    }
     if (
       new URL(socket.url()).origin ===
       (fixture.convexOrigin ?? "wss://visual.invalid")

@@ -35,6 +35,9 @@ export type GoalCompletionScorerOptions = {
   apiKey: string;
   baseUrls?: CreateModelOptions["baseUrls"];
   customProviders?: CreateModelOptions["customProviders"];
+  mcpjamAuth?: CreateModelOptions["mcpjamAuth"];
+  mcpjamProject?: CreateModelOptions["mcpjamProject"];
+  mcpjamLeaseScope?: CreateModelOptions["mcpjamLeaseScope"];
   rubric?: JudgeRubric;
   threshold?: number;
   role?: ScorerRole;
@@ -110,6 +113,9 @@ export function goalCompletionScorer(
     apiKey: options.apiKey,
     baseUrls: options.baseUrls,
     customProviders: options.customProviders,
+    mcpjamAuth: options.mcpjamAuth,
+    mcpjamProject: options.mcpjamProject,
+    mcpjamLeaseScope: options.mcpjamLeaseScope,
   });
   const timeoutMs = options.timeoutMs ?? DEFAULT_SCORER_TIMEOUT_MS;
   return {

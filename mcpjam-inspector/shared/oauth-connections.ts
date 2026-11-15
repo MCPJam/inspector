@@ -17,15 +17,41 @@ export interface OAuthConnection {
   expiresAt?: number;
 }
 export interface AuthorizedOAuthConnection extends OAuthConnection {
+  /**
+   * The backend's name for the account when it was asked for an account set:
+   * no email, and numbered over the person's whole list for that server.
+   */
+  displayName?: string;
+  /** Canonical per-account timestamp, including the legacy createdAt fallback. */
+  credentialAuthorizedAt?: number;
   accessToken?: string | null;
   unavailableReason?: string;
+  /**
+   * Built by the Inspector from the authorize result's default credential, not
+   * listed by the backend (it lists accounts only when there are two or more).
+   * The server's only login, so nothing on the wire names it.
+   */
+  implicit?: true;
 }
-export function connectionLabel(c: OAuthConnection, index = 0): string {
+export interface ConnectionLabelOptions {
+  /**
+   * For names other people read, such as eval runs a teammate opens: skip the
+   * profile email, and any rename or profile name that is an address.
+   */
+  withoutEmail?: boolean;
+}
+export function connectionLabel(
+  c: OAuthConnection,
+  index = 0,
+  options?: ConnectionLabelOptions,
+): string {
+  const usable = (value?: string) =>
+    value && !(options?.withoutEmail && value.includes("@")) ? value : undefined;
   return (
-    c.label ||
-    c.profile?.email ||
-    c.profile?.name ||
-    c.profile?.nickname ||
+    usable(c.label) ||
+    (options?.withoutEmail ? undefined : c.profile?.email) ||
+    usable(c.profile?.name) ||
+    usable(c.profile?.nickname) ||
     `Account ${index + 1}`
   );
 }
@@ -41,8 +67,11 @@ export function connectionLabel(c: OAuthConnection, index = 0): string {
  */
 export function connectionLabels(
   connections: readonly OAuthConnection[],
+  options?: ConnectionLabelOptions,
 ): string[] {
-  const base = connections.map((c, index) => connectionLabel(c, index));
+  const base = connections.map((c, index) =>
+    connectionLabel(c, index, options),
+  );
   const seen = new Map<string, number>();
   for (const label of base) seen.set(label, (seen.get(label) ?? 0) + 1);
 
@@ -59,6 +88,7 @@ export function connectionLabels(
     ];
     for (const qualifier of qualifiers) {
       if (!qualifier || qualifier === base[index]) continue;
+      if (options?.withoutEmail && qualifier.includes("@")) continue;
       const candidate = `${base[index]} (${qualifier})`;
       if (taken.has(candidate)) continue;
       taken.add(candidate);

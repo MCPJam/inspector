@@ -35,6 +35,10 @@ export const queries: Record<string, unknown> = {
   "projectSecrets:listSecrets": [],
   "billing:getCreditBalance": null,
   "organizationModelProviders:getVisibleConfigForProject": { providers: [] },
+  "organizationHarnessModels:listForProject": [],
+  // The create-client dialog (mounted by the client selector) reads the model
+  // list, which asks whether the deployment stores model selections.
+  "projectEnvironments:getCapabilities": {},
   "hosts:listHosts": [],
   "projects:getProjectMembers": { members: [], canManageMembers: false },
 };

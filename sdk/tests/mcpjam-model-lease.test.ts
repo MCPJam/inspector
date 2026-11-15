@@ -514,8 +514,14 @@ describe("configuration", () => {
     const base = `https://example.test/${slashes}path`;
     expect(resolveMcpjamBaseUrl(`${base}${slashes}`)).toBe(base);
     expect(resolveMcpjamBaseUrl(base)).toBe(base);
-    expect(resolveMcpjamBaseUrl(slashes)).toBe("");
-    expect(resolveMcpjamBaseUrl("")).toBe("");
+  });
+
+  it("refuses a base that is not a URL, and reads an empty one as unset", () => {
+    expect(() => resolveMcpjamBaseUrl("/".repeat(1_000))).toThrow(
+      expect.objectContaining({ code: "API_URL_INVALID" })
+    );
+    vi.stubEnv("MCPJAM_API_URL", "https://env.example.test/api/v1");
+    expect(resolveMcpjamBaseUrl("")).toBe("https://env.example.test");
   });
 
   it("defaults the project to the `default` sentinel", () => {

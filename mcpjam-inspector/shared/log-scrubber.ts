@@ -38,6 +38,7 @@ import { scrubCredentialsInText } from "./credential-urls";
 import {
   authHeaderLike,
   jwtLike,
+  localSessionProtocolLike,
   providerTokenLike,
   secretParamLike,
   skKeyLike,
@@ -64,6 +65,7 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
   "stripesubscription",
   "stripeprice",
   "xmcpsessionauth",
+  "secwebsocketprotocol",
   // Header-broker model lease (E2B network-transform delivery). A signed model
   // lease — never log it, even though the inspector never handles it directly
   // (defense in depth).
@@ -261,6 +263,7 @@ function scrubString(s: string): string {
     .replace(URL_LIKE(), reduceUrlMatch)
     .replace(authHeaderLike(), "$1[redacted]")
     .replace(tokenLike(), "Bearer [redacted-token]")
+    .replace(localSessionProtocolLike(), "[redacted-token]")
     .replace(jwtLike(), "[redacted-jwt]")
     .replace(urlBasicAuthLike(), "$1[redacted]@")
     .replace(EMAIL_LIKE, "[redacted-email]")

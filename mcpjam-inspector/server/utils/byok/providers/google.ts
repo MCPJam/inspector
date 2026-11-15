@@ -1,3 +1,5 @@
+export { GOOGLE_NATIVE_MODEL_IDS as GOOGLE_NATIVE_IDS } from "@mcpjam/sdk/model-factory";
+import { GOOGLE_NATIVE_MODEL_IDS } from "@mcpjam/sdk/model-factory";
 import {
   getProviderJson,
   isRecord,
@@ -8,7 +10,6 @@ import {
 } from "../list-request.js";
 import {
   createNativeIdTable,
-  type NativeIdMapping,
 } from "../native-id-table.js";
 import type { ByokListedModel, ByokProviderAdapter } from "../types.js";
 
@@ -25,32 +26,8 @@ const MAX_PAGES = 10;
  */
 const RESOURCE_PREFIX = "models/";
 
-// Every native id is a `SUPPORTED_MODELS` Google row that `createLlmModel`
-// (server/utils/chat-helpers.ts) sends verbatim to the Gemini API.
-const VERBATIM =
-  "SUPPORTED_MODELS row sent verbatim to the Gemini API by createLlmModel";
-const HOSTED = `${VERBATIM}; canonical spelling from hosted-model-ids.generated.ts`;
 
-export const GOOGLE_NATIVE_IDS: readonly NativeIdMapping[] = [
-  {
-    canonicalId: "google/gemini-2.5-pro",
-    nativeId: "gemini-2.5-pro",
-    evidence: HOSTED,
-  },
-  {
-    canonicalId: "google/gemini-2.5-flash",
-    nativeId: "gemini-2.5-flash",
-    evidence: HOSTED,
-  },
-  // Not in the hosted catalog; canonical spelling follows its siblings.
-  {
-    canonicalId: "google/gemini-2.0-flash-exp",
-    nativeId: "gemini-2.0-flash-exp",
-    evidence: VERBATIM,
-  },
-];
-
-const table = createNativeIdTable(LABEL, GOOGLE_NATIVE_IDS);
+const table = createNativeIdTable(LABEL, GOOGLE_NATIVE_MODEL_IDS);
 
 export const googleAdapter: ByokProviderAdapter = {
   providerKey: "google",

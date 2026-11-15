@@ -7,6 +7,8 @@ import {
 import { evaluateMultiTurnResults } from "../types";
 import { legacyProbeToPinnedTurn } from "@/shared/steps";
 import type { ProbeConfig } from "@/shared/probe-config";
+import { attachAuthChallenge, parseChallengeHeader } from "@mcpjam/sdk";
+import { toolAuthChallengeOf } from "../run-setup-signals";
 
 const probe: ProbeConfig = {
   serverName: "Weather",
@@ -72,6 +74,40 @@ describe("runPinnedTurn", () => {
       toolName: "show_map",
       kind: "protocol-error",
       message: "transport down",
+    });
+  });
+
+  it("files a pinned call that asks for sign-in as authorization_required, never signing in", async () => {
+    const browser = fakeBrowser();
+    const refused = Object.assign(new Error("HTTP 401"), { status: 401 });
+    attachAuthChallenge(
+      refused,
+      parseChallengeHeader(
+        'Bearer error="invalid_token", resource_metadata="https://x.example/.well-known/oauth-protected-resource", scope="orders:read"'
+      )
+    );
+    const executeTool = vi.fn().mockRejectedValue(refused);
+    const result = await runPinnedTurn({
+      pinned: probe,
+      resolvedServerKey: "srv-1",
+      mcpClientManager: { executeTool } as any,
+      browser,
+      promptIndex: 2,
+    });
+    expect(executeTool).toHaveBeenCalledOnce();
+    // The record itself is unchanged; the classification rides beside it.
+    expect(result.toolError).toMatchObject({
+      toolName: "show_map",
+      kind: "protocol-error",
+      message: "HTTP 401",
+    });
+    expect(toolAuthChallengeOf(result.toolError)).toMatchObject({
+      setupFailureSource: "authorization_required",
+      attribution: "ours",
+      toolCallId: result.toolCallId,
+      serverId: "srv-1",
+      promptIndex: 2,
+      authChallenge: { source: "http_401", requiredScope: "orders:read" },
     });
   });
 

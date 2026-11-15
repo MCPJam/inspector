@@ -667,16 +667,21 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("declarative WebMCP registration", () => 
     });
     const page = await browser.newPage();
     const cdp = await page.context().newCDPSession(page);
-    const seen: ToolPayload[] = [];
-    cdp.on("WebMCP.toolsAdded", (e) =>
-      seen.push(...(e as { tools: ToolPayload[] }).tools),
-    );
+    // Keyed by name, latest wins: when the parser yields mid-form, Blink
+    // registers the form with only the controls parsed so far, then removes
+    // and re-adds it once the form closes. The first payload can be partial.
+    const seen = new Map<string, ToolPayload>();
+    cdp.on("WebMCP.toolsAdded", (e) => {
+      for (const tool of (e as { tools: ToolPayload[] }).tools) {
+        seen.set(tool.name, tool);
+      }
+    });
     await cdp.send("WebMCP.enable" as never);
     await page.goto(fixture.declarativeUrl, { waitUntil: "networkidle" });
     await waitFor(() =>
-      seen.some((t) => t.name === FIXTURE_TOOLS.typedFields) ? true : undefined,
+      seen.has(FIXTURE_TOOLS.typedFields) ? true : undefined,
     );
-    tools = seen;
+    tools = [...seen.values()];
   }, 60_000);
 
   afterAll(async () => {

@@ -410,8 +410,8 @@ describe("web hosted rpc logs", () => {
       "srv-denied": {
         status: 403,
         code: "FORBIDDEN",
-        message: "Access denied",
-        details: { serverId: "srv-denied", serverName: "Denied" },
+        message: '"Denied" couldn\'t connect: Access denied. Check the server\'s settings on the Servers page.',
+        details: { serverId: "srv-denied", serverName: "Denied", serverRefusalReason: "other" },
       },
     });
     expect(data._rpcLogs.every((log) => log.serverId === "srv-1")).toBe(true);

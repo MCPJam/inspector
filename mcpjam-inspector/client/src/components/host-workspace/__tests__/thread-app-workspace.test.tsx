@@ -7,12 +7,18 @@ import {
   useThreadAppWorkspace,
 } from "../ThreadAppPanel";
 import { ThreadAppError } from "../thread-app-api";
+import { PLUGIN_ERROR_DESCRIPTIONS } from "../../../../../shared/plugin-diagnostics";
 const f = vi.hoisted(() => ({
   discover: vi.fn(),
   open: vi.fn(),
   invoke: vi.fn(),
   close: vi.fn(),
   log: vi.fn(),
+}));
+const analytics = vi.hoisted(() => ({ track: vi.fn() }));
+vi.mock("@/lib/analytics", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/analytics")>()),
+  track: analytics.track,
 }));
 vi.mock("../extension-log", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../extension-log")>()),
@@ -94,9 +100,10 @@ describe("caller-owned thread App lifetime", () => {
     // An unresolved activation can exceed any guest RPC budget: its acceptance
     // has already returned, without mounting/executing a second destination.
     await act(async () => {
-      await result.current.launch(servers[0], file, undefined, true);
+      await result.current.fileActions!.open("saved", file);
     });
     expect(f.invoke).toHaveBeenCalledTimes(1);
+    expect(result.current.fileActions?.workspaceId).toBe("workspace");
     await act(async () => {
       finish({ content: [] });
     });
@@ -325,6 +332,86 @@ describe("caller-owned thread App lifetime", () => {
     await waitFor(() => expect(f.close).toHaveBeenCalledTimes(1));
     await act(async () => deliver([declaration]));
     expect(result.current.menus).toEqual({});
+  });
+  it("logs only the shared refusal reason when discovery fails, then keeps explicit retry read-only", async () => {
+    const privateDescription = "private bearer and payload description";
+    f.discover.mockRejectedValueOnce(
+      new ThreadAppError("PLUGIN_WORKSPACE_DENIED", {
+        description: privateDescription,
+        candidates: ["private candidate"],
+      }),
+    );
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    await waitFor(() =>
+      expect(result.current.discoveryErrors.saved).toBe(true),
+    );
+    expect(f.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "discovery",
+        detail: {
+          refusalCode: "PLUGIN_WORKSPACE_DENIED",
+          refusalDescription: PLUGIN_ERROR_DESCRIPTIONS.PLUGIN_WORKSPACE_DENIED,
+        },
+      }),
+    );
+    expect(JSON.stringify(f.log.mock.calls)).not.toContain(privateDescription);
+    expect(JSON.stringify(f.log.mock.calls)).not.toContain("private candidate");
+    await act(async () => result.current.retryDiscovery("saved"));
+    expect(result.current.discoveryErrors.saved).toBe(false);
+    expect(result.current.entries.saved).toEqual([declaration]);
+    expect(f.open).not.toHaveBeenCalled();
+    expect(f.invoke).not.toHaveBeenCalled();
+  });
+  it.each([
+    new ThreadAppError("INSTANCE_PRIVATE_CREDENTIAL", {
+      description: "private description",
+    }),
+    new ThreadAppError("toString", { description: "private description" }),
+    Object.defineProperty(new ThreadAppError("PLUGIN_WORKSPACE_DENIED"), "code", { value: undefined }),
+    new ThreadAppError("PLUGIN_WORKSPACE_DENIED".repeat(100), {
+      description: "private description",
+    }),
+    new Error("private transport message"),
+    { code: "PLUGIN_WORKSPACE_DENIED", description: "private description" },
+  ])(
+    "keeps unknown or untrusted discovery errors generic %#",
+    async (error) => {
+      f.discover.mockRejectedValueOnce(error);
+      const { result } = renderHook(() =>
+        useThreadAppWorkspace(scope, servers),
+      );
+      await waitFor(() =>
+        expect(result.current.discoveryErrors.saved).toBe(true),
+      );
+      expect(f.log).toHaveBeenCalledWith({
+        serverId: "saved",
+        serverName: "Saved server",
+        label: "discovery",
+        level: "error",
+        message:
+          "Couldn't read this server's App entrypoints. Its Apps are hidden until discovery succeeds.",
+      });
+      expect(JSON.stringify(f.log.mock.calls)).not.toContain("private");
+    },
+  );
+  it("does not log a known refusal from discovery after its owner is aborted", async () => {
+    let fail!: (error: Error) => void;
+    f.discover.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    const { rerender } = renderHook(
+      ({ enabled }) => useThreadAppWorkspace(scope, enabled),
+      {
+        initialProps: { enabled: servers },
+      },
+    );
+    await waitFor(() => expect(f.discover).toHaveBeenCalledOnce());
+    rerender({ enabled: [] });
+    await act(async () => fail(new ThreadAppError("PLUGIN_WORKSPACE_DENIED")));
+    expect(f.log).not.toHaveBeenCalled();
   });
   it("ignores a late discovery retry after the owner or enabled servers change", async () => {
     for (const change of ["servers", "owner"] as const) {
@@ -687,5 +774,158 @@ describe("retained App leases", () => {
       await result.current.close(result.current.apps[0]);
     });
     expect(result.current.apps).toEqual([]);
+  });
+});
+
+describe("an entry App that can't go fullscreen", () => {
+  const global = { toolName: "board", title: "Board", kind: "global" as const };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    f.discover.mockResolvedValue([global]);
+    f.open.mockResolvedValue(handle);
+    f.invoke.mockResolvedValue({ content: [] });
+    f.close.mockResolvedValue(undefined);
+  });
+  afterEach(async () => {
+    vi.useRealTimers();
+    cleanup();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    delete (f as Record<string, unknown>).renew;
+  });
+
+  it("is closed and handed to its owner, without counting as a failed launch", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const handBack = vi.fn();
+    const { result } = renderHook(() =>
+      useThreadAppWorkspace(scope, servers, {
+        onFullscreenUnsupported: handBack,
+      }),
+    );
+    await act(async () => {
+      await result.current.launch(servers[0], global);
+    });
+    const [row] = result.current.apps;
+    expect(result.current.active).toBe(row.key);
+    act(() => result.current.appPorts!.fullscreenUnsupported!(row.key));
+    expect(handBack).toHaveBeenCalledExactlyOnceWith(servers[0], global);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(f.close).toHaveBeenCalledWith(handle, expect.any(AbortSignal));
+    expect(result.current.apps).toEqual([]);
+    expect(result.current.active).toBeNull();
+    // Its readiness wait would otherwise end as a timeout.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(31_000);
+    });
+    expect(analytics.track).not.toHaveBeenCalled();
+  });
+
+  it("has no port when the owner can't open it another way", () => {
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    expect(result.current.appPorts?.fullscreenUnsupported).toBeUndefined();
+  });
+
+  it("opens inline without selecting or revealing it, retries included", async () => {
+    const onLaunch = vi.fn();
+    f.invoke.mockRejectedValueOnce(new Error("offline"));
+    const { result } = renderHook(() =>
+      useThreadAppWorkspace(scope, servers, { onLaunch }),
+    );
+    await act(async () => {
+      await result.current.launch(
+        servers[0],
+        global,
+        undefined,
+        false,
+        "inline",
+      );
+    });
+    expect(f.open).toHaveBeenCalledWith(
+      "saved",
+      "board",
+      expect.any(AbortSignal),
+      "global",
+      undefined,
+      undefined,
+    );
+    expect(result.current.apps[0]).toMatchObject({
+      inline: true,
+      status: "error",
+    });
+    // Retry, as the inline view's Retry button does.
+    await act(async () => {
+      await result.current.launch(servers[0], global);
+    });
+    expect(result.current.apps[0]).toMatchObject({
+      inline: true,
+      status: "live",
+    });
+    expect(result.current.active).toBeNull();
+    expect(result.current.open).toBe(false);
+    expect(onLaunch).not.toHaveBeenCalled();
+  });
+
+  it("reopens an inline App whose session ended, since it is on screen", async () => {
+    vi.useFakeTimers({
+      toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
+    });
+    (f as Record<string, unknown>).renew = vi.fn(async () => {
+      throw new ThreadAppError("INSTANCE_UNAVAILABLE");
+    });
+    f.open.mockResolvedValueOnce({ ...handle, instanceToken: "first" });
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    await act(async () => {
+      await result.current.launch(
+        servers[0],
+        global,
+        undefined,
+        false,
+        "inline",
+      );
+    });
+    f.open.mockResolvedValueOnce({ ...handle, instanceToken: "second" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(APP_LEASE_RENEW_INTERVAL_MS);
+    });
+    expect(f.open).toHaveBeenCalledTimes(2);
+    expect(result.current.apps[0]).toMatchObject({
+      inline: true,
+      status: "live",
+      handle: { instanceToken: "second" },
+    });
+    expect(result.current.active).toBeNull();
+  });
+
+  it("closes an inline App without changing the rail's selection, a failed close included", async () => {
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    await act(async () => {
+      await result.current.launch(servers[0], declaration);
+      await result.current.launch(
+        servers[0],
+        global,
+        undefined,
+        false,
+        "inline",
+      );
+    });
+    const rail = result.current.active;
+    expect(rail).not.toBeNull();
+    const inline = result.current.apps.find((row) => row.inline)!;
+    f.close.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => {
+      await result.current.close(inline);
+    });
+    // The failed close stays inline, with its Retry close, and the rail keeps its App.
+    expect(result.current.apps.find((row) => row.inline)).toMatchObject({
+      status: "error",
+      closing: true,
+    });
+    expect(result.current.active).toBe(rail);
+    await act(async () => {
+      await result.current.close(inline);
+    });
+    expect(result.current.apps.some((row) => row.inline)).toBe(false);
+    expect(result.current.active).toBe(rail);
   });
 });

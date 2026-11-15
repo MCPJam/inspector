@@ -222,6 +222,36 @@ describe("posthog relay proxy", () => {
     expect(new Headers(init.headers).get("content-type")).toBe("text/plain");
   });
 
+  it("forwards a launch captured before the content grant with closed fields only", async () => {
+    const app = createTestApp();
+    vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
+    const launch = {
+      event: "app_launched",
+      uuid: "019a0000-0000-7000-8000-000000000002",
+      timestamp: EVENT_TIMESTAMP,
+      properties: {
+        token: POSTHOG_PROJECT_KEY,
+        distinct_id: "device-1",
+        location: "app",
+        is_authenticated: false,
+        platform: "web",
+        deployment: "hosted",
+        user_agent: "Mozilla/5.0 LAUNCH_SENTINEL",
+      },
+    };
+    const res = await app.request("http://localhost:6274/relay/i/v0/e/", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ api_key: POSTHOG_PROJECT_KEY, batch: [launch] }),
+    });
+    expect(res.status).toBe(200);
+    expect(forwardedJson()).toEqual({
+      api_key: POSTHOG_PROJECT_KEY,
+      batch: [{ ...restricted(launch), uuid: expect.any(String) }],
+    });
+    expect(JSON.stringify(forwardedJson())).not.toContain("LAUNCH_SENTINEL");
+  });
+
   it("serves the /tlm alias identically: prefix stripped, static/array/ingest routing intact", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValue(upstreamResponse());
@@ -414,6 +444,29 @@ describe("posthog relay proxy", () => {
     // No bearer, so the conservative policy: no client address at all.
     expect(headers.get("x-forwarded-for")).toBeNull();
     expect(headers.get("x-real-ip")).toBeNull();
+  });
+
+  it("never forwards the header MCPJAM_TRUSTED_CLIENT_IP_HEADER names", async () => {
+    vi.stubEnv("MCPJAM_TRUSTED_CLIENT_IP_HEADER", "x-envoy-external-address");
+    try {
+      const app = createTestApp();
+      vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
+
+      await app.request("http://localhost:6274/relay/i/v0/e/", {
+        method: "POST",
+        body: eventBatch(),
+        headers: {
+          "X-Envoy-External-Address": "1.2.3.4",
+          "User-Agent": "test-agent",
+        },
+      });
+
+      const headers = new Headers(mockedFetchInit().headers);
+      expect(headers.get("x-envoy-external-address")).toBeNull();
+      expect(headers.get("user-agent")).toBe("test-agent");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("scrubs encoding/cookie/CORS headers from the upstream response and passes status through", async () => {

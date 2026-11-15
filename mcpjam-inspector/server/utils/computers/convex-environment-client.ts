@@ -9,6 +9,7 @@
  * lives in Convex — this is a transport shim.
  */
 import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import type { ExecutionScope } from "../execution-scope.js";
 
 /**
@@ -128,4 +129,28 @@ export async function convexGetDesktopComputerStatus(
     computerId: view.computerId,
     status: typeof view.status === "string" ? view.status : "unknown",
   };
+}
+
+const deleteComputerRef = makeFunctionReference<
+  "mutation",
+  { projectId: string; runtimeKind: "desktop-browser" },
+  { deleted: boolean }
+>("projectComputers:deleteComputer");
+
+/**
+ * Delete the caller's desktop computer for a project: the mutation behind the
+ * Computer tab's delete button, run with the caller's own bearer, so it is
+ * authorized, settled for billing and audited exactly as theirs would be.
+ *
+ * `false` ⇒ there was no live desktop to delete.
+ */
+export async function convexDeleteDesktopComputer(
+  bearer: string,
+  projectId: string,
+): Promise<boolean> {
+  const result = await makeClient(bearer).mutation(deleteComputerRef, {
+    projectId,
+    runtimeKind: "desktop-browser",
+  });
+  return result.deleted;
 }

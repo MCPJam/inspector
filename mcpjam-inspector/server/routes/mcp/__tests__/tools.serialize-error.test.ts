@@ -71,10 +71,15 @@ describe("extractInsufficientScopeChallenge (SEP-2350)", () => {
     ).toBeUndefined();
   });
 
-  it("returns undefined when a name match carries no challenge fields", () => {
+  it("returns a bare challenge when a name match carries no challenge fields", () => {
+    // A bare `insufficient_scope` is still a step-up request.
     const err = new Error("insufficient scope");
     err.name = "InsufficientScopeError";
-    expect(extractInsufficientScopeChallenge(err)).toBeUndefined();
+    expect(extractInsufficientScopeChallenge(err)).toEqual({
+      requiredScope: undefined,
+      resourceMetadataUrl: undefined,
+      errorDescription: undefined,
+    });
   });
 
   it("tolerates a self-referential cause chain", () => {

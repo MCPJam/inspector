@@ -18,6 +18,7 @@ import {
   assertDirectoryReadResult,
   assertSkillEntry,
   assertSkillsListResult,
+  assertSkillsGetEnvelope,
   assertSkillsGetResult,
   isInvalidSkillsPayloadError,
 } from "../src/mcp-client-manager/skills-ext-guards.js";
@@ -230,6 +231,22 @@ describe("wire guards", () => {
     expect(isInvalidSkillsPayloadError(bare)).toBe(true);
   });
 
+  it("preserves SEP-2549 ttlMs/cacheScope on the skills/get envelope", () => {
+    // Required by the stable spec. The unwrapping guard drops them by
+    // design, so the envelope guard is the one that must keep them.
+    const entry = { uri: "skill://a/b/SKILL.md", frontmatter: { name: "b" } };
+    const result = assertSkillsGetEnvelope({
+      skill: entry,
+      ttlMs: 45_000,
+      cacheScope: "public",
+    });
+    expect(result).toMatchObject({ ttlMs: 45_000, cacheScope: "public" });
+    expect(result.skill).toMatchObject({ uri: "skill://a/b/SKILL.md" });
+    expect(() =>
+      assertSkillsGetEnvelope({ skill: entry, ttlMs: -1 })
+    ).toThrow();
+  });
+
   it("validates directory read results", () => {
     expect(
       assertDirectoryReadResult({
@@ -253,6 +270,18 @@ describe("wire guards", () => {
       "resources/directory/read"
     );
     expect((error as { issues: string[] }).issues.join(" ")).toContain("uri");
+  });
+
+  it("preserves SEP-2549 ttlMs/cacheScope on directory read results", () => {
+    const result = assertDirectoryReadResult({
+      resources: [],
+      ttlMs: 10_000,
+      cacheScope: "private",
+    });
+    expect(result).toMatchObject({ ttlMs: 10_000, cacheScope: "private" });
+    expect(() =>
+      assertDirectoryReadResult({ resources: [], ttlMs: 1.5 })
+    ).toThrow();
   });
 
   it("rejects an entry with NO frontmatter key at all", () => {

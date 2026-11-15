@@ -280,7 +280,7 @@ describe("RegistryTab", () => {
       expect(screen.getByText("Connect")).toBeInTheDocument();
     });
 
-    it("shows header and description when not authenticated", () => {
+    it("shows the header when not authenticated, without a subtitle", () => {
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer()],
       });
@@ -289,10 +289,11 @@ describe("RegistryTab", () => {
 
       expect(screen.getByText("Registry")).toBeInTheDocument();
       expect(
-        screen.getByText(
-          "Servers your organization has shared, plus connector directories you can connect from."
-        )
-      ).toBeInTheDocument();
+        screen.queryByText(/Connectors mirrored from a public directory/)
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Organization" })
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -328,6 +329,9 @@ describe("RegistryTab", () => {
       render(<RegistryTab {...defaultProps} />);
 
       expect(screen.queryByText("Your organization")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Organization" })
+      ).not.toBeInTheDocument();
     });
 
     it("renders the org's entries with their derived version, and no star control", () => {
@@ -339,8 +343,10 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
 
-      expect(screen.getByText("Your organization")).toBeInTheDocument();
       expect(screen.getByText("Internal Docs")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Directories" })
+      ).not.toBeInTheDocument();
       // Version comes off the probe snapshot, not off anything typed.
       expect(screen.getByText("v1.4.2")).toBeInTheDocument();
       // An org row has no `registryCardKey`, so it can never carry a star.
@@ -360,6 +366,12 @@ describe("RegistryTab", () => {
 
       expect(screen.getByText("Nothing shared yet")).toBeInTheDocument();
       expect(
+        screen.getByText("Add a server to share it with your organization.")
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/Paste a remote server/i)
+      ).not.toBeInTheDocument();
+      expect(
         screen.getByRole("button", { name: "Add a server" })
       ).toBeInTheDocument();
     });
@@ -374,6 +386,44 @@ describe("RegistryTab", () => {
       render(<RegistryTab {...defaultProps} />);
 
       expect(screen.queryByText("Your organization")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Organization" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("shows the organization first and keeps the directory on its own view", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      mockOrgRegistryReturn = orgRegistryHookReturn({
+        organizationId: "org_1",
+        canAdd: true,
+        servers: [orgEntry],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Internal Docs")).toBeInTheDocument();
+      expect(screen.queryByText("Linear")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Add a server" })
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Directories" }));
+
+      expect(screen.getByText("Linear")).toBeInTheDocument();
+      expect(screen.queryByText("Internal Docs")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Add a server" })
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Organization" }));
+
+      expect(screen.getByText("Internal Docs")).toBeInTheDocument();
+      expect(screen.queryByText("Linear")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Add a server" })
+      ).toBeInTheDocument();
     });
   });
 
@@ -645,7 +695,7 @@ describe("RegistryTab", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("renders the search box and the tier filter", () => {
+    it("renders the search box without a tier or connectable filter", () => {
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer()],
       });
@@ -657,7 +707,12 @@ describe("RegistryTab", () => {
           name: "Search the Claude directory…",
         })
       ).toBeInTheDocument();
-      expect(screen.getByTestId("directory-tier-filter")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("directory-tier-filter")
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Connectable only" })
+      ).not.toBeInTheDocument();
     });
 
     it("typing in the search box drives the hook's query", () => {
@@ -742,27 +797,15 @@ describe("RegistryTab", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("offers the source facet", () => {
+    it("does not offer a directory source picker", () => {
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer()],
       });
       render(<RegistryTab {...defaultProps} />);
-      expect(screen.getByTestId("directory-source-filter")).toBeInTheDocument();
-    });
-
-    it("hides the tier filter on a source that publishes no tiers", () => {
-      // An always-empty filter is worse than no filter: it reads as "this
-      // directory has no partners", which is a claim we would be inventing.
-      mockDirectoryReturn = directoryHookReturn({
-        items: [createDirectoryServer({ source: "chatgpt-directory" })],
-        source: "chatgpt-directory",
-        hasTiers: false,
-      });
-      render(<RegistryTab {...defaultProps} />);
-      expect(screen.getByTestId("directory-source-filter")).toBeInTheDocument();
       expect(
-        screen.queryByTestId("directory-tier-filter")
+        screen.queryByTestId("directory-source-filter")
       ).not.toBeInTheDocument();
+      expect(screen.queryByText("ChatGPT directory")).not.toBeInTheDocument();
     });
 
     it("keeps an options row on screen while Connectable only is on", () => {
@@ -788,31 +831,6 @@ describe("RegistryTab", () => {
       expect(
         screen.queryByRole("button", { name: "Not connectable" })
       ).not.toBeInTheDocument();
-    });
-
-    it("can hide the rows that cannot be installed", () => {
-      // Off by default — hiding a third of the ChatGPT directory before
-      // anyone asked would make it look smaller than it is.
-      mockDirectoryReturn = directoryHookReturn({
-        items: [createDirectoryServer()],
-      });
-      render(<RegistryTab {...defaultProps} />);
-      const toggle = screen.getByTestId("directory-connectable-filter");
-      expect(toggle).toHaveAttribute("aria-pressed", "false");
-
-      fireEvent.click(toggle);
-      expect(mockSetConnectableOnly).toHaveBeenCalledWith(true);
-    });
-
-    it("says how fresh the selected directory is", () => {
-      mockDirectoryReturn = directoryHookReturn({
-        items: [createDirectoryServer()],
-        lastSyncedAt: Date.parse("2026-08-14T00:00:00.000Z"),
-      });
-      render(<RegistryTab {...defaultProps} />);
-      expect(screen.getByTestId("directory-as-of")).toHaveTextContent(
-        /Claude directory as of/
-      );
     });
 
     it("badges a ChatGPT row as listed, never as verified", () => {
@@ -2040,11 +2058,7 @@ describe("RegistryTab", () => {
       );
     });
 
-    it("searchRegistryDirectory reports the tier that will actually be in force", async () => {
-      // Switching to a tier-less source clears the tier the screen was
-      // showing. Echoing `directory.tier` here would report a filter that had
-      // just been dropped — this render's closure still holds the old value —
-      // and the model would tell the user it had narrowed a view it had not.
+    it("searchRegistryDirectory rejects the ChatGPT directory", async () => {
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer()],
         tier: "partner",
@@ -2053,38 +2067,12 @@ describe("RegistryTab", () => {
 
       const response = await dispatch({
         type: "searchRegistryDirectory",
-        payload: { source: "chatgpt-directory" },
-      });
-
-      expect(response).toMatchObject({
-        status: "success",
-        result: {
-          status: "searching",
-          source: "chatgpt-directory",
-          tier: "all",
-        },
-      });
-    });
-
-    it("searchRegistryDirectory ignores a tier the target source cannot use", async () => {
-      // Applying it would park an inert value in state that springs back the
-      // moment the user returns to a source that DOES publish tiers, silently
-      // narrowing a view they never filtered.
-      mockDirectoryReturn = directoryHookReturn({
-        items: [createDirectoryServer()],
-      });
-      renderWithCards([toCatalogCard([createMockServer()])]);
-
-      const response = await dispatch({
-        type: "searchRegistryDirectory",
         payload: { source: "chatgpt-directory", tier: "partner" },
       });
 
-      expect(mockSetSource).toHaveBeenCalledWith("chatgpt-directory");
+      expect(response).toMatchObject({ status: "error" });
+      expect(mockSetSource).not.toHaveBeenCalled();
       expect(mockSetTier).not.toHaveBeenCalled();
-      expect(response).toMatchObject({
-        result: { source: "chatgpt-directory", tier: "all" },
-      });
     });
 
     it("searchRegistryDirectory rejects an unknown source", async () => {

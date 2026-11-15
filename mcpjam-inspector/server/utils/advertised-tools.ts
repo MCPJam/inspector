@@ -22,7 +22,7 @@
 export type PrepareAdvertisedTools = (ctx: {
   stepIndex: number;
   defaultToolNames: string[];
-}) => string[] | undefined;
+}) => string[] | undefined | Promise<string[] | undefined>;
 
 /**
  * Resolve the advertised tool-name list for a step.
@@ -44,12 +44,12 @@ export function applyPrepareAdvertisedTools(params: {
   stepIndex: number;
   prepareAdvertisedTools?: PrepareAdvertisedTools;
   onWarn?: (message: string, meta: { error: string }) => void;
-}): string[] {
+}): string[] | Promise<string[]> {
   const { defaultToolNames, stepIndex, prepareAdvertisedTools, onWarn } =
     params;
   if (!prepareAdvertisedTools) return defaultToolNames;
 
-  let narrowed: string[] | undefined;
+  let narrowed: ReturnType<PrepareAdvertisedTools>;
   try {
     narrowed = prepareAdvertisedTools({ stepIndex, defaultToolNames });
   } catch (err) {
@@ -59,9 +59,20 @@ export function applyPrepareAdvertisedTools(params: {
     return defaultToolNames;
   }
 
-  if (narrowed === undefined) return defaultToolNames;
-  const keep = new Set(narrowed);
-  return defaultToolNames.filter((name) => keep.has(name));
+  const normalize = (names: string[] | undefined) => {
+    if (names === undefined) return defaultToolNames;
+    const keep = new Set(names);
+    return defaultToolNames.filter(name => keep.has(name));
+  };
+  if (narrowed instanceof Promise) {
+    return narrowed.then(normalize, error => {
+      onWarn?.("prepareAdvertisedTools threw; advertising default tool set", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return defaultToolNames;
+    });
+  }
+  return normalize(narrowed);
 }
 
 /**

@@ -6,6 +6,26 @@ export const TELEMETRY_POLICY_HEADER = "x-mcpjam-telemetry-policy";
 /** A closed catalog, not a sanitizer: unlisted events and properties do not leave. */
 type Rule = readonly string[] | "count" | "boolean";
 const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
+  extension_launch_completed: {
+    location: ["host_workspace"],
+    launch_kind: ["thread", "global", "file", "quick-action", "settings"],
+    host_profile: ["chatgpt", "codex"],
+    outcome: ["success", "failure"],
+    failure_stage: ["none", "execution", "rendering", "timeout", "unknown"],
+    deployment: ["hosted", "self_hosted"],
+    source: ["client"],
+  },
+  // Sent at startup, often before the content grant arrives, so most launches
+  // reach the relay as strict. Without this entry every one of them is dropped.
+  app_launched: {
+    location: ["app"],
+    is_authenticated: "boolean",
+    platform: ["web", "npm", "docker", "mac", "win", "electron"],
+    deployment: ["hosted", "self_hosted"],
+    // Measures how long the content grant takes, to tune the launch timeout.
+    launch_trigger: ["immediate", "grant", "timeout", "hidden"],
+    policy_wait_ms: "count",
+  },
   send_message: {
     location: ["chat_tab", "ui_playground"],
     multi_model_enabled: "boolean",
@@ -22,6 +42,15 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     num_tests: "count",
     num_models: "count",
     replay: "boolean",
+  },
+  conformance_run_triggered: {
+    location: [
+      "conformance_tab",
+      "score_runner",
+      "compat_page",
+      "compat_detail_modal",
+    ],
+    run_source: ["ui"],
   },
   $pageview: {},
   $pageleave: {},
@@ -51,6 +80,13 @@ export function rebuildStrictPostHogEvent(
     typeof event.properties === "object" && event.properties !== null
       ? (event.properties as Record<string, unknown>)
       : {};
+  // An incomplete outcome would count as a successful attempt in the monitor.
+  if (event.event === "extension_launch_completed" &&
+      Object.entries(CATALOG.extension_launch_completed).some(([key, rule]) => {
+        const candidate = source[key];
+        return typeof rule !== "string" &&
+          (typeof candidate !== "string" || !rule.includes(candidate));
+      })) return null;
   const properties: Record<string, unknown> = {
     token: POSTHOG_PROJECT_KEY,
     app_version: version,

@@ -19,6 +19,21 @@
  * probing them separately would bill the customer's server twice.
  */
 
+export {
+  annotateToolAuthChallenge,
+  buildToolAuthChallengeMetadata,
+  classifyToolAuthChallenge,
+  collectToolAuthChallenges,
+  readToolAuthChallenge,
+  TOOL_AUTH_CHALLENGE_SOURCE,
+  TOOL_AUTH_CHALLENGES_METADATA_KEY,
+  toolAuthChallengeOf,
+  toolAuthChallengeRemediation,
+  type ToolAuthChallengeFinding,
+  type ToolAuthChallengeRecord,
+} from "./tool-auth-challenges.js";
+
+
 import {
   classifyNegotiationFailureClass,
   describeError,
@@ -38,6 +53,7 @@ import {
   BlockedEgressTargetError,
   EgressResolutionError,
 } from "../../utils/hosted-egress-guard.js";
+
 
 export type SetupAttribution = "ours" | "theirs" | "unknown";
 export type SetupPhase = "connection" | "discovery";

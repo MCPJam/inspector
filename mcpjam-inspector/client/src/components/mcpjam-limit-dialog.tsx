@@ -1,4 +1,7 @@
-import { creditUpgradeBenefit } from "@/lib/credit-limit-copy";
+import {
+  creditUpgradeBenefit,
+  SWARM_INSUFFICIENT_CREDITS_COPY,
+} from "@/lib/credit-limit-copy";
 import { FrontierSignInDialogView } from "./billing/FrontierSignInDialogView";
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { GuestCreditWallView } from "@/components/billing/GuestCreditWallView";
@@ -22,6 +25,7 @@ import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
 import { ScenarioOwnerLimitDialogView } from "@/components/billing/ScenarioOwnerLimitDialogView";
+import { NativeHarnessLimitDialog } from "@/components/billing/NativeHarnessLimitDialog";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
@@ -481,12 +485,21 @@ export function MCPJamLimitDialog() {
         />
       )}
       {showScenarioWall && <ScenarioOwnerLimitDialogView onDismiss={dismiss} />}
+      <NativeHarnessLimitDialog />
       {showGuestDialog && !frontierOpen && <GuestCreditWall />}
       {showCreditWall && (
         <CreditsLimitDialogView
           engagementContext={engagementContext}
           isFreePlan={isFreeEffectivePlan}
-          title={limitShortfall ? "Not enough MCPJam credits" : undefined}
+          // A swarm stops partway, often with credits still left, so its title
+          // says the run cannot finish rather than that the balance is empty.
+          title={
+            isSwarmWall
+              ? SWARM_INSUFFICIENT_CREDITS_COPY
+              : limitShortfall
+                ? "Not enough MCPJam credits"
+                : undefined
+          }
           description={isSwarmWall ? swarmDescription : creditDescription}
           isSwarm={isSwarmWall}
           isKnownNonManager={isKnownNonManager}

@@ -92,6 +92,7 @@ export async function runProtocolChecks(
   ctx: RawHttpCheckContext,
   selectedCheckIds: Set<MCPCheckId>,
 ): Promise<MCPCheckResult[]> {
+  ctx.config.signal?.throwIfAborted();
   const results: MCPCheckResult[] = [];
 
   if (!selectedCheckIds.has("protocol-invalid-method-error")) {
@@ -169,6 +170,7 @@ export async function runProtocolChecks(
       ),
     );
   } catch (error) {
+    ctx.config.signal?.throwIfAborted();
     results.push(
       failedResult(
         PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],

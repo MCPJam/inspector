@@ -1,4 +1,5 @@
 import { resolveAgentLoop } from './harness/agent-loop-dispatch.js';
+import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { readRuntimeModelChoice } from "./runtime-model-choice.js";
 /**
  * Shared resolver: hostConfig record + per-call overrides → resolved execution fields.
@@ -122,6 +123,7 @@ export interface ResolvedExecutionContext {
   systemPrompt: string | undefined;
   temperature: number | undefined;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   respectToolVisibility: boolean | undefined;
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
@@ -334,6 +336,12 @@ export function resolveExecutionContext(args: {
   namedHostId?: string;
 }): ResolvedExecutionContext {
   const { hostConfig, overrides = {}, precedence, namedHostId } = args;
+  if (hostConfig?.requireNativeToolDiscovery !== undefined && typeof hostConfig.requireNativeToolDiscovery !== "boolean") {
+    throw new Error("Native tool discovery requirement must be a boolean.");
+  }
+  if (hostConfig?.requireNativeToolDiscovery && !readHarness(hostConfig)) {
+    assertNativeDiscovery({ required: true });
+  }
   const drift: ExecutionDriftEntry[] = [];
 
   // hostConfig === null short-circuit: no host values, return overrides
@@ -513,6 +521,7 @@ export function resolveExecutionContext(args: {
     temperature: temperature.value,
     // `requireToolApproval` defaults to `false` (boolean-required slot).
     requireToolApproval: requireToolApprovalPick.value ?? false,
+    ...(hostConfig.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: hostConfig.requireNativeToolDiscovery } : {}),
     respectToolVisibility: respectToolVisibility.value,
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,

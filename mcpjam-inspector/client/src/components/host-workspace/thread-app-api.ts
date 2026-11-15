@@ -1,3 +1,7 @@
+import { watchOwnedLegacyInput } from "@/lib/owned-legacy-input";
+import { withPluginOperationAuthorization } from "@/lib/plugin-operation-authorization";
+import { readTransferredFile, writeTransferredFile } from "./file-transfer";
+import { PLUGIN_FILE_MEDIA_TYPE } from "@/shared/plugin-file-transfer";
 import { driveOwnedPluginMrtr } from "@/lib/apis/owned-plugin-mrtr";
 import { pluginOnboardingSpecSchema } from "@/shared/plugin-onboarding";
 import { z } from "zod";
@@ -40,6 +44,8 @@ export interface ThreadAppDeclaration {
 }
 const declaredIcons = pluginIconMetadataSchema.shape.toolIcons.optional();
 export interface ThreadAppHandle {
+  /** Captured from the admitted open target, never from App-authored metadata. */
+  serverId?: string;
   localFilesAvailable?: boolean;
   presentation?: "app" | "result";
   deepLink?: { url: string };
@@ -52,6 +58,7 @@ export interface ThreadAppHandle {
   toolTitle: string;
   toolMetadata?: Record<string, unknown>;
   appToolsEnabled: boolean;
+  resourcesEnabled?: boolean;
   contextEnabled?: boolean;
   messageEnabled?: boolean;
   contextSnapshot?: import("@/shared/plugin-model-context").PluginContextSnapshot;
@@ -108,7 +115,16 @@ async function post(
     // An unknown wire outcome is recoverable only through the original receipt.
     response = await authFetch(`/api/web/apps/plugin-instances/${path}`, init);
   }
+  return parseAppResponse(response, signal);
+}
+
+export async function parseAppResponse(response: Response, signal: AbortSignal): Promise<{ response: Response; value: Record<string, unknown> }> {
   signal.throwIfAborted();
+  if (response.ok && response.headers.get("content-type") === PLUGIN_FILE_MEDIA_TYPE) {
+    const value = await readTransferredFile(response, signal);
+    appendPluginDiagnostics(value.diagnostics);
+    return { response, value: { contents: value.contents } };
+  }
   const text = await response.text();
   if (new TextEncoder().encode(text).byteLength > PLUGIN_APP_REPLY_MAX_BYTES)
     throw new ThreadAppError("INSTANCE_RESPONSE_TOO_LARGE");
@@ -144,7 +160,7 @@ function accepted(response: Response, value: Record<string, unknown>) {
       },
     );
 }
-export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
+export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canInvoke: () => boolean = () => true) {
   const owner = {
     projectId: scope.projectId,
     pluginWorkspace: scope.pluginWorkspace,
@@ -204,6 +220,19 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
     };
   }
   return {
+    resource: async (
+      handle: ThreadAppHandle,
+      operation: { method: "resources/read"; uri: string; _meta?: Record<string, unknown> } | { method: "resources/list" | "resources/templates/list"; cursor?: string },
+      signal: AbortSignal,
+    ) => {
+      const response = await authFetch(`/api/web/apps/plugin-instances/${routePrefix}resources`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...owner, instanceToken: handle.instanceToken, operation }), signal,
+      });
+      const { value } = await parseAppResponse(response, signal);
+      accepted(response, value);
+      return value;
+    },
     onboarding: async (
       target: PluginOnboardingTarget,
       content: boolean,
@@ -285,11 +314,20 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
     ) => {
       if (!handle.file)
         throw new ThreadAppError("INSTANCE_RESOURCE_UNAVAILABLE");
-      const { response, value } = await post(
-        "files/read",
-        { ...owner, instanceToken: handle.instanceToken, params },
+      const init = {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: PLUGIN_FILE_MEDIA_TYPE },
+        body: JSON.stringify({ ...owner, instanceToken: handle.instanceToken, params }),
         signal,
-      );
+      };
+      let response: Response;
+      try {
+        response = await authFetch("/api/web/apps/plugin-instances/files/read", init);
+      } catch {
+        signal.throwIfAborted();
+        response = await authFetch("/api/web/apps/plugin-instances/files/read", init);
+      }
+      const { value } = await parseAppResponse(response, signal);
       accepted(response, value);
       const result = z
         .object({
@@ -326,7 +364,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
       signal: AbortSignal,
     ) => {
       const { response, value } = await post(
-        "files/open",
+        routePrefix + "files/open",
         { ...owner, instanceToken: handle.instanceToken, path },
         signal,
       );
@@ -361,16 +399,12 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
     ) => {
       if (!handle.fileCapabilities?.write)
         throw new ThreadAppError("INSTANCE_RESOURCE_UNAVAILABLE");
-      const { response, value } = await post(
-        "files/write",
-        {
-          ...owner,
-          instanceToken: handle.instanceToken,
-          operationId: crypto.randomUUID(),
-          params,
-        },
-        signal,
-      );
+      const response = await writeTransferredFile({
+        ...owner,
+        instanceToken: handle.instanceToken,
+        operationId: crypto.randomUUID(),
+      }, params, signal);
+      const { value } = await parseAppResponse(response, signal);
       accepted(response, value);
       return value;
     },
@@ -502,21 +536,50 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
         .safeParse(value);
       if (!handle.success)
         throw new ThreadAppError("INSTANCE_RESPONSE_INVALID");
-      return handle.data;
+      return { ...handle.data, serverId };
     },
     invoke: async (
       handle: ThreadAppHandle,
       signal: AbortSignal,
       approve: ApproveAppTool,
       call?: { name: string; arguments: Record<string, unknown> },
+      onInputPending?: (pending: boolean) => void,
     ): Promise<ThreadAppToolResult> => {
+      if (!canInvoke()) throw new ThreadAppError("INSTANCE_UNAVAILABLE");
       const path = routePrefix + (call ? "call" : "activation/execute");
       const body = {
         ...owner,
         instanceToken: handle.instanceToken,
         ...(call ? { invocationId: crypto.randomUUID(), params: call } : {}),
       };
-      let reply = await post(path, body, signal);
+      const send = (next: Record<string, unknown>) => withPluginOperationAuthorization(
+        { invocationId: call ? body.invocationId! : handle.operationId,
+          kind: call ? "call" : "activation", ...(call ? { params: call } : {}) },
+        signal,
+        async (operation, active) => {
+          const reply = await post(routePrefix + "renew", { ...owner, instanceToken: handle.instanceToken, ...operation }, active);
+          accepted(reply.response, reply.value);
+          return reply.value;
+        },
+        (authorization) => {
+          const stop = watchOwnedLegacyInput(
+            handle.serverId ? {
+              projectId: scope.projectId,
+              workspaceId: scope.pluginWorkspace.workspaceId,
+              instanceId: handle.instanceId,
+              generation: handle.generation,
+              serverId: handle.serverId,
+              invocationId: call ? body.invocationId! : handle.operationId,
+            } : undefined,
+            signal,
+            onInputPending,
+          );
+          return post(
+            path, { ...next, ...(authorization ? { authorization } : {}) }, signal,
+          ).finally(stop);
+        },
+      );
+      let reply = await send(body);
       if (
         reply.response.status === 409 &&
         reply.value?.status === "approval_required"
@@ -527,23 +590,26 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
         if (!parsed.success)
           throw new ThreadAppError("INSTANCE_RESPONSE_INVALID");
         const approval = parsed.data;
-        const approved = await approve(approval, signal);
+        let approved: boolean;
+        onInputPending?.(true);
+        try {
+          approved = await approve(approval, signal);
+        } finally {
+          onInputPending?.(false);
+        }
         signal.throwIfAborted();
-        reply = await post(
-          path,
-          { ...body, approval: { id: approval.id, approved } },
-          signal,
-        );
+        reply = await send({ ...body, approval: { id: approval.id, approved } });
       }
       accepted(reply.response, reply.value);
       reply.value = (await driveOwnedPluginMrtr(reply.value, {
         signal,
+        onInputPending,
         formScope: {
           projectId: scope.projectId,
           workspaceId: scope.pluginWorkspace.workspaceId,
         },
         submit: async (resume) => {
-          const next = await post(path, { ...body, resume }, signal);
+          const next = await send({ ...body, resume });
           accepted(next.response, next.value);
           return next.value;
         },

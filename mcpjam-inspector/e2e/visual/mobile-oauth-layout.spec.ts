@@ -304,9 +304,10 @@ for (const theme of ["light", "dark"])
           .getByRole("button", { name: /POST.*pending/ })
           .first();
         await expect(pending).toBeVisible();
+        // The request is in flight, so the button shows its pending label.
         await inside(
           page,
-          page.getByRole("button", { name: "Continue", exact: true }),
+          page.getByRole("button", { name: "Continuing...", exact: true }),
         );
         release();
         await requestFinished;
@@ -333,8 +334,10 @@ for (const theme of ["light", "dark"])
           .getByRole("button", { name: "Continue", exact: true })
           .click();
         await page.getByRole("tab", { name: "Raw", exact: true }).click();
+        // Not "503": the fake server's random port can contain it, and the
+        // hidden server URL would match first.
         await expect(
-          page.getByText(/503|Fixture unavailable|Local fixture error/).first(),
+          page.getByText(/Fixture unavailable|Local fixture error/).first(),
         ).toBeVisible();
         await inside(
           page,

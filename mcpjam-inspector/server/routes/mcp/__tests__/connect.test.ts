@@ -6,6 +6,13 @@ import {
   type MockMCPClientManager,
 } from "./helpers/index.js";
 
+// This device has approved every stdio command: the per-device approval gate
+// has its own suite, local-server-resolver.stdio-approval.test.ts.
+vi.mock("../../../utils/stdio-command-approvals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/stdio-command-approvals.js")>()),
+  checkStdioLaunchApproval: async () => ({ approval: "approved" as const }),
+}));
+
 const PROJECT_ID = "proj_test";
 const SERVER_ID = "srv_test";
 const SERVER_NAME = "test-server";
@@ -269,14 +276,49 @@ describe("POST /api/mcp/connect", () => {
         "X-Server-Default": "overridden-by-runtime",
       });
       expect(cfg.timeout).toBe(12345);
-      // The runtime overlay survives verbatim, and the local seam MERGES the
-      // SEP-2640 skills extension onto it — never replacing what the caller
-      // configured. In local mode the inspector IS the MCPJam client and ships
-      // the fulfiller, so advertise = enforce holds unconditionally here.
+      // The runtime overlay survives verbatim. It is the client's own exact
+      // set, and this client's "Skills over MCP" switch is off, so the local
+      // seam adds no SEP-2640 skills extension to it.
       expect(cfg.clientCapabilities).toEqual({
         sampling: { strategy: "auto" },
-        extensions: { "io.modelcontextprotocol/skills": {} },
       });
+    });
+
+    it("advertises Skills over MCP when the client's capabilities declare it", async () => {
+      mockBatchAuthorizeFetch({
+        results: {
+          [SERVER_ID]: {
+            ok: true,
+            role: "owner",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "http://localhost:3000/mcp",
+              useOAuth: false,
+            },
+          },
+        },
+      });
+      const declared = {
+        sampling: { strategy: "auto" },
+        extensions: { "io.modelcontextprotocol/skills": {} },
+      };
+
+      const res = await app.request("/api/mcp/connect", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          projectId: PROJECT_ID,
+          serverId: SERVER_ID,
+          serverName: SERVER_NAME,
+          connectionDefaults: { clientCapabilities: declared },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const cfg = mcpClientManager.connectToServer.mock.calls[0][1];
+      expect(cfg.clientCapabilities).toEqual(declared);
     });
 
     it("returns 401 when server requires OAuth but no token resolved", async () => {

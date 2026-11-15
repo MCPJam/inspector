@@ -136,3 +136,83 @@ describe("SDK analytics boundary", () => {
     expect(network).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("conformance run ping", () => {
+  it("sends one rebuilt, anonymous event in a single bounded attempt", async () => {
+    await telemetry.captureConformanceRun("sdk");
+    expect(network).toHaveBeenCalledTimes(1);
+    const [url, options] = network.mock.calls[0];
+    expect(url).toBe("https://us.i.posthog.com/batch/");
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    const { batch, ...envelope } = JSON.parse(options.body);
+    expect(Object.keys(envelope)).toEqual(["api_key"]);
+    expect(batch).toEqual([
+      {
+        event: "conformance_run_triggered",
+        distinct_id: "anonymous",
+        timestamp: expect.any(String),
+        properties: {
+          run_source: "sdk",
+          $geoip_disable: true,
+          $process_person_profile: false,
+          $insert_id: expect.stringMatching(/^[a-f0-9-]{36}$/),
+        },
+      },
+    ]);
+  });
+
+  it.each(["api", "github_app", "benchmark"] as const)(
+    "labels a hosted %s run",
+    async (runSource) => {
+      await telemetry.captureConformanceRun(runSource);
+      const { batch } = JSON.parse(network.mock.calls[0][1].body);
+      expect(batch[0].properties.run_source).toBe(runSource);
+    }
+  );
+
+  it.each([
+    ["DO_NOT_TRACK", "1"],
+    ["DO_NOT_TRACK", "true"],
+    ["MCPJAM_TELEMETRY_DISABLED", "1"],
+    ["MCPJAM_TELEMETRY_DISABLED", "true"],
+  ])("sends nothing when %s=%s", async (key, value) => {
+    process.env[key] = value;
+    await telemetry.captureConformanceRun("sdk");
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("tries once and never rejects when the network fails", async () => {
+    network.mockRejectedValueOnce(new TypeError("fetch failed"));
+    await expect(telemetry.captureConformanceRun("sdk")).resolves.toBeUndefined();
+    expect(network).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a run_source the SDK never sends, and leaks nothing", async () => {
+    const event = (run_source: unknown) => ({
+      event: "conformance_run_triggered",
+      distinct_id: "PRIVATE_SENTINEL",
+      properties: { run_source, $current_url: "PRIVATE_SENTINEL" },
+    });
+    await telemetry.sdkAnalyticsTransport("https://us.i.posthog.com/batch/", {
+      method: "POST",
+      headers: {},
+      body: JSON.stringify({
+        api_key: "PRIVATE_SENTINEL",
+        batch: [
+          event("ui"),
+          event("cli"),
+          event("github_action"),
+          event(""),
+          event(1),
+          event(undefined),
+          event("sdk"),
+        ],
+      }),
+    });
+    expect(network).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(network.mock.calls[0][1].body);
+    expect(payload.batch).toHaveLength(1);
+    expect(payload.batch[0].properties.run_source).toBe("sdk");
+    expect(JSON.stringify(payload)).not.toContain("PRIVATE_SENTINEL");
+  });
+});

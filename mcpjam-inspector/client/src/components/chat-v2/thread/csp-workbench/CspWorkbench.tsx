@@ -54,6 +54,11 @@ export interface CspWorkbenchProps {
   };
   protocol?: "openai-apps" | "mcp-apps";
   recordedPolicy?: RecordedWidgetPolicy;
+  /** Errors an eval run recorded, shown next to a live App's own findings. */
+  recordedErrors?: Pick<
+    RecordedWidgetPolicy,
+    "consoleErrors" | "blockedRequests"
+  >;
 }
 
 function stringList(value: unknown): string[] | undefined {
@@ -79,15 +84,17 @@ export function CspWorkbench({
   sandboxInfo,
   protocol,
   recordedPolicy,
+  recordedErrors: liveRecordedErrors,
 }: CspWorkbenchProps) {
   const [activeTab, setActiveTab] = useState<TabKey>(() =>
     recordedPolicy ? "policy-diff" : "findings",
   );
   const [jumpToHost, setJumpToHost] = useState<string | null>(null);
   const isRecorded = !!recordedPolicy;
+  const recordedErrors = recordedPolicy ?? liveRecordedErrors;
   const recordedErrorCount =
-    (recordedPolicy?.consoleErrors?.length ?? 0) +
-    (recordedPolicy?.blockedRequests?.length ?? 0);
+    (recordedErrors?.consoleErrors?.length ?? 0) +
+    (recordedErrors?.blockedRequests?.length ?? 0);
 
   // The policy the proxy reported injecting, parsed once. `undefined` on every
   // path that never round-trips through the proxy — an offline replay from
@@ -113,28 +120,28 @@ export function CspWorkbench({
             resourceDomains: [],
           }
         : appliedDirectives
-        ? {
-            ...effectiveFromCspHeader(appliedDirectives),
-            directives: appliedDirectives,
-            source: "applied",
-          }
-        : {
-            connectDomains: sandboxInfo?.connectDomains ?? [],
-            resourceDomains: sandboxInfo?.resourceDomains ?? [],
-            frameDomains: sandboxInfo?.frameDomains,
-            baseUriDomains: sandboxInfo?.baseUriDomains,
-            source: "declared",
-          },
+          ? {
+              ...effectiveFromCspHeader(appliedDirectives),
+              directives: appliedDirectives,
+              source: "applied",
+            }
+          : {
+              connectDomains: sandboxInfo?.connectDomains ?? [],
+              resourceDomains: sandboxInfo?.resourceDomains ?? [],
+              frameDomains: sandboxInfo?.frameDomains,
+              baseUriDomains: sandboxInfo?.baseUriDomains,
+              source: "declared",
+            },
       appliedPoliciesByMount: isRecorded
         ? undefined
         : sandboxInfo?.appliedPoliciesByMount,
       widgetDeclared: isRecorded
         ? recordedDeclaration(recordedPolicy)
-        : sandboxInfo?.widgetDeclared ?? null,
+        : (sandboxInfo?.widgetDeclared ?? null),
       subtypePolicy: isRecorded
         ? undefined
         : sandboxInfo?.applied?.cspSubtypePolicy,
-      violations: isRecorded ? [] : sandboxInfo?.violations ?? [],
+      violations: isRecorded ? [] : (sandboxInfo?.violations ?? []),
     }),
     [appliedDirectives, isRecorded, recordedPolicy, sandboxInfo],
   );
@@ -152,9 +159,50 @@ export function CspWorkbench({
     }
   }, [activeTab, isRecorded]);
 
+  const recordedErrorsBlock =
+    recordedErrorCount > 0 ? (
+      <div
+        className="rounded-md border border-destructive/30 bg-destructive/5 p-3"
+        data-testid="recorded-widget-errors"
+      >
+        <div className="text-[11px] font-semibold text-destructive">
+          {recordedErrorCount} recorded error
+          {recordedErrorCount === 1 ? "" : "s"}
+        </div>
+        {(recordedErrors?.consoleErrors?.length ?? 0) > 0 && (
+          <div className="mt-2">
+            <div className="text-[10px] font-medium text-muted-foreground">
+              Console
+            </div>
+            <ul className="mt-1 space-y-1 font-mono text-[10.5px] text-muted-foreground">
+              {recordedErrors?.consoleErrors?.map((error, index) => (
+                <li key={`${error}-${index}`} className="break-all">
+                  {error}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {(recordedErrors?.blockedRequests?.length ?? 0) > 0 && (
+          <div className="mt-2">
+            <div className="text-[10px] font-medium text-muted-foreground">
+              Blocked requests
+            </div>
+            <ul className="mt-1 space-y-1 font-mono text-[10.5px] text-muted-foreground">
+              {recordedErrors?.blockedRequests?.map((request, index) => (
+                <li key={`${request}-${index}`} className="break-all">
+                  {request}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    ) : null;
   // Absence-of-data: keep parity with the old panel — return null rather
-  // than rendering an empty workbench.
-  if (!sandboxInfo && !recordedPolicy) return null;
+  // than rendering an empty workbench. A live App loaded from its saved copy
+  // has no sandbox info, but the run's recorded errors still need a place.
+  if (!sandboxInfo && !recordedPolicy) return recordedErrorsBlock;
 
   return (
     <div
@@ -172,45 +220,7 @@ export function CspWorkbench({
           </div>
         </div>
       )}
-      {recordedErrorCount > 0 && (
-        <div
-          className="rounded-md border border-destructive/30 bg-destructive/5 p-3"
-          data-testid="recorded-widget-errors"
-        >
-          <div className="text-[11px] font-semibold text-destructive">
-            {recordedErrorCount} recorded error
-            {recordedErrorCount === 1 ? "" : "s"}
-          </div>
-          {(recordedPolicy?.consoleErrors?.length ?? 0) > 0 && (
-            <div className="mt-2">
-              <div className="text-[10px] font-medium text-muted-foreground">
-                Console
-              </div>
-              <ul className="mt-1 space-y-1 font-mono text-[10.5px] text-muted-foreground">
-                {recordedPolicy?.consoleErrors?.map((error, index) => (
-                  <li key={`${error}-${index}`} className="break-all">
-                    {error}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {(recordedPolicy?.blockedRequests?.length ?? 0) > 0 && (
-            <div className="mt-2">
-              <div className="text-[10px] font-medium text-muted-foreground">
-                Blocked requests
-              </div>
-              <ul className="mt-1 space-y-1 font-mono text-[10.5px] text-muted-foreground">
-                {recordedPolicy?.blockedRequests?.map((request, index) => (
-                  <li key={`${request}-${index}`} className="break-all">
-                    {request}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+      {recordedErrorsBlock}
       <Tabs
         value={activeTab}
         onValueChange={(v: string) => {

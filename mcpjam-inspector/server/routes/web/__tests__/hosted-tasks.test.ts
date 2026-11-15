@@ -1,3 +1,7 @@
+import {
+  installTaskAccounts,
+  TASK_ACCOUNT_KEY,
+} from "../../../utils/__tests__/task-account-fixture.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -11,6 +15,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const lifecycle: string[] = [];
 let managerImpl: Record<string, unknown> = {};
+
+const mockAuthorizeTaskSources = vi.fn();
+vi.mock("../../../utils/task-source-authorization.js", () => ({
+  authorizeTaskSources: (...args: unknown[]) => mockAuthorizeTaskSources(...args),
+}));
 
 const mockListRegistryTasks = vi.fn();
 const mockReportTaskStatuses = vi.fn();
@@ -37,8 +46,11 @@ vi.mock("../auth.js", async () => {
       c: any,
       schema: any,
       fn: (manager: any, body: any) => Promise<unknown>,
+      options: any,
     ) => {
-      const parsed = schema.safeParse(await c.req.json());
+      const raw = await c.req.json();
+      await options?.beforeConnect?.(raw);
+      const parsed = schema.safeParse(raw);
       if (!parsed.success) {
         return c.json(
           { error: { code: ErrorCode.VALIDATION_ERROR, message: "invalid" } },
@@ -47,6 +59,7 @@ vi.mock("../auth.js", async () => {
       }
       lifecycle.push("connect");
       try {
+        await options?.beforeOperation?.(parsed.data);
         const result = await fn(managerImpl, parsed.data);
         return c.json(result as Record<string, unknown>, 200);
       } catch (error) {
@@ -93,6 +106,7 @@ const legacySupport = {
 
 function setManager(overrides: Record<string, unknown>) {
   managerImpl = {
+    ensureTasksSupport: vi.fn().mockResolvedValue(extensionSupport),
     getTasksSupport: vi.fn().mockReturnValue(extensionSupport),
     ...overrides,
   };
@@ -114,8 +128,62 @@ describe("hosted /api/web/tasks", () => {
   beforeEach(() => {
     lifecycle.length = 0;
     managerImpl = {};
+    mockAuthorizeTaskSources.mockReset().mockResolvedValue(undefined);
     mockListRegistryTasks.mockReset().mockResolvedValue(null);
     mockReportTaskStatuses.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("waits for negotiation before checking ephemeral task capabilities", async () => {
+    let negotiated = false;
+    const manager = setManager({
+      ensureTasksSupport: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        negotiated = true;
+      }),
+      getTasksSupport: vi.fn(() => negotiated ? extensionSupport : { wire: "none" }),
+    });
+    const response = await post("/capabilities", {});
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ wire: "extension" });
+    expect(manager.ensureTasksSupport).toHaveBeenCalledWith("s1");
+  });
+
+  it("waits before checking the saved wire on a Task read", async () => {
+    let negotiated = false;
+    setManager({
+      ensureTasksSupport: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        negotiated = true;
+      }),
+      getTasksSupport: vi.fn(() => negotiated ? extensionSupport : { wire: "none" }),
+      getTaskExt: vi.fn().mockResolvedValue({ taskId: "t1" }),
+    });
+    const response = await post("/get", { taskId: "t1", wire: "extension" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ task: { taskId: "t1" } });
+  });
+
+  it("rejects an authority change during negotiation before reading the Task", async () => {
+    mockAuthorizeTaskSources.mockResolvedValueOnce({ binding: "original", hostConfig: {} });
+    const manager = setManager({
+      ensureTasksSupport: vi.fn(async () => {
+        await Promise.resolve();
+        mockAuthorizeTaskSources.mockResolvedValue(undefined);
+      }),
+      getTaskExt: vi.fn(),
+    });
+    const response = await post("/get", { taskId: "t1", wire: "extension" });
+    expect(response.status).toBe(403);
+    expect(manager.getTaskExt).not.toHaveBeenCalled();
+    expect(lifecycle).toEqual(["connect", "disconnect"]);
+  });
+
+  it("surfaces failed negotiation instead of reporting unsupported tasks", async () => {
+    const manager = setManager({ ensureTasksSupport: vi.fn().mockRejectedValue(new Error("connection failed")) });
+    const response = await post("/capabilities", {});
+    expect(response.status).toBe(500);
+    expect(manager.getTasksSupport).not.toHaveBeenCalled();
+    expect(lifecycle).toEqual(["connect", "disconnect"]);
   });
 
   it("connects, reads and disconnects for a single get", async () => {
@@ -598,4 +666,113 @@ describe("hosted /api/web/tasks", () => {
       }).success,
     ).toBe(true);
   });
+  it.each([
+    ["/get", "getTaskExt", { taskId: "same-id" }],
+    ["/get-batch", "getTaskExt", { taskIds: ["same-id"] }],
+    [
+      "/update",
+      "updateTask",
+      { taskId: "same-id", inputResponses: { choice: { action: "accept" } } },
+    ],
+    ["/cancel", "cancelTaskExt", { taskId: "same-id" }],
+  ] as const)(
+    "dispatches %s to the saved account, not the default",
+    async (path, method, body) => {
+      const execute = vi
+        .fn()
+        .mockResolvedValue({ taskId: "same-id", status: "working" });
+      const manager = setManager({ [method]: execute });
+      installTaskAccounts(
+        manager as unknown as Parameters<typeof installTaskAccounts>[0],
+      );
+      const response = await post(path, {
+        ...body,
+        connectionId: "account-b",
+        wire: "extension",
+      });
+      expect(response.status).toBe(200);
+      expect(execute.mock.calls[0][0]).toBe(TASK_ACCOUNT_KEY);
+      const registryCall = mockReportTaskStatuses.mock.calls[0];
+      if (registryCall)
+        expect(registryCall[0]).toMatchObject({
+          serverId: "s1",
+          connectionId: "account-b",
+        });
+    },
+  );
+
+  it("keeps recovery scoped to the selected account", async () => {
+    const manager = setManager({});
+    installTaskAccounts(
+      manager as unknown as Parameters<typeof installTaskAccounts>[0],
+    );
+    mockListRegistryTasks.mockResolvedValue([]);
+    expect(
+      (await post("/list", { connectionId: "account-b", wire: "extension" }))
+        .status,
+    ).toBe(200);
+    expect(mockListRegistryTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "s1", connectionId: "account-b" }),
+    );
+  });
+
+  it("refuses a missing saved account without reading the current default", async () => {
+    const getTaskExt = vi.fn();
+    const manager = setManager({ getTaskExt });
+    installTaskAccounts(
+      manager as unknown as Parameters<typeof installTaskAccounts>[0],
+    );
+    expect(
+      (await post("/get", { taskId: "same-id", connectionId: "removed" }))
+        .status,
+    ).toBe(403);
+    expect(getTaskExt).not.toHaveBeenCalled();
+  });
+
+  it("refuses a changed wire without interpreting an old task ID on the new wire", async () => {
+    const getTaskExt = vi.fn();
+    setManager({ getTaskExt });
+    expect(
+      (await post("/get", { taskId: "same-id", wire: "legacy" })).status,
+    ).toBe(409);
+    expect(getTaskExt).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed pins before connecting", async () => {
+    setManager({});
+    expect(
+      (await post("/get", { taskId: "same-id", connectionId: "bad\u0000pin" }))
+        .status,
+    ).toBe(400);
+    expect(lifecycle).toEqual([]);
+  });
+
+  it("refuses an owner change even when the new user can access the same account", async () => {
+    const getTaskExt = vi.fn().mockResolvedValue({ taskId: "same-id" });
+    const manager = setManager({ getTaskExt });
+    installTaskAccounts(
+      manager as unknown as Parameters<typeof installTaskAccounts>[0],
+      "actual-owner",
+    );
+    expect(
+      (
+        await post("/get", {
+          taskId: "same-id",
+          connectionId: "account-b",
+          ownerScope: "previous-owner",
+        })
+      ).status,
+    ).toBe(403);
+    expect(getTaskExt).not.toHaveBeenCalled();
+    expect(
+      (
+        await post("/get", {
+          taskId: "same-id",
+          connectionId: "account-b",
+          ownerScope: "actual-owner",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
 });

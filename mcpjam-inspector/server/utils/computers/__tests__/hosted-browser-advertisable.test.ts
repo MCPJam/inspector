@@ -38,7 +38,6 @@ describe("hostedBrowserAdvertisable", () => {
 
   beforeEach(() => {
     resetComputersRuntimeConfigBootstrapForTests();
-    vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "1");
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
   });
@@ -80,15 +79,5 @@ describe("hostedBrowserAdvertisable", () => {
     await initComputersRuntimeConfigBootstrap({ sleep: async () => {} });
 
     expect(hostedBrowserAdvertisable()).toBe(true);
-  });
-
-  it("refuses when the env flag is dark, whatever the backend says", async () => {
-    // The half the backend cannot see, and the reason this question is asked
-    // inspector-side at all.
-    stubRuntimeConfig({ exposable: true, desktopProvisionable: true });
-    await initComputersRuntimeConfigBootstrap({ sleep: async () => {} });
-    vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "");
-
-    expect(hostedBrowserAdvertisable()).toBe(false);
   });
 });

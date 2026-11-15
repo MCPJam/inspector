@@ -1,3 +1,4 @@
+import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
@@ -67,10 +68,6 @@ import {
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
-import type {
-  PinnableSkill,
-  PinnedSkillArtifact,
-} from "../../../shared/skill-types.js";
 import {
   resolveHostTools,
   type HostComputerResource,
@@ -86,10 +83,8 @@ import {
   type SkillsFetchFailure,
 } from "../../utils/computers/cloud-skill-tools.js";
 import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
-import {
-  buildLiveEffectiveCapabilities,
-  type EffectiveCapabilitySet,
-} from "../../services/environments/effective-capabilities.js";
+import type { PinnedSkillSource } from "../../services/environments/turn-skills.js";
+import { sessionTurnSkills } from "./session-skills.js";
 import {
   persistChatSessionToConvex,
   type PersistChatOutcome,
@@ -316,6 +311,8 @@ interface SessionResult {
 
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
+  /** Capabilities resolved from the immutable client snapshot. */
+  hostCapabilities?: Record<string, unknown>;
   modelDefinition: ModelDefinition;
   /**
    * The saved selection behind `modelDefinition`, already checked with
@@ -349,6 +346,7 @@ export interface SyntheticHostRuntime {
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   builtInToolIds?: string[];
   /**
    * What the hosted `browser_*` tools may do in this unattended run. A
@@ -372,6 +370,11 @@ export interface SyntheticHostRuntime {
    * from a run snapshot or a request body can produce one.
    */
   sandboxBinding?: TrustedSandboxBinding;
+  /**
+   * The desktop this session's Browser runs on when {@link sandboxBinding} is
+   * a pinned terminal box. Trusted the same way, and set the same way.
+   */
+  browserSandboxBinding?: TrustedSandboxBinding;
   /**
    * The SPECIFIC reason this session gets no shell, when one is known — e.g.
    * "this environment has no built image yet". Replaces the resolver's generic
@@ -427,15 +430,17 @@ export interface SyntheticHostRuntime {
   scenarioId?: string;
   /**
    * Authoritative pinned skills for an ENVIRONMENT-based swarm target
-   * (Project Environments, D3). `undefined` ⇒ live-pool semantics: the project
+   * (Project Environments, D3), prepared once for the target
+   * (`buildTargetSkillSource`). `undefined` ⇒ live-pool semantics: the project
    * catalog as a resolved capability set, plus the connected servers' own
-   * skills. An array — possibly EMPTY, meaning deliberately skill-less — ⇒
-   * skills come EXCLUSIVELY from these pinned artifacts: the emulated engine
-   * gets them via prepareChatV2 `skillsSource`, and a harness turn gets them
-   * via the pinned harness path (never `fetchRuntimeSkills`, and NEVER through
-   * prepareChatV2's pinned branch, which throws on harness).
+   * skills. A source — possibly EMPTY, meaning deliberately skill-less — ⇒
+   * skills come EXCLUSIVELY from these pins: every turn is planned from them
+   * (`sessionTurnSkills`), the emulated engine gets them as prepareChatV2's
+   * `skills` plan, and a harness turn gets their copies via the pinned harness
+   * path (never `fetchRuntimeSkills`, and NEVER as agent tools, which
+   * prepareChatV2 refuses on a harness turn).
    */
-  pinnedSkills?: PinnedSkillArtifact[];
+  pinnedSkillSource?: PinnedSkillSource;
   /**
    * The Project Environment this target runs (`environmentRef.environmentId` on
    * the pinned execution spec). Absent for a legacy host target, which has no
@@ -574,6 +579,7 @@ export async function runSyntheticHostSession(
     agentLoop,
     tasks,
     sandboxBinding,
+    browserSandboxBinding,
     harnessSandboxBinding,
     harnessExecutionTarget,
     accessVersion,
@@ -621,6 +627,7 @@ export async function runSyntheticHostSession(
 
   let harness: ReturnType<typeof resolveAgentLoop>["harnessId"];
   try {
+    assertNativeDiscovery({ required: runtime.requireNativeToolDiscovery });
     harness = resolveAgentLoop({ agentLoop, harness: configuredHarness }).harnessId;
   } catch (error) {
     return {
@@ -678,6 +685,7 @@ export async function runSyntheticHostSession(
   // with nothing to attach to.
   let anyTurnPersisted = false;
   let sessionRowEnsured = false;
+  let drainedTurnTimedOut = false;
   let selectedServerIds: string[] = [];
   // Derived from the persist signature rather than restated, so hoisting this
   // out of the try can't quietly widen what the persist accepts.
@@ -839,8 +847,9 @@ export async function runSyntheticHostSession(
     // session's transcript is read back like any other, and a card in it wants
     // the same answer: which tool on which page, as it was then.
     let advertisedPageTools: MintedDeclaredTool[] = [];
+    const browserBox = browserSandboxBinding ?? sandboxBinding;
     const pageToolsSnapshot = pageToolsSnapshotFrom(
-      sandboxBinding?.runtimeKind === "desktop-browser" &&
+      browserBox?.runtimeKind === "desktop-browser" &&
         browserApprovalDelivery
         ? await peekPageToolsForChatTurn({
             builtInToolIds,
@@ -854,7 +863,7 @@ export async function runSyntheticHostSession(
             engine: "hosted",
             projectId,
             bearer: authHeader,
-            sandboxRowId: sandboxBinding.sandboxRowId,
+            sandboxRowId: browserBox.sandboxRowId,
           })
         : undefined,
     );
@@ -910,6 +919,7 @@ export async function runSyntheticHostSession(
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        ...(browserSandboxBinding ? { browserSandboxBinding } : {}),
         ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
         onBrowserPageTools: ({ minted }) => {
           advertisedPageTools = minted;
@@ -959,9 +969,9 @@ export async function runSyntheticHostSession(
     // an otherwise-toolless approval simulation into one that fails every
     // session for no benefit. The skip stays correct even though empty
     // projects no longer advertise phantom tools.
-    const pinnedSkills = runtime.pinnedSkills;
+    const { pinnedSkillSource } = runtime;
     const cloudSkillsEnabled =
-      pinnedSkills === undefined &&
+      pinnedSkillSource === undefined &&
       !requireToolApproval &&
       Boolean(authHeader) &&
       Boolean(projectId) &&
@@ -975,27 +985,23 @@ export async function runSyntheticHostSession(
         hasProjectId: Boolean(projectId),
       });
 
-    // Authoritative pinned mode (env-based swarm target): the emulated engine
-    // gets frozen pinned tools via `skillsSource` — NEVER the live cloud-skill
-    // tools. `kind: "none"` covers (a) a deliberately skill-less target, (b) the
-    // approval-mode no-skills semantics (a headless visitor can't approve, same
-    // rationale as the live-catalog gate above), and (c) HARNESS turns —
-    // prepareChatV2 THROWS on harness+pinned, so a harness target's pinned
-    // artifacts ride `pinnedHarnessSkills` on the drain instead.
-    // The live arm, for a run with no pins: the project pool as a capability
-    // set. Previously this was "pass nothing and let the orchestrator fall
-    // through to its cloud branch"; that fallback is gone, so the source is
-    // now stated here.
+    // Authoritative pinned mode (env-based swarm target): every turn is
+    // planned from the target's frozen skills (`sessionTurnSkills`) — NEVER
+    // the live cloud-skill tools. MCPJam's agent gets them as tools; a
+    // HARNESS turn gets no tools, and the copies ride `pinnedHarnessSkills`
+    // on the drain instead.
+    // The live arm, for a run with no pins: the project pool, plus the
+    // connected servers' own skills.
     //
     // A catalog failure degrades to a live set with no PROJECT skills — never
-    // to `{ kind: "none" }`. The source also carries `composeLiveServerSkills`,
-    // so collapsing it would take the connected servers' SEP-2640 skills down
-    // with the project's, and those never failed: losing skills we could not
-    // fetch is a degradation, losing skills we could is a bug. The failure is
-    // recorded here rather than read back off `prepared`, because the fetch now
-    // happens on this side of `prepareChatV2` and the orchestrator cannot know
-    // how it went.
-    let liveCapabilities: EffectiveCapabilitySet | undefined;
+    // to no skills at all. A live set also composes the connected servers'
+    // SEP-2640 skills, so collapsing it would take those down with the
+    // project's, and those never failed: losing skills we could not fetch is
+    // a degradation, losing skills we could is a bug. The failure is recorded
+    // here rather than read back off `prepared`, because the fetch happens on
+    // this side of `prepareChatV2` and the orchestrator cannot know how it
+    // went.
+    let liveSkills: RuntimeStandaloneSkill[] | undefined;
     let skillsFetchFailed: SkillsFetchFailure | undefined;
     // `!harness` explicitly, not just via `cloudSkillsEnabled`: that gate only
     // suppresses a harness on a hosted-catalog model, so a harness on a BYOK
@@ -1011,40 +1017,18 @@ export async function runSyntheticHostSession(
       } catch (error) {
         skillsFetchFailed = skillsFailureFrom(error, Date.now() - startedAt);
       }
-      liveCapabilities = buildLiveEffectiveCapabilities({ standaloneSkills });
+      liveSkills = standaloneSkills;
     }
 
-    const skillsSource:
-      | { kind: "pinned"; skills: PinnableSkill[] }
-      | { kind: "none" }
-      | {
-          kind: "resolved";
-          capabilities: EffectiveCapabilitySet;
-          composeLiveServerSkills?: boolean;
-        } =
-      pinnedSkills === undefined
-        ? liveCapabilities
-          ? {
-              kind: "resolved",
-              capabilities: liveCapabilities,
-              // Live surface: server skills come from the connected servers,
-              // preserving what the fallthrough arm used to compose.
-              composeLiveServerSkills: true,
-            }
-          : { kind: "none" }
-        : harness || requireToolApproval || pinnedSkills.length === 0
-          ? { kind: "none" }
-          : {
-              kind: "pinned",
-              skills: pinnedSkills.map(
-                (a): PinnableSkill => ({
-                  name: a.name,
-                  description: a.description,
-                  content: a.content,
-                  contentHash: a.contentHash,
-                }),
-              ),
-            };
+    // One plan serves every turn of the session, and each turn's trace records
+    // what it hands the engine.
+    const sessionSkills = sessionTurnSkills({
+      pinnedSkillSource,
+      liveSkills,
+      harness,
+      requireToolApproval,
+      modelContextTokens: modelDefinition.contextLength,
+    });
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -1065,7 +1049,7 @@ export async function runSyntheticHostSession(
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
-      skillsSource,
+      skills: sessionSkills.skills,
     });
 
     if (skillsFetchFailed) {
@@ -1096,8 +1080,10 @@ export async function runSyntheticHostSession(
       // agentic personas drive rendered widgets by screenshots. Evals stay
       // deterministic and never enable it.
       enableComputerUse: true,
+      enableViewTools: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
+      hostCapabilities: runtime.hostCapabilities,
       // Live view: a frame per action, at CAPTURE time. Only wired when this
       // surface has a stream to put it on and the flag is on — absent, the
       // context does no thumbnail work at all.
@@ -1220,7 +1206,7 @@ export async function runSyntheticHostSession(
             ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
-            tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
+            tools: { ...prepared.allTools, ...browser!.computerWidgetTools, ...browser!.viewTools },
             hooks: {
               onToolCall: (event) => {
                 browser!.noteToolCallInput(event);
@@ -1237,13 +1223,13 @@ export async function runSyntheticHostSession(
                   args,
                 });
               },
-              onToolResult: (event) => {
-                void browser!.handleEngineToolResult(event);
+              onToolResult: async (event) => {
                 emit?.({
                   type: "tool_result",
                   toolCallId: event.toolCallId,
                   result: event.output,
                 });
+                await browser!.handleEngineToolResult(event);
               },
               ...(browser!.prepareAdvertisedTools
                 ? { prepareAdvertisedTools: browser!.prepareAdvertisedTools }
@@ -1312,8 +1298,8 @@ export async function runSyntheticHostSession(
             // exactly these artifacts (skillsHash derives from their fingerprints).
             // Passed even when EMPTY — an empty authoritative set means the
             // harness must run skill-less, not fall back to the live pool.
-            ...(harness && pinnedSkills !== undefined
-              ? { pinnedHarnessSkills: pinnedSkills }
+            ...(harness && pinnedSkillSource
+              ? { pinnedHarnessSkills: [...pinnedSkillSource.harnessSkills] }
               : {}),
             // The attempt's own disposable box for the HARNESS turn. Only meaningful
             // when a harness is selected — the emulated engine's shell binds through
@@ -1373,27 +1359,12 @@ export async function runSyntheticHostSession(
         return error.turn;
       });
 
-      if (turnDeadline.firedClock() === "turn") {
-        // Ends the SESSION, not just the turn — and that asymmetry with the
-        // eval runner is deliberate. Eval prompt turns are independently
-        // authored and independently graded, so the next one still means
-        // something. A swarm session is one conversation: turn N+1 is the
-        // persona reacting to turn N's reply, and there is no reply to react
-        // to. Carrying on would feed the persona a hole in the transcript.
-        const errorMessage = turnTimeoutMessage(budgets.turnTimeoutMs, turn);
-        emit?.({
-          type: "session_complete",
-          status: "failed",
-          errorMessage,
-        });
-        return {
-          outcome: "failed",
-          errorMessage,
-          errorReason: "turn_timeout",
-        };
+      // Capture the execution deadline before persistence can consume more time.
+      drainedTurnTimedOut = turnDeadline.firedClock() === "turn";
+      if (!drainedTurnTimedOut) {
+        await browser.dismissCarriedWidget();
+        emit?.({ type: "turn_finish", turnIndex: turn });
       }
-
-      emit?.({ type: "turn_finish", turnIndex: turn });
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
       // scenario modelId is pinned by `fetchScenarioRuntimeConfig` at start.
@@ -1405,10 +1376,9 @@ export async function runSyntheticHostSession(
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
 
-      if (!turnTrace) {
+      if (!turnTrace && !drainedTurnTimedOut) {
         if (failedTurn) throw failedTurn;
-        // No-trace turns skip transcript persistence (today only the aborted
-        // local-BYOK path reaches here — failed turns throw above). Their
+        // No-trace turns outside a timeout skip transcript persistence. Their
         // browser artifacts must still leave the context's "new" window now: a
         // later turn's drain would otherwise sweep them up (CodeRabbit,
         // PR 2610). With an outbox they are KEPT — it buckets by each
@@ -1430,7 +1400,9 @@ export async function runSyntheticHostSession(
       // Mirror chat-v2's per-turn persistence so the Trace tab and the
       // tool-snapshot/serverInspections fan-out work identically for
       // synthetic sessions and Playground sessions. Snapshot failures
-      // must never block the persist.
+      // must never block the persist. A timed-out turn skips the snapshot:
+      // the server that stalled the turn can stall `tools/list` for its whole
+      // request timeout before the evidence is saved.
       let toolSnapshot: unknown;
       try {
         const liveManager = built.manager;
@@ -1438,7 +1410,7 @@ export async function runSyntheticHostSession(
           typeof liveManager.hasServer === "function"
             ? selectedServerIds.filter((id) => liveManager.hasServer(id))
             : selectedServerIds;
-        if (knownIds.length > 0) {
+        if (knownIds.length > 0 && !drainedTurnTimedOut) {
           toolSnapshot =
             await exportConnectedServerToolSnapshotForEvalAuthoring(
               liveManager,
@@ -1476,16 +1448,22 @@ export async function runSyntheticHostSession(
         ...(persist.targetId ? { targetId: persist.targetId } : {}),
         // An EMPTY array is meaningful and is written: "this turn advertised no
         // page tools" is a different fact from "we do not know", and only the
-        // second is what an absent field means.
-        turnTrace: pageToolsSnapshot
-          ? {
-              ...turnTrace,
-              pageToolsAtTurn: toMintedPageToolRecords(
-                advertisedPageTools,
-                pageToolsSnapshot,
-              ),
-            }
-          : turnTrace,
+        // second is what an absent field means. The same holds for the skills
+        // a pinned target's turn was handed.
+        turnTrace: turnTrace && {
+          ...turnTrace,
+          ...(sessionSkills.skillsAtTurn
+            ? { skillsAtTurn: sessionSkills.skillsAtTurn }
+            : {}),
+          ...(pageToolsSnapshot
+            ? {
+                pageToolsAtTurn: toMintedPageToolRecords(
+                  advertisedPageTools,
+                  pageToolsSnapshot,
+                ),
+              }
+            : {}),
+        },
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
         // §3: ride this turn's harness resume-state commit into /ingest-chat
@@ -1508,6 +1486,26 @@ export async function runSyntheticHostSession(
         hostId: persist.hostId,
         bearer: authHeader,
       });
+
+      if (drainedTurnTimedOut) {
+        // Ends the SESSION, not just the turn — and that asymmetry with the
+        // eval runner is deliberate. Eval prompt turns are independently
+        // authored and independently graded, so the next one still means
+        // something. A swarm session is one conversation: turn N+1 is the
+        // persona reacting to turn N's reply, and there is no reply to react
+        // to. Carrying on would feed the persona a hole in the transcript.
+        const errorMessage = turnTimeoutMessage(budgets.turnTimeoutMs, turn);
+        emit?.({
+          type: "session_complete",
+          status: "failed",
+          errorMessage,
+        });
+        return {
+          outcome: "failed",
+          errorMessage,
+          errorReason: "turn_timeout",
+        };
+      }
 
       // MCP App widget snapshots so the Sessions viewer renders the actual
       // widget instead of a collapsed tool pill. Best-effort — a failure here
@@ -1567,7 +1565,15 @@ export async function runSyntheticHostSession(
     // A deadline abort reaches here as an `AbortError` whose message is the
     // runtime's ("This operation was aborted"), which tells a reader nothing.
     // `deadlineClockOf` recovers WHICH bound tripped and says so.
-    const firedClock = deadlineClockOf(error);
+    const errorClock = deadlineClockOf(error);
+    const firedClock = drainedTurnTimedOut ? "turn" : errorClock;
+    if (drainedTurnTimedOut && !errorClock) {
+      logger.warn("[sessionSimulation.runner] timed-out turn evidence could not be saved", {
+        runId,
+        chatSessionId,
+        reason: readErrorReason(error) ?? "persistence_failed",
+      });
+    }
     if (firedClock === "session" || firedClock === "turn") {
       const errorMessage =
         firedClock === "session"
@@ -2195,9 +2201,13 @@ export async function drainAssistantTurn(
   }
 
   // Engine-error signal. Structural type covers both the hosted
-  // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
-  let lastEngineError: ({ message: string } & SpendRefusal) | undefined;
-  const captureEngineError = (event: { message: string } & SpendRefusal) => {
+  // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`;
+  // a harness turn reports its code as producer evidence, under `infra`.
+  type EngineError = { message: string } & SpendRefusal & {
+    infra?: { code?: string; httpStatus?: number };
+  };
+  let lastEngineError: EngineError | undefined;
+  const captureEngineError = (event: EngineError) => {
     lastEngineError = event;
   };
 
@@ -2240,13 +2250,25 @@ export async function drainAssistantTurn(
       onEngineError: captureEngineError,
     });
 
-    // Aborted mid-turn: drop it (no writeback, no persist). Return the INPUT
-    // history unchanged, matching the old `runLocalOrgChatTurnHeadless` abort
-    // contract (`{ messages, aborted: true }`).
+    // Rebuild history with the SAME deduped append the old local path used
+    // (`buildLocalOrgOnPersist` / `runLocalOrgChatTurnHeadless`:
+    // `capturedHistory = [...messages]; appendDedupedModelMessages(...)`).
+    // `result.messages` is a plain `[...opts.messages, ...newMessages]` spread,
+    // so an engine response message that overlaps the input-history prefix (by
+    // id or JSON identity) would double-write into the transcript. Dedup the
+    // turn's new messages against the input prefix to match legacy semantics.
+    // `result.newMessages` are already mcp-tool-origin stamped, so the origin
+    // metadata is preserved.
+    const history: ModelMessage[] = [...args.messages];
+    appendDedupedModelMessages(history, result.newMessages);
+
+
+    // Preserve timeout evidence without changing cancellation or usage policy.
     if (result.aborted) {
+      const timedOut = deadlineClockOf(args.abortSignal?.reason) === "turn";
       return {
-        history: args.messages,
-        turnTrace: undefined,
+        history: timedOut ? history : args.messages,
+        turnTrace: timedOut ? result.turnTrace : undefined,
         modelSource: rt.modelSource,
       };
     }
@@ -2276,17 +2298,6 @@ export async function drainAssistantTurn(
       );
     }
 
-    // Rebuild history with the SAME deduped append the old local path used
-    // (`buildLocalOrgOnPersist` / `runLocalOrgChatTurnHeadless`:
-    // `capturedHistory = [...messages]; appendDedupedModelMessages(...)`).
-    // `result.messages` is a plain `[...opts.messages, ...newMessages]` spread,
-    // so an engine response message that overlaps the input-history prefix (by
-    // id or JSON identity) would double-write into the transcript. Dedup the
-    // turn's new messages against the input prefix to match legacy semantics.
-    // `result.newMessages` are already mcp-tool-origin stamped, so the origin
-    // metadata is preserved.
-    const history: ModelMessage[] = [...args.messages];
-    appendDedupedModelMessages(history, result.newMessages);
 
     return {
       history,
@@ -2432,11 +2443,11 @@ export async function drainAssistantTurn(
       return error;
     };
     if (lastEngineError) {
+      const httpStatus =
+        lastEngineError.httpStatus ?? lastEngineError.infra?.httpStatus;
       const detail = [
-        lastEngineError.code,
-        lastEngineError.httpStatus !== undefined
-          ? `HTTP ${lastEngineError.httpStatus}`
-          : undefined,
+        lastEngineError.code ?? lastEngineError.infra?.code,
+        httpStatus !== undefined ? `HTTP ${httpStatus}` : undefined,
       ]
         .filter(Boolean)
         .join(", ");

@@ -6,7 +6,8 @@
  * SUSPENDS: it hands the per-server manager a collector that persists the
  * operation to the durable continuation store, emits a `data-mrtr-input-
  * required` part, and throws `MrtrSuspendedSignal` to return control to the
- * worker (§12.5.2 forbids blocking).
+ * worker. Durable suspension is the hosted platform's lifecycle policy;
+ * the MCP protocol does not forbid an in-process input wait.
  *
  * ## Two connect-time races, both handled by construction
  *

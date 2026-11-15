@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AUTO_CONNECT_SERVERS_KEY,
   createPreferencesStore,
@@ -11,6 +11,11 @@ import {
 describe("preferences-store", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("initializes host style from the shared persisted key and persists updates", () => {
@@ -146,12 +151,13 @@ describe("preferences-store", () => {
     expect(store.getState().hostCapabilitiesOverride).toBeUndefined();
   });
 
-  it("defaults autoConnectServersEnabled to true and persists toggles", () => {
+  it("defaults autoConnectServersEnabled to false and persists toggles", () => {
     const store = createPreferencesStore({
       themeMode: "light",
       themePreset: "default",
     });
-    expect(store.getState().autoConnectServersEnabled).toBe(true);
+    expect(store.getState().autoConnectServersEnabled).toBe(false);
+    expect(localStorage.getItem(AUTO_CONNECT_SERVERS_KEY)).toBeNull();
 
     store.getState().setAutoConnectServersEnabled(false);
     expect(store.getState().autoConnectServersEnabled).toBe(false);
@@ -161,12 +167,36 @@ describe("preferences-store", () => {
     expect(localStorage.getItem(AUTO_CONNECT_SERVERS_KEY)).toBe("true");
   });
 
-  it("hydrates autoConnectServersEnabled=false from localStorage", () => {
-    localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, "false");
+  it.each([
+    ["false", false],
+    ["true", true],
+    ["invalid", false],
+  ])("hydrates auto-connect setting %s as %s", (stored, expected) => {
+    localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, stored);
     const store = createPreferencesStore({
       themeMode: "light",
       themePreset: "default",
     });
-    expect(store.getState().autoConnectServersEnabled).toBe(false);
+    expect(store.getState().autoConnectServersEnabled).toBe(expected);
+  });
+
+  it("defaults auto-connect off when storage cannot be read", () => {
+    const error = new Error("Storage unavailable");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(localStorage, "getItem").mockImplementation(() => {
+      throw error;
+    });
+    const state = createPreferencesStore().getState();
+    expect(state.autoConnectServersEnabled).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      "Failed to read persisted auto-connect setting:",
+      error,
+    );
+  });
+
+  it("defaults auto-connect off without a browser window", () => {
+    vi.stubGlobal("window", undefined);
+    const state = createPreferencesStore().getState();
+    expect(state.autoConnectServersEnabled).toBe(false);
   });
 });

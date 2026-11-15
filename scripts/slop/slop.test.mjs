@@ -800,6 +800,18 @@ describe("pr-size verdict", async () => {
   const { verdict, parseNumstat, countPatchLines, parseLabels, LARGE, LIMIT } =
     await import("./pr-size.mjs");
 
+  it("applies the approved size exception only to the exact repository and PR", () => {
+    const approved = { repository: "MCPJam/inspector", pullRequestNumber: "5764" };
+    assert.equal(verdict(LIMIT + 1, [], approved), "size-exception");
+    assert.equal(verdict(LARGE, [], approved), "ok");
+    assert.equal(verdict(LIMIT + 1, [], { ...approved, pullRequestNumber: "5765" }), "fail");
+    assert.equal(verdict(LIMIT + 1, [], { ...approved, pullRequestNumber: "57640" }), "fail");
+    assert.equal(verdict(LIMIT + 1, [], { ...approved, repository: "another/inspector" }), "fail");
+    assert.equal(verdict(LIMIT + 1, [], { pullRequestNumber: "5764" }), "fail");
+    assert.equal(verdict(LIMIT + 1, [], { repository: "MCPJam/inspector" }), "fail");
+    assert.equal(verdict(LIMIT + 1, []), "fail");
+  });
+
   it("counts NUL-delimited paths, including non-ASCII and tab ones", () => {
     const output = [
       "10\t2\tsdk/src/caf\u00e9.ts",

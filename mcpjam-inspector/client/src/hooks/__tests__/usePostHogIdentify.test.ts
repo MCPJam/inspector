@@ -74,7 +74,7 @@ vi.mock("@/lib/telemetry-context", () => ({
       ? mockState.actorKey
       : mockState.telemetryActor,
   currentTelemetryCaptureContext: () => ({
-    policy: { content: mockState.content },
+    policy: { content: mockState.content, identity: mockState.identity },
   }),
   telemetryIdentityFor: (actorKey: string | null) =>
     mockState.grant && actorKey !== null && actorKey === mockState.actorKey

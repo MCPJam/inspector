@@ -102,9 +102,15 @@ export function ownedPluginFormSchema(
 export function ownedMrtrFormCapabilities(
   base: Record<string, unknown>,
 ): Record<string, unknown> {
+  const elicitation = base.elicitation;
   return {
     ...base,
-    elicitation: { form: {} },
+    elicitation: {
+      ...(elicitation && typeof elicitation === "object" && !Array.isArray(elicitation)
+        ? elicitation
+        : {}),
+      form: {},
+    },
     extensions: {
       ...(base.extensions as Record<string, unknown> | undefined),
       [OPENAI_ELICITATION_EXTENSION]: { form: {} },
@@ -123,8 +129,10 @@ type Operation = {
 export function createOwnedPluginMrtr(deps: {
   c: Context;
   bearer: string;
+  getAuthorization?: () => Promise<string>;
   projectId: string;
   serverId: string;
+  serverName?: () => string | undefined;
   manager: () => MCPClientManager | undefined;
   assertCurrent: () => Promise<unknown>;
   sourceBinding: { hostId: string; hostRevision: string };
@@ -133,6 +141,8 @@ export function createOwnedPluginMrtr(deps: {
   uploadTarget?: () => "local-stdio" | "computer" | undefined;
   /** The client's File resources toggle; absent counts as off. */
   fileResources?: boolean;
+  /** Latest permission read by assertCurrent; issuance retains fileResources. */
+  fileResourcesEnabled?: () => boolean;
   /** The client's CURRENT Forms toggle, as of the latest `assertCurrent`
    * (one fresh admission read). Absent counts as on. */
   formsEnabled?: () => boolean;
@@ -150,6 +160,8 @@ export function createOwnedPluginMrtr(deps: {
       op.authorization.origin === "app" ? "mcp-app" : "server",
       uploadTarget() !== undefined,
     );
+  const currentBearer = () =>
+    deps.getAuthorization?.() ?? Promise.resolve(deps.bearer);
   let operation: Operation | undefined;
   let captured: PluginInvocationSuspension | undefined;
   const readCaptured = (): PluginInvocationSuspension | undefined => captured;
@@ -249,9 +261,10 @@ export function createOwnedPluginMrtr(deps: {
     const current = manager();
     const negotiatedEra = resolveMrtrNegotiatedEra(current, deps.serverId);
     const inner = createHostedMrtrCollector({
-      bearer: deps.bearer,
+      bearer: await currentBearer(),
       projectId: deps.projectId,
       serverId: deps.serverId,
+      serverName: deps.serverName?.(),
       negotiatedEra,
       bindingFingerprint: fingerprint(current, op),
       schemaDisplayMaxBytes: PLUGIN_FORM_SCHEMA_MAX_BYTES,
@@ -333,7 +346,7 @@ export function createOwnedPluginMrtr(deps: {
             suspended,
           );
         } catch (denied) {
-          await cancelContinuation(deps.bearer, {
+          await cancelContinuation(await currentBearer(), {
             continuationId: suspended.pending.continuationId,
             reason: disabled ? "plugin_forms_disabled" : "plugin_owner_changed",
           });
@@ -354,9 +367,9 @@ export function createOwnedPluginMrtr(deps: {
       const op: Operation = { authorization, invocationId, params, signal };
       const current = manager();
       await deps.assertCurrent();
-      const formsDisabled = () =>
+      const formsDisabled = async () =>
         endPluginMrtrFormsDisabled({
-          bearer: deps.bearer,
+          bearer: await currentBearer(),
           owner: authorization.owner,
           invocationId,
           continuationId: submission.continuationId,
@@ -366,6 +379,23 @@ export function createOwnedPluginMrtr(deps: {
       // form was shown with.
       if (formsOff()) return formsDisabled();
       let turnedOff = false;
+      let uploadRefusal: PluginContinuationRefused | undefined;
+      const assertUploadAllowed = (
+        origin: ResolvedInvocationContext["origin"],
+        hasUploads: boolean,
+      ) => {
+        if (
+          origin === "app" && hasUploads &&
+          !(deps.fileResourcesEnabled?.() ?? fileResources)
+        ) {
+          uploadRefusal = withPluginDiagnostic(
+            new PluginContinuationRefused("PLUGIN_FORM_WEB_UPLOAD_UNSUPPORTED"),
+            deps.serverId,
+            "Form submission refused: File resources is turned off for this client",
+          );
+          throw uploadRefusal;
+        }
+      };
       const client = current.getManagedClient(deps.serverId);
       // No wire started: the answer can be resent once the server reconnects.
       if (!client)
@@ -374,7 +404,7 @@ export function createOwnedPluginMrtr(deps: {
         );
       let wireStarted = false;
       const result = await resumeMrtrContinuationLeg({
-        bearer: deps.bearer,
+        bearer: await currentBearer(),
         submission,
         schemaDisplayMaxBytes: PLUGIN_FORM_SCHEMA_MAX_BYTES,
         selectFormSchema: formSchema,
@@ -414,9 +444,10 @@ export function createOwnedPluginMrtr(deps: {
             Object.keys(state.pendingInputRequests).length
           )
             throw new PluginInvocationError("CONTINUATION_FORM_UNSUPPORTED");
-          const deliveries: ReturnType<
-            typeof pluginFormFileGrants.prepareDelivery
-          >[] = [];
+          const deliveries: {
+            delivery: ReturnType<typeof pluginFormFileGrants.prepareDelivery>;
+            origin: ResolvedInvocationContext["origin"];
+          }[] = [];
           const sources: AbortSignal[] = [];
           const mapped = Object.fromEntries(
             Object.entries(state.pendingInputRequests).map(([key, request]) => {
@@ -464,17 +495,28 @@ export function createOwnedPluginMrtr(deps: {
                 original.token,
                 answer.content,
               );
-              deliveries.push(delivery);
+              assertUploadAllowed(original.source.origin, delivery.hasUploads);
+              deliveries.push({ delivery, origin: original.source.origin });
               return [key, { ...answer, content: delivery.content }];
             }),
           );
           return {
             responses: mapped,
-            commit: () => {
+            commit: async () => {
+              await deps.assertCurrent();
               signal.throwIfAborted();
+              if (formsOff()) {
+                turnedOff = true;
+                throw new PluginInvocationError("PLUGIN_FORMS_DISABLED");
+              }
               for (const source of sources) source.throwIfAborted();
-              for (const delivery of deliveries) delivery.assertReady();
-              for (const delivery of deliveries) delivery.commit();
+              // The durable pre-wire fence awaits after preparation; permission
+              // must still hold before any upload is promoted for delivery.
+              for (const { delivery, origin } of deliveries) {
+                assertUploadAllowed(origin, delivery.hasUploads);
+                delivery.assertReady();
+              }
+              for (const { delivery } of deliveries) delivery.commit();
             },
           };
         },
@@ -522,6 +564,7 @@ export function createOwnedPluginMrtr(deps: {
               continuationId: submission.continuationId,
               round: result.round,
               serverId: deps.serverId,
+              serverName: deps.serverName?.(),
               method: "tools/call",
               operationLabel: params.name,
               inputRequests: result.displays,
@@ -532,7 +575,7 @@ export function createOwnedPluginMrtr(deps: {
           );
         } catch (error) {
           pluginFormSources.closeOperation(authorization.owner, invocationId);
-          await cancelContinuation(deps.bearer, {
+          await cancelContinuation(await currentBearer(), {
             continuationId: submission.continuationId,
             reason: "plugin_form_source_unavailable",
           });
@@ -541,6 +584,15 @@ export function createOwnedPluginMrtr(deps: {
       }
       // Forms went off during this leg's admission: nothing reached the wire.
       if (!wireStarted && turnedOff) return formsDisabled();
+      if (!wireStarted && result.outcome === "failed" && result.terminal) {
+        pluginFormSources.closeOperation(authorization.owner, invocationId);
+        pluginFormFileGrants.closeOperation(authorization.owner, invocationId);
+        const terminal = new PluginContinuationTerminal(uploadRefusal
+          ? "PLUGIN_FORM_WEB_UPLOAD_UNSUPPORTED" : "CONTINUATION_FAILED");
+        terminal.diagnostics = uploadRefusal?.diagnostics;
+        throw terminal;
+      }
+      if (!wireStarted && uploadRefusal) throw uploadRefusal;
       if (!wireStarted && result.outcome === "failed")
         throw new PluginContinuationRefused();
       pluginFormSources.closeOperation(authorization.owner, invocationId);

@@ -22,9 +22,8 @@ vi.mock("../harness-proxy-strategy.js", async (importOriginal) => ({
 const { buildHarnessProxyMcpJsonFromManager } = await import(
   "../run-harness-turn.js"
 );
-const { isSealedHarnessProxyToken } = await import(
-  "../harness-proxy-policy-seal.js"
-);
+const { isSealedHarnessProxyToken, unsealHarnessProxyToken } =
+  await import("../harness-proxy-policy-seal.js");
 
 const policy: ToolPolicySnapshot = {
   mode: "default",
@@ -73,6 +72,20 @@ beforeEach(() => {
 });
 
 describe("policied harness .mcp.json assembly", () => {
+  it("does not mint or deliver a refused plugin server even with a cached config", async () => {
+    const { fetchHarnessProxyTokens } = await import("../harness-proxy-token-client.js");
+    vi.mocked(fetchHarnessProxyTokens).mockClear();
+    const { mcpJson } = await buildHarnessProxyMcpJsonFromManager({
+      manager, selectedServerIds: ["srv-a", "refused"],
+      unavailableServerIds: ["refused"],
+      pluginOrigins: { refused: { pluginId: "p", pluginVersionId: "v", name: "Refused plugin", bundleHash: null } },
+      authHeader: "Bearer test", projectId: "proj-1", strategy: hosted,
+      scopeStepUpCorrelationId: "corr-1",
+    });
+    expect(Object.keys(mcpJson.mcpServers)).toEqual(["srv-a"]);
+    expect(fetchHarnessProxyTokens).toHaveBeenCalledWith(expect.objectContaining({ serverIds: ["srv-a"] }));
+  });
+
   it("carries a sealed token, and no bare one, for a policied server", async () => {
     const { mcpJson } = await build(hosted, { "srv-a": policy });
     const header = Object.values(mcpJson.mcpServers)[0]?.headers?.[
@@ -82,11 +95,15 @@ describe("policied harness .mcp.json assembly", () => {
     expect(header).not.toContain("convex-token-a");
   });
 
-  it("keeps the bare token when no policy is in force", async () => {
+  it("seals the connection profile even when no tool policy is in force", async () => {
     const { mcpJson } = await build(hosted);
-    expect(
-      Object.values(mcpJson.mcpServers)[0]?.headers?.["X-MCPJam-Proxy-Token"]
-    ).toBe("convex-token-a");
+    const value = Object.values(mcpJson.mcpServers)[0]?.headers?.[
+      "X-MCPJam-Proxy-Token"
+    ];
+    expect(unsealHarnessProxyToken(value, "srv-a")).toMatchObject({
+      token: "convex-token-a",
+      profile: {},
+    });
   });
 
   it("refuses a policied run on the local-mcp plane rather than run it unenforced", async () => {

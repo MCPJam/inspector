@@ -9,10 +9,32 @@ import { useHostCatalog } from "./use-host-catalog";
 import { useWidgetUsageState } from "./use-widget-usage";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterReportsByFeatureFlags } from "./feature-visibility";
 
 const TOOLS_FETCH_MAX_ATTEMPTS = 3;
+/** A server that never stops paging must not hold the list open forever. */
+const TOOLS_MAX_PAGES = 50;
+
+/**
+ * Every page of a server's tools, following `nextCursor`. Stopped by the page
+ * cap, the result keeps the last `nextCursor`, so a reader can tell the list
+ * is not complete.
+ */
+async function listAllTools(
+  serverName: string,
+): Promise<ListToolsResultWithMetadata> {
+  let page = await listTools({ serverId: serverName });
+  const tools = [...page.tools];
+  let toolsMetadata = page.toolsMetadata;
+  for (let count = 1; page.nextCursor && count < TOOLS_MAX_PAGES; count++) {
+    page = await listTools({ serverId: serverName, cursor: page.nextCursor });
+    tools.push(...page.tools);
+    toolsMetadata = { ...toolsMetadata, ...page.toolsMetadata };
+  }
+  return { ...page, tools, toolsMetadata };
+}
 
 export type ToolsDataStatus = "idle" | "loading" | "ready" | "failed";
 
@@ -32,6 +54,8 @@ export type ServerToolsDataState = {
  */
 export function useServerToolsData(
   server: ServerWithName | null,
+  /** Follow `nextCursor` to the end, for a surface that offers every tool. */
+  { allPages = false }: { allPages?: boolean } = {},
 ): ServerToolsDataState {
   const isConnected = server?.connectionStatus === "connected";
   const serverName = server?.name;
@@ -52,7 +76,10 @@ export function useServerToolsData(
     }
 
     const attempt = (tries: number) => {
-      listTools({ serverId: serverName })
+      (allPages
+        ? listAllTools(serverName)
+        : listTools({ serverId: serverName })
+      )
         .then((result) => {
           if (!cancelled) setState({ data: result, status: "ready" });
         })
@@ -76,7 +103,7 @@ export function useServerToolsData(
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [isConnected, serverName]);
+  }, [allPages, isConnected, serverName]);
 
   return state;
 }
@@ -97,6 +124,7 @@ export function useHostCompatReports(
   const catalogState = useHostCatalog();
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
 
   const protocolVersion = server.initializationInfo?.protocolVersion;
@@ -123,6 +151,7 @@ export function useHostCompatReports(
       reports: filterReportsByFeatureFlags(evaluation.reports, {
         claudeCode: claudeCodeEnabled,
         codex: codexEnabled,
+        copilotCli: copilotCliEnabled === true,
         cursorCli: cursorCliEnabled,
       }),
     };
@@ -136,5 +165,6 @@ export function useHostCompatReports(
     claudeCodeEnabled,
     codexEnabled,
     cursorCliEnabled,
+    copilotCliEnabled,
   ]);
 }

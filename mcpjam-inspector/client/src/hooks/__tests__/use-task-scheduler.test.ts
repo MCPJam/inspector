@@ -14,6 +14,8 @@ import {
   getTrackedTasks,
   recordTaskObservation,
   setTrackedTaskScope,
+  setTrackedTaskOwner,
+  getOwnedTaskScope,
   trackTask,
 } from "@/lib/task-tracker";
 
@@ -501,4 +503,39 @@ describe("useTaskScheduler", () => {
       vi.useRealTimers();
     }
   });
+  it("does not reuse a matching task's answered keys across account switches", () => {
+    setTrackedTaskOwner("project", "owner");
+    const scope = getOwnedTaskScope();
+    for (const connectionId of ["a", "b"])
+      trackTask({
+        taskId: "same",
+        serverId: "server",
+        wire: "extension",
+        connectionId,
+        scope,
+        createdAt: NOW,
+      });
+    const { result, rerender } = renderHook(
+      ({ connectionId }) =>
+        useTaskScheduler({
+          serverId: "server",
+          wire: "extension",
+          connectionId,
+          scope,
+          userMinimumIntervalMs: 1000,
+        }),
+      { initialProps: { connectionId: "a" } },
+    );
+    act(() => {
+      result.current.dueTaskIds(["same"]);
+      result.current.markInputResponded("same", ["answered-a"]);
+    });
+    expect(result.current.respondedInputKeys("same")).toEqual(["answered-a"]);
+    rerender({ connectionId: "b" });
+    expect(result.current.respondedInputKeys("same")).toEqual([]);
+    rerender({ connectionId: "a" });
+    result.current.dueTaskIds(["same"]);
+    expect(result.current.respondedInputKeys("same")).toEqual(["answered-a"]);
+  });
+
 });

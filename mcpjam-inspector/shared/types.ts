@@ -6,6 +6,7 @@ import {
 
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 import { MODEL_ID_PREFIX_ALIASES } from "./model-id-prefix-aliases";
+import type { GatewayApi } from "./gateway-connection";
 
 import type {
   AuthMethod,
@@ -399,6 +400,18 @@ export interface ModelDefinition {
    */
   orgProvider?: { providerKey: string; id?: string };
   /**
+   * Set on rows from an organization gateway (`custom:*`): the APIs it
+   * serves, where its calls come from, and the catalog model this row's
+   * gateway model maps to (absent when unmapped). Harness pickers judge the
+   * row on these (`gatewayHarnessModel`).
+   */
+  gateway?: {
+    providerKey: string;
+    apis: readonly GatewayApi[];
+    runtimeLocation?: "cloud" | "local";
+    modelId?: string;
+  };
+  /**
    * The id the provider API is called with, when it is chosen explicitly
    * rather than being the row id: the deployment name of an org Azure OpenAI
    * row. Copied to the saved selection's `nativeModelId` by the selection
@@ -468,6 +481,7 @@ export enum Model {
   CLAUDE_OPUS_4_6 = "claude-opus-4-6",
   CLAUDE_SONNET_4_6 = "claude-sonnet-4-6",
   CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
+  CLAUDE_HAIKU_5_5 = "claude-haiku-5-5",
   CLAUDE_HAIKU_4_5 = "claude-haiku-4-5",
   GPT_4_1 = "gpt-4.1",
   GPT_4_1_MINI = "gpt-4.1-mini",
@@ -488,6 +502,7 @@ export enum Model {
   GPT_5_6_LUNA = "gpt-5.6-luna",
   GPT_5_6_SOL = "gpt-5.6-sol",
   GPT_5_6_TERRA = "gpt-5.6-terra",
+  GPT_6_LUNA = "gpt-6-luna",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
@@ -592,6 +607,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   {
+    id: Model.CLAUDE_HAIKU_5_5,
+    name: "Claude Haiku 5.5",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
+  {
     id: Model.CLAUDE_HAIKU_4_5,
     name: "Claude Haiku 4.5",
     provider: "anthropic",
@@ -612,6 +633,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: Model.GPT_5_6_TERRA,
     name: "GPT-5.6 Terra",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: Model.GPT_6_LUNA,
+    name: "GPT-6 Luna",
     provider: "openai",
     contextLength: 1050000,
   },

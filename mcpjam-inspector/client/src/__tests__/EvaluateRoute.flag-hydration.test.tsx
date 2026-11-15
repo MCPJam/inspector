@@ -7,7 +7,6 @@ let flagState: boolean | undefined = undefined;
 
 const { mockRouteContext } = vi.hoisted(() => ({
   mockRouteContext: {
-    billingUiEnabled: false,
     activeTabBillingLocked: false,
     activeTabBillingFeature: null as string | null,
     convexProjectId: "project-1" as string | null,

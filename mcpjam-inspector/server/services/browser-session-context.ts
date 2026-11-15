@@ -1,5 +1,8 @@
+import type { ViewToolCallRecord } from "../utils/mcp-app-view-tools.js";
+import { buildWidgetToolVerbs, WIDGET_TOOL_VERBS } from "./widget-tool-verbs.js";
 import { pluginModelContextMessage } from "../../shared/plugin-model-context.js";
 import type { HarnessPresentation } from "../../shared/unattended-workspace";
+import { currentAppToolVisibility } from "../utils/browser-harness/current-tool";
 /**
  * browser-session-context.ts — per-session browser-rendered MCP App context for
  * any runner that mocks a user session (eval iterations, synthetic scenario
@@ -48,6 +51,7 @@ import {
   DEFAULT_VIEWPORT,
   McpAppBrowserHarness,
   type WidgetToolCall,
+  type McpAppBrowserHarnessOptions,
 } from "../utils/mcp-app-browser-harness";
 import {
   MAX_SCRIPTED_STEP_TEXT_CHARS,
@@ -80,26 +84,6 @@ import {
   type LiveBrowserFrame,
 } from "@/shared/browser-live-frame";
 import { logger } from "../utils/logger";
-
-/**
- * Extract the SEP-1865 `_meta.ui.visibility` array from a tool's metadata entry
- * (as returned by `MCPClientManager.getAllToolsMetadata(serverId)[name]`).
- * Returns the typed array when present and well-formed, else `undefined` —
- * which downstream is treated as the spec default `["model", "app"]`
- * (model-visible). Kept narrow and pure; the app-only routing decision reuses
- * the SDK's `isAppOnlyTool` predicate rather than re-deriving the rule here.
- */
-function resolveToolVisibilityFromMeta(
-  meta: Record<string, unknown> | undefined,
-): Array<"model" | "app"> | undefined {
-  const visibility = (meta as { ui?: { visibility?: unknown } } | undefined)?.ui
-    ?.visibility;
-  if (!Array.isArray(visibility)) return undefined;
-  const vals = visibility.filter(
-    (v): v is "model" | "app" => v === "model" || v === "app",
-  );
-  return vals.length ? vals : undefined;
-}
 
 /** Cap on the number of `ui/message` follow-ups recorded as a per-step artifact
  *  (the *driven* count is bounded separately by `MAX_WIDGET_FOLLOWUP_TURNS`). */
@@ -264,8 +248,12 @@ export interface CreateBrowserSessionContextParams {
    *  (mapped Claude ids resolve offline; others need vision + tool calling per
    *  model-capabilities.ts), the computer tools are advertised. */
   enableComputerUse?: boolean;
+  enableViewTools?: boolean;
+  callWidgetTool?: McpAppBrowserHarnessOptions["callTool"];
   mcpClientManager: MCPClientManager;
   injectOpenAiCompat?: boolean;
+  /** Effective capabilities pinned by the selected client profile. */
+  hostCapabilities?: Record<string, unknown>;
   /** Log prefix so each surface stays greppable. Defaults to `"evals"`. */
   logScope?: "evals" | "sessionSimulation";
   /** Iteration-level render budget (ms). Applied to the harness when first
@@ -295,6 +283,9 @@ export interface BrowserSessionContext {
   /** Wire-format `computer` + `finish_widget`, or `{}` when the driver model
    *  lacks vision/tool-calling. */
   readonly computerWidgetTools: ToolSet;
+  readonly viewTools: ToolSet;
+  setWidgetToolCallPolicy(call: McpAppBrowserHarnessOptions["callTool"]): void;
+  readonly viewToolCalls: Array<{ promptIndex: number; call: ViewToolCallRecord }>;
   /** Collected render observations (promptIndex stamped at push time). */
   readonly widgetRenderObservations: RunnerWidgetRenderObservation[];
   /** Collected Computer Use steps (promptIndex/stepIndex stamped at push time). */
@@ -423,6 +414,8 @@ export async function createBrowserSessionContext(
   params: CreateBrowserSessionContextParams,
 ): Promise<BrowserSessionContext> {
   const { mcpClientManager, injectOpenAiCompat } = params;
+  let widgetToolCall = params.callWidgetTool;
+  const viewToolCalls: Array<{ promptIndex: number; call: ViewToolCallRecord }> = [];
   const scope = params.logScope ?? "evals";
   // Computer Use is OPT-IN (default off) and reserved for session simulation;
   // evals never opt in (they interact deterministically via Interact steps). No
@@ -498,13 +491,15 @@ export async function createBrowserSessionContext(
   const ensureWidgetHarness = (): McpAppBrowserHarness => {
     if (!widgetHarnessRef.current) {
       widgetHarnessRef.current = new McpAppBrowserHarness({
+        enableViewTools: params.enableViewTools,
+        onViewToolCall: (call) => viewToolCalls.push({ promptIndex: activePromptIndex, call }),
         getWorkspacePresentation: () => readWorkspacePresentation?.() ?? {},
+        hostCapabilities: params.hostCapabilities,
+        readResource: (sid, resource) => mcpClientManager.readResource(sid, resource),
         callTool: (sid, name, args) =>
-          mcpClientManager.executeTool(sid, name, args),
+          widgetToolCall ? widgetToolCall(sid, name, args) : mcpClientManager.executeTool(sid, name, args),
         resolveToolVisibility: (sid, name) =>
-          resolveToolVisibilityFromMeta(
-            mcpClientManager.getAllToolsMetadata(sid)?.[name],
-          ),
+          currentAppToolVisibility(mcpClientManager, sid, name),
         viewport: DEFAULT_VIEWPORT,
         // Honor a pinned turn's per-render budget override (mirrors the legacy
         // probe harness construction). Harness default applies when absent.
@@ -685,6 +680,7 @@ export async function createBrowserSessionContext(
           const ts = Date.now();
           const videoOffsetMs = videoOffsetFor(ts);
           const step: RunnerBrowserInteractionStep = {
+            ...(result.pluginWorkspace ? { pluginWorkspace: result.pluginWorkspace } : {}),
             toolCallId,
             stepIndex,
             promptIndex: activePromptIndex,
@@ -718,15 +714,18 @@ export async function createBrowserSessionContext(
   // Gate Computer Use tools on the harness's live mount — the SAME source
   // `getActiveToolCallId` reads — so the model only sees `computer` /
   // `finish_widget` when an action can actually target a widget.
-  const prepareAdvertisedTools: PrepareAdvertisedTools | undefined =
-    computerUseSupported
-      ? ({ defaultToolNames }) =>
-          widgetHarnessRef.current?.getMountedWidgetId()
-            ? defaultToolNames
-            : defaultToolNames.filter(
-                (n) => n !== "computer" && n !== "finish_widget",
-              )
-      : undefined;
+  const viewTools = params.enableViewTools ? buildWidgetToolVerbs(ensureWidgetHarness) : {};
+  const prepareAdvertisedTools: PrepareAdvertisedTools | undefined = params.enableViewTools
+    ? async ({ defaultToolNames }) => {
+        const harness = widgetHarnessRef.current;
+        if (harness?.getMountedWidgetId()) await harness.viewTools.list();
+        return defaultToolNames.filter(name => WIDGET_TOOL_VERBS.includes(name)
+          ? Boolean(harness?.viewTools.available)
+          : name === "computer" || name === "finish_widget"
+            ? computerUseSupported && Boolean(harness?.getMountedWidgetId()) : true);
+      }
+    : computerUseSupported ? ({ defaultToolNames }) => widgetHarnessRef.current?.getMountedWidgetId()
+      ? defaultToolNames : defaultToolNames.filter(name => name !== "computer" && name !== "finish_widget") : undefined;
 
   /**
    * Replay one widget-check group against the just-mounted widget. Pushes a
@@ -759,6 +758,7 @@ export async function createBrowserSessionContext(
       }
       const locatorLabel = describeScriptedStep(step);
       browserInteractionSteps.push({
+        ...(res.pluginWorkspace ? { pluginWorkspace: res.pluginWorkspace } : {}),
         toolCallId,
         stepIndex,
         promptIndex: activePromptIndex,
@@ -841,6 +841,7 @@ export async function createBrowserSessionContext(
     const ts = Date.now();
     const videoOffsetMs = videoOffsetFor(ts);
     browserInteractionSteps.push({
+      ...(res.pluginWorkspace ? { pluginWorkspace: res.pluginWorkspace } : {}),
       toolCallId,
       stepIndex,
       promptIndex: activePromptIndex,
@@ -936,7 +937,7 @@ export async function createBrowserSessionContext(
         // widget-check group needs to run against it, OR when the unified step
         // executor has pending `interact`/`assert` steps for this case.
         keepMounted:
-          computerUseSupported || !!checkEntry || keepWidgetsMountedForSteps,
+          params.enableViewTools || computerUseSupported || !!checkEntry || keepWidgetsMountedForSteps,
       });
       // Stamp promptIndex at push-time — the harness type stays pure; the
       // runner loop is the single source of truth for promptIndex. Split off
@@ -1061,6 +1062,9 @@ export async function createBrowserSessionContext(
     computerUseSupported,
     computerUseVersion,
     computerWidgetTools,
+    viewTools,
+    viewToolCalls,
+    setWidgetToolCallPolicy(call) { widgetToolCall = call; },
     widgetRenderObservations,
     browserInteractionSteps,
     prepareAdvertisedTools,
@@ -1170,6 +1174,7 @@ export async function createBrowserSessionContext(
     async dismissCarriedWidget(): Promise<void> {
       const carriedWidgetId =
         widgetHarnessRef.current?.getMountedWidgetId() ?? null;
+      if (carriedWidgetId && params.enableViewTools && (await widgetHarnessRef.current!.viewTools.list())?.tools.length) return;
       if (carriedWidgetId) {
         await widgetHarnessRef.current!.dismissWidget(carriedWidgetId);
       }

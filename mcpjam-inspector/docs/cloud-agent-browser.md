@@ -4,7 +4,7 @@ Use `mcpjam cloud sessions send --browser` for model-driven browsing and `mcpjam
 
 ## Setup and first turn
 
-Use `mcpjam cloud login` or `MCPJAM_API_KEY`. For a preview deployment, set `MCPJAM_API_URL` to its Inspector `/api/v1` endpoint. Its backend must have desktop admission configured, and the serving Inspector replica needs `HOSTED_BROWSER_TOOLS_ENABLED=1` plus a positive browser exposure verdict. Existing organization browser/computer and browser workspace gates still apply.
+Use `mcpjam cloud login` or `MCPJAM_API_KEY`. For a preview deployment, set `MCPJAM_API_URL` to its Inspector `/api/v1` endpoint. Its backend must have desktop admission configured and report a positive browser exposure verdict, and your account must be in the `hosted-browser-enabled` rollout. Existing organization browser/computer and browser workspace gates still apply.
 
 ```sh
 mcpjam cloud sessions send --project PROJECT_ID --model PROVIDER/MODEL \

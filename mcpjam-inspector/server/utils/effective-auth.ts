@@ -24,9 +24,11 @@
  */
 
 import {
+  authChallengePolicyFrom,
   readXaaEnterprisePolicy,
   XAA_ENTERPRISE_POLICY_IDPS,
   XAA_MCP_EXTENSION,
+  type AuthChallengePolicy,
   type XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
@@ -258,6 +260,21 @@ export function toolCallCancellationFromMcpProfile(
   return raw && typeof raw === "object"
     ? degradedCancellationLeaves(raw as { legacy?: unknown; modern?: unknown })
     : undefined;
+}
+
+/**
+ * How the host reacts to a mid-session sign-in challenge, read per TURN from
+ * the server-resolved `mcpProfile` (never the request body), like
+ * {@link toolCallCancellationFromMcpProfile}.
+ *
+ * `undefined` means the spec defaults (`AUTH_CHALLENGE_POLICY_DEFAULTS`): act
+ * on any 401, pass `_meta` challenges through. Unrecognized values are
+ * dropped field by field, so a malformed profile behaves conformantly.
+ */
+export function authChallengeFromMcpProfile(
+  mcpProfile: unknown
+): AuthChallengePolicy | undefined {
+  return authChallengePolicyFrom(mcpProfile);
 }
 
 function degradedCancellationLeaves(

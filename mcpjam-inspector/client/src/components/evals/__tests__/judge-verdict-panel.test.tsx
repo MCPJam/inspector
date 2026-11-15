@@ -5,8 +5,8 @@
  * run. The backend counts only blind labels toward the agreement rate — a
  * label chosen while looking at the judge's answer measures anchoring, not
  * judgement — and this panel is what asserts `blind`. A wrong assertion here
- * inflates a calibration that decides whether a judge may fail other people's
- * builds, so the two paths are pinned separately.
+ * inflates the agreement rate people read to judge the judge, so the two paths
+ * are pinned separately.
  */
 
 import { describe, expect, it, vi } from "vitest";

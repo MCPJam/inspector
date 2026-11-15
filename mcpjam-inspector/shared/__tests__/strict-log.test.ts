@@ -7,6 +7,24 @@ import {
 import catalog from "../telemetry-catalog.generated.json";
 
 describe("strict log boundary", () => {
+  it.each(["timeout", "transport_failed", "model_reported_missing"])(
+    "retains the bounded swarm setup reason %s",
+    (setupReason) => {
+      const row = buildLegacyLogRow(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        { setupReason },
+      );
+      expect(row.setupReason).toBe(setupReason);
+    },
+  );
+  it("omits arbitrary text from the swarm setup reason", () => {
+    const row = buildLegacyLogRow(
+      "[swarm.runner] target worker failed; finalizing its attempts",
+      { setupReason: "PRIVATE_SENTINEL" },
+    );
+    expect(row).not.toHaveProperty("setupReason");
+  });
+
   it.each(["fetch_failed", "invalid_catalog"])(
     "retains a catalog refresh failure with bounded reason %s and warning level",
     (reason) => {
@@ -73,6 +91,23 @@ describe("strict log boundary", () => {
   it("retains the typed unattested-IP containment signal", () => {
     expect(buildStrictLogRow("llm_spend_unattested_ip_pooled", { environment: "prod" }))
       .toMatchObject({ event: "llm_spend_unattested_ip_pooled", environment: "prod" });
+  });
+  it("keeps the shutdown drain's outcome and remaining-work counts", () => {
+    const payload = {
+      drainMs: 25000,
+      drainClamped: true,
+      drained: false,
+      waitedMs: 25001,
+      inFlightAtStart: 9,
+      remainingClaimedJobs: 1,
+      remainingEvalRuns: 2,
+      remainingSwarmRuns: 3,
+      remainingDoorbells: 4,
+      remainingQuickRuns: 5,
+    };
+    expect(
+      buildStrictLogRow("server.shutdown.drain", {}, payload),
+    ).toMatchObject({ event: "server.shutdown.drain", ...payload });
   });
   it("marks an internally minted Inspector canary route", () => {
     expect(
@@ -186,6 +221,21 @@ describe("strict log boundary", () => {
     expect(row).toMatchObject({ event: "log.unknown", route: "unknown_route" });
     expect(row).not.toHaveProperty("durationMs");
     expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+  });
+  it("names a dependency error class and keeps an unlisted one unknown", () => {
+    const named = (name: string) =>
+      Object.assign(new Error("PRIVATE_SENTINEL"), { name });
+    expect(
+      buildStrictLogRow("http.request.failed", {}, {}, named("McpError")),
+    ).toMatchObject({ errorClass: "McpError", knownError: true });
+    expect(
+      buildStrictLogRow(
+        "http.request.failed",
+        {},
+        {},
+        named("PRIVATE_SENTINEL"),
+      ),
+    ).toMatchObject({ errorClass: "UnknownError", knownError: false });
   });
   it("copies Convex IDs from the server's context and never from a payload", () => {
     const [org, project, server, forged] = ["org", "project", "server", "forged"]

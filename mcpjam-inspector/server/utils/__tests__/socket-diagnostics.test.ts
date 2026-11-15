@@ -129,6 +129,21 @@ describe("socket diagnostics", () => {
     expect(events).toHaveLength(0);
   });
 
+  it("counts a non-string error code as other instead of throwing", () => {
+    // INSPECTOR-HONO-50: a self-hosted server received a clientError whose
+    // `code` was a number, and `code.startsWith` took the process down.
+    const server = http.createServer();
+    attachSocketDiagnostics(server);
+    const err = Object.assign(new Error("socket failure"), { code: 42 });
+    const socket = new net.Socket();
+    socket.destroy();
+
+    expect(() => server.emit("clientError", err, socket)).not.toThrow();
+
+    flushSocketStats();
+    expect(events[0].payload.other).toBe(1);
+  });
+
   it("does not throw when the peer is already gone", async () => {
     // The socket can die between the writable check and the write. Throwing
     // here would reach uncaughtException and take the process down over a

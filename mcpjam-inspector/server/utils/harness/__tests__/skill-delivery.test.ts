@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  composeLivePlusSkills,
+  harnessTurnSkills,
+  pinnedArtifactsToRuntimeSkills,
   selectHarnessSkillSource,
 } from "../skill-delivery.js";
-import type { RuntimeSkill } from "../runtime-skills.js";
+import { skillsFingerprint, type RuntimeSkill } from "../runtime-skills.js";
 import type { PinnedSkillArtifact } from "../../../../shared/skill-types.js";
+import { buildLiveEffectiveCapabilities } from "../../../services/environments/effective-capabilities.js";
 
 const PINNED: PinnedSkillArtifact[] = [
   {
@@ -68,116 +70,148 @@ describe("selectHarnessSkillSource", () => {
     expect("skills" in source && source.skills).toEqual([]);
   });
 
-  it("falls back to the live project-wide fetch only when neither is present", () => {
-    expect(selectHarnessSkillSource({})).toEqual({ mode: "live" });
-  });
-
-  it("selects live_plus only from the explicit input, on top of an environment override", () => {
-    expect(
-      selectHarnessSkillSource({
-        runtimeSkillsOverride: RESOLVED,
-        includeProjectSkills: true,
-      }),
-    ).toEqual({ mode: "live_plus", environmentSkills: RESOLVED });
-    // An empty environment still adds the pool: the turn stands in for a
-    // client turn, which delivers it.
-    expect(
-      selectHarnessSkillSource({
-        runtimeSkillsOverride: [],
-        includeProjectSkills: true,
-      }),
-    ).toEqual({ mode: "live_plus", environmentSkills: [] });
-    // A pinned run still outranks it.
-    expect(
-      selectHarnessSkillSource({
-        pinnedHarnessSkills: PINNED,
-        runtimeSkillsOverride: RESOLVED,
-        includeProjectSkills: true,
-      }).mode,
-    ).toBe("pinned");
-    // Without an environment there is nothing to add: the plain live fetch.
-    expect(selectHarnessSkillSource({ includeProjectSkills: true })).toEqual({
-      mode: "live",
-    });
-    // An environment override alone is never read as live_plus.
-    expect(
-      selectHarnessSkillSource({ runtimeSkillsOverride: RESOLVED }).mode,
-    ).toBe("environment");
+  it("names no source when neither is present", () => {
+    // The harness never reads a project's skills on its own: a turn that
+    // names no source leaves its box as it is.
+    expect(selectHarnessSkillSource({})).toEqual({ mode: "none" });
   });
 });
 
-function skill(skillId: string, name: string): RuntimeSkill {
-  return {
-    skillId,
-    name,
-    description: "",
-    content: `${name} body`,
-    aggregateHash: `agg_${skillId}`,
-  };
-}
-
-describe("composeLivePlusSkills", () => {
-  it("delivers the environment's skills, then the project's pool", () => {
-    const composed = composeLivePlusSkills(
-      [skill("sk_notes", "notes")],
-      [skill("sk_plugin", "keycaps"), skill("sk_host", "release-notes")],
-    );
-    expect(composed.skills?.map((entry) => entry.skillId)).toEqual([
-      "sk_plugin",
-      "sk_host",
-      "sk_notes",
+describe("harnessTurnSkills", () => {
+  it("takes a run's frozen copies, files included", async () => {
+    const turn = await harnessTurnSkills({
+      pinnedHarnessSkills: [
+        { ...PINNED[0]!, files: [{ path: "scripts/run.sh", content: "echo" }] },
+      ],
+    });
+    expect(turn.mode).toBe("pinned");
+    expect(turn.skills?.map((entry) => entry.name)).toEqual(["pinned-skill"]);
+    expect(turn.skillsHash).toBe(skillsFingerprint(turn.skills!));
+    // Each copy's files ride with it, read at run start.
+    const listing = await turn.readFiles();
+    expect(listing.files).toEqual([
+      { path: "scripts/run.sh", content: "echo", skillId: "sk_pinned" },
     ]);
-    expect([...composed.environmentSkillIds]).toEqual(["sk_plugin", "sk_host"]);
-    expect([...composed.projectSkillIds]).toEqual(["sk_notes"]);
-    expect(composed.problems).toEqual([]);
+    expect(listing.complete("sk_pinned")).toBe(true);
   });
 
-  it("does not add a project skill the environment already carries", () => {
-    // The client selected it, so it arrived on the host channel: the same
-    // skill, delivered once, as the environment's.
-    const composed = composeLivePlusSkills(
-      [skill("sk_host", "release-notes"), skill("sk_notes", "notes")],
-      [skill("sk_host", "release-notes")],
-    );
-    expect(composed.skills?.map((entry) => entry.skillId)).toEqual([
-      "sk_host",
-      "sk_notes",
+  it("takes an environment's files from its capability set, the only source of a plugin skill's", async () => {
+    const set = buildLiveEffectiveCapabilities({
+      standaloneSkills: [
+        {
+          ...RESOLVED[0]!,
+          ref: "env-skill",
+          channels: ["environment"],
+          files: [{ path: "ref.md", size: 3, url: "https://f/ref" }],
+        },
+      ],
+    });
+    const turn = await harnessTurnSkills({
+      runtimeSkillsOverride: RESOLVED,
+      effectiveCapabilities: set,
+    });
+    expect(turn.mode).toBe("environment");
+    expect(turn.skills).toEqual(RESOLVED);
+    const files = await turn.readFiles();
+    expect(files.files).toEqual([
+      { skillId: "sk_env", path: "ref.md", size: 3, url: "https://f/ref" },
     ]);
-    expect([...composed.environmentSkillIds]).toEqual(["sk_host"]);
-    expect([...composed.projectSkillIds]).toEqual(["sk_notes"]);
-    expect(composed.problems).toEqual([]);
+    expect(files.complete("sk_env")).toBe(true);
   });
 
-  it("knows nothing when the live fetch failed, so delivers nothing new", () => {
-    const composed = composeLivePlusSkills(null, [
-      skill("sk_plugin", "keycaps"),
-    ]);
-    expect(composed.skills).toBeNull();
-    expect(composed.environmentSkillIds.size).toBe(0);
-    expect(composed.projectSkillIds.size).toBe(0);
+  it("knows none of an environment's files without its capability set", async () => {
+    const turn = await harnessTurnSkills({ runtimeSkillsOverride: RESOLVED });
+    expect(turn.skills).toEqual(RESOLVED);
+    const files = await turn.readFiles();
+    expect(files.files).toEqual([]);
+    // Unknown, so the writer keeps each skill's other files as they are.
+    expect(files.complete("sk_env")).toBe(false);
   });
 
-  it("keeps the environment's skill when two want one box folder, and reports the other", () => {
-    const composed = composeLivePlusSkills(
-      [skill("sk_personal", "keycaps"), skill("sk_notes", "notes")],
-      [skill("sk_plugin_a", "keycaps"), skill("sk_plugin_b", "keycaps")],
+  it("leaves the box as it is when the turn names no source", async () => {
+    const turn = await harnessTurnSkills({});
+    expect(turn).toMatchObject({
+      mode: "none",
+      skills: null,
+      skillsHash: undefined,
+    });
+    expect((await turn.readFiles()).files).toEqual([]);
+  });
+
+  it("calls a client's or a study's turn live, with or without skills of its own", async () => {
+    const live = async (args: Parameters<typeof harnessTurnSkills>[0]) =>
+      (await harnessTurnSkills(args)).live;
+    expect(await live({ runtimeSkillsOverride: [], liveTurn: true })).toBe(
+      true,
     );
-    expect(composed.skills?.map((entry) => entry.skillId)).toEqual([
-      "sk_plugin_a",
-      "sk_notes",
+    // A study whose Library could not be read still has its servers.
+    expect(await live({ liveTurn: true })).toBe(true);
+    // A named environment captured its server skills, and a run froze its own.
+    expect(await live({ runtimeSkillsOverride: [] })).toBe(false);
+    expect(await live({ pinnedHarnessSkills: [], liveTurn: true })).toBe(false);
+    expect(await live({})).toBe(false);
+  });
+});
+
+const artifact = (
+  over: Partial<PinnedSkillArtifact> = {}
+): PinnedSkillArtifact => ({
+  name: "my-skill",
+  description: "does things",
+  content: "# body",
+  contentHash: "hash-1",
+  ...over,
+});
+
+describe("pinnedArtifactsToRuntimeSkills", () => {
+  it("maps artifacts onto the runtime-skill shape with aggregateHash = the pinned contentHash", () => {
+    const skills = pinnedArtifactsToRuntimeSkills([
+      artifact({ skillId: "sk1" }),
     ]);
-    expect(composed.problems).toEqual([
+    expect(skills).toEqual([
       {
-        code: "skill_folder_collision",
-        skillId: "sk_plugin_b",
-        name: "keycaps",
-      },
-      {
-        code: "skill_folder_collision",
-        skillId: "sk_personal",
-        name: "keycaps",
+        skillId: "sk1",
+        name: "my-skill",
+        description: "does things",
+        content: "# body",
+        aggregateHash: "hash-1",
       },
     ]);
-    expect(composed.projectSkillIds.has("sk_personal")).toBe(false);
+  });
+
+  it("synthesizes a content-derived skillId when the pin lost its source pointer", () => {
+    const [s] = pinnedArtifactsToRuntimeSkills([artifact()]);
+    expect(s!.skillId).toBe("pinned:hash-1");
+  });
+
+  it("skillsFingerprint over the mapped set derives from the pinned artifact fingerprints", () => {
+    const a = skillsFingerprint(
+      pinnedArtifactsToRuntimeSkills([artifact({ skillId: "sk1" })])
+    );
+    const b = skillsFingerprint(
+      pinnedArtifactsToRuntimeSkills([
+        artifact({ skillId: "sk1", contentHash: "hash-2" }),
+      ])
+    );
+    expect(a).not.toBe(b); // a different pinned artifact ⇒ a different hash
+    expect(skillsFingerprint(pinnedArtifactsToRuntimeSkills([]))).toBe(""); // empty pinned set ⇒ the stable empty sentinel
+  });
+
+  it("projects preserved frontmatter onto the known Agent-Skills envelope only", () => {
+    const [s] = pinnedArtifactsToRuntimeSkills([
+      artifact({
+        frontmatter: {
+          license: "MIT",
+          "allowed-tools": ["Bash", "Read"],
+          metadata: { origin: "plugin" },
+          bogus: { nested: true },
+        },
+      }),
+    ]);
+    expect(s!.extraFrontmatter).toEqual({
+      license: "MIT",
+      allowedTools: ["Bash", "Read"],
+      metadata: { origin: "plugin" },
+    });
   });
 });

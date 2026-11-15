@@ -23,6 +23,7 @@ import {
   type LocationLike,
 } from "../../../shared/credential-urls";
 import { HOSTED_MODE } from "./config";
+import { getRuntimeDoNotTrack } from "./runtime-config";
 import {
   desktopSentryFallback,
   filterSentryEventIdentity,
@@ -52,7 +53,9 @@ export function resolveClientSentryConfig() {
     deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     // CI's E2E build sets this. That build talks to prod Convex and would
     // otherwise report its test failures to the same project that pages us.
-    enabled: import.meta.env.VITE_DISABLE_SENTRY !== "true",
+    // The server's DO_NOT_TRACK turns it off too, without a rebuild.
+    enabled:
+      import.meta.env.VITE_DISABLE_SENTRY !== "true" && !getRuntimeDoNotTrack(),
     // The sample rates only. The integration itself is added later, by
     // `syncSentryReplay`, once the session's privacy level allows recording;
     // `off` surfaces (npx/Docker, dev builds) never add it.
@@ -343,5 +346,24 @@ export function captureSentryMessage(
   message: string,
   context: Parameters<typeof Sentry.captureMessage>[1],
 ): void {
+  if (
+    context &&
+    typeof context === "object" &&
+    "tags" in context &&
+    context.tags?.source === "chat_auth_resume"
+  ) {
+    // Recovery can report on the OAuth callback page. Do not attach the URL
+    // or console/network breadcrumbs (which may contain a code or raw state).
+    Sentry.withScope((scope) => {
+      scope.addEventProcessor((event) => ({
+        ...event,
+        request: undefined,
+        breadcrumbs: [],
+        contexts: undefined,
+      }));
+      Sentry.captureMessage(message, context);
+    });
+    return;
+  }
   Sentry.captureMessage(message, context);
 }

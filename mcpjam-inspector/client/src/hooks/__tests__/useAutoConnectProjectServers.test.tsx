@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { serverCheckQueue } from "@/lib/server-check-queue";
+import { useServerCardOrder } from "../use-server-card-order";
 import { errorToastMessage } from "@/test/utils";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -98,10 +99,86 @@ function wrapper({
 const flushMicrotasks = () => act(() => Promise.resolve());
 
 describe("useAutoConnectProjectServers", () => {
+  it.each([false, true])("admits ten real checks, preserving drag/manual priority and in-flight work (storage blocked=%s)", async (blocked) => {
+    const projectId = `queue-admission-cards-${blocked}`;
+    const sharedId = `queue-admission-shared-${blocked}`;
+    const names = Array.from({ length: 14 }, (_, i) => `server-${i}`);
+    const saved = [...names].reverse();
+    localStorage.setItem("mcp-server-order", JSON.stringify({ [projectId]: saved }));
+    const write = blocked ? vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw new Error("Storage blocked"); }) : undefined;
+    const appState = { ...makeAppState(names), activeProjectId: projectId };
+    const starts: string[] = [];
+    const releases = new Map<string, () => void>();
+    const ensureServersReady = vi.fn(async (requested: string[]) => {
+      await Promise.all(requested.map((name) => serverCheckQueue.run(
+        { projectId: sharedId, serverName: name, identity: "admission-host" },
+        () => new Promise<void>((resolve) => { starts.push(name); releases.set(name, resolve); }),
+      )));
+      return { readyServerNames: requested, failedServerNames: [], missingServerNames: [], reauthServerNames: [] };
+    });
+    const provider = ({ children }: { children: ReactNode }) => wrapper({ children, appState, ensureServersReady });
+    const { result } = renderHook(() => {
+      const order = useServerCardOrder({ projectId, queueProjectId: sharedId, catalogNames: names, visibleNames: names, ready: true });
+      useAutoConnectProjectServers({ projectId: sharedId, hostScopeKey: "admission-host", serverNames: names, serverOrder: order.catalogOrder });
+      return order;
+    }, { wrapper: provider });
+    const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+    await act(tick);
+    expect(starts).toEqual(saved.slice(0, 10));
+    act(() => result.current.setOrderedServerNames(names));
+    const consumer = renderHook(() => useAutoConnectProjectServers({ projectId: sharedId, hostScopeKey: "admission-host", serverNames: names }), { wrapper: provider });
+    consumer.rerender();
+    expect(starts).toHaveLength(10);
+    // Promote waiting work: manual wins over the new card order, while checks
+    // already admitted keep their original attempts.
+    act(() => serverCheckQueue.markManual(sharedId, "server-2"));
+    releases.get(saved[0])!();
+    await act(tick);
+    expect(starts.at(-1)).toBe("server-2");
+    releases.get(saved[1])!();
+    await act(tick);
+    expect(starts.at(-1)).toBe("server-0");
+    for (let i = 0; i < names.length; i++) {
+      for (const release of releases.values()) release();
+      await act(tick);
+    }
+    expect(starts).toHaveLength(names.length);
+    expect(new Set(starts).size).toBe(names.length);
+    expect(ensureServersReady).toHaveBeenCalledOnce();
+    write?.mockRestore();
+  });
+
+  it("publishes Connect order before admission and never replaces live queue order with stale storage", async () => {
+    const projectId = "order-handoff-local";
+    const sharedId = "order-handoff-shared";
+    localStorage.setItem("mcp-server-order", JSON.stringify({ [projectId]: ["B", "A"] }));
+    const names = ["A", "B", "new"];
+    const appState = { ...makeAppState(names), activeProjectId: projectId };
+    const ensureServersReady = vi.fn(async () => {
+      expect(serverCheckQueue.getOrder(sharedId)).toEqual(["new", "B", "A"]);
+      return { readyServerNames: names, failedServerNames: [], missingServerNames: [], reauthServerNames: [] };
+    });
+    const provider = ({ children }: { children: ReactNode }) => wrapper({ children, appState, ensureServersReady });
+    renderHook(() => {
+      const { catalogOrder } = useServerCardOrder({
+        projectId, queueProjectId: sharedId, catalogNames: names, visibleNames: names, ready: true,
+      });
+      useAutoConnectProjectServers({ projectId: sharedId, hostScopeKey: "order-host", serverNames: names, serverOrder: catalogOrder });
+    }, { wrapper: provider });
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledOnce();
+    // A different surface has no resolved card order and an old preference key.
+    localStorage.setItem("mcp-server-order", JSON.stringify({ [projectId]: ["A", "B"] }));
+    renderHook(() => useAutoConnectProjectServers({ projectId: sharedId, hostScopeKey: "order-host", serverNames: ["A", "B"] }), { wrapper: provider });
+    await flushMicrotasks();
+    expect(serverCheckQueue.getOrder(sharedId)).toEqual(["new", "B", "A"]);
+    expect(ensureServersReady).toHaveBeenCalledOnce();
+  });
+
   beforeEach(() => {
     mocks.hosted = false;
     resetAutoConnectAttempts();
-    localStorage.removeItem("mcpjam-auto-connect-servers");
+    localStorage.setItem("mcpjam-auto-connect-servers", "true");
     mocks.toastDismiss.mockClear();
     mocks.toastError.mockClear();
     mocks.toastLoading.mockClear();
@@ -169,7 +246,7 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
 
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
-    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha", "beta"], { automatic: true });
   });
 
   it("is a no-op when the required set is empty (host has no required servers)", async () => {
@@ -193,28 +270,41 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).not.toHaveBeenCalled();
   });
 
-  it("does not call ensureServersReady when the toggle is disabled", async () => {
-    localStorage.setItem("mcpjam-auto-connect-servers", "false");
-    const ensureServersReady = vi.fn();
-    const appState = makeAppState(["alpha"]);
+  it.each([null, "false"])(
+    "does not connect or reconnect on client switches with preference %s",
+    async (stored) => {
+      if (stored === null) localStorage.removeItem("mcpjam-auto-connect-servers");
+      else localStorage.setItem("mcpjam-auto-connect-servers", stored);
+      const ensureServersReady = vi.fn();
+      const reconnectServer = vi.fn();
+      const appState = makeAppState(["alpha", "beta"]);
+      appState.servers.beta.connectionStatus = "connected";
 
-    const { result } = renderHook(
-      () =>
-        useAutoConnectProjectServers({
-          projectId: "proj-disabled",
-          hostScopeKey: "host-a",
-          serverNames: ["alpha"],
-        }),
-      {
-        wrapper: ({ children }) =>
-          wrapper({ children, ensureServersReady, appState }),
-      },
-    );
+      const { result, rerender } = renderHook(
+        ({ hostScopeKey }) =>
+          useAutoConnectProjectServers({
+            projectId: "proj-disabled",
+            hostScopeKey,
+            serverNames: ["alpha", "beta"],
+          }),
+        {
+          initialProps: { hostScopeKey: "host-a" },
+          wrapper: ({ children }) =>
+            wrapper({ children, ensureServersReady, reconnectServer, appState }),
+        },
+      );
 
-    await flushMicrotasks();
-    expect(result.current.enabled).toBe(false);
-    expect(ensureServersReady).not.toHaveBeenCalled();
-  });
+      await flushMicrotasks();
+      rerender({ hostScopeKey: "host-b" });
+      await flushMicrotasks();
+      rerender({ hostScopeKey: "host-a" });
+      await flushMicrotasks();
+      expect(result.current.enabled).toBe(false);
+      expect(ensureServersReady).not.toHaveBeenCalled();
+      expect(reconnectServer).not.toHaveBeenCalled();
+      expect(mocks.toastLoading).not.toHaveBeenCalled();
+    },
+  );
 
   it("skips servers already connected/connecting/oauth-flow", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
@@ -247,7 +337,7 @@ describe("useAutoConnectProjectServers", () => {
 
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
-    expect(ensureServersReady).toHaveBeenCalledWith(["alpha"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["alpha"], { automatic: true });
   });
 
   it("never re-attempts after a failure (refresh-keeps-failing guard)", async () => {
@@ -311,7 +401,7 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
 
     expect(ensureServersReady).toHaveBeenCalledTimes(2);
-    expect(ensureServersReady).toHaveBeenLastCalledWith(["alpha"]);
+    expect(ensureServersReady).toHaveBeenLastCalledWith(["alpha"], { automatic: true });
   });
 
   it("reconnects ALL connected servers on client switch, not just the required ones", async () => {
@@ -709,7 +799,7 @@ describe("useAutoConnectProjectServers", () => {
     expect(reconnectServer).toHaveBeenCalledTimes(1);
     expect(reconnectServer).toHaveBeenCalledWith("up");
     expect(ensureServersReady).toHaveBeenCalledTimes(2);
-    expect(ensureServersReady).toHaveBeenCalledWith(["needed"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["needed"], { automatic: true });
   });
 
   it("does not recycle again on a same-scope re-render (only lead changes recycle)", async () => {
@@ -796,7 +886,7 @@ describe("useAutoConnectProjectServers", () => {
 
     expect(reconnectServer).not.toHaveBeenCalled();
     expect(mocks.toastLoading).not.toHaveBeenCalled();
-    expect(ensureServersReady).toHaveBeenCalledWith(["gamma"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["gamma"], { automatic: true });
   });
 
   it("re-attempts on every host transition, including returning to a previously-visited host", async () => {
@@ -947,7 +1037,7 @@ describe("useAutoConnectProjectServers", () => {
 
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
-    expect(ensureServersReady).toHaveBeenCalledWith(["bart"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["bart"], { automatic: true });
 
     // Auto-connect succeeded → bart is connected.
     appStateHolder.current = {
@@ -1013,7 +1103,7 @@ describe("useAutoConnectProjectServers", () => {
 
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
-    expect(ensureServersReady).toHaveBeenCalledWith(["bart", "foo"]);
+    expect(ensureServersReady).toHaveBeenCalledWith(["bart", "foo"], { automatic: true });
 
     // Both connected.
     appStateHolder.current = {

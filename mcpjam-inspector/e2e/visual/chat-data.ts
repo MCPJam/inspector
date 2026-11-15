@@ -48,6 +48,7 @@ const snapshots = [
   },
 ];
 export const chatQueries = {
+  "elicitations:listPendingElicitations": [],
   "directChatHistory:listCurrentHistory": { personal: [session], project: [] },
   "directChatHistory:getCurrentSession": session,
   "directChatHistory:getCurrentSessionWidgetSnapshots": snapshots,

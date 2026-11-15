@@ -53,7 +53,10 @@ vi.mock("../runner.js", async () => {
 });
 
 import { startJourneyRun } from "../swarm-runner.js";
-import { SwarmSetupError } from "../swarm-setup-turn.js";
+import {
+  SETUP_PLATFORM_STOPPED_MESSAGE,
+  SwarmSetupError,
+} from "../swarm-setup-turn.js";
 import { isCreditExhaustion } from "../../../../shared/credit-exhaustion.js";
 import {
   SPONSORED_CAPACITY_MESSAGE,
@@ -948,6 +951,7 @@ describe("sponsored swarm conversations: platform capacity is the platform's pro
       fundingScope: "credits",
       terminalStatus: "failed",
       errorCode: "prerequisites_unavailable",
+      errorMessage: SETUP_PLATFORM_STOPPED_MESSAGE,
     });
     expect(
       finalizePendingAttemptsMock.mock.calls.some(
@@ -1050,6 +1054,7 @@ describe("sponsored swarm conversations: platform capacity is the platform's pro
     ).toMatchObject({
       status: "failed",
       errorCode: "prerequisites_unavailable",
+      errorMessage: SETUP_PLATFORM_STOPPED_MESSAGE,
     });
     expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
       terminalStatus: "failed",

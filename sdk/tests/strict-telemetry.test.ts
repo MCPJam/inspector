@@ -134,6 +134,73 @@ describe("strict telemetry reconstruction", () => {
     });
 
   });
+  it("groups a frameless exception by the cataloged event that captured it", () => {
+    const options = {
+      ...catalog,
+      errors: ["McpError"],
+      diagnosticFields: { event: ["process.unhandled_rejection"] },
+    };
+    const capture = (event: string) =>
+      rebuildSentryEvent(
+        {
+          exception: {
+            values: [
+              {
+                type: secret,
+                stacktrace: { frames: [{ filename: secret, lineno: 3 }] },
+              },
+            ],
+          },
+          extra: { event },
+        },
+        options
+      );
+    expect(capture("process.unhandled_rejection")).toMatchObject({
+      exception: { values: [{ type: "UnknownError", value: "UnknownError" }] },
+      fingerprint: [
+        "{{ default }}",
+        "UnknownError",
+        "process.unhandled_rejection",
+      ],
+      extra: { event: "process.unhandled_rejection", dropped_frames: 1 },
+    });
+    expect(capture(secret).fingerprint).toEqual([
+      "{{ default }}",
+      "UnknownError",
+    ]);
+    expect(JSON.stringify(capture(secret))).not.toContain(secret);
+    expect(
+      rebuildSentryEvent(
+        { exception: { values: [{ type: "McpError" }] } },
+        options
+      ).fingerprint
+    ).toEqual(["{{ default }}", "McpError"]);
+  });
+  it("leaves the fingerprint of an exception with an owned frame alone", () => {
+    const output = rebuildSentryEvent(
+      {
+        exception: {
+          values: [
+            {
+              type: "TypeError",
+              stacktrace: {
+                frames: [{ filename: "server/example.ts", lineno: 10 }],
+              },
+            },
+          ],
+        },
+        extra: { event: "process.unhandled_rejection" },
+      },
+      {
+        ...catalog,
+        diagnosticFields: { event: ["process.unhandled_rejection"] },
+      }
+    );
+    expect(output.fingerprint).toEqual(["{{ default }}", "TypeError"]);
+    expect(output.extra).toMatchObject({
+      event: "process.unhandled_rejection",
+    });
+  });
   it("rebuilds transactions and child spans separately", () => {
     const span = {
       description: secret,

@@ -3,10 +3,9 @@
  *
  * A tool is declared once, at build time, and then passes through a chain of
  * wrappers before an engine sees it: scope step-up observation, two eval-trace
- * wrappers, the skill approval wrap, the SEP-2640 compose, the advertised
- * subset gate. Each one rebuilds the tool object — `{...tool, execute: …}` —
- * and each one preserves `needsApproval` today only because a spread happens
- * to carry it.
+ * wrappers, the skill approval wrap, the advertised subset gate. Each one
+ * rebuilds the tool object — `{...tool, execute: …}` — and each one preserves
+ * `needsApproval` today only because a spread happens to carry it.
  *
  * That is fine while the BYOK path is the only reader. Once every engine reads
  * `tool.needsApproval` (PR 2), a wrapper that drops it silently ungates the
@@ -15,10 +14,11 @@
  * than one clever loop: the wrappers take different arguments and own different
  * parts of the tool, and a shared harness would hide that.
  *
- * BOTH FORMS matter. A boolean is the common case; a FUNCTION is the SEP-2640
- * form, whose identity must survive because it is not a predicate — it records
- * the manifest digest the user is being asked about, and a copy that merely
- * returns the same value would record nothing.
+ * BOTH FORMS matter. A boolean is the common case; a FUNCTION answers per
+ * call (a captured server skill's ref, the acting-skill gate), and its
+ * identity must survive: the gate marks its function so a runtime can read
+ * the declaration under it, and a copy that merely returns the same value
+ * would carry no mark.
  */
 import { describe, expect, it, vi } from "vitest";
 import { tool, type ToolSet } from "ai";
@@ -34,10 +34,9 @@ import {
   wrapToolSetForEvalTrace,
 } from "../../services/evals/eval-trace-capture";
 import { applySkillToolApproval } from "../chat-v2-orchestration";
-import { withServerSkills } from "../server-skill-tools";
 
 /** The declaration a function-form tool carries, identity included. */
-const digestBinding = vi.fn(async () => true);
+const declaredPerCall = vi.fn(async () => true);
 
 function fixture(): ToolSet {
   return {
@@ -63,7 +62,7 @@ function fixture(): ToolSet {
         inputSchema: z.object({ name: z.string() }),
         execute: async () => "ok",
       }),
-      needsApproval: digestBinding,
+      needsApproval: declaredPerCall,
     },
     // No declaration at all — the `never` floor, spelled as silence today.
     undeclared: tool({
@@ -78,13 +77,13 @@ function fixture(): ToolSet {
  * Assert a wrapper's output carries the same declarations as its input.
  *
  * Identity, not equality, for the function: a wrapper that rebuilt the closure
- * would still satisfy `typeof === "function"` while having lost the map the
- * digest binding writes into.
+ * would still satisfy `typeof === "function"` while having lost what the
+ * original carries.
  */
 function expectDeclarationsPreserved(wrapped: Record<string, any>) {
   expect(wrapped.always_true.needsApproval).toBe(true);
   expect(wrapped.always_false.needsApproval).toBe(false);
-  expect(wrapped.function_form.needsApproval).toBe(digestBinding);
+  expect(wrapped.function_form.needsApproval).toBe(declaredPerCall);
   expect(wrapped.undeclared.needsApproval).toBeUndefined();
 }
 
@@ -157,46 +156,6 @@ describe("ToolSet wrappers preserve the approval declaration", () => {
     for (const name of Object.keys(raised)) {
       expect(raised[name].needsApproval, name).toBe(true);
     }
-  });
-
-  it("the SEP-2640 compose, for the tools it does not own", async () => {
-    const manager = {
-      getSkillsSupport: () => ({
-        declared: true,
-        advertised: true,
-        directoryRead: false,
-        active: true,
-      }),
-      listServerSkills: vi.fn(async () => ({ skills: [] })),
-      getServerSkill: vi.fn(async () => undefined),
-    } as never;
-    const { tools } = withServerSkills(
-      fixture() as unknown as Record<string, unknown>,
-      { manager, servers: [{ serverId: "srv_1", serverLabel: "Acme" }] },
-    );
-    expectDeclarationsPreserved(tools as Record<string, any>);
-  });
-
-  it("the SEP-2640 compose declares its OWN loadSkill as a function", async () => {
-    // Not fidelity but its converse, and it belongs next to it: the compose
-    // REPLACES `loadSkill`, so preserving the input's declaration there would
-    // be the bug. What it must carry is the digest-recording gate.
-    const manager = {
-      getSkillsSupport: () => ({
-        declared: true,
-        advertised: true,
-        directoryRead: false,
-        active: true,
-      }),
-      listServerSkills: vi.fn(async () => ({ skills: [] })),
-      getServerSkill: vi.fn(async () => undefined),
-    } as never;
-    const { tools } = withServerSkills({} as Record<string, unknown>, {
-      manager,
-      servers: [{ serverId: "srv_1", serverLabel: "Acme" }],
-    });
-    expect(typeof (tools as any).loadSkill.needsApproval).toBe("function");
-    expect(typeof (tools as any).readSkillFile.needsApproval).toBe("function");
   });
 
   it("applyPrepareAdvertisedTools narrows NAMES and never touches a tool", () => {

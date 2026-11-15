@@ -74,4 +74,35 @@ describe("ToolCallsDiffView", () => {
     fireEvent.click(within(row).getByRole("button"));
     expect(screen.getByText("Called, not expected")).toBeInTheDocument();
   });
+
+  it("lists a failed call the model retried as retried, not unexpected", () => {
+    const exportScene = { toolName: "export_scene", arguments: { id: "s1" } };
+    render(
+      <ToolCallsDiffView
+        expected={[exportScene, { toolName: "share_scene", arguments: {} }]}
+        actual={[
+          { ...exportScene, failed: true },
+          exportScene,
+          { toolName: "share_scene", arguments: {} },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText("All 2 expected tool calls matched."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("retried")).toBeInTheDocument();
+    expect(screen.queryByText("unexpected")).not.toBeInTheDocument();
+    expect(screen.getAllByText("match")).toHaveLength(2);
+  });
+
+  it("still flags a second successful identical call as unexpected", () => {
+    const exportScene = { toolName: "export_scene", arguments: { id: "s1" } };
+    render(
+      <ToolCallsDiffView expected={[exportScene]} actual={[exportScene, exportScene]} />,
+    );
+
+    expect(screen.getByText("unexpected")).toBeInTheDocument();
+    expect(screen.queryByText("retried")).not.toBeInTheDocument();
+  });
 });

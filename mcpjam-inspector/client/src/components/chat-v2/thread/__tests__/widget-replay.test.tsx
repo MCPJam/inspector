@@ -3,6 +3,11 @@ import { render, screen } from "@testing-library/react";
 import { WidgetReplay } from "../widget-replay";
 
 const mockDetectUIType = vi.fn();
+vi.mock("@/components/host-workspace/OwnedModelApp", () => ({
+  OwnedModelApp: ({ marker }: { marker: { instanceToken: string } }) => (
+    <div data-testid="owned-instance">{marker.instanceToken}</div>
+  ),
+}));
 
 // After the renderer consolidation (Phase 3), every UI-bearing tool —
 // Apps SDK, MCP Apps, or dual-metadata — routes through MCPAppsRenderer.
@@ -27,7 +32,7 @@ vi.mock("../mcp-apps/use-widget-host", () => ({
 
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   detectUIType: (...args: unknown[]) => mockDetectUIType(...args),
-  getUIResourceUri: () => "ui://widget/test.html",
+  getUIResourceUri: (uiType: string | null) => uiType ? "ui://widget/test.html" : null,
   UIType: {
     MCP_APPS: "mcp-apps",
     OPENAI_SDK: "openai-sdk",
@@ -76,6 +81,23 @@ describe("WidgetReplay", () => {
     expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
   });
 
+  it("uses the owned instance when its catalog URI is absent, subject to host policy", () => {
+    mockDetectUIType.mockReturnValue(null);
+    const marker = {
+      instanceToken: "x".repeat(43),
+      hostId: "host",
+      workspaceId: "workspace",
+      projectId: "project",
+      serverId: "server-1",
+    };
+    const props = { ...baseProps, attributedModelApp: marker, serverId: marker.serverId };
+    const view = render(<WidgetReplay {...props} resolveHostSupportsWidget={() => false} />);
+    expect(screen.queryByTestId("owned-instance")).toBeNull();
+    view.rerender(<WidgetReplay {...props} resolveHostSupportsWidget={() => true} />);
+    expect(screen.getByTestId("owned-instance")).toHaveTextContent(marker.instanceToken);
+    expect(screen.queryByTestId("mcp-apps-renderer")).toBeNull();
+  });
+
   it("renders nothing when detectUIType returns null", () => {
     mockDetectUIType.mockReturnValue(null);
     const { container } = render(<WidgetReplay {...baseProps} />);
@@ -104,6 +126,21 @@ describe("WidgetReplay", () => {
     );
     expect(gate).toHaveBeenCalledWith("original-imported-server");
     expect(gate).not.toHaveBeenCalledWith("server-1");
+  });
+
+  it("addresses a restored snapshot through the caller's resolved server", () => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    const gate = vi.fn(() => true);
+    render(
+      <WidgetReplay
+        {...baseProps}
+        serverId="qa-server"
+        renderOverride={{ serverId: "convex-server-1" }}
+        resolveHostSupportsWidget={gate}
+      />,
+    );
+    expect(gate).toHaveBeenCalledWith("qa-server");
+    expect(gate).not.toHaveBeenCalledWith("convex-server-1");
   });
 
   // The caps-blob → boolean integration (`hostSupportsWidgetRendering` over the

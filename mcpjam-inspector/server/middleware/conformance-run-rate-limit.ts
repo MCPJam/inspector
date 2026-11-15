@@ -41,19 +41,89 @@ const RUN_WINDOW_MS = 10 * 60_000;
  * reached its limit. A limiter that can be turned into the attack is not one.
  */
 const IP_WINDOW_MAX_ENTRIES = 10_000;
-const ipWindows = new Map<string, { count: number; windowStart: number }>();
+type RunWindow = { count: number; windowStart: number };
+const ipWindows = new Map<string, RunWindow>();
+/**
+ * The same budget per signed-in user, for `/api/v1` starts. Every MCP and CLI
+ * call reaches `/api/v1` from MCPJam's own worker or the user's machine, so
+ * the user, not the address, is what an agent in a loop spends.
+ */
+const userWindows = new Map<string, RunWindow>();
 
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, entry] of ipWindows) {
-    if (now - entry.windowStart > RUN_WINDOW_MS * 2) {
-      ipWindows.delete(ip);
+  for (const windows of [ipWindows, userWindows]) {
+    for (const [key, entry] of windows) {
+      if (now - entry.windowStart > RUN_WINDOW_MS * 2) {
+        windows.delete(key);
+      }
     }
   }
 }, 5 * 60_000).unref();
 
 export function resetConformanceRunRateLimitForTests(): void {
   ipWindows.clear();
+  userWindows.clear();
+}
+
+/**
+ * Count one run against `key`. `limited` carries the wait until its window
+ * resets; `full` means the table is at its bound (see `IP_WINDOW_MAX_ENTRIES`).
+ */
+function takeRunSlot(
+  windows: Map<string, RunWindow>,
+  key: string,
+  now: number,
+): { taken: true } | { taken: false; reason: "limited" | "full"; waitMs: number } {
+  const entry = windows.get(key);
+  if (entry && now - entry.windowStart < RUN_WINDOW_MS) {
+    if (entry.count >= RUN_RATE_LIMIT) {
+      return {
+        taken: false,
+        reason: "limited",
+        waitMs: entry.windowStart + RUN_WINDOW_MS - now,
+      };
+    }
+    entry.count++;
+    return { taken: true };
+  }
+  if (entry) {
+    entry.count = 1;
+    entry.windowStart = now;
+    return { taken: true };
+  }
+  if (windows.size >= IP_WINDOW_MAX_ENTRIES) {
+    // FAIL CLOSED rather than evict. Evicting the oldest entry bounds memory
+    // but hands whoever owned it a fresh 30-run allowance — so a churner
+    // could reset their own exhausted bucket by filling the map, defeating
+    // the ceiling at exactly the scale it matters. Refusing the new key
+    // keeps both properties.
+    return { taken: false, reason: "full", waitMs: 60_000 };
+  }
+  windows.set(key, { count: 1, windowStart: now });
+  return { taken: true };
+}
+
+/**
+ * Take one `/api/v1` start from `userKey`'s budget, or return how many seconds
+ * to wait. Hosted only, like the per-address limit.
+ */
+export function takeConformanceStartSlot(
+  userKey: string,
+  now = Date.now(),
+): { retryAfterSeconds: number } | null {
+  if (!HOSTED_MODE) return null;
+  const slot = takeRunSlot(userWindows, userKey, now);
+  return slot.taken
+    ? null
+    : { retryAfterSeconds: Math.max(1, Math.ceil(slot.waitMs / 1000)) };
+}
+
+/** Give back a slot whose start dialled nothing: refused, or a replay. */
+export function releaseConformanceStartSlot(userKey: string): void {
+  if (!HOSTED_MODE) return;
+  const entry = userWindows.get(userKey);
+  if (entry && entry.count > 0) entry.count--;
 }
 
 /** Test-only: the bound is only meaningful if a test can actually observe it. */
@@ -76,43 +146,18 @@ export async function conformanceRunRateLimitMiddleware(
   // header-stripped request starve the rest.
   if (!ip) return next();
 
-  const now = Date.now();
-  const entry = ipWindows.get(ip);
-
-  if (entry) {
-    if (now - entry.windowStart < RUN_WINDOW_MS) {
-      if (entry.count >= RUN_RATE_LIMIT) {
-        return c.json(
-          {
-            code: ErrorCode.RATE_LIMITED,
-            message:
-              "Too many conformance runs from this address. Try again in a few minutes.",
-          },
-          429
-        );
-      }
-      entry.count++;
-    } else {
-      entry.count = 1;
-      entry.windowStart = now;
-    }
-  } else {
-    if (ipWindows.size >= IP_WINDOW_MAX_ENTRIES) {
-      // FAIL CLOSED rather than evict. Evicting the oldest entry bounds memory
-      // but hands whoever owned it a fresh 30-run allowance — so a churner
-      // could reset their own exhausted bucket by filling the map, defeating
-      // the ceiling at exactly the scale it matters. Refusing the new key
-      // keeps both properties.
-      return c.json(
-        {
-          code: ErrorCode.RATE_LIMITED,
-          message:
-            "Too many conformance runs right now. Try again in a few minutes.",
-        },
-        429
-      );
-    }
-    ipWindows.set(ip, { count: 1, windowStart: now });
+  const slot = takeRunSlot(ipWindows, ip, Date.now());
+  if (!slot.taken) {
+    return c.json(
+      {
+        code: ErrorCode.RATE_LIMITED,
+        message:
+          slot.reason === "limited"
+            ? "Too many conformance runs from this address. Try again in a few minutes."
+            : "Too many conformance runs right now. Try again in a few minutes.",
+      },
+      429
+    );
   }
 
   return next();

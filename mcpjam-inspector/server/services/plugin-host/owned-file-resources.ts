@@ -1,3 +1,4 @@
+import { PLUGIN_FILE_MAX_BYTES } from "../../../shared/plugin-file-transfer.js";
 import {
   createLocalFileTargetAdapter,
   type LocalFileTarget,
@@ -100,7 +101,7 @@ export class OwnedFileResources {
       resource: {
         key: descriptor.uri,
         name: descriptor.name,
-        maxBytes: 1024 * 1024,
+        maxBytes: PLUGIN_FILE_MAX_BYTES,
         ...(descriptor.localTarget
           ? {
               // On the Computer this is the VM path the server's own tools use.

@@ -40,6 +40,8 @@ import type { ProbeMcpServerResult } from "@mcpjam/sdk";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
+  hostedPrivateEgressAdmission,
+  isBlockedEgressHost,
 } from "../utils/hosted-egress-guard.js";
 import { createPinnedFetch } from "../utils/pinned-fetch.js";
 import { HOSTED_MODE } from "../config.js";
@@ -78,6 +80,9 @@ function createDefaultDiscoveryFetch(
   return createPinnedFetch({
     allowLoopback: input.allowLoopback === true,
     allowPrivateNetwork: allowsPrivateNetwork(input),
+    admitPrivateDestination: HOSTED_MODE
+      ? hostedPrivateEgressAdmission()
+      : undefined,
     timeoutMs: clampTimeout(input.timeoutMs),
   });
 }
@@ -400,8 +405,20 @@ export async function probeThroughEgressGuard(
   try {
     const url = assertOutboundOAuthUrlAllowed(input.serverUrl, {
       allowLoopback: input.allowLoopback === true,
-      allowPrivateNetwork: allowsPrivateNetwork(input),
+      // This check only parses the URL. The operator policy judges literals
+      // below and the pinned transport checks every resolved address and hop.
+      allowPrivateNetwork:
+        allowsPrivateNetwork(input) ||
+        (HOSTED_MODE && hostedPrivateEgressAdmission() !== undefined),
     });
+    if (HOSTED_MODE && isBlockedEgressHost(url.hostname, true)) {
+      return {
+        kind: "refused",
+        errorCode: "URL_NOT_ALLOWED",
+        detail:
+          "This installation cannot reach the server address. Ask your administrator to check the private-network allowlist.",
+      };
+    }
     // The classifier accepts http AND https — it judges addresses, not
     // transport. Hosted targets are HTTPS-only, so that has to be enforced
     // here rather than assumed: a plaintext probe to a public host puts the

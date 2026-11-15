@@ -1,5 +1,8 @@
 import type { MCPListTasksResult, MCPTask } from "@mcpjam/sdk/browser";
-import type { RegistryTaskEntry } from "@/shared/hosted-tasks";
+import type {
+  RegistryTaskEntry,
+  TaskRequestTarget,
+} from "@/shared/hosted-tasks";
 import { authFetch } from "@/lib/session-token";
 import { ensureLocalMode, runByMode } from "@/lib/apis/mode-client";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -74,25 +77,28 @@ export interface ListTasksWithRecoveryResult extends MCPListTasksResult {
 export async function listTasks(
   serverId: string,
   cursor?: string,
+  target?: TaskRequestTarget,
 ): Promise<ListTasksWithRecoveryResult> {
   return runByMode({
     hosted: () =>
       listHostedTasks({
         serverNameOrId: serverId,
+        ...target,
         cursor,
       }) as Promise<ListTasksWithRecoveryResult>,
-    local: () => listTasksLocal(serverId, cursor),
+    local: () => listTasksLocal(serverId, cursor, target),
   });
 }
 
 async function listTasksLocal(
   serverId: string,
   cursor?: string,
+  target?: TaskRequestTarget,
 ): Promise<ListTasksResult> {
   const res = await authFetch("/api/mcp/tasks/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, cursor }),
+    body: JSON.stringify({ serverId, cursor, ...target }),
   });
 
   let body: any = null;
@@ -109,19 +115,21 @@ async function listTasksLocal(
 export async function getTask(
   serverId: string,
   taskId: string,
+  target?: TaskRequestTarget,
 ): Promise<TaskEnvelope> {
   return runByMode({
     hosted: async () => {
       try {
         return (await getHostedTask({
           serverNameOrId: serverId,
+          ...target,
           taskId,
         })) as TaskEnvelope;
       } catch (error) {
         rethrowHostedTaskError(error);
       }
     },
-    local: () => getTaskLocal(serverId, taskId),
+    local: () => getTaskLocal(serverId, taskId, target),
   });
 }
 
@@ -136,18 +144,20 @@ export interface TaskBatchEntry {
 export async function getTasksBatch(
   serverId: string,
   taskIds: string[],
+  target?: TaskRequestTarget,
 ): Promise<{ wire: TasksWire; tasks: TaskBatchEntry[] }> {
-  return getHostedTasksBatch({ serverNameOrId: serverId, taskIds });
+  return getHostedTasksBatch({ serverNameOrId: serverId, taskIds, ...target });
 }
 
 async function getTaskLocal(
   serverId: string,
   taskId: string,
+  target?: TaskRequestTarget,
 ): Promise<TaskEnvelope> {
   const res = await authFetch("/api/mcp/tasks/get", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, taskId }),
+    body: JSON.stringify({ serverId, taskId, ...target }),
   });
 
   let body: any = null;
@@ -171,12 +181,14 @@ export async function updateTask(
   serverId: string,
   taskId: string,
   inputResponses: Record<string, unknown>,
+  target?: TaskRequestTarget,
 ): Promise<TaskEnvelope> {
   return runByMode({
     hosted: async () => {
       try {
         return (await updateHostedTask({
           serverNameOrId: serverId,
+          ...target,
           taskId,
           inputResponses,
         })) as TaskEnvelope;
@@ -184,7 +196,7 @@ export async function updateTask(
         rethrowHostedTaskError(error);
       }
     },
-    local: () => updateTaskLocal(serverId, taskId, inputResponses),
+    local: () => updateTaskLocal(serverId, taskId, inputResponses, target),
   });
 }
 
@@ -192,11 +204,12 @@ async function updateTaskLocal(
   serverId: string,
   taskId: string,
   inputResponses: Record<string, unknown>,
+  target?: TaskRequestTarget,
 ): Promise<TaskEnvelope> {
   const res = await authFetch("/api/mcp/tasks/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, taskId, inputResponses }),
+    body: JSON.stringify({ serverId, taskId, inputResponses, ...target }),
   });
 
   let body: any = null;
@@ -218,21 +231,24 @@ async function updateTaskLocal(
 export async function getTaskResult(
   serverId: string,
   taskId: string,
+  target?: TaskRequestTarget,
 ): Promise<unknown> {
   return runByMode({
-    hosted: () => getHostedTaskResult({ serverNameOrId: serverId, taskId }),
-    local: () => getTaskResultLocal(serverId, taskId),
+    hosted: () =>
+      getHostedTaskResult({ serverNameOrId: serverId, taskId, ...target }),
+    local: () => getTaskResultLocal(serverId, taskId, target),
   });
 }
 
 async function getTaskResultLocal(
   serverId: string,
   taskId: string,
+  target?: TaskRequestTarget,
 ): Promise<unknown> {
   const res = await authFetch("/api/mcp/tasks/result", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, taskId }),
+    body: JSON.stringify({ serverId, taskId, ...target }),
   });
 
   let body: any = null;
@@ -252,21 +268,24 @@ async function getTaskResultLocal(
 export async function cancelTask(
   serverId: string,
   taskId: string,
+  target?: TaskRequestTarget,
 ): Promise<{ wire: TasksWire; task: Task | null }> {
   return runByMode({
-    hosted: () => cancelHostedTask({ serverNameOrId: serverId, taskId }),
-    local: () => cancelTaskLocal(serverId, taskId),
+    hosted: () =>
+      cancelHostedTask({ serverNameOrId: serverId, taskId, ...target }),
+    local: () => cancelTaskLocal(serverId, taskId, target),
   });
 }
 
 async function cancelTaskLocal(
   serverId: string,
   taskId: string,
+  target?: TaskRequestTarget,
 ): Promise<{ wire: TasksWire; task: Task | null }> {
   const res = await authFetch("/api/mcp/tasks/cancel", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, taskId }),
+    body: JSON.stringify({ serverId, taskId, ...target }),
   });
 
   let body: any = null;
@@ -285,17 +304,19 @@ async function cancelTaskLocal(
 // if the corresponding capability has been declared by the receiver
 export async function getTaskCapabilities(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<TasksSupport> {
   return runByMode({
     hosted: () =>
       getHostedTaskCapabilities({
         serverNameOrId: serverId,
+        ...target,
       }) as Promise<TasksSupport>,
     local: async () => {
       const res = await authFetch("/api/mcp/tasks/capabilities", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId }),
+        body: JSON.stringify({ serverId, ...target }),
       });
 
       let body: any = null;
@@ -329,20 +350,22 @@ export interface ProgressEvent {
 // UI hides progress entirely.
 export async function getLatestProgress(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<ProgressEvent | null> {
   return runByMode({
     hosted: async () => null,
-    local: () => getLatestProgressLocal(serverId),
+    local: () => getLatestProgressLocal(serverId, target),
   });
 }
 
 async function getLatestProgressLocal(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<ProgressEvent | null> {
   const res = await authFetch("/api/mcp/tasks/progress", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId }),
+    body: JSON.stringify({ serverId, ...target }),
   });
 
   let body: any = null;
@@ -359,20 +382,22 @@ async function getLatestProgressLocal(
 // Get all active progress for a server
 export async function getAllProgress(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<ProgressEvent[]> {
   return runByMode({
     hosted: async () => [],
-    local: () => getAllProgressLocal(serverId),
+    local: () => getAllProgressLocal(serverId, target),
   });
 }
 
 async function getAllProgressLocal(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<ProgressEvent[]> {
   const res = await authFetch("/api/mcp/tasks/progress/all", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId }),
+    body: JSON.stringify({ serverId, ...target }),
   });
 
   let body: any = null;

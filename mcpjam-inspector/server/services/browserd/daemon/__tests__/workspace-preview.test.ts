@@ -1,0 +1,338 @@
+import http from "node:http";
+import net from "node:net";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { WebSocket, WebSocketServer } from "ws";
+import { previewKeyFor } from "../../../workspace-preview/workspace-tunnel";
+import {
+  APP_HOST,
+  startSidecar,
+  type RunningSidecar,
+} from "../../../workspace-preview/__tests__/preview-tunnel-harness";
+import {
+  parsePreviewGrant,
+  previewRequestRefusal,
+  WorkspacePreviewRelay,
+} from "../workspace-preview";
+
+const KEY = "b".repeat(64);
+
+describe("parsePreviewGrant", () => {
+  const valid = { port: 5173, upstreamUrl: "wss://41000-ws1.e2b.app", upstreamHeaders: { "E2b-Sandbox-Id": "ws1", "E2b-Sandbox-Port": "41000" }, key: KEY };
+
+  it("accepts exactly what the tunnel needs", () => {
+    expect(parsePreviewGrant(valid)).toEqual({ ...valid, upstreamUrl: "wss://41000-ws1.e2b.app/" });
+  });
+
+  it.each([
+    ["a privileged port", { ...valid, port: 80 }],
+    ["a short key", { ...valid, key: "abc" }],
+    ["an http upstream", { ...valid, upstreamUrl: "https://41000-ws1.e2b.app" }],
+    ["upstream credentials", { ...valid, upstreamUrl: "wss://u:p@41000-ws1.e2b.app" }],
+    ["a sandbox-wide credential", { ...valid, upstreamHeaders: { "E2B-Traffic-Access-Token": "secret" } }],
+    ["a header with a newline", { ...valid, upstreamHeaders: { "E2b-Sandbox-Id": "a\r\nb" } }],
+    ["no body", null],
+  ])("refuses %s", (_label, body) => {
+    expect(parsePreviewGrant(body)).toBeUndefined();
+  });
+});
+
+describe("previewRequestRefusal", () => {
+  const granted = new Set([5173, 3000]);
+  it.each([
+    ["a typed navigation", 5173, { host: "localhost:5173", "sec-fetch-site": "none" }, undefined],
+    ["the app's own request", 5173, { host: "localhost:5173", "sec-fetch-site": "same-origin", origin: "http://localhost:5173" }, undefined],
+    ["the frontend calling its granted API port", 3000, { host: "localhost:3000", "sec-fetch-site": "same-site", origin: "http://localhost:5173" }, undefined],
+    ["another site", 5173, { host: "localhost:5173", "sec-fetch-site": "cross-site", origin: "https://evil.example" }, "cross-site"],
+    ["an ungranted local page", 5173, { host: "localhost:5173", "sec-fetch-site": "same-site", origin: "http://localhost:9999" }, "cross-site"],
+    ["a foreign origin without fetch metadata", 5173, { host: "localhost:5173", origin: "https://evil.example" }, "origin"],
+    ["a rebinding host", 5173, { host: "evil.example:5173" }, "host"],
+    ["another port's host", 5173, { host: "localhost:3000" }, "host"],
+  ] as const)("%s", (_label, port, headers, expected) => {
+    expect(previewRequestRefusal(headers, port, granted)).toBe(expected);
+  });
+});
+
+describe("WorkspacePreviewRelay through the real sidecar", () => {
+  let sidecar: RunningSidecar;
+  let app: http.Server;
+  let sockets: WebSocketServer;
+  let port: number;
+  let hits = 0;
+  const relay = new WorkspacePreviewRelay();
+
+  const get = (headers: Record<string, string>, method = "GET") =>
+    new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = http.request({ host: "127.0.0.1", port, method, path: "/echo", headers: { host: `localhost:${port}`, ...headers } }, (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+
+  beforeAll(async () => {
+    sidecar = await startSidecar();
+    app = http.createServer((req, res) => {
+      hits += 1;
+      if (req.url === "/stream") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        const tick = setInterval(() => res.write("data: tick\n\n"), 20);
+        res.once("close", () => clearInterval(tick));
+        return;
+      }
+      if (req.url === "/truncated") {
+        res.writeHead(200, { "content-length": "100" });
+        res.write("partial", () => req.socket.destroy());
+        return;
+      }
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ host: req.headers.host, sawKey: "x-mcpjam-preview-key" in req.headers }));
+    });
+    sockets = new WebSocketServer({ server: app });
+    sockets.on("connection", (socket, req) => socket.send(`hello ${req.headers.host}`));
+    await new Promise<void>((resolve) => app.listen(0, APP_HOST, resolve));
+    port = (app.address() as net.AddressInfo).port;
+    const granted = await relay.grant({
+      port,
+      upstreamUrl: `ws://127.0.0.1:${sidecar.port}`,
+      upstreamHeaders: {},
+      key: previewKeyFor(sidecar.secret, port),
+    });
+    expect(granted).toEqual({ ok: true, port });
+  });
+  afterAll(async () => {
+    await relay.close();
+    sockets.close();
+    app.close();
+    sidecar.stop();
+  });
+
+  it("delivers the browser's request with its localhost Host and no tunnel key", async () => {
+    const res = await get({ "sec-fetch-site": "none" });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ host: `localhost:${port}`, sawKey: false });
+  });
+
+  it("carries the app's WebSocket, as hot reload needs", async () => {
+    const message = await new Promise<string>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/`, { headers: { host: `localhost:${port}`, origin: `http://localhost:${port}` } });
+      socket.once("message", (data) => {
+        resolve(data.toString());
+        socket.close();
+      });
+      socket.once("error", reject);
+    });
+    expect(message).toBe(`hello localhost:${port}`);
+  });
+
+  it("refuses another site's request before it reaches the app", async () => {
+    const before = hits;
+    const res = await get({ "sec-fetch-site": "cross-site", origin: "https://evil.example" }, "POST");
+    expect(res.status).toBe(403);
+    expect(hits).toBe(before);
+  });
+
+  it("refuses another site's WebSocket", async () => {
+    const status = await new Promise<number | undefined>((resolve) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/`, { headers: { host: `localhost:${port}`, origin: "https://evil.example" } });
+      socket.once("unexpected-response", (_req, res) => resolve(res.statusCode));
+      socket.once("open", () => resolve(101));
+      socket.once("error", () => resolve(undefined));
+    });
+    expect(status).toBe(403);
+  });
+
+  it("frees the tunnel when the browser abandons a streaming response", async () => {
+    // The relay holds eight tunnels per port, so nine abandoned streams
+    // would leave every later request queued.
+    for (let i = 0; i < 9; i++) {
+      await new Promise<void>((resolve, reject) => {
+        const req = http.request(
+          { host: "127.0.0.1", port, path: "/stream", headers: { host: `localhost:${port}`, "sec-fetch-site": "none" } },
+          (res) => res.once("data", () => (req.destroy(), resolve())),
+        );
+        req.on("error", reject);
+        req.end();
+      });
+    }
+    const res = await get({ "sec-fetch-site": "none" });
+    expect(res.status).toBe(200);
+  });
+
+  it("keeps serving after the app drops a connection mid-response", async () => {
+    const outcome = await new Promise<string>((resolve) => {
+      const req = http.request(
+        { host: "127.0.0.1", port, path: "/truncated", headers: { host: `localhost:${port}`, "sec-fetch-site": "none" } },
+        (res) => {
+          res.once("aborted", () => resolve("aborted"));
+          res.once("end", () => resolve("ended"));
+          res.resume();
+        },
+      );
+      req.on("error", () => resolve("aborted"));
+      req.end();
+    });
+    expect(outcome).toBe("aborted");
+    expect((await get({ "sec-fetch-site": "none" })).status).toBe(200);
+  });
+
+  it("re-grants the same port without a second listener", async () => {
+    await expect(
+      relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${sidecar.port}`, upstreamHeaders: {}, key: previewKeyFor(sidecar.secret, port) }),
+    ).resolves.toEqual({ ok: true, port });
+  });
+
+  it("says nothing is running when the app stops", async () => {
+    await new Promise<void>((resolve) => {
+      sockets.close();
+      app.close(() => resolve());
+      app.closeAllConnections();
+    });
+    const res = await get({ "sec-fetch-site": "none" });
+    expect(res.status).toBe(502);
+    expect(res.body).toContain(`Nothing is running on port ${port} on this conversation's computer.`);
+  });
+
+  it("reports a port the browser box already uses", async () => {
+    const busy = net.createServer();
+    await new Promise<void>((resolve) => busy.listen(0, "127.0.0.1", resolve));
+    const busyPort = (busy.address() as net.AddressInfo).port;
+    await expect(
+      relay.grant({ port: busyPort, upstreamUrl: `ws://127.0.0.1:${sidecar.port}`, upstreamHeaders: {}, key: KEY }),
+    ).resolves.toEqual({ ok: false, error: "port_unavailable" });
+    busy.close();
+  });
+});
+
+describe("WorkspacePreviewRelay lifecycle", () => {
+  const freePort = async () => {
+    const probe = net.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const port = (probe.address() as net.AddressInfo).port;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    return port;
+  };
+
+  it("grants a new port to two concurrent callers without a false busy answer", async () => {
+    const relay = new WorkspacePreviewRelay();
+    const port = await freePort();
+    const grant = { port, upstreamUrl: "ws://127.0.0.1:9", upstreamHeaders: {}, key: KEY };
+    await expect(Promise.all([relay.grant(grant), relay.grant(grant)])).resolves.toEqual([
+      { ok: true, port },
+      { ok: true, port },
+    ]);
+    await relay.close();
+  });
+
+  it("shuts down while a hot-reload socket is still open", async () => {
+    const sidecar = await startSidecar();
+    const app = http.createServer((_req, res) => res.end("ok"));
+    const sockets = new WebSocketServer({ server: app });
+    await new Promise<void>((resolve) => app.listen(0, APP_HOST, resolve));
+    const port = (app.address() as net.AddressInfo).port;
+    const relay = new WorkspacePreviewRelay();
+    await relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${sidecar.port}`, upstreamHeaders: {}, key: previewKeyFor(sidecar.secret, port) });
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/`, { headers: { host: `localhost:${port}`, origin: `http://localhost:${port}` } });
+    await new Promise((resolve, reject) => {
+      socket.once("open", resolve);
+      socket.once("error", reject);
+    });
+    socket.on("error", () => undefined);
+    await expect(
+      Promise.race([relay.close().then(() => "closed"), new Promise((resolve) => setTimeout(() => resolve("hung"), 3000))]),
+    ).resolves.toBe("closed");
+    sockets.close();
+    app.close();
+    sidecar.stop();
+  });
+
+  it("sends a page load again on a fresh tunnel when a pooled one is already closing", async () => {
+    // Each accepted tunnel answers its first request, then drops the tunnel
+    // when a second request arrives on it: what a pooled tunnel looks like
+    // after the app closed its idle keep-alive connection.
+    const tunnels: net.Socket[] = [];
+    const app = http.createServer((req, res) => {
+      const served = (req.socket as net.Socket & { served?: number }).served ?? 0;
+      (req.socket as net.Socket & { served?: number }).served = served + 1;
+      if (served > 0) return void req.socket.destroy();
+      res.end("ok");
+    });
+    const edge = net.createServer((socket) => {
+      tunnels.push(socket);
+      socket.once("data", (handshake) => {
+        socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+        const rest = handshake.subarray(handshake.indexOf("\r\n\r\n") + 4);
+        if (rest.length) socket.unshift(rest);
+        app.emit("connection", socket);
+      });
+    });
+    await new Promise<void>((resolve) => edge.listen(0, "127.0.0.1", resolve));
+    const relay = new WorkspacePreviewRelay();
+    const port = await freePort();
+    await relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${(edge.address() as net.AddressInfo).port}`, upstreamHeaders: {}, key: KEY });
+    const load = () =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        // A browser asks to keep the connection, which is what lets the
+        // relay pool the tunnel behind it.
+        const headers = { host: `localhost:${port}`, "sec-fetch-site": "none", connection: "keep-alive" };
+        const req = http.request({ host: "127.0.0.1", port, path: "/", agent: false, headers }, (res) => {
+          let body = "";
+          res.on("data", (chunk) => (body += chunk));
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    expect(await load()).toEqual({ status: 200, body: "ok" });
+    expect(await load()).toEqual({ status: 200, body: "ok" });
+    expect(tunnels).toHaveLength(2);
+    await relay.close();
+    edge.close();
+    app.close();
+  });
+
+  it("answers at once when the edge closes before a whole 101", async () => {
+    for (const answer of ["", "HTTP/1.1 10"]) {
+      // Ends cleanly after writing nothing, or part of the status line.
+      const edge = net.createServer((socket) => socket.once("data", () => socket.end(answer)));
+      await new Promise<void>((resolve) => edge.listen(0, "127.0.0.1", resolve));
+      const relay = new WorkspacePreviewRelay();
+      const port = await freePort();
+      await relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${(edge.address() as net.AddressInfo).port}`, upstreamHeaders: {}, key: KEY });
+      const status = new Promise<number>((resolve, reject) => {
+        const headers = { host: `localhost:${port}`, "sec-fetch-site": "none" };
+        const req = http.request({ host: "127.0.0.1", port, path: "/", agent: false, headers }, (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        });
+        req.on("error", reject);
+        req.end();
+      });
+      const outcome = await Promise.race([status, new Promise((resolve) => setTimeout(() => resolve("hung"), 3000))]);
+      expect(outcome).toBe(502);
+      await relay.close();
+      edge.close();
+    }
+  });
+
+  it("survives a browser that resets while the tunnel is still opening", async () => {
+    // An upstream that accepts and never answers keeps the handshake pending.
+    const stalled = net.createServer(() => undefined);
+    await new Promise<void>((resolve) => stalled.listen(0, "127.0.0.1", resolve));
+    const relay = new WorkspacePreviewRelay();
+    const port = await freePort();
+    await relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${(stalled.address() as net.AddressInfo).port}`, upstreamHeaders: {}, key: KEY });
+    const client = net.connect(port, "127.0.0.1", () =>
+      client.write(
+        `GET / HTTP/1.1\r\nHost: localhost:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    client.resetAndDestroy();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await relay.close();
+    stalled.close();
+  });
+});

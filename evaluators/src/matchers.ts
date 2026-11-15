@@ -12,7 +12,37 @@
 
 import type { ToolCall } from "./types.js";
 
-export type EvalToolCall = ToolCall;
+export type EvalToolCall = ToolCall & {
+  /**
+   * Set on an ACTUAL call whose execution failed: an MCP result with
+   * `isError: true`, a protocol or transport error, or a timeout. Absent means
+   * the call is not known to have failed. Ignored on expected calls.
+   *
+   * A failed call followed later in the same list by an identical call — the
+   * same `toolName` and deeply equal `arguments`, key order ignored — is a
+   * retry, not a separate call. See {@link EvalToolCallRetry}.
+   */
+  failed?: boolean;
+};
+
+/**
+ * A failed call that a later identical call retried.
+ *
+ * The attempt is graded as part of its retry rather than as a call of its own:
+ * it is never an extra, and under `toolCallOrder: "strict"` it holds no
+ * position, so the retry stands where the attempt was. Each failed attempt
+ * points at the next identical call, so repeated failures before a success
+ * form a chain. A failed call that nothing retried is graded like any other
+ * call, and two successful identical calls are still two calls.
+ */
+export type EvalToolCallRetry = {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  /** Index in the actual calls of the failed attempt. */
+  actualIndex: number;
+  /** Index in the actual calls of the identical call that retried it. */
+  retriedByIndex: number;
+};
 
 export type EvalArgumentMismatch = {
   toolName: string;
@@ -87,6 +117,8 @@ export type EvalToolCallMatchResult = {
   extra: EvalToolCall[];
   outOfOrder: EvalOutOfOrderToolCall[];
   argumentMismatches: EvalArgumentMismatch[];
+  /** Failed attempts graded as part of their retry; empty for a negative test. */
+  retries: EvalToolCallRetry[];
   passed: boolean;
 };
 
@@ -222,6 +254,60 @@ function stableStringify(value: unknown): string {
 
 function deepEqual(a: unknown, b: unknown): boolean {
   return stableStringify(a) === stableStringify(b);
+}
+
+/**
+ * The failed calls in `actual` that a later identical call retried, in call
+ * order. "Identical" is the same `toolName` and deeply equal arguments, key
+ * order ignored; the order and argument-matching options play no part, since
+ * this is about the calls the agent made, not about what was expected.
+ */
+export function findToolCallRetries(
+  actual: readonly EvalToolCall[],
+): EvalToolCallRetry[] {
+  const identities = actual.map(
+    (call) =>
+      `${JSON.stringify(call?.toolName)}:${stableStringify(call?.arguments ?? {})}`,
+  );
+  const retries: EvalToolCallRetry[] = [];
+  actual.forEach((call, actualIndex) => {
+    if (call?.failed !== true) return;
+    const retriedByIndex = identities.indexOf(
+      identities[actualIndex]!,
+      actualIndex + 1,
+    );
+    if (retriedByIndex === -1) return;
+    retries.push({
+      toolName: call.toolName,
+      arguments: call.arguments ?? {},
+      actualIndex,
+      retriedByIndex,
+    });
+  });
+  return retries;
+}
+
+/**
+ * Copies of `calls` with `failed: true` on each call a tool error names by
+ * `toolCallId`; the other calls are returned as they are. A call or an error
+ * without an id is never marked: joining by tool name alone could mark the
+ * wrong one of two identical calls.
+ */
+export function markFailedToolCalls<
+  T extends EvalToolCall & { toolCallId?: string },
+>(calls: readonly T[], toolErrors: ReadonlyArray<{ toolCallId?: string }>): T[] {
+  const failedIds = new Set<string>();
+  for (const error of toolErrors) {
+    if (typeof error?.toolCallId === "string" && error.toolCallId.length > 0) {
+      failedIds.add(error.toolCallId);
+    }
+  }
+  if (failedIds.size === 0) return [...calls];
+  return calls.map((call) =>
+    typeof call.toolCallId === "string" && failedIds.has(call.toolCallId)
+      ? { ...call, failed: true }
+      : call,
+  );
 }
 
 function partialArgumentsMatch(
@@ -423,7 +509,9 @@ export type ToolCallPairing = {
  * that anything else that reports per-call results (`tool-expectations`) reads
  * the same pairing instead of re-deriving one that could disagree on greedy
  * corner cases. `argumentMatching` may be a resolver so each expected call can
- * carry its own mode; a single mode reproduces `evaluateToolCalls` exactly.
+ * carry its own mode; a single mode reproduces `evaluateToolCalls` exactly when
+ * `actual` omits the retried attempts `findToolCallRetries` reports, as
+ * `evaluateToolCalls` does before it pairs.
  */
 export function pairToolCalls(
   expected: EvalToolCall[],
@@ -520,6 +608,10 @@ export function assertValidMaxExtra(value: number | null | undefined): void {
  *
  * Pass `isNegativeTest: true` to flip the test: it then passes iff *no*
  * tool calls were made.
+ *
+ * A failed actual call that a later identical call retried is graded as part
+ * of the retry: it is reported in `retries`, never in `extra`, and holds no
+ * position under `strict` order. See {@link EvalToolCallRetry}.
  */
 export function evaluateToolCalls(
   expected: EvalToolCall[],
@@ -552,6 +644,8 @@ export function evaluateToolCalls(
       extra: normalizedActual,
       outOfOrder: [],
       argumentMismatches: [],
+      // Every call breaks a negative test, a retried one included.
+      retries: [],
       passed: normalizedActual.length === 0,
     };
   }
@@ -566,16 +660,26 @@ export function evaluateToolCalls(
       extra: [],
       outOfOrder: [],
       argumentMismatches: [],
+      retries: [],
       passed: false,
     };
   }
+
+  // The last identical call is never a retried attempt itself, so `graded`
+  // keeps at least one call whenever `normalizedActual` has one.
+  const retries = findToolCallRetries(normalizedActual);
+  const retriedIndices = new Set(retries.map((retry) => retry.actualIndex));
+  const graded =
+    retriedIndices.size === 0
+      ? normalizedActual
+      : normalizedActual.filter((_, idx) => !retriedIndices.has(idx));
 
   // Pass 1 (trajectory-aware pairing on toolName + args) and pass 2
   // (same-name pairing, reported as an argument mismatch) live in
   // `pairToolCalls`, the one pairing implementation.
   const { expectedToActual, argumentMismatchExpected } = pairToolCalls(
     normalizedExpected,
-    normalizedActual,
+    graded,
     toolCallOrder,
     argumentMatching,
   );
@@ -585,7 +689,7 @@ export function evaluateToolCalls(
     argumentMismatchExpected.map((ei) => ({
       toolName: normalizedExpected[ei].toolName,
       expectedArgs: normalizedExpected[ei].arguments || {},
-      actualArgs: normalizedActual[expectedToActual.get(ei)!].arguments || {},
+      actualArgs: graded[expectedToActual.get(ei)!].arguments || {},
     }));
 
   // Order analysis is folded into the per-mode primitive: `strict` only
@@ -598,9 +702,7 @@ export function evaluateToolCalls(
   const missing = normalizedExpected.filter(
     (_, idx) => !matchedExpectedIndices.has(idx),
   );
-  const extra = normalizedActual.filter(
-    (_, idx) => !matchedActualIndices.has(idx),
-  );
+  const extra = graded.filter((_, idx) => !matchedActualIndices.has(idx));
 
   // Extras gate is independent of toolCallOrder. `null` = unlimited; a
   // non-negative integer caps the count.
@@ -617,6 +719,7 @@ export function evaluateToolCalls(
     extra,
     outOfOrder,
     argumentMismatches,
+    retries,
     passed,
   };
 }

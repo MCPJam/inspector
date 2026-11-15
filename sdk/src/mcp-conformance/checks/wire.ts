@@ -27,6 +27,7 @@ import type {
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
 import {
+  blockedResult,
   eraSkipMessage,
   failedResult,
   passedResult,
@@ -86,14 +87,17 @@ export async function runWireSchemaCheck(
   const startedAt = Date.now();
   const protocolVersion = ctx.config.protocolVersion;
   if (protocolVersion === undefined) {
-    // A raw-only run that never connected established no revision. Guessing
-    // one would grade the server against a schema it never agreed to speak.
+    // A run that never connected established no revision. Guessing one would
+    // grade the server against a schema it never agreed to speak. When the
+    // connect failed on a check, name it: that is where to look first.
     return {
       results: [
-        couldNotRunResult(
-          meta,
-          "The run established no protocol version (no client connection and no pin), so there is no revision whose schema to validate against",
-        ),
+        ctx.connectFailedCheck
+          ? blockedResult(meta, ctx.connectFailedCheck)
+          : couldNotRunResult(
+              meta,
+              "The run established no protocol version (no client connection and no pin), so there is no revision whose schema to validate against",
+            ),
       ],
     };
   }

@@ -170,6 +170,16 @@ import { HOST_TEMPLATE_FLAG_WAIT_MS, HostsRoute } from "../App";
 import { buildHostsPath } from "../lib/app-navigation";
 import { toast } from "../lib/toast";
 
+// The organization key policy binding has its own tests; here a template
+// seed is created as it is.
+vi.mock("@/hooks/use-org-bound-template-seed", () => ({
+  useOrgBoundTemplateSeed: () => ({
+    ready: true,
+    bind: (input: unknown) => ({ kind: "unchanged", input }),
+    prepare: (input: unknown) => ({ input }),
+  }),
+}));
+
 beforeEach(() => {
   mockRouteContext.convexProjectId = "project-1";
   mockRouteContext.hostsTabSelectedHostId = null;

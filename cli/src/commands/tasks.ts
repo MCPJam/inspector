@@ -1,18 +1,26 @@
 import { conformanceExitCode } from "../lib/conformance-exit-code.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { Command } from "commander";
-import { reportScore } from "../lib/conformance-exit-code.js";
+import { reportReadiness, reportScore } from "../lib/conformance-exit-code.js";
 import {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   MCPTasksConformanceTest,
+  RENAMED_MCP_TASKS_CHECK_IDS,
+  isKnownProtocolVersion,
   isMCPTasksWireError,
   isUnknownTaskError,
   type MCPClientManager,
+  type McpProtocolVersion,
+  type MCPServerConfig,
   type MCPTasksCheckCategory,
   type MCPTasksCheckId,
+  type MCPTasksCheckOverrides,
   type MCPTasksConformanceConfig,
   type TasksSupport,
   scoreFromTasksResult,
+  validateTaskOverrides,
 } from "@mcpjam/sdk";
 import {
   renderConformanceForCli,
@@ -77,7 +85,7 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
     "tasks-invalid-task-id-rejected",
     "tasks-status-payload-shape",
     "tasks-cancel-ack-shape",
-    "tasks-input-required-update-completes",
+    "tasks-update-ack-shape",
     "tasks-ttl-integer-shape",
     "tasks-undeclared-capability-names-requirements",
   ],
@@ -92,10 +100,13 @@ export const tasksConformanceExitCode = conformanceExitCode;
 export interface TasksConformanceOptions extends SharedServerTargetOptions {
   category?: string[];
   checkId?: string[];
+  adviceId?: string[];
   toolName?: string;
   toolArgs?: string;
+  checkOverrides?: string;
   pollTimeout?: number;
   inputResponses?: string;
+  protocolVersion?: string;
 }
 
 function collectInvalidEntries(
@@ -105,11 +116,14 @@ function collectInvalidEntries(
   return (values ?? []).filter((value) => !allowed.includes(value));
 }
 
+/**
+ * `serverConfig` is for a caller that already parsed the target, like
+ * `conformance run`, so it is not parsed twice.
+ */
 export function buildTasksConformanceConfig(
-  options: TasksConformanceOptions
+  options: TasksConformanceOptions,
+  serverConfig: MCPServerConfig = parseServerConfig(options)
 ): MCPTasksConformanceConfig {
-  const serverConfig = parseServerConfig(options);
-
   const categories = options.category?.filter(Boolean);
   const invalidCategories = collectInvalidEntries(
     categories,
@@ -123,13 +137,42 @@ export function buildTasksConformanceConfig(
     );
   }
 
-  const checkIds = options.checkId?.filter(Boolean);
+  // A renamed id runs under its current name; say what changed.
+  const checkIds = options.checkId?.filter(Boolean).map((id) => {
+    if (!Object.hasOwn(RENAMED_MCP_TASKS_CHECK_IDS, id)) return id;
+    const current =
+      RENAMED_MCP_TASKS_CHECK_IDS[
+        id as keyof typeof RENAMED_MCP_TASKS_CHECK_IDS
+      ];
+    process.stderr.write(
+      `Note: check ${id} is now ${current}. Running that instead.\n`
+    );
+    return current;
+  });
   const invalidCheckIds = collectInvalidEntries(checkIds, MCP_TASKS_CHECK_IDS);
   if (invalidCheckIds.length > 0) {
     throw usageError(
       `Unknown check id${
         invalidCheckIds.length === 1 ? "" : "s"
       }: ${invalidCheckIds.join(", ")}`
+    );
+  }
+
+  // A blank id is a mistake, not an omitted flag: dropping it would run every
+  // advice instead of the one asked for.
+  if (options.adviceId?.some((id) => !id.trim())) {
+    throw usageError("--advice-id needs an advice id.");
+  }
+  const readinessIds = options.adviceId;
+  const invalidReadinessIds = collectInvalidEntries(
+    readinessIds,
+    MCP_TASKS_READINESS_IDS
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${
+        invalidReadinessIds.length === 1 ? "" : "s"
+      }: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_TASKS_READINESS_IDS.join(", ")}`
     );
   }
 
@@ -147,14 +190,42 @@ export function buildTasksConformanceConfig(
         )
       : undefined;
 
+  const checkOverrides = parseCheckOverrides(options.checkOverrides);
+
+  const trimmedProtocolVersion = options.protocolVersion?.trim();
+  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  // A blank version is a mistake, not an omitted flag: dropping it would run
+  // unpinned instead of the version asked for.
+  if (trimmedProtocolVersion !== undefined) {
+    if (!isKnownProtocolVersion(trimmedProtocolVersion)) {
+      throw usageError(`Unknown --protocol-version: ${trimmedProtocolVersion}`);
+    }
+    if (!("url" in serverConfig) || !serverConfig.url) {
+      throw usageError(
+        "--protocol-version can only be used with an HTTP target (--url)."
+      );
+    }
+    mcpProtocolVersion = trimmedProtocolVersion;
+  }
+
   return {
     ...serverConfig,
+    ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
     ...(resolvedCheckIds && resolvedCheckIds.length > 0
       ? { checkIds: resolvedCheckIds as MCPTasksConformanceConfig["checkIds"] }
+      : {}),
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as MCPTasksConformanceConfig["readinessIds"],
+        }
       : {}),
     ...(options.toolName ? { toolName: options.toolName } : {}),
     ...(options.toolArgs
       ? { toolArguments: parseJsonRecord(options.toolArgs, "--tool-args") }
+      : {}),
+    ...(checkOverrides && Object.keys(checkOverrides).length > 0
+      ? { checkOverrides }
       : {}),
     ...(options.pollTimeout ? { pollTimeoutMs: options.pollTimeout } : {}),
     ...(options.inputResponses
@@ -166,6 +237,27 @@ export function buildTasksConformanceConfig(
         }
       : {}),
   };
+}
+
+/**
+ * `--check-overrides`: a different tool for some checks, keyed by check id.
+ * Checked with the SDK's own rule here, so a check that calls no tool, an
+ * unknown field or a blank tool name is a usage error before anything runs.
+ */
+function parseCheckOverrides(
+  value: string | undefined
+): MCPTasksCheckOverrides | undefined {
+  const parsed = parseJsonRecord(value, "--check-overrides");
+  if (!parsed) return undefined;
+  try {
+    return validateTaskOverrides(parsed);
+  } catch (error) {
+    throw usageError(
+      `--check-overrides: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 }
 
 export interface TaskVerbOptions extends SharedServerTargetOptions {
@@ -697,6 +789,33 @@ function registerTaskWatch(tasks: Command): void {
   });
 }
 
+/**
+ * The tools a Tasks run may call. Shared with `conformance run`, so the two
+ * commands cannot drift apart on what a flag means.
+ */
+export function addTasksToolOptions(command: Command): Command {
+  return command
+    .option(
+      "--tool-name <tool>",
+      "Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire)."
+    )
+    .option("--tool-args <json>", "Tool arguments as a JSON object")
+    .option(
+      "--check-overrides <json>",
+      'A different tool for some checks, keyed by check id: {"tasks-cancel-ack-shape":{"toolName":"slow_job","toolArguments":{"seconds":5}}}. Checks left out use --tool-name and --tool-args.'
+    )
+    .option(
+      "--input-responses <json>",
+      'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the tasks/update acknowledgement check is not applicable.'
+    )
+    .option(
+      "--poll-timeout <ms>",
+      "How long to poll a created task for a terminal status",
+      (value: string) => parsePositiveInteger(value, "Poll timeout"),
+      30_000
+    );
+}
+
 export function registerTasksCommands(program: Command): void {
   const tasks = program
     .command("tasks")
@@ -708,36 +827,33 @@ export function registerTasksCommands(program: Command): void {
   registerTaskVerbs(tasks);
   registerTaskWatch(tasks);
 
+  const conformance = tasks
+    .command("conformance")
+    .description("Run MCP Tasks conformance checks")
+    .option(
+      "--category <category>",
+      "Check category to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      []
+    )
+    .option(
+      "--check-id <id>",
+      "Specific check ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      []
+    )
+    .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      []
+    );
+  addTasksToolOptions(conformance);
   addSharedServerOptions(
-    tasks
-      .command("conformance")
-      .description("Run MCP Tasks conformance checks")
+    conformance
       .option(
-        "--category <category>",
-        "Check category to run. Repeat for multiple. Default: all.",
-        (value: string, previous: string[] = []) => [...previous, value],
-        []
-      )
-      .option(
-        "--check-id <id>",
-        "Specific check ID to run. Repeat for multiple. Default: all.",
-        (value: string, previous: string[] = []) => [...previous, value],
-        []
-      )
-      .option(
-        "--tool-name <tool>",
-        "Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire)."
-      )
-      .option("--tool-args <json>", "Tool arguments as a JSON object")
-      .option(
-        "--input-responses <json>",
-        'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the round-trip check reports what it needs.'
-      )
-      .option(
-        "--poll-timeout <ms>",
-        "How long to poll a created task for a terminal status",
-        (value: string) => parsePositiveInteger(value, "Poll timeout"),
-        30_000
+        "--protocol-version <version>",
+        "Pin the MCP protocol version for the conformance connection (e.g. 2026-07-28). HTTP targets only."
       )
       .option(
         "--reporter <reporter>",
@@ -775,7 +891,13 @@ export function registerTasksCommands(program: Command): void {
       }),
       ...(collector ? { rpcLogger: collector.rpcLogger } : {}),
     };
-    const result = await new MCPTasksConformanceTest(config).run();
+    // The CLI counts the run itself, under its own opt-outs.
+    const test = new MCPTasksConformanceTest({
+      ...config,
+      __suppressTelemetry: true,
+    });
+    captureConformanceRunEvent();
+    const result = await test.run();
 
     const outputResult = reporter
       ? result
@@ -787,6 +909,7 @@ export function registerTasksCommands(program: Command): void {
     process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 
     reportScore(scoreFromTasksResult(result), command);
+    reportReadiness(result, command);
     const incompleteReason = (result as { incompleteReason?: string })
       .incompleteReason;
     if (incompleteReason && !globalOptions.quiet) {

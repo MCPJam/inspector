@@ -48,7 +48,7 @@
  * to enforce — but it is the same shape of deviation documented at the top of
  * `sessionToolRegistrar.ts`, and worth reading alongside it.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import { z } from "zod";
@@ -77,8 +77,9 @@ export const SKILLS_EXTENSION_CAPABILITY = {
 } as const;
 
 /**
- * How long a client may cache a `skills/list` result (SEP-2549), and the scope
- * that cache entry is valid for.
+ * How long a client may cache a `skills/list` or `skills/get` result
+ * (SEP-2549), and the scope that cache entry is valid for. The stable spec
+ * requires both fields on both results.
  *
  * The catalog is baked into the bundle at build time, so it cannot change
  * without a deploy — an hour is an honest statement about this server rather
@@ -133,6 +134,37 @@ function entryFor(uri: string): SkillsBundleEntry {
 }
 
 /**
+ * Resource metadata for one manifest file.
+ *
+ * The spec says a SKILL.md resource's `name` and `description` SHOULD come
+ * from its frontmatter. A supporting file is named by its path within the
+ * skill, as the spec's directory-listing examples name them.
+ */
+export function resourceMetadataFor(uri: string): {
+  name: string;
+  description: string;
+} {
+  const entry = SKILLS_BUNDLE_ENTRIES.find((skill) =>
+    skill.resources.some((resource) => resource.uri === uri)
+  );
+  if (!entry) {
+    return { name: uri, description: "Agent Skill file served over MCP." };
+  }
+  const skillName = String(entry.frontmatter.name);
+  if (uri === entry.uri) {
+    return {
+      name: skillName,
+      description: String(entry.frontmatter.description),
+    };
+  }
+  const root = entry.uri.slice(0, -"/SKILL.md".length);
+  return {
+    name: uri.slice(root.length + 1),
+    description: `Supporting file of the "${skillName}" skill, served over MCP.`,
+  };
+}
+
+/**
  * Registers `skills/list`, `skills/get`, and one resource per manifest file.
  *
  * Call ONCE per server. The low-level `setRequestHandler` silently overwrites a
@@ -165,18 +197,22 @@ export function registerSkillsSurface(server: McpServer): void {
   server.server.setRequestHandler(
     "skills/get",
     { params: getParamsSchema, result: looseResult },
-    async (params) => ({ skill: entryFor(params.uri) })
+    // The SDK fills `ttlMs` / `cacheScope` only on the base protocol's
+    // cacheable methods, so an extension method has to carry its own.
+    async (params) => ({
+      skill: entryFor(params.uri),
+      ttlMs: SKILLS_LIST_TTL_MS,
+      cacheScope: SKILLS_LIST_CACHE_SCOPE,
+    })
   );
 
   for (const [uri, text] of Object.entries(SKILLS_BUNDLE_CONTENTS)) {
     const mimeType = mimeTypeFor(uri);
+    const { name, description } = resourceMetadataFor(uri);
     server.registerResource(
+      name,
       uri,
-      uri,
-      {
-        mimeType,
-        description: "Agent Skill file served over MCP (SEP-2640).",
-      },
+      { mimeType, description },
       // The SAME `mimeType` on the content, not just the registration. A
       // reader gets the type from `contents[0]`, not from `resources/list` —
       // MCPJam's own loader names it in the refusal for a non-text read — so

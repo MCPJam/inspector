@@ -3,13 +3,13 @@
  *
  * Layout:
  *   Row: [title] | [tabs]                          [actions]
- *   Description
+ *   Description, when the page has one
  *
  * On a phone the three do not fit one line, so the title keeps its action
  * beside it and the tabs take a line of their own:
  *   Row: [title]                                   [actions]
  *   Row: [tabs]
- *   Description
+ *   Description, when the page has one
  *
  * The detail-route counterpart is DetailPageHeader; this one is the version
  * with no way back out, so it carries the line that says what the page is for.
@@ -28,7 +28,8 @@ import {
 export const PAGE_HEADER_STRIP_CLASSNAME =
   "relative shrink-0 border-b border-border/40 px-4 py-4 sm:px-6";
 
-const TAB_CLASSNAME =
+/** Compact tabs for a page header strip; Suite settings reuses it. */
+export const PAGE_HEADER_TAB_CLASSNAME =
   "mt-0 w-auto min-w-0 shrink justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
 
 export function LandingPageHeader<T extends string>({
@@ -39,7 +40,8 @@ export function LandingPageHeader<T extends string>({
   testId,
 }: {
   title: string;
-  description: ReactNode;
+  /** Omit when the title and tabs already say what the page is. */
+  description?: ReactNode;
   /** Omit on a landing with a single view. */
   tabs?: {
     value: T;
@@ -82,7 +84,7 @@ export function LandingPageHeader<T extends string>({
               onChange={tabs.onChange}
               ariaLabel={tabs.ariaLabel}
               indicatorId={tabs.indicatorId}
-              className={TAB_CLASSNAME}
+              className={PAGE_HEADER_TAB_CLASSNAME}
             />
           </div>
         ) : null}
@@ -95,7 +97,11 @@ export function LandingPageHeader<T extends string>({
           </div>
         ) : null}
       </div>
-      <p className="mt-2 w-full text-sm text-muted-foreground">{description}</p>
+      {description ? (
+        <p className="mt-2 w-full text-sm text-muted-foreground">
+          {description}
+        </p>
+      ) : null}
     </div>
   );
 }

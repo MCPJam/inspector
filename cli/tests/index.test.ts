@@ -118,3 +118,41 @@ test("runCliEntrypoint does not append update text after usage errors", async ()
   assert.match(run.stderr, /"USAGE_ERROR"/);
   assert.doesNotMatch(run.stderr, /unexpected update notice/);
 });
+
+test("main keeps a dependency's console output off stdout", async () => {
+  const server = await startMockHttpServer();
+  // Stands in for the MCP client, which logs with `console.debug` mid-command
+  // (e.g. "Client.listResources() called but server does not advertise
+  // resources capability"). Node prints that to stdout.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+    console.debug("dependency debug line");
+    return originalFetch(...args);
+  }) as typeof fetch;
+
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "--format",
+          "json",
+          "server",
+          "export",
+          "--url",
+          server.url,
+          "--stable",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0, run.stderr);
+    assert.match(run.stderr, /dependency debug line/);
+    assert.doesNotMatch(run.stdout, /dependency debug line/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await server.stop();
+  }
+});

@@ -979,7 +979,10 @@ export class EvalTest {
                 // when multiple iterations run concurrently
                 budget = wrapBillableExecutor(
                   wrapAgentWithAbortSignal(
-                    agent.withOptions({}),
+                    // Leases are minted on the server this run started on.
+                    agent.withOptions({
+                      mcpjamBaseUrl: runContext.connection.baseUrl,
+                    }),
                     abortController.signal
                   ),
                   this.config.billableSteps ?? 1

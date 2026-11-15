@@ -121,7 +121,7 @@ function parseHostedExecutionTarget(
  * `{ pluginVersionIds: [] }` are real, meaningful overrides ("no servers" /
  * "no plugins this turn").
  */
-function parseEnvironmentOverrides(
+export function parseEnvironmentOverrides(
   value: unknown
 ):
   | { ok: true; overrides?: EnvironmentOverrides }

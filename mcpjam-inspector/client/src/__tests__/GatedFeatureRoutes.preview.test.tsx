@@ -21,38 +21,37 @@ const {
   mockUseIsMemberActor,
   mockUseViewerProjectRole,
 } = vi.hoisted(() => ({
-  // `sandboxes-enabled`, tri-state like PostHog. ON by default: the preview
-  // only exists for visitors the flag lets in.
-  mockFlags: { sandboxesEnabled: true as boolean | undefined },
-  mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
-  mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
-  mockUseAuth: vi.fn(() => ({
-    user: { email: "member@example.com" } as { email: string } | null,
-    isLoading: false,
-    signIn: vi.fn(),
-    signUp: vi.fn(),
-  })),
-  // The gate's identity source. WorkOS is still mocked below because the
-  // route reads it for the invitee-guest notice, but it is no longer what
-  // decides preview vs tab.
-  mockUseIsMemberActor: vi.fn(() => true as boolean | undefined),
-  mockUseViewerProjectRole: vi.fn(),
-  mockRouteContext: {
-    billingUiEnabled: true,
-    activeTabBillingLocked: false,
-    activeTabBillingFeature: "scenarios" as string | null,
-    convexProjectId: "project-1" as string | null,
-    isAuthenticated: true,
-    shellBillingStatus: {
-      plan: "free",
-      effectivePlan: "free",
-      canManageBilling: true,
+    // `sandboxes-enabled`, tri-state like PostHog. ON by default: the preview
+    // only exists for visitors the flag lets in.
+    mockFlags: { sandboxesEnabled: true as boolean | undefined },
+    mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
+    mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
+    mockUseAuth: vi.fn(() => ({
+      user: { email: "member@example.com" } as { email: string } | null,
+      isLoading: false,
+      signIn: vi.fn(),
+      signUp: vi.fn(),
+    })),
+    // The gate's identity source. WorkOS is still mocked below because the
+    // route reads it for the invitee-guest notice, but it is no longer what
+    // decides preview vs tab.
+    mockUseIsMemberActor: vi.fn(() => true as boolean | undefined),
+    mockUseViewerProjectRole: vi.fn(),
+    mockRouteContext: {
+      activeTabBillingLocked: false,
+      activeTabBillingFeature: "scenarios" as string | null,
+      convexProjectId: "project-1" as string | null,
+      isAuthenticated: true,
+      shellBillingStatus: {
+        plan: "free",
+        effectivePlan: "free",
+        canManageBilling: true,
+      },
+      upgradePlanForActiveTab: "team" as string | null,
+      billingOrganizationId: "org-1",
+      navigateToTarget: vi.fn(),
     },
-    upgradePlanForActiveTab: "team" as string | null,
-    billingOrganizationId: "org-1",
-    navigateToTarget: vi.fn(),
-  },
-}));
+  }));
 
 vi.mock("@/lib/config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/config")>();
@@ -192,7 +191,6 @@ describe("gated feature routes — hosted", () => {
     mockSwarmsTab.mockClear();
     mockUserTestingTab.mockClear();
     mockRouteContext.activeTabBillingLocked = false;
-    mockRouteContext.billingUiEnabled = true;
     mockRouteContext.convexProjectId = "project-1";
     mockRouteContext.isAuthenticated = true;
     mockUseViewerProjectRole.mockClear();

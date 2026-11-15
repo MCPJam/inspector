@@ -1,5 +1,6 @@
 import {
   EXHAUSTION_PHRASES,
+  isDeclinedCardRefusal,
   isHeldCreditsRefusal,
   namesAnotherRefusal,
   parseJsonEnvelope,
@@ -107,6 +108,27 @@ export const isHoldRefusal = (value: unknown, depth = 0): boolean => {
     );
   }
   return typeof value === "string" && isHeldCreditsRefusal(null, null, value);
+};
+
+/**
+ * A refusal after a declined card paused auto-reload, read the way
+ * {@link isHoldRefusal} reads a hold: a structured `refusalReason` at any
+ * depth decides; without one, only the refusal's own words count, so an
+ * earlier decline quoted in its history does not relabel a new exhaustion.
+ *
+ * It is still credit exhaustion (a run stops on it), but the out-of-credits
+ * dialog does not name the card, so a surface that does can show it instead.
+ */
+export const isDeclinedCardLimit = (value: unknown): boolean => {
+  const reason = findRefusalReason(value);
+  if (reason) return isDeclinedCardRefusal(reason);
+  const root = refusalRoot(value);
+  const own = root
+    ? [...OWN_MESSAGE_KEYS.map((key) => root[key]), root.details]
+    : [value];
+  return own.some(
+    (text) => typeof text === "string" && isDeclinedCardRefusal(null, text),
+  );
 };
 
 /** Account credit exhaustion, shared by notifications and run schedulers.

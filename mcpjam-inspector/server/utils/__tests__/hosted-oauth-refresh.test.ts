@@ -137,6 +137,46 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
     expect(error.details.oauthRequired).toBeUndefined();
   });
 
+  it.each([
+    ["message", "credentialExportPolicy", "Export policy is deny."],
+    ["message", "hostedOnlyAccount", "This account is for hosted runs only."],
+    // A hosted-only refusal keeps the backend's sentence in either field.
+    ["error", "hostedOnlyAccount", "This account is for hosted runs only."],
+    ["error", "credentialExportPolicy", "OAuth refresh failed (403)"],
+  ])(
+    "shows the backend's sentence from `%s` for a %s refusal",
+    async (field, policy, expected) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json(
+            {
+              success: false,
+              code: "export_denied",
+              exportDenied: true,
+              policy,
+              [field]:
+                policy === "hostedOnlyAccount"
+                  ? "This account is for hosted runs only."
+                  : "Export policy is deny.",
+            },
+            { status: 403 },
+          ),
+        ),
+      );
+      const error = await forceRefreshHostedOAuthAccessToken(
+        "bearer-token",
+        "project-1",
+        "server-1",
+      ).catch((caught) => caught);
+      expect(error).toMatchObject({
+        status: 403,
+        message: expected,
+        details: { exportDenied: true, policy },
+      });
+    },
+  );
+
   it("forwards the server's refusal on refresh_token_invalid", async () => {
     vi.stubGlobal(
       "fetch",
@@ -392,6 +432,110 @@ describe("buildHostedOAuthUnauthorizedHandler", () => {
     vi.unstubAllGlobals();
   });
 
+  it("preserves the original challenge when the login has no refresh token", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      code: "refresh_token_unavailable",
+      message: "Sign in again to continue this call.",
+    }), { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const original = Object.assign(new Error("HTTP 401"), {
+      statusCode: 401,
+      authChallenge: {
+        source: "http_401",
+        facets: {
+          challengeHeader: "bearer",
+          hasResourceMetadata: false,
+          hasScope: false,
+          hasErrorParams: false,
+        },
+      },
+    });
+    const handler = buildHostedOAuthUnauthorizedHandler({
+      bearerToken: "token", projectId: "project-1",
+      serverId: "server-1", serverName: "Server One",
+    });
+    await expect(handler({ serverId: "server-1", error: original })).rejects.toBe(original);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps reconnect details for a connect-time refusal without a refresh token", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ code: "refresh_token_unavailable" }), {
+            status: 401,
+          }),
+      ),
+    );
+    const handler = buildHostedOAuthUnauthorizedHandler({
+      bearerToken: "token",
+      projectId: "p1",
+      serverId: "s1",
+    });
+    await expect(
+      handler({
+        serverId: "s1",
+        error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
+      }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      setupFailureSource: "oauth_refresh",
+      details: {
+        oauthRequired: true,
+        refreshTokenInvalid: false,
+        refreshTokenUnavailable: true,
+      },
+    });
+  });
+  it("reads the backend's refreshTokenUnavailable flag on a refresh_token_invalid reply", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: "refresh_token_invalid",
+              refreshTokenUnavailable: true,
+            }),
+            { status: 401 },
+          ),
+      ),
+    );
+    const original = Object.assign(new Error("HTTP 401"), {
+      statusCode: 401,
+      authChallenge: {
+        source: "http_401",
+        facets: {
+          challengeHeader: "bearer",
+          hasResourceMetadata: false,
+          hasScope: false,
+          hasErrorParams: false,
+        },
+      },
+    });
+    const handler = buildHostedOAuthUnauthorizedHandler({
+      bearerToken: "token",
+      projectId: "p1",
+      serverId: "s1",
+    });
+    await expect(handler({ serverId: "s1", error: original })).rejects.toBe(
+      original,
+    );
+    await expect(
+      handler({
+        serverId: "s1",
+        error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
+      }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      details: {
+        oauthRequired: true,
+        refreshTokenInvalid: false,
+        refreshTokenUnavailable: true,
+      },
+    });
+  });
   it("returns a handler that POSTs and resolves to {accessToken}", async () => {
     const fetchMock = vi.fn(async (_input: any, init?: any) => {
       expect(JSON.parse(init?.body)).toEqual({

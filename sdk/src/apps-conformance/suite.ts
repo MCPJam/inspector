@@ -1,6 +1,7 @@
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
 import { normalizeMCPAppsConformanceConfig } from "./validation.js";
 import { MCPAppsConformanceTest } from "./runner.js";
+import { captureConformanceRun } from "../telemetry.js";
 import type {
   MCPAppsConformanceConfig,
   MCPAppsConformanceResult,
@@ -55,6 +56,7 @@ export class MCPAppsConformanceSuite {
   }
 
   async run(): Promise<MCPAppsConformanceSuiteResult> {
+    if (!this.config.__suppressTelemetry) void captureConformanceRun("sdk");
     const startedAt = Date.now();
     const results: Array<MCPAppsConformanceResult & { label: string }> = [];
 
@@ -65,6 +67,8 @@ export class MCPAppsConformanceSuite {
         ...this.config.target,
         ...this.config.defaults,
         ...runConfig,
+        // The suite already counted this run. Last, so no spread undoes it.
+        __suppressTelemetry: true,
       };
 
       const result = await new MCPAppsConformanceTest(mergedConfig).run();

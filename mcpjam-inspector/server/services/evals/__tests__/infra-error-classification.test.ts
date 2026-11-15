@@ -39,6 +39,7 @@ describe("classifyEvalInfraError — our backend's codes are an allowlist", () =
     ["ai_scope_unresolved", 403, "model"],
     ["provider_auth_failed", 422, "model"],
     ["credential_missing", 422, "model"],
+    ["provider_not_configured", 422, "model"],
   ] as const)(
     "the org-key policy's %s (HTTP %s) is configuration, never auth or an account limit",
     (code, httpStatus, layer) => {
@@ -465,6 +466,22 @@ describe("classifyEvalInfraError — harness producers", () => {
         httpStatus: 429,
       }),
     ).toMatchObject({ class: "account_limit", layer: "platform" });
+    // The Free native harness trial, refused at the lease or before the
+    // computer boots: an account limit no retry lifts.
+    expect(
+      classifyEvalInfraError({
+        source: "platform_setup",
+        code: "native_harness_trial_exhausted",
+        httpStatus: 403,
+      }),
+    ).toMatchObject({ class: "account_limit", layer: "platform", retryable: false });
+    expect(
+      classifyEvalInfraError({
+        source: "sandbox_setup",
+        code: "native_harness_trial_exhausted",
+        httpStatus: 409,
+      }),
+    ).toMatchObject({ class: "account_limit", retryable: false });
     // A box that is gone is the sandbox layer whoever reported it.
     expect(
       classifyEvalInfraError({

@@ -68,6 +68,7 @@ export async function gatherMuseReadinessEvidence(
         fetchFn: options.fetchFn,
         timeoutMs: options.timeoutMs,
         maxRedirects: options.maxRedirects,
+        mcpHeaders: options.mcpHeaders,
         headers: options.headers,
         signal: options.signal,
       }

@@ -10,6 +10,28 @@ import {
 
 const temporaryDirectories: string[] = [];
 
+// Reads the archive itself rather than an import of it: import applies the
+// same exclusions, so a round-trip would pass even if the files were shipped.
+function tarEntryNames(tarball: Buffer): string[] {
+  const names: string[] = [];
+  let offset = 0;
+  while (offset + 512 <= tarball.byteLength) {
+    const header = tarball.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const field = (start: number, length: number) =>
+      header
+        .subarray(start, start + length)
+        .toString("utf8")
+        .replace(/\0.*$/, "");
+    const prefix = field(345, 155);
+    const name = field(0, 100);
+    names.push(prefix ? `${prefix}/${name}` : name);
+    const size = Number.parseInt(field(124, 12), 8);
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  return names;
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories
@@ -42,6 +64,143 @@ describe("browser profile archives", () => {
       readFile(join(target, "Default", "Cache", "discarded")),
     ).rejects.toThrow();
     await expect(readFile(join(target, "SingletonLock"))).rejects.toThrow();
+  });
+
+  it.each(["Default", "Profile 1", "Guest Profile"])(
+    "leaves passwords, autofill, history and extensions out of %s but keeps its sessions",
+    async (profileName) => {
+      const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-private-"));
+      temporaryDirectories.push(source);
+      const profile = join(source, profileName);
+      for (const directory of [
+        "Network",
+        "Local Storage/leveldb",
+        "IndexedDB/https_example.com_0.indexeddb.leveldb",
+        "Session Storage",
+        "Extensions/abc",
+        "Extension State",
+        "Local Extension Settings/abc",
+        "Sessions",
+        "Sync Data/LevelDB",
+        "Segmentation Platform",
+        "Shared Dictionary",
+      ]) {
+        await mkdir(join(profile, ...directory.split("/")), {
+          recursive: true,
+        });
+      }
+      const kept = [
+        "Cookies",
+        "Cookies-journal",
+        "Network/Cookies",
+        "Network/Cookies-wal",
+        "Network/Device Bound Sessions",
+        "Preferences",
+        "Local Storage/leveldb/000003.log",
+        "IndexedDB/https_example.com_0.indexeddb.leveldb/000003.log",
+        "Session Storage/000003.log",
+      ];
+      const privateStores = [
+        "Login Data",
+        "Login Data For Account",
+        "Affiliation Database",
+        "Web Data",
+        "Account Web Data",
+        "History",
+        "Media History",
+        "Visited Links",
+        "Top Sites",
+        "Shortcuts",
+        "Favicons",
+        "Network Action Predictor",
+        "Current Session",
+        "Last Session",
+        "Current Tabs",
+        "Last Tabs",
+        "Extension Cookies",
+        "Extension Activity",
+        "DIPS",
+        "Bookmarks",
+        "Network/Network Persistent State",
+        "Network/TransportSecurity",
+        "Network/Reporting and NEL",
+        "Network/Trust Tokens",
+      ];
+      const dropped = [
+        ...privateStores.flatMap((store) =>
+          [
+            "",
+            "-journal",
+            "-wal",
+            "-shm",
+            ".bak",
+            ".tmp",
+            ".old",
+            "~",
+            "-journal.bak",
+          ].map((suffix) => `${store}${suffix}`),
+        ),
+        "Segmentation Platform/000003.log",
+        "Shared Dictionary/db",
+        "Sessions/Session_1",
+        "Sync Data/LevelDB/000003.log",
+        "Extensions/abc/manifest.json",
+        "Extension State/000003.log",
+        "Local Extension Settings/abc/000003.log",
+      ];
+      for (const path of [...kept, ...dropped]) {
+        await writeFile(join(profile, ...path.split("/")), path);
+      }
+
+      const archived = tarEntryNames(
+        gunzipSync(await exportBrowserProfileArchive(source)),
+      );
+
+      for (const path of kept) {
+        expect(archived).toContain(`${profileName}/${path}`);
+      }
+      const leaked = archived.filter((entry) =>
+        dropped.some((path) => entry.startsWith(`${profileName}/${path}`)),
+      );
+      expect(leaked).toEqual([]);
+      for (const directory of ["Extensions", "Sessions", "Sync Data"]) {
+        expect(archived).not.toContain(`${profileName}/${directory}`);
+      }
+    },
+  );
+
+  it("leaves backup copies of caches out of the archive", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-cache-"));
+    temporaryDirectories.push(source);
+    for (const directory of ["Cache.bak", "Code Cache.old", "GPUCache~"]) {
+      await mkdir(join(source, "Default", directory), { recursive: true });
+      await writeFile(join(source, "Default", directory, "data_0"), "cache");
+    }
+    await writeFile(join(source, "Default", "Preferences"), "{}");
+
+    const archived = tarEntryNames(
+      gunzipSync(await exportBrowserProfileArchive(source)),
+    );
+
+    expect(archived).toContain("Default/Preferences");
+    expect(archived.filter((entry) => /cache/i.test(entry))).toEqual([]);
+  });
+
+  it("drops browser account data at the user-data root but keeps Local State", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mcpjam-profile-root-"));
+    temporaryDirectories.push(source);
+    await mkdir(join(source, "Accounts", "Avatar Images"), { recursive: true });
+    await writeFile(join(source, "Accounts", "Avatar Images", "1234"), "png");
+    await writeFile(join(source, "Local State"), "{}");
+
+    const archived = tarEntryNames(
+      gunzipSync(await exportBrowserProfileArchive(source)),
+    );
+
+    expect(archived).toContain("Local State");
+    expect(archived.filter((entry) => entry.startsWith("Accounts"))).toEqual(
+      [],
+    );
   });
 
   it("refuses a gzip bomb without allocating its expansion", async () => {

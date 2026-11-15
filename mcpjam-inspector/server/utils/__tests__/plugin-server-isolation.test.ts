@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UIMessageChunk } from "ai";
 import {
+  chatTurnIsolatedServerIds,
   createTurnToolLister,
   emitPluginServersUnavailable,
   listToolsByServerIsolating,
@@ -59,6 +60,15 @@ describe("listToolsByServerIsolating", () => {
       isolatedKeys: new Set(["p1", "p2"]),
     });
     expect(calls).toEqual([["a", "b"], ["p1"], ["p2"]]);
+  });
+
+  it("propagates a tagged internal failure instead of dropping the server", async () => {
+    const error = new WebRouteError(500, ErrorCode.INTERNAL_ERROR, "Internal failure");
+    const { manager } = fakeManager({ p1: error });
+    await expect(listToolsByServerIsolating({
+      list: (keys) => manager.getToolsForAiSdkByServer(keys),
+      keys: ["p1"], isolatedKeys: new Set(["p1"]),
+    })).rejects.toBe(error);
   });
 
   it("keeps the turn when an isolated server fails, and records why", async () => {
@@ -354,3 +364,18 @@ describe("emitPluginServersUnavailable", () => {
      "secret-error",
    );
  });
+
+
+describe("chatTurnIsolatedServerIds", () => {
+  it("isolates every interactive server, including an empty selection", () => {
+    expect(
+      chatTurnIsolatedServerIds(["saved", "plugin"], "interactive"),
+    ).toEqual(["saved", "plugin"]);
+    expect(chatTurnIsolatedServerIds([], "interactive")).toEqual([]);
+  });
+  it("keeps recorded scenarios strict", () => {
+    expect(chatTurnIsolatedServerIds(["saved", "plugin"], "recorded")).toEqual(
+      [],
+    );
+  });
+});

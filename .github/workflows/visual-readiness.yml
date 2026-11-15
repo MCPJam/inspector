@@ -117,7 +117,7 @@ jobs:
           {
             echo '### Visual pipeline'
             echo "Pipeline result: $RESULT. Capture eligible: $ELIGIBLE."
-            echo 'Expected coverage: 26 application snapshots (13 screens, two themes) plus staging login/refresh.'
+            echo 'Expected coverage: every configured application screen in both themes, plus staging login/refresh.'
             echo 'Chromatic UI Tests owns visual-diff review; this job owns pipeline health.'
             echo 'Snapshots use the PR application build with synthetic guest and signed-in hosted data.'
           } >> "$GITHUB_STEP_SUMMARY"

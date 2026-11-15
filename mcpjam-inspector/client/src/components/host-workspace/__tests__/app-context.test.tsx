@@ -3,7 +3,11 @@ import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { appContextBlock, useAppContext } from "../use-app-context";
 import { pluginContextAttachments } from "@/shared/plugin-model-context";
-import type { ThreadAppHandle, ThreadAppScope } from "../thread-app-api";
+import {
+  ThreadAppError,
+  type ThreadAppHandle,
+  type ThreadAppScope,
+} from "../thread-app-api";
 const { context } = vi.hoisted(() => ({ context: vi.fn() }));
 vi.mock("../thread-app-api", async (original) => ({
   ...(await original<typeof import("../thread-app-api")>()),
@@ -161,11 +165,12 @@ describe("retained App composer context", () => {
       thumbnail: `data:image/png;base64,${png}`,
     });
     expect(new Set(rows.map((row) => row.group?.id))).toEqual(
-      new Set(["instance"]),
+      new Set([JSON.stringify(["instance", "Context"])]),
     );
     // The Context chip names the App's plugin with its icons.
     expect(rows[0]?.group).toMatchObject({
-      title: "Parts",
+      title: "Context",
+      appTitle: "Parts",
       serverName: "Bits & Bolts",
       icons: { logo: chipLogo },
       serverIcons: chipServerIcons,
@@ -184,6 +189,77 @@ describe("retained App composer context", () => {
       { operationId: expect.any(String), basis: 2 },
       expect.any(AbortSignal),
     );
+  });
+
+  it.each([
+    "PLUGIN_CONTEXT_TOO_LARGE",
+    "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    "INSTANCE_CONTEXT_RATE_LIMITED",
+    "INSTANCE_CONTEXT_TOO_LARGE",
+    "INVALID_INSTANCE_CONTEXT",
+    "RATE_LIMITED",
+  ])(
+    "answers a %s refusal with -32000 and sends the next update at once",
+    async (code) => {
+      context
+        .mockReset()
+        .mockRejectedValueOnce(new ThreadAppError(code))
+        .mockResolvedValueOnce({
+          _meta: { "openai/modelContext": { updateId: "u2" } },
+          snapshot: { revision: 2, sequence: 2, state: view("Smaller", "u2") },
+        });
+      const { result } = renderHook(() =>
+        useAppContext(scope, opened(view("Selected view"))),
+      );
+      let refused: unknown;
+      await act(async () => {
+        refused = await result.current
+          .update({ content: [{ type: "text", text: "Larger" }] })
+          .catch((error: unknown) => error);
+      });
+      expect(refused).toMatchObject({
+        code: -32000,
+        message: "The host could not persist the model context update",
+      });
+      // The composer keeps the last acknowledged context.
+      expect(result.current.snapshot.state).toEqual(view("Selected view"));
+      await act(async () => {
+        await result.current.update({
+          content: [{ type: "text", text: "Smaller" }],
+        });
+      });
+      expect(result.current.snapshot.state).toEqual(view("Smaller", "u2"));
+    },
+  );
+  it("keeps titled groups scoped to their App and falls back to Context", async () => {
+    const grouped = {
+      updateId: "grouped",
+      content: [
+        { type: "text", text: "cap", _meta: { "openai/group": { title: "Keycaps" } } },
+        { type: "text", text: "other cap", _meta: { "openai/group": { title: "Keycaps" } } },
+        { type: "text", text: "dial", _meta: { "openai/group": { title: "Controls" } } },
+        { type: "text", text: "plain", _meta: { "openai/group": { title: "  " } } },
+        { type: "text", text: "missing" },
+      ],
+    };
+    context.mockReset().mockResolvedValue(removed(2));
+    const first = renderHook(() => useAppContext(scope, opened(grouped)));
+    const second = renderHook(() => useAppContext(scope, {
+      ...opened(grouped), instanceId: "other", instanceToken: "other-token",
+    }));
+    const groups = first.result.current.attachments.map((row) => row.group!);
+    expect(groups.map((group) => group.title)).toEqual([
+      "Keycaps", "Keycaps", "Controls", "Context", "Context",
+    ]);
+    expect(groups[0].id).toBe(groups[1].id);
+    expect(new Set(groups.map((group) => group.id)).size).toBe(3);
+    expect(groups[0].id).not.toBe(second.result.current.attachments[0].group!.id);
+    expect(groups[0].removeAllLabel).toBe("Remove all Parts context");
+    const otherRows = second.result.current.attachments;
+    await act(async () => groups[0].removeAll!());
+    expect(first.result.current.attachments).toEqual([]);
+    expect(second.result.current.attachments).toBe(otherRows);
+    expect(context.mock.calls[0][0]).toBe("token");
   });
 
   it("removes all after an earlier change failed, without a separate read", async () => {

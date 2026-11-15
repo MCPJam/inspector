@@ -15,16 +15,15 @@ export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
   // Anthropic siblings follow Claude, Codex follows ChatGPT — with VS Code and
   // Slackbot pinned rightmost in that order.
   //
-  // `claude-code` and `codex` appear here but carry no "Verify against your
-  // server" link: that is driven separately by FLAG_GATED_HOST_IDS, because
-  // the link auto-creates a host and the app refuses while the rollout flag is
-  // off. Listing them here changes their position, not their verify state.
+  // FLAG_GATED_HOST_IDS controls which presets can offer a verify link.
   "preset:claude",
   "preset:claude-desktop",
   "preset:claude-code",
   "preset:chatgpt",
   "preset:codex",
+  "preset:codex-cli",
   "preset:copilot",
+  "preset:copilot-cli",
   "preset:cursor",
   "preset:vscode",
   "preset:slack",
@@ -34,6 +33,10 @@ const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
   "modelId",
   "temperature",
   "systemPrompt",
+  // The Playground's own pause-before-each-tool-call switch. Every template
+  // carries MCPJam's default (`false`), not a probe reading, so the row would
+  // mark hosts that do ask before running a tool as "Not supported".
+  "requireToolApproval",
   "mcpProtocolVersion",
   "clientInfo.name",
   "connectionDefaults.requestTimeout",
@@ -43,6 +46,15 @@ const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
   "sandbox.permissions.mode",
   "sandbox.sandboxAttrs",
   "sandbox.allowFeatures",
+  // Mid-session sign-in. The preset values for these come from each vendor's
+  // published docs, not from a probe, and every column on a capability page is
+  // stamped "Last verified". Publishing them would claim a measurement nobody
+  // has run. Remove these four once the hosts are measured; absent already
+  // reads as "Not yet tested" below.
+  "unauthorizedChallenge",
+  "unauthorizedChallengeTrigger",
+  "toolResultAuthChallenge",
+  "toolResultAuthChallengeTrigger",
 ]);
 
 export interface CaniuseCapability {
@@ -238,12 +250,35 @@ export function getCaniuseSupportLevel(
       // hosts still queued behind it must read "Not yet tested" rather than
       // be published as silently abandoning every cancelled call. Per era,
       // because the two are measured independently.
-      field.id.startsWith("toolCallCancellation.")) &&
+      field.id.startsWith("toolCallCancellation.") ||
+      // Absent is a real default for the sign-in actions (prompt on a 401,
+      // pass through a `_meta` challenge), but for a host nobody measured it is
+      // not a fact about that host.
+      field.id === "unauthorizedChallenge" ||
+      field.id === "toolResultAuthChallenge" ||
+      // A client with no saved Event delivery has only MCPJam's default for
+      // its style, which is not a measurement.
+      field.id === "eventsDeliveryModes" ||
+      // A catalog row reads `undefined` for an app or image value its probe
+      // did not measure (see `untestedCatalogAppValue`), rather than the
+      // client style's default. The CSP subtype rows keep their own reading.
+      (field.id.startsWith("appsCap.") &&
+        !field.id.startsWith("appsCap.cspConnectDomains.") &&
+        !field.id.startsWith("appsCap.cspResourceDomains.")) ||
+      field.id.startsWith("modelVisibleMcpToolResults.") ||
+      field.id.startsWith("mcpToolResultImageRendering")) &&
     field.read(config) === undefined
   ) {
     return "unknown";
   }
-  return getSupportLevel(field, config) ?? "unknown";
+  const level = getSupportLevel(field, config);
+  if (level !== null) return level;
+  // The other boolean rows keep their established reading: absent is not
+  // supported.
+  if (field.kind.kind === "boolean" && field.read(config) === undefined) {
+    return "neutral";
+  }
+  return "unknown";
 }
 
 // Rows that describe a sandboxing choice rather than a feature a client can

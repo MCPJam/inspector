@@ -45,6 +45,7 @@ type ToolResultDisplay = "sibling-text" | "attached-to-tool" | "tool-card";
  * stays free of eval-domain types.
  */
 export interface TraceEnvelope {
+  projectedMessages?: true;
   requestPayloads?: PersistedRequestPayloadEntry[];
   requestPayloadsJson?: string;
   /** Saved requests exist for this session but did not load. */

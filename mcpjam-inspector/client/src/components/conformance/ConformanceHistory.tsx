@@ -6,29 +6,54 @@
  * redacted artifact at `/conformance/shared/:token`.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { useAction, useQuery } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import { Loader2, Lock, Share2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
-import { Badge } from "@mcpjam/design-system/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
-import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
-import { toast } from "@/lib/toast";
-import { ShareDialog } from "@/components/sharing/ShareDialog";
-import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
+import { useOpenRunFromHistory, useRunBack } from "./conformance-run-origin";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
+import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
-import { buildConformanceSharePath } from "@/lib/app-navigation";
-import { fetchArtifact, useArtifactQuery } from "@/lib/artifact-urls";
+import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
   OverallScoreCard,
-  StatusIcon,
+  savedNotApplicableSubtitle,
   SUITE_COPY,
   SuiteRow,
   VerdictBadge,
 } from "./conformance-ui";
+import { CatalogList } from "./ConformanceCheckRows";
+import { SuiteReportCases } from "./ConformanceSavedChecks";
+import {
+  ConformanceSourceVersion,
+  SuiteList,
+} from "./conformance-source-version";
+import { ConformanceAdvice, reportAdviceGroups } from "./ConformanceAdvice";
+import {
+  useSavedRunReports,
+  type LoadReport,
+  type SavedReportCase,
+} from "./use-saved-run-reports";
+import type {
+  SharedConformanceArtifact,
+  SharedSuiteReport,
+} from "./conformance-shared-artifact";
+import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import { RunResultRing } from "./RunResultRing";
+import {
+  ConformanceHistoryFilters,
+  searchAndSortHistory,
+  type HistorySort,
+} from "./ConformanceHistoryFilters";
+import { conformanceVersionRefusal } from "./conformance-version-refusal";
+import { conformanceRunTargetName } from "./conformance-run-target";
+import { suiteCatalog } from "./conformance-catalogs";
+import {
+  SavedRunActions,
+  SavedRunSettings,
+  type SavedRunServerSettings,
+} from "./ConformanceRunActions";
 
 export type ConformanceRunListItem = {
   _id: string;
@@ -46,6 +71,9 @@ export type ConformanceRunListItem = {
   passed: number;
   failed: number;
   couldNotRun: number;
+  /** Absent on rows read from a build that predates the field. */
+  notApplicable?: number;
+  advisoryCount?: number;
   requestedSuites: string[];
   protocolVersion: string | null;
   actorLabel: string | null;
@@ -67,8 +95,8 @@ export type ConformanceRunListItem = {
 };
 
 /** Where a run came from, in the words the History table uses. */
-const HISTORY_SOURCE_LABEL: Record<string, string> = {
-  ui: "Inspector",
+export const HISTORY_SOURCE_LABEL: Record<string, string> = {
+  ui: "UI",
   sdk: "SDK",
   cli: "CLI",
   github_action: "GitHub",
@@ -76,54 +104,26 @@ const HISTORY_SOURCE_LABEL: Record<string, string> = {
   api: "API",
 };
 
-const historyDateFormat = new Intl.DateTimeFormat("en-US", {
+export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
   hour: "numeric",
   minute: "2-digit",
 });
 
-function RunResultBadge({ run }: { run: ConformanceRunListItem }) {
-  const base =
-    "inline-flex h-5.5 shrink-0 items-center rounded-sm px-2 text-[11px] font-semibold tracking-[0.06em]";
-  const neutral = "bg-muted text-muted-foreground";
-  if (run.status === "timed_out") {
-    return (
-      <span
-        className={`${base} bg-amber-400/25 text-amber-700 dark:text-amber-400`}
-      >
-        TIMED OUT
-      </span>
-    );
-  }
-  if (run.status === "cancelled") {
-    return <span className={`${base} ${neutral}`}>CANCELLED</span>;
-  }
-  if (run.status !== "completed") {
-    return <span className={`${base} ${neutral}`}>RUNNING</span>;
-  }
-  if (run.outcome === "passed") {
-    return (
-      <span
-        className={`${base} bg-emerald-500/15 text-emerald-700 dark:text-emerald-400`}
-      >
-        PASSED
-      </span>
-    );
-  }
-  if (run.outcome === "failed") {
-    return (
-      <span className={`${base} bg-red-500/10 text-red-600 dark:text-red-400`}>
-        FAILED
-      </span>
-    );
-  }
-  return <span className={`${base} ${neutral}`}>INCOMPLETE</span>;
-}
+/** Runs per page while History shows the newest first. */
+const HISTORY_PAGE_SIZE = 20;
+/**
+ * Runs per page while History reads every run. The backend matches runs by
+ * server only and orders them by date only, so search and the name sort work
+ * on the whole history, not on the pages loaded so far.
+ */
+const HISTORY_READ_ALL_PAGE_SIZE = 100;
 
 /**
  * Every conformance run in the project, newest first, as one table. A row
- * opens the run's detail page.
+ * opens the run's detail page. Above it, a search box, a server filter and a
+ * sort, laid out like the Swarms sessions filters.
  */
 export function ConformanceHistory({
   projectId,
@@ -135,12 +135,35 @@ export function ConformanceHistory({
 }) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [rows, setRows] = useState<ConformanceRunListItem[]>([]);
-  const navigate = useAppNavigate();
+  /** A saved server's id, or null for every server. */
+  const [serverFilter, setServerFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<HistorySort>("newest");
+  const openRun = useOpenRunFromHistory(projectId);
+
+  const query = search.trim().toLowerCase();
+  // One server's runs all share a name, so the name sort needs no more of
+  // them than are loaded. A search does.
+  const readsEveryRun =
+    query.length > 0 || (sort === "server" && serverFilter === null);
+  /** History is paging forward on its own, on the large page. */
+  const [readAll, setReadAll] = useState(false);
+  /** Once there are runs, the toolbar stays up through every reload. */
+  const [hadRuns, setHadRuns] = useState(false);
 
   const page = useQuery(
     "conformanceRuns:listRuns" as any,
     projectId
-      ? ({ projectId, paginationOpts: { numItems: 20, cursor } } as any)
+      ? ({
+          projectId,
+          // The backend filters by server on its index, so a filtered list
+          // pages through that server's runs alone.
+          ...(serverFilter ? { targetKey: `server:${serverFilter}` } : {}),
+          paginationOpts: {
+            numItems: readAll ? HISTORY_READ_ALL_PAGE_SIZE : HISTORY_PAGE_SIZE,
+            cursor,
+          },
+        } as any)
       : "skip",
   ) as
     | {
@@ -149,6 +172,16 @@ export function ConformanceHistory({
         continueCursor: string;
       }
     | undefined;
+
+  // A list that is already complete has nothing left to read.
+  if (readsEveryRun && !readAll && page && !page.isDone) setReadAll(true);
+  // Paging forward leaves only the last page watched: once cleared, go back to
+  // the first page, so new and finishing runs show again.
+  if (!readsEveryRun && readAll) {
+    setReadAll(false);
+    setCursor(null);
+  }
+  if (rows.length > 0 && !hadRuns) setHadRuns(true);
 
   useEffect(() => {
     if (!page) return;
@@ -159,83 +192,173 @@ export function ConformanceHistory({
     });
   }, [cursor, page]);
 
+  // Search and the name sort keep loading pages until the history is complete.
+  useEffect(() => {
+    if (readAll && page && !page.isDone) setCursor(page.continueCursor);
+  }, [readAll, page]);
+
   const serverLabel = (run: ConformanceRunListItem) =>
-    (run.serverId ? serverNames?.get(run.serverId) : undefined) ??
-    run.targetKey.replace(/^server:/, "");
+    conformanceRunTargetName(run, serverNames);
+
+  const changeServerFilter = (next: string | null) => {
+    if (next === serverFilter) return;
+    // Another server is another list: start it from its first page.
+    setServerFilter(next);
+    setCursor(null);
+    setRows([]);
+    setReadAll(false);
+  };
 
   // "Load more" changes the query's cursor, and the query reads undefined
   // again while that page loads: only the first page may replace the table.
-  if (page === undefined && rows.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground" role="status">
-        Loading run history…
-      </p>
-    );
+  // Only the first load returns early: a reload keeps the toolbar and its focus.
+  if (!hadRuns && serverFilter === null) {
+    if (page === undefined && rows.length === 0) {
+      return (
+        <p className="text-sm text-muted-foreground" role="status">
+          Loading run history…
+        </p>
+      );
+    }
+
+    if (rows.length === 0) {
+      return (
+        <EmptyState
+          icon={FlaskConical}
+          title="No conformance runs yet"
+          className="h-auto py-10"
+          description="Runs from the Inspector, the CLI, GitHub, and the API land here."
+        />
+      );
+    }
   }
 
-  if (rows.length === 0) {
-    return (
-      <EmptyState
-        icon={FlaskConical}
-        title="No conformance runs yet"
-        className="h-auto py-10"
-        description="Runs from the Inspector, the CLI, GitHub, and the API land here."
-      />
-    );
-  }
+  const visibleRows = searchAndSortHistory(rows, {
+    query,
+    sort,
+    texts: (run) => [
+      serverLabel(run),
+      run.protocolVersion ?? "Auto",
+      HISTORY_SOURCE_LABEL[run.source] ?? run.source,
+    ],
+    serverName: serverLabel,
+  });
+  const readingEveryRun = readAll && (!page || !page.isDone);
+  const filteredServerName = serverFilter
+    ? (serverNames?.get(serverFilter) ?? serverFilter)
+    : null;
 
   const header = "text-[11px] font-semibold tracking-[0.06em] text-foreground";
+  const columns =
+    "grid w-full grid-cols-[minmax(0,1.8fr)_repeat(6,minmax(0,1fr))] items-center gap-x-4";
+  const cell = "min-w-0 truncate";
+
+  const notice = (text: string, status = false) => (
+    <p
+      className="px-1 text-sm text-muted-foreground"
+      role={status ? "status" : undefined}
+    >
+      {text}
+    </p>
+  );
 
   return (
     <section className="space-y-3" aria-label="Run history">
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <div className="flex items-center gap-4 bg-muted/60 px-4.5 py-2">
-          <span className={`w-30 shrink-0 ${header}`}>SERVER</span>
-          <span className={`w-35 shrink-0 ${header}`}>DATE</span>
-          <span className={`min-w-0 grow ${header}`}>SOURCE</span>
-          <span className={`shrink-0 ${header}`}>RESULT</span>
-          <span className={`w-12 shrink-0 text-right ${header}`}>SCORE</span>
-        </div>
-        <ul>
-          {rows.map((run) => (
-            <li
-              key={run._id}
-              className="border-t border-border/60 first:border-t-0"
-            >
-              <button
-                type="button"
-                className="flex w-full items-center gap-4 px-4.5 py-3.5 text-left transition-colors hover:bg-muted/30"
-                data-testid="conformance-history-row"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  navigate(buildConformanceRunPath(run._id, projectId));
-                }}
-              >
-                <span className="w-30 shrink-0 truncate text-sm font-semibold">
-                  {serverLabel(run)}
-                </span>
-                <span className="w-35 shrink-0 text-[13px] text-muted-foreground">
-                  {historyDateFormat.format(run.createdAt)}
-                </span>
-                <span className="min-w-0 grow truncate text-[13px] text-muted-foreground">
-                  {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
-                </span>
-                <RunResultBadge run={run} />
-                <span
-                  className={`w-12 shrink-0 text-right text-sm font-semibold tabular-nums ${
-                    run.score == null ? "text-muted-foreground" : ""
-                  }`}
-                >
-                  {run.score == null ? "—" : `${Math.round(run.score)}%`}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <ConformanceHistoryFilters
+        search={search}
+        onSearchChange={setSearch}
+        serverFilter={serverFilter}
+        onServerFilterChange={changeServerFilter}
+        serverNames={serverNames}
+        sort={sort}
+        onSortChange={setSort}
+      />
 
-      {page === undefined ? (
+      {readingEveryRun && rows.length > 0
+        ? notice("Loading every run…", true)
+        : null}
+
+      {page === undefined && rows.length === 0 ? (
+        notice("Loading run history…", true)
+      ) : rows.length === 0 ? (
+        notice(
+          filteredServerName
+            ? `No runs for ${filteredServerName} yet.`
+            : "No conformance runs yet.",
+          true,
+        )
+      ) : visibleRows.length === 0 ? (
+        readingEveryRun ? null : (
+          <p
+            className="px-1 text-sm text-muted-foreground"
+            role="status"
+            data-testid="conformance-history-no-match"
+          >
+            No runs match &ldquo;{search.trim()}&rdquo;.
+          </p>
+        )
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
+            <span className={`${cell} ${header}`}>SERVER</span>
+            <span className={`${cell} ${header}`}>PROTOCOL</span>
+            <span className={`${cell} ${header}`}>SCORE</span>
+            <span className={`${cell} ${header}`}>CHECKS</span>
+            <span className={`${cell} ${header}`}>RESULT</span>
+            <span className={`${cell} ${header}`}>DATE</span>
+            <span className={`${cell} ${header}`}>SOURCE</span>
+          </div>
+          <ul>
+            {visibleRows.map((run) => (
+              <li
+                key={run._id}
+                className="border-t border-border/60 first:border-t-0"
+              >
+                <button
+                  type="button"
+                  className={`${columns} bg-popover px-4.5 py-3.5 text-left text-popover-foreground transition-colors hover:bg-muted/30`}
+                  data-testid="conformance-history-row"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openRun(run._id);
+                  }}
+                >
+                  <span className={`${cell} text-sm font-semibold`}>
+                    {serverLabel(run)}
+                  </span>
+                  <span className={`${cell} text-[13px] text-muted-foreground`}>
+                    {run.protocolVersion ?? "Auto"}
+                  </span>
+                  <span
+                    className={`${cell} text-sm tabular-nums ${
+                      run.score == null ? "text-muted-foreground" : ""
+                    }`}
+                  >
+                    {run.score == null ? "—" : `${run.score}%`}
+                  </span>
+                  <span
+                    className={`${cell} text-sm font-semibold tabular-nums`}
+                  >
+                    {run.passed}/{run.applicable}
+                  </span>
+                  <span className="flex min-w-0 items-center">
+                    <RunResultRing run={run} />
+                  </span>
+                  <span className="whitespace-nowrap text-[13px] text-muted-foreground">
+                    {historyDateFormat.format(run.createdAt)}
+                  </span>
+                  <span className={`${cell} text-[13px] text-muted-foreground`}>
+                    {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {readsEveryRun || visibleRows.length === 0 ? null : page === undefined ? (
         <Button variant="outline" size="sm" disabled>
           Loading…
         </Button>
@@ -255,13 +378,19 @@ export function ConformanceHistory({
 export function ConformanceRunDetailPage({
   runId,
   serverNames,
+  serverSettings,
+  serversLoading = false,
 }: {
   runId: string;
   projectId?: string | null;
   /** Saved server id → display name, for the breadcrumb and score card. */
   serverNames?: ReadonlyMap<string, string>;
+  /** The servers' default checks, for Settings. Omit to hide Settings. */
+  serverSettings?: SavedRunServerSettings;
+  serversLoading?: boolean;
 }) {
-  const navigate = useAppNavigate();
+  const back = useRunBack();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Each report carries a short-lived artifact link.
   const detail = useArtifactQuery<
     | (ConformanceRunListItem & {
@@ -282,41 +411,10 @@ export function ConformanceRunDetailPage({
       })
     | null
   >("conformanceRuns:getRun", runId ? { runId } : "skip");
-  const setSharing = useAction("conformanceRuns:setSharing" as any);
-  const unifiedShare =
-    useFeatureFlagEnabled("unified-share-conformance") === true;
-  const [shareBusy, setShareBusy] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
-
-  const copyShare = useCallback(
-    async (enabled: boolean) => {
-      if (!detail) return;
-      setShareBusy(true);
-      try {
-        const result = (await setSharing({
-          runId: detail._id,
-          enabled,
-        })) as { enabled: boolean; token?: string | null; shareUrl?: string };
-        if (result.enabled && (result.shareUrl || result.token)) {
-          const url =
-            result.shareUrl ??
-            `${window.location.origin}/conformance/shared/${result.token}`;
-          await navigator.clipboard.writeText(url);
-          toast.success("Share link copied");
-        } else {
-          toast.success("Sharing turned off");
-        }
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Could not update sharing",
-        );
-      } finally {
-        setShareBusy(false);
-      }
-    },
-    [detail, setSharing],
+  const { advice, loadReport, cases: versionCases } = useSavedRunReports(
+    runId,
+    detail?.reports ?? [],
   );
-
   if (detail === undefined) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
@@ -334,95 +432,59 @@ export function ConformanceRunDetailPage({
     );
   }
 
-  const serverName =
-    (detail.serverId ? serverNames?.get(detail.serverId) : undefined) ??
-    detail.targetKey.replace(/^server:/, "");
+  // A saved server the project still has: Run again and Settings act on it.
+  const savedServerName = detail.serverId
+    ? serverNames?.get(detail.serverId)
+    : undefined;
+  const serverName = conformanceRunTargetName(detail, serverNames);
   const finished = detail.status === "completed";
+
+  if (settingsOpen && savedServerName && serverSettings) {
+    return (
+      <SavedRunSettings
+        key={detail.serverId ?? serverName}
+        serverName={savedServerName}
+        settings={serverSettings}
+        onBack={() => setSettingsOpen(false)}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-col gap-2 border-b border-border px-8 pt-5 pb-4">
-        <div className="flex items-center gap-2 text-sm">
-          <button
-            type="button"
-            className="font-medium tracking-tight text-muted-foreground hover:text-foreground"
-            onClick={() => navigate("/conformance?view=history")}
+      {/* The same chrome as a run on screen, so a saved run reads like it. */}
+      <DetailPageHeader
+        backLabel={back.label}
+        onBack={back.onBack}
+        backTestId="conformance-saved-run-back"
+        stackWhenNarrow
+        title={
+          <h1
+            className="truncate text-xl font-bold tracking-tight text-foreground"
+            title={serverName}
           >
-            Conformance History
-          </button>
-          <span className="text-muted-foreground/70">/</span>
-          <span className="truncate font-semibold">{serverName}</span>
-          <div className="ml-auto flex items-center gap-2">
-            {unifiedShare ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!finished}
-                onClick={() => setShareOpen(true)}
-                data-testid="conformance-share-open"
-              >
-                <Share2 className="size-3.5" aria-hidden /> Share
-              </Button>
-            ) : (
-              <Button
-                variant={detail.sharingEnabled ? "secondary" : "outline"}
-                size="sm"
-                disabled={shareBusy || !finished}
-                onClick={() => void copyShare(!detail.sharingEnabled)}
-              >
-                {detail.sharingEnabled ? (
-                  <>
-                    <Share2 className="size-3.5" aria-hidden /> Shareable
-                  </>
-                ) : (
-                  <>
-                    <Lock className="size-3.5" aria-hidden /> Private
-                  </>
-                )}
-              </Button>
-            )}
-            <Button size="sm" onClick={() => navigate("/conformance")}>
-              Run again
-            </Button>
-          </div>
-        </div>
+            {serverName}
+          </h1>
+        }
+        actions={
+          <SavedRunActions
+            runId={detail._id}
+            finished={finished}
+            serverName={savedServerName}
+            settings={serverSettings}
+            serversLoading={serversLoading}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
+        }
+      >
         <p className="text-sm text-muted-foreground">
           {detailDateFormat.format(detail.createdAt)} ·{" "}
           {HISTORY_SOURCE_LABEL[detail.source] ?? detail.source}
-          {detail.verification === "client_reported"
-            ? " · Client-reported"
-            : ""}
         </p>
-      </div>
-      {unifiedShare ? (
-        <ShareDialog
-          open={shareOpen}
-          onOpenChange={setShareOpen}
-          title="Share conformance run"
-          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
-        >
-          <ResourceSharePanel
-            resourceType="conformanceRun"
-            resourceId={detail._id}
-            disabledReason={
-              finished ? null : "Only a finished run can be shared"
-            }
-            footerSlot={
-              <p className="text-xs text-muted-foreground">
-                Viewers see a frozen snapshot. Revoking access is immediate even
-                though the artifact itself does not change.
-              </p>
-            }
-            linkLabel="Share link"
-            buildShareUrl={(token) =>
-              `${window.location.origin}${buildConformanceSharePath(token)}`
-            }
-            testIdPrefix="conformance-share"
-          />
-        </ShareDialog>
-      ) : null}
+      </DetailPageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-8">
+        <ConformanceVersionNotice refusal={conformanceVersionRefusal(versionCases, detail.protocolVersion)} serverName={serverName} />
         <OverallScoreCard
           score={
             detail.outcome
@@ -433,6 +495,8 @@ export function ConformanceRunDetailPage({
                   passed: detail.passed,
                   failed: detail.failed,
                   couldNotRun: detail.couldNotRun,
+                  notApplicable: detail.notApplicable,
+                  advisoryCount: detail.advisoryCount,
                 }
               : undefined
           }
@@ -443,18 +507,27 @@ export function ConformanceRunDetailPage({
             detail.status !== "timed_out" &&
             detail.status !== "cancelled"
           }
+          // A suite's own row already says why it is incomplete; the card
+          // repeats the run's reason only when no suite carries it (e.g. a
+          // suite that never reported).
+          note={
+            detail.incompleteReason &&
+            !detail.reports.some(
+              (report) => report.incompleteReason === detail.incompleteReason,
+            )
+              ? detail.incompleteReason
+              : null
+          }
         />
-        {detail.incompleteReason ? (
-          <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">
-            {detail.incompleteReason}
-          </p>
-        ) : null}
 
-        <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
+        <ConformanceAdvice groups={advice} />
+
+        <SuiteList version={detail.protocolVersion}>
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
               report={report}
+              loadReport={loadReport}
               runSettled={
                 detail.status === "completed" ||
                 detail.status === "timed_out" ||
@@ -462,13 +535,13 @@ export function ConformanceRunDetailPage({
               }
             />
           ))}
-        </div>
+        </SuiteList>
       </div>
     </div>
   );
 }
 
-const detailDateFormat = new Intl.DateTimeFormat("en-US", {
+export const detailDateFormat = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
   year: "numeric",
@@ -493,10 +566,16 @@ type SavedSuiteReport = {
 function SavedSuiteRow({
   report,
   runSettled,
+  cases,
+  loadReport,
 }: {
   report: SavedSuiteReport;
   /** The run as a whole is over, so an unsettled suite will never finish. */
   runSettled: boolean;
+  /** Checks already in hand, as in a shared artifact; skips the fetch. */
+  cases?: SavedReportCase[];
+  /** Shares the page's fetch of this report. */
+  loadReport?: LoadReport;
 }) {
   const copy = SUITE_COPY[report.suiteKind as keyof typeof SUITE_COPY] ?? {
     title: report.suiteKind,
@@ -509,12 +588,20 @@ function SavedSuiteRow({
   const notApplicable =
     report.status === "skipped" ||
     (settled && report.score == null && report.applicable === 0);
+  const absentApps =
+    report.suiteKind === "apps" &&
+    report.status === "completed" &&
+    report.outcome === "passed" &&
+    report.score == null &&
+    report.applicable === 0;
   const [override, setOverride] = useState<boolean | null>(null);
+  // A suite that did not apply stays shut but still opens on click, to its
+  // list of checks.
   const expanded =
-    !notApplicable &&
     !noResult &&
     (override ??
-      (report.outcome === "failed" || report.outcome === "incomplete"));
+      (!notApplicable &&
+        (report.outcome === "failed" || report.outcome === "incomplete")));
 
   const badge = noResult ? (
     <VerdictBadge label="NO RESULT" tone="neutral" />
@@ -537,8 +624,7 @@ function SavedSuiteRow({
         noResult
           ? "This suite did not report a result for this run."
           : notApplicable
-            ? (report.incompleteReason ??
-              "Nothing here applied to this server, so it was not scored.")
+            ? savedNotApplicableSubtitle(report, copy.title)
             : copy.description
       }
       badge={badge}
@@ -546,121 +632,68 @@ function SavedSuiteRow({
         report.score == null
           ? null
           : {
-              score: Math.round(report.score),
+              score: report.score,
               passed: report.passed,
               applicable: report.applicable,
             }
       }
       expanded={expanded}
-      collapsible={!notApplicable && !noResult}
+      collapsible={!noResult}
       onToggle={() => setOverride(!expanded)}
     >
-      <SuiteReportCases
-        reportUrl={report.reportUrl}
-        incompleteReason={notApplicable ? null : report.incompleteReason}
-        load={expanded || override !== null}
-      />
+      {notApplicable ? (
+        <CatalogList
+          catalog={suiteCatalog(report.suiteKind)}
+          note={
+            report.status === "skipped"
+              ? ". Not run."
+              : absentApps
+                ? "."
+                : ". None apply to this server."
+          }
+        />
+      ) : (
+        <SuiteReportCases
+          suiteKind={report.suiteKind}
+          reportUrl={report.reportUrl}
+          loadReport={loadReport}
+          inlineCases={cases}
+          incompleteReason={report.incompleteReason}
+          load={expanded || override !== null}
+        />
+      )}
     </SuiteRow>
   );
 }
 
-type SavedReportCase = {
-  id: string;
-  title: string;
-  status: string;
-  skipReason?: string;
-  error?: string;
-};
-
-/**
- * The checks of a saved suite, read from its report artifact. Fetched the
- * first time the row opens, not on page load.
- */
-function SuiteReportCases({
-  reportUrl,
-  incompleteReason,
-  load,
-}: {
-  reportUrl?: string | null;
-  incompleteReason: string | null;
-  load: boolean;
-}) {
-  const [cases, setCases] = useState<SavedReportCase[] | null | "error">(null);
-  useEffect(() => {
-    if (!load || !reportUrl || cases !== null) return;
-    let cancelled = false;
-    fetchArtifact(reportUrl)
-      .then((response) => {
-        // An expired link answers with an error body; never show that as the
-        // report. `fetchArtifact` renews the link and retries once.
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((json: { groups?: Array<{ cases?: SavedReportCase[] }> }) => {
-        if (cancelled) return;
-        setCases((json.groups ?? []).flatMap((group) => group.cases ?? []));
-      })
-      .catch(() => {
-        if (!cancelled) setCases("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [load, reportUrl, cases]);
-
-  return (
-    <div>
-      {incompleteReason ? (
-        <p className="py-2 pl-7 text-[13px] text-amber-700 dark:text-amber-400">
-          {incompleteReason}
-        </p>
-      ) : null}
-      {!reportUrl || cases === "error" ? (
-        <p className="py-3 pl-7 text-[13px] text-muted-foreground">
-          The detailed report for this suite is not available. Run the checks
-          again to generate a new one.
-        </p>
-      ) : cases === null ? (
-        <p className="flex items-center gap-2 py-3 pl-7 text-[13px] text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> Loading checks…
-        </p>
-      ) : (
-        cases.map((check) => (
-          <div
-            key={check.id}
-            className="flex items-start gap-2.5 border-b border-border/60 py-1.75 pl-7 pr-1 last:border-0"
-          >
-            <span className="mt-0.5">
-              <StatusIcon status={check.status} skipReason={check.skipReason} />
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span
-                className={
-                  check.status === "skipped" &&
-                  check.skipReason !== "could-not-run"
-                    ? "text-[13px] text-muted-foreground"
-                    : "text-[13px]"
-                }
-              >
-                {check.title}
-              </span>
-              {check.error ? (
-                <span
-                  className={
-                    check.status === "failed"
-                      ? "text-[13px] font-medium text-red-600 dark:text-red-400"
-                      : "text-[13px] text-muted-foreground"
-                  }
-                >
-                  {check.error}
-                </span>
-              ) : null}
-            </span>
-          </div>
-        ))
-      )}
-    </div>
-  );
+/** A shared suite in the shape the run page's rows read, from its own score. */
+function sharedSuiteRow(
+  suiteKind: string,
+  report: SharedSuiteReport,
+): { report: SavedSuiteReport; cases: SavedReportCase[] } {
+  const score = report.score ?? {};
+  return {
+    report: {
+      suiteKind,
+      status: "completed",
+      // The SDK reads a missing outcome as `passed ? "passed" : "failed"`.
+      outcome:
+        score.outcome ??
+        report.outcome ??
+        (report.passed === undefined
+          ? null
+          : report.passed
+            ? "passed"
+            : "failed"),
+      incompleteReason: report.incompleteReason ?? null,
+      score: typeof score.score === "number" ? score.score : null,
+      applicable: score.applicable ?? 0,
+      passed: score.passed ?? 0,
+      failed: score.failed ?? 0,
+      couldNotRun: score.couldNotRun ?? 0,
+    },
+    cases: (report.groups ?? []).flatMap((group) => group.cases ?? []),
+  };
 }
 
 export function ConformanceSharedPage({ token }: { token: string }) {
@@ -668,10 +701,17 @@ export function ConformanceSharedPage({ token }: { token: string }) {
     resourceType: "conformanceRun",
     token,
   });
-  const body =
+  const run =
     artifact && typeof artifact === "object"
-      ? (artifact as Record<string, unknown>)
+      ? (artifact as SharedConformanceArtifact)
       : {};
+  const reports = run.reports ?? {};
+  const suiteKinds = [
+    ...(run.requestedSuites ?? []).filter((kind) => kind in reports),
+    ...Object.keys(reports).filter(
+      (kind) => !(run.requestedSuites ?? []).includes(kind),
+    ),
+  ];
 
   return (
     <SharedArtifactPage
@@ -679,25 +719,59 @@ export function ConformanceSharedPage({ token }: { token: string }) {
       loading={loading}
       error={error}
     >
-      <p className="text-sm text-muted-foreground">
+      {typeof run.createdAt === "number" ? (
+        <p className="text-sm text-muted-foreground">
+          {detailDateFormat.format(run.createdAt)}
+        </p>
+      ) : null}
+      <OverallScoreCard
+        score={
+          run.outcome
+            ? {
+                score: run.score ?? null,
+                outcome: run.outcome,
+                applicable: run.applicable ?? 0,
+                passed: run.passed ?? 0,
+                failed: run.failed ?? 0,
+                couldNotRun: run.couldNotRun ?? 0,
+                notApplicable: run.notApplicable ?? 0,
+                advisoryCount: run.advisoryCount,
+              }
+            : undefined
+        }
+        serverName={run.serverName?.trim() || "Shared run"}
+        version={run.protocolVersion ?? "Auto"}
+      />
+      <ConformanceAdvice
+        groups={reportAdviceGroups(
+          suiteKinds.map((kind) => ({
+            suiteKind: kind,
+            advisories: reports[kind]!.advisories,
+          })),
+        )}
+      />
+      {suiteKinds.length > 0 ? (
+        <ConformanceSourceVersion version={run.protocolVersion}>
+          <div className="overflow-hidden rounded-lg border border-border bg-popover">
+            {suiteKinds.map((kind) => {
+              const row = sharedSuiteRow(kind, reports[kind]!);
+              return (
+                <SavedSuiteRow
+                  key={kind}
+                  report={row.report}
+                  cases={row.cases}
+                  runSettled
+                />
+              );
+            })}
+          </div>
+        </ConformanceSourceVersion>
+      ) : null}
+      <p className="text-xs text-muted-foreground">
         Read-only shared result. Credentials, raw HTTP evidence, and rerun
         controls are not included. Guests who opened this link are auditable
         browser sessions, not verified individuals.
       </p>
-      {body.verification === "client_reported" ? (
-        <Badge variant="secondary">Client-reported</Badge>
-      ) : (
-        <Badge variant="outline">MCPJam-verified</Badge>
-      )}
-      <p className="text-sm">
-        Outcome {String(body.outcome ?? "unknown")}
-        {typeof body.score === "number"
-          ? ` · score ${Math.round(body.score)}`
-          : ""}
-      </p>
-      <pre className="max-h-[70vh] overflow-auto rounded bg-muted/40 p-3 text-xs">
-        {JSON.stringify(body, null, 2)}
-      </pre>
     </SharedArtifactPage>
   );
 }

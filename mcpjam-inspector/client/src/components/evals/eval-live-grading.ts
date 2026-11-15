@@ -41,6 +41,8 @@ import type { EvalIteration } from "./types";
 export type LiveToolCall = {
   toolName: string;
   arguments: Record<string, unknown>;
+  /** The call errored, so an identical call after it grades as its retry. */
+  failed?: boolean;
 };
 
 export type LiveVerdict = "passed" | "failed";
@@ -78,9 +80,21 @@ function collectToolCalls(message: UIMessage): LiveToolCall[] {
     calls.push({
       toolName: info.toolName,
       arguments: (info.input ?? {}) as Record<string, unknown>,
+      ...(callFailed(info) ? { failed: true } : {}),
     });
   }
   return calls;
+}
+
+/** A thrown or timed-out call, or an MCP result with `isError: true`. */
+function callFailed(info: ReturnType<typeof getToolInfo>): boolean {
+  if (info.toolState === "output-error") return true;
+  const output = info.output;
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    (output as { isError?: unknown }).isError === true
+  );
 }
 
 /**

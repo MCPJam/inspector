@@ -1,5 +1,10 @@
+import { encodePluginFileMetadata, decodePluginFileMetadata, PLUGIN_FILE_MEDIA_TYPE } from "@/shared/plugin-file-transfer";
+import { PLUGIN_FILE_METADATA_HEADER } from "@/shared/plugin-file-headers";
+import { PLUGIN_APP_REPLY_MAX_BYTES } from "@/shared/plugin-app-ui-limits";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createThreadAppApi, type ThreadAppHandle } from "../thread-app-api";
+// This suite isolates the existing transport; the real preflight composition has its own suite.
+vi.mock("@/lib/plugin-operation-authorization", () => ({ withPluginOperationAuthorization: async (_operation: unknown, _signal: unknown, _renew: unknown, send: () => Promise<unknown>) => send() }));
 const fetch = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/session-token", () => ({ authFetch: fetch }));
 const scope = {
@@ -23,6 +28,61 @@ const response = (value: unknown, status = 200) =>
 const signal = () => AbortSignal.timeout(1000);
 describe("thread App authenticated transport", () => {
   beforeEach(() => fetch.mockReset());
+  it("binds resource reads to the original instance without retrying transport loss", async () => {
+    const api = createThreadAppApi(scope, "model/");
+    fetch.mockResolvedValueOnce(response({ contents: [] }));
+    await api.resource(handle, { method: "resources/read", uri: "test://item" }, signal());
+    expect(fetch.mock.calls[0][0]).toBe("/api/web/apps/plugin-instances/model/resources");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ projectId: "project", pluginWorkspace: scope.pluginWorkspace, instanceToken: "opaque", operation: { method: "resources/read", uri: "test://item" } });
+    fetch.mockReset().mockRejectedValueOnce(new Error("network lost"));
+    await expect(api.resource(handle, { method: "resources/read", uri: "test://item" }, signal())).rejects.toThrow("network lost");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each(["malformed", "oversized"])("rejects %s resource replies", async kind => {
+    fetch.mockResolvedValueOnce(new Response(kind === "malformed" ? "not-json" : "x".repeat(PLUGIN_APP_REPLY_MAX_BYTES + 1)));
+    await expect(createThreadAppApi(scope, "model/").resource(handle, { method: "resources/list" }, signal())).rejects.toMatchObject({ code: kind === "malformed" ? "INSTANCE_RESPONSE_INVALID" : "INSTANCE_RESPONSE_TOO_LARGE" });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it("reconstructs binary file bytes at the App boundary without exposing diagnostics", async () => {
+    fetch.mockResolvedValueOnce(new Response(new Uint8Array([0, 1, 255]), { headers: {
+      "content-type": PLUGIN_FILE_MEDIA_TYPE,
+      [PLUGIN_FILE_METADATA_HEADER]: encodePluginFileMetadata({
+        content: { uri: "host-resource://f", _meta: { "openai/resource": { etag: "revision" } } },
+        representation: "blob", byteLength: 3, diagnostics: [],
+      }),
+    } }));
+    const result = await createThreadAppApi(scope).readFile({ ...handle, file: { name: "part.stl", resourceUri: "host-resource://f" } }, { uri: "host-resource://f" }, signal());
+    expect(result).toEqual({ contents: [{ uri: "host-resource://f", blob: "AAH/", _meta: { "openai/resource": { etag: "revision" } } }] });
+  });
+  it("retries a file read after transport loss with the same request", async () => {
+    fetch.mockRejectedValueOnce(new Error("lost")).mockResolvedValueOnce(response({
+      contents: [{ uri: "host-resource://f", text: "saved" }],
+    }));
+    await expect(createThreadAppApi(scope).readFile(
+      { ...handle, file: { name: "part.stl", resourceUri: "host-resource://f" } },
+      { uri: "host-resource://f" }, signal(),
+    )).resolves.toMatchObject({ contents: [{ text: "saved" }] });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[0][1]).toBe(fetch.mock.calls[1][1]);
+  });
+  it("retries a binary write with the same operation and immutable bytes", async () => {
+    fetch.mockRejectedValueOnce(new Error("lost")).mockResolvedValueOnce(response({ outcome: "saved", etag: "next" }));
+    await createThreadAppApi(scope).writeFile({ ...handle, fileCapabilities: { write: true, subscribe: false } }, { uri: "host-resource://f", text: "saved 🧩", ifMatch: "first" }, signal());
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[0][1]).toBe(fetch.mock.calls[1][1]);
+    const init = fetch.mock.calls[0][1];
+    const metadata = decodePluginFileMetadata(init.headers[PLUGIN_FILE_METADATA_HEADER]);
+    expect(metadata).toMatchObject({ instanceToken: "opaque", operationId: expect.any(String), params: { uri: "host-resource://f", ifMatch: "first" } });
+    expect(metadata.params).not.toHaveProperty("text");
+    expect(new TextDecoder().decode(init.body)).toBe("saved 🧩");
+  });
+  it.each(["aGk", "a Gk=", "!!!!"])("rejects malformed base64 %s before sending bytes", async (blob) => {
+    await expect(createThreadAppApi(scope).writeFile(
+      { ...handle, fileCapabilities: { write: true, subscribe: false } },
+      { uri: "host-resource://f", blob, ifMatch: "first" }, signal(),
+    )).rejects.toMatchObject({ code: "RESOURCE_INVALID" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("asks about a plugin with no server by plugin, never a made-up server", async () => {
     fetch
       .mockResolvedValueOnce(response({ available: false }))
@@ -285,11 +345,16 @@ describe("thread App authenticated transport", () => {
           result: { content: [], structuredContent: { zero: 0, no: false } },
         }),
       );
-    const approve = vi.fn().mockResolvedValue(true);
+    const waiting = vi.fn();
+    const approve = vi.fn(async () => {
+      expect(waiting).toHaveBeenLastCalledWith(true);
+      return true;
+    });
     await createThreadAppApi(scope).invoke(handle, signal(), approve, {
       name: "read",
       arguments: { path: "synthetic" },
-    });
+    }, waiting);
+    expect(waiting.mock.calls).toEqual([[true], [false]]);
     const bodies = fetch.mock.calls.map((call) => JSON.parse(call[1].body));
     expect(new Set(bodies.map((body) => body.invocationId)).size).toBe(1);
     expect(approve).toHaveBeenCalledTimes(1);

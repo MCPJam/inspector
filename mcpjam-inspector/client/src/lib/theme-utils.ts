@@ -10,8 +10,10 @@ import {
   ThemePreset,
 } from "@/types/preferences/theme";
 
-// Utility to get the initial theme mode from localStorage or fallback to 'light'.
-export function getInitialThemePreference(): ThemePreference {
+/** The theme for anyone who has not picked one in Settings. */
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = "dark";
+
+function readStoredThemePreference(): ThemePreference | null {
   try {
     const stored = localStorage.getItem(THEME_MODE_KEY);
     if (stored === "dark" || stored === "light" || stored === "system")
@@ -19,11 +21,30 @@ export function getInitialThemePreference(): ThemePreference {
   } catch (error) {
     console.warn("Cannot access localStorage for theme mode:", error);
   }
-  return "light";
+  return null;
+}
+
+/** True once the user has picked a theme in Settings on this device. */
+export function hasStoredThemePreference(): boolean {
+  return readStoredThemePreference() !== null;
+}
+
+// The saved theme choice, or the default when there is none.
+export function getInitialThemePreference(): ThemePreference {
+  return readStoredThemePreference() ?? DEFAULT_THEME_PREFERENCE;
 }
 
 export function getInitialThemeMode(): ThemeMode {
   return resolveThemeMode(getInitialThemePreference());
+}
+
+/**
+ * The theme this tab renders: the root `dark` class that `updateThemeMode`
+ * sets on every change. Storage can lag behind it when another tab switched
+ * the theme, since the preferences store does not sync across tabs.
+ */
+export function getRenderedThemeMode(): ThemeMode {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
 export function updateThemeMode(value: ThemeMode) {

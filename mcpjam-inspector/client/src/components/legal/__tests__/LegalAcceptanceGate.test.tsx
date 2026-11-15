@@ -1,0 +1,282 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ConvexError } from "convex/values";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  isSignOutInProgress,
+  resetSignOutLatchForTests,
+} from "@/lib/auth/sign-out-latch";
+import { useSignOutStore } from "@/stores/sign-out-store";
+import { useAuthExitCleanup } from "@/hooks/use-sign-out";
+import {
+  LegalAcceptanceGate,
+  type LegalAcceptanceStatus,
+} from "../LegalAcceptanceGate";
+
+const state = vi.hoisted(() => ({
+  workosUser: null as { id: string } | null,
+  convexAuthenticated: false,
+  dbUserReady: false,
+  status: undefined as unknown,
+  statusRequests: [] as unknown[],
+  accept: vi.fn(),
+  reportCaught: vi.fn(),
+  toastError: vi.fn(),
+  workosSignOut: vi.fn(),
+  getAccessToken: vi.fn(),
+}));
+
+vi.mock("convex/react", async () =>
+  (await import("@/test/mocks/convex-use-queries")).withUseQueries({
+    useConvexAuth: () => ({
+      isAuthenticated: state.convexAuthenticated,
+      isLoading: false,
+    }),
+    useQuery: (name: string, args: unknown) => {
+      if (name !== "legalAcceptance:getStatus") return undefined;
+      state.statusRequests.push(args);
+      return state.status;
+    },
+    useMutation: () => state.accept,
+  }),
+);
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    user: state.workosUser,
+    signOut: state.workosSignOut,
+    getAccessToken: state.getAccessToken,
+  }),
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => state.dbUserReady,
+}));
+
+vi.mock("@/lib/error-reporting", () => ({
+  reportCaught: state.reportCaught,
+}));
+
+vi.mock("@/lib/toast", () => ({
+  toast: { error: state.toastError },
+}));
+
+const pending: LegalAcceptanceStatus = {
+  needsAcceptance: true,
+  termsVersion: "2026-01-29",
+  privacyVersion: "2026-01-31",
+  minimumAge: 18,
+};
+
+function signIn() {
+  state.workosUser = { id: "user_1" };
+  state.convexAuthenticated = true;
+  state.dbUserReady = true;
+}
+
+describe("LegalAcceptanceGate", () => {
+  beforeEach(() => {
+    state.workosUser = null;
+    state.convexAuthenticated = false;
+    state.dbUserReady = false;
+    state.status = undefined;
+    state.statusRequests = [];
+    state.accept.mockReset();
+    state.reportCaught.mockReset();
+    state.toastError.mockReset();
+    state.workosSignOut.mockReset();
+    state.getAccessToken.mockReset();
+    resetSignOutLatchForTests();
+    useSignOutStore.setState({ isSigningOut: false });
+  });
+
+  it("signs the user out without recording acceptance", async () => {
+    signIn();
+    state.status = pending;
+    // No token: the sign-out sequence skips revocation and goes to WorkOS.
+    state.getAccessToken.mockRejectedValue(new Error("Login required"));
+    const user = userEvent.setup();
+    render(<LegalAcceptanceGate />);
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(useSignOutStore.getState().isSigningOut).toBe(true);
+    expect(isSignOutInProgress()).toBe(true);
+    await waitFor(() =>
+      expect(state.workosSignOut).toHaveBeenCalledWith({
+        returnTo: window.location.origin,
+        navigate: false,
+      }),
+    );
+    expect(state.accept).not.toHaveBeenCalled();
+  });
+
+  it("disconnects App's servers before signing out from the dialog", async () => {
+    signIn();
+    state.status = pending;
+    state.getAccessToken.mockRejectedValue(new Error("Login required"));
+    const disconnectServers = vi.fn().mockResolvedValue(undefined);
+    // Stands in for App, which registers its runtime-server teardown and is
+    // mounted beside the gate in AuthBootstrap.
+    function AppTeardown() {
+      useAuthExitCleanup(disconnectServers);
+      return null;
+    }
+    const user = userEvent.setup();
+    render(
+      <>
+        <AppTeardown />
+        <LegalAcceptanceGate />
+      </>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(disconnectServers).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(state.workosSignOut).toHaveBeenCalled());
+    expect(disconnectServers.mock.invocationCallOrder[0]).toBeLessThan(
+      state.workosSignOut.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("asks a signed-in user who has not accepted, with the backend's minimum age", () => {
+    signIn();
+    state.status = pending;
+
+    render(<LegalAcceptanceGate />);
+
+    expect(
+      screen.getByRole("dialog", {
+        name: "Accept the Terms and Privacy Policy",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("I am at least 18 years old.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Terms of Use" })).toHaveAttribute(
+      "href",
+      "https://www.mcpjam.com/terms-of-use",
+    );
+    expect(
+      screen.getByRole("link", { name: "Privacy Policy" }),
+    ).toHaveAttribute("href", "https://www.mcpjam.com/privacy-policy");
+    expect(
+      screen.getByRole("button", { name: "Accept and continue" }),
+    ).toBeDisabled();
+  });
+
+  it("records the versions shown and closes once the status reports acceptance", async () => {
+    signIn();
+    state.status = pending;
+    state.accept.mockImplementation(async () => {
+      state.status = { ...pending, needsAcceptance: false };
+      return { alreadyAccepted: false };
+    });
+    const user = userEvent.setup();
+    const { rerender } = render(<LegalAcceptanceGate />);
+
+    await user.click(screen.getByLabelText("I am at least 18 years old."));
+    await user.click(
+      screen.getByRole("button", { name: "Accept and continue" }),
+    );
+
+    expect(state.accept).toHaveBeenCalledWith({
+      termsVersion: "2026-01-29",
+      privacyVersion: "2026-01-31",
+      minimumAge: 18,
+      ageConfirmed: true,
+    });
+    rerender(<LegalAcceptanceGate />);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("stays closed for a user who has already accepted", () => {
+    signIn();
+    state.status = { ...pending, needsAcceptance: false };
+
+    render(<LegalAcceptanceGate />);
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("never asks the backend for a guest with a Convex identity", () => {
+    state.convexAuthenticated = true;
+    state.dbUserReady = true;
+    state.status = pending;
+
+    render(<LegalAcceptanceGate />);
+
+    expect(state.statusRequests).toEqual([]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("never asks the backend when there is no Convex identity", () => {
+    state.workosUser = { id: "user_1" };
+    state.status = pending;
+
+    render(<LegalAcceptanceGate />);
+
+    expect(state.statusRequests).toEqual([]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("lets the user in when the status query fails", () => {
+    signIn();
+    state.status = new Error(
+      "[CONVEX Q(legalAcceptance:getStatus)] Could not find public function",
+    );
+
+    render(<LegalAcceptanceGate />);
+
+    expect(state.statusRequests).toEqual([{}]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows a version refusal without reporting it, and keeps the dialog open", async () => {
+    signIn();
+    state.status = pending;
+    state.accept.mockRejectedValue(
+      new ConvexError({
+        code: "CONFLICT",
+        message:
+          "The Terms, Privacy Policy or minimum age changed since this page loaded.",
+      }),
+    );
+    const user = userEvent.setup();
+    render(<LegalAcceptanceGate />);
+
+    await user.click(screen.getByLabelText("I am at least 18 years old."));
+    await user.click(
+      screen.getByRole("button", { name: "Accept and continue" }),
+    );
+
+    await waitFor(() =>
+      expect(state.toastError).toHaveBeenCalledWith(
+        "The Terms, Privacy Policy or minimum age changed since this page loaded.",
+      ),
+    );
+    expect(state.reportCaught).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("reports an unexpected save failure", async () => {
+    signIn();
+    state.status = pending;
+    const failure = new Error("network down");
+    state.accept.mockRejectedValue(failure);
+    const user = userEvent.setup();
+    render(<LegalAcceptanceGate />);
+
+    await user.click(screen.getByLabelText("I am at least 18 years old."));
+    await user.click(
+      screen.getByRole("button", { name: "Accept and continue" }),
+    );
+
+    await waitFor(() =>
+      expect(state.reportCaught).toHaveBeenCalledWith(failure, {
+        source: "legal_acceptance_accept",
+      }),
+    );
+    expect(state.toastError).toHaveBeenCalled();
+  });
+});

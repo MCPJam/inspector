@@ -161,17 +161,25 @@ describe("harness scope step-up correlation", () => {
       errorDescription: undefined,
     });
 
+    // A bare challenge (no scope, no pointer) is a step-up request too
+    //: discovery chooses the scopes.
     publishHarnessScopeStepUpFromToolError(TURN_A, {
       serverId: "auth-bench",
       error: new InsufficientScopeError({
         errorDescription: "More access is required",
       }),
     });
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        serverId: "auth-bench",
+        errorDescription: "More access is required",
+      }),
+    );
     publishHarnessScopeStepUpFromToolError(TURN_A, {
       serverId: "auth-bench",
       error: new Error("ordinary failure"),
     });
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("rejects malformed correlation ids", () => {

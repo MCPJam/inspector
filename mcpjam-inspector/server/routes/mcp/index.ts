@@ -1,3 +1,5 @@
+import turnAuthorization from "../web/turn-authorization.js";
+import chatPersistence from "../web/chat-persistence.js";
 import { Hono } from "hono";
 import connect from "./connect";
 import servers from "./servers";
@@ -21,6 +23,7 @@ import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
+import events from "./events";
 import skills from "./skills";
 import serverSkills from "./server-skills";
 import conformance from "./conformance";
@@ -34,6 +37,7 @@ import webmcpInspector from "./webmcp-inspector";
 import audioTranscriptions from "./audio-transcriptions";
 import plugins from "./plugins";
 import { buildHealthMeta } from "../../utils/health-payload.js";
+import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
 
 const mcp = new Hono();
 
@@ -48,7 +52,10 @@ mcp.get("/health", (c) => {
 });
 
 // Chat v2 endpoint
+mcp.use("/chat-v2", onboardingTurnTraceMiddleware);
 mcp.route("/chat-v2", chatV2);
+mcp.route("/chat-persistence", chatPersistence);
+mcp.route("/turn-authorization", turnAuthorization);
 
 // Local computer engine — consent capability (grant/verify/revoke)
 mcp.route("/computers", computers);
@@ -129,6 +136,11 @@ mcp.route("/log-level", logLevel);
 
 // Tasks endpoints - MCP Tasks experimental feature (spec 2025-11-25)
 mcp.route("/tasks", tasks);
+
+// MCP Events (triggers, draft@28ec35e) - discovery, one-off poll, the local
+// subscription runtime, its feed/stream, and the plain-http development
+// webhook receiver (`/events/hooks/*`, session-exempt, signature-verified).
+mcp.route("/events", events);
 
 // Skills endpoints - Agent skills from .mcpjam/skills/
 mcp.route("/skills", skills);

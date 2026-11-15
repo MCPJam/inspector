@@ -727,7 +727,7 @@ describe("ModelSelector", () => {
 
     expect(
       await screen.findByText(
-        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models."
+        "Claude Code runs MCPJam models, your organization's Anthropic key, or a gateway that serves Anthropic Messages. Set one up in Organization models."
       )
     ).toBeVisible();
     expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
@@ -1261,7 +1261,7 @@ describe("ModelSelector — organization requires its own keys", () => {
     await user.click(screen.getByTestId("model-selector-trigger"));
     const empty = await screen.findByTestId("model-selector-org-keys-empty");
     expect(empty).toHaveTextContent(
-      "This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider.",
+      "This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider or a gateway that serves Responses.",
     );
     expect(empty).not.toHaveTextContent(/MCPJam models/);
     expect(

@@ -3,10 +3,7 @@ import { runModernChecks } from "../../src/mcp-conformance/checks/modern.js";
 import { normalizeMCPConformanceConfig } from "../../src/mcp-conformance/validation.js";
 import type { MCPCheckId } from "../../src/mcp-conformance/types.js";
 
-const LOGGING_CHECKS = [
-  "modern-logs-require-log-level",
-  "modern-log-level-filtering",
-] as const;
+const LOGGING_CHECKS = ["modern-logs-require-log-level"] as const;
 
 async function runCheck(id: MCPCheckId, fetchFn: typeof fetch) {
   const config = normalizeMCPConformanceConfig({
@@ -94,40 +91,4 @@ describe("modern logging unavailable probes", () => {
       });
     }
   }
-});
-
-describe("modern logging notification levels", () => {
-  it("rejects unknown levels rather than passing an unranked severity", async () => {
-    const fetchFn: typeof fetch = async (_input, init) => {
-      const body = JSON.parse(String(init?.body));
-      const messages = [
-        {
-          jsonrpc: "2.0",
-          method: "notifications/message",
-          params: { level: "bogus", data: "log" },
-        },
-        {
-          jsonrpc: "2.0",
-          id: body.id,
-          result: { resultType: "complete", content: [] },
-        },
-      ];
-      return new Response(
-        messages
-          .map(
-            (message) => `event: message\ndata: ${JSON.stringify(message)}\n\n`
-          )
-          .join(""),
-        {
-          headers: { "Content-Type": "text/event-stream" },
-        }
-      );
-    };
-    expect(await runCheck("modern-log-level-filtering", fetchFn)).toMatchObject(
-      {
-        status: "failed",
-        details: { invalidOrLowerLevels: ["bogus"] },
-      }
-    );
-  });
 });

@@ -591,7 +591,7 @@ describe("each local harness is addressed by its own id", () => {
 
   it("refuses a harness this build has no local runtime for, rather than defaulting", async () => {
     for (const [path, init] of [
-      ["/api/mcp/local-harness/availability?harnessId=cursor", { headers: AUTH }],
+      ["/api/mcp/local-harness/availability?harnessId=opencode", { headers: AUTH }],
       ["/api/mcp/local-harness/runtime/install", { method: "POST", headers: AUTH, body: JSON.stringify({ harnessId: "__proto__" }) }],
     ] as const) {
       const response = await createApp().request(path, init);
@@ -672,7 +672,7 @@ describe("local Off consent", () => {
     expect(grantLocalHarnessConsentMock).not.toHaveBeenCalled();
     expect(startRuntimeInstallMock).not.toHaveBeenCalled();
   });
-  it.each([{}, { projectId: "p", harnessId: "cursor" }])("rejects unsupported consent input %j", async body => {
+  it.each([{}, { projectId: "p", harnessId: "opencode" }])("rejects unsupported consent input %j", async body => {
     expect((await request(body)).status).toBe(400);
     expect(offConsent.acknowledge).not.toHaveBeenCalled();
   });

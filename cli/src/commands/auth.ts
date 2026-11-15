@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { usageError, writeResult } from "../lib/output.js";
 import { runPlatformLogin, runPlatformLogout } from "../lib/platform-auth.js";
@@ -7,13 +8,14 @@ import {
   runPlatformOperation,
 } from "../lib/platform-command.js";
 import {
-  resolvePlatformBaseUrl,
-  resolvePlatformOrigin,
+  resolveCliDeployment,
+  resolvePlatformExtraHeaders,
 } from "../lib/platform-client.js";
 
 export function registerAuthCommands(program: Command): void {
-  program
-    .command("login")
+  // Signing in replaces the saved login, so that login never blocks it: its
+  // server is only the default when nothing else names one.
+  declareMcpjamUse(program.command("login"), { credential: "none" })
     .description(
       "Log in to MCPJam Cloud. Opens your browser for OAuth and stores the session locally."
     )
@@ -26,11 +28,18 @@ export function registerAuthCommands(program: Command): void {
           "`mcpjam cloud login` uses browser OAuth. Pass --api-key to other cloud commands, or set MCPJAM_API_KEY."
         );
       }
-      const apiUrl = resolvePlatformBaseUrl(platform);
-      const origin = resolvePlatformOrigin(platform);
+      const { apiUrl } = resolveCliDeployment({
+        apiUrl: platform.apiUrl,
+        credential: "none",
+      });
+      const headers = resolvePlatformExtraHeaders(platform);
 
       const result = await runPlatformLogin(
-        { origin, apiUrl },
+        {
+          origin: new URL(apiUrl).origin,
+          apiUrl,
+          ...(headers ? { headers } : {}),
+        },
         {
           quiet: globalOptions.quiet,
           ...(options.browser === false
@@ -61,8 +70,8 @@ export function registerAuthCommands(program: Command): void {
       );
     });
 
-  program
-    .command("logout")
+  // Clears the local login and contacts no server, so no address blocks it.
+  declareMcpjamUse(program.command("logout"), { when: () => false })
     .description("Remove the stored MCPJam Cloud login.")
     .action(async (_options, command) => {
       const globalOptions = getGlobalOptions(command);

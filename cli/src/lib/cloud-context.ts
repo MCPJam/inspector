@@ -9,6 +9,7 @@
 import { getAuthFilePath, readStoredAuth } from "./auth-store.js";
 import {
   describeCloudCredential,
+  describeDeploymentSource,
   type DescribeCloudCredentialDependencies,
 } from "./credential-describe.js";
 import {
@@ -16,10 +17,11 @@ import {
   type CloudScope,
 } from "./cloud-scope.js";
 import {
-  LEGACY_KEY_REMEDY,
+  legacyKeyRemedy,
   MISSING_CLOUD_CREDENTIAL_MESSAGE,
 } from "./platform-auth.js";
 import { operationalError, usageError } from "./output.js";
+import { resolveCliDeployment } from "./platform-client.js";
 
 export { MISSING_CLOUD_CREDENTIAL_MESSAGE };
 
@@ -89,25 +91,38 @@ export function formatCloudAudienceLine(input: CloudAudienceLineInput): string {
     authFilePath: input.authFilePath,
   };
   const { deployment } = describeCloudCredential(input.options, deps);
-  return `Using MCPJam Cloud as ${identityLabel(input.options, deps)} · ${scopeLabel(input.scope)} · ${deployment.apiUrl}`;
+  // An organization's server says so; the other sources read as before.
+  const organization =
+    deployment.source === "managed" || deployment.source === "managed-default"
+      ? ` · ${describeDeploymentSource(deployment)}`
+      : "";
+  return `Using MCPJam Cloud as ${identityLabel(input.options, deps)} · ${scopeLabel(input.scope)} · ${deployment.apiUrl}${organization}`;
 }
 
 export function preflightCloudCredentials(
   options: CloudCredentialOptions,
   deps: DescribeCloudCredentialDependencies = {}
 ): void {
-  const { credential, deployment } = describeCloudCredential(options, deps);
+  const { credential } = describeCloudCredential(options, deps);
   if (credential.valid === false) {
-    throw usageError(credential.error ?? LEGACY_KEY_REMEDY);
+    throw usageError(
+      credential.error ?? legacyKeyRemedy({ apiUrl: options.apiUrl, ...deps })
+    );
   }
-  if (!deployment.valid) {
-    throw usageError(deployment.error ?? "Invalid API URL.");
-  }
+  // Thrown with the refusal's own code and exit status, before the
+  // missing-credential check below.
+  resolveCliDeployment(
+    {
+      apiUrl: options.apiUrl,
+      credential: credential.kind === "api-key" ? "api-key" : "oauth",
+    },
+    deps
+  );
   if (credential.source === "missing") {
     const envKey = (deps.env ?? process.env).MCPJAM_API_KEY?.trim();
     if (envKey?.startsWith("mcpjam_")) {
       throw operationalError(
-        `${MISSING_CLOUD_CREDENTIAL_MESSAGE} Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${LEGACY_KEY_REMEDY}`
+        `${MISSING_CLOUD_CREDENTIAL_MESSAGE} Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${legacyKeyRemedy({ apiUrl: options.apiUrl, ...deps })}`
       );
     }
     throw operationalError(MISSING_CLOUD_CREDENTIAL_MESSAGE);

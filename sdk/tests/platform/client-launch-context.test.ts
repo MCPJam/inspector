@@ -168,6 +168,20 @@ describe("declared launch context", () => {
     expect(headersOf(fetchMock, 1)[RUN_LAUNCH_HEADERS.launcher]).toBeDefined();
   });
 
+  it("rides them on a conformance start, and not on its reads", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    const client = makeClient(fetchMock, { launcher: { ...CLI_LAUNCHER } });
+
+    await client.startConformanceRun({ projectId: "p1", serverId: "s1" });
+    await client.getConformanceRun({ projectId: "p1", runId: "r1" });
+
+    expect(JSON.parse(headersOf(fetchMock, 0)[RUN_LAUNCH_HEADERS.launcher]!))
+      .toEqual(CLI_LAUNCHER);
+    expect(headersOf(fetchMock, 1)).not.toHaveProperty(
+      RUN_LAUNCH_HEADERS.launcher
+    );
+  });
+
   it("is absent from every call that is not a launch", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => ok());
     const client = makeClient(fetchMock, { launcher: { ...CLI_LAUNCHER } });

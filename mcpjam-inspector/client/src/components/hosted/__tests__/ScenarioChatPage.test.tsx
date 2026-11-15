@@ -1007,6 +1007,26 @@ describe("ScenarioChatPage", () => {
     });
   });
 
+  it("blocks chat before sending when the saved study model needs repair, then clears on reload", async () => {
+    consentAlreadyGiven();
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(createFetchResponse({
+      ...body, bootstrap: { ...body.bootstrap, modelReadiness: { ready: false, code: "org_keys_required" } },
+    }));
+    const mounted = render(<ScenarioChatPage pathToken="scenario-token" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Ask the study owner or an editor");
+    await waitFor(() => expect(mockChatTabV2).toHaveBeenLastCalledWith(expect.objectContaining({ scenarioComposerBlocked: true })));
+    expect(readScenarioSession()?.payload.modelReadiness?.ready).toBe(false);
+    mounted.unmount();
+    mockAuthFetch.mockResolvedValue(createFetchResponse({
+      ...body, bootstrap: { ...body.bootstrap, modelReadiness: { ready: true } },
+    }));
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+    await waitFor(() => expect(readScenarioSession()?.payload.modelReadiness?.ready).toBe(true));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockChatTabV2).toHaveBeenLastCalledWith(expect.objectContaining({ scenarioComposerBlocked: false }));
+  });
+
   it("persists the redeemed session to sessionStorage when standalone", async () => {
     window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
 
@@ -1777,16 +1797,15 @@ describe("ScenarioChatPage", () => {
 
     expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
 
-    // Settle the gate before reporting the 401. A server joins the authorizable
-    // set only once the requirement probe has answered for it, and it verifies
-    // its stored credential after that — so clicking earlier races both, and
-    // the resulting state depends on which promise won. An unblocked composer
-    // is the observable "everything has settled" signal.
-    await waitFor(() =>
+    // Settle the gate before reporting the 401. The composer is open before the
+    // requirement probe answers, and a 401 reported as the gate admits the
+    // server is rebuilt away, so wait until it has verified the credential.
+    await waitFor(() => {
+      expect(mockValidateHostedServer).toHaveBeenCalled();
       expect(mockChatTabV2).toHaveBeenLastCalledWith(
         expect.objectContaining({ scenarioComposerBlocked: false }),
-      ),
-    );
+      );
+    });
 
     await userEvent.click(
       screen.getByRole("button", { name: "Trigger OAuth" }),
@@ -1858,12 +1877,13 @@ describe("ScenarioChatPage", () => {
 
     expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
 
-    // See above: let the probe answer and the credentials verify before the 401.
-    await waitFor(() =>
+    // See above: let both servers be admitted and verified before the 401.
+    await waitFor(() => {
+      expect(mockValidateHostedServer).toHaveBeenCalledTimes(2);
       expect(mockChatTabV2).toHaveBeenLastCalledWith(
         expect.objectContaining({ scenarioComposerBlocked: false }),
-      ),
-    );
+      );
+    });
 
     await userEvent.click(
       screen.getByRole("button", { name: "Trigger targeted OAuth" }),

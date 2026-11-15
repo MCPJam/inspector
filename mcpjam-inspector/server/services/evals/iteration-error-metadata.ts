@@ -6,6 +6,11 @@ import type {
   RunnerBrowserInteractionStep,
   RunnerWidgetRenderObservation,
 } from "@/shared/eval-trace";
+import {
+  buildToolAuthChallengeMetadata,
+  collectToolAuthChallenges,
+  toolAuthChallengeOf,
+} from "./run-setup-signals.js";
 
 /** Small evidence for the run summary, without downloading trace blobs. */
 export function buildIterationErrorMetadata(input: {
@@ -25,6 +30,18 @@ export function buildIterationErrorMetadata(input: {
     const entry = { reason, message: clean.trim() };
     errors.set(JSON.stringify(entry), entry);
   };
+  // A tool step that hit a sign-in challenge is reported by its
+  // classification and remediation instead of the raw refusal text, under the
+  // same reason its kind already files it as.
+  const authChallenges = collectToolAuthChallenges([
+    ...(input.spans ?? []),
+    ...(input.toolErrors ?? []),
+  ]);
+  const challengedCallIds = new Set(
+    authChallenges.flatMap((record) =>
+      record.toolCallId ? [record.toolCallId] : [],
+    ),
+  );
   const toolErrors = [
     ...(input.toolErrors ?? []),
     ...extractToolErrors({
@@ -36,9 +53,23 @@ export function buildIterationErrorMetadata(input: {
     if (!error || typeof error !== "object") continue;
     const record = error as Record<string, unknown>;
     if (typeof record.message !== "string") continue;
+    if (
+      toolAuthChallengeOf(error) ||
+      (typeof record.toolCallId === "string" &&
+        challengedCallIds.has(record.toolCallId))
+    )
+      continue;
     add(
       record.kind === "protocol-error" ? "protocolError" : "toolError",
       record.message,
+    );
+  }
+  for (const record of authChallenges) {
+    add(
+      record.authChallenge.source === "tool_result_meta"
+        ? "toolError"
+        : "protocolError",
+      `${record.line} ${record.remediation}`,
     );
   }
   for (const observation of input.widgetRenderObservations ?? []) {
@@ -77,6 +108,7 @@ export function buildIterationErrorMetadata(input: {
     );
   return {
     ...(errors.size ? { evalErrors: [...errors.values()] } : {}),
+    ...buildToolAuthChallengeMetadata(authChallenges),
     ...(stopped
       ? {
           evalExecutionFailure: {

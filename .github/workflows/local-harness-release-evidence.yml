@@ -1,0 +1,138 @@
+name: Local harness release evidence
+
+# The release's local-harness conformance gate, run when a commit a release
+# could ship lands on `main` (alongside Deploy Staging, which a release waits
+# for anyway) instead of inside the release. release.yml's
+# `local-harness-evidence-lookup` picks up what this run leaves, and the
+# release runs conformance itself only when there is nothing to pick up.
+#
+# Evidence is named by the conformance inputs digest
+# (mcpjam-inspector/scripts/conformance-inputs-digest.mjs) and the packs the
+# build selects (mcpjam-inspector/scripts/local-harness-release-packs.mjs).
+# A commit that changed nothing a leg can load finds the evidence of an
+# earlier one, and this run ends after its plan, as it does on every push
+# with nothing to release. .github/scripts/release-evidence.mjs has the
+# lookup and the rules for which runs a release trusts.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Only the newest commit on `main` can be released, so a newer push replaces
+# a run still going.
+concurrency:
+  group: local-harness-release-evidence
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Finding a marker an earlier run left.
+  actions: read
+
+env:
+  NODE_VERSION: "24.22.1"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.find.outputs.run }}
+      name: ${{ steps.find.outputs.name }}
+      claude_desired: ${{ steps.packs.outputs.claude_desired }}
+      codex_desired: ${{ steps.packs.outputs.codex_desired }}
+      claude_permitted: ${{ steps.packs.outputs.claude_permitted }}
+      codex_permitted: ${{ steps.packs.outputs.codex_permitted }}
+      permitted_harnesses: ${{ steps.packs.outputs.permitted_harnesses }}
+      runtime_desired: ${{ steps.packs.outputs.runtime_desired }}
+      runtime_permitted: ${{ steps.packs.outputs.runtime_permitted }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The question release.yml's preflight answers, minus its refusal of an
+      # empty release: conformance gates only a release that builds the
+      # Inspector's npm package or desktop apps, and most pushes ship nothing.
+      - name: Would a release from this commit ship the Inspector?
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          node .github/scripts/unpublished-versions.mjs > "$RUNNER_TEMP/unpublished.json"
+          node .github/scripts/release-plan.mjs "$RUNNER_TEMP/unpublished.json" --needs-inspector-artifacts
+
+      - name: Packs a release from this commit selects
+        id: packs
+        if: steps.plan.outputs.build_inspector_artifacts == 'true'
+        working-directory: mcpjam-inspector
+        run: node scripts/local-harness-release-packs.mjs >> "$GITHUB_OUTPUT"
+
+      - name: Look for evidence an earlier run already produced
+        id: find
+        if: steps.plan.outputs.build_inspector_artifacts == 'true'
+        uses: actions/github-script@v9
+        env:
+          PACKS: ${{ steps.packs.outputs.key }}
+        with:
+          script: |
+            const workspace = process.env.GITHUB_WORKSPACE;
+            const { findReleaseEvidence, releaseEvidenceName } =
+              await import(`${workspace}/.github/scripts/release-evidence.mjs`);
+            const { computeConformanceInputsDigest } =
+              await import(`${workspace}/mcpjam-inspector/scripts/conformance-inputs-digest.mjs`);
+            const name = releaseEvidenceName({ digest: computeConformanceInputsDigest(), packs: process.env.PACKS });
+            const found = await findReleaseEvidence({ github, ...context.repo, name });
+            core.info(found.reason);
+            core.setOutput("name", name);
+            core.setOutput("run", String(found.runId === null));
+
+  evidence:
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ needs.plan.outputs.claude_desired }}
+      codex_published_pack_version: ${{ needs.plan.outputs.codex_desired }}
+      runtime_pack_versions: ${{ needs.plan.outputs.runtime_desired }}
+      certified_only: true
+
+  evidence-permitted:
+    needs: plan
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.permitted_harnesses != ''
+    uses: ./.github/workflows/local-harness-conformance.yml
+    with:
+      published_pack_version: ${{ needs.plan.outputs.claude_permitted }}
+      codex_published_pack_version: ${{ needs.plan.outputs.codex_permitted }}
+      runtime_pack_versions: ${{ needs.plan.outputs.runtime_permitted }}
+      harnesses: ${{ needs.plan.outputs.permitted_harnesses }}
+      certified_only: true
+
+  # Written only once every pack the build selects has passed, so a marker
+  # always means complete evidence.
+  record:
+    needs: [plan, evidence, evidence-permitted]
+    if: |
+      !cancelled() &&
+      needs.plan.outputs.run == 'true' &&
+      needs.evidence.result == 'success' &&
+      (needs.evidence-permitted.result == 'success' || needs.evidence-permitted.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write the evidence marker
+        env:
+          NAME: ${{ needs.plan.outputs.name }}
+        run: |
+          jq -n --arg name "$NAME" --arg commit "$GITHUB_SHA" '{name: $name, commit: $commit}' > "$RUNNER_TEMP/marker.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.plan.outputs.name }}
+          path: ${{ runner.temp }}/marker.json
+          if-no-files-found: error

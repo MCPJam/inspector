@@ -66,6 +66,7 @@
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog } from "./redact-log-message.js";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "@/shared/native-harness-trial";
 
 type ConvexErrorData = {
   code?: unknown;
@@ -75,6 +76,8 @@ type ConvexErrorData = {
   reason?: unknown;
   /** The gated feature's key, on a `FEATURE_UNAVAILABLE` refusal. */
   feature?: unknown;
+  /** The billing page that lifts a native harness trial refusal. */
+  upgradeUrl?: unknown;
 };
 
 /**
@@ -118,7 +121,7 @@ const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
  * is a bug worth surviving, and three links is already more nesting than any
  * path here has.
  */
-function convexErrorData(error: unknown): ConvexErrorData | null {
+export function convexErrorData(error: unknown): ConvexErrorData | null {
   let current: unknown = error;
   for (let depth = 0; depth < 4 && current; depth += 1) {
     const data = (current as { data?: unknown }).data;
@@ -194,18 +197,24 @@ export interface TranslateConvexWriteErrorOptions {
  * `currentImpact` is a small object of counts rather than a scalar, and it is
  * forwarded whole: an agent proposal that conflicted on impact needs to know
  * WHICH consumer count moved to describe the edit honestly the second time.
+ *
+ * A directory submission's revision guard puts `currentRevision` and
+ * `conflictingKeys` beside its code rather than under `data`; the keys that
+ * conflicted are what lets a writer reapply only its own change.
  */
 function preconditionDetails(
   data: Record<string, unknown> | null | undefined
 ): Record<string, unknown> | undefined {
-  const payload = data?.data;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return undefined;
-  }
-  const source = payload as Record<string, unknown>;
   const details: Record<string, unknown> = {};
-  for (const key of ["currentConfigId", "currentName", "currentImpact"]) {
-    if (source[key] !== undefined) details[key] = source[key];
+  const payload = data?.data;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const source = payload as Record<string, unknown>;
+    for (const key of ["currentConfigId", "currentName", "currentImpact"]) {
+      if (source[key] !== undefined) details[key] = source[key];
+    }
+  }
+  for (const key of ["currentRevision", "conflictingKeys"]) {
+    if (data?.[key] !== undefined) details[key] = data[key];
   }
   return Object.keys(details).length > 0 ? details : undefined;
 }
@@ -273,7 +282,7 @@ function retryAfterFromResetsAt(
 }
 
 /** Same, from a duration a token bucket measured directly. */
-function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
+export function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
   if (typeof retryAfterMs !== "number" || !Number.isFinite(retryAfterMs)) {
     return undefined;
   }
@@ -380,6 +389,23 @@ export function translateConvexWriteError(
   // message, and anything downstream would take one or both away.
   if (code === "account_suspended") {
     return new WebRouteError(403, ErrorCode.FORBIDDEN, structuredMessage ?? "Account suspended. Contact support.", { code });
+  }
+  // The Free plan's native harness trial is used up, so the backend refused
+  // to put a client on its native harness. The same FORBIDDEN a refused native
+  // turn answers, with the reason a program branches on and the billing page
+  // the backend named.
+  if (code === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE) {
+    const upgradeUrl = data?.upgradeUrl;
+    return new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      structuredMessage ??
+        "This organization has used its free native harness turns. Upgrade to keep using them.",
+      {
+        reason: code,
+        ...(typeof upgradeUrl === "string" && upgradeUrl ? { upgradeUrl } : {}),
+      },
+    );
   }
   if (kind === "forbidden") {
     return adminFailureIsForbidden

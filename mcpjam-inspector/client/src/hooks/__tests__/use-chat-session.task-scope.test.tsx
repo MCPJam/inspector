@@ -4,6 +4,7 @@ import { useChatSession } from "../use-chat-session";
 import {
   getTrackedTasks,
   setTrackedTaskScope,
+  setTrackedTaskOwner,
 } from "@/lib/task-tracker";
 
 /**
@@ -17,6 +18,7 @@ import {
 
 const mockState = vi.hoisted(() => ({
   chatOnData: null as ((part: unknown) => void) | null,
+  chatOnError: null as ((error: Error) => void) | null,
   transportOptions: [] as Array<{ body?: () => unknown }>,
   chatStatus: "ready" as string,
   messages: [] as unknown[],
@@ -142,8 +144,9 @@ vi.mock("convex/react", async () =>
 }));
 
 vi.mock("@ai-sdk/react", () => ({
-  useChat: vi.fn((options: { onData?: (part: unknown) => void }) => {
+  useChat: vi.fn((options: { onData?: (part: unknown) => void; onError?: (error: Error) => void }) => {
     mockState.chatOnData = options.onData ?? null;
+    mockState.chatOnError = options.onError ?? null;
     return {
       messages: mockState.messages,
       sendMessage: mockState.sendMessage,
@@ -197,12 +200,65 @@ describe("useChatSession task-created scope capture", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    setTrackedTaskOwner(null, null);
     setTrackedTaskScope(undefined);
     mockState.chatOnData = null;
     mockState.transportOptions = [];
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.messages = [];
+  });
+
+  it("clears startup status on Stop, error and chat switch and rejects stale requests", async () => {
+    const { result, rerender } = await renderChatSession();
+    const requestId = () => {
+      let value: unknown;
+      act(() => { value = mockState.transportOptions.at(-1)?.body?.(); });
+      if (!value || typeof value !== "object" || !("harnessStartupRequestId" in value) ||
+          typeof value.harnessStartupRequestId !== "string") throw new Error("Missing request ID");
+      return value.harnessStartupRequestId;
+    };
+    const first = requestId();
+    const chat = result.current.chatSessionId;
+    const receive = (id: string) => act(() => mockState.chatOnData?.({
+      type: "data-harness-startup", transient: true,
+      data: { phase: "computer", requestId: id, chatSessionId: chat },
+    }));
+    mockState.chatStatus = "streaming";
+    rerender();
+    receive(first);
+    expect(result.current.harnessStartupPhase).toBe("computer");
+    const second = requestId();
+    expect(second).not.toBe(first);
+    receive(first);
+    expect(result.current.harnessStartupPhase).toBeNull();
+    receive(second);
+    expect(result.current.harnessStartupPhase).toBe("computer");
+    act(() => result.current.stop());
+    expect(mockState.stop).toHaveBeenCalled();
+    expect(result.current.harnessStartupPhase).toBeNull();
+    receive(second);
+    expect(result.current.harnessStartupPhase).toBeNull();
+    const third = requestId();
+    receive(third);
+    expect(result.current.harnessStartupPhase).toBe("computer");
+    act(() => mockState.chatOnError?.(new Error("Connection closed")));
+    expect(result.current.harnessStartupPhase).toBeNull();
+    mockState.chatStatus = "error";
+    rerender();
+    expect(result.current.harnessStartupPhase).toBeNull();
+    mockState.chatStatus = "streaming";
+    rerender();
+    receive(third);
+    expect(result.current.harnessStartupPhase).toBeNull();
+    const fourth = requestId();
+    receive(fourth);
+    expect(result.current.harnessStartupPhase).toBe("computer");
+    act(() => result.current.resetChat());
+    expect(result.current.chatSessionId).not.toBe(chat);
+    receive(fourth);
+    expect(result.current.harnessStartupPhase).toBeNull();
+    expect(result.current.messages).toEqual([]);
   });
 
   it("files a part delivered after a mid-stream scope switch under the turn-start scope", async () => {
@@ -248,4 +304,97 @@ describe("useChatSession task-created scope capture", () => {
 
     expect(getTrackedTasks().map((t) => t.scope)).toEqual(["proj-a"]);
   });
+  it("uses per-request owners when overlapping bound replies arrive out of order", async () => {
+    setTrackedTaskOwner("project", "actor-a");
+    await renderChatSession();
+    const transport = mockState.transportOptions.at(-1)!;
+    const first = transport.body!() as {
+      hostedTaskOwnerRequestId: string;
+      hostedTaskOwnerScope: string;
+    };
+    setTrackedTaskOwner("project", "actor-b");
+    const second = transport.body!() as {
+      hostedTaskOwnerRequestId: string;
+      hostedTaskOwnerScope: string;
+    };
+    expect(first.hostedTaskOwnerRequestId).not.toBe(
+      second.hostedTaskOwnerRequestId,
+    );
+    const reply = (
+      ownerRequestId: string,
+      sourceExecutionId: string,
+      ownerScope: string,
+    ) => {
+      const part = taskCreatedPart("same");
+      return {
+        ...part,
+        data: {
+          ...part.data,
+          connectionId: "account",
+          ownerRequestId,
+          sourceExecutionId,
+          ownerScope,
+        },
+      };
+    };
+    act(() => {
+      mockState.chatOnData?.(
+        reply(
+          second.hostedTaskOwnerRequestId,
+          "b",
+          second.hostedTaskOwnerScope,
+        ),
+      );
+      mockState.chatOnData?.(
+        reply(first.hostedTaskOwnerRequestId, "a", first.hostedTaskOwnerScope),
+      );
+    });
+    expect(getTrackedTasks().map((task) => task.sourceExecutionId)).toEqual([
+      "b",
+    ]);
+    setTrackedTaskOwner("project", "actor-a");
+    expect(getTrackedTasks().map((task) => task.sourceExecutionId)).toEqual([
+      "a",
+    ]);
+    expect(getTrackedTasks()[0].serverId).toBe("convex-doc-id");
+  });
+
+  it("does not assign an uncorrelated bound reply to the currently signed-in actor", async () => {
+    setTrackedTaskOwner("project", "actor-a");
+    await renderChatSession();
+    const part = taskCreatedPart("unknown");
+    act(() =>
+      mockState.chatOnData?.({
+        ...part,
+        data: {
+          ...part.data,
+          connectionId: "account",
+          ownerRequestId: "unknown-request",
+        },
+      }),
+    );
+    expect(getTrackedTasks()).toEqual([]);
+  });
+
+  it("rejects an authenticated owner mismatch even for a known request", async () => {
+    setTrackedTaskOwner("project", "actor-a");
+    await renderChatSession();
+    const request = mockState.transportOptions.at(-1)!.body!() as {
+      hostedTaskOwnerRequestId: string;
+    };
+    const part = taskCreatedPart("wrong-owner");
+    act(() =>
+      mockState.chatOnData?.({
+        ...part,
+        data: {
+          ...part.data,
+          connectionId: "account",
+          ownerRequestId: request.hostedTaskOwnerRequestId,
+          ownerScope: "another-owner",
+        },
+      }),
+    );
+    expect(getTrackedTasks()).toEqual([]);
+  });
+
 });

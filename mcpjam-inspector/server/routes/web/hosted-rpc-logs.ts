@@ -5,6 +5,7 @@ import { logger } from "../../utils/logger.js";
 import {
   isRpcLogSinkConfigured,
   readCrossInstanceRpcLogs,
+  type RpcLogCursor,
 } from "../../utils/harness/harness-rpc-log-sink.js";
 import { consumeCrossInstanceHarnessScopeStepUpMessage } from "../../utils/harness/harness-scope-step-up.js";
 import { consumeCrossInstanceHarnessPolicyBlockMessage } from "../../utils/harness/harness-policy-block-channel.js";
@@ -314,16 +315,16 @@ export function createHostedRpcLogCollector(
  * the shared Convex sink by `startCrossInstanceRpcLogPoll` (COMP-21), which pairs
  * with this bridge — start both, tear both down.
  *
- * Scoped by serverId only (the proxy token carries no turn id), so a
- * concurrent turn against the same server on this instance would also see the
- * entries — same per-server semantics as the local-mode Logs SSE.
+ * Native forwarding supplies an owner/account/turn scope. Legacy publishers
+ * and readers remain unscoped; neither group receives the other's frames.
  *
  * Returns the unsubscribe; callers MUST run it on stream completion or the
  * collector (and its closed writer) leak on the bus for the process lifetime.
  */
 export function bridgeHarnessRpcLogsToCollector(
   serverIds: string[],
-  collector: HostedRpcLogCollector
+  collector: HostedRpcLogCollector,
+  scopeIds?: Record<string, string>,
 ): () => void {
   // An empty filter would subscribe to EVERY server's traffic (bus semantics);
   // a harness turn with no MCP servers has nothing to bridge.
@@ -347,7 +348,7 @@ export function bridgeHarnessRpcLogsToCollector(
       message: event.message,
       serverId: event.serverId,
     });
-  });
+  }, scopeIds);
 }
 
 /** How often a live turn polls the shared sink for other instances' frames. */
@@ -379,14 +380,16 @@ const CROSS_INSTANCE_POLL_MS = 1000;
  */
 export function startCrossInstanceRpcLogPoll(
   serverIds: string[],
-  collector: HostedRpcLogCollector
+  collector: HostedRpcLogCollector,
+  scopeIds?: Record<string, string>,
 ): () => void {
   if (serverIds.length === 0 || !isRpcLogSinkConfigured()) return () => {};
   let stopped = false;
   const startedAt = Date.now(); // only frames from this turn onward
-  let cursors = [...new Set(serverIds)].map((serverId) => ({
+  let cursors: RpcLogCursor[] = [...new Set(serverIds)].map((serverId) => ({
     serverId,
     sinceMs: startedAt,
+    ...(scopeIds?.[serverId] ? { scopeId: scopeIds[serverId] } : {}),
   }));
   const seen = new Set<string>(); // sink row ids already delivered
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -396,6 +399,10 @@ export function startCrossInstanceRpcLogPoll(
     try {
       const page = await readCrossInstanceRpcLogs({ servers: cursors });
       for (const e of page.entries) {
+        if (
+          !serverIds.includes(e.serverId) ||
+          e.scopeId !== scopeIds?.[e.serverId]
+        ) continue;
         if (seen.has(e.id)) continue;
         seen.add(e.id);
         if (consumeCrossInstanceHarnessScopeStepUpMessage(e.message)) {
@@ -412,7 +419,11 @@ export function startCrossInstanceRpcLogPoll(
           serverId: e.serverId,
         });
       }
-      cursors = page.cursors;
+      cursors = cursors.map((previous) =>
+        page.cursors.find((cursor) =>
+          cursor.serverId === previous.serverId && cursor.scopeId === previous.scopeId
+        ) ?? previous
+      );
     } catch {
       // Best-effort; observation-only. Cursors stay put, so a failed tick
       // re-reads rather than skipping frames.

@@ -141,6 +141,16 @@ describe("buildEvalsUiTools", () => {
     });
 
     dispatchInspectorCommandMock.mockClear();
+    await getTool("ui_run_eval_suite").execute({
+      suite: "Asana smoke",
+      iterations: 1,
+    });
+    expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
+      type: "runEvalSuite",
+      payload: { suite: "Asana smoke", iterations: 1 },
+    });
+
+    dispatchInspectorCommandMock.mockClear();
     const missing = await getTool("ui_run_eval_suite").execute({});
     expect(missing.isError).toBe(true);
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();

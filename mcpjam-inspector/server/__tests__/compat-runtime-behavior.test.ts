@@ -89,7 +89,7 @@ function buildHandle(configJson: Record<string, unknown>): RuntimeHandle {
     },
     completeInitHandshake(hostContext: Record<string, unknown> = {}) {
       const initRequest = parentMessages.find(
-        (m): m is CapturedMessage & { data: { method: string; id: number } } =>
+        (m): m is CapturedMessage & { data: { method: string; id: string } } =>
           (m.data as any)?.method === "ui/initialize"
       );
       if (!initRequest) throw new Error("ui/initialize was not sent");
@@ -167,7 +167,7 @@ describe("compat runtime — F1: Apps SDK only", () => {
     );
     expect(init).toBeDefined();
     expect((init!.data as any).jsonrpc).toBe("2.0");
-    expect((init!.data as any).id).toBeGreaterThan(0);
+    expect((init!.data as any).id).toEqual(expect.any(String));
     expect((init!.data as any).params.protocolVersion).toBe("2026-01-26");
   });
 
@@ -475,5 +475,95 @@ describe("compat runtime — F3: dual metadata", () => {
     });
     expect(h.setGlobalsEvents.length).toBe(baseline + 2);
     expect(h.window.openai.toolInput).toEqual({ a: 2 });
+  });
+});
+
+// PLB-432: an MCP Apps widget runs its own JSON-RPC client (ext-apps `App`)
+// in the same window, and its transport reports every response it did not
+// request as "Received a response for an unknown message ID".
+describe("compat runtime — alongside the widget's own MCP Apps client", () => {
+  let h: RuntimeHandle;
+  let widgetMessages: unknown[];
+  beforeEach(() => {
+    h = buildHandle(F2_CONFIG);
+    // Registered after the runtime, like a widget script that follows the
+    // runtime injected at the top of <head>.
+    widgetMessages = [];
+    h.window.addEventListener("message", (event: MessageEvent) => {
+      widgetMessages.push(event.data);
+    });
+  });
+
+  const requestIdFor = (method: string): unknown =>
+    h.parentMessages
+      .map((m) => m.data as { method?: string; id?: unknown })
+      .find((data) => data?.method === method)?.id;
+
+  it("keeps the runtime's ui/initialize reply away from the widget", () => {
+    h.completeInitHandshake({ theme: "light" });
+    expect(h.window.openai.theme).toBe("light");
+    expect(widgetMessages).toEqual([]);
+  });
+
+  it("keeps replies to fire-and-forget runtime requests away from the widget", () => {
+    h.completeInitHandshake();
+    h.window.openai.requestDisplayMode({ mode: "fullscreen" });
+    h.sendFromParent({
+      jsonrpc: "2.0",
+      id: requestIdFor("ui/request-display-mode"),
+      result: {},
+    });
+    expect(widgetMessages).toEqual([]);
+  });
+
+  it("resolves window.openai.callTool without exposing its reply to the widget", async () => {
+    h.completeInitHandshake();
+    const pending = h.window.openai.callTool("weather", { location: "SF" });
+    h.sendFromParent({
+      jsonrpc: "2.0",
+      id: requestIdFor("tools/call"),
+      result: { structuredContent: { t: 70 } },
+    });
+    await expect(pending).resolves.toEqual({ structuredContent: { t: 70 } });
+    expect(widgetMessages).toEqual([]);
+  });
+
+  it("rejects window.openai.callTool on an error reply without exposing it to the widget", async () => {
+    h.completeInitHandshake();
+    const pending = h.window.openai.callTool("weather", {});
+    h.sendFromParent({
+      jsonrpc: "2.0",
+      id: requestIdFor("tools/call"),
+      error: { code: -32000, message: "tool failed" },
+    });
+    await expect(pending).rejects.toThrow("tool failed");
+    expect(widgetMessages).toEqual([]);
+  });
+
+  it("hides runtime replies from widget listeners in the capture phase", () => {
+    const captured: unknown[] = [];
+    h.window.addEventListener(
+      "message",
+      (event: MessageEvent) => captured.push(event.data),
+      true,
+    );
+    h.completeInitHandshake();
+    expect(captured).toEqual([]);
+  });
+
+  it("passes replies to the widget's own requests through", () => {
+    const widgetReply = {
+      jsonrpc: "2.0",
+      id: 0,
+      result: { protocolVersion: "2026-01-26" },
+    };
+    h.sendFromParent(widgetReply);
+    h.sendFromParent({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-input",
+      params: { arguments: { location: "NYC" } },
+    });
+    expect(widgetMessages).toHaveLength(2);
+    expect(widgetMessages[0]).toEqual(widgetReply);
   });
 });
