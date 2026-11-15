@@ -618,6 +618,56 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     ]);
   });
 
+  it("reads an uploaded account's token again, once, when its refresh fails", async () => {
+    const authorizes: any[] = [];
+    const fetchMock = vi.fn(async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        authorizes.push(JSON.parse(String(init?.body)));
+        return authorizeBatchLocalResponse({
+          serverId: "srv-uploaded",
+          serverConfig: {
+            transportType: "http",
+            url: "https://lab.example.com/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: authorizes.length === 1 ? "upload-1" : "upload-2",
+          extra: { oauthCredentialId: "conn-ci", oauthAccountKind: "uploaded" },
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({ code: "refresh_token_unavailable" }),
+          { status: 401 }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      { ...fakeContext, mcpClientManager: { disconnectServer: vi.fn() } },
+      "bearer-xyz",
+      "proj-1",
+      "srv-uploaded",
+      { serverDisplayName: "Lab" }
+    );
+    const rejected = Object.assign(new Error("HTTP 401"), { statusCode: 401 });
+
+    await expect(
+      config.onUnauthorized({ serverId: "Lab", error: rejected })
+    ).resolves.toEqual({ accessToken: "upload-2" });
+    expect(authorizes).toHaveLength(2);
+    expect(authorizes[1]).toMatchObject({
+      serverIds: ["srv-uploaded"],
+      connectionIds: { "srv-uploaded": "conn-ci" },
+    });
+    // The same token again is not a recovery: it asks for a fresh upload.
+    await expect(
+      config.onUnauthorized({ serverId: "Lab", error: rejected })
+    ).rejects.toThrow(/Upload a fresh token/);
+  });
+
   it("does not send a recovered token whose origins the backend left out", async () => {
     // The recovery names no account, so only the origins can tie the token
     // to this connection; an answer without them is not trusted.

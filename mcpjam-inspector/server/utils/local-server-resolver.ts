@@ -47,6 +47,10 @@ import {
   type DeliveredTokenFacts,
 } from "./hosted-oauth-refresh.js";
 import { oauthRefusalFromAuthorize } from "./local-oauth-refusal.js";
+import {
+  uploadedAccountRecoveries,
+  type UploadedAccountRecovery,
+} from "./uploaded-account-recovery.js";
 import { logger } from "./logger.js";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import {
@@ -418,6 +422,21 @@ export async function authorizeBatchLocal(
   };
 }
 
+/** Uploaded-account recoveries that re-resolve through `authorize-batch-local`. */
+function localUploadedRecoveries(
+  manager: Pick<MCPClientManager, "disconnectServer">,
+  bearerToken: string,
+  projectId: string,
+) {
+  const recoveries = uploadedAccountRecoveries((id, connectionId) =>
+    authorizeBatchLocal(null, bearerToken, projectId, [id], undefined, {
+      connectionIds: { [id]: connectionId },
+    }),
+  );
+  recoveries.bind(manager);
+  return recoveries;
+}
+
 /**
  * Convenience wrapper: authorize a single server and return the {success: true}
  * payload directly. Throws WebRouteError for any non-ok result.
@@ -676,6 +695,8 @@ export function toMCPServerConfig(
       serverId: string;
       serverName: string;
       connectionId?: string;
+      /** An uploaded account's re-resolve when a refresh can't renew its token. */
+      uploaded?: UploadedAccountRecovery;
     };
     /**
      * XAA re-mint hook. When the server uses Cross-App Access, the connect
@@ -962,6 +983,7 @@ export function toMCPServerConfig(
       serverName: options.refreshContext.serverName,
       connectionId: options.refreshContext.connectionId,
       targetOrigin: credentialOrigin(url),
+      uploaded: options.refreshContext.uploaded,
       // In local mode this process is the one that can reach a private
       // authorization server. Covers the in-flight 401 during a long session,
       // not just the connect. `!HOSTED_MODE` rather than `true`:
@@ -1653,6 +1675,13 @@ export async function resolveLocalServerForConnect(
     serverDisplayName: options?.serverDisplayName,
   });
 
+  const serverName = options?.serverDisplayName ?? serverId;
+  // Pinned to the account that answered, so a refresh never lands on
+  // whichever account is the default by then.
+  const connectionId =
+    result.oauthCredentialId ??
+    recoveredCredentialId ??
+    result.oauthConnections?.find((c) => c.isDefault)?.connectionId;
   const config = toMCPServerConfig(result, {
     timeoutMs: options?.timeoutMs ?? options?.defaults?.timeoutMs,
     clientCapabilities:
@@ -1682,13 +1711,19 @@ export async function resolveLocalServerForConnect(
       bearerToken,
       projectId,
       serverId,
-      serverName: options?.serverDisplayName ?? serverId,
-      // Pinned to the account that answered, so a refresh never lands on
-      // whichever account is the default by then.
-      connectionId:
-        result.oauthCredentialId ??
-        recoveredCredentialId ??
-        result.oauthConnections?.find((c) => c.isDefault)?.connectionId,
+      serverName,
+      connectionId,
+      uploaded: localUploadedRecoveries(
+        c.mcpClientManager,
+        bearerToken,
+        projectId,
+      ).for({
+        account: result,
+        token: resolvedOauthAccessToken,
+        connectionId,
+        serverId,
+        serverName,
+      }),
     },
     xaaUnauthorizedHandler,
     xaaPolicy,
@@ -2196,6 +2231,7 @@ async function executeLocalServerConnectAttempt(
   const accounts = resolved.authorizeResult.oauthConnections ?? [];
   // See the note in routes/web/auth.ts: labels are unique per group.
   const accountLabels = connectionLabels(accounts);
+  const uploads = localUploadedRecoveries(mcpClientManager, bearer, projectId);
   const connected = [];
   for (const [index, account] of accounts.entries()) {
     signal.throwIfAborted();
@@ -2257,6 +2293,14 @@ async function executeLocalServerConnectAttempt(
             targetOrigin: credentialOrigin(
               (connectConfig as HttpServerConfig).url,
             ),
+            uploaded: uploads.for({
+              account,
+              token: account.accessToken,
+              connectionId: account.connectionId,
+              serverId,
+              serverName: serverDisplayName,
+              accountName: accountLabels[index],
+            }),
           }), delivered.baseFetch),
         }, { signal });
         signal.throwIfAborted();

@@ -6,6 +6,7 @@ import {
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ConvexBatchAuthorizeSuccess } from "../routes/web/auth.js";
 import { oauthRefusalFromAuthorize } from "./local-oauth-refusal.js";
+import { isUploadedAccount } from "./uploaded-account-recovery.js";
 
 /**
  * Exactly which accounts each server runs with for the acting person, keyed
@@ -116,8 +117,11 @@ export function accountSetGroup(args: {
       const withheld =
         !args.refusal && withheldAccount(entry.c, args, entry.label);
       if (withheld) throw withheld;
+      // An upload is renewed by uploading again, never by signing in.
       refuse(
-        `${serverName} ${entry.label} needs reconnect. Reconnect it in Authorization, or choose another account in the suite's settings.`,
+        isUploadedAccount(entry.c)
+          ? `${serverName} ${entry.label} has no usable uploaded token. Upload a fresh token for it, or choose another account in the suite's settings.`
+          : `${serverName} ${entry.label} needs reconnect. Reconnect it in Authorization, or choose another account in the suite's settings.`,
       );
     }
     return entry;

@@ -96,7 +96,14 @@ import {
 } from "../../services/host-connection-pins.js";
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
-import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
+import {
+  authorizeBatchLocal,
+  resolveLocalStdioServerConfig,
+} from "../../utils/local-server-resolver.js";
+import {
+  uploadedAccountRecoveries,
+  type UploadedAccountFlag,
+} from "../../utils/uploaded-account-recovery.js";
 import { canColocatePluginStdio } from "../../services/plugins/computer-stdio.js";
 import {
   resolvePluginStdioHttpTarget,
@@ -645,6 +652,10 @@ export type ConvexBatchAuthorizeSuccess = {
   oauthRetryAfterMs?: number | null;
   /** Origins `oauthAccessToken` may be sent to; absent from older backends. */
   oauthBoundOrigins?: string[];
+  /** Set when `oauthAccessToken` is a shared or uploaded account's. */
+  oauthAccountKind?: "shared" | "uploaded";
+  /** Set for an uploaded account, including one on a shared server. */
+  oauthAccountUploaded?: boolean;
   permissions: {
     chatOnly: boolean;
   };
@@ -1795,6 +1806,21 @@ export async function createAuthorizedManager(
       accessVersion: options?.accessVersion,
     },
   );
+  // An uploaded account's token is read again when a refresh can't renew it
+  // (`uploaded-account-recovery.ts`).
+  const uploadedRecoveries = uploadedAccountRecoveries((id, connectionId) => {
+    const connectionIds = { [id]: connectionId };
+    return HOSTED_MODE
+      ? authorizeBatch(caller, bearerToken, projectId, [id], {
+          connectionIds,
+          accessScope: options?.accessScope,
+          scenarioId: options?.scenarioId,
+          accessVersion: options?.accessVersion,
+        })
+      : authorizeBatchLocal(null, bearerToken, projectId, [id], undefined, {
+          connectionIds,
+        });
+  });
   const connectionsByServerId: Record<string, McpToolConnection[]> = {};
   for (const [serverId, auth] of Object.entries(batch.results)) {
     const storedName = auth.ok ? auth.serverConfig.name : auth.serverName;
@@ -1820,7 +1846,17 @@ export async function createAuthorizedManager(
             resolveEffectiveAuthMethod(auth.serverConfig, options?.xaaPolicy),
           )
         ) {
-          auth.oauthConnections = [{connectionId: auth.oauthCredentialId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: true, implicit: true, boundOrigins: auth.oauthBoundOrigins}];
+          const implicit: AuthorizedOAuthConnection & UploadedAccountFlag = {
+            connectionId: auth.oauthCredentialId,
+            accessToken: auth.oauthAccessToken,
+            credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt,
+            isDefault: true,
+            implicit: true,
+            boundOrigins: auth.oauthBoundOrigins,
+            accountKind: auth.oauthAccountKind,
+            accountUploaded: auth.oauthAccountUploaded,
+          };
+          auth.oauthConnections = [implicit];
         }
         const live = (auth.oauthConnections ?? []).filter(
           (c) => c.accessToken && !c.needsReauth,
@@ -2437,6 +2473,14 @@ export async function createAuthorizedManager(
                 shareToken: (options as { shareToken?: string })?.shareToken,
                 scenarioId: options?.scenarioId,
                 accessVersion: options?.accessVersion,
+                uploaded: uploadedRecoveries.for({
+                  account: auth,
+                  token: storedOAuthToken,
+                  connectionId:
+                    options?.connectionIds?.[serverId] ?? auth.oauthCredentialId,
+                  serverId,
+                  serverName: displayServerName,
+                }),
                 // Same reasoning as the local resolver's own handler: in local
                 // mode THIS process is the one that can reach a private
                 // authorization server. Without it every surface routed through
@@ -2786,6 +2830,14 @@ export async function createAuthorizedManager(
                       (config as HttpServerConfig).url,
                     ),
                   }),
+              uploaded: uploadedRecoveries.for({
+                account: credential,
+                token: credential.accessToken,
+                connectionId: connection.connectionId,
+                serverId,
+                serverName: serverNamesById[serverId] ?? serverId,
+                accountName: connection.label,
+              }),
             }),
           },
         ] as const;
@@ -2920,6 +2972,7 @@ export async function createAuthorizedManager(
       ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
       : {}),
   });
+  uploadedRecoveries.bind(manager);
   if (pluginLeaseReleases.length > 0) {
     // Every ephemeral-manager teardown path (withManager, web-chat-turn
     // cleanup, manual-connection callers) funnels through

@@ -165,6 +165,33 @@ describe("accountSetGroup", () => {
     );
   });
 
+  it.each([
+    [
+      "an upload on a shared server",
+      { accountKind: "shared", accountUploaded: true },
+    ],
+    ["an older backend's upload", { accountKind: "uploaded" }],
+  ] as const)(
+    "asks for a fresh upload, not a sign-in, when %s has no token",
+    (_label, kind) => {
+      const expired = {
+        connectionId: DUMMY,
+        label: "CI account",
+        isDefault: false,
+        accessToken: null,
+        unavailableReason: "refresh_token_unavailable",
+        ...kind,
+      };
+      expect(
+        refusal(() =>
+          group([DUMMY], authorized({ oauthConnections: [expired] })),
+        ),
+      ).toBe(
+        "Asana CI account has no usable uploaded token. Upload a fresh token for it, or choose another account in the suite's settings.",
+      );
+    },
+  );
+
   it("refuses when a chosen account was removed", () => {
     expect(
       refusal(() => group([DUMMY], authorized({ oauthConnections: [] }))),
