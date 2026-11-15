@@ -50,6 +50,14 @@ export function harnessPrepareBoxEnabled(organizationId: string | undefined): bo
   return listsOrganization(process.env.MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS, organizationId);
 }
 
+/**
+ * Session API turns reuse a hosted agent under the Playground's conditions
+ * (`warm-approval-binding.ts`). Off by default; read per call.
+ */
+export function harnessApiWarmEnabled(): boolean {
+  return process.env.MCPJAM_HARNESS_API_WARM === "true";
+}
+
 /** Hosted native MCP forwarding; read per call so operators can turn it off. */
 export function nativeForwardingEnabled(): boolean {
   return process.env.HARNESS_NATIVE_FORWARDING === "true";

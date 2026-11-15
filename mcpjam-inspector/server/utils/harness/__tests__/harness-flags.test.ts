@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  harnessApiWarmEnabled,
   harnessPrepareBoxEnabled,
   harnessPrepareBoxSwitchedOn,
   harnessQuietClaudeStartup,
@@ -57,6 +58,16 @@ it("limits box preparation to the listed organizations", () => {
   vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", " organization-a, ,organization-b ");
   expect(harnessPrepareBoxEnabled("organization-a")).toBe(true);
   expect(harnessPrepareBoxEnabled("organization-c")).toBe(false);
+});
+
+it.each([undefined, "", "1", "TRUE", "false"])("keeps API warm reuse off unless set to true (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_API_WARM", value);
+  expect(harnessApiWarmEnabled()).toBe(false);
+});
+
+it("turns API warm reuse on when set to true", () => {
+  vi.stubEnv("MCPJAM_HARNESS_API_WARM", "true");
+  expect(harnessApiWarmEnabled()).toBe(true);
 });
 
 it.each([undefined, "", "1", "TRUE", "false"])("keeps Claude Code's start-up traffic unless switched on (%s)", (value) => {
