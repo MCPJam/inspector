@@ -143,6 +143,8 @@ export interface ProvisionedHarnessBox {
   sandboxId: string;
   /** The backend's idle window for this box, from its reserve reply. */
   idleMs?: number;
+  /** When the box stops keeping its processes through a pause (epoch ms). */
+  retainUntil?: number;
   /** What ACTUALLY booted; absent means terminal. */
   runtimeKind?: "terminal" | "desktop-browser";
   workdir?: string;
@@ -229,6 +231,9 @@ export function holdHarnessBox(
     runtimeKind: provisioned.runtimeKind ?? "terminal",
     ...(provisioned.workdir ? { workdir: provisioned.workdir } : {}),
     ...(provisioned.idleMs ? { idleMs: provisioned.idleMs } : {}),
+    ...(provisioned.retainUntil
+      ? { retainUntil: provisioned.retainUntil }
+      : {}),
   };
   const ownsBox = HARNESS_BOX_SCOPES[options.surface].ownsBox;
   if (!ownsBox && !provisioned.idleMs) {

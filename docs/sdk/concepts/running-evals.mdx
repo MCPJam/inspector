@@ -5,7 +5,7 @@ icon: "chart-bar"
 ---
 
 <Note>
-The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+SDK 10, CLI 6, Vitest 0.3, and later versions require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. Earlier versions do not.
 </Note>
 
 LLMs are probabilistic, so the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
@@ -174,15 +174,15 @@ await test.run(agent, {
 });
 ```
 
-See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
+See [Eval reporting: Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
 
 ### Predicate gate
 
-Predicates express richer pass/fail criteria than tool-call matching — without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
+Predicates express richer pass/fail criteria than tool-call matching, without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
 
-Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **required** predicate passes (`"gating"` is the legacy spelling of that role and is still accepted) — an **advisory** one is recorded and never fails the case, including when it could not be scored. A required check that could not be scored does hold the gate shut. An absent or empty list means no predicate gate.
+Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **required** predicate passes (`"gating"` is the legacy spelling of that role and is still accepted): an **advisory** one is recorded and never fails the case, including when it could not be scored. A required check that could not be scored does hold the gate shut. An absent or empty list means no predicate gate.
 
-The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at — Connection is measured by the runner; Discovery combines runner evidence with optional catalog assertions:
+The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at; Connection is measured by the runner. Discovery combines runner evidence with optional catalog assertions:
 
 | Type | Measures | What it checks |
 |------|----------|----------------|
@@ -235,15 +235,15 @@ The built-in predicate types. **Measures** is the link of the [user-value chain]
 }
 ```
 
-`toolResultMatches` is the same check on what came back: one tool result at a time, every pattern within that one result. `toolName` is optional there — omit it to read every tool's results — and `isError` results count like any other.
+`toolResultMatches` is the same check on what came back: one tool result at a time, every pattern within that one result. `toolName` is optional there, omit it to read every tool's results, and `isError` results count like any other.
 
-`path` is a JSON Pointer to one top-level key (`"/elements"`); omit it to match the whole arguments object, or the whole result. Both kinds count **matching** units: `min` and `max` count matching calls for `toolInputMatches` and matching results for `toolResultMatches`, never all of them. The default (`min` 1) means at least one matches, so one correct call among ten others still passes. `min: 0, max: 0` means none matches — not that the tool was never called; use `toolNeverCalled` for that. For "any of these", put the alternatives in one pattern (`Idea|Plan`). Patterns use a linear-time engine (re2js), so lookahead and backreferences are refused when the check is written. See [Matching tool input and output](/sdk/reference/eval-reporting#matching-tool-input-and-output).
+`path` is a JSON Pointer to one top-level key (`"/elements"`); omit it to match the whole arguments object, or the whole result. Both kinds count **matching** units: `min` and `max` count matching calls for `toolInputMatches` and matching results for `toolResultMatches`, never all of them. The default (`min` 1) means at least one matches, so one correct call among ten others still passes. `min: 0, max: 0` means none matches, not that the tool was never called. Use `toolNeverCalled` for that. For "any of these", put the alternatives in one pattern (`Idea|Plan`). Patterns use a linear-time engine (re2js), so lookahead and backreferences are refused when the check is written. See [Matching tool input and output](/sdk/reference/eval-reporting#matching-tool-input-and-output).
 
-When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
+When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass, since a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
 
 ### Standard checks
 
-Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory. UVC reports these evaluator results without turning advisory failures into failed stages. Scored required discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
+Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory. The user-value chain reports these evaluator results without turning advisory failures into failed stages. Scored required discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
 
 Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
 
@@ -335,7 +335,7 @@ if (suite.accuracy() < 0.90) {
 
 ## Bring your own host
 
-`HostRunner` is the right starting point when you just need an LLM + tools + a model string. For richer setups — pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses for its Playground — start from a `Host` spec instead:
+`HostRunner` is the right starting point when you just need an LLM + tools + a model string. For richer setups (pinning a host style/profile, applying sandbox/permission policy, or running the same configuration in CI that the MCPJam Inspector uses for its Playground), start from a `Host` spec instead:
 
 ```typescript
 import { MCPClientManager, Host, EvalTest } from "@mcpjam/sdk";
@@ -367,34 +367,6 @@ await test.run(runtime, { iterations: 10 });
 
 `HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction. Pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
 
-**Personal computer.** A `Host` can declare a personal cloud workstation via the `computer` property (type `HostComputer`, exported from `@mcpjam/sdk`). When set, the scenario surfaces a `bash` tool and a web terminal for signed-in members. Use `setComputer()` to attach or detach it fluently:
-
-```typescript
-import { Host, type HostComputer } from "@mcpjam/sdk";
-
-// Attach with the default shape
-const host = new Host({ style: "mcpjam", model: "openai/gpt-5.6-sol" })
-  .setComputer();
-
-// Attach with an initial working directory
-host.setComputer({ kind: "personal", toolset: "bash", workdir: "/srv/app" });
-
-// Detach
-host.setComputer(null);
-```
-
-Or pass it directly in the constructor:
-
-```typescript
-const host = new Host({
-  style: "mcpjam",
-  model: "openai/gpt-5.6-sol",
-  computer: { kind: "personal", toolset: "bash" },
-});
-```
-
-`null` and an absent `computer` field hash identically, so existing host configs are unaffected. The `computer` field is automatically stripped from eval wire configs — evals never target personal computers.
-
 **Statelessness.** `HostRuntime.run()` does NOT auto-replay history across turns. Use `PromptOptions.context` to thread context explicitly:
 
 ```typescript
@@ -402,7 +374,7 @@ const r1 = await runtime.run("Who am I?");
 const r2 = await runtime.run("List my projects", { context: [r1] });
 ```
 
-**Eval reporting (Stage 5).** When you upload results to MCPJam and the reporter can resolve a host snapshot, it sends the canonical host config alongside the run (`{ hostConfig, hostConfigHash }`) so the persisted row in the Evals UI shows the exact host you ran with — the v1 ingest surface always accepts the pair. The snapshot comes from `executor.getHostSnapshot?.()`, falling back to `MCPJamReportingConfig.host`; result-only uploads with neither source omit the pair. Uploaded results don't yet carry a per-iteration `hostSnapshot` field, so the pair stays run-level for now.
+**Eval reporting.** When you upload results to MCPJam and the reporter can resolve a host snapshot, it sends the canonical host config alongside the run (`{ hostConfig, hostConfigHash }`) so the run in the Evals UI shows the host you ran with. The snapshot comes from `executor.getHostSnapshot?.()`, falling back to `MCPJamReportingConfig.host`; result-only uploads with neither source omit the pair. The host config is recorded once per run, when the report is built, not per iteration. If you mutate a `HostRuntime`'s host between iterations, the recorded config is the host at report time, which can differ from the one earlier iterations used. Keep the host fixed for the run, or use `HostRunner`, which snapshots once at construction, for an exact record.
 
 ## Generate evals from the Inspector
 
@@ -427,4 +399,4 @@ You can also generate eval code from the MCPJam Inspector. Click **⋮ → Copy 
 
 ## Eval authentication
 
-For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.
+See [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

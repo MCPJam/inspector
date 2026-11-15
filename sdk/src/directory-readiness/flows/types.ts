@@ -128,6 +128,11 @@ export interface DirectoryFlowField {
     keys: [string, string];
     placeholders?: [string, string][];
     maxRows: number;
+    /**
+     * Rows show as they fill, one empty row at a time, up to `maxRows`.
+     * Without it every row shows, as a portal's fixed rows do.
+     */
+    grow?: true;
   };
   /** Characters, counted as the portal's counter counts them. */
   maxLength?: number;
@@ -202,6 +207,11 @@ export interface DirectoryCheckPlacement {
   field?: string;
   /** Answer keys the check reads; a change to one makes its result stale. */
   reads?: string[];
+  /**
+   * The result also depends on whether someone stood behind a declaration it
+   * reads, so a change of origin alone makes it stale.
+   */
+  readsConfirmation?: boolean;
   needs?: DirectoryCheckNeed[];
 }
 
@@ -244,7 +254,8 @@ export interface DirectoryFieldIssue {
  *
  *   - `established` — the run reached a settled result.
  *   - `inconclusive` — a model flagged something and said it was unsure.
- *   - `stale` — established, but an answer it read has changed since.
+ *   - `stale` — established or inconclusive, but an answer it read has
+ *     changed since.
  *   - `not-tested` — the run did not evaluate it, with a stated reason.
  *   - `blocked` — the run lacked something the check depends on.
  */

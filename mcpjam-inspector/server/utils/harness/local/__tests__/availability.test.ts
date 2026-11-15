@@ -17,6 +17,19 @@ vi.mock("../pack-digests.generated.js", async (importOriginal) => {
     ),
   };
 });
+// The real re-verification, counted: how often a turn runs it is the subject
+// of one test below.
+const revalidations = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../runtime-identity.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../runtime-identity.js")>();
+  return {
+    ...real,
+    revalidateRuntime: (...args: Parameters<typeof real.revalidateRuntime>) => {
+      revalidations.count += 1;
+      return real.revalidateRuntime(...args);
+    },
+  };
+});
 import {
   LOCAL_HARNESS_MANIFEST,
   type LocalHarnessCompatibility,
@@ -48,6 +61,9 @@ let workspaceGrantId: string;
 let runtimeId: string;
 let manifests: Record<string, LocalHarnessCompatibility>;
 const realHome = process.env.HOME;
+// `os.homedir()` reads USERPROFILE on Windows; both point at the fixture so
+// the grant revokes below never reach a developer's real store.
+const realUserProfile = process.env.USERPROFILE;
 
 const USER = "user_1";
 const PROJECT = "proj_1";
@@ -112,6 +128,7 @@ async function query(overrides: Record<string, unknown> = {}) {
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-avail-")));
   process.env.HOME = base;
+  process.env.USERPROFILE = base;
   workspace = join(base, "project");
   runtimeRoot = join(base, "runtimes");
   await mkdir(workspace, { recursive: true });
@@ -180,6 +197,8 @@ beforeAll(async () => {
 afterAll(() => {
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
 });
 
 beforeEach(async () => {
@@ -334,6 +353,25 @@ describe("a fully authorized turn", () => {
       "console.log(1)",
     );
     clearRuntimeVerificationCache();
+  });
+
+  it("leaves the re-verification to a caller whose spawn gate runs it", async () => {
+    // A local turn starts every process through the supervised provider,
+    // which re-verifies the runtime right before each spawn, so the gate does
+    // not run the same check a second time for that turn. A modified pack is
+    // refused at that spawn (`supervised-provider.test.ts`, "refuses to
+    // launch when the verified bundle changed after consent").
+    const t = target();
+    const { token } = await grantLocalHarnessConsent(binding(t));
+    revalidations.count = 0;
+    await expect(
+      query({ grantToken: token, runtimeVerifiedAtSpawn: true }),
+    ).resolves.toMatchObject({ available: true });
+    expect(revalidations.count).toBe(0);
+    await expect(query({ grantToken: token })).resolves.toMatchObject({
+      available: true,
+    });
+    expect(revalidations.count).toBe(1);
   });
 });
 

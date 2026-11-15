@@ -145,7 +145,10 @@ export function openaiIssuePortalCode(
   id: string
 ): OpenAIPortalCode | undefined {
   if (isOpenAIPortalCode(id)) return id;
-  return OPENAI_ISSUE_PORTAL_CODES[id] ?? undefined;
+  // Own keys only: `toString` must not find `Object.prototype.toString`.
+  return Object.hasOwn(OPENAI_ISSUE_PORTAL_CODES, id)
+    ? (OPENAI_ISSUE_PORTAL_CODES[id] ?? undefined)
+    : undefined;
 }
 
 /** The finding, with `details.portalCode` when its check grades one code. */

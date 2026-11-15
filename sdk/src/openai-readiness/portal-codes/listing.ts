@@ -147,7 +147,7 @@ export const LISTING_ERRORS = portalTable({
     plugin_short_description_wrong_type: field(SUBTITLE, STRING),
     plugin_short_description_empty: field(SUBTITLE, NON_EMPTY),
     plugin_short_description_too_long: field(SUBTITLE, maxLength(240)),
-    plugin_short_description_character_unsupported: field(SUBTITLE, TEXT),
+    plugin_short_description_character_unsupported: field(SUBTITLE, ONE_LINE),
     plugin_long_description_wrong_type: field(DESCRIPTION, STRING),
     plugin_long_description_empty: field(DESCRIPTION, REQUIRED),
     plugin_long_description_too_long: field(DESCRIPTION, maxLength(4000)),

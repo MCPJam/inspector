@@ -40,6 +40,10 @@ const ISSUER_ROUTE_ALLOWED = new Map([
     "API-key ingestion proxy, not /api/web; passes the backend's answer through for older SDK releases",
   ],
   [
+    "services/readiness/reviewer-sign-in-live.ts",
+    "asks the backend, on the run's lease, where to store the sign-in recording, uploads it from the worker, and keeps only the storage id",
+  ],
+  [
     "utils/mcp-app-widget-capture.ts",
     "asks the backend where to store a replay video on the user's behalf, uploads it, and keeps only the storage id",
   ],

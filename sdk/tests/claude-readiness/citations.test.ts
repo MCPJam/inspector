@@ -19,6 +19,8 @@ import { gradeClaudeReadiness } from "../../src/claude-readiness/runner.js";
 import {
   OPENAI_PLUGINS_POLICY_PAGES,
   OPENAI_POLICY_MANIFEST,
+  OPENAI_POLICY_PAGES,
+  openaiPolicySource,
 } from "../../src/openai-readiness/manifest.js";
 import { completeAnswers } from "../support/claude-connector-answers.js";
 
@@ -111,5 +113,13 @@ describe("OpenAI citations", () => {
     expect(OPENAI_POLICY_MANIFEST["plugin-guidelines"].url).toBe(
       "https://developers.openai.com/plugins/plugin-guidelines"
     );
+  });
+
+  it("still accept app-guidelines, and cite plugin-guidelines for it", () => {
+    expect(openaiPolicySource("app-guidelines", "§Sample")).toEqual(
+      openaiPolicySource("plugin-guidelines", "§Sample")
+    );
+    expect(OPENAI_POLICY_PAGES).not.toContain("app-guidelines");
+    expect(Object.keys(OPENAI_POLICY_MANIFEST)).not.toContain("app-guidelines");
   });
 });

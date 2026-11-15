@@ -56,7 +56,7 @@ export interface DirectoryTestCallRecord {
   /** `directoryTestCaseDigest` when the call was made. */
   inputDigest: string;
   ranBy: DirectoryTestClient;
-  /** The reviewer account it ran as. */
+  /** The reviewer account it ran as; absent when it ran with no account. */
   account?: string;
   /** The server URL it called. */
   endpoint?: string;

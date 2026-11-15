@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CLAUDE_CONNECTOR_FLOW as FLOW,
+  directoryFieldWordingRevision,
   unconfirmedDeclarations,
   type DirectoryAnswer,
 } from "../../src/directory-readiness/index.js";
@@ -57,7 +58,15 @@ describe("unconfirmedDeclarations", () => {
   it("drops what someone set or confirmed, and keeps what nobody did", () => {
     const answers: DirectoryAnswer[] = [
       { key: "useCases.access", value: "read-write", origin: "set" },
-      { key: "dataHandling.apiOwnership", value: "own", origin: "confirmed" },
+      {
+        key: "dataHandling.apiOwnership",
+        value: "own",
+        origin: "confirmed",
+        wordingRevision: directoryFieldWordingRevision(
+          FLOW,
+          "dataHandling.apiOwnership"
+        ),
+      },
       { key: "dataHandling.healthData", value: "no", origin: "imported" },
       { key: "dataHandling.sponsored", value: "no", origin: "set" },
       { key: "testLaunch.selfTested", value: false, origin: "reset" },
@@ -72,6 +81,22 @@ describe("unconfirmedDeclarations", () => {
       ["dataHandling.healthData", "imported"],
       ["testLaunch.selfTested", "reset"],
     ]);
+  });
+
+  it("lists a confirmation made under wording that has since changed", () => {
+    const confirmed = (wordingRevision?: string): DirectoryAnswer => ({
+      key: "dataHandling.healthData",
+      value: "no",
+      origin: "confirmed",
+      ...(wordingRevision === undefined ? {} : { wordingRevision }),
+    });
+    const listed = (answer: DirectoryAnswer) =>
+      unconfirmedDeclarations(FLOW, [answer]).some(
+        (entry) => entry.key === answer.key
+      );
+    expect(listed(confirmed(FLOW.version))).toBe(false);
+    expect(listed(confirmed("2020-01-01"))).toBe(true);
+    expect(listed(confirmed())).toBe(true);
   });
 
   it("never lists a field that is not a declaration", () => {
