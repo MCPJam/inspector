@@ -56,7 +56,6 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
-import { PlatformLaunchAnnouncement } from "@/components/sidebar/platform-launch-announcement";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
 import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
@@ -276,32 +275,6 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      // Both are behind `sandboxes-enabled`, which is the rollout control.
-      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
-      // signed-out visitor sees the items too, and the route decides what they
-      // get — a signed-out visitor gets the preview, a member the real tab.
-      //
-      // Swarms before User Testing (Vig): less set-up is required to get value
-      // out of it, so it is the better first stop.
-      {
-        title: "Swarms",
-        url: "/swarms",
-        icon: Network,
-        featureFlag: "sandboxes-enabled",
-        // Same pill XAA Debugger carries. It marks a NEW feature, not an
-        // access state: the earlier LOG IN / UPGRADE markers described who the
-        // reader was, and there is no longer a plan to report on.
-        badge: "New",
-        billingFeature: "scenarios",
-      },
-      {
-        title: "User Testing",
-        url: "/user-testing",
-        icon: Users,
-        featureFlag: "sandboxes-enabled",
-        badge: "New",
-        billingFeature: "scenarios",
-      },
       {
         title: "Evaluate (Legacy)",
         url: "/evals",
@@ -314,6 +287,27 @@ export const navigationSections: NavSection[] = [
         url: "/evaluate",
         icon: FlaskConical,
         billingFeature: "evals",
+      },
+      // Both are behind `sandboxes-enabled`, which is the rollout control.
+      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
+      // signed-out visitor sees the items too, and the route decides what they
+      // get — a signed-out visitor gets the preview, a member the real tab.
+      //
+      // Swarms before User Testing (Vig): less set-up is required to get value
+      // out of it, so it is the better first stop.
+      {
+        title: "Swarms",
+        url: "/swarms",
+        icon: Network,
+        featureFlag: "sandboxes-enabled",
+        billingFeature: "scenarios",
+      },
+      {
+        title: "User Testing",
+        url: "/user-testing",
+        icon: Users,
+        featureFlag: "sandboxes-enabled",
+        billingFeature: "scenarios",
       },
       {
         // Cross-surface session feed (Playground + User Testing + Evals +
@@ -970,13 +964,6 @@ export function MCPSidebar({
           <SidebarUser />
         </SidebarFooter>
       </Sidebar>
-      {!authResolving && (
-        <PlatformLaunchAnnouncement
-          onNavigate={appNavigate}
-          audience={user ? "signed_in" : "guest"}
-          sandboxesEnabled={sandboxesEnabled === true}
-        />
-      )}
       {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (
         <InviteTeamMembersDialog
           key={activeOrganizationId}
