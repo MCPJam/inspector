@@ -2067,9 +2067,6 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/servers");
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-3",
@@ -2183,9 +2180,6 @@ describe("App hosted OAuth callback handling", () => {
       user: null,
       isLoading: false,
     });
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseConvexAuth.mockReturnValue({
       // Hosted guests have a real Convex identity. WorkOS user presence, not
       // this flag, must decide whether paid checkout needs sign-in.
@@ -2221,9 +2215,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -2261,9 +2252,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockConvexAuthState.isAuthenticated = true;
     mockWorkOsAuthState.user = null;
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -2869,9 +2857,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -2980,9 +2965,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -3039,9 +3021,6 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     let organizationsLoaded = false;
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") return existingConvexUser;
@@ -3080,9 +3059,6 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -3130,9 +3106,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -3183,9 +3156,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [];
@@ -3205,24 +3175,6 @@ describe("App hosted OAuth callback handling", () => {
       ).not.toBeInTheDocument();
     });
     expect(mockOrganizationsTab).not.toHaveBeenCalled();
-  });
-
-  it("clears billing handoff state when billing is unavailable", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
-    mockWorkOsAuthState.user = { id: "workos-user-1" };
-    mockUseFeatureFlagEnabled.mockReturnValue(false);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId("billing-handoff-loading"),
-      ).not.toBeInTheDocument();
-      expect(readPersistedCheckoutIntent()).toBeNull();
-    });
-    expect(sonnerToast.error).toHaveBeenCalledTimes(1);
   });
 
   it("leaves billing usable when checkout parameters are invalid", async () => {
@@ -6438,9 +6390,6 @@ describe("App hosted OAuth callback handling", () => {
         },
       },
     }));
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
         return existingConvexUser;
