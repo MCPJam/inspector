@@ -58,9 +58,35 @@ env:
 # moves together (their caches live with the runner that saved them).
 
 jobs:
+  # Which tests this run needs (.github/scripts/ci-scope.mjs). A pull request
+  # runs the tests its diff can affect; Release calls this workflow and gets
+  # everything. Every job below treats a failed scope as "run everything", so
+  # a broken scope step can cost minutes but never skip a test.
+  scope:
+    name: Test scope
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    outputs:
+      inspector: ${{ steps.scope.outputs.inspector }}
+      rest: ${{ steps.scope.outputs.rest }}
+      packaging: ${{ steps.scope.outputs.packaging }}
+      app: ${{ steps.scope.outputs.app }}
+      code: ${{ steps.scope.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The PR's merge commit and its first parent, the base.
+          fetch-depth: 2
+          persist-credentials: false
+      - id: scope
+        run: node .github/scripts/ci-scope.mjs
+
   authoring-mirror:
     name: Compare authoring contracts with backend
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    needs: scope
+    if: >-
+      !cancelled() && (needs.scope.result != 'success' || needs.scope.outputs.code == 'true') &&
+      (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'))
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     # About 3x the slowest green run with a warm node_modules cache, so a cold
     # install still fits and a hung step fails in minutes instead of six hours.
@@ -106,6 +132,9 @@ jobs:
         run: node scripts/check-ai-refusal-parity.mjs --backend .ai-refusal-backend
 
   test:
+    needs: scope
+    # A required check, so it always runs; the scope only narrows what it runs.
+    if: ${{ !cancelled() }}
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Run Tests
@@ -203,11 +232,24 @@ jobs:
         # Node 24 auto-scales heap to ~half system RAM (~4 GB on ubuntu-latest).
         # The vitest workspace (server + client + shared) runs concurrently and
         # exceeds that cap. 6 GB gives headroom without exhausting the runner.
+        #
+        # When only Inspector files changed, the other workspaces cannot be
+        # affected, so only the repo guards run (they scan Inspector code).
         env:
           NODE_OPTIONS: "--max-old-space-size=6144"
-        run: npm run test:ci:rest
+          REST: ${{ needs.scope.result == 'success' && needs.scope.outputs.rest || 'full' }}
+        run: |
+          if [ "$REST" = "checks" ]; then
+            echo "Only Inspector files changed: running the repo guards, not the other workspaces' suites."
+            npm run test:checks && npm run test:packaging:assert -w @mcpjam/sdk
+          else
+            npm run test:ci:rest
+          fi
 
   packaging:
+    needs: scope
+    if: >-
+      !cancelled() && (needs.scope.result != 'success' || needs.scope.outputs.packaging == 'true')
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     name: Packaging
@@ -270,6 +312,14 @@ jobs:
         run: npm run test:ci:packaging
 
   inspector:
+    needs: scope
+    # Required checks, so every shard always runs and reports. A job-level skip
+    # would report one check under the unexpanded name
+    # "Inspector Tests ${{ matrix.shard }}/6", and the six required ones would
+    # wait forever. The steps check SCOPE instead.
+    if: ${{ !cancelled() }}
+    env:
+      SCOPE: ${{ needs.scope.result == 'success' && needs.scope.outputs.inspector || 'full' }}
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Inspector Tests ${{ matrix.shard }}/6
@@ -305,8 +355,11 @@ jobs:
           # No step here uses git auth after checkout, so don't leave the token
           # in .git/config where dependency install scripts and tests could read it.
           persist-credentials: false
+          # `--changed HEAD^1` below diffs the PR's merge commit against the base.
+          fetch-depth: 2
 
       - name: Setup Node.js
+        if: env.SCOPE != 'skip'
         uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -314,6 +367,7 @@ jobs:
 
       # Same node_modules cache as the `test` job — see the rationale there.
       - name: Cache workspace node_modules
+        if: env.SCOPE != 'skip'
         id: node-modules
         uses: actions/cache@v6
         with:
@@ -324,10 +378,11 @@ jobs:
           key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', 'mcpjam-inspector/scripts/patch-harness-approvals.mjs') }}
 
       - name: Install workspace dependencies
-        if: steps.node-modules.outputs.cache-hit != 'true'
+        if: env.SCOPE != 'skip' && steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
       - name: Build the SDK
+        if: env.SCOPE != 'skip'
         # The inspector's vitest configs alias many @mcpjam/sdk subpaths to
         # source, but the bare package export still resolves to dist. The root
         # `npm test` chain builds the SDK before any suite runs; this job is not
@@ -338,7 +393,32 @@ jobs:
         # `npm run test -w @mcpjam/inspector` also fires the workspace's
         # `pretest` bundling step, which the suite needs; args after `--` reach
         # vitest. Shards split by test file, so no shard depends on another.
-        run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/6
+        #
+        # SCOPE (see the `scope` job): `changed` runs the test files that
+        # import a file this PR changed; `docs` runs the test files that
+        # mention `docs/`, since some read docs files at runtime.
+        if: env.SCOPE != 'skip'
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}/6
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          case "$SCOPE" in
+            changed)
+              npm run test -w @mcpjam/inspector -- --shard="$SHARD" --changed HEAD^1 --passWithNoTests
+              ;;
+            docs)
+              mapfile -t files < <(git grep -l -F 'docs/' -- 'mcpjam-inspector/**/*.test.*' | sed 's#^mcpjam-inspector/##')
+              if [ "${#files[@]}" -eq 0 ]; then
+                echo "No Inspector test mentions docs/."
+                exit 0
+              fi
+              npm run test -w @mcpjam/inspector -- --shard="$SHARD" --passWithNoTests "${files[@]}"
+              ;;
+            *)
+              npm run test -w @mcpjam/inspector -- --shard="$SHARD"
+              ;;
+          esac
 
   e2e:
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
@@ -352,10 +432,12 @@ jobs:
     # skip the job rather than fail it. Keep its errors out of prod Sentry,
     # which pages us: the build flag turns off the browser SDK, DO_NOT_TRACK
     # turns off the server's.
+    needs: scope
     if: >-
-      github.event_name != 'pull_request' ||
+      !cancelled() && (needs.scope.result != 'success' || needs.scope.outputs.app == 'true') &&
+      (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'dependabot[bot]')
+      github.event.pull_request.user.login != 'dependabot[bot]'))
     env:
       VITE_DISABLE_SENTRY: "true"
       DO_NOT_TRACK: "1"
@@ -443,6 +525,9 @@ jobs:
   # context sends no seeded personal data; `telemetry-egress` drives the whole
   # hosted app and proves no credential URL leaves through PostHog or Sentry.
   telemetry-egress:
+    needs: scope
+    if: >-
+      !cancelled() && (needs.scope.result != 'success' || needs.scope.outputs.app == 'true')
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Telemetry egress (Playwright, telemetry on)
@@ -522,6 +607,9 @@ jobs:
           if-no-files-found: ignore
 
   telemetry-privacy:
+    needs: scope
+    if: >-
+      !cancelled() && (needs.scope.result != 'success' || needs.scope.outputs.app == 'true')
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     name: Telemetry Privacy (browser)

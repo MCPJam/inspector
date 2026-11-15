@@ -10,8 +10,10 @@ name: Release
 # failure in step 1 stops the whole release before anything ships.
 #
 #   1. Verify    `tests` + `build-and-test` run the full test suite and build on
-#                this exact commit. `preflight` then checks staging is green and
-#                works out what to publish.
+#                this exact commit. PRs run only the tests their diff can affect
+#                (.github/scripts/ci-scope.mjs), so this is where every test
+#                runs. `preflight` then checks staging is green and works out
+#                what to publish.
 #   2. Build     npm packages, Docker image, desktop apps, and the local harness
 #                conformance evidence the release contract needs.
 #   3. Publish   npm (`publish-packages`), Docker (`docker-publish`), the evals
@@ -95,9 +97,10 @@ permissions:
   attestations: read
 
 jobs:
-  # Step 1: the full suite on the commit being shipped. Each PR is tested on its
-  # own and nothing tests `main` after a merge, so a break that only shows when
-  # two PRs meet is caught here, before anything publishes.
+  # Step 1: the full suite on the commit being shipped. A PR runs only the tests
+  # its diff can affect and nothing tests `main` after a merge, so a break those
+  # miss, or one that only shows when two PRs meet, is caught here, before
+  # anything publishes.
   # Read-only token: these jobs run the repo's tests, not release steps. Only
   # the secrets the suites use are passed, never the release's own.
   tests:
