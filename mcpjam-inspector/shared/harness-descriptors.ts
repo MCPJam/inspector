@@ -94,6 +94,9 @@ const LOOP_CONTROLS: Record<
   },
 };
 
+/** What the harness choice calls MCPJam's own agent loop, beside each `runtimeName`. */
+export const MCPJAM_HARNESS_NAME = "MCPJam Harness";
+
 /** Everywhere a runtime can run. Keep parity with the backend's list. */
 export const HARNESS_SURFACES = [
   "playground", "api", "evals", "events", "swarms", "user-testing", "guests", "local",
@@ -114,6 +117,8 @@ export function harnessSurfaceOfSource(sourceType: string | undefined): HarnessS
 
 /**
  * Runtime facts shared by the adapters, admission gates and client controls.
+ * `runtimeName` is what the harness choice calls the runtime, its real name
+ * (`displayName` names the CLI); MCPJam's own loop is `MCPJAM_HARNESS_NAME`.
  * `protocol` is the wire API the harness speaks to its model; `orgKeys` says
  * whether it may run on an organization connection that serves that API.
  * A runtime runs on every surface except those `unavailableOn` names, each
@@ -121,28 +126,28 @@ export function harnessSurfaceOfSource(sourceType: string | undefined): HarnessS
  */
 export const HARNESS_DESCRIPTORS = {
   "claude-code": {
-    displayName: "Claude Code", runtimeVersion: "2.1.290", mcpClient: "harness",
+    displayName: "Claude Code", runtimeName: "Claude Agent SDK", runtimeVersion: "2.1.290", mcpClient: "harness",
     modelAccess: "broker", orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     unavailableOn: {},
     controls: LOOP_CONTROLS["claude-code"], reasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   },
   codex: {
-    displayName: "Codex", runtimeVersion: "0.163.0", mcpClient: "mcpjam",
+    displayName: "Codex", runtimeName: "Codex App Server", runtimeVersion: "0.163.0", mcpClient: "mcpjam",
     modelAccess: "broker", orgKeys: true,
     protocol: "openai-responses", credential: null,
     unavailableOn: {},
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
   "copilot-cli": {
-    displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
+    displayName: "GitHub Copilot CLI", runtimeName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
     modelAccess: "broker", orgKeys: true,
     protocol: "openai-responses", credential: null,
     unavailableOn: {},
     controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
   },
   cursor: {
-    displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
+    displayName: "Cursor CLI", runtimeName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
     modelAccess: "external-account", orgKeys: false, protocol: null,
     unavailableOn: {
       api: "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
@@ -156,7 +161,7 @@ export const HARNESS_DESCRIPTORS = {
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
   },
   opencode: {
-    displayName: "OpenCode", runtimeVersion: "1.18.34", mcpClient: "mcpjam",
+    displayName: "OpenCode", runtimeName: "OpenCode", runtimeVersion: "1.18.34", mcpClient: "mcpjam",
     modelAccess: "broker", orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     unavailableOn: {

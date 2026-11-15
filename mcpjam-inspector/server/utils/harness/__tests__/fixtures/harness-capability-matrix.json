@@ -61,6 +61,7 @@
       "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
+      "runtimeName": "Claude Agent SDK",
       "runtimeVersion": "2.1.290",
       "unavailableOn": {}
     },
@@ -140,6 +141,7 @@
         "high",
         "xhigh"
       ],
+      "runtimeName": "Codex App Server",
       "runtimeVersion": "0.163.0",
       "unavailableOn": {}
     },
@@ -211,6 +213,7 @@
       "orgKeys": true,
       "protocol": "openai-responses",
       "reasoningEfforts": [],
+      "runtimeName": "GitHub Copilot CLI",
       "runtimeVersion": "1.0.92",
       "unavailableOn": {}
     },
@@ -301,6 +304,7 @@
       "orgKeys": false,
       "protocol": null,
       "reasoningEfforts": [],
+      "runtimeName": "Cursor CLI",
       "runtimeVersion": "2026.11.05-86047df",
       "unavailableOn": {
         "api": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
@@ -371,6 +375,7 @@
       "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
+      "runtimeName": "OpenCode",
       "runtimeVersion": "1.18.34",
       "unavailableOn": {
         "guests": "OpenCode isn't available to guests until it's tested with them.",
