@@ -8,6 +8,7 @@ import {
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
 import { AgentSidePanelTrigger } from "@/components/mcpjam-agent/AgentSidePanelTrigger";
+import { OnboardAgentButton } from "@/components/onboard-agent/OnboardAgentButton";
 import { ProjectClientBootstrap } from "@/components/hosts/ProjectClientBootstrap";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
@@ -42,6 +43,7 @@ export function AuthUpperArea({
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
         <AgentSidePanelTrigger />
+        <OnboardAgentButton />
         {!user && !isLoading && (
           <>
             <Button
