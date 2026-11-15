@@ -11,7 +11,7 @@
  * offers, so the attended profiles ask before anything runs.
  */
 import { VERSION as CURSOR_ADAPTER_VERSION } from "@ai-sdk/harness-cursor";
-import { HARNESS_PINNED_VERSIONS } from "../../../../../shared/harness-model-support.js";
+import { CURSOR_CLI_BUILD } from "../../cursor-cli-build.js";
 import type { HarnessAuth } from "../../registry.js";
 import type { LocalHarnessCompatibility } from "../compatibility.js";
 import { PACK_TREE_DIGESTS } from "../pack-digests.generated.js";
@@ -71,7 +71,7 @@ export const cursorLocalRuntime: LocalRuntime<"cursor"> = {
   manifest,
   // Read from the adapter compiled into this server and the pinned build.
   installedAdapterVersion: () =>
-    `@ai-sdk/harness-cursor@${CURSOR_ADAPTER_VERSION}+cursor-agent@${HARNESS_PINNED_VERSIONS.cursor}`,
+    `@ai-sdk/harness-cursor@${CURSOR_ADAPTER_VERSION}+cursor-agent@${CURSOR_CLI_BUILD}`,
   commands: {
     shapes: [
       "pnpm install --frozen-lockfile --store-dir .pnpm-store",

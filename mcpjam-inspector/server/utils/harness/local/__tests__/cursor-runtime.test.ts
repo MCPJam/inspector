@@ -8,6 +8,7 @@ import { join, normalize, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 import { CURSOR_CLI_CHECKSUMS } from "../../cursor-bootstrap.js";
+import { CURSOR_CLI_BUILD } from "../../cursor-cli-build.js";
 import { localCursorBootstrapRecipe } from "../../cursor-local-bridge.js";
 import {
   CommandTranslationError,
@@ -82,6 +83,8 @@ describe("the Cursor runtime's definition", () => {
       readFileSync(join(__dirname, "../../../../../scripts/local-harness-pack-recipes/cursor-vendor-checksums.json"), "utf8"),
     ) as { build: string; archives: Record<string, { url: string; sha256: string }> };
     expect(recorded.build).toBe(HARNESS_PINNED_VERSIONS.cursor);
+    // The leaf the bridge's recipe and the definition read, which can't import the descriptor's.
+    expect(CURSOR_CLI_BUILD).toBe(HARNESS_PINNED_VERSIONS.cursor);
     expect(Object.keys(recorded.archives).sort()).toEqual(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-x64"]);
     for (const archive of Object.values(recorded.archives)) {
       expect(archive.url).toMatch(new RegExp(`^https://downloads\\.cursor\\.com/lab/${recorded.build}/`));
