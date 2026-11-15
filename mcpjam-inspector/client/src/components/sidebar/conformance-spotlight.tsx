@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import {
   FeatureSpotlight,
@@ -6,7 +7,6 @@ import {
   FeatureSpotlightAnchor,
   FeatureSpotlightContent,
   FeatureSpotlightDescription,
-  FeatureSpotlightEyebrow,
   FeatureSpotlightTitle,
 } from "@mcpjam/design-system/feature-spotlight";
 import { SUITE_COPY } from "@/components/conformance/conformance-ui";
@@ -145,7 +145,7 @@ export function ConformanceSpotlight({
     >
       <FeatureSpotlightAnchor>{children}</FeatureSpotlightAnchor>
       <FeatureSpotlightContent>
-        <FeatureSpotlightEyebrow>New</FeatureSpotlightEyebrow>
+        <Badge>New</Badge>
         <FeatureSpotlightTitle>
           Check your server against the MCP spec
         </FeatureSpotlightTitle>

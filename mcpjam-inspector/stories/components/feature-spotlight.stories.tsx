@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { ReactNode } from "react";
 import { CircleCheck } from "lucide-react";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import {
   FeatureSpotlight,
@@ -9,7 +10,6 @@ import {
   FeatureSpotlightClose,
   FeatureSpotlightContent,
   FeatureSpotlightDescription,
-  FeatureSpotlightEyebrow,
   FeatureSpotlightTitle,
 } from "@mcpjam/design-system/feature-spotlight";
 
@@ -59,7 +59,7 @@ function Spotlit({
 function ConformanceCopy() {
   return (
     <>
-      <FeatureSpotlightEyebrow>New</FeatureSpotlightEyebrow>
+      <Badge>New</Badge>
       <FeatureSpotlightTitle>
         Check your server against the MCP spec
       </FeatureSpotlightTitle>

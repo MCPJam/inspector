@@ -8,7 +8,9 @@ import { cn } from "../cn";
  * A one-time callout pinned to a piece of UI, introducing a feature where the
  * user will find it. Opened by the product, not by a click, so it never steals
  * focus and never traps it. Built on Radix Popover: Escape and an outside
- * click both close it, and the caller decides what closing means.
+ * click both close it, and the caller decides what closing means. Title and
+ * description wrap balanced and pretty so no line strands a single word.
+ * Mark it new with the design-system `Badge` above the title.
  */
 
 const SpotlightTitleContext = React.createContext<string | undefined>(
@@ -88,23 +90,6 @@ function FeatureSpotlightContent({
   );
 }
 
-/** A small pill above the title, e.g. "New". */
-function FeatureSpotlightEyebrow({
-  className,
-  ...props
-}: React.ComponentProps<"span">) {
-  return (
-    <span
-      data-slot="feature-spotlight-eyebrow"
-      className={cn(
-        "w-fit rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium leading-none text-foreground",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
 function FeatureSpotlightTitle({
   className,
   ...props
@@ -114,7 +99,10 @@ function FeatureSpotlightTitle({
     <h2
       id={id}
       data-slot="feature-spotlight-title"
-      className={cn("pr-6 text-sm font-semibold leading-snug", className)}
+      className={cn(
+        "pr-6 text-sm font-semibold leading-snug text-balance",
+        className,
+      )}
       {...props}
     />
   );
@@ -127,7 +115,10 @@ function FeatureSpotlightDescription({
   return (
     <p
       data-slot="feature-spotlight-description"
-      className={cn("text-xs leading-relaxed text-muted-foreground", className)}
+      className={cn(
+        "text-xs leading-relaxed text-pretty text-muted-foreground",
+        className,
+      )}
       {...props}
     />
   );
@@ -170,7 +161,6 @@ export {
   FeatureSpotlight,
   FeatureSpotlightAnchor,
   FeatureSpotlightContent,
-  FeatureSpotlightEyebrow,
   FeatureSpotlightTitle,
   FeatureSpotlightDescription,
   FeatureSpotlightActions,
