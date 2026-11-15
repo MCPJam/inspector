@@ -21,7 +21,12 @@ import {
   type TourRun,
 } from "./tour-driver";
 import { TourGhostCursor, type GhostCursorHandle } from "./tour-ghost-cursor";
-import { rectCenter, rectWithin, useAnchorRects } from "./tour-geometry";
+import {
+  findAnchor,
+  rectCenter,
+  rectWithin,
+  useAnchorRects,
+} from "./tour-geometry";
 import { TourSpotlight } from "./tour-spotlight";
 import { StopCoachmarkContent, TourPopover } from "./tour-popover";
 import { TourIntroCard } from "./tour-intro";
@@ -124,6 +129,15 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
     [reducedMotion, cancelRun],
   );
 
+  const showStop = (index: number) => {
+    const root = rootRef.current;
+    const name = TOUR_STOPS[index]?.anchors[0];
+    // Short panes clip the mock screens; bring the spotlighted part into view.
+    if (root && name)
+      findAnchor(root, name)?.scrollIntoView?.({ block: "nearest" });
+    setStopIndex(index);
+  };
+
   const start = (origin: HTMLElement) => {
     tour.begin();
     rootRef.current?.focus({ preventScroll: true });
@@ -142,7 +156,7 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
       atStopRef.current = "setup";
       await driver.settle();
       await driver.pause(SCREEN_FADE_MS);
-      setStopIndex(0);
+      showStop(0);
     });
   };
 
@@ -166,7 +180,7 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
       atStopRef.current = target.id;
       await driver.settle();
       await driver.pause(SCREEN_FADE_MS);
-      setStopIndex(stopIndex + 1);
+      showStop(stopIndex + 1);
     });
   };
 
