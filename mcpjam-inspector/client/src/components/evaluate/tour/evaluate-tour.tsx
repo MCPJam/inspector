@@ -199,6 +199,20 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
       role="region"
       data-testid="evaluate-tour"
     >
+      {/* Stays opaque while screens cross-fade so the real page never shows through. */}
+      <AnimatePresence initial={!reducedMotion}>
+        {screen === "intro" ? null : (
+          <motion.div
+            key="backdrop"
+            aria-hidden
+            className="absolute inset-0 bg-background"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={screenFade}
+          />
+        )}
+      </AnimatePresence>
       <AnimatePresence initial={!reducedMotion}>
         {screen === "intro" ? (
           <motion.div
