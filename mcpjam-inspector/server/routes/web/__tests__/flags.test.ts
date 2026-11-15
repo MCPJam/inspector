@@ -93,7 +93,7 @@ describe("GET /api/web/flags", () => {
     mocks.getAllFlags.mockResolvedValueOnce({
       "sandbox-images-enabled": true,
       "guest-credit-wall-copy": "treatment",
-      xaa: false,
+      "learn-more-enabled": false,
       "unlisted-flag": true,
       "registry-enabled": { nested: true },
     });
@@ -106,7 +106,7 @@ describe("GET /api/web/flags", () => {
         ...LOCAL_HARNESS_FLAGS_OFF,
         "sandbox-images-enabled": true,
         "guest-credit-wall-copy": "treatment",
-        xaa: false,
+        "learn-more-enabled": false,
       },
     });
     expect(response.headers.get("cache-control")).toBe("no-store");
