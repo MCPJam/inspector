@@ -24,7 +24,29 @@ env:
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
 jobs:
+  # Same scope as test.yml's: a docs-only PR skips the typecheck and build.
+  # A failed scope runs everything.
+  scope:
+    name: Build scope
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.scope.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: scope
+        run: node .github/scripts/ci-scope.mjs
+
   build:
+    needs: scope
+    # A required check. A skipped job reports success, which is what a
+    # docs-only PR should get here.
+    if: >-
+      !cancelled() &&
+      (needs.scope.result != 'success' || needs.scope.outputs.build == 'true')
     # Blacksmith, and TEST_RUNNER to fall back: see test.yml.
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     # About 3x the slowest green run with a warm node_modules cache, so a cold
@@ -61,6 +83,7 @@ jobs:
             .github/scripts/release-plan.test.mjs \
             .github/scripts/release-pr.test.mjs \
             .github/scripts/release-trigger.test.mjs \
+            .github/scripts/ci-scope.test.mjs \
             .github/scripts/release-evidence.test.mjs \
             .github/scripts/daily-release.test.mjs \
             .github/scripts/local-harness-bot-pr.test.mjs \
