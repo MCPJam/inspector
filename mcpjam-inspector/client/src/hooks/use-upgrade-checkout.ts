@@ -200,6 +200,9 @@ interface UseUpgradeCheckoutParams {
   origin: UpgradeOrigin;
   /** Forwarded to telemetry so we can compare which wall converts. */
   limitKind: string;
+  /** The caller shows its own failure message next to the button, so a toast
+   * would say the same thing twice. */
+  inlineErrors?: boolean;
 }
 
 /**
@@ -209,6 +212,18 @@ interface UseUpgradeCheckoutParams {
 export interface UpgradeStartResult {
   redirected: boolean;
   shouldDismiss: boolean;
+  /** Set when checkout did not open, so the caller can say so in place. */
+  failure?: UpgradeStartFailure;
+}
+
+export type UpgradeStartFailure =
+  | "no_organization"
+  | "prices_loading"
+  | "no_supported_interval"
+  | "start_failed";
+
+function failedStart(failure: UpgradeStartFailure): UpgradeStartResult {
+  return { redirected: false, shouldDismiss: false, failure };
 }
 
 export function resolveUpgradeInterval(
@@ -232,6 +247,7 @@ export function useUpgradeCheckout({
   organizationId,
   origin,
   limitKind,
+  inlineErrors = false,
 }: UseUpgradeCheckoutParams) {
   const {
     billingStatus,
@@ -331,12 +347,12 @@ export function useUpgradeCheckout({
   );
 
   const start = useCallback(async (): Promise<UpgradeStartResult> => {
-    if (!organizationId) return { redirected: false, shouldDismiss: false };
+    if (!organizationId) return failedStart("no_organization");
     // The catalog is a separate query from billingStatus, so the CTA can be
     // live while prices and interval support are still unknown. Never send
     // anyone to checkout on a price we haven't shown them.
     if (isLoadingPlanCatalog || !teamEntry) {
-      return { redirected: false, shouldDismiss: false };
+      return failedStart("prices_loading");
     }
     const checkoutInterval = resolveUpgradeInterval(
       interval,
@@ -344,7 +360,9 @@ export function useUpgradeCheckout({
       monthlySupported,
     );
     if (!checkoutInterval) {
-      toast.error("Checkout is not available for this plan right now.");
+      if (!inlineErrors) {
+        toast.error("Checkout is not available for this plan right now.");
+      }
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",
         organization_id: organizationId,
@@ -357,7 +375,7 @@ export function useUpgradeCheckout({
         annual_supported: annualSupported,
         monthly_supported: monthlySupported,
       });
-      return { redirected: false, shouldDismiss: false };
+      return failedStart("no_supported_interval");
     }
 
     const url = new URL(window.location.href);
@@ -441,11 +459,13 @@ export function useUpgradeCheckout({
       });
       return { redirected: false, shouldDismiss: true };
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Couldn't start checkout. Please try again.",
-      );
+      if (!inlineErrors) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Couldn't start checkout. Please try again.",
+        );
+      }
       track("plan_limit_upgrade_failed", {
         location: "plan_limit_dialog",
         organization_id: organizationId,
@@ -457,13 +477,14 @@ export function useUpgradeCheckout({
         effective_plan: effectivePlan,
         can_manage_billing: canManageBilling,
       });
-      return { redirected: false, shouldDismiss: false };
+      return failedStart("start_failed");
     }
   }, [
     annualSupported,
     canManageBilling,
     currentPlan,
     effectivePlan,
+    inlineErrors,
     interval,
     isLoadingPlanCatalog,
     limitKind,
@@ -488,6 +509,8 @@ export function useUpgradeCheckout({
       teamEntry?.billingModel === "flat" ? "per month" : "per seat/month",
     isFlatPlan: teamEntry?.billingModel === "flat",
     teamName: teamEntry?.displayName ?? "Team",
+    /** The plan `start()` checks out: Pro for Free orgs when it is on sale. */
+    targetPlan,
     creditUpgradePlans: [
       planCatalog?.plans.pro,
       planCatalog?.plans.team,

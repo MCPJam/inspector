@@ -460,6 +460,9 @@ export const ANALYTICS_EVENTS = {
   plan_limit_upgrade_failed: { source: "client" },
   plan_limit_upgrade_resolved: { source: "client" },
   plan_limit_upgrade_returned: { source: "client" },
+  // The Free credit wall's checkout button. `outcome` says whether Stripe
+  // opened, and `failure_reason` why not when it didn't.
+  plan_limit_checkout_clicked: { source: "client" },
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
   plan_limit_upgrade_requested: { source: "client" },
