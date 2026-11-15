@@ -26,6 +26,8 @@ export const EXAMPLE_CASE = {
     { kind: "response", label: "Response contains:", value: "excalidraw.com" },
   ],
   interaction: { action: "click share-link", view: "create_view" },
+  expectedOutcome:
+    "A two-step Idea to Ship diagram, and a working excalidraw.com link to share it.",
 } as const;
 
 export type ExampleStageStatus = "passed" | "failed" | "skipped";

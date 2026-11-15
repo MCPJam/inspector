@@ -86,7 +86,7 @@ describe("EvaluateTour", () => {
         expect(screen.getByText(stop.title)).toBeInTheDocument(),
       );
       expect(
-        screen.getByTestId(`evaluate-tour-screen-${stop.id}`),
+        screen.getByTestId(`evaluate-tour-screen-${stop.screen}`),
       ).toBeInTheDocument();
       expect(
         screen.getByText(`${index + 1} of ${TOUR_STOPS.length}`),

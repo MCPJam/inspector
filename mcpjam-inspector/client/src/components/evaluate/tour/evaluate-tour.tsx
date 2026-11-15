@@ -27,7 +27,7 @@ import { StopCoachmarkContent, TourPopover } from "./tour-popover";
 import { TourIntroCard } from "./tour-intro";
 import { TourHandoff } from "./tour-handoff";
 import { TourCreateScreen, TourSetupScreen } from "./tour-screens-setup";
-import { TourDiagnoseScreen, TourExperimentScreen } from "./tour-screens-case";
+import { TourCaseScreen, TourDiagnoseScreen } from "./tour-screens-case";
 import { TourMonitorScreen } from "./tour-screen-monitor";
 
 /**
@@ -61,8 +61,8 @@ function TourScreenView({
       return <TourCreateScreen typedName={typedName} />;
     case "setup":
       return <TourSetupScreen />;
-    case "experiment":
-      return <TourExperimentScreen />;
+    case "case":
+      return <TourCaseScreen />;
     case "diagnose":
       return <TourDiagnoseScreen />;
     case "monitor":
@@ -81,6 +81,8 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
   const [screen, setScreen] = useState<StageScreen>("intro");
   const [stopIndex, setStopIndex] = useState<number | null>(null);
   const [typedName, setTypedName] = useState("");
+  // The stop on screen or on its way in, for the skip event.
+  const atStopRef = useRef<TourStopId | "intro">("intro");
 
   const stop = stopIndex === null ? null : TOUR_STOPS[stopIndex];
   const { rects, bounds } = useAnchorRects(rootRef, stop?.anchors ?? []);
@@ -137,6 +139,7 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
       await driver.moveTo("create-continue");
       await driver.click();
       setScreen("setup");
+      atStopRef.current = "setup";
       await driver.settle();
       await driver.pause(SCREEN_FADE_MS);
       setStopIndex(0);
@@ -159,7 +162,8 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
       await driver.pause(COACHMARK_FADE_MS);
       await driver.moveTo(advanceAnchor);
       await driver.click();
-      setScreen(target.id);
+      setScreen(target.screen);
+      atStopRef.current = target.id;
       await driver.settle();
       await driver.pause(SCREEN_FADE_MS);
       setStopIndex(stopIndex + 1);
@@ -168,10 +172,7 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
 
   const skip = () => {
     cancelRun();
-    const at: TourStopId | "intro" =
-      stop?.id ??
-      (screen === "intro" || screen === "create" ? "intro" : screen);
-    tour.skip(at);
+    tour.skip(stop?.id ?? atStopRef.current);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
