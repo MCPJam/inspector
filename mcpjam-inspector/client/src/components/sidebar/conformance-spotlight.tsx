@@ -15,7 +15,7 @@ import { track } from "@/lib/analytics";
 import { buildConformanceRunServerPath } from "@/lib/app-navigation";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
-import type { AppState } from "@/state/app-types";
+import type { ServerWithName } from "@/state/app-types";
 
 export const CONFORMANCE_SPOTLIGHT_STORAGE_KEY =
   "mcpjam:conformance-spotlight:status";
@@ -49,15 +49,15 @@ function rememberDismissed(): void {
  * connected one, else the first saved one. Null when there are none.
  */
 export function pickConformanceServer(
-  appState: Pick<AppState, "servers" | "selectedServer"> | null,
+  servers: Record<string, ServerWithName>,
+  selectedServer: string | undefined,
 ): string | null {
-  if (!appState) return null;
-  const servers = Object.values(appState.servers);
-  const selected = appState.servers[appState.selectedServer];
+  const selected = selectedServer ? servers[selectedServer] : undefined;
+  const offered = Object.values(servers);
   return (
     selected?.name ??
-    servers.find((server) => server.connectionStatus === "connected")?.name ??
-    servers[0]?.name ??
+    offered.find((server) => server.connectionStatus === "connected")?.name ??
+    offered[0]?.name ??
     null
   );
 }
@@ -69,18 +69,28 @@ export function pickConformanceServer(
  */
 export function ConformanceSpotlight({
   enabled,
+  servers,
   onConformancePage,
   onNavigate,
   children,
 }: {
   /** The Conformance row is visible to this user. */
   enabled: boolean;
+  /**
+   * The servers the Conformance page offers, saved ones included. Defaults
+   * to the runtime connections, which miss saved servers not yet loaded.
+   */
+  servers?: Record<string, ServerWithName>;
   onConformancePage: boolean;
   onNavigate: (path: string) => void;
   children: ReactNode;
 }) {
   const isMobile = useIsMobile();
-  const serverName = pickConformanceServer(useOptionalSharedAppState());
+  const appState = useOptionalSharedAppState();
+  const serverName = pickConformanceServer(
+    servers ?? appState?.servers ?? {},
+    appState?.selectedServer,
+  );
   const [dismissed, setDismissed] = useState(readDismissed);
   const [ready, setReady] = useState(false);
   const shown = useRef(false);

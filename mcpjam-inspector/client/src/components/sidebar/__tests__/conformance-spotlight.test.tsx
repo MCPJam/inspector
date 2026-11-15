@@ -2,7 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createConnectedServer, createServer } from "@/test/factories";
-import type { AppState } from "@/state/app-types";
+import type { AppState, ServerWithName } from "@/state/app-types";
 import {
   CONFORMANCE_SPOTLIGHT_DELAY_MS,
   CONFORMANCE_SPOTLIGHT_STORAGE_KEY,
@@ -26,10 +26,14 @@ vi.mock("@/state/app-state-context", () => ({
 const onNavigate = vi.fn();
 const TITLE = "Check your server against the MCP spec";
 
-function renderSpotlight(onConformancePage = false) {
+function renderSpotlight(
+  onConformancePage = false,
+  servers?: Record<string, ServerWithName>,
+) {
   return render(
     <ConformanceSpotlight
       enabled
+      servers={servers}
       onConformancePage={onConformancePage}
       onNavigate={onNavigate}
     >
@@ -68,18 +72,10 @@ describe("pickConformanceServer", () => {
     const idle = createServer({ name: "idle" });
     const live = createConnectedServer({ name: "live" });
     const servers = { idle, live };
-    expect(pickConformanceServer({ servers, selectedServer: "idle" })).toBe(
-      "idle",
-    );
-    expect(pickConformanceServer({ servers, selectedServer: "none" })).toBe(
-      "live",
-    );
-    expect(
-      pickConformanceServer({ servers: { idle }, selectedServer: "none" }),
-    ).toBe("idle");
-    expect(pickConformanceServer({ servers: {}, selectedServer: "none" })).toBe(
-      null,
-    );
+    expect(pickConformanceServer(servers, "idle")).toBe("idle");
+    expect(pickConformanceServer(servers, "none")).toBe("live");
+    expect(pickConformanceServer({ idle }, undefined)).toBe("idle");
+    expect(pickConformanceServer({}, "none")).toBe(null);
   });
 });
 
@@ -110,6 +106,15 @@ describe("ConformanceSpotlight", () => {
       "dismissed",
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("offers a saved server that has no runtime connection yet", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    withServers();
+    renderSpotlight(false, { saved: createServer({ name: "saved" }) });
+    await waitForOpen();
+    await user.click(screen.getByRole("button", { name: "Check saved" }));
+    expect(onNavigate).toHaveBeenCalledWith("/conformance?run=saved");
   });
 
   it("opens Conformance when there is no server to check", async () => {

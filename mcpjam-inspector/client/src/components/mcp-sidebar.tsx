@@ -89,7 +89,7 @@ import {
   useOrganizationBillingStatus,
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
-import type { Project } from "@/state/app-types";
+import type { Project, ServerWithName } from "@/state/app-types";
 
 interface NavItem {
   title: string;
@@ -531,6 +531,8 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
+  /** The servers the Conformance page offers, for its intro card's action. */
+  conformanceServers?: Record<string, ServerWithName>;
 }
 
 export function MCPSidebar({
@@ -551,6 +553,7 @@ export function MCPSidebar({
   billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
+  conformanceServers,
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
@@ -893,6 +896,7 @@ export function MCPSidebar({
                       url === "/conformance" ? (
                         <ConformanceSpotlight
                           enabled
+                          servers={conformanceServers}
                           onConformancePage={activeTab === "conformance"}
                           onNavigate={appNavigate}
                         >
