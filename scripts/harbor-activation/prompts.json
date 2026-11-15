@@ -1,0 +1,7 @@
+{
+  "A": "You have built an MCP server at {endpoint}. Find a way to check whether it works correctly and obtain a useful, reproducible result. Start from {entry_point}. Use public documentation and normal product interfaces. You may install tools. Stop after achieving the goal or reaching the trial budget.",
+  "B": "Use MCPJam to validate the MCP server at {endpoint}. Set it up from this clean environment and obtain your first useful result. Then find how to turn that result into a repeatable evaluation and run it.",
+  "C": "Continue validating this MCP server using MCPJam. If something fails, use the information available to identify the problem and recover. Preserve your work. Stop if you need an action only the account owner or a human can perform, and state precisely what is needed.",
+  "D": "Run a repeatable evaluation for this MCP server. Before running it, find what you can about usage, available credits, and expected cost. If blocked, identify the reason and the next action available to your account. After the environment reports that the account issue has been resolved, try to resume your original task.",
+  "concern": "At meaningful checkpoints or when confused, write a brief user-facing concern note: what you expected, what you observed, what information was missing, and what you will try next. Report no concern when none exists. Do not provide private chain-of-thought or extended internal reasoning."
+}
