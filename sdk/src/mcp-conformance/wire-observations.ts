@@ -84,6 +84,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 /** Every JSON-RPC message an exchange's response carried, JSON body or SSE. */
 function responseMessages(exchange: RawExchange): unknown[] {
   const { response } = exchange;
+  // Streamable HTTP permits GET 405 when no SSE stream is offered. Its HTTP
+  // error body is not a JSON-RPC message; the raw exchange remains captured.
+  if (exchange.request.method === "GET" && response.status === 405) return [];
   if (response.sse) {
     return response.sse
       .map((event) => event.json)
