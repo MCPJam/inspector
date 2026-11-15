@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockUserTestingTab, mockRouteContext } = vi.hoisted(() => ({
   mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
   mockRouteContext: {
-    billingUiEnabled: true,
     activeTabBillingLocked: false,
     activeTabBillingFeature: "scenarios" as string | null,
     convexProjectId: "project-1" as string | null,
@@ -102,7 +101,6 @@ import { ScenariosRoute } from "../App";
 describe("ScenariosRoute gates", () => {
   beforeEach(() => {
     mockUserTestingTab.mockClear();
-    mockRouteContext.billingUiEnabled = true;
     mockRouteContext.activeTabBillingLocked = false;
     mockRouteContext.activeTabBillingFeature = "scenarios";
     mockRouteContext.convexProjectId = "project-1";
@@ -170,15 +168,4 @@ describe("ScenariosRoute gates", () => {
     expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
     expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
   });
-
-  it("renders the surface when billing UI is disabled", () => {
-    mockRouteContext.billingUiEnabled = false;
-    mockRouteContext.activeTabBillingLocked = true;
-
-    render(<ScenariosRoute />);
-
-    expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
-    expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
-  });
-
 });

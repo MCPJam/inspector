@@ -207,7 +207,6 @@ describe("filterByFeatureFlags", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { scenarios: true },
         enforcementActive: true,
       },
@@ -316,7 +315,6 @@ describe("applyBillingGateNavState", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: false,
       },
@@ -346,7 +344,6 @@ describe("applyBillingGateNavState", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: true,
       },
