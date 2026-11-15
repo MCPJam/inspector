@@ -47,6 +47,7 @@ import {
 import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
 import { collectRepeated } from "./readiness-lazy-auth.js";
+import { registerSubmissionHandoffCommands } from "./readiness-submission-handoff.js";
 
 type Options = PlatformOptions & {
   project?: string;
@@ -479,4 +480,6 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
     writeResult(saved, format);
     reportGate(saved.submission.checkGate, command);
   });
+
+  registerSubmissionHandoffCommands(submission);
 }

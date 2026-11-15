@@ -3,12 +3,15 @@
  * portal's first screen for a saved server, then the form rendered from the
  * flow with MCPJam's results under the answers they read.
  */
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CHATGPT_PLUGIN_FLOW,
   CLAUDE_CONNECTOR_FLOW,
+  buildDirectoryHandoff,
   placeDirectoryResults,
+  withDirectoryFlowDefaults,
   type DirectoryAnswer,
   type PlacedFinding,
 } from "@mcpjam/sdk/browser";
@@ -43,6 +46,14 @@ vi.mock("@/hooks/useViews", () => ({
     isLoading: false,
   }),
 }));
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: () => ({
+    members: [{ userId: "user_pm", user: { name: "Sample Person" } }],
+  }),
+}));
+vi.mock("@/hooks/use-task-owner-id", () => ({
+  useTaskOwnerId: () => "user_1",
+}));
 vi.mock("@/components/routing/scoped-navigate", () => ({
   ScopedNavigate: ({ to }: { to: string }) => (
     <div data-testid="navigate" data-to={to} />
@@ -56,8 +67,30 @@ const api = vi.hoisted(() => ({
   getDirectorySubmission: vi.fn(),
   updateDirectorySubmission: vi.fn(),
   startDirectorySubmissionRun: vi.fn(),
+  getDirectorySubmissionHandoff: vi.fn(),
+  exportDirectorySubmission: vi.fn(),
+  getSubmissionFinding: vi.fn(),
+  listSubmissionEvents: vi.fn(),
+  recordSubmissionEvent: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-submissions-api", () => api);
+vi.mock("@/hooks/usePluginImportApi", () => ({
+  useProjectPlugins: () => [],
+  useProjectPlugin: () => undefined,
+  usePluginVersion: () => undefined,
+}));
+vi.mock("@/hooks/usePluginsEnabled", () => ({
+  usePluginsEnabledState: () => true,
+}));
+
+const TITLES: Record<string, string> = {
+  "claude.endpoint.https": "The server URL uses https",
+  "claude.submission.listing-fields":
+    "Listing fields follow the portal's rules",
+  "claude.submission.access-matches-annotations":
+    "The read or write declaration matches the tool annotations",
+  "claude.submission.use-cases": "Each use case has an example prompt",
+};
 
 function finding(
   id: string,
@@ -66,10 +99,7 @@ function finding(
 ): PlacedFinding["finding"] {
   return {
     id,
-    title:
-      id === "claude.endpoint.https"
-        ? "The server URL uses https"
-        : "Listing fields follow the portal's rules",
+    title: TITLES[id] ?? id,
     lane: "submission-artifacts",
     class: "required",
     status,
@@ -82,10 +112,19 @@ function finding(
   };
 }
 
-function submission(): SubmissionView {
-  const answers: DirectoryAnswer[] = [
-    { key: "listing.name", value: "Sample server", origin: "set", revision: 2 },
-  ];
+function submission(extra: PlacedFinding["finding"][] = []): SubmissionView {
+  // As the API reads it: stored answers plus the portal's defaults.
+  const answers: DirectoryAnswer[] = withDirectoryFlowDefaults(
+    CLAUDE_CONNECTOR_FLOW,
+    [
+      {
+        key: "listing.name",
+        value: "Sample server",
+        origin: "set",
+        revision: 2,
+      },
+    ],
+  );
   return {
     id: "sub_1",
     projectId: "proj_1",
@@ -109,10 +148,26 @@ function submission(): SubmissionView {
           "violated",
           "Add a one-liner of 200 characters or fewer.",
         ),
+        ...extra,
       ],
     }),
     resultsRunId: "run_1",
     submissionUrl: CLAUDE_CONNECTOR_FLOW.submissionUrl,
+  };
+}
+
+/** A ChatGPT plugin rehearsal before its plugin is chosen. */
+function pluginSubmission(): SubmissionView {
+  return {
+    ...submission(),
+    id: "sub_2",
+    directory: "openai",
+    flowId: "chatgpt-plugin",
+    flowVersion: CHATGPT_PLUGIN_FLOW.version,
+    answers: [],
+    steps: placeDirectoryResults({ flow: CHATGPT_PLUGIN_FLOW, answers: [] }),
+    resultsRunId: null,
+    submissionUrl: CHATGPT_PLUGIN_FLOW.submissionUrl,
   };
 }
 
@@ -123,6 +178,20 @@ describe("ReadinessRoute", () => {
     api.listServerSubmissions.mockResolvedValue([]);
     api.createDirectorySubmission.mockResolvedValue(submission());
     api.getDirectorySubmission.mockResolvedValue(submission());
+    api.updateDirectorySubmission.mockResolvedValue(submission());
+    const view = submission();
+    api.getDirectorySubmissionHandoff.mockResolvedValue(
+      buildDirectoryHandoff({
+        flow: CLAUDE_CONNECTOR_FLOW,
+        submission: view,
+        results: view.steps,
+        resultsRunId: view.resultsRunId,
+        latestRun: null,
+        events: [],
+        snapshots: {},
+      }),
+    );
+    api.listSubmissionEvents.mockResolvedValue([]);
     context.convexProjectId = "proj_1";
     context.selectedServerEntry = { name: "Sample server" };
     flag.value = true;
@@ -214,6 +283,76 @@ describe("ReadinessRoute", () => {
     expect(screen.getByText("1 blocker")).toBeVisible();
   });
 
+  it("renders Use cases from the flow, with marks and results under the answers they read", async () => {
+    const useCases = submission([
+      finding(
+        "claude.submission.access-matches-annotations",
+        "violated",
+        "Choose Read and write: 64 tools write.",
+      ),
+      finding("claude.submission.use-cases", "satisfied"),
+    ]);
+    api.createDirectorySubmission.mockResolvedValue(useCases);
+    api.getDirectorySubmission.mockResolvedValue(useCases);
+    render(<ReadinessRoute />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    );
+    await screen.findByRole("heading", { level: 1, name: "Connection" });
+    const rail = within(
+      screen.getByRole("navigation", { name: "Claude submission steps" }),
+    );
+    await userEvent.click(rail.getByRole("button", { name: /Use cases/ }));
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Use cases" }),
+    ).toBeVisible();
+
+    // The portal's three rows of use case and example prompt.
+    expect(screen.getByText("Example prompt")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Use case 3" })).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Use case 4" })).toBeNull();
+    expect(
+      screen.getByRole("textbox", { name: "Example prompt 1" }),
+    ).toHaveAttribute(
+      "placeholder",
+      "What sizes are in stock at the Portland store?",
+    );
+    expect(screen.getByLabelText(/^Prerequisites/)).toBeVisible();
+    expect(screen.getByRole("radio", { name: /Read only/ })).toBeChecked();
+    const note = screen.getByText(
+      "Based on what your tools do; we check it against their annotations.",
+    );
+
+    // The default is called out under the field, above the check that reads it.
+    const mark = screen.getByText("Nobody has confirmed this answer.");
+    const check = screen.getByText(
+      "The read or write declaration matches the tool annotations",
+    );
+    expect(note.compareDocumentPosition(mark)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(mark.compareDocumentPosition(check)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(
+      screen.getByText("Each use case has an example prompt"),
+    ).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(
+      () =>
+        expect(api.updateDirectorySubmission).toHaveBeenCalledWith(
+          { projectId: "proj_1", submissionId: "sub_1" },
+          {
+            expectedRevision: 2,
+            answers: { "useCases.access": "read-only" },
+            confirm: ["useCases.access"],
+          },
+        ),
+      { timeout: 3000 },
+    );
+  });
+
   it("ends on the portal's review page, with copy where the portal submits", async () => {
     render(<ReadinessRoute />);
     await userEvent.click(
@@ -228,6 +367,13 @@ describe("ReadinessRoute", () => {
     await userEvent.click(rail.getByRole("button", { name: /Review/ }));
     expect(
       screen.getByRole("heading", { level: 1, name: "Review and submit" }),
+    ).toBeVisible();
+    // The handoff summary an agent reads, above the portal's review table.
+    const handoff = await screen.findByRole("region", {
+      name: "Handoff summary",
+    });
+    expect(
+      await within(handoff).findByText("1 blocker in 2 evaluated checks."),
     ).toBeVisible();
 
     // The rail counts seven missing listing answers and the blocker; the
@@ -248,6 +394,9 @@ describe("ReadinessRoute", () => {
       screen.getByRole("button", { name: "Copy for the portal" }),
     ).toBeVisible();
     expect(
+      await screen.findByRole("button", { name: "Mark as submitted" }),
+    ).toBeVisible();
+    expect(
       screen.getByRole("link", { name: /Open the real Claude portal/ }),
     ).toHaveAttribute("href", CLAUDE_CONNECTOR_FLOW.submissionUrl);
     expect(
@@ -261,6 +410,63 @@ describe("ReadinessRoute", () => {
       screen.getByRole("heading", { level: 1, name: "Listing" }),
     ).toBeVisible();
     expect(screen.getByText("Error: Slug is required")).toBeVisible();
+  });
+
+  it("starts a ChatGPT plugin rehearsal from the directory choice", async () => {
+    api.getDirectoryFlow.mockResolvedValue(CHATGPT_PLUGIN_FLOW);
+    api.createDirectorySubmission.mockResolvedValue(pluginSubmission());
+    api.getDirectorySubmission.mockResolvedValue(pluginSubmission());
+    api.listServerSubmissions.mockResolvedValue([
+      { ...submission(), id: "sub_0", updatedAt: Date.now() },
+    ]);
+    render(<ReadinessRoute />);
+    expect(
+      await screen.findByText("Saved rehearsals for this server"),
+    ).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
+    expect(screen.getByRole("button", { name: "ChatGPT" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // The saved Claude rehearsal belongs to the other directory.
+    expect(screen.queryByText("Saved rehearsals for this server")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Upload new or existing plugin" }),
+    );
+    expect(api.createDirectorySubmission).toHaveBeenCalledWith(
+      { projectId: "proj_1", serverId: "srv_1", flowId: "chatgpt-plugin" },
+      expect.stringMatching(/^ui-srv_1-/),
+    );
+    expect(
+      await screen.findByText(/Choose the stored plugin to rehearse\./),
+    ).toBeVisible();
+  });
+
+  it("opens a saved ChatGPT plugin rehearsal on the plugin page, which waits for a version", async () => {
+    api.getDirectoryFlow.mockResolvedValue(CHATGPT_PLUGIN_FLOW);
+    api.getDirectorySubmission.mockResolvedValue(pluginSubmission());
+    // Untitled, so the list names it by its flow.
+    api.listServerSubmissions.mockResolvedValue([pluginSubmission()]);
+    render(<ReadinessRoute />);
+    await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
+    const saved = await screen.findByText("ChatGPT plugin");
+    const row = saved.closest("li");
+    if (!row) throw new Error("No saved rehearsal row");
+    await userEvent.click(within(row).getByRole("button", { name: "Open" }));
+
+    expect(
+      await screen.findByText(/Choose the stored plugin to rehearse\./),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "A copy of the ChatGPT portal. Nothing here is sent to ChatGPT.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Choose a plugin version to run checks."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run checks" })).toBeDisabled();
   });
 });
 

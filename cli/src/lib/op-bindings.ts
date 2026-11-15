@@ -424,6 +424,20 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_reviewer_attempt: { command: "readiness reviewer status" },
   resume_reviewer_attempt: { command: "readiness reviewer resume" },
   cancel_reviewer_attempt: { command: "readiness reviewer cancel" },
+  // Resuming a submission from its id, and recording what happened in the
+  // directory itself.
+  get_directory_submission_handoff: { command: "readiness submission handoff" },
+  list_directory_submission_findings: {
+    command: "readiness submission findings",
+  },
+  get_directory_submission_finding: { command: "readiness submission finding" },
+  export_directory_submission: { command: "readiness submission export" },
+  list_directory_submission_events: { command: "readiness submission events" },
+  record_directory_submission_status: { command: "readiness submission status" },
+  record_directory_submission_snapshot: {
+    command: "readiness submission snapshot",
+  },
+  import_directory_finding: { command: "readiness submission import-finding" },
   // Hosted conformance, beside the local `mcpjam conformance` commands: those
   // grade what this machine reaches and record nothing in a project, these
   // run on the platform against a saved server and leave a run to poll.

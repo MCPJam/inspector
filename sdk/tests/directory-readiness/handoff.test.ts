@@ -19,6 +19,7 @@ import { ALL_OPERATIONS } from "../../src/platform/operations.js";
 import {
   answer,
   completeAnswers,
+  confirmedAnswers,
 } from "../support/claude-connector-answers.js";
 import {
   event,
@@ -52,6 +53,17 @@ function gradedInput(overrides: Parameters<typeof handoffInput>[0] = {}) {
     findings: FINDINGS,
     ...overrides,
   });
+}
+
+/** Eleven more checks failing the gate: past the summary's ten. */
+const MORE_BLOCKERS = Array.from({ length: 11 }, (_, index) =>
+  finding(`claude.extra.blocker-${index}`, { status: "violated" })
+);
+
+/** Every gated check passed on answers that have not changed since. */
+function passingInput(overrides: Parameters<typeof handoffInput>[0] = {}) {
+  const findings = [finding("claude.endpoint.https"), finding("claude.tools.title-present")];
+  return handoffInput({ answers: confirmedAnswers(), gradedAnswers: confirmedAnswers(), findings, ...overrides });
 }
 
 describe("buildDirectoryHandoff", () => {
@@ -274,10 +286,56 @@ describe("buildDirectoryHandoff", () => {
     expect(stopped.run).toEqual({ resultsRunId: null, latest: { id: "run-2", status: "pending", resumable: true } });
   });
 
+  it("points at the first blocker's evidence, and at the failing checks past the first ten", () => {
+    const handoff = buildDirectoryHandoff(gradedInput({ findings: [...FINDINGS, ...MORE_BLOCKERS] }));
+    expect(handoff.blockers).toHaveLength(10);
+    const scope = { project: "project-1", submission: "sub-1" };
+    expect(handoff.nextActions).toContainEqual({
+      operation: "get_directory_submission_finding",
+      why: "Read what the first blocker found, with its evidence, before you fix it.",
+      input: { ...scope, check: "claude.endpoint.https" },
+    });
+    expect(handoff.nextActions).toContainEqual({
+      operation: "list_directory_submission_findings",
+      why: "13 checks fail the run, and this summary lists the first 10. Page through the violated findings for the rest.",
+      input: { ...scope, status: "violated" },
+    });
+    const ten = buildDirectoryHandoff(gradedInput()).nextActions.map((entry) => entry.operation);
+    expect(ten).not.toContain("list_directory_submission_findings");
+  });
+
+  it("hands the pack to a person once every gated check passes and only portal steps are left", () => {
+    const ready = buildDirectoryHandoff(passingInput());
+    expect(ready.verdict.verdict).toBe("ready");
+    expect(ready.nextActions).toEqual([
+      {
+        operation: "export_directory_submission",
+        why: "Every gated check passes. Export the pack for the person who finishes in the portal; it lists the steps only they can take there.",
+        input: { project: "project-1", submission: "sub-1", format: "markdown" },
+      },
+    ]);
+    // Nothing to hand over while a run may still change the verdict, or once nothing is left in the portal.
+    const running = passingInput({ latestRun: { id: "run-2", status: "running", resumable: false } });
+    expect(buildDirectoryHandoff(running).nextActions.map((entry) => entry.operation)).toEqual(["get_readiness_run"]);
+    const stopped = passingInput({ latestRun: { id: "run-2", status: "pending", resumable: true } });
+    expect(buildDirectoryHandoff(stopped).nextActions.map((entry) => entry.operation)).toEqual(["resume_readiness_run"]);
+    // Nor while an answer is missing or a declaration unconfirmed, though no gated check reads it.
+    const unanswered = confirmedAnswers().filter((entry) => entry.key !== "listing.name");
+    for (const answers of [unanswered, completeAnswers()]) {
+      const handoff = buildDirectoryHandoff(passingInput({ answers, gradedAnswers: answers }));
+      expect(handoff.verdict.verdict).toBe("ready");
+      expect(handoff.nextActions.map((entry) => entry.operation)).toEqual(["update_directory_submission"]);
+    }
+    const published = passingInput({ events: [event("status", { state: "published" })] });
+    expect(buildDirectoryHandoff(published).nextActions).toEqual([]);
+  });
+
   it("names only operations in MCPJam's catalog, each with an input it accepts", () => {
     const actions: DirectoryNextAction[] = [
       handoffInput(),
       gradedInput(),
+      gradedInput({ findings: [...FINDINGS, ...MORE_BLOCKERS] }),
+      passingInput(),
       handoffInput({ latestRun: { id: "run-2", status: "running", resumable: false } }),
       handoffInput({ latestRun: { id: "run-2", status: "pending", resumable: true } }),
       handoffInput({
@@ -299,6 +357,9 @@ describe("buildDirectoryHandoff", () => {
         "get_readiness_run",
         "resume_readiness_run",
         "diff_server_revisions",
+        "get_directory_submission_finding",
+        "list_directory_submission_findings",
+        "export_directory_submission",
       ])
     );
   });
