@@ -158,14 +158,16 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -184,7 +186,11 @@ import {
 import { claimHarnessSessionState, commitHarnessSessionState, heartbeatHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
-import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
+import { startHarnessModelBroker } from "../harness-model-broker.js";
+import {
+  reserveHarnessBox,
+  renewHarnessBoxReservation,
+} from "../harness-box-reservation.js";
 
 vi.mock("../local/local-turn.js", () => ({
   prepareLocalHarnessTurn: vi.fn(async () => ({
@@ -235,6 +241,7 @@ import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
 import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
 import { stampOrgCredentialRevision } from "../org-credential-continuity";
 import { logger } from "../../logger.js";
+import { TurnTiming } from "../../turn-timing.js";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type {
   MCPJamEngineErrorEvent,
@@ -444,6 +451,27 @@ describe("runHarnessTurn local continuity", () => {
     expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(harnessState.teardown).toHaveBeenCalledOnce();
     expect(harnessState.discardState).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a fresh session", false, "new"],
+    ["a session resumed from disk", true, "disk_resume"],
+  ])("reports %s on this machine under the local surface", async (_label, resumed, start) => {
+    if (resumed) resume();
+    const sink = { surface: "web" as const, capture: vi.fn() };
+    await runHarnessTurn(baseOptions({
+      turnTiming: new TurnTiming({ harnessTurnEvent: sink }),
+    }) as any, "none");
+    expect(sink.capture).toHaveBeenCalledTimes(1);
+    const event = sink.capture.mock.calls[0]![0];
+    expect(event).toMatchObject({
+      surface: "local", harness_id: "claude-code", outcome: "completed",
+      bootstrap: "unknown", kind: "follow_up", start, fallback_reason: "none",
+      local_prepare_ms: expect.any(Number),
+    });
+    // No box was woken and no broker started on this machine.
+    expect(event).not.toHaveProperty("box_wake_ms");
+    expect(event).not.toHaveProperty("broker_start_ms");
   });
 
   it("resumes the state persisted by the first turn", async () => {
