@@ -25,6 +25,7 @@ import {
   type AffectedIterationRow,
 } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
+import { ProblemRubric } from "./problem-rubric";
 import {
   buildOptionPrompt,
   OPTION_KIND_LABEL,
@@ -188,10 +189,19 @@ export function ProblemDetailsContent({
   return (
     <div className="space-y-6 px-6 pb-8 text-sm leading-relaxed">
       <section>
-        <h5 className="mb-3 font-semibold">What happened</h5>
-        <p className="break-words text-[15px] leading-7">
-          <FindingText text={problem.observed} />
-        </p>
+        <ul className="list-disc space-y-2 pl-5">
+          <ProblemRubric problem={problem} iterationRows={iterationRows} />
+          <li>
+            <details>
+              <summary className="cursor-pointer">
+                <strong>Evidence:</strong> View recorded result
+              </summary>
+              <p className="mt-2 break-words">
+                <FindingText text={problem.observed} />
+              </p>
+            </details>
+          </li>
+        </ul>
         <p className="mt-2 text-xs text-muted-foreground">
           {coverageLine(problem)}
         </p>
@@ -235,53 +245,57 @@ export function ProblemDetailsContent({
             <h5 className="font-semibold">{OPTION_KIND_LABEL[option.kind]}</h5>
             <Badge variant="outline">{KIND_BADGE[option.kind]}</Badge>
           </div>
-          <p className="break-words text-[15px] leading-7">
-            <FindingText text={option.change} />
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Applies to {option.iterationIds.length} of{" "}
-            {plural(problem.coverage.observed, "affected iteration")}
-            {target ? ` · ${target}` : ""}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Effort: {option.effort} · Compatibility risk:{" "}
-            {option.compatibilityRisk}
-          </p>
-          <div>
-            <h6 className="mb-1 font-semibold">
-              {recommended ? "Why this option" : "Why consider this option"}
-            </h6>
-            {recommended && problem.recommendationReason ? (
-              <p className="mb-2">{problem.recommendationReason}</p>
-            ) : null}
-            <p>
-              <FindingText text={option.rationale} />
-            </p>
-          </div>
-          {option.hypothesis || option.supportsIf || option.weakensIf ? (
-            <dl className="space-y-2">
-              {[
-                ["Hypothesis", option.hypothesis],
-                ["Supports it if", option.supportsIf],
-                ["Weakens it if", option.weakensIf],
-              ]
-                .filter((row): row is [string, string] => Boolean(row[1]))
-                .map(([term, text]) => (
-                  <div key={term}>
-                    <dt className="font-semibold">{term}</dt>
-                    <dd>
-                      <FindingText text={text} />
-                    </dd>
-                  </div>
-                ))}
-            </dl>
-          ) : null}
-          <div>
-            <h6 className="mb-1 font-semibold">How to verify</h6>
-            <p>
+          <ul className="list-disc space-y-2 pl-5 [&>li]:break-words">
+            <li>
+              <strong>Next:</strong> <FindingText text={option.change} />
+            </li>
+            <li>
+              <strong>
+                {recommended ? "Why this option" : "Why consider this option"}:
+              </strong>{" "}
+              <FindingText
+                text={
+                  recommended && problem.recommendationReason
+                    ? problem.recommendationReason
+                    : option.rationale
+                }
+              />
+            </li>
+            <li>
+              <strong>Success check:</strong>{" "}
               <FindingText text={option.verification} />
-            </p>
-          </div>
+            </li>
+            <li>
+              <strong>Scope:</strong> {option.iterationIds.length} of{" "}
+              {plural(problem.coverage.observed, "affected iteration")}
+              {target ? ` · ${target}` : ""}
+            </li>
+            <li>
+              <strong>Effort:</strong> {option.effort}.{" "}
+              <strong>Compatibility risk:</strong> {option.compatibilityRisk}.
+            </li>
+            {[
+              ["Hypothesis", option.hypothesis],
+              ["Supports it if", option.supportsIf],
+              ["Weakens it if", option.weakensIf],
+            ]
+              .filter((row): row is [string, string] => Boolean(row[1]))
+              .map(([label, text]) => (
+                <li key={label}>
+                  <strong>{label}:</strong> <FindingText text={text} />
+                </li>
+              ))}
+          </ul>
+          {recommended && problem.recommendationReason ? (
+            <details>
+              <summary className="cursor-pointer font-semibold">
+                Evidence limits
+              </summary>
+              <p className="mt-2">
+                <FindingText text={option.rationale} />
+              </p>
+            </details>
+          ) : null}
           <CopyOptionPrompt
             key={option.id}
             problem={problem}
@@ -291,8 +305,10 @@ export function ProblemDetailsContent({
         </section>
       ) : null}
       {problem.explanations.length > 0 ? (
-        <section className="border-t border-border/60 pt-5">
-          <h5 className="mb-2 font-semibold">Reviewed explanation</h5>
+        <details className="border-t border-border/60 pt-5">
+          <summary className="cursor-pointer font-semibold">
+            Reviewed explanation
+          </summary>
           <ul className="list-disc space-y-1 pl-5">
             {problem.explanations.map((row) => (
               <li key={row.id}>
@@ -303,7 +319,7 @@ export function ProblemDetailsContent({
               </li>
             ))}
           </ul>
-        </section>
+        </details>
       ) : null}
       <section className="border-t border-border/60 pt-5">
         <h5 className="mb-3 font-semibold">

@@ -1,12 +1,6 @@
 /** One recorded problem and its recommended next step; copy lives in the panel header. */
 import { useRef, useState } from "react";
-import {
-  AlertTriangle,
-  ArrowUpRight,
-  FlaskConical,
-  Search,
-  Wrench,
-} from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -21,12 +15,7 @@ import type { AffectedIterationRow } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
 import { OPTION_KIND_LABEL, optionTargetLabel } from "./problem-prompts";
 import { coverageLine, ProblemDetailsContent } from "./problem-details";
-
-const KIND_ICON = {
-  fix: Wrench,
-  experiment: FlaskConical,
-  investigation: Search,
-};
+import { ProblemRubric } from "./problem-rubric";
 
 export function ProblemSummary({
   problem,
@@ -44,7 +33,6 @@ export function ProblemSummary({
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const option = problem.options[0];
-  const Icon = option ? KIND_ICON[option.kind] : Search;
   const target = option ? optionTargetLabel(option) : null;
   const openEvidence = onOpenEvidence
     ? (locator: FindingEvidenceLocator) => {
@@ -55,62 +43,62 @@ export function ProblemSummary({
     : undefined;
   return (
     <article data-testid={lead ? "problem-lead" : "problem"}>
-      <div className="grid grid-cols-1 md:grid-cols-2">
-        <section className="min-w-0 pb-5 md:pr-7 md:pb-2">
-          <h4 className="flex items-center gap-2 text-sm font-semibold">
-            <AlertTriangle
-              className="size-4 text-muted-foreground"
-              aria-hidden="true"
-            />
-            What happened
-          </h4>
-          <p className="mt-3 break-words text-[15px] leading-7">
-            <FindingText text={problem.observed} />
-          </p>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {coverageLine(problem)}
-          </p>
-        </section>
-        <section className="min-w-0 border-t border-border/60 pt-5 md:border-t-0 md:border-l md:pt-0 md:pl-7">
-          <h4 className="flex items-center gap-2 text-sm font-semibold">
-            <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
-            {option ? OPTION_KIND_LABEL[option.kind] : "No supported next step"}
-          </h4>
+      <div className="max-w-4xl text-sm leading-relaxed">
+        <ul className="list-disc space-y-2 pl-5 [&>li]:break-words">
+          <ProblemRubric problem={problem} iterationRows={iterationRows} />
+          <li>
+            <details>
+              <summary className="cursor-pointer">
+                <strong>Evidence:</strong> {problem.affected.count} of{" "}
+                {problem.affected.total} iterations affected. View recorded
+                result
+              </summary>
+              <p className="mt-2">
+                <FindingText text={problem.observed} />
+              </p>
+            </details>
+          </li>
           {option ? (
             <>
-              <p className="mt-3 break-words text-[15px] leading-7">
+              <li>
+                <strong>{OPTION_KIND_LABEL[option.kind]}:</strong>{" "}
                 <FindingText text={option.change} />
-              </p>
-              <p className="mt-3 text-sm leading-relaxed">
-                <span className="font-semibold">Why: </span>
-                {problem.recommendationReason ?? (
-                  <FindingText text={option.rationale} />
-                )}
-              </p>
-              {target ? (
-                <p className="mt-2 break-words text-xs text-muted-foreground">
-                  {target} · not yet verified
-                </p>
-              ) : null}
+              </li>
+              <li>
+                <strong>Success check:</strong>{" "}
+                <FindingText text={option.verification} />
+              </li>
             </>
-          ) : null}
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <button
-              type="button"
-              className="inline-flex min-h-9 items-center gap-1 text-xs font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
-              onClick={(event) => {
-                trigger.current = event.currentTarget;
-                setOpen(true);
-              }}
-              data-testid="problem-details-toggle"
-            >
-              {problem.options.length > 1
-                ? `See ${problem.options.length} options`
-                : "See details"}
-              <ArrowUpRight className="size-3.5" aria-hidden="true" />
-            </button>
-          </div>
-        </section>
+          ) : (
+            <li>
+              <strong>Next:</strong> No supported next step.
+            </li>
+          )}
+        </ul>
+        <p className="mt-3 text-xs text-muted-foreground">
+          {coverageLine(problem)}
+        </p>
+        {target ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {target} · not yet verified
+          </p>
+        ) : null}
+        <div className="mt-2">
+          <button
+            type="button"
+            className="inline-flex min-h-9 items-center gap-1 text-xs font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+            onClick={(event) => {
+              trigger.current = event.currentTarget;
+              setOpen(true);
+            }}
+            data-testid="problem-details-toggle"
+          >
+            {problem.options.length > 1
+              ? `See ${problem.options.length} options`
+              : "See details"}
+            <ArrowUpRight className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent

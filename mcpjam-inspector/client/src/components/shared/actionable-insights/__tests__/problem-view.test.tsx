@@ -216,9 +216,9 @@ describe("the observation view", () => {
     expect(screen.queryByText("Legacy flat finding")).toBeNull();
     expect(screen.queryByText(/Open the exemplar sessions/)).toBeNull();
     const lead = screen.getByTestId("problem-lead");
-    expect(within(lead).getByText("Experiment to try")).toBeVisible();
+    expect(within(lead).getByText("Experiment to try:")).toBeVisible();
     expect(
-      within(lead).getByText("It is the surface both iterations misread."),
+      within(lead).getByText("Success check:"),
     ).toBeVisible();
     expect(
       within(lead).getByText(
@@ -238,7 +238,7 @@ describe("the observation view", () => {
   it("an evaluator error is an investigation that claims nothing about the server", () => {
     renderPanel({ problemsView: view({ problems: [evaluatorProblem] }) });
     const lead = screen.getByTestId("problem-lead");
-    expect(within(lead).getByText("Investigate next")).toBeVisible();
+    expect(within(lead).getByText("Investigate next:")).toBeVisible();
     expect(within(lead).getByText("Cause not established.")).toBeVisible();
     const prompt = buildOptionPrompt(
       evaluatorProblem,
@@ -335,7 +335,7 @@ describe("problem details", () => {
         context={{ rerunLabel: "this eval suite" }}
       />,
     );
-    expect(screen.getByText("Why this option")).toBeVisible();
+    expect(screen.getByText("Why this option:")).toBeVisible();
     expect(
       screen.getByText("It is the surface both iterations misread."),
     ).toBeVisible();
@@ -347,18 +347,18 @@ describe("problem details", () => {
         name: /Alternative: experiment to try · Add a tool/,
       }),
     );
-    expect(screen.getByText("Why consider this option")).toBeVisible();
+    expect(screen.getByText("Why consider this option:")).toBeVisible();
     expect(
       screen.queryByText("It is the surface both iterations misread."),
     ).toBeNull();
     expect(
       screen.getByText(
-        "Applies to 2 of 3 affected iterations · server capability · lookup_customer",
+        /2 of 3 affected iterations · server capability · lookup_customer/,
       ),
     ).toBeVisible();
     expect(
-      screen.getByText("Effort: large · Compatibility risk: unknown"),
-    ).toBeVisible();
+      screen.getByText("Effort:").closest("li"),
+    ).toHaveTextContent("Effort: large. Compatibility risk: unknown.");
     await user.click(screen.getByTestId("problem-copy-prompt"));
     await waitFor(() =>
       expect(clipboard.text).toContain("Add a tool that resolves"),
@@ -596,7 +596,7 @@ describe("problem view edge cases", () => {
         context={{ rerunLabel: "this eval suite" }}
       />,
     );
-    expect(screen.getByText("Supports it if")).toBeVisible();
+    expect(screen.getByText("Supports it if:")).toBeVisible();
     expect(screen.getByText("The rerun still passes a name.")).toBeVisible();
   });
 
