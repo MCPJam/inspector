@@ -17,12 +17,14 @@ const {
   validateGuestTokenMock,
   convexQueryMock,
   convexMutationMock,
+  convexActionMock,
   authorizeServerMock,
   executeHostedReadinessRunMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
   convexQueryMock: vi.fn(),
   convexMutationMock: vi.fn(),
+  convexActionMock: vi.fn(),
   authorizeServerMock: vi.fn(),
   executeHostedReadinessRunMock: vi.fn(),
 }));
@@ -32,7 +34,7 @@ vi.mock("../../../services/guest-token.js", () => ({
 }));
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: vi.fn().mockImplementation(function () {
-    return { setAuth: vi.fn(), query: convexQueryMock, mutation: convexMutationMock };
+    return { setAuth: vi.fn(), query: convexQueryMock, mutation: convexMutationMock, action: convexActionMock };
   }),
 }));
 vi.mock("../../../services/readiness/worker.js", () => ({
@@ -124,6 +126,7 @@ describe("v1 reviewer attempts", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    convexActionMock.mockResolvedValue({ handoffUrl: "https://app.test/connect/server/one-use", expiresAt: 100 });
     process.env.CONVEX_URL = "https://convex.example.com";
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
@@ -330,6 +333,27 @@ describe("v1 reviewer attempts", () => {
       expect((await request("GET", ONE)).status).toBe(404);
       queries["directoryReviewerAttempts:getDirectoryReviewerAttempt"] = () => null;
       expect((await request("GET", ONE)).status).toBe(404);
+    });
+  });
+
+  describe("a human sign-in handoff", () => {
+    it("mints the link only after reading the attempt in the requested submission", async () => {
+      const response = await request("POST", `${ONE}/handoff`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ handoffUrl: "https://app.test/connect/server/one-use" });
+      expect(convexActionMock).toHaveBeenCalledWith(expect.anything(), { attemptId: ATTEMPT_ID });
+      expect(nameOf(convexActionMock.mock.calls[0]![0])).toBe("directoryReviewerHandoff:createReviewerHandoff");
+    });
+
+    it("refuses a handoff for an attempt in another submission", async () => {
+      queries["directoryReviewerAttempts:getDirectoryReviewerAttempt"] = () => ({ ...ATTEMPT, submissionId: "other" });
+      expect((await request("POST", `${ONE}/handoff`)).status).toBe(404);
+      expect(convexActionMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses caller-supplied handoff data", async () => {
+      expect((await request("POST", `${ONE}/handoff`, { token: "chosen-token" })).status).toBe(400);
+      expect(convexActionMock).not.toHaveBeenCalled();
     });
   });
 

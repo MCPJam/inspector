@@ -294,7 +294,12 @@ async function joinAndRehearse(
     });
     return undefined;
   }
-  if (!join.attempt || !options.reviewerSignIn) return undefined;
+  if (!join.attempt) return undefined;
+  const { humanSignInCompletedAt, reviewerAccountId } = join.attempt;
+  if (humanSignInCompletedAt && reviewerAccountId) {
+    return { kind: "connected", reviewerAccountId };
+  }
+  if (!options.reviewerSignIn) return undefined;
   return options.reviewerSignIn({
     lease: options.lease,
     attemptId,

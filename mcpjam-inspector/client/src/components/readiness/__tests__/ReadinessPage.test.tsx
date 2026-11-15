@@ -4,6 +4,7 @@
  * flow with MCPJam's results under the answers they read.
  */
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -19,6 +20,14 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
 import { ReadinessPage, ReadinessRoute } from "../ReadinessPage";
+
+function renderRoute(search = "") {
+  return render(
+    <MemoryRouter initialEntries={[`/readiness${search}`]}>
+      <ReadinessRoute />
+    </MemoryRouter>,
+  );
+}
 
 const flag = vi.hoisted(() => ({ value: undefined as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
@@ -216,9 +225,17 @@ describe("ReadinessRoute", () => {
     flag.value = true;
   });
 
+  it("opens the linked submission and selects its server without visiting the picker", async () => {
+    context.selectedServerEntry = null;
+    renderRoute("?submission=sub_1&project=proj_1");
+    await waitFor(() => expect(api.getDirectorySubmission).toHaveBeenCalledWith(expect.objectContaining({ submissionId: "sub_1", projectId: "proj_1" })));
+    await waitFor(() => expect(context.setSelectedServer).toHaveBeenCalledWith("Sample server"));
+    expect(await screen.findByRole("heading", { level: 1, name: "Connection" })).toBeVisible();
+  });
+
   it("sends a user without the flag back to Servers", () => {
     flag.value = false;
-    render(<ReadinessRoute />);
+    renderRoute();
     expect(screen.getByTestId("navigate")).toHaveAttribute(
       "data-to",
       "/servers",
@@ -227,7 +244,7 @@ describe("ReadinessRoute", () => {
 
   it("renders nothing while the flag is still loading", () => {
     flag.value = undefined;
-    const { container } = render(<ReadinessRoute />);
+    const { container } = renderRoute();
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByTestId("navigate")).toBeNull();
   });
@@ -236,7 +253,7 @@ describe("ReadinessRoute", () => {
     api.listServerSubmissions.mockResolvedValue([
       { ...submission(), id: "sub_0", updatedAt: Date.now() },
     ]);
-    render(<ReadinessRoute />);
+    renderRoute();
     expect(screen.getByText("Rehearsal")).toBeVisible();
     expect(
       screen.getByText(
@@ -378,10 +395,9 @@ describe("ReadinessRoute", () => {
 
     /** Opens the rehearsal and presses the run button once it reads `label`. */
     async function pressRun(label: string) {
-      const page = render(<ReadinessRoute />);
-      await userEvent.click(
-        screen.getByRole("button", { name: /MCP connector/ }),
-      );
+      const page = renderRoute();
+      const start = screen.queryByRole("button", { name: /MCP connector/ });
+      if (start) await userEvent.click(start);
       const button = await screen.findByRole("button", { name: label });
       await waitFor(() => expect(button).toBeEnabled());
       await userEvent.click(button);
@@ -542,7 +558,7 @@ describe("ReadinessRoute", () => {
 
     it("sends no revision and asks nothing when no plan is saved", async () => {
       plans.getTestPlan.mockResolvedValue(null);
-      render(<ReadinessRoute />);
+      renderRoute();
       await userEvent.click(
         screen.getByRole("button", { name: /MCP connector/ }),
       );
@@ -556,7 +572,7 @@ describe("ReadinessRoute", () => {
   });
 
   it("shows the test plan on Test & launch, marked as MCPJam's", async () => {
-    render(<ReadinessRoute />);
+    renderRoute();
     await userEvent.click(
       screen.getByRole("button", { name: /MCP connector/ }),
     );
@@ -578,14 +594,14 @@ describe("ReadinessRoute", () => {
 
   it("asks for a saved server first", () => {
     context.selectedServerEntry = null;
-    render(<ReadinessRoute />);
+    renderRoute();
     expect(
       screen.getByText("Choose a saved server to rehearse its submission."),
     ).toBeVisible();
   });
 
   it("starts a connector rehearsal and renders the Listing step from the flow", async () => {
-    render(<ReadinessRoute />);
+    renderRoute();
     await userEvent.click(
       screen.getByRole("button", { name: /MCP connector/ }),
     );
@@ -631,7 +647,7 @@ describe("ReadinessRoute", () => {
     ]);
     api.createDirectorySubmission.mockResolvedValue(useCases);
     api.getDirectorySubmission.mockResolvedValue(useCases);
-    render(<ReadinessRoute />);
+    renderRoute();
     await userEvent.click(
       screen.getByRole("button", { name: /MCP connector/ }),
     );
@@ -691,7 +707,7 @@ describe("ReadinessRoute", () => {
   });
 
   it("ends on the portal's review page, with copy where the portal submits", async () => {
-    render(<ReadinessRoute />);
+    renderRoute();
     await userEvent.click(
       screen.getByRole("button", { name: /MCP connector/ }),
     );
@@ -756,7 +772,7 @@ describe("ReadinessRoute", () => {
     api.listServerSubmissions.mockResolvedValue([
       { ...submission(), id: "sub_0", updatedAt: Date.now() },
     ]);
-    render(<ReadinessRoute />);
+    renderRoute();
     expect(
       await screen.findByText("Saved rehearsals for this server"),
     ).toBeVisible();
@@ -785,7 +801,7 @@ describe("ReadinessRoute", () => {
     api.getDirectorySubmission.mockResolvedValue(pluginSubmission());
     // Untitled, so the list names it by its flow.
     api.listServerSubmissions.mockResolvedValue([pluginSubmission()]);
-    render(<ReadinessRoute />);
+    renderRoute();
     await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
     const saved = await screen.findByText("ChatGPT plugin");
     const row = saved.closest("li");
