@@ -23,7 +23,7 @@
  * rebuild the computer template from that commit.
  */
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
+import { HARNESS_PINNED_VERSIONS } from "../../../shared/harness-model-support.js";
 
 /** The pinned Cursor CLI build (what `agent --version` prints). */
 export const CURSOR_CLI_VERSION: string = HARNESS_PINNED_VERSIONS.cursor;

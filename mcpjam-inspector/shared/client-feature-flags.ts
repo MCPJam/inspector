@@ -8,7 +8,6 @@
  * the two match. (MJ-015)
  */
 export const CLIENT_FEATURE_FLAG_KEYS = [
-  "billing-entitlements-ui",
   "browser-workspace-enabled",
   "claude-code-host-enabled",
   "client-agent-loop",
@@ -34,6 +33,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "local-codex-enabled",
   "local-computer-enabled",
   "local-copilot-cli-enabled",
+  "local-cursor-enabled",
   "local-harness-enabled",
   "mcp-events-enabled",
   "mcp-tasks",

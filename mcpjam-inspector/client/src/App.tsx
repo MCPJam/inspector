@@ -1641,7 +1641,6 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
 
 function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
   const {
-    billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
@@ -1655,7 +1654,7 @@ function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
   const pathnameMode = useEvalsMode();
   const activeMode = mode ?? pathnameMode;
 
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+  if (activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
@@ -1689,7 +1688,6 @@ export function EvaluateRoute() {
 
 function EvaluateRouteContent() {
   const {
-    billingUiEnabled,
     activeTabBillingLocked,
     activeTabBillingFeature,
     convexProjectId,
@@ -1697,7 +1695,7 @@ function EvaluateRouteContent() {
     handleContinueEvalInChat,
     handleConnect,
   } = useAppRouteContext();
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+  if (activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
@@ -3173,9 +3171,6 @@ export default function App() {
   const [pendingCheckoutIntent, setPendingCheckoutIntent] =
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const posthog = usePostHog();
-  const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui",
-  );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
@@ -5059,14 +5054,12 @@ export default function App() {
       permissionKey: telemetryPrivacy.scope,
     },
   );
-  const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
     billingProjectId && projectPremiumness
       ? projectPremiumness
       : organizationPremiumness;
   const activeTabGate = getPremiumnessGateForTab(activeTab);
   const activeTabBillingLocked = isPremiumnessGateDeniedForShell({
-    billingUiEnabled,
     projectPremiumness,
     organizationPremiumness,
     hasProject: !!billingProjectId,
@@ -5078,7 +5071,6 @@ export default function App() {
     activeTabGate,
   );
   const projectCreationGate = resolveBillingGateState({
-    billingUiEnabled,
     organizationId: billingOrganizationId,
     billingStatus: shellBillingStatus,
     premiumness: organizationPremiumness,
@@ -5092,7 +5084,7 @@ export default function App() {
     return denied;
   }, [navPremiumness]);
   const billingGateEnforcementActive =
-    billingUiEnabled && isBillingEnforcementActive(navPremiumness);
+    isBillingEnforcementActive(navPremiumness);
   const isGuestProjectActor = currentUser?.isAnonymous === true;
   const guestProjectLimitReached =
     isGuestProjectActor && Object.keys(projects).length >= 1;
@@ -5129,12 +5121,10 @@ export default function App() {
   const trialModalDismissed =
     trialModalDismissedForOrg === billingOrganizationId;
   const showTrialDecisionModal =
-    billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
     shellBillingStatus?.isOwner === true &&
     !trialModalDismissed;
   const showTrialDecisionNotice =
-    billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
     shellBillingStatus?.isOwner === false;
 
@@ -5815,11 +5805,6 @@ export default function App() {
       return;
     }
 
-    if (billingEntitlementsUiEnabled === false) {
-      toast.error("Checkout isn't available in this environment.");
-      consumeCheckoutIntent();
-      return;
-    }
     if (!workOsUser) {
       if (isWorkOsLoading || billingSignInStartedRef.current) return;
       billingSignInStartedRef.current = true;
@@ -5868,7 +5853,6 @@ export default function App() {
     activeProject?.organizationId,
     billingLocation.pathname,
     billingLocation.search,
-    billingEntitlementsUiEnabled,
     consumeCheckoutIntent,
     currentUser?.isAnonymous,
     isAuthLoading,
@@ -6318,7 +6302,6 @@ export default function App() {
   const checkoutIntentForBilling =
     useMemo((): CheckoutIntentWithOrganization | null => {
       if (
-        !billingUiEnabled ||
         activeTab !== "organizations" ||
         !routeOrganizationId ||
         routeOrganizationSection !== "plans" ||
@@ -6332,7 +6315,6 @@ export default function App() {
         organizationId: routeOrganizationId,
       };
     }, [
-      billingUiEnabled,
       activeTab,
       routeOrganizationId,
       routeOrganizationSection,
@@ -6447,7 +6429,6 @@ export default function App() {
   const shouldShowBillingHandoffOverlay =
     !isHostedChatRoute &&
     !isOAuthCallback &&
-    billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
 
   if (
@@ -6646,7 +6627,6 @@ export default function App() {
     appState,
     billingOrganizationId,
     billingProjectId,
-    billingUiEnabled,
     activeHost,
     activeHostId,
     checkoutIntentForBilling,
@@ -6760,7 +6740,6 @@ export default function App() {
           activeOrganizationName={activeOrganizationName}
           onSwitchOrganization={handleSidebarSwitchOrganization}
           onProjectShared={handleProjectShared}
-          billingUiEnabled={billingUiEnabled}
           billingGateDenied={sidebarGateDenied}
           billingGateEnforcementActive={billingGateEnforcementActive}
           isCreateProjectDisabled={isCreateProjectDisabled}

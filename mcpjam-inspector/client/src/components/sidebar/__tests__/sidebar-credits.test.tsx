@@ -114,7 +114,6 @@ function renderCredits(
   return render(
     <SidebarCredits
       organizationId="org_a"
-      billingUiEnabled
       onExplorePlans={vi.fn()}
       {...overrides}
     />,
