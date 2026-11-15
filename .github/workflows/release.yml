@@ -1,12 +1,27 @@
 name: Release
 
 # Ships the versions `main` already carries. They arrive through the version PR
-# (prepare-release.yml), and release-trigger.yml dispatches this once `main` is
-# green with them on it. This run publishes whatever public package version npm
-# does not have yet, deploys, tags the commit and publishes the GitHub release.
-# It never writes to `main`, whose rulesets take changes only through a
-# reviewed pull request. Dispatching it by hand (Soundcheck's "Run release now")
-# is the retry path.
+# (prepare-release.yml), and release-trigger.yml dispatches this once staging
+# is green with them on it. Dispatching it by hand (Soundcheck's "Run release
+# now") is the retry path. It never writes to `main`, whose rulesets take
+# changes only through a reviewed pull request.
+#
+# How a run goes, in order. Every job after step 1 needs `preflight`, so a
+# failure in step 1 stops the whole release before anything ships.
+#
+#   1. Verify    `tests` + `build-and-test` run the full test suite and build on
+#                this exact commit. `preflight` then checks staging is green and
+#                works out what to publish.
+#   2. Build     npm packages, Docker image, desktop apps, and the local harness
+#                conformance evidence the release contract needs.
+#   3. Publish   npm (`publish-packages`), Docker (`docker-publish`), the evals
+#                GitHub Action (`publish-evals-action`).
+#   4. Deploy    only what the version PR ticked: backend prod, webapp, then the
+#                Slack app and hosted template that depend on them.
+#   5. Finish    `finalize` tags the commit and publishes the GitHub release;
+#                `announce-start` / `announce-finish` post to Slack.
+#
+# `skip_verify` skips step 1's tests and the staging check, for an urgent fix.
 run-name: ${{ inputs.versions != '' && format('Release {0}', inputs.versions) || 'Release' }}
 
 on:
@@ -23,7 +38,7 @@ on:
         default: false
         type: boolean
       skip_verify:
-        description: "Skip the verification gates: green CI (Tests + Build and Test) and a green staging deploy"
+        description: "Urgent fix only: skip the full test run and the green-staging check"
         required: false
         default: false
         type: boolean
@@ -80,13 +95,39 @@ permissions:
   attestations: read
 
 jobs:
+  # Step 1: the full suite on the commit being shipped. Each PR is tested on its
+  # own and nothing tests `main` after a merge, so a break that only shows when
+  # two PRs meet is caught here, before anything publishes.
+  # Read-only token: these jobs run the repo's tests, not release steps. Only
+  # the secrets the suites use are passed, never the release's own.
+  tests:
+    if: ${{ !fromJSON(inputs.skip_verify) && (inputs.trigger_sha == '' || inputs.trigger_sha == github.sha) }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+    secrets:
+      BACKEND_PREVIEW_DISPATCH_TOKEN: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+      E2E_GUEST_SESSION_SHARED_SECRET: ${{ secrets.E2E_GUEST_SESSION_SHARED_SECRET }}
+
+  build-and-test:
+    if: ${{ !fromJSON(inputs.skip_verify) && (inputs.trigger_sha == '' || inputs.trigger_sha == github.sha) }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint.yml
+
   preflight:
+    needs: [tests, build-and-test]
     # A trigger dispatch names the commit it found green, but a dispatch can
     # only target `main`, so a push landing in between would run this on a
     # commit nobody checked. Stand down instead: every job below skips, the
     # run ends green without publishing, and the newer commit's own checks
-    # trigger the release again.
-    if: inputs.trigger_sha == '' || inputs.trigger_sha == github.sha
+    # trigger the release again. `!cancelled()` because `tests` and
+    # `build-and-test` are skipped on purpose under skip_verify.
+    if: >-
+      !cancelled() &&
+      (inputs.trigger_sha == '' || inputs.trigger_sha == github.sha) &&
+      (fromJSON(inputs.skip_verify) ||
+       (needs.tests.result == 'success' && needs.build-and-test.result == 'success'))
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     outputs:
       publish_any: ${{ steps.plan.outputs.publish_any }}
@@ -150,72 +191,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      # This used to be `npm run verify` (typecheck && test && build:inspector),
-      # a serial ~5-8 min re-run of work `test.yml` and `lint.yml` already did
-      # on this exact commit when it landed on main — and it built the SDK three
-      # times over. Gating on those workflows' results instead takes seconds and
-      # covers strictly more: `lint.yml` runs typecheck, typecheck:client,
-      # build:inspector and a production boot; `test.yml` runs the suites.
-      # BOTH are required — neither alone covers what `verify` did.
-      - name: Require green CI for candidate SHA
-        if: ${{ !fromJSON(inputs.skip_verify) }}
-        uses: actions/github-script@v9
-        with:
-          script: |
-            // Fetch without branch/status filters — GitHub's search index can
-            // lag minutes behind, causing false negatives on recent runs.
-            // JS-side filtering on head_sha + conclusion is authoritative.
-            //
-            // Paged with an early exit rather than github.paginate(): that
-            // helper walks EVERY historical run before filtering, which cost
-            // ~67s in this job and grows with repo age. Runs come back
-            // newest-first, so a match is nearly always on page 1; the page cap
-            // bounds the miss case at roughly a month of main pushes.
-            const findGreenRun = async (workflowId) => {
-              const iterator = github.paginate.iterator(
-                github.rest.actions.listWorkflowRuns,
-                {
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  workflow_id: workflowId,
-                  per_page: 100,
-                }
-              );
-              let pages = 0;
-              for await (const { data: runs } of iterator) {
-                const match = runs.find(
-                  (run) => run.head_sha === context.sha && run.conclusion === "success"
-                );
-                if (match) return match;
-                if (++pages >= 5) break;
-              }
-              return null;
-            };
-
-            for (const workflowId of ["test.yml", "lint.yml"]) {
-              const run = await findGreenRun(workflowId);
-
-              if (!run) {
-                core.setFailed(
-                  `No successful ${workflowId} run found for ${context.sha}. ` +
-                    `That workflow runs in the merge queue on every commit before it ` +
-                    `lands on main, so this commit either did not come through the ` +
-                    `queue or its run is older than the pages searched here. Re-run ` +
-                    `that queue run for this SHA, or release a newer HEAD.`
-                );
-                return;
-              }
-
-              core.info(`Found successful ${workflowId} run ${run.id} for ${context.sha}.`);
-            }
-
-      # Behind `skip_verify` alongside the CI gate above: the two answer the
-      # same question ("has this SHA been exercised before it ships"), so one
-      # bypassable and one not meant an urgent release had no way through
-      # without editing this file. Skipping it also skips what
-      # `deploy-webapp`'s `require_staging_green: false` relies on, so a
-      # skip_verify release that also deploys the webapp ships a SHA no staging
-      # run has smoked.
+      # Behind `skip_verify`, like the `tests` and `build-and-test` jobs: all
+      # three answer "has this SHA been exercised before it ships". Skipping it
+      # also skips what `deploy-webapp`'s `require_staging_green: false` relies
+      # on, so a skip_verify release that also deploys the webapp ships a SHA no
+      # staging run has smoked.
       - name: Require green staging smoke for candidate SHA
         if: ${{ !fromJSON(inputs.skip_verify) }}
         uses: actions/github-script@v9
@@ -227,7 +207,8 @@ jobs:
             // Fetch without branch/status filters — GitHub's search index
             // can lag minutes behind, causing false negatives on recent runs.
             // JS-side filtering on head_sha + conclusion is authoritative.
-            // Paged with an early exit (see the CI gate above for why).
+            // Paged with an early exit rather than github.paginate(), which walks
+            // every historical run before filtering. Runs come back newest-first.
             const iterator = github.paginate.iterator(
               github.rest.actions.listWorkflowRuns,
               { owner, repo, workflow_id: workflowId, per_page: 100 }

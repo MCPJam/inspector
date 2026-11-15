@@ -5,13 +5,13 @@
  * Inputs, in priority order (see lib/release-state.ts for the stages):
  *   1. Is a release.yml run already in flight? → In flight.
  *   2. Does main carry versions npm does not have? The version PR merged and
- *      Release is waiting for a green main, or its automatic run failed.
+ *      Release is waiting for green staging, or its automatic run failed.
  *   3. Is the version PR open? → merge it.
  *   4. Are there pending changesets? → Go: "Start release" opens the PR.
  *
- * The CI and staging gates only matter in (2): release-trigger.yml starts
- * Release at the first commit where test.yml, lint.yml and deploy-staging.yml
- * all passed, so they say how long the wait is, not whether to start.
+ * The staging gate only matters in (2): release-trigger.yml starts Release at
+ * the first commit where deploy-staging.yml passed, so it says how long the
+ * wait is, not whether to start. Release runs the full tests itself.
  *
  * This component does its own fetches rather than reading from the readiness
  * tile, so the verdict renders even if the readiness tile is still streaming.
@@ -164,30 +164,21 @@ export async function ReleaseVerdict() {
       );
     }
 
-    const [stagingRun, testRun, lintRun] = await Promise.all(
-      ["deploy-staging.yml", "test.yml", "lint.yml"].map((workflow) =>
-        findSuccessfulRunForSha(
-          INSPECTOR.owner,
-          INSPECTOR.repo,
-          workflow,
-          "main",
-          headSha
-        ).catch(() => null)
-      )
-    );
-    const waiting = [
-      testRun ? null : "test.yml",
-      lintRun ? null : "lint.yml",
-      stagingRun ? null : "deploy-staging.yml"
-    ].filter((name): name is string => name !== null);
+    const stagingRun = await findSuccessfulRunForSha(
+      INSPECTOR.owner,
+      INSPECTOR.repo,
+      "deploy-staging.yml",
+      "main",
+      headSha
+    ).catch(() => null);
     return (
       <Verdict
         tone="running"
-        headline={`${label} is merged and waiting for a green main.`}
+        headline={`${label} is merged and waiting for staging.`}
         detail={
-          waiting.length > 0
-            ? `Release starts by itself at the first commit where test.yml, lint.yml and deploy-staging.yml all pass. ${shortSha(headSha)} is waiting on ${waiting.join(", ")}.`
-            : `Everything is green on ${shortSha(headSha)}, so Release should start within a minute.`
+          stagingRun
+            ? `Staging is green on ${shortSha(headSha)}, so Release should start within a minute. It runs the full tests before publishing.`
+            : `Release starts by itself once staging deploys and passes its smoke test on the latest commit (now ${shortSha(headSha)}). It then runs the full tests before publishing.`
         }
       />
     );
