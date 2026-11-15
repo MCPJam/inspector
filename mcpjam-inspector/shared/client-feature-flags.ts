@@ -29,7 +29,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "hosted-browser-enabled",
   "integrations-tab",
   "learn-more-enabled",
-  "local-browser-enabled",
   "local-codex-enabled",
   "local-computer-enabled",
   "local-copilot-cli-enabled",
@@ -38,10 +37,8 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "mcp-events-enabled",
   "mcp-tasks",
   "mcpjam-compatibility",
-  "mcpjam-conformance",
   "mcpjam-directory-readiness",
   "mcpjam-learning",
-  "multi-account-connections-enabled",
   "org-model-gateways",
   "platform-post-launch",
   "plugin-extensions-enabled",
@@ -51,7 +48,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "registry-enabled",
   "run-disclosure-enabled",
   "sandbox-images-enabled",
-  "sandboxes-enabled",
   "scheduled-evals-enabled",
   "shared-slack-channel-enabled",
   "skills-enabled",
@@ -61,7 +57,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "trace-destinations",
   "unified-sessions-enabled",
   "unified-share-evals",
-  "xaa",
 ] as const;
 
 export type ClientFeatureFlagKey = (typeof CLIENT_FEATURE_FLAG_KEYS)[number];

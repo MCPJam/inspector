@@ -104,7 +104,6 @@ function flagPersonProperties(c: Context): Record<string, string> {
     : undefined;
   return {
     deployment: HOSTED_MODE ? "hosted" : "self_hosted",
-    ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
     ...(platform ? { platform } : {}),
   };
 }

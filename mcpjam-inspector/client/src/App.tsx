@@ -370,7 +370,6 @@ import {
   useHostList,
   useHostMutations,
 } from "@/hooks/useClients";
-import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
 import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePreview";
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
 import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
@@ -2018,10 +2017,9 @@ function useGatedFeatureGate(feature: GatedFeatureId): ReactElement | null {
 }
 
 // The User Testing surface: `/user-testing` (the project's scenarios) and
-// `/user-testing/:scenarioId` (one scenario). Same billing feature,
-// `sandboxes-enabled` flag and gated-preview decision as Swarms below. The
-// flag decides whether the surface exists for a visitor; identity then
-// decides whether they get the preview or the real tab.
+// `/user-testing/:scenarioId` (one scenario). Same billing feature and
+// gated-preview decision as Swarms below: identity decides whether a visitor
+// gets the preview or the real tab.
 export function ScenariosRoute() {
   // NO `PricingFeatureSignInGate` HERE, deliberately, and it is not an
   // oversight from the merge that brought it in.
@@ -2044,27 +2042,10 @@ export function ScenariosRoute() {
 
 function ScenariosRouteContent() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
-  // The sidebar filters this item on the flag, but a filtered nav item is not
-  // a gate — `/user-testing` is a plain route, so without this a direct URL
-  // mounts the whole surface for users the flag excludes.
-  const sandboxesEnabled = useSandboxesEnabledState();
-  // Hooks first: every gate below early-returns, and a hook after one of them
-  // would crash React the moment a gate settles between renders.
+  // Hooks first: the gate below early-returns, and a hook after it would
+  // crash React the moment the gate settles between renders.
   const gate = useGatedFeatureGate("user-testing");
   const params = useParams<{ scenarioId?: string }>();
-
-  // The flag is the rollout control and runs before the preview: a visitor the
-  // flag excludes gets no surface at all, not a sign-up pitch for one.
-  //
-  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
-  // `undefined`, and bouncing then would strand a flagged-in user who cold-
-  // loads the URL. (Same tradeoff SwarmsRoute makes.)
-  if (sandboxesEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
-  if (sandboxesEnabled === undefined) {
-    return <LoadingScreen />;
-  }
 
   if (gate) {
     return gate;
@@ -2162,10 +2143,6 @@ function SwarmsRouteContent() {
   // via userId. Do NOT treat "no WorkOS email" as "not a member".
   const { user, isLoading: isWorkOsLoading } = useInspectorAuth();
   const isWorkOsSignedIn = !!user;
-  // The sidebar filters the Swarms nav item on this flag, but a filtered nav
-  // item is not a gate — `/swarms` is a plain route, so a direct URL mounted
-  // the whole surface for users the flag excludes.
-  const sandboxesEnabled = useSandboxesEnabledState();
   // The backend made Swarm member-only vs project *invitee guests* (role
   // `guest`): personas/journeys/runs reject that tier. Mirror that for
   // WorkOS-signed-in viewers by resolving role from the members list.
@@ -2197,15 +2174,6 @@ function SwarmsRouteContent() {
   // crash React the moment a gate settles.
   const gate = useGatedFeatureGate("swarms");
   const params = useParams<{ swarmId?: string }>();
-
-  // Flag before preview, for the reason given on ScenariosRoute. Only redirect
-  // on an explicit `false`; `undefined` means PostHog is still hydrating.
-  if (sandboxesEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
-  }
-  if (sandboxesEnabled === undefined) {
-    return <LoadingScreen />;
-  }
 
   // Guests stop here. `null` means the viewer is a signed-in member.
   //
@@ -2732,7 +2700,6 @@ export function OAuthFlowRoute() {
 
 export function XAAFlowRoute() {
   const {
-    xaaEnabled,
     appState,
     displayServerConfigs,
     areServersHydrated,
@@ -2744,7 +2711,6 @@ export function XAAFlowRoute() {
     xaaServerModalNonce,
     xaaDebuggerHasHeaderServers,
   } = useAppRouteContext();
-  if (xaaEnabled !== true) return null;
 
   return (
     <ErrorBoundary
@@ -3173,9 +3139,7 @@ export default function App() {
   const posthog = usePostHog();
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const xaaEnabled = useFeatureFlagEnabled("xaa");
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -3183,7 +3147,7 @@ export default function App() {
   const headerHiddenSurface: HeaderSurface | null =
     activeTab === "oauth-flow"
       ? "oauth"
-      : activeTab === "xaa-flow" && xaaEnabled === true
+      : activeTab === "xaa-flow"
         ? "xaa"
         : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
@@ -5897,35 +5861,20 @@ export default function App() {
     } else if (activeTab === "client-config") {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
-      activeTab === "conformance" &&
-      !isConformanceSharedRoute &&
-      conformanceEnabled === false
-    ) {
-      navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (
       activeTab === "compatibility" &&
       compatibilityEnabled === false
     ) {
       // Only bounce on an explicit `false`. While PostHog hydrates the flag is
       // `undefined`; redirecting then would strand a flagged-in user who
       // cold-loads /compatibility (the redirect fires before the flag
-      // resolves) — the "refresh sends me home" bug. Mirrors the xaa branch.
-      navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "xaa-flow" && xaaEnabled === false) {
-      // Only bounce on an explicit `false`. While PostHog hydrates the flag is
-      // `undefined`; redirecting then would strand a flagged-in user who
-      // cold-loads /xaa-flow (the redirect fires before the flag resolves) —
-      // which is exactly the "refresh sends me home" bug. Mirrors ComputerRoute.
+      // resolves) — the "refresh sends me home" bug.
       navigateToTarget(defaultHubRoute, { replace: true });
     }
   }, [
-    conformanceEnabled,
-    isConformanceSharedRoute,
     compatibilityEnabled,
     defaultHubRoute,
     registryEnabled,
     learningEnabled,
-    xaaEnabled,
     isAuthenticated,
     isAuthLoading,
     activeTab,
@@ -6418,14 +6367,6 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  if (
-    activeTab === "conformance" &&
-    !isConformanceSharedRoute &&
-    conformanceEnabled === undefined
-  ) {
-    return <LoadingScreen />;
-  }
-
   const shouldShowBillingHandoffOverlay =
     !isHostedChatRoute &&
     !isOAuthCallback &&
@@ -6487,7 +6428,7 @@ export default function App() {
     activeTab === "events" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
-    (activeTab === "xaa-flow" && xaaEnabled === true) ||
+    activeTab === "xaa-flow" ||
     activeTab === "chat";
 
   const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
@@ -6516,7 +6457,7 @@ export default function App() {
           // which strands the user on an error page when the client isn't
           // registered). Save without connecting, then select it as the target.
           onConnect:
-            activeTab === "xaa-flow" && xaaEnabled === true
+            activeTab === "xaa-flow"
               ? async (formData) => {
                   await saveServerConfigWithoutConnecting(formData);
                   const name = formData.name?.trim();
@@ -6530,7 +6471,7 @@ export default function App() {
           // the active debugger's modal so it matches the in-canvas "Configure"
           // button; other tabs fall back to the generic modal (prop omitted).
           onAddServerRequested:
-            activeTab === "xaa-flow" && xaaEnabled === true
+            activeTab === "xaa-flow"
               ? () => setXaaServerModalNonce((n) => n + 1)
               : activeTab === "oauth-flow"
                 ? () => setOauthServerModalNonce((n) => n + 1)
@@ -6539,9 +6480,8 @@ export default function App() {
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true),
-          includeXaaServers: activeTab === "xaa-flow" && xaaEnabled === true,
+            activeTab === "oauth-flow" || activeTab === "xaa-flow",
+          includeXaaServers: activeTab === "xaa-flow",
           // Only the OAuth / XAA debugger headers get the "hide from this tab"
           // x button; other surfaces omit onHideServer so no x renders.
           hiddenServers: hiddenHeaderServers,
@@ -6553,8 +6493,7 @@ export default function App() {
           // target and it must not change without an explicit click. Other
           // tabs keep full auto-select (stale selections get replaced).
           autoSelectFilteredServer:
-            activeTab === "oauth-flow" ||
-            (activeTab === "xaa-flow" && xaaEnabled === true)
+            activeTab === "oauth-flow" || activeTab === "xaa-flow"
               ? "when-empty"
               : true,
           showOnlyServersWithViews: false,
@@ -6693,7 +6632,6 @@ export default function App() {
     toggleServerSelection,
     upgradePlanForActiveTab,
     workOsUser,
-    xaaEnabled,
     oauthDebuggerHasHeaderServers,
     xaaDebuggerHasHeaderServers,
     xaaServerModalNonce,

@@ -129,14 +129,11 @@ interface NavSection {
  */
 export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "mcpjam-learning",
-  "sandboxes-enabled",
   "registry-enabled",
-  "mcpjam-conformance",
   "mcpjam-compatibility",
   "mcpjam-directory-readiness",
   "hosts-enabled",
   "home-page-enabled",
-  "xaa",
   "project-environments-enabled",
   "unified-sessions-enabled",
   "evaluate-enabled",
@@ -287,10 +284,9 @@ export const navigationSections: NavSection[] = [
         icon: FlaskConical,
         billingFeature: "evals",
       },
-      // Both are behind `sandboxes-enabled`, which is the rollout control.
-      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
-      // signed-out visitor sees the items too, and the route decides what they
-      // get — a signed-out visitor gets the preview, a member the real tab.
+      // Neither is combined with sign-in (REEV-6): a signed-out visitor sees
+      // both items, and the route decides what they get — a signed-out
+      // visitor gets the preview, a member the real tab.
       //
       // Swarms before User Testing (Vig): less set-up is required to get value
       // out of it, so it is the better first stop.
@@ -298,14 +294,12 @@ export const navigationSections: NavSection[] = [
         title: "Swarms",
         url: "/swarms",
         icon: Network,
-        featureFlag: "sandboxes-enabled",
         billingFeature: "scenarios",
       },
       {
         title: "User Testing",
         url: "/user-testing",
         icon: Users,
-        featureFlag: "sandboxes-enabled",
         billingFeature: "scenarios",
       },
       {
@@ -333,23 +327,18 @@ export const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
-        featureFlag: "xaa",
       },
       {
         title: "Conformance",
         url: "/conformance",
         icon: MCPIcon,
-        // MCPJam-internal flag: rollout is restricted to the MCPJam team in
-        // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
-        // this is an internal-only flag (same convention as `mcpjam-learning`).
-        featureFlag: "mcpjam-conformance",
         badge: "New",
       },
       {
         title: "Compatibility",
         url: "/compatibility",
         icon: Boxes,
-        // MCPJam-internal flag (same convention as `mcpjam-conformance`).
+        // MCPJam-internal flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-compatibility",
       },
       {
@@ -544,11 +533,8 @@ export function MCPSidebar({
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
-  const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
-  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const readinessEnabled = useFeatureFlagEnabled("mcpjam-directory-readiness");
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
@@ -654,11 +640,7 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      // Flag only, not `&& isAuthenticated`: a signed-out visitor is meant to
-      // reach the REEV-6 preview once the flag is on.
-      "sandboxes-enabled": sandboxesEnabled === true,
       "registry-enabled": registryEnabled === true,
-      "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
       // Submissions belong to a project, like the rows below.
       "mcpjam-directory-readiness": readinessEnabled === true && isAuthenticated,
@@ -666,7 +648,6 @@ export function MCPSidebar({
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
-      xaa: xaaEnabled === true,
       "project-environments-enabled": projectEnvironmentsEnabled,
       // Project-scoped like the two above: the feed needs a project, and
       // `SessionsRoute` renders a "needs a project" empty state without one.
@@ -682,12 +663,9 @@ export function MCPSidebar({
     }),
     [
       learningEnabled,
-      sandboxesEnabled,
       registryEnabled,
-      conformanceEnabled,
       compatibilityEnabled,
       readinessEnabled,
-      xaaEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
       evaluateEnabled,
