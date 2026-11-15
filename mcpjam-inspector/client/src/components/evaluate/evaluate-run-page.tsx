@@ -357,6 +357,9 @@ export type PairingDecision = {
  * invents Hold/Ship while the run is still in flight.
  */
 export function pairingDecision(run: EvalSuiteRunListItem): PairingDecision {
+  // Refused over credits before it started: a hold would blame the server.
+  if (run.stopReason === "platform_fee_required")
+    return { word: "Not started", tone: "pending" };
   const outcome = IN_FLIGHT_STATUSES.has(run.status)
     ? run.status
     : run.result && run.result !== "pending"

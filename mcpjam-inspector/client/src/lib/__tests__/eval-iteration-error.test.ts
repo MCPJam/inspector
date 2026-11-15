@@ -195,3 +195,61 @@ describe("describeEvalIterationError — organization AI-key refusals", () => {
     ).toBe("eval/setup_failed");
   });
 });
+
+describe("describeEvalIterationError — platform fee refusals", () => {
+  it.each([
+    {
+      status: "setup_failed",
+      error: "Failed to prepare eval test attempts.",
+      errorDetails:
+        'Uncaught ConvexError: {"code":"PLATFORM_FEE_REQUIRED","message":"This work requires platform credits."}',
+    },
+    {
+      status: "failed",
+      error:
+        "This work requires platform credits. Add credits or contact your organization administrator.",
+    },
+    {
+      status: "failed",
+      infraError: {
+        class: "account_limit",
+        layer: "platform",
+        retryable: false,
+        code: "PLATFORM_FEE_REQUIRED",
+      },
+    },
+  ] as const)(
+    "names credits, not setup, and never shows the code (%o)",
+    (row) => {
+      const error = describeEvalIterationError({ result: "failed", ...row })!;
+      expect(error).toMatchObject({
+        slug: "eval/platform_fee_required",
+        severity: "warning",
+        oneLine: "Your organization's credits can't pay for this run.",
+      });
+      const shown = JSON.stringify(error);
+      expect(shown).not.toContain("PLATFORM_FEE_REQUIRED");
+      expect(shown).not.toMatch(/server|setup|provider key/i);
+    },
+  );
+
+  it("leaves the iteration cap to its own refusal", () => {
+    expect(
+      describeEvalIterationError({
+        status: "failed",
+        result: "failed",
+        errorDetails: '{"code":"billing_limit_reached"}',
+      })?.slug,
+    ).not.toBe("eval/platform_fee_required");
+  });
+
+  it("does not read a completed run's own text as a fee refusal", () => {
+    expect(
+      describeEvalIterationError({
+        status: "completed",
+        result: "failed",
+        error: "The tool said PLATFORM_FEE_REQUIRED",
+      })?.slug,
+    ).not.toBe("eval/platform_fee_required");
+  });
+});

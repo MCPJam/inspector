@@ -5,6 +5,8 @@ import {
   type AiLaunchProblem,
 } from "@/lib/ai-launch-problems";
 import { AiLaunchProblemsList } from "@/components/shared/ai-launch-problems-list";
+import { PlatformFeeRefusal } from "@/components/billing/PlatformFeeRefusal";
+import { isPlatformFeeRefusal } from "@/lib/platform-fee-refusal";
 import { Loader2, Play, Settings2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -206,12 +208,14 @@ export function SuiteRunReviewContent({
   // The backend's launch refusal under the org's AI key policy lists every
   // dependency that can't run on the organization's providers.
   const [launchProblems, setLaunchProblems] = useState<AiLaunchProblem[]>([]);
+  const [feeRefused, setFeeRefused] = useState(false);
   const [connecting, setConnecting] = useState(false);
   // A failed start's reason is about that setup; a different one gets a
   // fresh try.
   useEffect(() => {
     setError(null);
     setLaunchProblems([]);
+    setFeeRefused(false);
   }, [iterations, selected, matrix?.signature]);
   const lock = useRef(false);
   const count = Number(iterations);
@@ -293,6 +297,7 @@ export function SuiteRunReviewContent({
     setStarting(true);
     setError(null);
     setLaunchProblems([]);
+    setFeeRefused(false);
     try {
       await onStart(
         matrix
@@ -307,6 +312,10 @@ export function SuiteRunReviewContent({
       if (!isCaseRun) rememberIterations(suite._id, count);
       onClose();
     } catch (failure) {
+      if (isPlatformFeeRefusal(failure)) {
+        setFeeRefused(true);
+        return;
+      }
       // A refusal under the organization's AI key policy shows the backend's
       // full list of problems under one headline. Anything else: a ConvexError
       // keeps its reason in `data`; its message is the raw
@@ -475,7 +484,8 @@ export function SuiteRunReviewContent({
               </span>
             </p>
           </div>
-          {(error || (!starting && disabledReason)) && (
+          {feeRefused && <PlatformFeeRefusal />}
+          {!feeRefused && (error || (!starting && disabledReason)) && (
             <div role="alert" className="text-xs text-destructive">
               <p>{error ?? disabledReason}</p>
               {error ? (

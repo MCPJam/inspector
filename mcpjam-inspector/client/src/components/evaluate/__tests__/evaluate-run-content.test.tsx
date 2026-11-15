@@ -22,6 +22,9 @@ import { EvaluateRunContent } from "../evaluate-run-content";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 import type { UnifiedFindingsSectionProps } from "../unified-findings-section";
 
+vi.mock("@/components/billing/PlatformFeeRefusal", () => ({
+  PlatformFeeRefusal: () => <div>platform-fee-refusal</div>,
+}));
 vi.mock("../../evals/use-selected-run", () => ({
   useSelectedRun: () => ({ run: null, isLoading: false, isUnavailable: false }),
 }));
@@ -249,6 +252,19 @@ afterEach(() => {
 });
 
 describe("EvaluateRunContent", () => {
+  it("shows the billing actions, not a verdict, for a run the fee refused", () => {
+    renderContent({
+      run: {
+        ...RUN,
+        status: "failed",
+        stopReason: "platform_fee_required",
+      } as EvalSuiteRun,
+      iterations: [],
+    });
+    expect(screen.getByText("platform-fee-refusal")).toBeInTheDocument();
+    expect(screen.queryByTestId("unified-findings-section")).toBeNull();
+  });
+
   it("mounts findings by default for the displayed run", () => {
     renderContent();
     expect(screen.getByTestId("unified-findings-section")).toHaveAttribute(

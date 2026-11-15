@@ -1,5 +1,9 @@
 import { ConvexError } from "convex/values";
 import {
+  isPlatformFeeRefusal,
+  platformFeeRefusalSentence,
+} from "@/lib/platform-fee-refusal";
+import {
   convexErrMessage,
   describeConvexFailure,
   formatSupportReference,
@@ -491,6 +495,10 @@ export function getBillingErrorMessage(
   fallback: string,
   canManageBilling = true,
 ): string {
+  // The fee refusal's code rides `details.reason`, which the payload below
+  // never reads, and the backend's sentence does not name auto-reload.
+  if (isPlatformFeeRefusal(error))
+    return platformFeeRefusalSentence(canManageBilling);
   const payload = extractBillingErrorPayload(error);
   if (!payload) {
     // Not a billing rejection — a write-boundary validator, say. Its message

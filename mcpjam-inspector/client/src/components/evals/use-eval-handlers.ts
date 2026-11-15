@@ -4,6 +4,10 @@ import { DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT } from "@mcpjam/sdk/contract";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
 import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
+import {
+  isPlatformFeeRefusal,
+  platformFeeRefusalSentence,
+} from "@/lib/platform-fee-refusal";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -1277,10 +1281,15 @@ export function useEvalHandlers({
           // dependency that can't run on its providers: it goes through
           // whole, so the run sheet can list them, and a toast says all of it.
           const policyRefusal = aiLaunchRefusalSentence(error);
-          const message = policyRefusal ?? launchMessage;
+          // The fee refusal keeps its reason when thrown, so the run sheet
+          // can offer the billing actions in place of a sentence.
+          const feeRefusal = isPlatformFeeRefusal(error);
+          const message =
+            policyRefusal ??
+            (feeRefusal ? platformFeeRefusalSentence(true) : launchMessage);
           if (options?.stayOnPage || options?.throwOnFailure) {
             toast.dismiss(runStartedToastId);
-            throw policyRefusal ? error : new Error(message);
+            throw policyRefusal || feeRefusal ? error : new Error(message);
           }
           toast.error(message, { id: runStartedToastId });
         }

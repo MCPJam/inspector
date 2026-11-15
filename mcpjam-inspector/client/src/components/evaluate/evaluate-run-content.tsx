@@ -58,6 +58,8 @@ import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import { useCaseResultLinks } from "./run-result-pages/result-page-links";
 import { useRunScrollMemory } from "./run-result-pages/run-view-memory";
+import { PlatformFeeRefusal } from "@/components/billing/PlatformFeeRefusal";
+import { PLATFORM_FEE_STOP_REASON } from "@/lib/platform-fee-refusal";
 
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
@@ -66,6 +68,17 @@ export function EvaluateRunContent(
     props.run,
     props.siblingRuns ?? [],
   );
+  // The fee refusal ends a run before any row exists, so there is no verdict
+  // or result to show, only the way to pay for the next run.
+  const feeRefused = targets.every(
+    (target) => target.stopReason === PLATFORM_FEE_STOP_REASON,
+  );
+  if (feeRefused)
+    return (
+      <div className="p-5" data-testid="evaluate-run-platform-fee">
+        <PlatformFeeRefusal />
+      </div>
+    );
   return targets.length > 1 ? (
     <CombinedRunContent {...props} runs={targets} />
   ) : (

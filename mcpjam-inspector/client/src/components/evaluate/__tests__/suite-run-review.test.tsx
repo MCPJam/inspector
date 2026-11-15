@@ -6,6 +6,9 @@ import type { EvalSuite, EvalCase } from "../../evals/types";
 import { toast } from "sonner";
 import { useCaseLaunches } from "../case-workspace/pending-case-launches";
 vi.mock("sonner", () => ({ toast: { loading: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/billing/PlatformFeeRefusal", () => ({
+  PlatformFeeRefusal: () => <div>platform-fee-refusal</div>,
+}));
 const suite = {
   _id: "suite",
   name: "Checkout",
@@ -349,6 +352,30 @@ describe("suite run review", () => {
     expect(
       screen.getByRole("checkbox", { name: "Claude · opus" }),
     ).toBeChecked();
+  });
+
+  it("offers the billing actions, not the code, when credits can't pay", async () => {
+    const user = userEvent.setup();
+    const refusal = Object.assign(
+      new Error("This work requires platform credits."),
+      { code: "FORBIDDEN", reason: "PLATFORM_FEE_REQUIRED" },
+    );
+    const close = vi.fn();
+    render(
+      <SuiteRunReview
+        suite={suite}
+        cases={cases}
+        environments={environments}
+        hostNamesById={names}
+        onStart={vi.fn().mockRejectedValue(refusal)}
+        onClose={close}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText("platform-fee-refusal")).toBeInTheDocument();
+    expect(screen.queryByText(/PLATFORM_FEE_REQUIRED/)).toBeNull();
+    expect(screen.queryByText(/requires platform credits/)).toBeNull();
+    expect(close).not.toHaveBeenCalled();
   });
 
   it("opens suite settings from the grading policy action", async () => {
