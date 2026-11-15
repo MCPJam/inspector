@@ -200,6 +200,8 @@ import {
   setTelemetryIdentity,
 } from "./lib/telemetry-context";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
+import { PostHogThemeContext } from "./hooks/usePostHogThemeContext";
+import { DarkDefaultNudge } from "./components/DarkDefaultNudge";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
@@ -6965,6 +6967,7 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
+      <PostHogThemeContext />
       <ProjectClientConfigSync
         activeProjectId={activeProjectId}
         savedClientConfig={activeProject?.clientConfig}
@@ -6995,6 +6998,7 @@ export default function App() {
             isLoadingRemoteProjects={isLoadingRemoteProjects}
           >
             <Toaster />
+            <DarkDefaultNudge />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <StdioCommandApprovalDialog />

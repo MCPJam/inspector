@@ -321,6 +321,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockPosthogCapture,
+    register: vi.fn(),
     featureFlags: mockPosthogState.featureFlags,
     onFeatureFlags: mockPosthogState.onFeatureFlags,
   }),
@@ -391,6 +392,7 @@ vi.mock("../lib/config", () => ({
 
 vi.mock("../lib/theme-utils", () => ({
   getInitialThemeMode: () => "light",
+  hasStoredThemePreference: () => true,
   updateThemeMode: vi.fn(),
   getInitialThemePreset: () => "default",
   updateThemePreset: vi.fn(),
