@@ -154,6 +154,8 @@ interface LiveProcess {
     pid: number;
     identity: ProcessBirthIdentity;
   }> | null> | null;
+  /** Start this process's wall clock again: a kept runtime's next turn. */
+  restartWallClock?: () => void;
 }
 
 function bufferedStream(maxBytes: number): {
@@ -710,14 +712,26 @@ export class LocalHarnessSupervisor {
     };
     request.abortSignal?.addEventListener("abort", onAbort, { once: true });
 
-    const wallClockTimer = setTimeout(() => {
-      logger.warn("[local-harness] wall-clock ceiling reached", {
-        sessionId: request.sessionId,
-        pid,
-      });
-      void killTree();
-    }, this.limits.maxWallClockMs);
-    wallClockTimer.unref?.();
+    // A budget per turn: a runtime kept between turns starts it again when
+    // the next turn adopts it (`restartWallClock`), so a kept bridge is never
+    // killed mid-turn for the turns before it.
+    const armWallClock = () => {
+      const timer = setTimeout(() => {
+        logger.warn("[local-harness] wall-clock ceiling reached", {
+          sessionId: request.sessionId,
+          pid,
+        });
+        void killTree();
+      }, this.limits.maxWallClockMs);
+      timer.unref?.();
+      return timer;
+    };
+    let wallClockTimer = armWallClock();
+    entry.restartWallClock = () => {
+      if (entry.exited) return;
+      clearTimeout(wallClockTimer);
+      wallClockTimer = armWallClock();
+    };
 
     // Built AFTER the timer and abort listener exist, so the teardown below
     // can reference them without a temporal dead zone. A child that already
@@ -938,6 +952,11 @@ export class LocalHarnessSupervisor {
     // and an operator need to see.
     await updateLifecycleState(sessionId, "failed");
     return { stopped: false, escaped };
+  }
+
+  /** A fresh wall-clock budget for every live process of a session. */
+  restartWallClock(sessionId: string): void {
+    for (const entry of this.live.get(sessionId) ?? []) entry.restartWallClock?.();
   }
 
   /** Live supervised process count for a session (tests and diagnostics). */

@@ -63,6 +63,12 @@ export function nativeForwardingEnabled(): boolean {
   return process.env.HARNESS_NATIVE_FORWARDING === "true";
 }
 
+/** Keep a local Codex runtime between chat turns (`local/kept-runtime.ts`).
+ *  Off by default; read per call. */
+export function localKeepAgentEnabled(): boolean {
+  return process.env.MCPJAM_LOCAL_KEEP_AGENT === "true";
+}
+
 /**
  * Keep a warm hosted agent running through its box's pause, up to the box's
  * ceiling. Off by default; read per call so operators can turn it off.

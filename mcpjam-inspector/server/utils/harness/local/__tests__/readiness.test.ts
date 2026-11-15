@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), actor: vi.fn(), authorization: vi.fn(), grant: vi.fn(), rollout: vi.fn(),
   status: vi.fn(), install: vi.fn(), register: vi.fn(),
@@ -33,6 +33,10 @@ vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.r
 import { ensureLocalHarnessTarget, localHarnessAccountEnabled, resetLocalHarnessRolloutForTests, setupLocalHarness } from "../readiness.js";
 import { takeTurnRuntimeStatus } from "../turn-runtime-status.js";
 import { resetLaunchCredentialsForTests } from "../launch-credentials.js";
+import { parkLocalTurn, resetApprovalParkForTests } from "../approval-park.js";
+import { reportEndedKeptRuntime } from "../parked-runtime.js";
+import { HarnessTurnRecord } from "../../harness-turn-event.js";
+import { TurnTiming } from "../../../turn-timing.js";
 import { setRegisteredKeyId } from "../instance-key.js";
 const actor = { credential: "authkit" as const, subject: "user", userId: "authkit:user" };
 beforeEach(() => {
@@ -144,6 +148,56 @@ describe("a chat turn's registration and grant", () => {
     await expect(turn()).rejects.toThrow(/Add client/);
     expect(grantStore.verify).not.toHaveBeenCalled();
     expect(mocks.grant).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runtimes kept on a pack this build no longer selects", () => {
+  const keptOn = (sessionId: string, runtimeDigest: string, harnessId = "claude-code") => {
+    const end = vi.fn(async (_reason: string) => {});
+    parkLocalTurn({
+      sessionId, generation: "gen-1", userId: "authkit:user", projectId: "project", harnessId,
+      runtimeDigest, stateVersion: 1, fingerprint: "config", resources: {}, end,
+      isAlive: () => true, holdModelTraffic: () => {},
+    });
+    return end;
+  };
+  afterEach(() => resetApprovalParkForTests());
+
+  it("end when readiness selects another pack for their harness", async () => {
+    const onOld = keptOn("old", "sha256:old");
+    const onCurrent = keptOn("current", "sha256:current");
+    const otherHarness = keptOn("codex", "sha256:old", "codex");
+    mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "2", digest: "sha256:current" });
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    await vi.waitFor(() => expect(onOld).toHaveBeenCalledWith("runtime-update"));
+    expect(onCurrent).not.toHaveBeenCalled();
+    expect(otherHarness).not.toHaveBeenCalled();
+  });
+
+  it("tell the next turn's event that an update ended the runtime its lane names", async () => {
+    keptOn("old", "sha256:old");
+    mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "2", digest: "sha256:current" });
+    // Readiness runs before the turn's own preparation, and ends the kept runtime there.
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    const sink = { surface: "web" as const, capture: vi.fn() };
+    const record = new HarnessTurnRecord(new TurnTiming({ harnessTurnEvent: sink }), "codex", true);
+    reportEndedKeptRuntime({
+      sessionId: "old",
+      keptRuntime: { fingerprint: "config", committed: { generation: "gen-1", stateVersion: 1 } },
+      onKeptRuntime: record.keptRuntime,
+    });
+    record.sessionStarted({ approval: false, resumed: true, resetReason: undefined });
+    record.close({ aborted: false, completed: true, bootstrap: undefined });
+    expect(sink.capture.mock.calls[0]![0]).toMatchObject({
+      surface: "local", start: "disk_resume", fallback_reason: "runtime_update",
+    });
+  });
+
+  it("end when readiness finds their pack revoked", async () => {
+    const kept = keptOn("kept", "sha256:old");
+    mocks.status.mockResolvedValue({ state: "revoked", packVersion: "1", message: "MCPJam withdrew the claude-code runtime 1" });
+    await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/withdrew/);
+    await vi.waitFor(() => expect(kept).toHaveBeenCalledWith("runtime-update"));
   });
 });
 
