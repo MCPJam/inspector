@@ -38,6 +38,7 @@ import {
 import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
+import { ConformanceSpotlight } from "@/components/sidebar/conformance-spotlight";
 import {
   Sidebar,
   SidebarContent,
@@ -888,6 +889,19 @@ export function MCPSidebar({
                       isActive: isNavItemActive(item),
                     }))}
                     onItemClick={handleNavClick}
+                    wrapItem={(url, row) =>
+                      url === "/conformance" ? (
+                        <ConformanceSpotlight
+                          enabled
+                          onConformancePage={activeTab === "conformance"}
+                          onNavigate={appNavigate}
+                        >
+                          {row}
+                        </ConformanceSpotlight>
+                      ) : (
+                        row
+                      )
+                    }
                     learnMore={
                       learnMoreEnabled
                         ? {
