@@ -38,12 +38,13 @@ function contentGranted(): boolean {
  * as a fallback for browsers that skip `visibilitychange` on close; sending
  * is idempotent.
  *
- * Sends at most once and returns a cancel function.
+ * Sends at most once. Returns a cancel function that reports whether it
+ * stopped a launch that had not been sent yet.
  */
 export function trackLaunchWhenPolicySettles(
   properties: LaunchProperties,
   { timeoutMs = LAUNCH_POLICY_TIMEOUT_MS }: { timeoutMs?: number } = {},
-): () => void {
+): () => boolean {
   const startedAt = Date.now();
   let settled = false;
   let unsubscribe: () => void = () => undefined;
@@ -69,10 +70,15 @@ export function trackLaunchWhenPolicySettles(
       policy_wait_ms: Math.max(0, Date.now() - startedAt),
     });
   }
+  const cancel = () => {
+    if (settled) return false;
+    stop();
+    return true;
+  };
 
   if (contentGranted()) {
     send("immediate");
-    return stop;
+    return cancel;
   }
   unsubscribe = subscribeTelemetryPolicy(() => {
     if (contentGranted()) send("grant");
@@ -80,7 +86,7 @@ export function trackLaunchWhenPolicySettles(
   timer = setTimeout(() => send("timeout"), timeoutMs);
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pagehide", onPageHide);
-  return stop;
+  return cancel;
 }
 
 /**
@@ -93,16 +99,18 @@ export function useAppLaunchedEvent(
   isAuthenticated: boolean,
 ): void {
   const lastActorRef = useRef<string | null>(null);
-  const cancelPendingRef = useRef<(() => void) | null>(null);
+  const cancelPendingRef = useRef<(() => boolean) | null>(null);
   // Unmount-only cleanup, kept apart from the actor effect so prop changes
-  // never cancel a pending launch. It also clears the actor guard: under
-  // StrictMode the dev double-mount runs this cleanup, and a stale guard
-  // would stop the remount from resending the cancelled launch.
+  // never cancel a pending launch. When it cancels a launch that was not sent
+  // yet, it also clears the actor guard: under StrictMode the dev double-mount
+  // runs this cleanup, and a stale guard would stop the remount from resending
+  // it. A launch that was already sent keeps the guard, so effects restored on
+  // the same instance do not send it twice.
   useEffect(
     () => () => {
-      cancelPendingRef.current?.();
+      const cancelledUnsent = cancelPendingRef.current?.() ?? false;
       cancelPendingRef.current = null;
-      lastActorRef.current = null;
+      if (cancelledUnsent) lastActorRef.current = null;
     },
     [],
   );

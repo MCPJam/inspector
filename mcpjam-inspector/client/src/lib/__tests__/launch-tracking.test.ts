@@ -229,4 +229,22 @@ describe("useAppLaunchedEvent", () => {
     vi.advanceTimersByTime(LAUNCH_POLICY_TIMEOUT_MS);
     expect(mocks.track).toHaveBeenCalledTimes(1);
   });
+
+  it("does not resend a sent launch when its effects are torn down and re-run", () => {
+    grantContent();
+    let activityMode: "visible" | "hidden" = "visible";
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(Activity, { mode: activityMode }, children);
+    const { rerender } = renderHook(
+      () => useAppLaunchedEvent("user_A", false),
+      { wrapper },
+    );
+    expect(mocks.track).toHaveBeenCalledTimes(1);
+    activityMode = "hidden";
+    rerender();
+    activityMode = "visible";
+    rerender();
+    vi.advanceTimersByTime(LAUNCH_POLICY_TIMEOUT_MS);
+    expect(mocks.track).toHaveBeenCalledTimes(1);
+  });
 });
