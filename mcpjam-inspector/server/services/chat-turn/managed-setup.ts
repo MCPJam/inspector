@@ -541,6 +541,7 @@ export async function resolveManagedTurnSetup(args: {
           scope: "attended",
           harnessId: localHarnessId,
           requireToolApproval,
+          reuseCredentials: true,
         })
       ).target;
     } catch (error) {

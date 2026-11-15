@@ -47,6 +47,7 @@ import {
   type LocalModelGateway,
 } from "./model-gateway.js";
 import { noteRuntimeLaunch, readRuntimeInstallStatus } from "./runtime-install.js";
+import { takeTurnRuntimeStatus } from "./turn-runtime-status.js";
 import {
   reserveRuntimeUse,
   type RuntimeOperationKey,
@@ -68,6 +69,7 @@ import {
   type ParkInvalidationReason,
 } from "./approval-park.js";
 import { localRuntime } from "./runtimes/index.js";
+import { revalidateRuntime } from "./runtime-identity.js";
 import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
 import {
   createSupervisedLocalHarnessProvider,
@@ -296,8 +298,10 @@ export async function prepareLocalHarnessTurn(
   // SELECTED per build (desired, or the permitted previous while an update is
   // in flight or after a rollback), preferring the runtime this target's grant
   // names while it is still selectable — so an update that activated in the
-  // background does not refuse this turn; the client renews onto it.
-  const runtimeStatus = await readRuntimeInstallStatus({
+  // background does not refuse this turn; the client renews onto it. Read once
+  // a turn: a target readiness just minted comes with the selection its
+  // runtime was resolved from.
+  const runtimeStatus = takeTurnRuntimeStatus(args.target) ?? await readRuntimeInstallStatus({
     harnessId,
     preferRuntimeId: args.target.runtimeId,
   });
@@ -455,6 +459,9 @@ async function prepareWithReservedRuntime(outer: {
     installedAdapterVersion:
       args.installedAdapterVersion ??
       localRuntime(harnessId).installedAdapterVersion(),
+    // The provider re-verifies the runtime right before it spawns the bridge
+    // (`assertCanStart`), so this turn verifies it once, at exec.
+    runtimeVerifiedAtSpawn: true,
   });
   if (!availability.available) {
     return {
@@ -826,7 +833,7 @@ async function adoptParkedLocalTurn(
   };
   const verifyStartedAt = Date.now();
 
-  const runtimeStatus = await readRuntimeInstallStatus({
+  const runtimeStatus = takeTurnRuntimeStatus(args.target) ?? await readRuntimeInstallStatus({
     harnessId,
     preferRuntimeId: args.target.runtimeId,
   });
@@ -858,6 +865,9 @@ async function adoptParkedLocalTurn(
     installedAdapterVersion:
       args.installedAdapterVersion ??
       localRuntime(harnessId).installedAdapterVersion(),
+    // The parked process's own pack is re-verified below, once it is known
+    // to be the runtime this turn names.
+    runtimeVerifiedAtSpawn: true,
   });
   if (!availability.available) {
     return fail("authorization-revoked", availability.status, availability.message);
@@ -873,6 +883,16 @@ async function adoptParkedLocalTurn(
       "authorization-revoked",
       "approval-runtime-changed",
       "The runtime or workspace changed while this approval was waiting; " +
+        "the pending action will not run.",
+    );
+  }
+  // Not "verified once at spawn": the bridge starts a new vendor process from
+  // this pack when its runtime configuration changes or the app-server dies.
+  if (!(await revalidateRuntime(live.prepared.plan.runtime)).ok) {
+    return fail(
+      "authorization-revoked",
+      "runtime-changed",
+      "The local runtime changed on disk while this approval was waiting; " +
         "the pending action will not run.",
     );
   }
