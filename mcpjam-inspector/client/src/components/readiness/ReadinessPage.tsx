@@ -411,7 +411,7 @@ export function ReadinessPage({
       ? { scope, saved }
       : null;
   const config = chosen?.server.config;
-  const serverUrl = config && "url" in config ? config.url : undefined;
+  const serverUrl = config && "url" in config ? config.url?.toString() : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
     (view?.steps ?? []).reduce((sum, step) => sum + step.counts[key], 0);
   const counts = view?.resultsRunId

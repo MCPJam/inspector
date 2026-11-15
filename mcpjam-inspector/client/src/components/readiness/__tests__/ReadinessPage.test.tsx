@@ -32,7 +32,7 @@ const context = vi.hoisted(() => ({
   displayServerConfigs: {
     "Sample server": {
       name: "Sample server",
-      config: { url: "https://mcp.example.com/mcp" },
+      config: { url: new URL("https://mcp.example.com/mcp") },
       connectionStatus: "disconnected",
     },
   },
@@ -598,6 +598,7 @@ describe("ReadinessRoute", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Connection" }),
     ).toBeVisible();
+    expect(screen.getByText("https://mcp.example.com/mcp")).toBeVisible();
     expect(screen.getByText("The server URL uses https")).toBeVisible();
     expect(screen.getByText(/Rules as of Nov 13, 2026/)).toBeVisible();
 
