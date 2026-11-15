@@ -15,6 +15,8 @@ export interface OAuthConnection {
   needsReauth?: boolean;
   authorizedAt?: number;
   expiresAt?: number;
+  /** A shared or API-uploaded account, whose tokens are never revealed. */
+  hostedOnly?: boolean;
 }
 export interface AuthorizedOAuthConnection extends OAuthConnection {
   /**

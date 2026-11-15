@@ -13,6 +13,7 @@ export function useHostedOAuthConnections(
     key: string;
     connections: OAuthConnection[];
     shared: boolean;
+    localDeliveryAllowed: boolean;
   }>();
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
@@ -50,6 +51,7 @@ export function useHostedOAuthConnections(
     // Until the list answers, a server counts as shared, which hides adding
     // an account that the server's mode may not allow.
     shared: current?.shared ?? true,
+    localDeliveryAllowed: current?.localDeliveryAllowed ?? false,
     loaded: current !== undefined,
     error,
     refetch,
