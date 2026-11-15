@@ -1,7 +1,11 @@
 import { connectionKey, type McpToolConnection } from "@mcpjam/sdk";
-import { connectionLabels } from "../../shared/oauth-connections.js";
+import {
+  connectionLabels,
+  type AuthorizedOAuthConnection,
+} from "../../shared/oauth-connections.js";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ConvexBatchAuthorizeSuccess } from "../routes/web/auth.js";
+import { oauthRefusalFromAuthorize } from "./local-oauth-refusal.js";
 
 /**
  * Exactly which accounts each server runs with for the acting person, keyed
@@ -14,6 +18,43 @@ export type ConnectionIdSets = Readonly<Record<string, readonly string[]>>;
 /** The refusal for a request pinned to one saved account, such as a task. */
 export const SAVED_ACCOUNT_UNAVAILABLE =
   "The account saved with this task is unavailable. Reconnect that account to continue.";
+
+/** A string the backend may send on an account before its type names it. */
+function textField(value: object, key: string): string | undefined {
+  const field: unknown = Reflect.get(value, key);
+  return typeof field === "string" ? field : undefined;
+}
+
+/**
+ * The backend's refusal of one account's token (a shared or uploaded account
+ * not allowed here, the organization's policy, a moved server), in its words
+ * after the server and account it is about.
+ */
+function withheldAccount(
+  c: AuthorizedOAuthConnection,
+  server: { serverId: string; serverName: string },
+  label: string,
+) {
+  const withheld = oauthRefusalFromAuthorize(
+    {
+      oauthAccessToken: c.accessToken,
+      oauthUnavailableReason: c.unavailableReason,
+      oauthUnavailablePolicy: textField(c, "unavailablePolicy"),
+      oauthUnavailableCause: textField(c, "unavailableCause"),
+      oauthUnavailableMessage: textField(c, "unavailableMessage"),
+    },
+    server,
+  );
+  return (
+    withheld &&
+    new WebRouteError(
+      withheld.status,
+      withheld.code,
+      `${server.serverName} ${label}: ${withheld.message}`,
+      withheld.details,
+    )
+  );
+}
 
 /**
  * The account group a server runs with when its launcher sent a set, or
@@ -72,6 +113,9 @@ export function accountSetGroup(args: {
       );
     }
     if (!entry.c.accessToken || entry.c.needsReauth) {
+      const withheld =
+        !args.refusal && withheldAccount(entry.c, args, entry.label);
+      if (withheld) throw withheld;
       refuse(
         `${serverName} ${entry.label} needs reconnect. Reconnect it in Authorization, or choose another account in the suite's settings.`,
       );

@@ -138,6 +138,33 @@ describe("accountSetGroup", () => {
     );
   });
 
+  it("refuses a chosen account the backend withheld in the backend's words, not as a reconnect", () => {
+    const withheld = {
+      connectionId: DUMMY,
+      label: "Dummy",
+      isDefault: false,
+      accessToken: null,
+      unavailableReason: "credential_export_denied",
+      unavailablePolicy: "hostedOnlyAccount",
+      unavailableCause: "not_acknowledged",
+      unavailableMessage:
+        "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+    };
+    const run = () =>
+      group([DUMMY], authorized({ oauthConnections: [withheld] }));
+    // After the server and account it is about.
+    expect(refusal(run)).toBe(`Asana Dummy: ${withheld.unavailableMessage}`);
+    expect(() => run()).toThrow(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          exportDenied: true,
+          policy: "hostedOnlyAccount",
+          cause: "not_acknowledged",
+        }),
+      }),
+    );
+  });
+
   it("refuses when a chosen account was removed", () => {
     expect(
       refusal(() => group([DUMMY], authorized({ oauthConnections: [] }))),

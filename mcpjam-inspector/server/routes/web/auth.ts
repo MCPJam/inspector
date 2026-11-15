@@ -634,6 +634,9 @@ export type ConvexBatchAuthorizeSuccess = {
    * admin can change.
    */
   oauthUnavailablePolicy?: "credentialExportPolicy" | "hostedOnlyAccount";
+  /** With `hostedOnlyAccount`: which part of the account's rule, and its sentence. */
+  oauthUnavailableCause?: string;
+  oauthUnavailableMessage?: string;
   /**
    * How long to wait before retrying, when the reason is transient. Sent with
    * `refresh_in_progress` — the lease the other refresh holds expires after
@@ -2064,11 +2067,15 @@ export async function createAuthorizedManager(
           403,
           ErrorCode.FORBIDDEN,
           hostedOnly
-            ? `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`
+            ? (auth.oauthUnavailableMessage ??
+                `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`)
             : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
           {
             exportDenied: true,
             policy: hostedOnly ? "hostedOnlyAccount" : "credentialExportPolicy",
+            ...(hostedOnly && auth.oauthUnavailableCause
+              ? { cause: auth.oauthUnavailableCause }
+              : {}),
             serverId,
             serverName: serverNamesById?.[serverId] ?? null,
             serverUrl: auth.serverConfig.url,
