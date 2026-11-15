@@ -67,6 +67,7 @@ import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
+import { shutdownLocalTurnParks } from "./utils/harness/local/approval-park.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -1133,6 +1134,9 @@ async function shutdown() {
     // the context is what makes Chromium release its profile's singleton lock,
     // so a skipped teardown here is a browser the NEXT run cannot launch.
     await shutdownLocalBrowserSessions();
+    // Local runtimes kept between turns stop with this Inspector rather than
+    // run detached until the next boot's janitor (bounded internally).
+    await shutdownLocalTurnParks();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.

@@ -10,12 +10,24 @@ import type {
   BillingInterval,
   BillingLimitName,
   GateDecision,
+  OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
   PlanCatalogEntry,
   PremiumnessGateKey,
   PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
+
+export function canShowSubscriptionNotices(
+  billingStatus: Pick<OrganizationBillingStatus, "plan" | "source">,
+): boolean {
+  return (
+    billingStatus.plan !== "free" &&
+    billingStatus.source !== "trial" &&
+    billingStatus.source !== "simulation"
+  );
+}
+
 export function getDisplayPriceCentsForPlan(
   _plan: OrganizationPlan,
   interval: BillingInterval,

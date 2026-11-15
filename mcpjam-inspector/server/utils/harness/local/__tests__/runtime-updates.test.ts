@@ -53,6 +53,7 @@ import { PREVIOUS_SUFFIX, reserveRuntimeUse } from "../runtime-lifecycle.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { currentLocalPlatform, localPackTarget } from "../targets.js";
 import { removeTestTree } from "./remove-test-tree.js";
+import { parkLocalTurn, resetApprovalParkForTests } from "../approval-park.js";
 
 const TARGET = localPackTarget()!;
 const PLATFORM = currentLocalPlatform(process.platform)!;
@@ -505,6 +506,28 @@ describe("revocation", () => {
     const status = await selected();
     expect(status).toMatchObject({ state: "revoked", packVersion: NEW });
     expect(status.state === "revoked" && status.message).toMatch(/withdrew/);
+  });
+
+  it("ends a runtime kept between turns on a pack a new list withdraws", async () => {
+    await machineOnOldPackWithUpdatePinned();
+    const kept = (sessionId: string, runtimeDigest: string) => {
+      const end = vi.fn(async (_reason: string) => {});
+      parkLocalTurn({
+        sessionId, generation: "gen-1", userId: "u1", projectId: "p1", harnessId: "claude-code",
+        runtimeDigest, stateVersion: 1, fingerprint: "config", resources: {}, end,
+        isAlive: () => true, holdModelTraffic: () => {},
+      });
+      return end;
+    };
+    try {
+      const onOld = kept("on-old", digests[OLD]!);
+      const onNew = kept("on-new", digests[NEW]!);
+      await publishRevocations(1, [{ treeDigest: digests[OLD]!, reason: "security fix" }]);
+      await vi.waitFor(() => expect(onOld).toHaveBeenCalledWith("runtime-update"));
+      expect(onNew).not.toHaveBeenCalled();
+    } finally {
+      resetApprovalParkForTests();
+    }
   });
 
   it("refuses an older list than the one cached, so a replay cannot un-revoke a pack", async () => {

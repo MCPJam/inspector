@@ -163,6 +163,9 @@ export async function installRuntimeLogin(
   };
 }
 
+/** Teardown waits on the clear, so a backend that never answers must not. */
+const CLEAR_TIMEOUT_MS = 10_000;
+
 /** Best effort: the login expires within the hour whatever happens here. */
 export async function clearRuntimeLogin(
   args: RuntimeLoginScope & { installId: string; bearer: string },
@@ -171,7 +174,7 @@ export async function clearRuntimeLogin(
     const response = await post(
       RUNTIME_LOGIN_CLEAR_PATH,
       { ...scopeBody(args), installId: args.installId },
-      args,
+      { ...args, signal: AbortSignal.timeout(CLEAR_TIMEOUT_MS) },
     );
     await response.body?.cancel();
   } catch (error) {

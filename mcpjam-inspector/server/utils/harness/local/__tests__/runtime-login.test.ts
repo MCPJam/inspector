@@ -202,6 +202,31 @@ describe("clearRuntimeLogin", () => {
     ).resolves.toBe(true);
   });
 
+  it("gives up on a backend that never answers, so teardown is not held", async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () =>
+            reject(init.signal!.reason),
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+    try {
+      const cleared = clearRuntimeLogin({
+        ...SCOPE,
+        installId: "0e2c6a7b-3f4d-4a1e-9b8c-1d2e3f4a5b6c",
+        bearer: "member-bearer",
+      });
+      await vi.advanceTimersByTimeAsync(10_001);
+      await expect(cleared).resolves.toBeUndefined();
+      expect(fetchMock.mock.calls[0]![1].signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never throws: the login expires within the hour either way", async () => {
     vi.stubGlobal(
       "fetch",

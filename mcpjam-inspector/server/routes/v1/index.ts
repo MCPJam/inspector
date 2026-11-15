@@ -71,7 +71,11 @@ import hostCatalog from "./host-catalog.js";
 import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
+import directoryReviewerAttempts from "./directory-reviewer-attempts.js";
 import directorySubmissions from "./directory-submissions.js";
+import directorySubmissionHandoff from "./directory-submission-handoff.js";
+import directoryTestPlans from "./directory-test-plans.js";
+import directorySubmissionEvals from "./directory-submission-evals.js";
 import conformanceRuns from "./conformance-runs.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
@@ -183,10 +187,15 @@ v1.route("/", serverSkills);
 v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", readiness);
+// Reviewer sign-in attempts, under their submission: guest-DENIED like it.
+v1.route("/", directoryReviewerAttempts);
 // Directory submissions and the directory flows they rehearse. Guest-DENIED
 // by default (no GUEST_ALLOWED_V1_RULES entry): writes need a project member,
 // and a run started here dials the submission's server.
 v1.route("/", directorySubmissions);
+v1.route("/", directorySubmissionHandoff);
+v1.route("/", directoryTestPlans);
+v1.route("/", directorySubmissionEvals);
 v1.route("/", conformanceRuns);
 v1.route("/", clients);
 v1.route("/", harness);

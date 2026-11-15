@@ -116,9 +116,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
 const revoked = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 vi.mock("../harness-model-broker.js", async (importOriginal) => ({
   boxRequestFields: (await importOriginal<typeof import("../harness-model-broker.js")>()).boxRequestFields,
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async (args: Record<string, unknown>) => {
     revoked.push(args);
     return { ok: true };
@@ -128,6 +125,11 @@ vi.mock("../harness-model-broker.js", async (importOriginal) => ({
     proxyBaseUrl: "https://broker.example",
     expiresAt: Date.now() + 60_000,
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";

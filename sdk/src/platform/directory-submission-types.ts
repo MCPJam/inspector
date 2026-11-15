@@ -10,6 +10,7 @@ import type {
   DirectoryFieldIssue,
   PlacedStep,
 } from "../directory-readiness/flows/types.js";
+import type { DirectoryCheckGate } from "../directory-readiness/flows/verdict.js";
 import type { PlatformReadinessRun } from "./types.js";
 
 export interface PlatformDirectoryFlowSummary {
@@ -37,8 +38,22 @@ export interface PlatformDirectorySubmission {
   revision: number;
   createdBy: string;
   lastRunId?: string;
+  /** A plugin flow's plugin, stored in the project. */
+  pluginId?: string;
+  /** The version of that plugin chosen for the submission. */
+  pluginVersionId?: string;
+  /** Which attempt at the directory this rehearses: 1, then one per resubmission. */
+  attempt?: number;
+  /** Which checks fail a run. Absent: the directory's blocking checks. */
+  checkGate?: DirectoryCheckGate;
   createdAt: number;
   updatedAt: number;
+}
+
+/** The stored plugin a ChatGPT plugin submission is about. A version alone brings its plugin. */
+export interface PlatformDirectorySubmissionPlugin {
+  pluginId?: string;
+  pluginVersionId?: string;
 }
 
 export type PlatformDirectorySubmissionSummary = Omit<
@@ -66,6 +81,8 @@ export interface PlatformDirectorySubmissionResults {
   run: PlatformReadinessRun | null;
   steps: PlacedStep[];
   counts: PlatformDirectorySubmissionCounts;
+  /** The submission's gate now, to judge the run by. Older servers omit it. */
+  checkGate?: DirectoryCheckGate | null;
 }
 
 export interface PlatformDirectorySubmissionCreateBody {
@@ -83,12 +100,27 @@ export interface PlatformDirectorySubmissionUpdateBody {
   /** Field keys to confirm as true under the wording the flow shows now. */
   confirm?: string[];
   title?: string;
+  /** Replaces the plugin whole, on a ChatGPT plugin submission. `null` clears it. */
+  plugin?: PlatformDirectorySubmissionPlugin | null;
+  /** `null` clears it. */
+  attempt?: number | null;
+  /** Replaces the gate, guarded like an answer. `null` restores the default. */
+  checkGate?: DirectoryCheckGate | null;
   idempotencyKey?: string;
 }
 
 export interface PlatformDirectorySubmissionRunBody {
   idempotencyKey?: string;
   includeLlmObservations?: boolean;
+  /**
+   * The stored plugin version a ChatGPT plugin submission's run grades,
+   * required there. It is never read from the submission.
+   */
+  pluginVersionId?: string;
+  /** A running reviewer sign-in attempt of this submission for the run to work on. */
+  reviewerAttemptId?: string;
+  /** The saved test plan revision to run; naming it authorizes its calls. */
+  testPlanRevision?: number;
 }
 
 export interface PlatformDirectorySubmissionDeleted {
@@ -107,7 +139,8 @@ export interface PlatformDirectorySubmissionConflict {
 export function directorySubmissionsPath(
   projectId: string,
   submissionId?: string,
-  sub?: "runs" | "results"
+  sub?: "runs" | "results" | "handoff" | "findings" | "export" | "events" | "snapshots"
+    | "test-plan" | "test-plan/draft" | "tool-tests" | "evals" | "evals/import" | "evals/export"
 ): string {
   const base = `/projects/${encodeURIComponent(projectId)}/directory-submissions`;
   if (submissionId === undefined) return base;

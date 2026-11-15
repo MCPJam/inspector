@@ -8,6 +8,7 @@ import type { Tool } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
 import { claudeSubmissionEvidenceFromAnswers } from "../../src/claude-readiness/answers.js";
+import { runClaudeAnswerStepChecks } from "../../src/claude-readiness/checks/answer-steps.js";
 import { runClaudeSubmissionChecks } from "../../src/claude-readiness/checks/submission.js";
 import {
   gradeClaudeReadiness,
@@ -153,6 +154,61 @@ describe("the listing checks graded from answers", () => {
       "Fix this answer before you submit. Policies acknowledged: All policy items must be acknowledged."
     );
     expect(finding.details).toMatchObject({ acknowledged: 6 });
+  });
+
+  it("report every other answer the review page would refuse", () => {
+    const passing = byId(
+      grade(completeAnswers()),
+      "claude.submission.other-answers"
+    );
+    expect(passing.status).toBe("satisfied");
+
+    const finding = byId(
+      grade(
+        completeAnswers([
+          answer("connection.serverUrl", ""),
+          answer("listing.tagline", "A field the flow dropped"),
+        ])
+      ),
+      "claude.submission.other-answers"
+    );
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toBe(
+      "Fix these answers before you submit. Server URL: This field is required. listing.tagline: This flow has no field listing.tagline. Read the flow for its field keys."
+    );
+    expect(finding.details).toMatchObject({
+      issues: [
+        { key: "connection.serverUrl", code: "required" },
+        { key: "listing.tagline", code: "unknownField" },
+      ],
+    });
+  });
+
+  it("report each answer issue from exactly one check", () => {
+    const answers = completeAnswers([
+      answer("connection.serverUrl", ""),
+      answer("listing.slug", ""),
+      answer("listing.documentationUrl", "http://acme.example/docs"),
+      answer("useCases.pairs", []),
+      answer("company.contactEmail", "not an email"),
+      answer("dataHandling.sponsored", ""),
+      answer("compliance.acknowledgments", []),
+      answer("listing.tagline", "A field the flow dropped"),
+    ]);
+    const evidence = claudeSubmissionEvidenceFromAnswers(answers);
+    const findings = [
+      ...runClaudeSubmissionChecks({ answers: evidence }, STAMP),
+      ...runClaudeAnswerStepChecks(evidence, STAMP),
+    ];
+    const reported = findings.flatMap((finding) =>
+      ((finding.details?.issues as { key: string }[] | undefined) ?? []).map(
+        (issue) => issue.key
+      )
+    );
+    expect(evidence.issues.length).toBeGreaterThan(0);
+    expect([...reported].sort()).toEqual(
+      evidence.issues.map((issue) => issue.key).sort()
+    );
   });
 
   it("find no screenshots to check on a connector submission", () => {

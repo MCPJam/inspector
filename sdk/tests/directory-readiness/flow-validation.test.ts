@@ -169,6 +169,18 @@ describe("each issue code", () => {
     });
   });
 
+  it("tooLong: a name over the listing limit", () => {
+    const name = (length: number) =>
+      only(with_([set("listing.name", "x".repeat(length))]), "listing.name");
+    expect(name(100)).toBeUndefined();
+    expect(name(101)).toEqual({
+      key: "listing.name",
+      step: "listing",
+      code: "tooLong",
+      message: "Use 100 characters or fewer. This has 101.",
+    });
+  });
+
   it("format: links, contacts and the slug", () => {
     const format = (key: string, value: string) =>
       only(with_([set(key, value)]), key);
