@@ -58,11 +58,13 @@ describe("directory submission client methods", () => {
       expectedRevision: 3,
       answers: { "listing.name": "Acme", "listing.retired": null },
       confirm: ["useCases.access"],
+      checkGate: { warnOnly: ["claude.submission.listing-fields"] },
     });
     await client.deleteDirectorySubmission(SCOPE);
     await client.startDirectorySubmissionRun({
       ...SCOPE,
       includeLlmObservations: true,
+      testPlanRevision: 2,
     });
     await client.getDirectorySubmissionResults({ ...SCOPE, runId: "run-1" });
 
@@ -87,9 +89,36 @@ describe("directory submission client methods", () => {
       expectedRevision: 3,
       answers: { "listing.name": "Acme", "listing.retired": null },
       confirm: ["useCases.access"],
+      checkGate: { warnOnly: ["claude.submission.listing-fields"] },
     });
-    expect(requests[7]!.body).toEqual({ includeLlmObservations: true });
+    expect(requests[7]!.body).toEqual({
+      includeLlmObservations: true,
+      testPlanRevision: 2,
+    });
     expect(requests[8]!.query).toEqual({ runId: "run-1" });
+  });
+
+  it("sends a plugin, an attempt and a run's plugin version, keeping null", async () => {
+    const { client, requests } = recordingClient();
+    await client.updateDirectorySubmission({
+      ...SCOPE,
+      expectedRevision: 2,
+      plugin: { pluginVersionId: "pv-1" },
+      attempt: 2,
+    });
+    await client.updateDirectorySubmission({
+      ...SCOPE,
+      expectedRevision: 3,
+      plugin: null,
+      attempt: null,
+    });
+    await client.startDirectorySubmissionRun({ ...SCOPE, pluginVersionId: "pv-1" });
+
+    expect(requests.map((request) => request.body)).toEqual([
+      { expectedRevision: 2, plugin: { pluginVersionId: "pv-1" }, attempt: 2 },
+      { expectedRevision: 3, plugin: null, attempt: null },
+      { pluginVersionId: "pv-1" },
+    ]);
   });
 
   it("declares the launcher on answer writes only, which labels an agent's answers", async () => {

@@ -16,6 +16,8 @@ const harnessState = vi.hoisted(() => ({
   /** Thrown once every part has gone out. */
   errorAfterParts: null as Error | null,
   afterFirstPart: null as (() => void) | null,
+  /** Resolve the stream once the turn's abort fires, without throwing. */
+  endOnAbort: false,
   claim: {
     stateVersion: 1,
     fingerprintChanged: false,
@@ -36,12 +38,21 @@ const harnessState = vi.hoisted(() => ({
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
     createSession = harnessState.createSession;
-    stream = vi.fn(async () => ({
+    stream = vi.fn(async (options?: { abortSignal?: AbortSignal }) => ({
       fullStream: (async function* () {
         if (harnessState.streamError) throw harnessState.streamError;
         for (const part of harnessState.streamParts) {
           yield part;
           harnessState.afterFirstPart?.();
+        }
+        if (harnessState.endOnAbort) {
+          const signal = options?.abortSignal;
+          if (signal && !signal.aborted) {
+            await new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+          }
+          return;
         }
         if (harnessState.errorAfterParts) throw harnessState.errorAfterParts;
       })(),
@@ -154,6 +165,7 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 });
 
 import { runHarnessTurn } from "../run-harness-turn";
+import { heartbeatHarnessSessionState } from "../harness-session-state.js";
 import {
   releaseHarnessBoxReservation,
   reserveHarnessBox,
@@ -241,6 +253,8 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     harnessState.streamError = null;
     harnessState.errorAfterParts = null;
     harnessState.afterFirstPart = null;
+    harnessState.endOnAbort = false;
+    vi.mocked(heartbeatHarnessSessionState).mockResolvedValue("ok");
     harnessState.claim = {
       stateVersion: 1,
       fingerprintChanged: false,
@@ -250,7 +264,10 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     harnessState.adapter = {};
   });
 
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
 
   it("sends one event when a browser turn's response closes", async () => {
     const { sink, options } = turn("web");
@@ -486,6 +503,22 @@ describe("runHarnessTurn: harness_turn_completed", () => {
       outcome: "aborted",
       kind: "follow_up",
     });
+  });
+
+  it("reports a lease loss as failed when the stream ends without another part", async () => {
+    vi.useFakeTimers();
+    harnessState.endOnAbort = true;
+    harnessState.streamParts = [{ type: "text-delta", delta: "Hi." }];
+    harnessState.createSession.mockClear();
+    vi.mocked(heartbeatHarnessSessionState).mockResolvedValue("lost");
+    const { sink, options } = turn();
+    const closed = runToClose(options);
+    await vi.waitFor(() =>
+      expect(harnessState.createSession).toHaveBeenCalled(),
+    );
+    await vi.advanceTimersByTimeAsync(90_000);
+    await closed;
+    expect(onlyEvent(sink)).toMatchObject({ outcome: "failed" });
   });
 
   describe("on a box that keeps a warm agent", () => {
