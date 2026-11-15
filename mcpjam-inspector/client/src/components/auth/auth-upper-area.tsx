@@ -42,8 +42,8 @@ export function AuthUpperArea({
         <div className="flex-1 min-w-0 h-full pr-2" />
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
-        <AgentSidePanelTrigger />
         <OnboardAgentButton />
+        <AgentSidePanelTrigger />
         {!user && !isLoading && (
           <>
             <Button
