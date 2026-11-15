@@ -70,10 +70,9 @@ export function openResult(entry: PlacedFinding): string | undefined {
   const current =
     entry.evidenceStatus === "established" ||
     entry.evidenceStatus === "inconclusive";
-  const { label } = severityOf(entry);
-  return current && (label === "Blocker" || label === "Likely flag")
-    ? label
-    : undefined;
+  // Judged by tone, not by the words shown: blockers fail, likely flags flag.
+  const { label, tone } = severityOf(entry);
+  return current && (tone === "fail" || tone === "flag") ? label : undefined;
 }
 
 export function McpjamMark({ children }: { children?: ReactNode }) {
