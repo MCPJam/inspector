@@ -128,7 +128,7 @@ export function formatErrorDetailsForCopy(
     }`,
   );
   if (normalized.cause) {
-    lines.push(`Technical cause for support: ${normalized.cause.name}: ${normalized.cause.message}`);
+    lines.push(`Cause for support: ${normalized.cause.name}: ${normalized.cause.message}`);
   }
   // The technical block goes last: it is the longest and the least readable,
   // and a human skimming a pasted report wants the prose first. Every field

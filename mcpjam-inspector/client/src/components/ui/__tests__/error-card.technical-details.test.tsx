@@ -134,7 +134,7 @@ describe("ErrorCard technical details", () => {
     expect(payload).toContain("Type: WebApiError");
     expect(payload).toContain("Request ID: req-copy");
     expect(payload).toContain("Technical details for support");
-    expect(payload).toContain("Technical cause for support: TypeError: nested diagnostic");
+    expect(payload).toContain("Cause for support: TypeError: nested diagnostic");
     expect(payload).toContain("at webPost (base.ts:89:11)");
   });
 });
