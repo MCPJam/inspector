@@ -36,9 +36,9 @@
     "test:clean-build": "node scripts/clean-build-smoke.mjs"
   },
   "dependencies": {
-    "@cfworker/json-schema": "^4.1.1",
+    "@cfworker/json-schema": "^4.1.6",
     "@noble/hashes": "^2.4.0",
-    "re2js": "2.8.7",
+    "re2js": "2.10.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

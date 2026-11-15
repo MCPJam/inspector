@@ -35,18 +35,18 @@
   "dependencies": {
     "@mcp-ui/client": "^5.9.0",
     "@mcpjam/sdk": "^10.6.0",
-    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
-    "lucide-react": "^1.49.0",
-    "zustand": "^5.0.15"
+    "lucide-react": "^1.72.0",
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "jsdom": "^27.4.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "tsup": "^8.3.5",
     "typescript": "^5",
     "vitest": "^4.1.11"

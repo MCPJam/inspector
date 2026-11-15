@@ -13,11 +13,11 @@
   },
   "dependencies": {
     "@mcpjam/design-system": "*",
-    "@workos-inc/authkit-nextjs": "^4.3.2",
+    "@workos-inc/authkit-nextjs": "^4.6.3",
     "@workos-inc/node": "^11.0.0",
-    "next": "^16.4.2",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "next": "^16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
@@ -26,7 +26,7 @@
     "@types/react-dom": "^19",
     "eslint": "^8.57.0",
     "eslint-config-next": "^15.5.25",
-    "postcss": "^8.5.28",
+    "postcss": "^8.5.32",
     "tailwindcss": "^4.1.11",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5.5.2"
