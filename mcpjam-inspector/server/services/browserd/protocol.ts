@@ -108,6 +108,12 @@ export const BROWSERD_WEBMCP_FEATURES = [
    * server must refuse placeholders: an old daemon would type them literally.
    */
   "secret-placeholders",
+  /**
+   * A `secrets` entry may carry `origins`, and is then typed only on a page at
+   * one of them. Without it the server must not send such an entry: an old
+   * daemon ignores `origins` and would type the value on any page.
+   */
+  "secret-origins",
 ] as const;
 
 /**
@@ -614,6 +620,16 @@ export interface BrowserCommandCorrelation {
 }
 
 /**
+ * The value for one `{{secret:NAME}}` placeholder, sent beside a command.
+ * `origins` (exact web origins) are the only pages it may be typed on.
+ */
+export interface BrowserCommandSecret {
+  name: string;
+  value: string;
+  origins?: readonly string[];
+}
+
+/**
  * Is this a flat, bounded string map safe to echo onto a ledger row? Checks
  * shape only, not keys, so a newer caller's unknown key is still echoed.
  */
@@ -825,6 +841,11 @@ export const BROWSERD_ERROR_CODES = [
   "secret_unresolved",
   /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
   "secret_too_short",
+  /**
+   * A secret limited to some origins was typed on a page outside them, or a
+   * reviewer credential arrived with no origins; nothing was typed.
+   */
+  "secret_origin_refused",
   /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.

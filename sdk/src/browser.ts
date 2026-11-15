@@ -106,6 +106,10 @@ export * from "./directory-readiness/decisions/index.js";
  */
 export * from "./directory-readiness/test-plan/index.js";
 
+/** The handoff summary and export pack builders: pure, over the same flows. */
+export * from "./directory-readiness/handoff.js";
+export * from "./directory-readiness/handoff-markdown.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,

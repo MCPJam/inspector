@@ -230,7 +230,9 @@ function notRunVerdict(
 ): Verdict {
   if (!testCase.arguments)
     return { status: "blocked", reason: caseWords("notDrafted") };
-  for (const { fixture } of directoryFixtureReferences(testCase.arguments)) {
+  for (const { fixture, value } of directoryFixtureReferences(
+    testCase.arguments
+  )) {
     if (input.missingFixtures?.includes(fixture)) {
       return {
         status: "blocked",
@@ -240,14 +242,21 @@ function notRunVerdict(
     const creator = input.plan.cases.find((other) =>
       other.creates?.includes(fixture)
     )?.id;
-    const status =
-      creator === undefined ? undefined : graded.get(creator)?.status;
+    const made = creator === undefined ? undefined : graded.get(creator);
+    const status = made?.status;
     if (status !== undefined && status !== "passed" && status !== "untested") {
       const words = { fixture, creator, status };
       return {
         status: "blocked",
         reason: caseWords("fixtureNotCreated", words),
       };
+    }
+    // Created, but the result did not hold the value this case needs.
+    const captured = made?.call?.captured ?? {};
+    const named = Object.hasOwn(captured, fixture) ? captured[fixture] : {};
+    if (status === "passed" && !Object.hasOwn(named ?? {}, value)) {
+      const words = { fixture, creator, value };
+      return { status: "blocked", reason: caseWords("notCaptured", words) };
     }
   }
   const { stopped } = input;

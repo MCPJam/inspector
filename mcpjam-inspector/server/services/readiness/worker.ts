@@ -45,8 +45,10 @@ import {
   finalizeReadinessRun,
   getReadinessRunSubmission,
   heartbeatReadinessRun,
+  joinReviewerAttempt,
   ReadinessSubmissionUnreadableError,
   requestManagedObservations,
+  requestReadinessDecisions,
   type ReadinessClaimRefusal,
   type ReadinessFinalizeSummary,
   type ReadinessLease,
@@ -59,9 +61,15 @@ import {
   type DirectoryReadinessResult,
   type ReadinessPublisher,
 } from "./runner.js";
+import { runDirectoryTestPlan } from "./test-plan-run.js";
+import {
+  ReadinessPackageUnreadableError,
+  readRunPackage,
+} from "./run-package.js";
 import {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
+  OPENAI_SUBMISSION_MODE_SHAPES,
   getDirectoryFlow,
   isMuseReadinessResult,
   redactConformanceReportForSharing,
@@ -107,6 +115,11 @@ export interface ExecuteHostedReadinessOptions {
   claimedFeatures?: DirectoryFeatureClaim[];
   /** The directory submission the run grades: its answers are read at the start. */
   submissionId?: string;
+  /**
+   * The submission's reviewer sign-in attempt, held in memory: the backend run
+   * takes no attempt, so the run joins it before anything dials.
+   */
+  reviewerAttemptId?: string;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -212,6 +225,36 @@ async function readSubmissionAnswers(
 }
 
 /**
+ * Whether the run's declared shape includes an uploaded package. A hosted
+ * run has one only as a stored plugin version, frozen with its answers, and
+ * fails with the reason when that version cannot be read.
+ */
+function gradesPackage(options: ExecuteHostedReadinessOptions): boolean {
+  const mode = options.submissionMode;
+  return (
+    options.publisher === "openai" &&
+    mode !== undefined &&
+    OPENAI_SUBMISSION_MODE_SHAPES[mode].hasUploadedPackage
+  );
+}
+
+/**
+ * Join the reviewer attempt the run carries. An attempt it cannot join (ended,
+ * held by another run) leaves the run grading the submission without it.
+ */
+async function joinAttempt(options: ExecuteHostedReadinessOptions): Promise<void> {
+  const attemptId = options.reviewerAttemptId;
+  if (!attemptId) return;
+  const join = await joinReviewerAttempt(options.lease, attemptId);
+  if (join.joined) return;
+  logger.warn("[readiness] the run did not join its reviewer attempt", {
+    runId: options.lease.runId,
+    attemptId,
+    reason: join.reason,
+  });
+}
+
+/**
  * Claim the run this node started. Returns why it must not execute, or
  * nothing when it may.
  */
@@ -295,8 +338,12 @@ export async function executeHostedReadinessRun(
       terminal = { outcome: "abandoned", terminalReason: refusal };
       return;
     }
+    await joinAttempt(options);
     const submissionAnswers = options.submissionId
       ? await readSubmissionAnswers(options)
+      : undefined;
+    const runPackage = gradesPackage(options)
+      ? await readRunPackage(lease)
       : undefined;
     const { result } = await runDirectoryReadiness({
       publisher: options.publisher,
@@ -313,13 +360,31 @@ export async function executeHostedReadinessRun(
         : {}),
       // As stored: the grader merges the flow's defaults itself.
       ...(submissionAnswers ? { submissionAnswers } : {}),
+      ...(runPackage ? { pluginPackage: runPackage } : {}),
       // The requester's opt-in decides whether a requester exists AT ALL. A
       // runner with no requester structurally cannot spend, which is a
       // stronger guarantee than one that checks a flag before asking.
       requestObservations: options.includeLlmObservations
         ? async ({ evidence }) => requestManagedObservations(lease, evidence)
         : undefined,
+      // The same opt-in: the decision model reads the server's text too.
+      requestDecisions: options.includeLlmObservations
+        ? async ({ items, signal }) =>
+            requestReadinessDecisions(lease, items, signal)
+        : undefined,
     });
+
+    // Test plans belong to submissions, so only a submission run has one.
+    const toolTests = options.submissionId
+      ? await runDirectoryTestPlan({
+          lease,
+          target: options.target,
+          fetchFn: options.fetchFn,
+          mcpHeaders: options.mcpHeaders,
+          signal: controller.signal,
+          deadlineAt: startedAtMs + RUN_DEADLINE_MS,
+        })
+      : undefined;
 
     await finalizeReadinessRun(
       lease,
@@ -345,7 +410,15 @@ export async function executeHostedReadinessRun(
       // mostly challenges and metadata documents anyone can fetch. The point
       // is that neither of those facts is guaranteed to hold for the next
       // check somebody adds.
-      redactConformanceReportForSharing(result),
+      //
+      // A graded package adds which stored version the findings are about:
+      // its ids and the hash its bytes were checked against.
+      {
+        ...redactConformanceReportForSharing(result),
+        ...(runPackage ? { gradedPluginVersion: runPackage.version } : {}),
+        // Redacted where it is built, so the plan issues' codes stay readable.
+        ...(toolTests ? { toolTests } : {}),
+      },
     );
 
     terminal = {
@@ -389,7 +462,9 @@ export async function executeHostedReadinessRun(
     const terminalReason =
       error instanceof ReadinessSubmissionUnreadableError
         ? "submission_unreadable"
-        : "runner_error";
+        : error instanceof ReadinessPackageUnreadableError
+          ? error.reason
+          : "runner_error";
     if (terminalReason === "submission_unreadable") {
       // The submission's state, not a fault in MCPJam: recorded, not captured.
       logger.warn("[readiness] hosted run could not read its submission", {

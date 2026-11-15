@@ -785,6 +785,9 @@ export * from "./directory-readiness/flows/index.js";
 export * from "./directory-readiness/test-plan/index.js";
 // The decision scan: question ids, rule candidates, the request, grading.
 export * from "./directory-readiness/decisions/index.js";
+// What a submission's reader resumes from, and the pack its team receives.
+export * from "./directory-readiness/handoff.js";
+export * from "./directory-readiness/handoff-markdown.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner
 // and the dialing checks are deliberately not re-exported here, so importing

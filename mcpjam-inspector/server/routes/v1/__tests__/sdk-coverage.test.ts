@@ -203,6 +203,30 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "startDirectorySubmissionRun",
   "get /projects/{projectId}/directory-submissions/{submissionId}/results":
     "getDirectorySubmissionResults",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/handoff":
+    "getDirectorySubmissionHandoff",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/findings":
+    "listDirectorySubmissionFindings",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/findings/{checkId}":
+    "getDirectorySubmissionFinding",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/export":
+    "exportDirectorySubmission",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/events":
+    "listDirectorySubmissionEvents",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/events":
+    "recordDirectorySubmissionEvent",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/snapshots":
+    "getDirectorySubmissionSnapshots",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts":
+    "createDirectoryReviewerAttempt",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts":
+    "listDirectoryReviewerAttempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}":
+    "getDirectoryReviewerAttempt",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/resume":
+    "resumeDirectoryReviewerAttempt",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/cancel":
+    "cancelDirectoryReviewerAttempt",
 
   // Persisted conformance runs
   "post /projects/{projectId}/servers/{serverId}/conformance-runs":

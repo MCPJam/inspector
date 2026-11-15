@@ -71,6 +71,11 @@ import {
   updateDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -1601,6 +1606,37 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getDirectorySubmissionResultsOperation, tier: "direct" },
+  // Reviewer sign-in: each start or resume begins a run that signs in to the
+  // submission's server, so a person approves it. Reading and stopping do not.
+  {
+    operation: createReviewerAttemptOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Sign in as the reviewer for directory submission ${named(input, "submission") ?? "(unnamed)"}`,
+      buttonLabel: "Sign in",
+      kind: "start",
+      // MCPJam runs the sign-in; there is no money to warn about.
+      confirmSeverity: "none",
+    },
+    promptNotes: [
+      "- `create_reviewer_attempt` takes secret NAMES only. Never write a password into a call: ask the user to save it in the app as a materialized project secret whose name starts with `MCPJAM_REVIEWER_`, then pass that name.",
+    ],
+  },
+  { operation: listReviewerAttemptsOperation, tier: "direct" },
+  { operation: getReviewerAttemptOperation, tier: "direct" },
+  {
+    operation: resumeReviewerAttemptOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Continue the reviewer sign-in ${named(input, "attempt") ?? "(unnamed)"}`,
+      buttonLabel: "Continue",
+      kind: "start",
+      confirmSeverity: "none",
+    },
+  },
+  { operation: cancelReviewerAttemptOperation, tier: "direct" },
   {
     operation: startConformanceRunOperation,
     tier: "gated",

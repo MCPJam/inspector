@@ -275,6 +275,65 @@ describe("directory submission operations", () => {
     expect(result.submission.replayed).toBe(true);
   });
 
+  it("saves a plugin and an attempt, and keys each distinct change apart", async () => {
+    const changes = [
+      { plugin: { pluginVersionId: "pv-1" }, attempt: 2 },
+      { plugin: { pluginVersionId: "pv-2" }, attempt: 2 },
+      // Clearing is a change of its own, not "nothing to save".
+      { plugin: null },
+    ];
+    const bodies: Array<Record<string, unknown>> = [];
+    for (const change of changes) {
+      const { client, requests } = clientWith({
+        [`PATCH ${BASE}/sub-1`]: { body: VIEW },
+      });
+      await updateDirectorySubmissionOperation.execute(
+        { submission: "sub-1", expectedRevision: 4, ...change },
+        { client }
+      );
+      bodies.push(requests[0]!.body as Record<string, unknown>);
+    }
+    expect(bodies[0]).toMatchObject({
+      expectedRevision: 4,
+      plugin: { pluginVersionId: "pv-1" },
+      attempt: 2,
+    });
+    expect(bodies[2]).toMatchObject({ plugin: null });
+    expect(bodies[2]).not.toHaveProperty("attempt");
+    const keys = new Set(bodies.map((body) => body.idempotencyKey));
+    expect(keys.size).toBe(3);
+  });
+
+  it("saves a gate on its own, null restoring the default, each gate with its own key", async () => {
+    const { client, requests } = clientWith({
+      [`PATCH ${BASE}/sub-1`]: [{ body: VIEW }, { body: VIEW }, { body: VIEW }],
+    });
+    const gates = [{ warnOnly: [FINDING.id] }, { failOn: [FINDING.id] }, null];
+    for (const checkGate of gates) {
+      await updateDirectorySubmissionOperation.execute(
+        { submission: "sub-1", expectedRevision: 4, checkGate },
+        { client }
+      );
+    }
+    const bodies = requests.map(
+      (request) => request.body as { checkGate: unknown; idempotencyKey: string }
+    );
+    expect(bodies.map((body) => body.checkGate)).toEqual(gates);
+    expect(bodies[0]).toMatchObject({ expectedRevision: 4 });
+    expect(bodies[0]).not.toHaveProperty("answers");
+    // A different gate at the same revision is a new write, not a replay.
+    expect(new Set(bodies.map((body) => body.idempotencyKey)).size).toBe(3);
+  });
+
+  it("refuses a misspelled gate list instead of dropping it", () => {
+    const parse = (checkGate: unknown) =>
+      updateDirectorySubmissionOperation.inputSchema.safeParse({ submission: "sub-1", checkGate })
+        .success;
+    expect(parse({ failOnly: [FINDING.id] })).toBe(false);
+    expect(parse({ failOn: [""] })).toBe(false);
+    expect(parse({ warnOnly: [FINDING.id] })).toBe(true);
+  });
+
   it("refuses a write with nothing to save before any request", async () => {
     const { client, requests } = clientWith({});
     await expect(
@@ -354,6 +413,17 @@ describe("directory submission operations", () => {
     expect(result).toEqual({ project: PROJECT_INFO, submissionId: "sub-1", run: receipt });
   });
 
+  it("starts a ChatGPT plugin submission's run on the version it names", async () => {
+    const { client, requests } = clientWith({
+      [`POST ${BASE}/sub-1/runs`]: { body: { runId: "run-3" }, status: 202 },
+    });
+    await startDirectorySubmissionRunOperation.execute(
+      { submission: "sub-1", pluginVersionId: "pv-1" },
+      { client }
+    );
+    expect(requests[0]!.body).toEqual({ pluginVersionId: "pv-1" });
+  });
+
   it("reads one run's results by step, without raw details", async () => {
     const { client, requests } = clientWith({
       [`GET ${BASE}/sub-1/results`]: {
@@ -368,5 +438,71 @@ describe("directory submission operations", () => {
     expect(result.submissionId).toBe("sub-1");
     expect(result.counts.blockers).toBe(1);
     expect(result.steps[0]!.findings[0]!.finding).not.toHaveProperty("details");
+  });
+
+  it("judges the run under the submission's gate, from the findings' raw details", async () => {
+    const urls = { ...FINDING, id: "claude.submission.urls", status: "satisfied" };
+    // Only its details say this check needs a recorded OAuth sign-in.
+    const signIn = {
+      ...FINDING,
+      id: "claude.auth.rfc8707-resource-canonical",
+      status: "not-evaluated",
+      details: { missingInput: "authorizationRequests" },
+    };
+    const findings = [
+      STEPS[0]!.findings[0]!,
+      { finding: urls, step: "listing", evidenceStatus: "established" },
+      { finding: signIn, step: "connection", evidenceStatus: "not-tested" },
+    ];
+    const { client } = clientWith({
+      [`GET ${BASE}/sub-1/results`]: {
+        body: {
+          run: { id: "run-1" },
+          steps: [{ ...STEPS[0]!, findings }],
+          counts: STEPS[0]!.counts,
+          checkGate: { warnOnly: [FINDING.id] },
+        },
+      },
+    });
+    const result = await getDirectorySubmissionResultsOperation.execute(
+      { submission: "sub-1" },
+      { client }
+    );
+    expect(result.verdict).toEqual({
+      verdict: "ready",
+      failing: [],
+      undetermined: [],
+      notCheckedOnPath: [signIn.id],
+      notCheckedReasons: {
+        [signIn.id]:
+          "it reads the requests of a completed OAuth sign-in, and no run records those yet",
+      },
+      gate: { failOn: [], warnOnly: [FINDING.id] },
+    });
+    // The warned check still shows; only the details are left out.
+    const shown = result.steps[0]!.findings.map((entry) => entry.finding);
+    expect(shown.map((finding) => [finding.id, finding.status])).toEqual([
+      [FINDING.id, "violated"],
+      [urls.id, "satisfied"],
+      [signIn.id, "not-evaluated"],
+    ]);
+    expect(shown.some((finding) => "details" in finding)).toBe(false);
+  });
+
+  it("judges under the directory's own gate when the server sends none", async () => {
+    const { client } = clientWith({
+      [`GET ${BASE}/sub-1/results`]: {
+        body: { run: { id: "run-1" }, steps: STEPS, counts: STEPS[0]!.counts },
+      },
+    });
+    const result = await getDirectorySubmissionResultsOperation.execute(
+      { submission: "sub-1" },
+      { client }
+    );
+    expect(result.verdict).toMatchObject({
+      verdict: "not-ready",
+      failing: [FINDING.id],
+      gate: { failOn: [], warnOnly: [] },
+    });
   });
 });

@@ -111,15 +111,33 @@ export type {
   PlatformDirectorySubmissionCounts,
   PlatformDirectorySubmissionCreateBody,
   PlatformDirectorySubmissionDeleted,
+  PlatformDirectorySubmissionPlugin,
   PlatformDirectorySubmissionResults,
   PlatformDirectorySubmissionRunBody,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
   PlatformDirectorySubmissionView,
 } from "./directory-submission-types.js";
+export type {
+  PlatformDirectorySubmissionEvent,
+  PlatformDirectorySubmissionEventBody,
+  PlatformDirectorySubmissionExportFile,
+  PlatformDirectorySubmissionFinding,
+  PlatformDirectorySubmissionFindingsQuery,
+  PlatformDirectorySubmissionHandoff,
+  PlatformDirectorySubmissionSnapshotsView,
+} from "./directory-submission-handoff-types.js";
 export { directorySubmissionConflict } from "./directory-submission-client.js";
+export type {
+  PlatformReviewerAttempt,
+  PlatformReviewerAttemptCreateBody,
+  PlatformReviewerAttemptStart,
+  PlatformReviewerAttemptState,
+  PlatformReviewerStage,
+} from "./directory-reviewer-attempt-types.js";
 // The nine directory submission operations and their input and result types.
 export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
 
 export {
   computeRunTargets,

@@ -2432,6 +2432,14 @@ describe("operation catalog consistency", () => {
     delete_directory_submission: { submission: "sub" },
     start_directory_submission_run: { submission: "sub" },
     get_directory_submission_results: { submission: "sub" },
+    create_reviewer_attempt: {
+      submission: "sub",
+      passwordSecretName: "MCPJAM_REVIEWER_SUB_PASSWORD",
+    },
+    list_reviewer_attempts: { submission: "sub" },
+    get_reviewer_attempt: { submission: "sub", attempt: "att" },
+    resume_reviewer_attempt: { submission: "sub", attempt: "att" },
+    cancel_reviewer_attempt: { submission: "sub", attempt: "att" },
     start_conformance_run: { server: "s" },
     get_conformance_run: { run: "r" },
     list_conformance_runs: {},
@@ -2789,6 +2797,11 @@ describe("operation catalog consistency", () => {
       "update_directory_submission",
       "delete_directory_submission",
       "start_directory_submission_run",
+      // A reviewer sign-in starts a run that signs in to the submission's
+      // server; a cancel stops one.
+      "create_reviewer_attempt",
+      "resume_reviewer_attempt",
+      "cancel_reviewer_attempt",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
