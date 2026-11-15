@@ -396,6 +396,13 @@ async function postEvalRequest<TResponse>(
     if (typeof errorBody?.code === "string") {
       (error as Error & { code?: string }).code = errorBody.code;
     }
+    // A 403 names which refusal it is in `details.reason`; the platform fee
+    // refusal is told apart from other 403s by it.
+    const reason = (body as { details?: { reason?: unknown } } | null)?.details
+      ?.reason;
+    if (typeof reason === "string") {
+      (error as Error & { reason?: string }).reason = reason;
+    }
     // A launch the organization's AI key policy refused lists every
     // dependency that can't run on its providers; keep the list so the run
     // sheet can show all of them, not only the summary sentence.

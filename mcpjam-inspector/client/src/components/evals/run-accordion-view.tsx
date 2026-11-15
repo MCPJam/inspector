@@ -45,6 +45,24 @@ interface RunTestCase {
   model?: string;
 }
 
+const STOP_LABELS: Record<
+  NonNullable<EvalSuiteRunListItem["stopReason"]>,
+  string
+> = {
+  run_timeout: "20m limit",
+  iteration_timeout: "iteration limit",
+  stale_worker: "worker stale",
+  user_cancelled: "user cancelled",
+  platform_fee_required: "not enough credits",
+};
+
+/** The short reason a stopped run shows beside its stop time. */
+export function runStopLabel(
+  stopReason: EvalSuiteRunListItem["stopReason"],
+): string | null {
+  return stopReason ? STOP_LABELS[stopReason] : null;
+}
+
 export function RunAccordionView({
   suite: _suite,
   runs,
@@ -169,16 +187,7 @@ export function RunAccordionView({
 
         const timestamp = run.completedAt ?? run.createdAt;
         const timeAgo = timestamp ? formatTimeAgo(timestamp) : null;
-        const stopLabel =
-          run.stopReason === "run_timeout"
-            ? "20m limit"
-            : run.stopReason === "iteration_timeout"
-              ? "iteration limit"
-              : run.stopReason === "stale_worker"
-                ? "worker stale"
-                : run.stopReason === "user_cancelled"
-                  ? "user cancelled"
-                  : null;
+        const stopLabel = runStopLabel(run.stopReason);
         const stoppedAgo = run.stoppedAt ? formatTimeAgo(run.stoppedAt) : null;
 
         const creator = run.createdBy && userMap?.get(run.createdBy);
@@ -294,6 +303,13 @@ export function RunAccordionView({
                       {stoppedAgo ? ` - ${stoppedAgo}` : ""}
                     </span>
                   )}
+
+                  {run.status === "failed" &&
+                    run.stopReason === "platform_fee_required" && (
+                      <span className="text-xs text-muted-foreground font-medium shrink-0">
+                        Not started · {stopLabel}
+                      </span>
+                    )}
 
                   {run.status === "timed_out" && (
                     <span className="text-xs text-warning font-medium shrink-0">

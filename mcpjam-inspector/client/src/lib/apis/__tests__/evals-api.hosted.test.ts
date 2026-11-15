@@ -347,6 +347,51 @@ describe("evals-api hosted mode", () => {
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
+  it("keeps the platform fee refusal's reason and words it as a billing fix", async () => {
+    authFetchMock.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "FORBIDDEN",
+          message:
+            "This work requires platform credits. Add credits or contact your organization administrator.",
+          details: { reason: "PLATFORM_FEE_REQUIRED" },
+        },
+        403
+      )
+    );
+
+    const caught = await runEvals({
+      projectId: "project-1",
+      suiteName: "Hosted Suite",
+      tests: [{ title: "Test", query: "Hello", runs: 1 }],
+      serverIds: ["Server A"],
+      convexAuthToken: "convex-token",
+    }).catch((error: unknown) => error);
+
+    expect(caught).toMatchObject({ reason: "PLATFORM_FEE_REQUIRED" });
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    const message = getBillingErrorMessage(caught, "Failed to start eval run");
+    expect(message).toBe(
+      "Your organization's credits can't pay for this run. Buy credits or turn on auto-reload, then run it again."
+    );
+    expect(message).not.toMatch(/PLATFORM_FEE_REQUIRED|provider key/i);
+  });
+
+  it("does not word the iteration cap as a credits refusal", () => {
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxEvalIterationsPerMonth",
+          allowedValue: 25,
+        })
+      ),
+      "Failed to start eval run"
+    );
+    expect(message).toContain("eval iteration limit");
+    expect(message).not.toMatch(/credits|auto-reload/i);
+  });
+
   it("posts hosted guest quick runs with the project/server payload", async () => {
     await runEvalTestCase({
       projectId: "guest-project",

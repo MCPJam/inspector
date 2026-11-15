@@ -3,13 +3,6 @@ import { BarChart3, Info, Settings } from "lucide-react";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@mcpjam/design-system/dialog";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -17,7 +10,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { AutoTopupDialogBody } from "./AutoTopupDialogBody";
+import { AutoTopupDialog } from "./AutoTopupDialogBody";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTopupsBanner";
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
@@ -526,24 +519,12 @@ export function CreditBalanceCard({
           </div>
         )}
       </CardContent>
-      <Dialog
+      <AutoTopupDialog
         open={isAutoManageOpen && topUpEligible}
         onOpenChange={setIsAutoManageOpen}
-      >
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Auto-reload</DialogTitle>
-            <DialogDescription>
-              Automatically purchase credits when you’re running low.
-            </DialogDescription>
-          </DialogHeader>
-          <AutoTopupDialogBody
-            organizationId={organizationId}
-            canManage={canManageCredits}
-            onClose={() => setIsAutoManageOpen(false)}
-          />
-        </DialogContent>
-      </Dialog>
+        organizationId={organizationId}
+        canManage={canManageCredits}
+      />
       {isTopupOpen && canManageCredits && topUpEligible && (
         <CreditTopupDialog
           open

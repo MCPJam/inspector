@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteHeroStats } from "../suite-hero-stats";
-import { RunAccordionView } from "../run-accordion-view";
+import { RunAccordionView, runStopLabel } from "../run-accordion-view";
 
 describe("CI replay actions", () => {
   const replayableRun = {
@@ -121,5 +121,16 @@ describe("CI replay actions", () => {
 
     expect(screen.getByText(/Cancelled/)).toBeInTheDocument();
     expect(screen.queryByText(/Failed/)).not.toBeInTheDocument();
+  });
+});
+
+describe("runStopLabel", () => {
+  it("names a run the platform fee refused by credits", () => {
+    expect(runStopLabel("platform_fee_required")).toBe("not enough credits");
+  });
+
+  it("keeps the other stop reasons and leaves a running run unlabelled", () => {
+    expect(runStopLabel("user_cancelled")).toBe("user cancelled");
+    expect(runStopLabel(undefined)).toBeNull();
   });
 });
