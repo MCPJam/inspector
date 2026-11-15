@@ -46,6 +46,7 @@ import {
   isCredentialRefusalError,
   type DeliveredTokenFacts,
 } from "./hosted-oauth-refresh.js";
+import { oauthRefusalFromAuthorize } from "./local-oauth-refusal.js";
 import { logger } from "./logger.js";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import {
@@ -193,6 +194,11 @@ type LocalAuthorizeBatchSuccess = {
   oauthAccountKind?: "shared" | "uploaded";
   /** The account `oauthAccessToken` came from, pinned for refresh. */
   oauthCredentialId?: string;
+  /** Why there is no token, when the backend can say; see `local-oauth-refusal.ts`. */
+  oauthUnavailableReason?: string;
+  oauthUnavailablePolicy?: string;
+  oauthUnavailableCause?: string;
+  oauthUnavailableMessage?: string;
   oauthConnections?: AuthorizedOAuthConnection[];
   internalLogContext?: InternalLogContext;
   /**
@@ -1451,6 +1457,19 @@ export async function resolveLocalServerForConnect(
     result.serverConfig.transportType === "http"
       ? credentialOrigin(result.serverConfig.url)
       : null;
+  // A token the backend refused to release (policy, local runs not allowed,
+  // a moved server) is answered here; a refresh would only be refused again.
+  if ((useOAuth || effectiveAuth === "discover") && !resolvedOauthAccessToken) {
+    const refusal = oauthRefusalFromAuthorize(result, {
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      serverUrl:
+        result.serverConfig.transportType === "http"
+          ? result.serverConfig.url
+          : undefined,
+    });
+    if (refusal) throw refusal;
+  }
   if (useOAuth && !resolvedOauthAccessToken) {
     const displayName = options?.serverDisplayName ?? serverId;
     try {

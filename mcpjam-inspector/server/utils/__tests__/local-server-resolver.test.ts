@@ -386,6 +386,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     };
     oauthAccessToken: string | null;
     oauthCredentialId?: string;
+    /** More of the backend's per-server answer (reasons, credential id). */
+    extra?: Record<string, unknown>;
   }) {
     return new Response(
       JSON.stringify({
@@ -400,6 +402,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
             ...(payload.oauthCredentialId
               ? { oauthCredentialId: payload.oauthCredentialId }
               : {}),
+            ...payload.extra,
           },
         },
       }),
@@ -486,6 +489,133 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       status: 401,
       message: expect.stringContaining('"Excalidraw" now points at another address'),
     });
+  });
+
+  it("raises the backend's refusal for a shared account without spending a refresh", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-shared",
+          serverConfig: {
+            transportType: "http",
+            url: "https://ctrl.example.com/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: null,
+          extra: {
+            oauthUnavailableReason: "credential_export_denied",
+            oauthUnavailablePolicy: "hostedOnlyAccount",
+            oauthUnavailableCause: "not_acknowledged",
+            oauthUnavailableMessage:
+              "Local runs aren't allowed yet for this server's shared sign-in.",
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(
+        fakeContext,
+        "bearer-xyz",
+        "proj-1",
+        "srv-shared",
+        { serverDisplayName: "CTRL UAT" }
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      message: "Local runs aren't allowed yet for this server's shared sign-in.",
+      details: expect.objectContaining({
+        exportDenied: true,
+        policy: "hostedOnlyAccount",
+        cause: "not_acknowledged",
+      }),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("raises the refusal for a discover-mode server too, without a refresh or a bare connect", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-shared-auto",
+          serverConfig: {
+            transportType: "http",
+            url: "https://ctrl.example.com/mcp",
+            authMethod: "auto",
+          },
+          oauthAccessToken: null,
+          extra: {
+            oauthUnavailableReason: "credential_export_denied",
+            oauthUnavailablePolicy: "hostedOnlyAccount",
+            oauthUnavailableCause: "not_acknowledged",
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(
+        fakeContext,
+        "bearer-xyz",
+        "proj-1",
+        "srv-shared-auto",
+        { serverDisplayName: "CTRL UAT" }
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ cause: "not_acknowledged" }),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("pins the account that answered for a later refresh", async () => {
+    const bodies: any[] = [];
+    const fetchMock = vi.fn(async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-shared",
+          serverConfig: {
+            transportType: "http",
+            url: "https://ctrl.example.com/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: "shared-token",
+          extra: { oauthCredentialId: "conn-test-user-1" },
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        bodies.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ accessToken: "next-token" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-shared",
+      { serverDisplayName: "CTRL UAT" }
+    );
+    await config.onUnauthorized();
+
+    expect(bodies).toEqual([
+      expect.objectContaining({
+        serverId: "srv-shared",
+        connectionId: "conn-test-user-1",
+      }),
+    ]);
   });
 
   it("does not send a recovered token whose origins the backend left out", async () => {
