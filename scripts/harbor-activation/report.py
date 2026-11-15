@@ -572,7 +572,10 @@ def publish_analysis(sources, out):
     for path in out.glob('*/events.json'):
         for event in load(path, []):
             event_paths.setdefault(event['id'], '../' + path.parent.name + '/' + event['path'] + '/event.json')
+    appendix_names = {source.name for source in sources}
     def remap(text):
+        for name in appendix_names:
+            text = text.replace('work/' + name, './' + name)
         text = re.sub(r'outputs/evidence/(harness-validation|bootstrap|product-fixes)/([\w-]+)', r'../preflight/\1--\2/event.json', text)
         return re.sub(r'work/jobs/([^/\s`"]+)/([^/\s`".,]+)(?:/[^\s`"),]+)?',
                       lambda m: '../' + m[1] + '--' + m[2] + '/index.md', redact(text))
@@ -597,13 +600,15 @@ def publish_analysis(sources, out):
             value = walk(value)
             if not isinstance(value, dict):
                 value = {'source_document': value}
-            value['publication_note'] = ('Controlled cycle-2 reproduction derived from captured output; separate from fresh-user trial rates.' if source.name.startswith('cycle2-') else 'Independent qualitative review; frozen strict rewards are unchanged. Raw trajectory references map to public-only projections via run indexes.' if source.name.startswith('final-') else 'Preliminary, noncomparative v1.2 observations. Invalid benchmark assertion fixture; excluded from improvement denominators. Raw trajectory references map to run indexes containing public-only CLI projections; raw private trajectories are not published.')
+            value['publication_note'] = ('Controlled cycle-2 reproduction derived from captured output; separate from fresh-user trial rates.' if source.name.startswith('cycle2-') else 'Preliminary, noncomparative v1.2 observations; excluded from improvement denominators.' if source.name.startswith(('baseline-', 'benchmark-validity')) else 'Independent qualitative review; frozen strict rewards are unchanged. Raw trajectory references map to public-only projections via run indexes.')
             text = json.dumps(value, indent=2)
         else:
             text = remap(source.read_text())
             text = re.sub(r'`(\.\./[^`]+/index\.md)`', r'[Published run evidence](\1)', text)
             text = re.sub(r'`([a-f0-9]{32})`', lambda m: '[' + m[1] + '](' + event_paths[m[1]] + ')' if m[1] in event_paths else m[0], text)
-            note = ('Independent qualitative review; frozen strict rewards are unchanged. Raw trajectory references map to public-only projections via run indexes.' if source.name.startswith('final-') else 'Harness validation review, separate from fresh-user observations.' if 'v13' in source.name else 'Preliminary, noncomparative v1.2 observations. The assertion fixture was invalid; exclude these results from improvement denominators. Raw trajectory references link to run indexes with public-only projections; private trajectories are not published.')
+            for name in appendix_names:
+                text = text.replace('./' + name, '[' + name + '](' + name + ')')
+            note = ('Preliminary, noncomparative v1.2 observations; excluded from improvement denominators.' if source.name.startswith(('baseline-', 'benchmark-validity')) else 'Harness validation review, separate from fresh-user observations.' if source.name.startswith('fixture-v13') else 'Independent qualitative review; frozen strict rewards are unchanged. Raw trajectory references map to public-only projections via run indexes.')
             text = '> ' + note + '\n\n' + text
         (target / source.name).write_text(text)
     (target / 'index.md').write_text('# Independent analysis appendix\n\n' + '\n'.join(f'- [{p.name}]({p.name})' for p in sorted(target.iterdir()) if p.name != 'index.md') + '\n')
