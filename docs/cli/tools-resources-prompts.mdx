@@ -16,7 +16,7 @@ mcpjam tools list --url https://your-server.com/mcp --host claude
 
 Valid host IDs match the presets in the Inspector: `claude`, `chatgpt`, `cursor`, `copilot`, `codex`, `mcpjam`.
 
-**Tool visibility with `--host`:** `tools list --host` hides tools whose `_meta.ui.visibility` is `["app"]`; those are app-only tools the host's model cannot see. The output includes a `host` field and a `toolsDroppedVisibility` count. Hosts that opt out of visibility filtering (such as `cursor`) keep all tools. `tools call --host` rejects app-only tools with a usage error; omit `--host` to call them as an operator.
+**Tool visibility with `--host`:** `tools list --host` hides tools whose `_meta.ui.visibility` is `["app"]`; those are app-only tools the host's model cannot see. The output includes a `host` field and a `toolsDroppedVisibility` count. `tools call --host` rejects app-only tools with a usage error; omit `--host` to call them as an operator. Hosts that opt out of visibility filtering (such as `cursor`) keep all tools in the list and can call app-only tools.
 
 **Conflict with `--client-capabilities`:** `--host` and `--client-capabilities` both set the exact advertised capabilities and cannot be combined. The CLI exits with a usage error if both are passed.
 
