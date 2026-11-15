@@ -49,10 +49,8 @@ export function ReviewerExampleRow({
             {iterationLabel}
           </label>
           <OutcomeTag outcome={judgeSaid} />
-          <ArrowRight
-            aria-label="changed to"
-            className="size-3.5 text-muted-foreground"
-          />
+          <ArrowRight aria-hidden className="size-3.5 text-muted-foreground" />
+          <span className="sr-only">changed to</span>
           <OutcomeTag outcome={reviewerSaid} />
           <span className="text-xs text-muted-foreground">by {reviewer}</span>
         </div>

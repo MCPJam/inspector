@@ -105,6 +105,7 @@ describe("ReviewerExampleRow", () => {
     expect(screen.getByText("by Matt")).toBeInTheDocument();
     expect(screen.getByText("Pass")).toBeInTheDocument();
     expect(screen.getByText("Fail")).toBeInTheDocument();
+    expect(screen.getByText("changed to")).toHaveClass("sr-only");
     fireEvent.click(screen.getByRole("button", { name: "Exclude" }));
     expect(onIncludedChange).toHaveBeenLastCalledWith(false);
     fireEvent.click(
