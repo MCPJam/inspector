@@ -300,6 +300,8 @@ export function EnvironmentComposer({
     maxTargets,
   };
   const targetCount = composerTargetCount(value);
+  const serverSkillCount =
+    value.stack.serverSkillSelection?.serverSkillIds.length ?? 0;
 
   const patchStack = useCallback(
     (patch: Partial<EnvironmentStack>) => {
@@ -521,6 +523,25 @@ export function EnvironmentComposer({
             projectId={projectId}
             value={value.stack.skillSelection}
             onChange={(skillSelection) => patchStack({ skillSelection })}
+            // A saved environment on "All shared Library skills" seeds its
+            // scope into the stack. The strip shows it and turns it off; it
+            // doesn't offer to turn it on, which is the Evaluate field's.
+            allLibrary={
+              value.stack.skillScope
+                ? {
+                    state: true,
+                    serverSkillCount,
+                    onToggle: () => patchStack({ skillScope: null }),
+                    onLeaveOut: (_skillId, rest) =>
+                      patchStack({
+                        skillScope: null,
+                        skillSelection: rest.length
+                          ? { mode: "explicit", skillIds: rest }
+                          : null,
+                      }),
+                  }
+                : undefined
+            }
             disabled={slotsDisabled}
             testId={testId("skills-picker")}
             inModal={inModal}

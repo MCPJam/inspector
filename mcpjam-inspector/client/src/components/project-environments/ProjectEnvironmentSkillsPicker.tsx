@@ -290,7 +290,8 @@ export function ProjectEnvironmentSkillsPicker({
   // Only the truly-empty case short-circuits. With orphaned pins we MUST fall
   // through to the list so they get detach-only rows — otherwise the pins are
   // invisible, unremovable, and still sent on save. Server skills are listed
-  // below an empty Library too.
+  // below an empty Library too, and a scope that is on stays listed so it can
+  // be turned off.
   const libraryEmpty = skills.length === 0 && orphanSelectedIds.length === 0;
   const emptyLibrary = (
     <p className="py-1 text-xs italic text-muted-foreground">
@@ -298,7 +299,7 @@ export function ProjectEnvironmentSkillsPicker({
       here.
     </p>
   );
-  if (libraryEmpty && !serverSkills) return emptyLibrary;
+  if (libraryEmpty && !serverSkills && scope === false) return emptyLibrary;
 
   return (
     <div className="space-y-1">
