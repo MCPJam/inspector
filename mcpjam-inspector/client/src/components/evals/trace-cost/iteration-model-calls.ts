@@ -5,7 +5,7 @@ import {
   type ModelCallCostEvidence,
   type ModelCostRollup,
 } from "@mcpjam/sdk/browser";
-import { isConvexQueryUnavailable } from "@/lib/convex-error";
+import { isConvexQueryNotServed } from "@/lib/convex-error";
 import type { EvalIteration } from "../types";
 
 export const ITERATION_MODEL_CALLS_QUERY = "evalIterationModelCalls:list";
@@ -89,13 +89,7 @@ export function unmatchedModelCalls(
     }));
 }
 
-/**
- * The query is not deployed everywhere yet. Production redacts the "Could not
- * find public function" message to "Server Error", so a redacted failure of
- * this query reads as unavailable too, matched by the function name.
- */
+/** The query is not deployed everywhere yet; until it is, it reads as absent. */
 export function isIterationModelCallsUnavailable(error: Error): boolean {
-  const message = typeof error?.message === "string" ? error.message : "";
-  if (!message.includes(`Q(${ITERATION_MODEL_CALLS_QUERY})`)) return false;
-  return isConvexQueryUnavailable(error) || message.includes("Server Error");
+  return isConvexQueryNotServed(error, ITERATION_MODEL_CALLS_QUERY);
 }
