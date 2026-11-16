@@ -152,17 +152,20 @@ function admission(
 }
 
 describe("Cursor CLI client protocol negotiation", () => {
-  it("T1: on a both-era server it stays on 2025-11-25 and pass-through is admitted", async () => {
+  it("T1: on a both-era server it stays on 2025-11-25, and the elicitation it declares keeps pass-through off", async () => {
     const fixture = await serve("both");
     const manager = await turnConnection(cursorCli(), fixture.url);
     expect(manager.getInitializationInfo("server")?.protocolVersion).toBe(
       "2025-11-25",
     );
     expect(fixture.wire).not.toContain("POST server/discover");
-    expect(admission(manager, cursorCli(), "cursor")).toEqual({
-      delivery: "native",
-      gaps: [],
-    });
+    // The turn hands elicitation to its handler only for Claude Code's
+    // profile; on pass-through Cursor CLI would decline the server's form
+    // itself, where MCPJam's connection asks the member.
+    expect(admission(manager, cursorCli(), "cursor").gaps.sort()).toEqual([
+      "capability-overrides",
+      "client-capabilities",
+    ]);
   });
 
   it("T2: the signed proxy's connection, rebuilt from the sealed profile, negotiates 2025-11-25", async () => {

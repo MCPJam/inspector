@@ -201,7 +201,7 @@ describe("native profile admission", () => {
       ).toEqual(["unqualified-protocol"]);
     });
 
-    it("still needs a live handler for elicitation the runtime declares", () => {
+    it("keeps the configured route for elicitation the turn would not hand to its handler", () => {
       const elicitation = {
         ...nativeClient,
         capabilities: { elicitation: { form: {} } },
@@ -211,25 +211,37 @@ describe("native profile admission", () => {
         url: "https://mcp.example/mcp",
         clientCapabilities: { elicitation: { form: {} } },
       };
-      expect(nativeForwardingGaps({ ...candidate(config), nativeClient: elicitation })).toContain(
-        "client-capabilities",
-      );
+      // With or without a live handler, on either landing: the turn routes
+      // elicitation only for the measured Claude Code profile, so the
+      // runtime's client would answer the server itself.
+      for (const landedOn of ["2025-06-18", "2025-11-25"])
+        for (const elicitationRuntimeVersion of [undefined, "1.2.3"])
+          expect(
+            nativeForwardingGaps({
+              ...candidate(config, landedOn),
+              nativeClient: elicitation,
+              elicitationRuntimeVersion,
+            }),
+          ).toContain("client-capabilities");
+    });
+
+    it("admits elicitation the runtime's client declares where the turn routes it to its handler", () => {
+      const claudeCode = {
+        clientInfo: { name: "claude-code", version: "2.1.290" },
+        capabilities: { elicitation: { form: {} }, roots: { listChanged: true } },
+      };
+      const config = {
+        url: "https://mcp.example/mcp",
+        clientCapabilities: claudeCode.capabilities,
+        clientInfo: claudeCode.clientInfo,
+      };
       expect(
         nativeForwardingGaps({
           ...candidate(config),
-          nativeClient: elicitation,
-          elicitationRuntimeVersion: "1.2.3",
+          nativeClient: claudeCode,
+          elicitationRuntimeVersion: "2.1.290",
         }),
       ).toEqual([]);
-      // The turn routes elicitation only from a 2025-11-25 connection, so one
-      // that landed earlier keeps its configured route.
-      expect(
-        nativeForwardingGaps({
-          ...candidate(config, "2025-06-18"),
-          nativeClient: elicitation,
-          elicitationRuntimeVersion: "1.2.3",
-        }),
-      ).toContain("client-capabilities");
     });
   });
   it("keeps host-only promises and client-fulfilled tools", () => {
