@@ -52,6 +52,7 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
+import { localHostAllowlistMiddleware } from "./middleware/local-host-allowlist";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -486,6 +487,9 @@ app.use("*", securityHeadersMiddleware);
 // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
 // than another line in the security headers — see indexing-headers.ts.
 app.use("*", indexingHeadersMiddleware);
+
+// 1c. Host allowlist (blocks DNS rebinding), local mode only.
+if (!HOSTED_MODE) app.use("*", localHostAllowlistMiddleware);
 
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
