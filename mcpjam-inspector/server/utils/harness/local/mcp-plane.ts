@@ -10,6 +10,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import { handleJsonRpc, parseAndValidateJsonRpc, type ToolCallEvidenceHook } from "../../../services/mcp-http-bridge.js";
+import { downstreamProtocolVersionOf } from "../../../services/bridge-protocol-version.js";
 import { evaluateHarnessProxyToolPolicy } from "../harness-proxy-policy-enforcement.js";
 import { publishHarnessPolicyBlock } from "../harness-policy-block-channel.js";
 import { publishHarnessScopeStepUp } from "../harness-scope-step-up.js";
@@ -74,6 +75,7 @@ export async function startLocalHarnessMcpPlane(args: LocalHarnessMcpPlaneArgs) 
       const manager = pinMcpManagerToServer(current.manager, serverId);
       rpcLogBus.publish({ serverId, direction: "send", timestamp: new Date().toISOString(), message: parsed.body });
       const result = await handleJsonRpc(serverId, parsed.body, manager, "adapter", {
+        downstreamProtocolVersion: downstreamProtocolVersionOf(parsed.body),
         failureReporter: current.failureReporter,
         ...(current.evidence ? { toolCallEvidence: current.evidence() } : {}),
         onToolCallError: async context => {
