@@ -408,8 +408,8 @@ enforced in code, not by convention.
    --evidence`), recorded at the release commit or at one with the same
    conformance inputs digest (`scripts/conformance-inputs-digest.mjs`), and
    attested as `runtime-contract.json`. A pack becomes desired
-   only through the version PR that pins it: `prepare-release.yml` runs
-   `local-harness-pack-pipeline.yml` per harness and writes the pin once this
+   only through the reviewed pin PR that pins it: `local-harness-pack-prebuild.yml`
+   runs `local-harness-pack-pipeline.yml` per harness and writes the pin once this
    layer passed conformance on the pack; the pack being replaced
    stays permitted only if it passed too and its provenance verifies. On the
    machine, selection is per build with no shared pointer (`runtime-selection.ts`),

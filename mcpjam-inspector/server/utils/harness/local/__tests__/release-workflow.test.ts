@@ -165,21 +165,60 @@ describe("packs are part of starting a release", () => {
     expect(workflow("local-harness-pack-prebuild").jobs.prebuild.concurrency).toEqual(group);
   });
 
-  it("prebuilds in the background without ever reaching main or users", () => {
+  it("prebuilds in the background and proposes the pins as one reviewed PR once every harness finishes", () => {
     const prebuild = workflow("local-harness-pack-prebuild");
     expect(prebuild.on.push.branches).toEqual(["main"]);
-    // It pins nothing: no pin artifacts collected, no PR, no push token.
-    const text = JSON.stringify(prebuild);
-    expect(text).not.toContain("local-harness-pin-");
-    expect(text).not.toContain("RELEASE_PUSH_TOKEN");
-    expect(text).not.toContain("apply-pins");
-    // It stands down while a release is being prepared, and while signing
-    // needs a person (a build waiting for approval would hold the harness's
-    // group, and the next release would queue behind it).
-    expect(prebuild.jobs.prebuild.if).toBe("needs.harnesses.outputs.release_in_progress == 'false'");
+    // It stands down while signing needs a person (a build waiting for
+    // approval would hold the harness's group, and the next run would queue
+    // behind it), and never waits on another workflow's runs.
+    expect(prebuild.jobs.prebuild.if).toBe("needs.harnesses.outputs.stand_down == 'false'");
     const guard = JSON.stringify(prebuild.jobs.harnesses);
-    expect(guard).toContain("prepare-release.yml");
     expect(guard).toContain("required_reviewers");
+    expect(guard).not.toContain("prepare-release.yml");
+
+    // All harnesses or none: no `if`, so a failed pipeline means no pin PR.
+    const pinPr = prebuild.jobs["pin-pr"];
+    expect(pinPr.needs).toBe("prebuild");
+    expect(pinPr.if).toBeUndefined();
+    expect(pinPr.concurrency).toEqual({ group: "local-harness-pack-pins", "cancel-in-progress": false });
+    expect(pinPr.permissions).toEqual({ contents: "read", attestations: "read" });
+
+    // Collect every pin, apply them in a clean install, gate exactly what the
+    // PR pins, then open it through the shared bot script.
+    const steps: any[] = pinPr.steps;
+    const at = (test: (step: any) => boolean) => steps.findIndex(test);
+    const checkout = at((step) => String(step.uses).startsWith("actions/checkout@"));
+    const install = at((step) => /npm ci/.test(step.run ?? ""));
+    const collect = at((step) => step.with?.pattern === "local-harness-pin-*");
+    const apply = at((step) => /local-harness-publication\.mjs apply-pins/.test(step.run ?? ""));
+    const gate = at((step) => /check-local-harness-release\.mjs --assets --verify-attestations/.test(step.run ?? ""));
+    const newer = at((step) => step.id === "newer");
+    const open = at((step) => step.name === "Open or refresh the pin PR");
+    expect(steps[checkout].with["persist-credentials"]).toBe(false);
+    expect(checkout).toBeLessThan(install);
+    expect(install).toBeLessThan(apply);
+    expect(collect).toBeGreaterThan(-1);
+    expect(collect).toBeLessThan(apply);
+    expect(apply).toBeLessThan(gate);
+    expect(gate).toBeLessThan(newer);
+    expect(newer).toBeLessThan(open);
+
+    // A run from an older commit never replaces a newer commit's pins.
+    expect(steps[newer].run).toMatch(/compare\/\$base\.\.\.\$GITHUB_SHA/);
+    expect(steps[open].if).toBe("steps.newer.outputs.stand_down == 'false'");
+
+    // Only the pin step holds the push token, and it stages only what
+    // `apply-pins` writes, a new equivalence record included.
+    expect(steps[open].env.GH_TOKEN).toBe("${{ secrets.RELEASE_PUSH_TOKEN }}");
+    expect(steps.filter((step) => JSON.stringify(step).includes("RELEASE_PUSH_TOKEN"))).toHaveLength(1);
+    const run: string = steps[open].run;
+    expect(run).toMatch(/runtime-compat\.generated\.json/);
+    expect(run).toMatch(/pack-inputs\.generated\.json/);
+    expect(run).toMatch(/local-harness-pack-equivalence/);
+    expect(run).not.toMatch(/git add (-u|-A|\.)/);
+    expect(run).toMatch(/packs\.md/);
+    expect(run).toContain('branch: "bot/local-harness-pack-pins"');
+    expect(run).toMatch(/bash \.github\/scripts\/local-harness-bot-pr\.sh/);
   });
 
   it("prebuilds on a push that changes ANY declared pack input", async () => {
