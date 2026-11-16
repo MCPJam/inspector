@@ -2382,6 +2382,8 @@ export function useChatSession(
    * before it — the same late-binding shape the transport refs use.
    */
   const ownedMrtrAnswers = useRef(new Map<string, ReturnType<typeof createPrivateFormAnswer>>());
+  // Continuations whose rounds this session enqueued.
+  const ownMrtrContinuations = useRef(new Set<string>());
   useEffect(() => () => { for (const answer of ownedMrtrAnswers.current.values()) answer.dispose(); ownedMrtrAnswers.current.clear(); }, []);
   const mrtrResumeSenderRef = useRef<
     | ((
@@ -2603,6 +2605,7 @@ export function useChatSession(
         expiresAt: event.expiresAt,
         timestamp: new Date().toISOString(),
       };
+      ownMrtrContinuations.current.add(event.continuationId);
       // `enqueue` dedupes by round key, so a re-delivered part never stacks a
       // second dialog over one suspended operation.
       store.enqueue(round, {
@@ -5523,7 +5526,11 @@ export function useChatSession(
       )
     );
   }, [messages]);
-  const awaitingAppRound = useHostedMrtrStore((s) => s.rounds.length > 0);
+  // The rounds store is shared by every chat and surface; only this
+  // session's rounds hold its sends.
+  const awaitingAppRound = useHostedMrtrStore((s) =>
+    s.rounds.some((r) => ownMrtrContinuations.current.has(r.continuationId)),
+  );
   useEffect(() => {
     idleGate.set({
       idle: status === "ready" || status === "error",

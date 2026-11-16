@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DefaultChatTransport, UIMessageChunk } from "ai";
 import { useChatSession } from "../use-chat-session";
 import { useResumedThreadPersistence } from "../use-resumed-thread-persistence";
+import { useHostedMrtrStore } from "@/stores/hosted-mrtr-store";
 
 const mockState = vi.hoisted(() => ({
   empty: [] as never[],
@@ -298,6 +299,7 @@ beforeEach(() => {
   scenario.firstAsksApproval = false;
   scenario.onConflict.mockClear();
   scenario.onUnsaved.mockClear();
+  useHostedMrtrStore.getState().clear();
 });
 
 describe("one chat turn at a time (real AI SDK)", () => {
@@ -602,5 +604,35 @@ describe("one chat turn at a time (real AI SDK)", () => {
     act(() => result.current.stop());
     await expect(queued).resolves.toBe(false);
     expect(scenario.bodies).toHaveLength(1);
+  });
+
+  it("is not held by an App round that another chat is waiting on", async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => {
+      void result.current.sendMessage({ text: "count to 150" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("streaming"));
+    await act(async () => {
+      void result.current.sendMessage({ text: "App follow-up" });
+    });
+    act(() =>
+      useHostedMrtrStore.getState().enqueue(
+        {
+          key: "elsewhere:1",
+          continuationId: "elsewhere",
+          round: 1,
+          serverId: "server",
+          method: "tools/call",
+          requests: [],
+          expiresAt: Date.now() + 60_000,
+          timestamp: new Date().toISOString(),
+        },
+        { submit: () => {} },
+      ),
+    );
+
+    await act(async () => scenario.releases[0]());
+    await waitFor(() => expect(scenario.bodies).toHaveLength(2));
+    await act(async () => scenario.releases[1]());
   });
 });
