@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import "./reasoning-part.css";
 
@@ -29,14 +29,28 @@ export function ReasoningPart({
   const isHidden = displayMode === "hidden";
   const isCollapsible =
     displayMode === "collapsed" || displayMode === "collapsible";
-  const [isExpanded, setIsExpanded] = useState(displayMode !== "collapsed");
+  // "collapsed" opens while the block streams, so a long reasoning turn shows
+  // its thinking instead of reading as a stall, and closes once it is done,
+  // so a turn's several blocks don't push the answer down. A reader who
+  // toggled it keeps their choice.
+  const followsStream = displayMode === "collapsed";
+  const [isExpanded, setIsExpanded] = useState(
+    displayMode !== "collapsed" || state === "streaming",
+  );
+  const readerToggled = useRef(false);
   const contentId = useId();
 
-  // Only a mode change resets the panel. Text grows with every streamed delta,
-  // and a reader who opened the panel mid-stream must be able to keep reading.
+  // A mode change resets the panel and the reader's choice. Text is not a
+  // dependency: it grows with every streamed delta.
   useEffect(() => {
+    readerToggled.current = false;
     setIsExpanded(displayMode !== "collapsed");
   }, [displayMode]);
+
+  useEffect(() => {
+    if (!followsStream || readerToggled.current) return;
+    setIsExpanded(state === "streaming");
+  }, [followsStream, state]);
 
   // While reasoning streams, a collapsible block shows its "Thinking…" header
   // even before any text: a provider that sends no summary streams an empty
@@ -56,7 +70,10 @@ export function ReasoningPart({
     <div className="rounded-lg border border-border/30 bg-muted/10 p-3 text-xs text-muted-foreground">
       <button
         type="button"
-        onClick={() => setIsExpanded((expanded) => !expanded)}
+        onClick={() => {
+          readerToggled.current = true;
+          setIsExpanded((expanded) => !expanded);
+        }}
         className="flex w-full items-center justify-between gap-3 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/90"
         aria-expanded={isExpanded}
         aria-controls={contentId}
