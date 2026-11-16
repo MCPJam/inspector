@@ -1252,3 +1252,110 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     expect(screen.queryByTestId("evaluate-run-page")).toBeNull();
   });
 });
+
+const stepsEditor = vi.hoisted(() => ({
+  enabled: undefined as boolean | undefined,
+}));
+vi.mock("@/hooks/use-test-case-steps-editor-enabled", () => ({
+  useTestCaseStepsEditorEnabled: () => stepsEditor.enabled,
+}));
+vi.mock("../../evaluate/case-steps/case-steps-page", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../evaluate/case-steps/case-steps-page")>()),
+  CaseStepsPage: ({ testCaseId, readOnly, onDeleteTestCasesBatch, navigation }: any) => (
+    <div data-testid="case-steps-page" data-case={testCaseId} data-readonly={String(readOnly)}>
+      <button onClick={() => void onDeleteTestCasesBatch?.([testCaseId])}>Delete case</button>
+      <button onClick={() => navigation.toTestEdit("suite-1", testCaseId, { checks: true })}>Open evaluators</button>
+    </div>
+  ),
+}));
+
+describe("SuiteIterationsView behind eval-test-case-steps-editor", () => {
+  const savedCase = {
+    _id: "case-1",
+    testSuiteId: "suite-1",
+    createdBy: "u",
+    title: "Case 1",
+    query: "Prompt",
+    models: [],
+    runs: 1,
+    expectedToolCalls: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stepsEditor.enabled = undefined;
+  });
+
+  const renderCase = (
+    route: Record<string, unknown>,
+    props: Partial<Record<string, unknown>> = {},
+    navigation = noopNav,
+  ) =>
+    render(
+      withDataRouter(
+        <SuiteIterationsView
+          suite={baseSuite}
+          cases={[savedCase as any]}
+          iterations={[]}
+          allIterations={[]}
+          runs={[]}
+          runsLoading={false}
+          aggregate={null}
+          onRerun={vi.fn()}
+          onCancelRun={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteRun={vi.fn()}
+          onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+          connectedServerNames={new Set()}
+          canDeleteSuite={false}
+          rerunningSuiteId={null}
+          cancellingRunId={null}
+          deletingSuiteId={null}
+          deletingRunId={null}
+          availableModels={[]}
+          route={{ type: "test-edit", suiteId: "suite-1", testId: "case-1", ...route } as any}
+          navigation={navigation}
+          evaluateCaseEditor
+          {...(props as any)}
+        />,
+      ),
+    );
+
+  it.each([undefined, false])("keeps today's editor while the flag is %s", (flag) => {
+    stepsEditor.enabled = flag;
+    renderCase({});
+    expect(screen.getByTestId("case-workspace")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-steps-page")).toBeNull();
+  });
+
+  it("opens a saved case in the steps editor with the flag on", () => {
+    stepsEditor.enabled = true;
+    renderCase({});
+    expect(screen.getByTestId("case-steps-page")).toHaveAttribute("data-case", "case-1");
+    expect(screen.queryByTestId("case-workspace")).toBeNull();
+  });
+
+  it.each([
+    ["the evaluators page", { checks: true }],
+    ["a link into past results", { openCompare: true }],
+    ["a link to one iteration", { iteration: "it-1" }],
+    ["a new draft", { testId: "draft:prompt" }],
+  ])("keeps today's editor for %s with the flag on", (_name, route) => {
+    stepsEditor.enabled = true;
+    renderCase(route);
+    expect(screen.getByTestId("case-workspace")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-steps-page")).toBeNull();
+  });
+
+  it("hands the page the suite's delete and navigation", async () => {
+    stepsEditor.enabled = true;
+    const onDeleteTestCasesBatch = vi.fn().mockResolvedValue(undefined);
+    const navigation = { ...noopNav, toTestEdit: vi.fn() };
+    renderCase({}, { onDeleteTestCasesBatch }, navigation);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Delete case" }));
+    await user.click(screen.getByRole("button", { name: "Open evaluators" }));
+    expect(onDeleteTestCasesBatch).toHaveBeenCalledWith(["case-1"]);
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1", { checks: true });
+  });
+});

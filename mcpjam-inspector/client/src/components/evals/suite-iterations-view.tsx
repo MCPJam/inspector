@@ -118,6 +118,11 @@ import {
   type RunResultCrumbs,
 } from "../evaluate/run-result-pages/run-result-page";
 import { useRunResultPagesEnabled } from "@/hooks/use-run-result-pages-enabled";
+import { useTestCaseStepsEditorEnabled } from "@/hooks/use-test-case-steps-editor-enabled";
+import {
+  CaseStepsPage,
+  opensInStepsEditor,
+} from "../evaluate/case-steps/case-steps-page";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
@@ -1580,6 +1585,10 @@ export function SuiteIterationsView({
     route.type === "run-detail" ? (route.testCaseId ?? null) : null;
   // Old `?case=` and `?iteration=` links open their page once this is on.
   const resultPagesEnabled = useRunResultPagesEnabled();
+  const showStepsEditor =
+    useTestCaseStepsEditorEnabled() === true &&
+    viewMode === "test-edit" &&
+    opensInStepsEditor(route);
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -2239,9 +2248,40 @@ export function SuiteIterationsView({
       {!isEditMode && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
-            {(viewMode === "test-edit" || viewMode === "test-detail") &&
-            selectedTestId &&
-            caseRowsPending ? (
+            {showStepsEditor && selectedTestId ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <CaseStepsPage
+                  suiteId={suite._id}
+                  testCaseId={selectedTestId}
+                  projectId={projectId}
+                  readOnly={editingDisabled}
+                  projectServers={projectServers}
+                  launchReview={{
+                    projectId,
+                    suite,
+                    environments: projectEnvironments ?? undefined,
+                    hostNamesById,
+                    disabledReason:
+                      evalRunsDisabledReason ??
+                      (rerunningSuiteId ? "A run is already starting." : null),
+                  }}
+                  onRunCase={isDirectGuest ? undefined : onRunCase}
+                  onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                  navigation={navigation}
+                />
+              </motion.div>
+            ) : (viewMode === "test-edit" || viewMode === "test-detail") &&
+              selectedTestId &&
+              caseRowsPending ? (
               <RowsLoading key={contentKey} label="Loading case history..." />
             ) : viewMode === "test-edit" && selectedTestId ? (
               <motion.div
