@@ -26,6 +26,9 @@ export type PlatformDirectorySubmissionFinding = Pick<
   step: string;
   field?: string;
   inputs?: Array<{ kind: string; key: string; fingerprint: string }>;
+  /** JSON source attribution retained when the run report expires. */
+  source?: string;
+  intrusiveness?: DirectoryReadinessFinding["intrusiveness"];
   /** Epoch ms of the verdict. */
   evaluatedAt: number;
   engineVersion: string;

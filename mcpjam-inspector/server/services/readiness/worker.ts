@@ -36,6 +36,7 @@
  * stopped is traffic to somebody else's server.
  */
 
+import { submissionFindingInputs } from "./submission-finding-inputs.js";
 import { logger } from "../../utils/logger.js";
 import { captureServerEventForActor } from "../../utils/analytics.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
@@ -519,7 +520,18 @@ export async function executeHostedReadinessRun(
       // A graded package adds which stored version the findings are about:
       // its ids and the hash its bytes were checked against.
       {
-        ...redactConformanceReportForSharing(result),
+        ...redactConformanceReportForSharing({
+          ...result,
+          findings: submission
+            ? result.findings.map((finding) => ({
+                ...finding,
+                inputs: submissionFindingInputs(finding, {
+                  ...submission,
+                  pluginVersionId: runPackage?.version.pluginVersionId,
+                }),
+              }))
+            : result.findings,
+        }),
         ...(runPackage ? { gradedPluginVersion: runPackage.version } : {}),
         // Redacted where it is built, so the plan issues' codes stay readable.
         ...(toolTests ? { toolTests } : {}),
