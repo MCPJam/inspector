@@ -191,12 +191,20 @@ export function CreateHostDialog({
     Boolean(selectedTemplateInput) &&
     orgSeed.ready;
 
+  // A template the member picked stays picked while it is still offered: a
+  // rollout flag that resolves after the dialog opens only changes the list.
+  const userPickedTemplateRef = useRef(false);
   useEffect(() => {
     if (!isOpen) return;
     if (visibleCatalogHosts.length === 0) return;
     const requested = initialTemplateId ?? DEFAULT_CATALOG_HOST_ID;
-    const allowed = visibleHostIds.has(requested);
-    setSelectedTemplateId(allowed ? requested : defaultHostId);
+    setSelectedTemplateId((current) =>
+      userPickedTemplateRef.current && visibleHostIds.has(current)
+        ? current
+        : visibleHostIds.has(requested)
+          ? requested
+          : defaultHostId,
+    );
   }, [isOpen, initialTemplateId, visibleCatalogHosts.length, visibleHostIds, defaultHostId]);
 
   useEffect(() => {
@@ -209,6 +217,7 @@ export function CreateHostDialog({
     setSetupError(null);
     setName("");
     userEditedNameRef.current = false;
+    userPickedTemplateRef.current = false;
     setSelectedTemplateId(initialTemplateId ?? DEFAULT_CATALOG_HOST_ID);
     onClose();
   };
@@ -315,7 +324,10 @@ export function CreateHostDialog({
                   <button
                     key={host.id}
                     type="button"
-                    onClick={() => setSelectedTemplateId(host.id)}
+                    onClick={() => {
+                      userPickedTemplateRef.current = true;
+                      setSelectedTemplateId(host.id);
+                    }}
                     disabled={!templateAvailable}
                     className={cn(
                       "flex min-w-0 flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
