@@ -362,6 +362,8 @@ describe("pack release boundaries", () => {
   it("produces the release's evidence when a releasable commit lands, against the packs a release selects", () => {
     const evidence = workflow("local-harness-release-evidence");
     expect(evidence.on.push.branches).toEqual(["main"]);
+    // A newer push must not cancel the run still going, or none ever finishes.
+    expect(evidence.concurrency).toEqual({ group: "local-harness-release-evidence", "cancel-in-progress": false });
     const { jobs } = evidence;
     const plan = jobs.plan.steps.map((step: any) => `${step.run ?? ""}${step.with?.script ?? ""}`).join("\n");
     expect(plan).toContain("release-plan.mjs");
