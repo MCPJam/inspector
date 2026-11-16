@@ -28,7 +28,9 @@ var BROWSERD_WEBMCP_FEATURES = [
    * is sent, and returns its URL as `stoppedAt`. Without it the server must
    * not rely on one: an old daemon ignores `stopAt` and lets the page load.
    */
-  "navigation-stop"
+  "navigation-stop",
+  /** A callback stop can remain armed between commands on the same tab. */
+  "navigation-stop-persistent"
 ];
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
@@ -7830,6 +7832,7 @@ var ChromiumDriver = class {
   secrets;
   lease;
   tabs = /* @__PURE__ */ new Map();
+  navigationStops = /* @__PURE__ */ new Map();
   /**
    * Which tab is on screen.
    *
@@ -8129,6 +8132,36 @@ var ChromiumDriver = class {
     const target = command.stopAt;
     const kind = command.action.kind;
     const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    if (command.stopAtPersistent) {
+      if (!isStopTarget(target)) {
+        return { ok: false, error: "invalid navigation stop target" };
+      }
+      const entry = kind === "navigate" ? await this.getOrCreateTab(tabId) : this.tabs.get(tabId);
+      if (!entry || entry.page.isClosed()) {
+        return { ok: false, error: "navigation stop tab unavailable" };
+      }
+      let watch = this.navigationStops.get(tabId);
+      if (watch && watch.target !== target) {
+        await watch.stop.disarm();
+        this.navigationStops.delete(tabId);
+        watch = void 0;
+      }
+      if (!watch) {
+        const cdp2 = await entry.page.cdp();
+        if (!cdp2) return { ok: false, error: "navigation stop unavailable" };
+        watch = { target, stop: await armNavigationStop(cdp2, target) };
+        this.navigationStops.set(tabId, watch);
+      }
+      const before = watch.stop.stopped();
+      const result = before ? { ok: true } : await this.executeInBarrier(command, context);
+      const stoppedAt = before ?? watch.stop.stopped();
+      if (stoppedAt) {
+        this.navigationStops.delete(tabId);
+        await watch.stop.disarm();
+        return { ...result, stoppedAt };
+      }
+      return result;
+    }
     const page = (kind === "navigate" || kind === "act") && isStopTarget(target) ? this.tabs.get(tabId)?.page : void 0;
     const cdp = page ? await page.cdp() : null;
     if (!cdp || !isStopTarget(target)) {
@@ -9417,6 +9450,7 @@ var ChromiumDriver = class {
       })
     ]);
     const rendererCleanup = Promise.allSettled([
+      ...[...this.navigationStops.values()].map(({ stop }) => stop.disarm()),
       ...[...this.viewports.values()].map(
         (viewport) => viewport.then((v) => v?.dispose())
       ),
@@ -9435,6 +9469,7 @@ var ChromiumDriver = class {
     } finally {
       clearTimeout(timer);
       this.viewports.clear();
+      this.navigationStops.clear();
       this.tabs.clear();
     }
     await this.context.close().catch(() => {
@@ -10076,6 +10111,9 @@ var ChromiumDriver = class {
   }
   /** Forget a tab and everything attached to it. */
   async dropTab(tabId) {
+    const watch = this.navigationStops.get(tabId);
+    this.navigationStops.delete(tabId);
+    if (watch) await watch.stop.disarm();
     const going = this.tabs.get(tabId);
     going?.webmcp.unsubscribe?.();
     const next = tabAfterClose(

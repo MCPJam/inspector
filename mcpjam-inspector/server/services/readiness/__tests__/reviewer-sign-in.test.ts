@@ -78,7 +78,7 @@ function makeDeps(
   let index = 0;
   const writes: ReviewerAttemptWrite[] = [];
   const browser = {
-    features: options.features ?? ["secret-origins", "navigation-stop"],
+    features: options.features ?? ["secret-origins", "navigation-stop-persistent"],
     open: vi.fn(async (_url: string) => {}),
     read: vi.fn(async () => pages[Math.min(index, pages.length - 1)]!),
     type: vi.fn(

@@ -473,7 +473,7 @@ async function rehearse(
   }
   // Without a stop at MCPJam's callback, its app would take the code before
   // this run could read it, so nothing is started.
-  if (!browser.features.includes("navigation-stop")) {
+  if (!browser.features.includes("navigation-stop-persistent")) {
     return ending({
       stage: "connected",
       status: "failed",

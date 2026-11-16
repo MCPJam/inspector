@@ -162,13 +162,13 @@ function browserOn(
     action: BrowserAction,
     secrets: BrowserCommandSecret[] = [],
   ) => {
-    const navigates = action.kind === "navigate" || action.kind === "act";
     const answer = await handle.client.sendCommand(
       {
         commandId: randomUUID(),
         source: "inspector",
         action,
-        ...(navigates ? { stopAt: options.callbackUrl } : {}),
+        stopAt: options.callbackUrl,
+        stopAtPersistent: true,
       },
       handle.bootId,
       { signal: options.signal, secrets },
@@ -206,6 +206,7 @@ function browserOn(
         mode: "a11y",
         filter: "interactive",
       });
+      if (stoppedAt) return { url: stoppedAt, text: "", controls: [] };
       const page = await send({ kind: "observe", mode: "text" });
       return {
         url: String(page.url ?? tree.url ?? ""),

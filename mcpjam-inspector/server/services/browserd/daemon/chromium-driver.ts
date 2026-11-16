@@ -73,7 +73,11 @@ import {
   type BrowserSecretRegistry,
 } from "./secret-registry";
 import { resolveActSecrets } from "./secret-substitution";
-import { armNavigationStop, isStopTarget } from "./navigation-stop";
+import {
+  armNavigationStop,
+  isStopTarget,
+  type NavigationStop,
+} from "./navigation-stop";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -510,6 +514,10 @@ export class ChromiumDriver implements BrowserDriver {
       >
     | undefined;
   private readonly tabs = new Map<string, TabEntry>();
+  private readonly navigationStops = new Map<
+    string,
+    { target: string; stop: NavigationStop }
+  >();
   /**
    * Which tab is on screen.
    *
@@ -881,6 +889,41 @@ export class ChromiumDriver implements BrowserDriver {
     const target = command.stopAt;
     const kind = command.action.kind;
     const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    if (command.stopAtPersistent) {
+      if (!isStopTarget(target)) {
+        return { ok: false, error: "invalid navigation stop target" };
+      }
+      const entry =
+        kind === "navigate"
+          ? await this.getOrCreateTab(tabId)
+          : this.tabs.get(tabId);
+      if (!entry || entry.page.isClosed()) {
+        return { ok: false, error: "navigation stop tab unavailable" };
+      }
+      let watch = this.navigationStops.get(tabId);
+      if (watch && watch.target !== target) {
+        await watch.stop.disarm();
+        this.navigationStops.delete(tabId);
+        watch = undefined;
+      }
+      if (!watch) {
+        const cdp = await entry.page.cdp();
+        if (!cdp) return { ok: false, error: "navigation stop unavailable" };
+        watch = { target, stop: await armNavigationStop(cdp, target) };
+        this.navigationStops.set(tabId, watch);
+      }
+      const before = watch.stop.stopped();
+      const result = before
+        ? { ok: true }
+        : await this.executeInBarrier(command, context);
+      const stoppedAt = before ?? watch.stop.stopped();
+      if (stoppedAt) {
+        this.navigationStops.delete(tabId);
+        await watch.stop.disarm();
+        return { ...result, stoppedAt };
+      }
+      return result;
+    }
     const page =
       (kind === "navigate" || kind === "act") && isStopTarget(target)
         ? this.tabs.get(tabId)?.page
@@ -2812,6 +2855,7 @@ export class ChromiumDriver implements BrowserDriver {
     // or page.close(). Start cleanup together and bound the whole group so one
     // stuck page cannot prevent the owning context from closing every target.
     const rendererCleanup = Promise.allSettled([
+      ...[...this.navigationStops.values()].map(({ stop }) => stop.disarm()),
       ...[...this.viewports.values()].map((viewport) =>
         viewport.then((v) => v?.dispose()),
       ),
@@ -2830,6 +2874,7 @@ export class ChromiumDriver implements BrowserDriver {
     } finally {
       clearTimeout(timer);
       this.viewports.clear();
+      this.navigationStops.clear();
       this.tabs.clear();
     }
     await this.context.close().catch(() => {});
@@ -3785,6 +3830,9 @@ export class ChromiumDriver implements BrowserDriver {
 
   /** Forget a tab and everything attached to it. */
   private async dropTab(tabId: string): Promise<void> {
+    const watch = this.navigationStops.get(tabId);
+    this.navigationStops.delete(tabId);
+    if (watch) await watch.stop.disarm();
     const going = this.tabs.get(tabId);
     // The subscription holds a closure over THIS entry; left attached to a
     // bridge whose page is being replaced, it would keep bumping a revision

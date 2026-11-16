@@ -120,6 +120,8 @@ export const BROWSERD_WEBMCP_FEATURES = [
    * not rely on one: an old daemon ignores `stopAt` and lets the page load.
    */
   "navigation-stop",
+  /** A callback stop can remain armed between commands on the same tab. */
+  "navigation-stop-persistent",
 ] as const;
 
 /**
@@ -612,6 +614,8 @@ export interface BrowserCommand {
    * loads, and the URL it asked for comes back as `stoppedAt`.
    */
   stopAt?: string;
+  /** Keep stopAt armed until it fires or the tab closes. */
+  stopAtPersistent?: boolean;
 }
 
 /** @see BrowserCommand.actor */
