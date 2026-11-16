@@ -74,6 +74,10 @@ import {
   HARNESS_SKILLS,
   type HarnessSkillsDescriptor,
 } from "./skills-descriptor.js";
+import {
+  HARNESS_CONVERSATION_STATE,
+  type HarnessConversationState,
+} from "./conversation-state.js";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
  *  portable `Harness` union (the persistence-contract source of truth), so the
@@ -399,6 +403,9 @@ type HarnessRuntimeAdapterBase = {
    *  this and nothing else about the runtime, `supportsSkills` off included:
    *  a runtime that takes no skills still reads folders other runtimes write. */
   skills: HarnessSkillsDescriptor;
+  /** The files its conversation resumes from, which a replaced box gets back
+   *  (`conversation-state.ts`), or null when it does not survive one. */
+  conversationState: HarnessConversationState | null;
   /** Can the adapter install a whole PLUGIN BUNDLE natively (the plugin folder
    *  as the runtime's own plugin/marketplace unit), rather than MCPJam projecting
    *  the bundle's components into per-kind channels (skills, native MCP config)?
@@ -885,6 +892,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   liveApprovalRuntime: true,
   supportsSkills: true,
   skills: HARNESS_SKILLS["claude-code"],
+  conversationState: HARNESS_CONVERSATION_STATE["claude-code"],
   // No native plugin-unit install: this adapter delivers a plugin's COMPONENTS
   // (skills param + MCP configuration), which is not the same contract.
   supportsPluginBundles: false,
@@ -1064,6 +1072,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // root the retired exec transport used.
   supportsSkills: true,
   skills: HARNESS_SKILLS.codex,
+  conversationState: HARNESS_CONVERSATION_STATE.codex,
   // Codex has no plugin-install interface — MCPJam still projects a plugin's
   // components (skills param, host-executed MCP tools), which is not the same
   // contract as a native bundle install.
@@ -1185,6 +1194,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // (`cursor-skill-parity.test.ts`).
   supportsSkills: true,
   skills: HARNESS_SKILLS.cursor,
+  conversationState: HARNESS_CONVERSATION_STATE.cursor,
   supportsPluginBundles: false,
   // Cursor does not emit file-change stream parts.
   fileChangeToolName: undefined,
@@ -1264,6 +1274,7 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   },
   supportsSkills: true,
   skills: HARNESS_SKILLS["copilot-cli"],
+  conversationState: HARNESS_CONVERSATION_STATE["copilot-cli"],
   supportsPluginBundles: false,
   listBuiltinTools: () => [],
   parseToolName: parseHarnessToolName,
@@ -1297,6 +1308,7 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
   supportsSkills: true,
   skills: HARNESS_SKILLS.opencode,
+  conversationState: HARNESS_CONVERSATION_STATE.opencode,
   supportsPluginBundles: false,
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createOpenCode()),
@@ -1360,6 +1372,13 @@ export function registeredHarnessIds(): HarnessId[] {
  */
 export function harnessSupportsSkills(id: string): boolean {
   return isHarnessId(id) ? HARNESS_ADAPTERS[id].supportsSkills : false;
+}
+
+/** A runtime's conversation-state declaration, or null for an unknown id. */
+export function harnessConversationState(
+  id: string,
+): HarnessConversationState | null {
+  return isHarnessId(id) ? HARNESS_ADAPTERS[id].conversationState : null;
 }
 
 /**
