@@ -7,6 +7,11 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+import {
   Tabs,
   TabsContent,
   TabsList,
@@ -43,6 +48,8 @@ const CLI_LINKS = [
 
 // Matches the trigger's `lg:inline-flex`; below it the trigger is hidden.
 const TRIGGER_VISIBLE_QUERY = "(min-width: 1024px)";
+// Below 2xl the trigger shows only the logos so the server selector keeps room.
+const TRIGGER_LABEL = "Onboard your agent to MCPJam";
 const COPIED_RESET_MS = 1500;
 
 function CommandRow({ id, command }: { id: string; command: string }) {
@@ -107,29 +114,37 @@ export function OnboardAgentButton() {
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className={cn(
-            "hidden gap-2 rounded-full border-chrome-control-border pr-1.5 pl-3 text-card-foreground lg:inline-flex",
-            "hover:border-ring hover:bg-background hover:text-card-foreground",
-            open && "border-ring ring-ring/30 ring-[3px]",
-          )}
-        >
-          Onboard your agent to MCPJam
-          <span className="flex items-center gap-1" aria-hidden>
-            {AGENT_LOGOS.map(({ hostId, label }) => (
-              <img
-                key={hostId}
-                src={getHostLogoSrc(hostId)}
-                alt={label}
-                className="size-4.5 rounded object-contain"
-              />
-            ))}
-          </span>
-        </Button>
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label={TRIGGER_LABEL}
+              className={cn(
+                "hidden gap-2 rounded-full border-chrome-control-border px-1.5 text-card-foreground lg:inline-flex 2xl:pl-3",
+                "hover:border-ring hover:bg-background hover:text-card-foreground",
+                open && "border-ring ring-ring/30 ring-[3px]",
+              )}
+            >
+              <span className="hidden 2xl:inline">{TRIGGER_LABEL}</span>
+              <span className="flex items-center gap-1" aria-hidden>
+                {AGENT_LOGOS.map(({ hostId, label }) => (
+                  <img
+                    key={hostId}
+                    src={getHostLogoSrc(hostId)}
+                    alt={label}
+                    className="size-4.5 rounded object-contain"
+                  />
+                ))}
+              </span>
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="2xl:hidden">
+          {TRIGGER_LABEL}
+        </TooltipContent>
+      </Tooltip>
       <PopoverContent
         align="end"
         sideOffset={8}
