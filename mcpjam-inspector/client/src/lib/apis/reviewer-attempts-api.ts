@@ -60,3 +60,6 @@ export const cancelReviewerAttempt = (
   attemptId: string,
 ): Promise<ReviewerAttempt> =>
   client().cancelDirectoryReviewerAttempt({ ...scope, attemptId });
+
+export const createReviewerHandoff = (scope: SubmissionScope, attemptId: string) =>
+  client().createDirectoryReviewerHandoff({ ...scope, attemptId });
