@@ -128,6 +128,8 @@ vi.mock("lucide-react", async (importOriginal) => ({
 
 // Mock UI components
 vi.mock("@mcpjam/design-system/button", () => ({
+  // The discard-draft AlertDialog styles its actions with these.
+  buttonVariants: () => "",
   Button: ({ children, onClick, className, ...props }: any) => (
     <button onClick={onClick} className={className} {...props}>
       {children}
@@ -2679,6 +2681,336 @@ describe("PlaygroundMain", () => {
         "same prompt",
         "same prompt",
       ]);
+    });
+  });
+
+  describe("thread switch while a send prepares", () => {
+    const sessionA = {
+      _id: "history-1",
+      chatSessionId: "chat-session-1",
+      firstMessagePreview: "Hello",
+      status: "active" as const,
+      directVisibility: "private" as const,
+      messageCount: 2,
+      version: 4,
+      startedAt: 1,
+      lastActivityAt: 1,
+      isPinned: false,
+      manualUnread: false,
+      isUnread: false,
+      messagesBlobUrl: "https://storage.test/blob",
+      resumeConfig: { selectedServers: ["test-server"] },
+    };
+    const sessionB = {
+      ...sessionA,
+      _id: "history-2",
+      chatSessionId: "chat-session-2",
+    };
+    const ready = {
+      readyServerNames: ["test-server"],
+      missingServerNames: [],
+      failedServerNames: [],
+      reauthServerNames: [],
+    };
+    const bridge = () => usePlaygroundChatHistoryBridgeStore.getState().bridge;
+    // The readiness gate yields an animation frame after the server is ready;
+    // waiting past it lets a send that is not dropped reach sendMessage.
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+    const typeAndSend = async (text: string) => {
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: text },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+    };
+    // Server readiness is the first wait of every send; holding it opens the
+    // window in which the user can move to another thread.
+    const holdServerReadiness = () => {
+      let release!: () => void;
+      const ensureServersReady = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve(ready);
+          }),
+      );
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "disconnected",
+      };
+      return { ensureServersReady, release: () => release() };
+    };
+    // Thread A open, with a live state current enough that the send skips
+    // the pre-send read: since #7281 the common path.
+    const renderWithThreadA = async (props: Record<string, unknown>) => {
+      mockConvexAuthState.isAuthenticated = true;
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ] as never;
+      mockReadHistory.mockResolvedValueOnce({
+        ok: true,
+        session: sessionA,
+        widgetSnapshots: [],
+      });
+      const view = render(<PlaygroundMain {...defaultProps} {...props} />);
+      await waitFor(() => expect(bridge()).not.toBe(null));
+      await act(async () => {
+        await Promise.resolve(bridge()?.onSelectThread(sessionA));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge"),
+      );
+      mockUseChatSession.resumedVersion = 4 as never;
+      mockReactiveHistoryState.session = { ...sessionA } as never;
+      mockReactiveHistoryState.widgetSnapshots = [] as never;
+      view.rerender(<PlaygroundMain {...defaultProps} {...props} />);
+      // B's load never lands: the send must not wait for it to be dropped.
+      mockReadHistory.mockImplementation(() => new Promise(() => {}));
+      return view;
+    };
+
+    afterEach(() => {
+      mockUseChatSession.chatSessionId = "chat-session-1";
+      mockReadHistory.mockReset();
+      invalidateChatHistoryPrefetch();
+    });
+
+    it("cancels the send when another thread is clicked, even if it is ready before Discard", async () => {
+      const readiness = holdServerReadiness();
+      await renderWithThreadA({
+        ensureServersReady: readiness.ensureServersReady,
+      });
+      await typeAndSend("draft for A");
+      expect(readiness.ensureServersReady).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        void bridge()?.onSelectThread(sessionB);
+      });
+      expect(screen.getByText("Discard unsaved draft?")).toBeInTheDocument();
+      // The send is ready while the dialog is still open.
+      await act(async () => readiness.release());
+      await settle();
+      await act(async () => {
+        fireEvent.click(screen.getByText("Discard and continue"));
+      });
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("keeps the draft when the dialog is cancelled, and sends it once to the same thread", async () => {
+      const readiness = holdServerReadiness();
+      const props = { ensureServersReady: readiness.ensureServersReady };
+      const view = await renderWithThreadA(props);
+      await typeAndSend("draft for A");
+
+      await act(async () => {
+        void bridge()?.onSelectThread(sessionB);
+      });
+      await act(async () => readiness.release());
+      await settle();
+      await act(async () => {
+        fireEvent.click(screen.getByText("Cancel"));
+      });
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue("draft for A");
+
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connected",
+      };
+      view.rerender(<PlaygroundMain {...defaultProps} {...props} />);
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      });
+      expect(mockUseChatSession.sendMessage.mock.calls[0]![0]).toMatchObject({
+        text: "draft for A",
+      });
+      expect(mockUseChatSession.chatSessionId).toBe("chat-session-1");
+    });
+
+    it("drops the send when the old thread's read returns after another thread is picked", async () => {
+      // The live state is not current, so the send takes the pre-send read.
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ] as never;
+      mockReadHistory.mockResolvedValueOnce({
+        ok: true,
+        session: sessionA,
+        widgetSnapshots: [],
+      });
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(bridge()).not.toBe(null));
+      await act(async () => {
+        await Promise.resolve(bridge()?.onSelectThread(sessionA));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge"),
+      );
+      let resolveA!: (value: unknown) => void;
+      mockReadHistory.mockImplementation(
+        (params: { chatSessionId?: string }) =>
+          params?.chatSessionId === "chat-session-2"
+            ? new Promise(() => {})
+            : new Promise((resolve) => {
+                resolveA = resolve;
+              }),
+      );
+      mockGetChatHistoryState.mockClear();
+      await typeAndSend("draft for A");
+      expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        void bridge()?.onSelectThread(sessionB);
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByText("Discard and continue"));
+      });
+      // B is picked but not loaded: the open session is still A's.
+      await act(async () => {
+        resolveA({ ok: true, session: sessionA });
+      });
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a resumed thread", true],
+      ["a new chat", false],
+    ])(
+      "drops the send when New chat is clicked from %s while the server connects",
+      async (_label, resumed) => {
+        const readiness = holdServerReadiness();
+        const props = { ensureServersReady: readiness.ensureServersReady };
+        if (resumed) {
+          await renderWithThreadA(props);
+        } else {
+          render(<PlaygroundMain {...defaultProps} {...props} />);
+          await waitFor(() => expect(bridge()).not.toBe(null));
+        }
+        await typeAndSend("draft before New chat");
+        expect(readiness.ensureServersReady).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+          void bridge()?.onNewChat();
+        });
+        await act(async () => {
+          fireEvent.click(screen.getByText("Discard and continue"));
+        });
+        await act(async () => readiness.release());
+        await settle();
+
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      },
+    );
+
+    it("drops the send when the session changes under it with no thread pick", async () => {
+      const readiness = holdServerReadiness();
+      const props = { ensureServersReady: readiness.ensureServersReady };
+      const view = await renderWithThreadA(props);
+      await typeAndSend("draft for A");
+
+      // An environment or target change mints a new session in place.
+      mockUseChatSession.chatSessionId = "chat-session-2";
+      view.rerender(<PlaygroundMain {...defaultProps} {...props} />);
+      await act(async () => readiness.release());
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("drops the send when Clear chat is confirmed while the server connects", async () => {
+      const readiness = holdServerReadiness();
+      await renderWithThreadA({
+        ensureServersReady: readiness.ensureServersReady,
+      });
+      await typeAndSend("draft for A");
+
+      // Clear chat goes through no discard dialog. The mocked session keeps
+      // its id, so only the thread selection counter records the change.
+      fireEvent.click(screen.getByRole("button", { name: "Clear chat" }));
+      fireEvent.click(
+        within(screen.getByTestId("confirm-dialog")).getByRole("button", {
+          name: "Confirm",
+        }),
+      );
+      await act(async () => readiness.release());
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("stops at the wait it was in: the old thread's state read is not taken after a switch", async () => {
+      // Live state not current, so a send that kept going would read A's state.
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ] as never;
+      mockReadHistory.mockResolvedValueOnce({
+        ok: true,
+        session: sessionA,
+        widgetSnapshots: [],
+      });
+      const readiness = holdServerReadiness();
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={readiness.ensureServersReady}
+        />,
+      );
+      await waitFor(() => expect(bridge()).not.toBe(null));
+      await act(async () => {
+        await Promise.resolve(bridge()?.onSelectThread(sessionA));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge"),
+      );
+      mockReadHistory.mockImplementation(() => new Promise(() => {}));
+      mockGetChatHistoryState.mockClear();
+      await typeAndSend("draft for A");
+
+      await act(async () => {
+        void bridge()?.onNewChat();
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByText("Discard and continue"));
+      });
+      await act(async () => readiness.release());
+      await settle();
+
+      expect(mockGetChatHistoryState).not.toHaveBeenCalled();
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("sends once with no switch, and the send's isCurrent turns false once another thread opens", async () => {
+      vi.mocked(mockUseChatSession.sendMessage).mockResolvedValueOnce(
+        true as never,
+      );
+      await renderWithThreadA({});
+      await typeAndSend("draft for A");
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      });
+      const { isCurrent } = mockUseChatSession.sendMessage.mock
+        .calls[0]![0] as {
+        isCurrent?: () => boolean;
+      };
+      expect(isCurrent?.()).toBe(true);
+
+      await act(async () => {
+        void bridge()?.onSelectThread(sessionB);
+      });
+      expect(isCurrent?.()).toBe(false);
     });
   });
 

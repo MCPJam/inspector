@@ -3794,6 +3794,19 @@ export function PlaygroundMain({
   ]);
 
   const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, convexProjectId);
+  // A send belongs to the thread open when it started. A click on another
+  // thread or New chat bumps the epoch before any discard dialog; the other
+  // ways the open thread changes move the selection counter or the target.
+  const sendEpochRef = useRef(0);
+  const beginThreadSend = useCallback(() => {
+    const epoch = sendEpochRef.current;
+    const selection = historySelectionRequestIdRef.current;
+    const target = { chatSessionId, projectId: convexProjectId };
+    return () =>
+      sendEpochRef.current === epoch &&
+      historySelectionRequestIdRef.current === selection &&
+      isCurrentHistoryTarget(target);
+  }, [chatSessionId, convexProjectId, isCurrentHistoryTarget]);
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
@@ -3921,6 +3934,7 @@ export function PlaygroundMain({
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
       if (isStreaming) return;
+      sendEpochRef.current += 1;
       if (!(await ensureDiscardDraftConfirmed())) return;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
@@ -4144,6 +4158,7 @@ export function PlaygroundMain({
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean; isCurrent?: () => boolean }) => {
       if (isStreaming) return false;
+      sendEpochRef.current += 1;
       if (!(await ensureDiscardDraftConfirmed())) return false;
       // An App's new-chat action can lapse while the person decides; a reset
       // for it then would discard their draft for nothing.
@@ -5449,6 +5464,7 @@ export function PlaygroundMain({
   // through `performComposerSubmit`, one submit at a time.
 
   const submitComposer = useCallback(async (): Promise<boolean> => {
+    const isCurrent = beginThreadSend();
     if (isCompareMode && !ensureCompareReady()) return false;
     if (!composerHasContent || sendBlocked) {
       return false;
@@ -5468,16 +5484,16 @@ export function PlaygroundMain({
     if (conversationSendBlockedRef.current) {
       return false;
     }
-    if (!(await ensureSelectedServerReadyForChat())) {
+    if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
       return false;
     }
-    if (!(await ensureThreadReadyForSend())) {
+    if (!(await ensureThreadReadyForSend()) || !isCurrent()) {
       return false;
     }
     // AFTER the other gates and before anything is consumed: a dialog that
     // opened and was cancelled must leave the draft, the attachments and the
     // prompt/skill results exactly as they were.
-    if (!(await ensureLocalHarnessReadyForSend())) {
+    if (!(await ensureLocalHarnessReadyForSend()) || !isCurrent()) {
       return false;
     }
 
@@ -5509,6 +5525,7 @@ export function PlaygroundMain({
           file_count: entries.length,
         });
       } catch (err) {
+        if (!isCurrent()) return false;
         if (isComputerStartLimitError(err)) {
           track("computer_start_limit_hit", {
             location: "playground_attachments",
@@ -5530,6 +5547,7 @@ export function PlaygroundMain({
       fileAttachments.length > 0
         ? await attachmentsToFileUIParts(fileAttachments)
         : undefined;
+    if (!isCurrent()) return false;
 
     // EXPLICIT injection (INS-4): a prompt the user expanded and a skill they
     // attached are turn CONTENT, not context the model has to go fetch. The
@@ -5573,6 +5591,7 @@ export function PlaygroundMain({
         widgetModelContext: modelContextQueue,
         pluginMentions: composerMentions.selections,
         extraParts: draftItems.map((item) => item.part),
+        isCurrent,
       });
       if (!sent) return false;
       composerMentions.clear();
@@ -5613,6 +5632,7 @@ export function PlaygroundMain({
     onFirstMessageSent,
     computerAttachmentsActive,
     computerAttachmentUpload,
+    beginThreadSend,
   ]);
   // An App draft is refused for the whole submit, which captures the composer
   // first and clears it last. One submit at a time: the gates above await the
