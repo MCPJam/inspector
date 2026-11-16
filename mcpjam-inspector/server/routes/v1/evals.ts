@@ -4081,6 +4081,14 @@ function translateConvexWriteError(
       `This MCPJam deployment does not serve ${feature}.`,
     );
   }
+  // A failure Convex's HTTP layer answered before the mutation ran reads by
+  // its status: the shared translator below reads an expired token's
+  // "Unauthorized" as a refusal (404) and a proxy's 500 as our own.
+  const statusError = translateConvexStatusError(error, {
+    scope: "v1.evals",
+    notFoundMessage: "Resource not found",
+  });
+  if (statusError) return statusError;
   const data = (error as { data?: unknown } | null | undefined)?.data;
   if (data && typeof data === "object" && !Array.isArray(data)) {
     const code = (data as { code?: unknown }).code;
