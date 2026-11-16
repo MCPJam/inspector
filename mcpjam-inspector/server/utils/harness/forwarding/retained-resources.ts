@@ -226,24 +226,29 @@ export function retainedResourceExecutor(args: {
       isMcpAppTool(declared) || isChatGPTAppTool(declared)
         ? settle(bind(execution, bindable))
         : undefined;
-    const result = await execute();
-    binding ??= hasInlineUiResource(result)
-      ? settle(bind(execution, bindable))
-      : undefined;
-    const refusal = await binding;
-    if (refusal) {
-      args.refused?.add(execution.toolCallId);
-      logger.warn("[harness] App result left unbound; the tool result stands", {
-        serverId: execution.serverKey,
-        toolName: execution.toolName,
-        ...(refusal.error instanceof ExecutionControlError
-          ? { code: refusal.error.code, reason: refusal.error.reason }
-          : {
-              error:
-                refusal.error instanceof Error ? refusal.error.name : "unknown",
-            }),
-      });
+    // Settled before the call's outcome returns, even when the call throws, so
+    // the source or refusal is recorded before the turn reads this result.
+    try {
+      const result = await execute();
+      binding ??= hasInlineUiResource(result)
+        ? settle(bind(execution, bindable))
+        : undefined;
+      return result;
+    } finally {
+      const refusal = await binding;
+      if (refusal) {
+        args.refused?.add(execution.toolCallId);
+        logger.warn("[harness] App result left unbound; the tool result stands", {
+          serverId: execution.serverKey,
+          toolName: execution.toolName,
+          ...(refusal.error instanceof ExecutionControlError
+            ? { code: refusal.error.code, reason: refusal.error.reason }
+            : {
+                error:
+                  refusal.error instanceof Error ? refusal.error.name : "unknown",
+              }),
+        });
+      }
     }
-    return result;
   };
 }

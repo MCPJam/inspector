@@ -160,6 +160,24 @@ it("asks again for a chat whose preparation was refused", async () => {
     ),
   ).toHaveLength(2);
 });
+it("settles the App binding before a failed call's error returns", async () => {
+  const p = producer();
+  let finishBinding!: () => void;
+  vi.mocked(requestExecutionControl).mockImplementation(
+    () =>
+      new Promise((_, reject) => {
+        finishBinding = () =>
+          reject(new ExecutionControlError("control_409", "harness_execution_scope_mismatch"));
+      }),
+  );
+  const run = vi.fn(async () => {
+    queueMicrotask(() => finishBinding());
+    throw new Error("tool failed");
+  });
+  await expect(p.executor(execution, run)).rejects.toThrow("tool failed");
+  expect(p.refused.has("call")).toBe(true);
+  expect(p.sources.size).toBe(0);
+});
 it("leaves a tool without an App alone", async () => {
   const p = producer();
   vi.mocked(p.manager.getToolMetadata).mockReturnValue(undefined);
