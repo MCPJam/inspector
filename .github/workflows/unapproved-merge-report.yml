@@ -30,6 +30,9 @@ env:
 jobs:
   report:
     runs-on: ubuntu-latest
+    # A 31-day dispatch makes about 2,500 sequential API calls, a few minutes
+    # of work; this stops a hung request from holding a runner for six hours.
+    timeout-minutes: 30
     name: List merges without an independent approval
 
     steps:
