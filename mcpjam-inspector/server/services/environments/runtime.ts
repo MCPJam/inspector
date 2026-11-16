@@ -27,6 +27,7 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { logger } from "../../utils/logger.js";
@@ -272,6 +273,24 @@ export function translateEnvironmentRuntimeError(
   }
 
   const message = error instanceof Error ? error.message : String(error);
+  if (/\bArgumentValidationError\b/.test(message)) {
+    // Convex rejected the arguments before the resolver ran: a malformed id,
+    // or deploy skew on a field this backend does not know. Answer with the
+    // field only, since Convex's prose echoes the argument values back; the
+    // warn keeps skew visible in Axiom without a Sentry event per turn.
+    const field = argumentValidationField(message);
+    logger.warn("[environments] Convex rejected runtime arguments", {
+      detail: redactForLog(error),
+    });
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      field
+        ? `Invalid environment request field: ${field}`
+        : "Invalid environment request",
+      field ? { field } : undefined
+    );
+  }
   if (/could not find public function/i.test(message)) {
     // Deploy-order skew: the Phase 1 backend contract isn't deployed yet.
     // Same guard (and wording shape) as `resolveEnvironmentForLaunch`.
@@ -293,6 +312,18 @@ export function translateEnvironmentRuntimeError(
     ErrorCode.INTERNAL_ERROR,
     "Environment could not be resolved"
   );
+}
+
+/**
+ * The argument Convex's validator named: `Path: .x` for a value that does not
+ * match, or the backticked name in "extra field" / "missing the required
+ * field". Undefined when the message names none.
+ */
+function argumentValidationField(message: string): string | undefined {
+  const match =
+    /^Path: \.([\w.[\]]+)$/m.exec(message) ??
+    /\b(?:extra|required) field [`'"]?(\w+)/.exec(message);
+  return match?.[1];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -325,6 +325,49 @@ describe("translateEnvironmentRuntimeError", () => {
       ).status
     ).toBe(400);
   });
+
+  it("answers a Convex argument rejection with a 400 naming the field", () => {
+    const cases = [
+      [
+        '[CONVEX Q(projectEnvironments:resolveEnvironmentForRuntime)] Server Error\nArgumentValidationError: Value does not match validator.\nPath: .environmentId\nValue: "not-an-id"\nValidator: v.id("projectEnvironments")',
+        "environmentId",
+      ],
+      [
+        "ArgumentValidationError: Object contains extra field `runtimeVenue` that is not in the validator.",
+        "runtimeVenue",
+      ],
+      [
+        "ArgumentValidationError: Object is missing the required field `projectId`.",
+        "projectId",
+      ],
+    ] as const;
+    for (const [message, field] of cases) {
+      const err = translateEnvironmentRuntimeError(new Error(message));
+      expect(err.status).toBe(400);
+      expect(err.code).toBe("VALIDATION_ERROR");
+      expect(err.message).toBe(`Invalid environment request field: ${field}`);
+      expect(err.details).toEqual({ field });
+    }
+  });
+
+  it("keeps the argument values out of the 400", () => {
+    const err = translateEnvironmentRuntimeError(
+      new Error(
+        'ArgumentValidationError: Value does not match validator.\nPath: .environmentId\nValue: "not-an-id"'
+      )
+    );
+    expect(err.message).not.toContain("not-an-id");
+    expect(JSON.stringify(err.details)).not.toContain("not-an-id");
+  });
+
+  it("still 400s an argument rejection that names no field", () => {
+    const err = translateEnvironmentRuntimeError(
+      new Error("ArgumentValidationError: Value does not match validator.")
+    );
+    expect(err.status).toBe(400);
+    expect(err.message).toBe("Invalid environment request");
+    expect(err.details).toBeUndefined();
+  });
 });
 
 describe("runtime projections", () => {
