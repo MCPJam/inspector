@@ -43,6 +43,7 @@ import {
   type LocalPlatform,
 } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
+import { isLoopbackListener, treeListeners } from "./process-checks.js";
 import { installedAdapterVersion } from "./adapter-version.js";
 import { probeProcessGroup, probeProcess } from "../process-identity.js";
 
@@ -349,29 +350,6 @@ async function psLine(pid: number, withEnv = false) {
     return "";
   }
 }
-async function listeners(pid: number) {
-  if (WIN) {
-    // `  TCP    127.0.0.1:53123    0.0.0.0:0    LISTENING    1234`, for v4 and
-    // v6 alike (`[::1]:53123`). Shaped like the lsof answer below so the
-    // loopback verdict's regex reads both.
-    try {
-      return (await execFileP("netstat", ["-ano"])).stdout
-        .split(/\r?\n/)
-        .map((l) => l.trim().split(/\s+/))
-        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
-        .map((f) => `${f[1]} (LISTEN)`);
-    } catch {
-      return [];
-    }
-  }
-  try {
-    return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
-      .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
-  } catch {
-    return [];
-  }
-}
-
 type TurnResult = { text: string; parts: Record<string, number>; firstPartMs: number; firstTextMs: number; finishMs: number; approvals: number; errors: string[]; tools: string[] };
 async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt: string): Promise<TurnResult> {
   const start = performance.now();
@@ -633,7 +611,7 @@ async function main() {
   // Job Object launcher and the socket belongs to the node process under it;
   // on POSIX the union is a superset of the old check and stricter for it —
   // any listener anywhere in the tree that is off loopback fails the run.
-  const bridgeListeners = (await Promise.all([bridgePid, ...kids].map(listeners))).flat();
+  const bridgeListeners = await treeListeners([bridgePid, ...kids]);
   note(`bridge listeners: ${JSON.stringify(bridgeListeners)}`);
   const homeLeak = envDump.match(/HOME=([^\s]+)/g)?.slice(0, 2);
   note(`child HOME values: ${JSON.stringify(homeLeak)}`);
@@ -731,9 +709,10 @@ async function main() {
   const failures: string[] = [];
   if (upstreamKeyInEnv) failures.push("the upstream model key reached a child process's environment");
   if (upstreamKeyInState) failures.push("the upstream model key was written to session state on disk");
-  const offLoopback = bridgeListeners.filter((l) => !/^(127\.|\[?::1\]?:)/.test(l));
+  if (bridgeListeners === null) failures.push("a supervised process's listeners could not be read, so the loopback check proved nothing");
+  const offLoopback = (bridgeListeners ?? []).filter((l) => !isLoopbackListener(l));
   if (offLoopback.length > 0) failures.push(`the bridge listened off loopback: ${JSON.stringify(offLoopback)}`);
-  if (bridgeListeners.length === 0) failures.push("no bridge listener was observed, so the loopback check proved nothing");
+  if (bridgeListeners?.length === 0) failures.push("no bridge listener was observed, so the loopback check proved nothing");
   if (survivors.length > 0) failures.push(`stop() left ${survivors.length} process(es) running: ${survivors}`);
   if (recordsAfterStop !== 0) failures.push(`${recordsAfterStop} process registry record(s) survived stop()`);
   if (after.length > 0) failures.push(`the session left ${after.length} new entr(ies) in the workspace: ${JSON.stringify(after)}`);

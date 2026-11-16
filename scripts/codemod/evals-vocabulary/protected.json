@@ -218,7 +218,7 @@
     "sdk/src/contract/decision-summary.ts",
     "sdk/tests/fixtures/",
     "soundcheck/",
-    "docs/github-checks.mdx"
+    "internal-docs/unreleased/github-checks.mdx"
   ],
   "pathSuffixes": [
     ".generated.ts",

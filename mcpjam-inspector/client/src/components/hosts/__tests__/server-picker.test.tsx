@@ -1329,9 +1329,7 @@ describe("ServerPicker — the popover's own lifecycle", () => {
     expect(await serverRow("srv_2")).toBeInTheDocument();
   });
 
-  it("REOPENS on the tab that holds the current selection", async () => {
-    // Not the initial state — `useState` already seeds that. This is the
-    // second open, after the user browsed away from the selection's tab.
+  it("opens on the Servers tab even when a group is selected", async () => {
     mockState.attachments = [
       {
         _id: "att_pair",
@@ -1345,8 +1343,20 @@ describe("ServerPicker — the popover's own lifecycle", () => {
     );
 
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
-    await userEvent.click(await screen.findByRole("tab", { name: "Servers" }));
-    expect(screen.getByRole("tab", { name: "Servers" })).toHaveAttribute(
+    expect(await screen.findByRole("tab", { name: "Servers" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("reopens on the Servers tab after the user browsed to Groups", async () => {
+    render(<ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    expect(screen.getByRole("tab", { name: "Server Groups" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -1355,9 +1365,10 @@ describe("ServerPicker — the popover's own lifecycle", () => {
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
 
-    expect(
-      await screen.findByRole("tab", { name: "Server Groups" }),
-    ).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tab", { name: "Servers" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });
 
@@ -2402,6 +2413,9 @@ describe("ServerPicker — a surface that refuses an empty field", () => {
     expect(screen.queryByTestId("server-picker-clear")).toBeNull();
 
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
     await userEvent.click(
       await screen.findByRole("button", { name: "Delete prod pair" }),
     );

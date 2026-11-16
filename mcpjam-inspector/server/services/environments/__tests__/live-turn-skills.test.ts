@@ -1,7 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedEnvironmentRuntime } from "../runtime";
+
+const reads = vi.hoisted(() => ({
+  fetchRuntimeSkills: vi.fn(),
+  fetchRuntimeSkillFiles: vi.fn(),
+}));
+
+vi.mock("../../../utils/harness/runtime-skills.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../utils/harness/runtime-skills.js")
+  >()),
+  fetchRuntimeSkills: reads.fetchRuntimeSkills,
+  fetchRuntimeSkillFiles: reads.fetchRuntimeSkillFiles,
+}));
+
 import {
   environmentTurnSkills,
+  studyLibraryTurnSkills,
   turnSkillProvenance,
 } from "../live-turn-skills";
 import { resolveTurnSkills } from "../turn-skills";
@@ -188,6 +203,83 @@ describe("turnSkillProvenance", () => {
     expect(turnSkillProvenance(ENVIRONMENT_REF, skills)).toEqual({
       environmentAtTurn: ENVIRONMENT_REF,
       skillsAtTurn: [],
+    });
+  });
+});
+
+describe("studyLibraryTurnSkills", () => {
+  const SHARED = {
+    skillId: "sk_shared",
+    name: "onboarding",
+    description: "Project onboarding",
+    content: "onboarding body",
+    aggregateHash: "agg_shared",
+  };
+  const SCOPE = {
+    kind: "swarm" as const,
+    swarmId: "sw_1",
+    accessVersion: 3,
+    projectId: "p_1",
+    workspaceId: "ws_1",
+  };
+
+  beforeEach(() => {
+    reads.fetchRuntimeSkills.mockReset().mockResolvedValue({
+      ok: true,
+      skills: [SHARED],
+    });
+    reads.fetchRuntimeSkillFiles.mockReset().mockResolvedValue({
+      ok: true,
+      files: [
+        { skillId: "sk_shared", path: "guide.md", size: 5, url: "https://f/g" },
+      ],
+    });
+  });
+
+  it("reads the study's Library through its scope and plans a live turn", async () => {
+    const turn = await studyLibraryTurnSkills({
+      bearer: "Bearer tester",
+      projectId: "p_1",
+      executionScope: SCOPE,
+      runtime: AGENT,
+    });
+    expect(reads.fetchRuntimeSkills).toHaveBeenCalledWith(
+      "Bearer tester",
+      "p_1",
+      SCOPE,
+    );
+    expect(turn.skills.delivered.map((ref) => ref.ref)).toEqual(["onboarding"]);
+    // The study's servers are connected now, so their own skills join.
+    expect(turn.skills.agent).toEqual({ kind: "live" });
+    expect(turn.live).toBe(true);
+    expect(turn.skills.set.standaloneSkills[0]?.files).toEqual([
+      { path: "guide.md", size: 5, url: "https://f/g" },
+    ]);
+    // A study with no environment names none to record.
+    expect(turn.turnProvenance).toBeUndefined();
+  });
+
+  it("keeps the turn live, and a harness's box as it is, when the Library can't be read", async () => {
+    reads.fetchRuntimeSkills.mockResolvedValue({ ok: false });
+    const turn = await studyLibraryTurnSkills({
+      bearer: "Bearer tester",
+      projectId: "p_1",
+      runtime: harness("claude-code"),
+    });
+    expect(turn.skills.delivered).toEqual([]);
+    expect(turn.box).toBeUndefined();
+    expect(turn.live).toBe(true);
+  });
+
+  it("writes each skill's SKILL.md and keeps its other files when their list can't be read", async () => {
+    reads.fetchRuntimeSkillFiles.mockResolvedValue({ ok: false });
+    const turn = await studyLibraryTurnSkills({
+      bearer: "Bearer tester",
+      projectId: "p_1",
+      runtime: harness("claude-code"),
+    });
+    expect(turn.box).toEqual({
+      skills: [{ ...SHARED }],
     });
   });
 });

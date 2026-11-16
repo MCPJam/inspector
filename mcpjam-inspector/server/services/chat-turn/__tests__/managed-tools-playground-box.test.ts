@@ -46,6 +46,7 @@ vi.mock("../../../routes/web/mcpjam-platform-client.js", () => ({
 }));
 import { prepareManagedTools } from "../managed-tools.js";
 import { TurnResources } from "../resources.js";
+import { TurnTiming } from "../../../utils/turn-timing.js";
 
 type Setup = Parameters<typeof prepareManagedTools>[0]["setup"];
 const harnessSetup = (harness: string) =>
@@ -77,7 +78,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function prepareTurn(harness: string) {
+async function prepareTurn(harness: string, timing = new TurnTiming()) {
   const app = new Hono<{ Variables: { guestId?: string } }>();
   let failure: unknown;
   let sandboxId: string | undefined;
@@ -90,6 +91,7 @@ async function prepareTurn(harness: string) {
         bearerToken: "bearer",
         localIngress: false,
         resources: new TurnResources(() => {}),
+        timing,
         setup: harnessSetup(harness),
         connections: { validatedPageTools: [] },
       });
@@ -168,6 +170,25 @@ describe("the Playground box and the secrets read", () => {
     expect(failure).toMatchObject({ status: 409 });
     expect(m.acquire).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["early, while the secrets read is in flight", "claude-code"],
+    ["after the member's own credential check", "cursor"],
+  ])(
+    "counts the box booked %s toward the turn's box wake",
+    async (_label, harness) => {
+      let now = 0;
+      const timing = new TurnTiming({ now: () => now });
+      m.secrets.mockResolvedValue({ ok: true, secrets: [] });
+      m.acquire.mockImplementation(async () => {
+        now += 3_100;
+        return { ok: true, box };
+      });
+      const turn = await prepareTurn(harness, timing);
+      expect(await turn.done).toEqual({ failure: undefined, sandboxId: "sbx" });
+      expect(timing.boxAcquisitionMs()).toBe(3_100);
+    },
+  );
 
   it("leaves a guest's turn without a Playground box", async () => {
     m.guestId = "guest-1";

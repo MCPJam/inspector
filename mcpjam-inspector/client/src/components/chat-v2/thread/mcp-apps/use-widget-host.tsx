@@ -26,6 +26,7 @@ import {
 } from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 import { artifactStableKey, fetchArtifact } from "@/lib/artifact-urls";
+import { useChatAppDisplayBehavior } from "@/contexts/chat-app-display-behavior-context";
 import { useIsScenarioSurface } from "@/contexts/scenario-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
 import { useWidgetSurface } from "@/contexts/widget-surface-context";
@@ -208,6 +209,7 @@ export function useWidgetHost(): WidgetHostImpl {
     [],
   );
 
+  const displayBehavior = useChatAppDisplayBehavior();
   const surface = useMemo<WidgetSurfaceInfo>(
     () => ({
       kind,
@@ -218,8 +220,15 @@ export function useWidgetHost(): WidgetHostImpl {
       viewMountMode: VIEW_MOUNT_MODE,
       viewSubdomainsEnabled: VIEW_SUBDOMAINS_ENABLED,
       playgroundCspMode,
+      ...(displayBehavior ? { displayBehavior } : {}),
     }),
-    [kind, persistentSurfaceHost, webManagedServers, playgroundCspMode],
+    [
+      kind,
+      persistentSurfaceHost,
+      webManagedServers,
+      playgroundCspMode,
+      displayBehavior,
+    ],
   );
 
   // --- environment inputs (Phase 1b raw ambient reads) -----------------------

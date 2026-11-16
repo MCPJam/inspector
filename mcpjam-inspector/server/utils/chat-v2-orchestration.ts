@@ -55,8 +55,10 @@ import {
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
 import { listLiveServerSkills } from "./computers/live-server-skills.js";
 import { applyActingServerSkillGate } from "./server-skill-acting-gate.js";
-import { withLiveServerSkills } from "../services/environments/effective-capabilities.js";
-import type { TurnSkills } from "../services/environments/turn-skills.js";
+import {
+  planWithLiveServerSkills,
+  type TurnSkills,
+} from "../services/environments/turn-skills.js";
 import { logger } from "./logger.js";
 import {
   modelDefinitionSupportsTemperature,
@@ -1221,6 +1223,12 @@ export interface PrepareChatV2Result {
   reservedAgainstPageTools: ReadonlySet<string>;
   /** The `isolatedServers` this turn runs without, with their errors. */
   unavailableServers?: ReadonlyMap<string, unknown>;
+  /**
+   * The turn's skill plan once the connected servers' own skills have joined
+   * it: what MCPJam's agent holds, and what the delivery event reports. Absent
+   * when the turn had no plan.
+   */
+  effectiveSkills?: TurnSkills;
 }
 
 /**
@@ -1474,23 +1482,27 @@ export async function prepareChatV2(
           })),
         )
       : undefined;
-  const skillPrep: SkillPrep = !skills?.agent
+  // What MCPJam's agent holds: the plan, plus the connected servers' skills.
+  const effectiveSkills =
+    skills && liveServerSkills
+      ? planWithLiveServerSkills(
+          skills,
+          liveServerSkills,
+          modelDefinition.contextLength,
+        )
+      : skills;
+  const skillPrep: SkillPrep = !effectiveSkills?.agent
     ? { tools: {}, systemPromptSection: "" }
-    : getEffectiveSkillToolsAndPrompt(
-        liveServerSkills
-          ? withLiveServerSkills(skills.set, liveServerSkills)
-          : skills.set,
-        {
-          ...(abortSignal ? { signal: abortSignal } : {}),
-          // The discovery listing is budgeted against THIS model's context
-          // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-          // model definition; the budget helper falls back to 8,000 chars.
-          // `resolveTurnSkills` plans the same listing, so the plan and
-          // this prompt agree on which of the plan's skills the model can
-          // see; the servers' skills come after them in it.
-          ...modelContextTokens,
-        },
-      );
+    : getEffectiveSkillToolsAndPrompt(effectiveSkills.set, {
+        ...(abortSignal ? { signal: abortSignal } : {}),
+        // The discovery listing is budgeted against THIS model's context
+        // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+        // model definition; the budget helper falls back to 8,000 chars.
+        // `resolveTurnSkills` plans the same listing, so the plan and
+        // this prompt agree on which of the plan's skills the model can
+        // see; the servers' skills come after them in it.
+        ...modelContextTokens,
+      });
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
 
@@ -1820,6 +1832,7 @@ export async function prepareChatV2(
 
   return {
     liveServerSkills: liveServerSkills !== undefined,
+    ...(effectiveSkills ? { effectiveSkills } : {}),
     ...(selectedGroups
       ? {
           toolConnections,

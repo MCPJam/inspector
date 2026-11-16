@@ -15,8 +15,8 @@ import {
  * Single-user local installs (not hosted, no INSPECTOR_SERVICE_TOKEN) keep App
  * instance controls in this process instead of the backend service, with the
  * same request contract and rules (expiry, ownership, activation anchors and
- * renewal, context versions, settings documents and Settings App children,
- * close tombstones). Invocation receipts stay in the live invoker, as before.
+ * renewal, model Apps and their discovery, context versions, settings
+ * documents and Settings App children, close tombstones). Invocation receipts stay in the live invoker, as before.
  * Nothing survives a restart: Apps reopen.
  */
 export function pluginLocalStoresEnabled(
@@ -67,6 +67,8 @@ type ControlRow = {
   contextToken?: string;
   contextVersion?: number;
   contextJson?: string;
+  modelToken?: string;
+  modelThreadHash?: string;
   settingsVersion?: number;
   settingsJson?: string;
   childToken?: string;
@@ -300,7 +302,21 @@ export class LocalPluginControlStore {
           .slice(0, 64)
           .map((row) => row.contextToken!),
       };
-    if (c.action === "list-models") return { tokens: [] };
+    if (c.action === "list-models") {
+      hash(c.threadHash);
+      const tokens = [...this.controls.values()]
+        .filter(
+          (row) =>
+            row.identityHash === c.identityHash &&
+            !row.closed &&
+            row.expiresAt > now &&
+            row.modelThreadHash === c.threadHash &&
+            row.modelToken,
+        )
+        .map((row) => row.modelToken!);
+      if (tokens.length > 64) fail("INSTANCE_LIMIT");
+      return { tokens };
+    }
     hash(c.controlHash);
     const row = this.controls.get(c.controlHash);
     if (row && row.identityHash !== c.identityHash) fail("INSTANCE_DENIED");
@@ -322,6 +338,8 @@ export class LocalPluginControlStore {
           settingsVersion: undefined,
           settingsJson: undefined,
           childToken: undefined,
+          modelToken: undefined,
+          modelThreadHash: undefined,
         });
         if (row.activationAnchorHash)
           this.anchors.delete(row.activationAnchorHash);
@@ -392,7 +410,7 @@ export class LocalPluginControlStore {
         !row ||
         row.closed ||
         row.expiresAt <= now ||
-        !row.activationAnchorHash
+        !(row.activationAnchorHash || row.modelToken)
       )
         fail("INSTANCE_UNAVAILABLE");
       if (
@@ -411,11 +429,14 @@ export class LocalPluginControlStore {
         return fail("INVALID_INSTANCE_CONTROL");
       }
       const declaration = snapshot.instance?.activation;
+      // A model App's row has no activation; its snapshot says what it is.
       if (
-        snapshot.kind ||
-        !declaration ||
-        (isDurableInteractiveFileDescriptor(declaration.file) &&
-          c.expiresAt > declaration.file.ownership.expiresAt)
+        row!.modelToken
+          ? snapshot.kind !== "model-app" || declaration
+          : snapshot.kind ||
+            !declaration ||
+            (isDurableInteractiveFileDescriptor(declaration.file) &&
+              c.expiresAt > declaration.file.ownership.expiresAt)
       )
         fail("INVALID_INSTANCE_CONTROL");
       row!.expiresAt = c.expiresAt;
@@ -437,12 +458,23 @@ export class LocalPluginControlStore {
       fail("INVALID_INSTANCE_CONTROL");
     if (c.contextToken !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(c.contextToken))
       fail("INVALID_INSTANCE_CONTROL");
+    // Model discovery is all or nothing, and never part of an activation.
+    if ((c.modelToken === undefined) !== (c.modelThreadHash === undefined))
+      fail("INVALID_INSTANCE_CONTROL");
+    if (c.modelToken !== undefined) {
+      if (typeof c.modelToken !== "string" || !TOKEN.test(c.modelToken))
+        fail("INVALID_INSTANCE_CONTROL");
+      hash(c.modelThreadHash);
+    }
     const activation = c.activation as
       | { token: string; anchorHash: string; bindingHash: string; renewable: boolean }
       | undefined;
     if (
       c.settings &&
-      (!activation || !isSettingsActivation(c.snapshotJson) || c.contextToken)
+      (!activation ||
+        !isSettingsActivation(c.snapshotJson) ||
+        c.contextToken ||
+        c.modelToken)
     )
       fail("INVALID_SETTINGS_CONTROL");
     if (activation) {
@@ -450,6 +482,7 @@ export class LocalPluginControlStore {
       hash(activation.bindingHash);
       if (
         !/^[A-Za-z0-9_-]{43}$/.test(activation.token) ||
+        c.modelToken ||
         (c.contextToken && c.contextToken !== activation.token)
       )
         fail("INVALID_INSTANCE_CONTROL");
@@ -491,6 +524,9 @@ export class LocalPluginControlStore {
         row.ownerHash !== c.ownerHash ||
         row.snapshotJson !== c.snapshotJson ||
         row.expiresAt !== c.expiresAt ||
+        row.contextToken !== c.contextToken ||
+        row.modelToken !== c.modelToken ||
+        row.modelThreadHash !== c.modelThreadHash ||
         (row.settingsVersion !== undefined) !== !!c.settings
       )
         fail("INSTANCE_CONTROL_CHANGED");
@@ -518,6 +554,9 @@ export class LocalPluginControlStore {
           : {}),
         ...(c.contextToken
           ? { contextToken: c.contextToken, contextVersion: 0 }
+          : {}),
+        ...(c.modelToken
+          ? { modelToken: c.modelToken, modelThreadHash: c.modelThreadHash }
           : {}),
         ...(c.settings ? { settingsVersion: 0 } : {}),
       };

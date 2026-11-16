@@ -395,6 +395,26 @@ export class PluginInstanceRegistry {
     return this.restoreRead(token, identity, saved, known, port, signal);
   }
 
+  /** Whether this process holds `token`'s control or its close. */
+  holds(token: string) {
+    return this.records.has(token) || this.closed.has(token);
+  }
+
+  /** `getPersistent` for a control the caller already read with `port`. */
+  async getPersistentFrom(
+    token: string,
+    identity: PluginInstanceIdentity,
+    saved: DurablePluginInstanceControl | null,
+    signal: AbortSignal,
+    port: PluginInstanceControlPort,
+  ) {
+    signal.throwIfAborted();
+    if (this.closed.has(token))
+      throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
+    this.sweep();
+    return this.restoreRead(token, identity, saved, undefined, port, signal);
+  }
+
   /** `restore` a reply that left out the context at `known`. If this
    * process released its copy while the reply was in flight, the context is
    * read once more, in full. */

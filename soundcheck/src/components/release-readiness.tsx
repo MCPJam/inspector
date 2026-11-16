@@ -1,14 +1,13 @@
 /**
  * Release Readiness Checklist tile.
  *
- * Mirrors the gates `release.yml`'s preflight enforces, in its order:
- * "Require green CI for candidate SHA" (test.yml + lint.yml green for the
- * exact SHA — these replaced the old in-preflight `npm run verify`), "Require
- * green staging smoke for candidate SHA", and "Compute release plan" (the
- * versions main carries that npm does not have). release-trigger.yml starts
- * Release by itself once the first three are green on a commit carrying such
- * versions; the version PR and pending-changeset rows say how far the release
- * is from that point.
+ * Mirrors what Release checks: staging green on the commit (its `staging` job)
+ * and "Compute release plan" (the versions main carries that npm does not
+ * have). Start release pushes those versions and starts Release on them; if
+ * that run stood down, release-trigger.yml retries once staging is green. The
+ * pending-changeset row says what the next Start release would ship. The full
+ * test suite is not a row here: Release runs it itself (`tests` and
+ * `build-and-test`), so the progress stepper shows it.
  *
  * Referenced by step name rather than line number on purpose — the previous
  * line-number citations here went stale the first time preflight was edited.
@@ -20,7 +19,6 @@
 
 import {
   compareCommits,
-  findOpenPullRequest,
   findSuccessfulRunForSha,
   getBranchHead,
   getLatestEnvironmentDeployment,
@@ -32,8 +30,7 @@ import {
 import { fetchPendingChangesets } from "@/lib/changesets";
 import {
   fetchUnpublishedVersions,
-  releaseLabel,
-  VERSION_PR_BRANCH
+  releaseLabel
 } from "@/lib/release-state";
 import { formatRelativeTime, shortSha } from "@/lib/format";
 import { StatusDot, Tile, type StatusTone } from "@/components/ui";
@@ -109,50 +106,6 @@ export async function ReleaseReadiness() {
     });
   }
 
-  // ── Green CI for the candidate SHA (hard gate) ────────────────────────
-  // preflight requires BOTH: lint.yml ("Build and Test") covers typecheck,
-  // typecheck:client, build:inspector and a production boot, test.yml covers
-  // the suites. Between them they cover what `npm run verify` used to re-run
-  // serially inside preflight.
-  if (inspectorHead) {
-    const CI_GATES: { workflow: string; label: string }[] = [
-      { workflow: "test.yml", label: "Tests" },
-      { workflow: "lint.yml", label: "Build and Test" }
-    ];
-
-    for (const gate of CI_GATES) {
-      try {
-        const run = await findSuccessfulRunForSha(
-          INSPECTOR.owner,
-          INSPECTOR.repo,
-          gate.workflow,
-          "main",
-          inspectorHead.sha
-        );
-        if (run) {
-          rows.push({
-            tone: "success",
-            label: `${gate.label} green for ${shortSha(inspectorHead.sha)}`,
-            detail: `${gate.workflow} succeeded ${formatRelativeTime(run.updatedAt)}`,
-            href: run.htmlUrl
-          });
-        } else {
-          rows.push({
-            tone: "failure",
-            label: `No successful ${gate.label} run for ${shortSha(inspectorHead.sha)}`,
-            detail: `Release will not start from this commit until ${gate.workflow} is green on it. It may still be running, or it was cancelled by a newer push, in which case the next green commit releases instead.`
-          });
-        }
-      } catch (err) {
-        rows.push({
-          tone: "failure",
-          label: `Could not check ${gate.label} for main SHA`,
-          detail: (err as Error).message
-        });
-      }
-    }
-  }
-
   // ── Inspector staging-for-SHA (the hard gate) ─────────────────────────
   if (inspectorHead) {
     try {
@@ -186,7 +139,7 @@ export async function ReleaseReadiness() {
     }
   }
 
-  // ── The release in flight: unpublished versions → version PR → changesets
+  // ── The release in flight: unpublished versions → changesets
   if (inspectorHead) {
     let unpublishedCount = 0;
     try {
@@ -201,35 +154,13 @@ export async function ReleaseReadiness() {
           tone: "running",
           label: `${releaseLabel(unpublished)} is on main, not yet on npm`,
           detail:
-            "The version PR merged. Release starts by itself once the gates above are green on the tip of main."
+            "Start release pushed these versions. If its Release run stood down, it starts again once staging is green on the tip of main."
         });
       }
     } catch (err) {
       rows.push({
         tone: "warning",
         label: "Could not compare main's versions with npm",
-        detail: (err as Error).message
-      });
-    }
-
-    try {
-      const pr = await findOpenPullRequest(
-        INSPECTOR.owner,
-        INSPECTOR.repo,
-        VERSION_PR_BRANCH
-      );
-      if (pr) {
-        rows.push({
-          tone: "info",
-          label: `Version PR #${pr.number} is open`,
-          detail: `${pr.title}. Approve and merge it to release; updated ${formatRelativeTime(pr.updatedAt)}.`,
-          href: pr.url
-        });
-      }
-    } catch (err) {
-      rows.push({
-        tone: "warning",
-        label: "Could not look for an open version PR",
         detail: (err as Error).message
       });
     }

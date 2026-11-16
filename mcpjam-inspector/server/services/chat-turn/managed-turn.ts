@@ -38,6 +38,7 @@ import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
 import { TurnTiming } from "../../utils/turn-timing.js";
+import { harnessTurnEventSink } from "../../utils/harness/harness-turn-event.js";
 import {
   conversationExecutionArgs,
   startBoundConversationExecutionCheck,
@@ -49,7 +50,10 @@ export async function handleManagedChatTurn(
   normalizedBody?: Record<string, unknown>,
 ): Promise<Response> {
   const localIngress = ingress === "local" && !HOSTED_MODE;
-  const timing = new TurnTiming();
+  // A harness turn on a local runtime reports the `local` surface itself.
+  const timing = new TurnTiming({
+    harnessTurnEvent: harnessTurnEventSink(c, "web"),
+  });
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
   // returns a streaming Response. Wrapping it in handleRoute → c.json() would
   // serialize the Response object as '{}' instead of forwarding the stream.
@@ -144,7 +148,6 @@ export async function handleManagedChatTurn(
       executionScope,
       scenarioParticipant,
       harnessComputerWorkdir,
-      projectSkillReadFailed,
       executionBound,
     } = setup.value;
 
@@ -220,6 +223,7 @@ export async function handleManagedChatTurn(
       bearerToken,
       localIngress,
       resources,
+      timing,
       setup: setup.value,
       connections,
     });
@@ -537,15 +541,21 @@ export async function handleManagedChatTurn(
           ...(turnSkills.box
             ? {
                 runtimeSkillsOverride: turnSkills.box.skills,
-                effectiveCapabilities: turnSkills.box.set,
-                ...(turnSkills.live ? { liveTurn: true } : {}),
+                ...(turnSkills.box.set
+                  ? { effectiveCapabilities: turnSkills.box.set }
+                  : {}),
               }
             : {}),
+          // Its servers are connected now: a harness may offer their own
+          // skills, as MCPJam's agent does.
+          ...(turnSkills.live ? { liveTurn: true } : {}),
           ...(turnSkills.turnProvenance
             ? { turnProvenance: turnSkills.turnProvenance }
             : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
-          setupSkillProvenanceIncomplete: projectSkillReadFailed,
+          // A study whose Library could not be read ran with unknown skills.
+          setupSkillProvenanceIncomplete:
+            turnMode === "recorded" && !turnSkills.box,
           // Ad-hoc overrides are not represented by a saved client snapshot.
           setupConnectionPolicyIncomplete:
             !authoritativeConnectionPolicy &&

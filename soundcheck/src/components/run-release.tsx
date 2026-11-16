@@ -4,11 +4,11 @@
  * Run Release tile — the single dispatch form for every production deploy
  * Soundcheck can trigger:
  *
- *   - start: prepare-release.yml opens the version PR, with the deploy
- *     flags as checkboxes in it. Merging the PR is the release;
- *     release-trigger.yml runs release.yml once main is green.
- *   - publish: release.yml directly, for versions already merged whose
- *     automatic run failed or never started.
+ *   - start: prepare-release.yml versions the pending changesets, pushes
+ *     the version commit to main and starts release.yml on it, with the
+ *     deploy flags.
+ *   - publish: release.yml directly, for versions already on main whose
+ *     run failed or never started.
  *   - deploy-mcp-prod.yml (deploy_mcp_production), with either or alone.
  *
  * MCP lives here rather than in its own tile because it's another flavor
@@ -47,8 +47,8 @@ import { Badge, Tile } from "@/components/ui";
 type Action = "start" | "publish" | "none";
 
 const ACTION_HINT: Record<Action, string> = {
-  start: "open the version PR; merging it releases",
-  publish: "release versions already merged (retry)",
+  start: "version the pending changesets and release them",
+  publish: "release versions already on main (retry)",
   none: "no release (use for MCP-only promotions)"
 };
 
@@ -69,10 +69,7 @@ export function RunRelease() {
   const [isPending, startTransition] = useTransition();
 
   const runsRelease = action !== "none";
-  // "start" only writes the deploy flags into the version PR; production
-  // changes when that PR merges, not on this click.
-  const impactsProd =
-    deployMcp || (action === "publish" && (deployBackend || deployWebapp));
+  const impactsProd = deployMcp || (runsRelease && (deployBackend || deployWebapp));
   const hasAnyTarget = runsRelease || deployMcp;
   const effectiveSkipVerify = runsRelease && skipVerify;
 
@@ -175,9 +172,10 @@ export function RunRelease() {
       accent={impactsProd ? "warning" : "info"}
     >
       <p className="mb-5 text-xs leading-relaxed text-muted-foreground">
-        Start release opens the version PR; merging it ships to npm and
-        production once <span className="font-mono text-foreground">main</span>{" "}
-        is green. MCP promotes through{" "}
+        Start release versions the pending changesets on{" "}
+        <span className="font-mono text-foreground">main</span> and ships them
+        to npm and production once staging and the full tests pass. MCP
+        promotes through{" "}
         <span className="font-mono text-foreground">deploy-mcp-prod.yml</span>.
         Confirmation required; the server re-checks your email before
         touching the write token.
@@ -224,7 +222,7 @@ export function RunRelease() {
             checked={skipVerify}
             onChange={changeSkipVerify}
             disabled={!runsRelease}
-            description="Skips the green-CI and green-staging gates. For start, ticked in the version PR: the release runs as soon as it merges."
+            description="Urgent fix only. Ships without waiting for the full tests or a green staging deploy."
           />
         </fieldset>
 
@@ -239,7 +237,7 @@ export function RunRelease() {
               checked={deployBackend}
               onChange={changeDeployBackend}
               disabled={!runsRelease}
-              description="Dispatch backend production deploy with the release. For start, ticked in the version PR."
+              description="Deploy the backend to production with the release."
             />
             <FlagRow
               id="deploy-webapp"
@@ -247,7 +245,7 @@ export function RunRelease() {
               checked={deployWebapp}
               onChange={changeDeployWebapp}
               disabled={!runsRelease}
-              description="Deploy inspector to Railway prod after publish (needs an inspector version). For start, ticked in the version PR."
+              description="Deploy the inspector webapp to production with the release. Needs an inspector version."
             />
             <FlagRow
               id="deploy-mcp"
@@ -267,17 +265,10 @@ export function RunRelease() {
           </div>
         ) : null}
 
-        {action === "start" && (deployBackend || deployWebapp || skipVerify) ? (
-          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-            These are ticked in the version PR and take effect when it merges.
-            Untick them there to change your mind.
-          </div>
-        ) : null}
-
         {effectiveSkipVerify ? (
           <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
             <span className="font-medium">skip_verify:</span> Release will not
-            wait for green CI and staging on main.
+            wait for the full tests or a green staging deploy.
           </div>
         ) : null}
 
@@ -486,9 +477,9 @@ function ConfirmModal({
 
         {impactsProd ? (
           <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs leading-relaxed text-warning">
-            This is the one path to production. Release.yml refuses unless
-            deploy-staging.yml is green for the current main SHA (unless
-            skip_verify); deploy-mcp-prod.yml refuses unless
+            This is the one path to production. Release ships nothing until
+            the full tests and deploy-staging.yml pass on the release commit
+            (unless skip_verify); deploy-mcp-prod.yml refuses unless
             deploy-mcp-staging.yml is green for the current MCP build inputs.
           </p>
         ) : null}
@@ -513,7 +504,7 @@ function ConfirmModal({
               : dispatchedWorkflows.length === 2
                 ? "Dispatch both →"
                 : action === "start"
-                  ? "Open version PR →"
+                  ? "Start release →"
                   : action === "publish"
                     ? "Dispatch release →"
                     : "Deploy MCP →"}

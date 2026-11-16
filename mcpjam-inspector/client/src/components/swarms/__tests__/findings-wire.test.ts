@@ -506,6 +506,61 @@ describe("the wire headline says what was established", () => {
     });
     expect(wireFindingsFootnotes(wire).join(" ")).not.toContain("rejected");
   });
+
+  it.each([1, 3])(
+    "shows only the counted note for %i rejected causes",
+    (rejected) => {
+      const wire = truncatedWire({
+        mechanismRows: false,
+        verification: {
+          proposed: rejected + 2,
+          confirmed: 0,
+          rejected,
+          unverified: 2,
+          omitted: 0,
+        },
+      });
+      wire.coverageNotes = ["mechanismsRejected", "partialRead"];
+
+      expect(wireFindingsFootnotes(wire)).toEqual([
+        SWARM_FINDING_COVERAGE_NOTE_LABELS.partialRead,
+        rejected === 1
+          ? "1 possible cause was rejected."
+          : "3 possible causes were rejected.",
+        "2 possible causes could not be verified.",
+      ]);
+    },
+  );
+
+  it("keeps the generic rejection note when verification counts are absent", () => {
+    const wire = truncatedWire({ mechanismRows: false });
+    delete wire.verification;
+    wire.coverageNotes = ["mechanismsRejected", "partialRead"];
+
+    expect(wireFindingsFootnotes(wire)).toEqual([
+      SWARM_FINDING_COVERAGE_NOTE_LABELS.mechanismsRejected,
+      SWARM_FINDING_COVERAGE_NOTE_LABELS.partialRead,
+    ]);
+  });
+
+  it("keeps the generic rejection note when the rejected count is zero", () => {
+    const wire = truncatedWire({
+      mechanismRows: false,
+      verification: {
+        proposed: 0,
+        confirmed: 0,
+        rejected: 0,
+        unverified: 0,
+        omitted: 0,
+      },
+    });
+    wire.coverageNotes = ["mechanismsRejected", "partialRead"];
+
+    expect(wireFindingsFootnotes(wire)).toEqual([
+      SWARM_FINDING_COVERAGE_NOTE_LABELS.mechanismsRejected,
+      SWARM_FINDING_COVERAGE_NOTE_LABELS.partialRead,
+    ]);
+  });
 });
 
 describe("the persona speaks for a session that actually exists", () => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { scrubDeliveredSecretsDeep } from "../../../shared/delivered-secret-registry.js";
 import { readAuthChallenge } from "../../utils/connection-effective-auth.js";
 import {
   describeError,
@@ -323,14 +324,16 @@ export function webError(
     normalized,
   });
   return c.json(
-    {
+    // A credential the backend delivered to this process can be quoted back in
+    // an upstream error; it is replaced by exact value before the browser.
+    scrubDeliveredSecretsDeep({
       ...restExtras,
       code,
       message: view.message,
       ...(view.details ? { details: view.details } : {}),
       ...(view.normalized ? { normalized: view.normalized } : {}),
       ...(reportedOrigin ? { origin: reportedOrigin } : {}),
-    },
+    }),
     status,
     // Also a HEADER, because the body does not always survive to the reader
     // that needs it. The chat client's reporter runs after the AI SDK has

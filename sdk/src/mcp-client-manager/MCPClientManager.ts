@@ -3880,6 +3880,7 @@ export class MCPClientManager {
       return undefined;
     }
     if (
+      config.credentialSource === "mcpjam-backend" ||
       config.authProvider ||
       config.eventSourceInit ||
       config.reconnectionOptions ||
@@ -4482,7 +4483,12 @@ export class MCPClientManager {
     // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
     const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
     const logged = httpLogger
-      ? wrapFetchForHttpLogging(serverId, httpLogger, baseFetch)
+      ? wrapFetchForHttpLogging(
+          serverId,
+          httpLogger,
+          baseFetch,
+          config.credentialHeaderNames
+        )
       : baseFetch;
     // ABOVE the logger deliberately: a refused listen stream never reaches the
     // network, so logging it would invent a request that was not made. The

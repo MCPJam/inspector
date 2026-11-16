@@ -10,12 +10,24 @@ import type {
   BillingInterval,
   BillingLimitName,
   GateDecision,
+  OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
   PlanCatalogEntry,
   PremiumnessGateKey,
   PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
+
+export function canShowSubscriptionNotices(
+  billingStatus: Pick<OrganizationBillingStatus, "plan" | "source">,
+): boolean {
+  return (
+    billingStatus.plan !== "free" &&
+    billingStatus.source !== "trial" &&
+    billingStatus.source !== "simulation"
+  );
+}
+
 export function getDisplayPriceCentsForPlan(
   _plan: OrganizationPlan,
   interval: BillingInterval,
@@ -95,20 +107,14 @@ export function isGateAccessDenied(
  * organization premiumness applies.
  */
 export function isPremiumnessGateDeniedForShell(params: {
-  billingUiEnabled: boolean;
   projectPremiumness: PremiumnessState | undefined;
   organizationPremiumness: PremiumnessState | undefined;
   hasProject: boolean;
   gateKey: PremiumnessGateKey | null;
 }): boolean {
-  const {
-    billingUiEnabled,
-    projectPremiumness,
-    organizationPremiumness,
-    hasProject,
-    gateKey,
-  } = params;
-  if (!billingUiEnabled || !gateKey) {
+  const { projectPremiumness, organizationPremiumness, hasProject, gateKey } =
+    params;
+  if (!gateKey) {
     return false;
   }
   const premiumness =

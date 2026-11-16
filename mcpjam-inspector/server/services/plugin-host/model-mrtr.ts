@@ -98,6 +98,7 @@ export function createModelMrtrAdapter(options: Options) {
     if (completed.revision !== record.revision) throw denied();
     return modelApps.publish(
       result, record.instance, record.params.name, record.revision, completed.tool._meta,
+      signal,
     );
   };
   const current = (record: Record) => {

@@ -6,9 +6,16 @@
  *
  * Every live turn plans from the environment it resolved. A Playground
  * client's own skills come inside that environment (`skillScope: 'visible'`),
- * so no surface reads a project's pool beside it.
+ * so no surface reads a project's pool beside it. A study whose scenario
+ * predates environments has none, and reads its shared Library instead
+ * ({@link studyLibraryTurnSkills}).
  */
-import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
+import type { ExecutionScope } from "../../utils/execution-scope.js";
+import {
+  fetchRuntimeSkillFiles,
+  fetchRuntimeSkills,
+  type RuntimeSkill,
+} from "../../utils/harness/runtime-skills.js";
 import type {
   EffectiveCapabilityInput,
   EffectiveCapabilitySet,
@@ -34,10 +41,10 @@ export interface LiveTurnSkills {
   /**
    * What a harness turn writes to its box (`runtimeSkillsOverride`), and the
    * set that carries their supporting files (`effectiveCapabilities`). Absent
-   * when the plan is not the box's source: a study whose scenario predates
-   * environments has its harness read the study's skills itself.
+   * when the turn could not read its skills: a harness then leaves its box as
+   * it is. Without `set`, the box keeps each skill's other files as they are.
    */
-  box?: { skills: RuntimeSkill[]; set: EffectiveCapabilitySet };
+  box?: { skills: RuntimeSkill[]; set?: EffectiveCapabilitySet };
   /** A live turn: its servers are connected now, so their own skills join the
    *  set (`liveTurn` on a harness). A named environment captured its own. */
   live: boolean;
@@ -87,6 +94,76 @@ export function environmentTurnSkills(args: {
     live: args.liveExtras !== undefined,
     ...(turnProvenance ? { turnProvenance } : {}),
   };
+}
+
+/**
+ * A turn in a study whose scenario predates environments. It reads the
+ * study's shared Library through the study's own scope, where the backend
+ * returns shared skills only, to every tester, members included. The read is
+ * planned like an environment's skills, for both engines, and the turn stays
+ * live: the study's servers are connected now, so their own skills join. The
+ * turn names no environment, so it writes no record.
+ *
+ * A failed read loses the Library's skills, never the servers' own, and
+ * leaves a harness's box as it is, so a backend hiccup never deletes the
+ * folders an earlier turn wrote.
+ */
+export async function studyLibraryTurnSkills(args: {
+  bearer: string;
+  projectId: string;
+  executionScope?: ExecutionScope;
+  runtime: TurnRuntime;
+  modelContextTokens?: number;
+}): Promise<LiveTurnSkills> {
+  const [read, files] = await Promise.all([
+    fetchRuntimeSkills(args.bearer, args.projectId, args.executionScope),
+    fetchRuntimeSkillFiles(args.bearer, args.projectId, args.executionScope),
+  ]);
+  if (!read.ok) {
+    return {
+      skills: resolveTurnSkills({
+        source: { kind: "live", projectSkills: [] },
+        runtime: args.runtime,
+      }),
+      live: true,
+    };
+  }
+  const filesOf = (skillId: string) =>
+    files.ok
+      ? files.files.flatMap((file) =>
+          file.skillId === skillId
+            ? [{ path: file.path, size: file.size, url: file.url }]
+            : [],
+        )
+      : [];
+  const spec: TurnEnvironment = {
+    servers: { effectiveServerIds: [] },
+    skills: read.skills.map((skill) => ({
+      skillId: skill.skillId,
+      name: skill.name,
+      description: skill.description,
+      content: skill.content,
+      aggregateHash: skill.aggregateHash,
+      ...(skill.extraFrontmatter
+        ? { extraFrontmatter: skill.extraFrontmatter }
+        : {}),
+      channels: [],
+      files: filesOf(skill.skillId),
+    })),
+  };
+  const planned = environmentTurnSkills({
+    spec,
+    attribution: null,
+    liveExtras: {},
+    runtime: args.runtime,
+    ...(args.modelContextTokens !== undefined
+      ? { modelContextTokens: args.modelContextTokens }
+      : {}),
+  });
+  // Files unknown: the box writes each SKILL.md and keeps its other files.
+  return files.ok
+    ? planned
+    : { ...planned, box: { skills: runtimeSkills(spec) } };
 }
 
 /**

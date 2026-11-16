@@ -7,9 +7,9 @@ const state = vi.hoisted(() => ({
   release: vi.fn(),
   assertSchema: vi.fn(),
 }));
-vi.mock("../receipt-store.js", () => ({
+vi.mock("../receipt-store.js", async (original) => ({
+  ...(await original<typeof import("../receipt-store.js")>()),
   createPluginInvocationReceiptPort: () => undefined,
-  pluginInvocationOwnerHash: () => "hash",
 }));
 vi.mock("../request-runtime.js", () => ({
   createPluginRequestRuntime: () => ({
@@ -216,13 +216,16 @@ describe("original model MRTR owner", () => {
     expect(publication).toHaveBeenCalledOnce();
     const result = z.object({ _meta: z.object({
       [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }),
-    }) }).parse(publication.mock.results[0]!.value);
+    }) }).parse(await publication.mock.results[0]!.value);
     const token = result._meta[PLUGIN_MODEL_APP_META].instanceToken;
-    modelApps.close(token, identity);
+    const signal = new AbortController().signal;
+    await modelApps.close(token, identity, signal);
     await f.adapter.resume(event.pluginModelOperation, submission, "server");
     expect(publication).toHaveBeenCalledOnce();
     expect(state.resume).toHaveBeenCalledOnce();
-    expect(() => modelApps.get(token, identity)).toThrow();
+    await expect(modelApps.restore(token, identity, signal)).rejects.toThrow(
+      "MODEL_APP_UNAVAILABLE",
+    );
   });
   it("refuses replay with changed arguments under the same engine id", async () => {
     const f = fixture();

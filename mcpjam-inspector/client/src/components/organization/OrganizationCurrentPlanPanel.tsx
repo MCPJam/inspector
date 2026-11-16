@@ -6,7 +6,10 @@ import type {
   OrganizationBillingStatus,
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
-import { formatPlanName } from "@/lib/billing-entitlements";
+import {
+  canShowSubscriptionNotices,
+  formatPlanName,
+} from "@/lib/billing-entitlements";
 import { canCheckoutPlanEntry, isLegacyTeamEntry } from "@/lib/pricing-catalog";
 
 function formatCurrency(
@@ -78,6 +81,10 @@ export function getCurrentPlanRenewalLine(
   formattedCancellationDate: string,
   formattedScheduledChangeDate: string,
 ): string {
+  if (!canShowSubscriptionNotices(billingStatus)) {
+    return "No active subscription";
+  }
+
   if (billingStatus.stripeCancelAtPeriodEnd) {
     return formattedCancellationDate === "Not available"
       ? "Will not renew"
@@ -103,7 +110,7 @@ export function getCurrentPlanRenewalLine(
     }
     return `Renews ${formattedPeriodEnd}`;
   }
-  if (billingStatus.plan === "free" || !billingStatus.hasCustomer) {
+  if (!billingStatus.hasCustomer) {
     return "No active subscription";
   }
   if (billingStatus.subscriptionStatus) {
@@ -116,7 +123,10 @@ function getScheduledCancellationDetailLine(
   billingStatus: OrganizationBillingStatus,
   formattedCancellationDate: string,
 ): string | null {
-  if (!billingStatus.stripeCancelAtPeriodEnd) {
+  if (
+    !canShowSubscriptionNotices(billingStatus) ||
+    !billingStatus.stripeCancelAtPeriodEnd
+  ) {
     return null;
   }
 
@@ -134,7 +144,11 @@ function getScheduledChangeDetailLine(
   const scheduledPlan = billingStatus.stripeScheduledPlan;
   const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
 
-  if (!scheduledPlan || !scheduledBillingInterval) {
+  if (
+    !canShowSubscriptionNotices(billingStatus) ||
+    !scheduledPlan ||
+    !scheduledBillingInterval
+  ) {
     return null;
   }
 
@@ -249,6 +263,7 @@ export function OrganizationCurrentPlanPanel({
   const currentPlan = billingStatus.plan ?? "free";
   const isTrial = billingStatus.source === "trial";
   const isSimulation = billingStatus.source === "simulation";
+  const showSubscriptionNotices = canShowSubscriptionNotices(billingStatus);
   const currentEntry = planCatalog?.plans[currentPlan];
   const isLegacyTeam =
     currentPlan === "team" &&
@@ -300,7 +315,8 @@ export function OrganizationCurrentPlanPanel({
         displayPlan,
       )}, while billing remains on ${formatPlanName(currentPlan)}.`
     : null;
-  const isPastDue = billingStatus.paymentState === "past_due";
+  const isPastDue =
+    showSubscriptionNotices && billingStatus.paymentState === "past_due";
   const paymentGraceEndsLabel = formatBillingDate(
     billingStatus.paymentGraceEndsAt ?? null,
   );
@@ -308,7 +324,7 @@ export function OrganizationCurrentPlanPanel({
   const showIntervalPortalLink =
     billingConfigured &&
     canManageBilling &&
-    !isTrial &&
+    showSubscriptionNotices &&
     (currentPlan === "team" || currentPlan === "pro") &&
     billingStatus.billingInterval != null &&
     // The catalog only speaks for the bundle the org actually holds. When it
@@ -388,7 +404,7 @@ export function OrganizationCurrentPlanPanel({
             Legacy
           </Badge>
         ) : null}
-        {billingStatus.stripeCancelAtPeriodEnd ? (
+        {showSubscriptionNotices && billingStatus.stripeCancelAtPeriodEnd ? (
           <Badge
             variant="outline"
             className="rounded-md border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-900 dark:text-amber-100"
@@ -397,7 +413,7 @@ export function OrganizationCurrentPlanPanel({
             Will not renew
           </Badge>
         ) : null}
-        {displayPlan !== "free" || isTrial ? (
+        {showSubscriptionNotices || isTrial ? (
           <span
             className="text-sm text-muted-foreground"
             data-testid="current-plan-renewal"
@@ -469,7 +485,7 @@ export function OrganizationCurrentPlanPanel({
           </div>
         </div>
 
-        {currentPlan !== "free" &&
+        {showSubscriptionNotices &&
         canManageBilling &&
         !isEnterpriseBilledOffline(billingStatus) ? (
           <Button
@@ -491,7 +507,10 @@ export function OrganizationCurrentPlanPanel({
         ) : null}
       </div>
       {scheduledCancellationDetailLine || scheduledChangeDetailLine ? (
-        <div className="rounded-lg border border-border bg-muted/40 p-3">
+        <div
+          className="rounded-lg border border-border bg-muted/40 p-3"
+          data-testid="current-plan-subscription-notice"
+        >
           {scheduledCancellationDetailLine ? (
             <p
               className="text-xs font-medium text-amber-900 dark:text-amber-100"

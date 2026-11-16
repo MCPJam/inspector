@@ -79,6 +79,19 @@ export function cellResult(iterations: readonly EvalIteration[]) {
   return "passed";
 }
 
+/** A cell's iterations as its test case page lists them: failures, then running, then the rest. */
+export function cellIterationOrder(items: readonly EvalIteration[]) {
+  const rank = (item: EvalIteration) =>
+    ["failed", "timed_out"].includes(computeIterationResult(item))
+      ? 0
+      : computeIterationResult(item) === "pending"
+        ? 1
+        : 2;
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => rank(a.item) - rank(b.item) || a.index - b.index);
+}
+
 export function matrixCaseKey(iteration: EvalIteration): string {
   return (
     iteration.testCaseId ??

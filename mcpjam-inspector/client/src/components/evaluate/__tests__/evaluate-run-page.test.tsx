@@ -15,6 +15,9 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 // It reads Convex; its own test covers it.
 vi.mock("../run-server-groups", () => ({ RunServerGroups: () => null }));
 
+const track = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/analytics", () => ({ track }));
+
 function makeRun(
   overrides: Partial<EvalSuiteRun> & { _id: string },
 ): EvalSuiteRun {
@@ -38,6 +41,37 @@ function makeRun(
 const hostNamesById = new Map<string, string | null>([["host-1", "Claude"]]);
 
 describe("EvaluateRunPage", () => {
+  it("records a run view on mount and again for another run", () => {
+    track.mockClear();
+    const props = {
+      hostNamesById,
+      otherRuns: [],
+      defaultCompareRunId: null,
+      onCompareWithRun: vi.fn(),
+    };
+    const { rerender } = render(
+      <EvaluateRunPage run={makeRun({ _id: "run-a" })} {...props}>
+        <div />
+      </EvaluateRunPage>,
+    );
+    rerender(
+      <EvaluateRunPage run={makeRun({ _id: "run-a" })} {...props}>
+        <div />
+      </EvaluateRunPage>,
+    );
+    rerender(
+      <EvaluateRunPage run={makeRun({ _id: "run-b" })} {...props}>
+        <div />
+      </EvaluateRunPage>,
+    );
+
+    expect(
+      track.mock.calls
+        .filter(([event]) => event === "eval_run_viewed")
+        .map(([, props]) => props.run_id),
+    ).toEqual(["run-a", "run-b"]);
+  });
+
   it("uses a simple Paper header with Compare as a visible action", () => {
     render(
       <EvaluateRunPage

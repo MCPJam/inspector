@@ -1,6 +1,6 @@
 /**
- * `mcpjam cloud server-accounts`: the accounts a saved server signs in with
- * for hosted runs, addressed by id or by name.
+ * `mcpjam cloud server-accounts`: the accounts a saved server signs in with,
+ * addressed by id or by name.
  *
  * Tokens are write-only: `set` stores one, and no command prints one. `set`
  * reads the access token from a file, an environment variable or stdin, and
@@ -182,14 +182,14 @@ export function registerServerAccountsCommands(cloud: Command): void {
   const accounts = cloud
     .command("server-accounts")
     .description(
-      "Manage the accounts a saved server signs in with for hosted runs. Write-only: no command prints a token.",
+      "Manage the accounts a saved server signs in with. Write-only: no command prints a token.",
     );
 
   bindOperation(
     serverCommand(
       accounts,
       "list",
-      "List a saved server's accounts: id, name, whether runs use it by default, whether it needs reconnecting, and whether it is for hosted runs only",
+      "List a saved server's accounts: id, name, whether runs use it by default, whether it needs reconnecting, and whether it is a shared or uploaded account whose token is never revealed",
     ),
     listServerAccountsOperation,
     (options: ServerOptions) => ({
@@ -212,7 +212,7 @@ export function registerServerAccountsCommands(cloud: Command): void {
     accountCommand(
       accounts,
       "set",
-      "Upload an access token to an account. A name no account has creates the account; otherwise its token is replaced and its ID stays. Accounts uploaded this way are for hosted runs only",
+      "Upload an access token to an account. A name no account has creates the account; otherwise its token is replaced and its ID stays. The token is never revealed. Hosted runs use it. On a shared server, members' local apps use it once a project admin allows local runs; on your own server, only your local app does",
     )
       .requiredOption(
         "--client-id <id>",

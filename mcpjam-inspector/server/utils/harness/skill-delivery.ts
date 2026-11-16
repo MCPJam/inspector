@@ -1,7 +1,7 @@
 /**
  * Which skill set a harness turn delivers — one decision, made here.
  *
- * Several callers can each be authoritative about a turn's skills, and they are
+ * Two callers can each be authoritative about a turn's skills, and they are
  * NOT interchangeable, so the precedence is written down once here instead of
  * being re-derived inside `runHarnessTurn`:
  *
@@ -12,14 +12,12 @@
  *      resolved to, in ONE atomic read: a Playground client's selection, all
  *      visible by default, arrives inside that environment. The next turn
  *      re-resolves, but this one's answer is authoritative for it.
- *   3. `live` — the project-wide fetch, only when neither of the above spoke:
- *      a study whose scenario predates environments, or a swarm target that
- *      pinned nothing.
  *
- * PRESENCE, not length, selects a source in both overriding cases. An EMPTY
- * environment override is a real answer ("this environment delivers no skills")
- * and must skip the project-wide fetch: falling through would silently deliver
- * the whole project pool to a turn whose environment deliberately pinned none.
+ * PRESENCE, not length, selects a source. An EMPTY environment override is a
+ * real answer ("this environment delivers no skills"), and the box writer
+ * clears MCPJam's folders for it. A turn that supplies neither (`none`) leaves
+ * the box exactly as it is: the harness never reads a project's skills on
+ * its own, so a source it was not given is unknown, never empty.
  *
  * `harnessTurnSkills` reads the chosen source into what the box writer
  * (`box-skills-writer.ts`) takes: the skills in the turn's order, their
@@ -33,17 +31,12 @@ import type {
 } from "../computers/convex-skills-client.js";
 import type { BoxSkillFiles } from "./box-skills-writer.js";
 import { capabilitySkillFiles } from "./plugin-delivery.js";
-import {
-  skillsFingerprint,
-  type FetchRuntimeSkillFilesResult,
-  type FetchRuntimeSkillsResult,
-  type RuntimeSkill,
-} from "./runtime-skills.js";
+import { skillsFingerprint, type RuntimeSkill } from "./runtime-skills.js";
 
 export type HarnessSkillSource =
   | { mode: "pinned"; skills: RuntimeSkill[] }
   | { mode: "environment"; skills: RuntimeSkill[] }
-  | { mode: "live" };
+  | { mode: "none" };
 
 export function selectHarnessSkillSource(args: {
   /** Frozen run artifacts (eval / swarm). */
@@ -60,23 +53,22 @@ export function selectHarnessSkillSource(args: {
   if (args.runtimeSkillsOverride !== undefined) {
     return { mode: "environment", skills: args.runtimeSkillsOverride };
   }
-  return { mode: "live" };
+  return { mode: "none" };
 }
 
 /** A turn's skills for its box, read from the source that spoke. */
 export interface HarnessTurnSkills {
   mode: HarnessSkillSource["mode"];
-  /** In the turn's order; `null` when the project's skills could not be read,
-   *  which leaves the box exactly as it is. */
+  /** In the turn's order; `null` when the turn named no source, which leaves
+   *  the box exactly as it is. */
   skills: RuntimeSkill[] | null;
   /** Folded into the session lane so a skill change forks the session;
    *  `undefined` when the skills are unknown, so the stored hash stands. */
   skillsHash: string | undefined;
   /** The skills' supporting files, read when the writer needs them. */
   readFiles(): Promise<BoxSkillFiles>;
-  /** A live turn: its servers are connected now, so their own skills may be
-   *  offered. A client's environment (`liveTurn`) or the project's pool;
-   *  never a run's copies or a named environment, which captured its own. */
+  /** A live turn (`liveTurn`): its servers are connected now, so their own
+   *  skills may be offered. Never a run's copies, which froze their own. */
   live: boolean;
 }
 
@@ -84,66 +76,48 @@ const NO_FILES_KNOWN: BoxSkillFiles = { files: [], complete: () => false };
 
 /**
  * Read a turn's skills from its source (`selectHarnessSkillSource`). Files come
- * from the same place as the skills: a run's frozen copies carry theirs, an
- * environment's capability set carries its skills' (the only source of a
- * plugin skill's, which the project-wide file query leaves out), and the
- * project's pool is read with the project-wide query, at write time and only
- * when the box gets a skill.
+ * from the same place as the skills: a run's frozen copies carry theirs, and
+ * an environment's capability set carries its skills' (the only source of a
+ * plugin skill's). An environment turn handed no capability set writes each
+ * skill's SKILL.md and leaves its other files as they are.
  */
 export async function harnessTurnSkills(args: {
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   runtimeSkillsOverride?: RuntimeSkill[];
   effectiveCapabilities?: EffectiveCapabilitySet;
-  /** The environment override is a client's live turn, not a named
-   *  environment's. */
+  /** The turn is a client's or a study's, on servers connected now, not a
+   *  named environment's. */
   liveTurn?: boolean;
-  /** The project's live skills and files; absent when the turn has no project
-   *  to read, which delivers none from it. */
-  project?: {
-    skills(): Promise<FetchRuntimeSkillsResult>;
-    files(): Promise<FetchRuntimeSkillFilesResult>;
-  };
 }): Promise<HarnessTurnSkills> {
   const source = selectHarnessSkillSource(args);
-  const own = args.effectiveCapabilities
-    ? capabilitySkillFiles(args.effectiveCapabilities)
-    : undefined;
-  const projectFiles = async (): Promise<BoxSkillFiles> => {
-    const listing = await args.project?.files();
-    return listing?.ok
-      ? { files: listing.files, complete: () => true }
-      : NO_FILES_KNOWN;
-  };
-  if (source.mode === "pinned" || source.mode === "environment") {
-    const files =
-      source.mode === "pinned"
-        ? (args.pinnedHarnessSkills ?? []).flatMap((artifact, index) =>
-            (artifact.files ?? []).map((file) => ({
-              ...file,
-              skillId: source.skills[index]!.skillId,
-            })),
-          )
-        : own;
+  const live = source.mode !== "pinned" && args.liveTurn === true;
+  if (source.mode === "none") {
     return {
-      mode: source.mode,
-      skills: source.skills,
-      skillsHash: skillsFingerprint(source.skills),
-      readFiles: files
-        ? async () => ({ files, complete: () => true })
-        : projectFiles,
-      live: source.mode === "environment" && args.liveTurn === true,
+      mode: "none",
+      skills: null,
+      skillsHash: undefined,
+      readFiles: async () => NO_FILES_KNOWN,
+      live,
     };
   }
-  const fetched = args.project
-    ? await args.project.skills()
-    : { ok: true as const, skills: [] };
-  const live = fetched.ok ? fetched.skills : null;
+  const files =
+    source.mode === "pinned"
+      ? (args.pinnedHarnessSkills ?? []).flatMap((artifact, index) =>
+          (artifact.files ?? []).map((file) => ({
+            ...file,
+            skillId: source.skills[index]!.skillId,
+          })),
+        )
+      : args.effectiveCapabilities
+        ? capabilitySkillFiles(args.effectiveCapabilities)
+        : undefined;
   return {
-    mode: "live",
-    skills: live,
-    skillsHash: live ? skillsFingerprint(live) : undefined,
-    readFiles: projectFiles,
-    live: true,
+    mode: source.mode,
+    skills: source.skills,
+    skillsHash: skillsFingerprint(source.skills),
+    readFiles: async () =>
+      files ? { files, complete: () => true } : NO_FILES_KNOWN,
+    live,
   };
 }
 

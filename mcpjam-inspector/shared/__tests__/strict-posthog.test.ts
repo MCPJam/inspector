@@ -199,3 +199,70 @@ describe("strict PostHog reconstruction", () => {
     ).toBeNull();
   });
 });
+
+describe("strict app launches", () => {
+  const launch = {
+    ...product,
+    event: "app_launched",
+    properties: {
+      ...product.properties,
+      location: "app",
+      is_authenticated: true,
+      platform: "web",
+      deployment: "hosted",
+      launch_trigger: "timeout",
+      policy_wait_ms: 10_000,
+      user_agent: secret,
+      version: secret,
+    },
+  };
+
+  it("counts a launch captured before the content grant, with closed fields only", () => {
+    const result = applyEventPolicy(launch, CONSERVATIVE_TELEMETRY_POLICY, null);
+    expect(result).toEqual({
+      event: "app_launched",
+      timestamp: expect.any(String),
+      uuid: expect.any(String),
+      properties: {
+        token: expect.stringMatching(/^phc_/),
+        app_version: expect.stringMatching(/^\d+\.\d+\.\d+/),
+        distinct_id: "strict",
+        $process_person_profile: false,
+        $geoip_disable: true,
+        location: "app",
+        is_authenticated: true,
+        platform: "web",
+        deployment: "hosted",
+        launch_trigger: "timeout",
+        policy_wait_ms: 10_000,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it("attributes a signed-in strict launch to the relay's actor id", () => {
+    const result = rebuildStrictPostHogEvent(launch, "user_01ACTOR");
+    expect(result).toMatchObject({ properties: { distinct_id: "user_01ACTOR" } });
+  });
+
+  it("drops launch values outside the catalog", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "app_launched",
+      properties: {
+        location: secret,
+        is_authenticated: "true",
+        platform: secret,
+        deployment: secret,
+        launch_trigger: secret,
+        policy_wait_ms: 1.5,
+      },
+    });
+    expect(result?.properties).not.toHaveProperty("location");
+    expect(result?.properties).not.toHaveProperty("is_authenticated");
+    expect(result?.properties).not.toHaveProperty("platform");
+    expect(result?.properties).not.toHaveProperty("deployment");
+    expect(result?.properties).not.toHaveProperty("launch_trigger");
+    expect(result?.properties).not.toHaveProperty("policy_wait_ms");
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+});

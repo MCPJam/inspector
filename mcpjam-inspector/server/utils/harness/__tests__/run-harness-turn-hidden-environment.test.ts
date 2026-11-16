@@ -130,14 +130,16 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -343,5 +345,14 @@ describe("runHarnessTurn — the Playground's hidden environment", () => {
     const second = claimArgs();
     expect(second.skillsHash).toBe(first.skillsHash);
     expect(second.runtimeFingerprint).not.toBe(first.runtimeFingerprint);
+  });
+
+  it("leaves the box as it is when the turn names no skills", async () => {
+    await runHarnessTurn(baseOptions() as never, "none");
+    expect(deliveredSkillNames()).toEqual([]);
+    expect(passes.reconcileSkillDirs).not.toHaveBeenCalled();
+    expect(passes.materializeSkillFiles).not.toHaveBeenCalled();
+    // Unknown, so the stored hash stands (no resume churn).
+    expect(claimArgs().skillsHash).toBeUndefined();
   });
 });

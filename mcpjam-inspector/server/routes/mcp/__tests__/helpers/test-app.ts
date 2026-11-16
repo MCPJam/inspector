@@ -14,6 +14,7 @@ import widgetRender from "../../widget-render.js";
 import widgetSession from "../../widget-session.js";
 import logLevel from "../../log-level.js";
 import tasks from "../../tasks.js";
+import tunnels from "../../tunnels.js";
 import { adapterHttp, managerHttp } from "../../http-adapters.js";
 
 // Import security middleware
@@ -37,6 +38,7 @@ export type RouteConfig =
   | "widget-session"
   | "log-level"
   | "tasks"
+  | "tunnels"
   | "adapter-http"
   | "manager-http";
 
@@ -52,6 +54,7 @@ const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   "widget-session": { path: "/api/mcp/widget-session", handler: widgetSession },
   "log-level": { path: "/api/mcp/log-level", handler: logLevel },
   tasks: { path: "/api/mcp/tasks", handler: tasks },
+  tunnels: { path: "/api/mcp/tunnels", handler: tunnels },
   "adapter-http": { path: "/api/mcp/adapter-http", handler: adapterHttp },
   "manager-http": { path: "/api/mcp/manager-http", handler: managerHttp },
 };
