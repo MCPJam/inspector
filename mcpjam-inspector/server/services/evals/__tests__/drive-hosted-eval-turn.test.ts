@@ -684,10 +684,16 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
       } as never;
     }) as never);
 
-    await driveHostedEvalTurn(baseParams());
+    const outcome = await driveHostedEvalTurn(baseParams());
 
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      errorCode: "policy_no_zdr_endpoint",
+    });
     expect(error).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=policy_no_zdr_endpoint"),
+    );
     error.mockRestore();
     warn.mockRestore();
   });

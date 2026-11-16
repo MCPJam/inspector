@@ -1093,6 +1093,8 @@ export async function driveHostedEvalTurn(
   // PR 5b-followup-2: prefer the engine's captured structured error when
   // present (429 daily-cap text, hosted-model setup errors, …) over the
   // generic fallbacks.
+  // A harness turn carries the backend's code only in `infra`.
+  const engineCode = lastEngineError?.code ?? lastEngineError?.infra?.code;
   const failTurn = (
     fallbackError: string,
     logLine: string,
@@ -1108,8 +1110,7 @@ export async function driveHostedEvalTurn(
     // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
     // page on the provider-owned ones that verdict declines. A model with no
     // private provider is the user's to fix, and the engine already reported
-    // it as such. A harness turn carries the backend's code only in `infra`.
-    const engineCode = lastEngineError?.code ?? lastEngineError?.infra?.code;
+    // it as such.
     if (
       engineCode === "provider_empty_response" ||
       engineCode === "policy_no_zdr_endpoint"
@@ -1141,7 +1142,7 @@ export async function driveHostedEvalTurn(
       kind: "failed" as const,
       ...failure,
       errorSource: failedLayer,
-      ...(lastEngineError?.code ? { errorCode: lastEngineError.code } : {}),
+      ...(engineCode ? { errorCode: engineCode } : {}),
       ...(typeof lastEngineError?.httpStatus === "number"
         ? { errorHttpStatus: lastEngineError.httpStatus }
         : {}),
@@ -1159,7 +1160,7 @@ export async function driveHostedEvalTurn(
     return failTurn(
       turnFailure,
       `[evals] runAssistantTurn${logSuffix} failed: ${turnFailure} (engineError=${
-        lastEngineError ? lastEngineError.code ?? "uncoded" : "none"
+        lastEngineError ? (engineCode ?? "uncoded") : "none"
       })`,
     );
   }
