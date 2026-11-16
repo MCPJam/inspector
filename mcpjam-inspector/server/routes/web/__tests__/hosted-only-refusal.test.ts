@@ -65,6 +65,24 @@ describe("an export refusal names the rule that refused", () => {
     });
   });
 
+  it("keeps the backend's own sentence and cause when it sends them", async () => {
+    stubAuthorize({
+      oauthUnavailablePolicy: "hostedOnlyAccount",
+      oauthUnavailableCause: "not_acknowledged",
+      oauthUnavailableMessage:
+        "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+    });
+    const error = await refusal();
+    expect(error.message).toBe(
+      "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+    );
+    expect(error.details).toMatchObject({
+      exportDenied: true,
+      policy: "hostedOnlyAccount",
+      cause: "not_acknowledged",
+    });
+  });
+
   it.each([{}, { oauthUnavailablePolicy: "credentialExportPolicy" }])(
     "keeps the organization policy copy for %j",
     async (extra) => {

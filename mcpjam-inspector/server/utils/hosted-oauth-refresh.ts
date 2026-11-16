@@ -32,6 +32,10 @@ import {
   handOverRefreshedToken,
   type DeliveredTokenFacts,
 } from "./token-origin-check.js";
+import {
+  type UploadedAccountRecovery,
+  withUploadedAccountRecovery,
+} from "./uploaded-account-recovery.js";
 
 /**
  * The backend cannot refresh this credential — its authorization server is on
@@ -701,6 +705,8 @@ export type HostedOAuthUnauthorizedHandlerArgs = {
    * is refused instead of retried here.
    */
   targetOrigin?: string | null;
+  /** An uploaded account's one re-resolve; see `uploaded-account-recovery.ts`. */
+  uploaded?: UploadedAccountRecovery;
 };
 
 /**
@@ -713,7 +719,7 @@ export function buildHostedOAuthUnauthorizedHandler(
   const refresh = args.allowPrivateAuthorizationServerFallback
     ? refreshHostedOAuthAccessTokenWithLocalFallback
     : forceRefreshHostedOAuthAccessToken;
-  return async (context) => {
+  return withUploadedAccountRecovery(async (context) => {
     const unauthorized: unknown = context?.error;
     // The 401 that prompted this refresh may have been a sign-in challenge
     // for one protected operation. Keep it so the caller can offer sign-in
@@ -769,5 +775,5 @@ export function buildHostedOAuthUnauthorizedHandler(
       failure.cause = error;
       throw failure;
     }
-  };
+  }, args.uploaded, args.targetOrigin);
 }
