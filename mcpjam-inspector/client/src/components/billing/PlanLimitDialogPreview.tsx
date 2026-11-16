@@ -314,7 +314,7 @@ export function PlanLimitDialogPreview() {
           modal={false}
           interval={interval}
           onIntervalChange={setInterval}
-          onUpgrade={() => setLastAction(`checkout would start (${interval})`)}
+          onUpgrade={() => setLastAction(`Checkout starts (${interval})`)}
           onRequestEnterprise={() =>
             setLastAction("would open mcpjam.com/contact in a new tab")
           }
@@ -333,7 +333,7 @@ export function PlanLimitDialogPreview() {
                     interval,
                     onIntervalChange: setInterval,
                     onUpgrade: () =>
-                      setLastAction(`checkout would start (${interval})`),
+                      setLastAction(`Checkout starts (${interval})`),
                   },
                   failed: false,
                 }
