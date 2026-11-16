@@ -234,10 +234,11 @@ describe("Cursor CLI client protocol negotiation", () => {
       "POST initialize 2025-11-25",
       "POST server/discover",
     ]);
-    // The remaining gap: native forwarding is qualified on 2025 only.
+    // Native forwarding is qualified on 2025 only, and elicitation is routed
+    // only from a 2025-11-25 connection.
     expect(
-      nativeForwardingGaps({ manager, ...turnFacts(cursorCli(), "cursor") }),
-    ).toEqual(["unqualified-protocol"]);
+      nativeForwardingGaps({ manager, ...turnFacts(cursorCli(), "cursor") }).sort(),
+    ).toEqual(["capability-overrides", "client-capabilities", "unqualified-protocol"]);
   });
 
   it("T4: a generic refusal of initialize ends the connection, as it does for the CLI", async () => {

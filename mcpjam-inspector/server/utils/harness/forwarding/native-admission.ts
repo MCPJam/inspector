@@ -95,7 +95,8 @@ export function nativeForwardingGaps(candidate: Candidate): string[] {
         !!capabilities &&
         !differsFromNative(capabilities, native.capabilities) &&
         (!("elicitation" in native.capabilities) ||
-          candidate.elicitationRuntimeVersion !== undefined));
+          (candidate.elicitationRuntimeVersion !== undefined &&
+            initialized?.protocolVersion === "2025-11-25")));
     if (
       (!capabilities || Object.keys(capabilities).length > 0) && !nativeProfile
     )
@@ -121,12 +122,18 @@ export function nativeForwardingGaps(candidate: Candidate): string[] {
       )
     )
       gaps.add("protocol-pins");
+    // On pass-through the runtime's own client speaks to the server, so the
+    // version this connection landed on must be one that client offers.
     if (
       !initialized ||
       initialized.transport !== "streamable-http" ||
       !["2025-03-26", "2025-06-18", "2025-11-25"].includes(
         initialized.protocolVersion ?? "",
-      )
+      ) ||
+      (native?.supportedProtocolVersions !== undefined &&
+        !native.supportedProtocolVersions.includes(
+          initialized.protocolVersion ?? "",
+        ))
     )
       gaps.add("unqualified-protocol");
     if (config.timeout !== undefined && config.timeout !== 300_000)
