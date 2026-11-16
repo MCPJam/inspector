@@ -429,9 +429,15 @@ describe("ToolList", () => {
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /connect a server/i }));
     expect(onAddServerRequested).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /^servers$/i }));
+    expect(
+      screen.queryByRole("button", { name: /connect a server/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Bash")).toBeInTheDocument();
   });
 
-  it("does not offer to connect below built-ins once a server is connected", () => {
+  it("does not offer to connect above built-ins once a server is connected", () => {
     render(
       <ToolList
         {...defaultProps}

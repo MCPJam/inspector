@@ -234,12 +234,14 @@ export function ToolList({
         ) : (
           <div className="space-y-3">
             {!hasConnectedServer && appToolCount === 0 && !searchQuery.trim() ? (
-              <div className="border-b border-border text-center pt-2 pb-4 px-2 space-y-3">
-                <p className="text-xs text-muted-foreground text-pretty">
-                  {NO_SERVER_COPY}
-                </p>
-                {connectServerAction}
-              </div>
+              <ToolSourceHeader title="Servers">
+                <div className="text-center pt-2 pb-4 px-2 space-y-3">
+                  <p className="text-xs text-muted-foreground text-pretty">
+                    {NO_SERVER_COPY}
+                  </p>
+                  {connectServerAction}
+                </div>
+              </ToolSourceHeader>
             ) : null}
             {browserTools ? (
               <BrowserToolsSection
