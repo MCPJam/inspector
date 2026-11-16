@@ -144,11 +144,12 @@ function estimate(
   const add = (part: keyof CostParts, femto: Femto) => {
     partFemto[part] = (partFemto[part] ?? 0n) + femto;
   };
-  // With context tiers and no input count, every token rate is unknown: the
-  // request may sit in a higher tier, so base rates would understate it.
+  // Uncached input is the bulk of a request's input. Without it the request's
+  // context tier is unknown, so every tiered token rate is unknown too: base
+  // rates would understate a request that crossed a threshold.
   const tierUnknown =
     (rate.rates.tiers?.length ?? 0) > 0 &&
-    totalInputTokens(usage) === undefined;
+    usage.uncachedInputTokens === undefined;
 
   if (usage.uncachedInputTokens === undefined) missing.push("input_tokens");
   else add("input", tokenCostFemto(usage.uncachedInputTokens, rates.input));
@@ -158,7 +159,7 @@ function estimate(
     add("output", tokenCostFemto(usage.outputTokens, rates.output));
   }
 
-  if (usage.cacheReadTokens) {
+  if (usage.cacheReadTokens && !tierUnknown) {
     if (rates.cacheRead === undefined) missing.push("cache_read_rate");
     else
       add("cacheRead", tokenCostFemto(usage.cacheReadTokens, rates.cacheRead));
