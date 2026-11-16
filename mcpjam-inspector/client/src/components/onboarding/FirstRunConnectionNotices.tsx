@@ -82,7 +82,7 @@ const HOSTED_INPUT_COPY = {
   localhost: {
     title: "The web app cannot reach localhost",
     detail:
-      "MCPJam on the web runs in the cloud. Use the desktop app, or start MCPJam on your computer with npx, to connect a local server.",
+      "To connect a local server, use the desktop app or run MCPJam on your computer with npx.",
   },
 } as const;
 
