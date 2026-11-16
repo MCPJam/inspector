@@ -1,5 +1,6 @@
 import { mkdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { runBridge, type BridgeTurn } from "@ai-sdk/harness/bridge";
@@ -17,6 +18,7 @@ import {
   parseNativeMcpServers,
   stampNativeMcpCall,
 } from "./native-mcp.js";
+import { sessionSkillsAndTools } from "./session-skills.js";
 
 const { values } = parseArgs({
   options: {
@@ -169,12 +171,12 @@ await runBridge<Start>({
       streaming: true,
       model: start.model,
       tools,
-      availableTools: [
-        ...tools.map(({ name }) => "custom:" + name),
-        ...mcpToolPatterns,
-      ],
-      excludedTools: mcpServers ? ["builtin:*"] : ["builtin:*", "mcp:*"],
-      enableConfigDiscovery: false,
+      // This process keeps the box's home; the runtime's is `copilot-home`.
+      ...sessionSkillsAndTools(
+        homedir(),
+        tools.map(({ name }) => name),
+        mcpToolPatterns,
+      ),
       ...(mcpServers ? { mcpServers } : {}),
       ...(mcpServers && start.correlateNativeMcp
         ? { hooks: { onPreMcpToolCall: stampNativeMcpCall } }
