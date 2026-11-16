@@ -1,4 +1,4 @@
-/** One recorded problem and its recommended next step; copy lives in the panel header. */
+/** One recorded problem and its recommended next step; copy stays with its finding. */
 import { useRef, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 import {
@@ -14,7 +14,11 @@ import type { FindingEvidenceLocator } from "./finding-evidence";
 import type { AffectedIterationRow } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
 import { OPTION_KIND_LABEL, optionTargetLabel } from "./problem-prompts";
-import { coverageLine, ProblemDetailsContent } from "./problem-details";
+import {
+  coverageLine,
+  CopyOptionPrompt,
+  ProblemDetailsContent,
+} from "./problem-details";
 import { ProblemRubric } from "./problem-rubric";
 
 export function ProblemSummary({
@@ -83,7 +87,7 @@ export function ProblemSummary({
             {target} · not yet verified
           </p>
         ) : null}
-        <div className="mt-2">
+        <div className="mt-2 flex flex-wrap items-center gap-3">
           <button
             type="button"
             className="inline-flex min-h-9 items-center gap-1 text-xs font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
@@ -98,6 +102,9 @@ export function ProblemSummary({
               : "See details"}
             <ArrowUpRight className="size-3.5" aria-hidden="true" />
           </button>
+          {option ? (
+            <CopyOptionPrompt problem={problem} option={option} context={context} />
+          ) : null}
         </div>
       </div>
       <Sheet open={open} onOpenChange={setOpen}>
