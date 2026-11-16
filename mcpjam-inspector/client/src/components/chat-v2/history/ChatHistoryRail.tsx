@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Archive, Folder, FolderOpen, Loader2, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -21,6 +28,7 @@ import { useMultiModelSessionsEnabled } from "@/hooks/useMultiModelSessionsEnabl
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useProjectMembers } from "@/hooks/useProjects";
+import { useHostList } from "@/hooks/useClients";
 import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import {
@@ -244,9 +252,24 @@ export function ChatHistoryRail({
     includeMultiModelSiblings: multiModelSessionsEnabled,
   });
   // Siblings only fill out groups on screen; they never become rows of their own.
-  const personalWithSiblings = useMemo(
-    () => [...personal, ...multiModelSiblings],
-    [personal, multiModelSiblings],
+  const personalWithSiblings = useMemo(() => {
+    const onPage = new Set(personal.map((session) => session._id));
+    return [
+      ...personal,
+      ...multiModelSiblings.filter((session) => !onPage.has(session._id)),
+    ];
+  }, [personal, multiModelSiblings]);
+  const { hosts } = useHostList({
+    isAuthenticated: isAuthenticated && multiModelSessionsEnabled,
+    projectId: projectId ?? null,
+  });
+  const hostNames = useMemo(
+    () => new Map(hosts.map((host) => [host.hostId, host.name])),
+    [hosts],
+  );
+  const hostName = useCallback(
+    (hostId: string) => hostNames.get(hostId),
+    [hostNames],
   );
 
   const { activeMembers } = useProjectMembers({
@@ -398,7 +421,10 @@ export function ChatHistoryRail({
                     }
                     archiving={archivingScope === "personal"}
                     onArchive={() =>
-                      void handleArchiveSection("personal", personal)
+                      void handleArchiveSection(
+                        "personal",
+                        personalWithSiblings,
+                      )
                     }
                     onNewChat={onNewChat}
                     newChatDisabled={isStreaming}
@@ -423,6 +449,7 @@ export function ChatHistoryRail({
                           onConvertToTestCase={setSessionToConvert}
                           actions={actions}
                           groupActions={groupActions}
+                          hostName={hostName}
                         />
                       ) : (
                         <ChatHistoryRow

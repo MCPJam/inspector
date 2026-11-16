@@ -56,6 +56,9 @@ type ChatHistoryActionName =
   | "pin"
   | "unpin";
 
+/** Shared so a list without siblings keeps one identity across renders. */
+const NO_SIBLINGS: ChatHistorySession[] = [];
+
 export function useChatHistory({
   projectId,
   enabled = true,
@@ -281,7 +284,7 @@ export function useChatHistory({
 
   const personal = reactiveResult?.personal ?? personalFallback;
   const multiModelSiblings = reactiveResult
-    ? (reactiveResult.multiModelSiblings ?? [])
+    ? (reactiveResult.multiModelSiblings ?? NO_SIBLINGS)
     : siblingsFallback;
   const project = reactiveResult?.project ?? projectFallback;
 

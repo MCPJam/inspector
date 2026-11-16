@@ -42,11 +42,9 @@ describe("foldMultiModelSessions", () => {
       row("single-2"),
       row("a", { groupId: "g", position: 0 }),
     ]);
-    expect(entries.map((e) => (e.kind === "group" ? e.groupId : e.session._id))).toEqual([
-      "single-1",
-      "g",
-      "single-2",
-    ]);
+    expect(
+      entries.map((e) => (e.kind === "group" ? e.groupId : e.session._id)),
+    ).toEqual(["single-1", "g", "single-2"]);
   });
 
   it("leads with the lowest live column and lists removed ones last", () => {
@@ -64,8 +62,12 @@ describe("foldMultiModelSessions", () => {
   });
 
   it("keeps a group with one saved column as a plain row", () => {
-    const entries = foldMultiModelSessions([row("a", { groupId: "g", position: 0 })]);
-    expect(entries).toEqual([{ kind: "session", session: expect.objectContaining({ _id: "a" }) }]);
+    const entries = foldMultiModelSessions([
+      row("a", { groupId: "g", position: 0 }),
+    ]);
+    expect(entries).toEqual([
+      { kind: "session", session: expect.objectContaining({ _id: "a" }) },
+    ]);
   });
 });
 
@@ -78,5 +80,16 @@ describe("foldMultiModelSessions with columns from outside the page", () => {
     const [group] = entries;
     if (group.kind !== "group") throw new Error("expected a group");
     expect(group.columns.map((c) => c._id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("multiModelLineupLabel", () => {
+  it("uses a singular noun when one column is left", () => {
+    const [group] = foldMultiModelSessions([
+      row("a", { groupId: "g", position: 0 }),
+      row("b", { groupId: "g", position: 1, removedAt: 5 }),
+    ]);
+    if (group.kind !== "group") throw new Error("expected a group");
+    expect(multiModelLineupLabel(group, (s) => s._id)).toBe("1 model · a");
   });
 });

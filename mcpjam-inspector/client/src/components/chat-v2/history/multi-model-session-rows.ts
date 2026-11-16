@@ -70,7 +70,15 @@ export function multiModelLineupLabel(
   const live = entry.columns.filter(
     (column) => column.multiModel?.removedAt === undefined,
   );
-  const noun = entry.columnKind === "host" ? "clients" : "models";
+  const one = live.length === 1;
+  const noun =
+    entry.columnKind === "host"
+      ? one
+        ? "client"
+        : "clients"
+      : one
+        ? "model"
+        : "models";
   const names = live
     .map(columnLabel)
     .filter((name): name is string => !!name)

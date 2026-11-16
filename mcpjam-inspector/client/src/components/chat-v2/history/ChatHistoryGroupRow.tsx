@@ -34,10 +34,16 @@ export function ChatHistoryGroupRow({
   groupActions,
   onSelectGroup,
   onSelectColumn,
+  hostName,
   ...rowProps
 }: Omit<
   RowProps,
-  "session" | "isActive" | "onSelect" | "actions" | "titleOverride" | "labelOverride"
+  | "session"
+  | "isActive"
+  | "onSelect"
+  | "actions"
+  | "titleOverride"
+  | "labelOverride"
 > & {
   entry: Extract<ChatHistoryEntry, { kind: "group" }>;
   activeSessionId: string | null | undefined;
@@ -45,6 +51,8 @@ export function ChatHistoryGroupRow({
   groupActions: MultiModelGroupActions;
   onSelectGroup: (lead: ChatHistorySession) => void;
   onSelectColumn: (column: ChatHistorySession) => void;
+  /** A client's name, so client columns read by client rather than model. */
+  hostName?: (hostId: string) => string | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { groupId, lead } = entry;
@@ -55,15 +63,32 @@ export function ChatHistoryGroupRow({
   );
   const columnLabel = useCallback(
     (column: ChatHistorySession) =>
+      (entry.columnKind === "host" && column.hostId
+        ? hostName?.(column.hostId)
+        : undefined) ??
       formatChatHistoryModelLabel(column, (id) => hostedNames.get(id)),
-    [hostedNames],
+    [entry.columnKind, hostName, hostedNames],
   );
+  // The lead row reports itself; the other columns changed with it, so the
+  // Playground hears about each of them too.
+  const reportOtherColumns = async (action: "archive" | "unarchive") => {
+    for (const column of entry.columns) {
+      if (column._id === lead._id) continue;
+      await rowProps.onActionComplete?.({ action, session: column });
+    }
+  };
   const leadActions: RowProps["actions"] = {
     rename: (_sessionId, title) => groupActions.rename(groupId, title),
     pin: () => groupActions.pin(groupId),
     unpin: () => groupActions.unpin(groupId),
-    archive: () => groupActions.archive(groupId),
-    unarchive: () => groupActions.unarchive(groupId),
+    archive: async () => {
+      await groupActions.archive(groupId);
+      await reportOtherColumns("archive");
+    },
+    unarchive: async () => {
+      await groupActions.unarchive(groupId);
+      await reportOtherColumns("unarchive");
+    },
     share: refuseShare,
     unshare: refuseShare,
   };
@@ -115,6 +140,7 @@ export function ChatHistoryGroupRow({
                 titleOverride={columnLabel(column) ?? "Column"}
                 labelOverride={removed ? "Removed" : ""}
                 hideShare
+                hideMenu
               />
             );
           })}
