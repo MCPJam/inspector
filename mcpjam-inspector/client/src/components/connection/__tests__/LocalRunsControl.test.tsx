@@ -7,7 +7,10 @@ import { LocalRunsControl } from "../LocalRunsControl";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
-function mount(allowed: boolean, onChange = vi.fn().mockResolvedValue(undefined)) {
+function mount(
+  allowed: boolean,
+  onChange = vi.fn().mockResolvedValue(undefined),
+) {
   render(<LocalRunsControl allowed={allowed} onChange={onChange} />);
   return onChange;
 }
@@ -73,6 +76,24 @@ describe("LocalRunsControl", () => {
     expect(screen.getByRole("switch")).toBeDisabled();
     rerender(<LocalRunsControl allowed onChange={onChange} />);
     expect(screen.getByRole("switch")).toBeEnabled();
+  });
+
+  it("re-enables when the reload shows another admin's value", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <LocalRunsControl allowed={false} listVersion={1} onChange={onChange} />,
+    );
+    await flip(user);
+    await user.click(screen.getByRole("button", { name: "Allow local runs" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(screen.getByRole("switch")).toBeDisabled();
+    // Another admin turned it off again: the list reloads, still not allowed.
+    rerender(
+      <LocalRunsControl allowed={false} listVersion={2} onChange={onChange} />,
+    );
+    expect(screen.getByRole("switch")).toBeEnabled();
+    expect(screen.getByRole("switch")).not.toBeChecked();
   });
 
   it("says the write failed when it fails for another reason", async () => {
