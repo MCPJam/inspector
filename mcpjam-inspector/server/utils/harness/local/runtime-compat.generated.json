@@ -138,9 +138,41 @@
     },
     "cursor": {
       "conformance": {
-        "version": ""
+        "version": "published-cursor-1.0.0-d0bc683bd74d",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/43783948981"
       },
-      "targets": {}
+      "targets": {
+        "darwin-arm64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:27b7430fe4431dab6b99ea3110710546fef4b48b421a36ffd44120485bcd9fde"
+          }
+        },
+        "darwin-x64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:933abf010dcb5b7f78dab31216fca4ff194c95262f781898bb07fa084dcbf192"
+          }
+        },
+        "linux-arm64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:4379fa8e00220843121ac02dfc56c500b9234861a7c62a5ae4a1dd8f817cf8ff"
+          }
+        },
+        "linux-x64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:ce50f4b7f618c0b70944311aa84d2525f708521fe82042f0b344a78580d9e890"
+          }
+        },
+        "win32-x64": {
+          "desired": {
+            "packVersion": "1.0.0",
+            "treeDigest": "sha256:9c972a354eab48b6baa1e83a6c19d3ee004c0ad2a64111fd8afded2384ca303e"
+          }
+        }
+      }
     }
   }
 }
