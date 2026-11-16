@@ -13,7 +13,7 @@
 //                  called run is the caller's.
 //   push / dispatch with no version
 //                  Packs built from source on every platform, as before.
-//                  A push that changed no conformance input (a version PR's
+//                  A push that changed no conformance input (a version commit's
 //                  lockfile bump, say) runs no legs: its parent's run already
 //                  proved the same thing, and the legs would compete for the
 //                  macOS runners the release's own evidence run needs. A run

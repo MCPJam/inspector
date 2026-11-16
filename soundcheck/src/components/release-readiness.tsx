@@ -1,13 +1,13 @@
 /**
  * Release Readiness Checklist tile.
  *
- * Mirrors what has to be true before `release.yml` starts: "Require green
- * staging smoke for candidate SHA" and "Compute release plan" (the versions
- * main carries that npm does not have). release-trigger.yml starts Release by
- * itself once staging is green on a commit carrying such versions; the version
- * PR and pending-changeset rows say how far the release is from that point.
- * The full test suite is not a row here: Release runs it as its first step
- * (`tests` and `build-and-test`), so the progress stepper shows it.
+ * Mirrors what Release checks: staging green on the commit (its `staging` job)
+ * and "Compute release plan" (the versions main carries that npm does not
+ * have). Start release pushes those versions and starts Release on them; if
+ * that run stood down, release-trigger.yml retries once staging is green. The
+ * pending-changeset row says what the next Start release would ship. The full
+ * test suite is not a row here: Release runs it itself (`tests` and
+ * `build-and-test`), so the progress stepper shows it.
  *
  * Referenced by step name rather than line number on purpose — the previous
  * line-number citations here went stale the first time preflight was edited.
@@ -19,7 +19,6 @@
 
 import {
   compareCommits,
-  findOpenPullRequest,
   findSuccessfulRunForSha,
   getBranchHead,
   getLatestEnvironmentDeployment,
@@ -31,8 +30,7 @@ import {
 import { fetchPendingChangesets } from "@/lib/changesets";
 import {
   fetchUnpublishedVersions,
-  releaseLabel,
-  VERSION_PR_BRANCH
+  releaseLabel
 } from "@/lib/release-state";
 import { formatRelativeTime, shortSha } from "@/lib/format";
 import { StatusDot, Tile, type StatusTone } from "@/components/ui";
@@ -141,7 +139,7 @@ export async function ReleaseReadiness() {
     }
   }
 
-  // ── The release in flight: unpublished versions → version PR → changesets
+  // ── The release in flight: unpublished versions → changesets
   if (inspectorHead) {
     let unpublishedCount = 0;
     try {
@@ -156,35 +154,13 @@ export async function ReleaseReadiness() {
           tone: "running",
           label: `${releaseLabel(unpublished)} is on main, not yet on npm`,
           detail:
-            "The version PR merged. Release starts by itself once the gates above are green on the tip of main."
+            "Start release pushed these versions. If its Release run stood down, it starts again once staging is green on the tip of main."
         });
       }
     } catch (err) {
       rows.push({
         tone: "warning",
         label: "Could not compare main's versions with npm",
-        detail: (err as Error).message
-      });
-    }
-
-    try {
-      const pr = await findOpenPullRequest(
-        INSPECTOR.owner,
-        INSPECTOR.repo,
-        VERSION_PR_BRANCH
-      );
-      if (pr) {
-        rows.push({
-          tone: "info",
-          label: `Version PR #${pr.number} is open`,
-          detail: `${pr.title}. Approve and merge it to release; updated ${formatRelativeTime(pr.updatedAt)}.`,
-          href: pr.url
-        });
-      }
-    } catch (err) {
-      rows.push({
-        tone: "warning",
-        label: "Could not look for an open version PR",
         detail: (err as Error).message
       });
     }

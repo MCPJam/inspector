@@ -73,7 +73,8 @@ jobs:
       - name: Verify the node_modules cache warmer matches its consumers
         run: node --test .github/scripts/warm-node-modules.test.mjs
 
-      # The scripts behind prepare-release.yml, release-trigger.yml and
+      # The scripts behind prepare-release.yml, main-push-guard.yml,
+      # release-trigger.yml and
       # release.yml's plan. Release itself runs rarely, so this is where a
       # break shows up first.
       - name: Release script tests
@@ -81,7 +82,7 @@ jobs:
           node --test \
             .github/scripts/unpublished-versions.test.mjs \
             .github/scripts/release-plan.test.mjs \
-            .github/scripts/release-pr.test.mjs \
+            .github/scripts/release-commit.test.mjs \
             .github/scripts/release-trigger.test.mjs \
             .github/scripts/ci-scope.test.mjs \
             .github/scripts/release-evidence.test.mjs \

@@ -1,10 +1,9 @@
 name: Release
 
-# Ships the versions `main` already carries. They arrive through the version PR
-# (prepare-release.yml), and release-trigger.yml dispatches this once staging
-# is green with them on it. Dispatching it by hand (Soundcheck's "Run release
-# now") is the retry path. It never writes to `main`, whose rulesets take
-# changes only through a reviewed pull request.
+# Ships the versions `main` already carries. Start release (prepare-release.yml)
+# pushes them as a version commit and dispatches this on it straight away;
+# release-trigger.yml dispatches it again if `main` moved first. Dispatching it
+# by hand (Soundcheck's "Publish") is the retry path. It never writes to `main`.
 #
 # How a run goes. Steps 1 and 2 run at the same time; nothing in step 3 or 4
 # starts until `verified` says step 1 passed.
@@ -12,14 +11,15 @@ name: Release
 #   1. Verify    `tests` + `build-and-test` run the full test suite and build on
 #                this exact commit. PRs run only the tests their diff can affect
 #                (.github/scripts/ci-scope.mjs), so this is where every test
-#                runs. `preflight` checks staging is green and works out what to
-#                publish. `verified` passes only when all three did.
+#                runs. `staging` waits for Deploy Staging to pass on this commit,
+#                `preflight` works out what to publish, and `verified` passes
+#                only when all four did.
 #   2. Build     npm packages, Docker image, desktop apps, and the local harness
 #                conformance evidence the release contract needs. These start
 #                with step 1 instead of after it, because they ship nothing.
 #   3. Publish   npm (`publish-packages`), Docker (`docker-publish`), the evals
 #                GitHub Action (`publish-evals-action`).
-#   4. Deploy    only what the version PR ticked: backend prod, webapp, then the
+#   4. Deploy    only what Start release asked for: backend prod, webapp, then the
 #                Slack app and hosted template that depend on them.
 #   5. Finish    `finalize` tags the commit and publishes the GitHub release;
 #                `announce-start` / `announce-finish` post to Slack.
@@ -129,17 +129,92 @@ jobs:
   # `!cancelled()` because `tests` and `build-and-test` are skipped on purpose
   # under skip_verify.
   verified:
-    needs: [preflight, tests, build-and-test]
+    needs: [preflight, staging, tests, build-and-test]
     if: >-
       !cancelled() &&
       needs.preflight.result == 'success' &&
+      needs.staging.outputs.stand_down != 'true' &&
       (fromJSON(inputs.skip_verify) ||
-       (needs.tests.result == 'success' && needs.build-and-test.result == 'success'))
+       (needs.staging.result == 'success' &&
+        needs.tests.result == 'success' &&
+        needs.build-and-test.result == 'success'))
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 2
     permissions: {}
     steps:
-      - run: echo "Preflight passed, and the full suite and build passed or skip_verify is set."
+      - run: echo "Preflight passed, and staging, the full suite and build passed or skip_verify is set."
+
+  # Deploy Staging runs on every push to `main`, the version commit's
+  # included, and takes 10-17 minutes, so this waits for it beside the tests
+  # and builds instead of before them. Behind `skip_verify`, like the tests:
+  # all three answer "has this SHA been exercised before it ships". Skipping
+  # it also skips what `deploy-webapp`'s `require_staging_green: false` relies
+  # on, so a skip_verify release that also deploys the webapp ships a SHA no
+  # staging run has smoked.
+  #
+  # A push to `main` cancels the staging run before it. When that happens to
+  # this commit, this run stands down like preflight does (nothing ships, the
+  # run ends green) and release-trigger.yml releases the new tip once its own
+  # staging passes.
+  staging:
+    if: ${{ !fromJSON(inputs.skip_verify) && (inputs.trigger_sha == '' || inputs.trigger_sha == github.sha) }}
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 40
+    permissions:
+      actions: read
+    outputs:
+      stand_down: ${{ steps.wait.outputs.stand_down }}
+    steps:
+      - name: Wait for a green staging deploy of this commit
+        id: wait
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const workflowId = "deploy-staging.yml";
+            const { owner, repo } = context.repo;
+            const headSha = context.sha;
+            const deadline = Date.now() + 35 * 60 * 1000;
+            for (;;) {
+              // Unfiltered and paged by hand: GitHub's search index behind the
+              // status and branch filters can lag minutes behind.
+              const runs = [];
+              const iterator = github.paginate.iterator(
+                github.rest.actions.listWorkflowRuns,
+                { owner, repo, workflow_id: workflowId, per_page: 100 }
+              );
+              let pages = 0;
+              for await (const { data } of iterator) {
+                runs.push(...data.filter((run) => run.head_sha === headSha));
+                if (++pages >= 3) break;
+              }
+              if (runs.some((run) => run.conclusion === "success")) {
+                core.info(`Deploy Staging passed on ${headSha}.`);
+                return;
+              }
+              const active = runs.filter((run) => run.status !== "completed");
+              if (runs.length > 0 && active.length === 0) {
+                const { data: main } = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
+                if (runs.every((run) => run.conclusion === "cancelled") && main.commit.sha !== headSha) {
+                  core.notice(
+                    `A newer push cancelled Deploy Staging on ${headSha}. Standing down: release-trigger.yml releases ${main.commit.sha} once its staging passes.`
+                  );
+                  core.setOutput("stand_down", "true");
+                  return;
+                }
+                core.setFailed(
+                  `Deploy Staging ended "${runs[0].conclusion}" on ${headSha}: ${runs[0].html_url}. Fix or re-run it, then re-run this release's failed jobs.`
+                );
+                return;
+              }
+              if (Date.now() > deadline) {
+                core.setFailed(`No green Deploy Staging run for ${headSha} within 35 minutes.`);
+                return;
+              }
+              core.info(runs.length === 0
+                ? `No Deploy Staging run for ${headSha} yet; checking again in 30s.`
+                : `Deploy Staging is running on ${headSha}: ${active[0].html_url}`);
+              await new Promise((resolve) => setTimeout(resolve, 30_000));
+            }
 
   preflight:
     # A trigger dispatch names the commit it found green, but a dispatch can
@@ -211,49 +286,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      # Behind `skip_verify`, like the `tests` and `build-and-test` jobs: all
-      # three answer "has this SHA been exercised before it ships". Skipping it
-      # also skips what `deploy-webapp`'s `require_staging_green: false` relies
-      # on, so a skip_verify release that also deploys the webapp ships a SHA no
-      # staging run has smoked.
-      - name: Require green staging smoke for candidate SHA
-        if: ${{ !fromJSON(inputs.skip_verify) }}
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const workflowId = "deploy-staging.yml";
-            const { owner, repo } = context.repo;
-            const headSha = context.sha;
-            // Fetch without branch/status filters — GitHub's search index
-            // can lag minutes behind, causing false negatives on recent runs.
-            // JS-side filtering on head_sha + conclusion is authoritative.
-            // Paged with an early exit rather than github.paginate(), which walks
-            // every historical run before filtering. Runs come back newest-first.
-            const iterator = github.paginate.iterator(
-              github.rest.actions.listWorkflowRuns,
-              { owner, repo, workflow_id: workflowId, per_page: 100 }
-            );
-
-            let matchingRun = null;
-            let pages = 0;
-            for await (const { data: runs } of iterator) {
-              matchingRun = runs.find(
-                (run) => run.head_sha === headSha && run.conclusion === "success"
-              );
-              if (matchingRun || ++pages >= 5) break;
-            }
-
-            if (!matchingRun) {
-              core.setFailed(
-                `No successful ${workflowId} run found for ${headSha}. Deploy the candidate SHA to staging and wait for the staging deploy + smoke workflow first.`
-              );
-              return;
-            }
-
-            core.info(`Found successful staging deploy run ${matchingRun.id} for ${headSha}.`);
-
       # What ships is what `main` carries: every public package whose committed
-      # version npm does not have yet. The version PR put those versions there.
+      # version npm does not have yet. Start release's version commit put them there.
       # Pending changesets belong to the NEXT release and play no part here.
       # When npm has everything but the Inspector's GitHub release is missing
       # (its desktop build failed after publishing), the plan is DESKTOP-ONLY:
@@ -1015,7 +1049,7 @@ jobs:
   # slowest job in this tail (~3.5 min vs ~1 min) and it deployed TWICE per
   # release — once here, then again from the version commit, which touches
   # root package-lock.json, a path in its own push trigger. That push trigger
-  # (now fired when the version PR merges) still redeploys it every release;
+  # (now fired when the version commit lands) still redeploys it every release;
   # this job was the redundant half.
   deploy-slack-app:
     needs:
@@ -1075,8 +1109,8 @@ jobs:
   # It costs nothing when deploy_webapp=false: those jobs are skipped, and
   # `always()` lets this one proceed the moment publish-packages is done.
   #
-  # This job used to push the version commit to `main` as well. The version PR
-  # carries it now, so nothing here writes to `main`.
+  # This job used to push the version commit to `main` as well. Start release
+  # pushes it before this run starts, so nothing here writes to `main`.
   finalize:
     needs:
       - preflight

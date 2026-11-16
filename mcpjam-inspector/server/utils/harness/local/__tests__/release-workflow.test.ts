@@ -119,35 +119,31 @@ describe("release critical path", () => {
   });
 });
 
-describe("packs are part of starting a release", () => {
-  it("brings every harness's pack up to date before the version PR opens", () => {
+describe("starting a release", () => {
+  it("pushes only a checked version commit, then starts Release on it", () => {
     const { jobs } = workflow("prepare-release");
-    expect(jobs.packs.uses).toBe("./.github/workflows/local-harness-pack-pipeline.yml");
-    expect(jobs.packs.strategy.matrix.harness).toBe("${{ fromJSON(needs.harnesses.outputs.list) }}");
-    expect(jobs.packs.strategy["fail-fast"]).toBe(false);
-    expect(jobs.packs.with.harness).toBe("${{ matrix.harness }}");
-    // A failed pipeline means no version PR: the release cannot say what it pins.
-    expect(jobs["version-pr"].needs).toBe("packs");
-    expect(jobs["version-pr"].if).toBeUndefined();
-
-    // Pins are written onto the version branch, then the gate checks exactly
-    // what the PR pins, then the PR opens.
-    const steps: any[] = jobs["version-pr"].steps;
-    const at = (test: (step: any) => boolean) => steps.findIndex(test);
-    const collect = at((step) => step.with?.pattern === "local-harness-pin-*");
-    const apply = at((step) => /local-harness-publication\.mjs apply-pins/.test(step.run ?? ""));
-    const gate = at((step) => /check-local-harness-release\.mjs/.test(step.run ?? ""));
-    const open = at((step) => step.name === "Open or refresh the version PR");
-    expect(collect).toBeGreaterThan(-1);
-    expect(collect).toBeLessThan(apply);
-    expect(apply).toBeLessThan(gate);
-    expect(gate).toBeLessThan(open);
-    // The PR says what it pins, and commits a new equivalence record too.
-    expect(steps[open].run).toMatch(/packs\.md/);
-    expect(steps[open].run).toMatch(/git add mcpjam-inspector\/scripts\/local-harness-pack-equivalence/);
+    expect(Object.keys(workflow("prepare-release").on)).toEqual(["workflow_dispatch"]);
+    const steps: any[] = jobs.version.steps;
+    const run = steps.find((step) => step.name === "Version, check and push to main").run as string;
+    const at = (needle: string) => run.indexOf(needle);
+    // Versioned, gated and checked before the push, which only fast-forwards.
+    expect(at("changeset version")).toBeGreaterThan(-1);
+    expect(at("changeset version")).toBeLessThan(at("check-local-harness-release.mjs"));
+    expect(at("check-local-harness-release.mjs")).toBeLessThan(at("release-commit.mjs check HEAD^ HEAD"));
+    expect(at("release-commit.mjs check HEAD^ HEAD")).toBeLessThan(at("git push origin HEAD:refs/heads/main"));
+    expect(run).not.toMatch(/--force/);
+    // Pushed with the release App's token, the only bypass actor on main.
+    const token = steps.find((step) => step.uses?.startsWith("actions/create-github-app-token"));
+    expect(token).toBeDefined();
+    const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout"));
+    expect(checkout.with.token).toBe("${{ steps.app.outputs.token }}");
+    // Then Release, on exactly the commit it pushed.
+    const start = steps.find((step) => step.name === "Start Release");
+    expect(start.with.script).toMatch(/workflow_id: "release\.yml"/);
+    expect(start.env.SHA).toBe("${{ steps.push.outputs.sha }}");
   });
 
-  it("runs the pack pipeline from a release and from the background prebuild only, one per harness at a time", () => {
+  it("builds and pins packs outside the release, so the release commit carries versions only", () => {
     const callers = readdirSync(workflowsDir)
       .filter((name) => /\.ya?ml$/.test(name))
       .filter((name) =>
@@ -156,15 +152,20 @@ describe("packs are part of starting a release", () => {
         ),
       )
       .sort();
-    expect(callers).toEqual(["local-harness-pack-prebuild.yml", "prepare-release.yml"]);
-    expect(Object.keys(workflow("prepare-release").on)).toEqual(["workflow_dispatch"]);
-    // One concurrency group per harness across both callers, never cancelled:
-    // the two never build the same pack at once.
-    const group = { group: "local-harness-pack-${{ matrix.harness }}", "cancel-in-progress": false };
-    expect(workflow("prepare-release").jobs.packs.concurrency).toEqual(group);
-    expect(workflow("local-harness-pack-prebuild").jobs.prebuild.concurrency).toEqual(group);
+    expect(callers).toEqual(["local-harness-pack-prebuild.yml"]);
+    expect(JSON.stringify(workflow("prepare-release"))).not.toContain("apply-pins");
   });
 
+  it("checks every commit that reaches main without a pull request", () => {
+    const guard = workflow("main-push-guard");
+    expect(guard.on.push.branches).toEqual(["main"]);
+    const script = guard.jobs.check.steps.find((step: any) => step.id === "check").with.script as string;
+    expect(script).toMatch(/listPullRequestsAssociatedWithCommit/);
+    expect(script).toMatch(/checkVersionCommitBetween/);
+  });
+});
+
+describe("pack prebuild", () => {
   it("prebuilds in the background and proposes the pins as one reviewed PR once every harness finishes", () => {
     const prebuild = workflow("local-harness-pack-prebuild");
     expect(prebuild.on.push.branches).toEqual(["main"]);
@@ -246,18 +247,6 @@ describe("packs are part of starting a release", () => {
       [...declared].filter((path) => !filters.some((filter) => filter.test(path))),
       "add these to the push paths of local-harness-pack-prebuild.yml",
     ).toEqual([]);
-  });
-
-  it("never lets an approval of an older version PR cover new pins", () => {
-    // The rulesets keep approvals across pushes, and this PR pins what users
-    // download: a regenerated PR with different contents dismisses them first.
-    const steps: any[] = workflow("prepare-release").jobs["version-pr"].steps;
-    const run: string = steps.find((step) => step.name === "Open or refresh the version PR").run;
-    const dismiss = run.indexOf("/dismissals");
-    const push = run.indexOf("git push --force");
-    expect(dismiss).toBeGreaterThan(-1);
-    expect(dismiss).toBeLessThan(push);
-    expect(run).toMatch(/HEAD\^\{tree\}/);
   });
 });
 
