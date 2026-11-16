@@ -281,6 +281,29 @@ describe("buildSuiteHistoryLaunches health", () => {
     expect(onlyB.health).toEqual({ passed: 4, total: 4 });
   });
 
+  it("applies the filters before checking for a running client", () => {
+    const runs = [
+      finished({ _id: "a", runNumber: 12, status: "running", result: "pending", runGroupId: "g2" }),
+      finished({ _id: "b", runNumber: 13, result: "passed", runGroupId: "g2" }),
+    ];
+    const metrics = metricsByRunFromIterations(scored("b", 4, 0));
+    expect(buildSuiteHistoryLaunches(runs, metrics)[0].health).toBeNull();
+    expect(
+      buildSuiteHistoryLaunches(runs, metrics, (id) => id === "b")[0].health,
+    ).toEqual({ passed: 4, total: 4 });
+  });
+
+  it("dates a launch by its latest run", () => {
+    const [launch] = buildSuiteHistoryLaunches(
+      [
+        finished({ _id: "a", runNumber: 14, createdAt: 1_000, runGroupId: "g3" }),
+        finished({ _id: "b", runNumber: 15, createdAt: 3_000, runGroupId: "g3" }),
+      ],
+      metricsByRunFromIterations(scored("a", 1, 0)),
+    );
+    expect(launch.date).toBe(3_000);
+  });
+
   it("skips an inconclusive run", () => {
     const [launch] = buildSuiteHistoryLaunches(
       [finished({ _id: "r1", runNumber: 11, result: "inconclusive" as EvalSuiteRun["result"] })],

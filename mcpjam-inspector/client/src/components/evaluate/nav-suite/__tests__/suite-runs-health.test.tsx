@@ -81,6 +81,21 @@ describe("SuiteRunsHealth", () => {
     expect(screen.getByTestId("nav-suite-health")).toHaveTextContent(line);
   });
 
+  it("names as Last run the launch with the latest run, as the table does", () => {
+    const early = { ...launch(1, 3, 4), date: Date.UTC(2026, 9, 20) };
+    const later = { ...launch(2, 4, 4), date: Date.UTC(2026, 9, 18) };
+    renderWithProviders(
+      <SuiteRunsHealth
+        launches={[early, later]}
+        threshold={null}
+        onOpenRun={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("nav-suite-health")).toHaveTextContent(
+      "Last run #1 · Failed",
+    );
+  });
+
   it("leaves a running launch out of the average and the bars", () => {
     renderWithProviders(
       <SuiteRunsHealth

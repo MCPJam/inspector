@@ -35,21 +35,26 @@ export type SuiteHistoryLaunch = {
 };
 
 /**
- * The dashboard's rule (`buildSuiteHealth`): a launch still running is not on
- * the trend yet, a "rerun failed cases" rerun never is, and an inconclusive
- * run was not measured. Only scored trials count.
+ * The dashboard's rule (`buildSuiteHealth`): first keep the runs that count (no
+ * "rerun failed cases" rerun, no inconclusive run, only what the filters
+ * match); the launch is off the trend while any of those is still running.
+ * Only scored trials count.
  */
 function launchHealth(
   members: readonly EvalSuiteRunListItem[],
   metricsByRun: RunMetricsByRun,
   countsRun?: (runId: string) => boolean,
 ): SuiteHistoryLaunch["health"] {
-  if (members.some(isActiveRun)) return null;
+  const counted = members.filter(
+    (member) =>
+      !isSubsetRerunRun(member) &&
+      member.result !== "inconclusive" &&
+      (!countsRun || countsRun(member._id)),
+  );
+  if (counted.some(isActiveRun)) return null;
   let passed = 0;
   let total = 0;
-  for (const member of members) {
-    if (isSubsetRerunRun(member) || member.result === "inconclusive") continue;
-    if (countsRun && !countsRun(member._id)) continue;
+  for (const member of counted) {
     const results = metricsByRun.get(member._id)?.results;
     if (!results) continue;
     passed += results.passed;
@@ -83,7 +88,8 @@ export function buildSuiteHistoryLaunches(
         runId: members[0]._id,
         suiteId: members[0].suiteId,
         runNumber: members[0].runNumber,
-        date: runTimestamp(members[0]),
+        // The latest member's time: the runs table orders launches by it.
+        date: Math.max(...members.map(runTimestamp)),
         verdict: historyResult(members),
         health: launchHealth(members, metricsByRun, countsRun),
       };

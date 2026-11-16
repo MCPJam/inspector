@@ -26,7 +26,11 @@ export function SuiteRunsHealth({
   threshold: number | null;
   onOpenRun: (runId: string) => void;
 }) {
-  const scored = launches
+  // Newest last by the latest run in each launch, as the runs table orders them.
+  const ordered = [...launches].sort(
+    (a, b) => a.date - b.date || a.runNumber - b.runNumber,
+  );
+  const scored = ordered
     .flatMap((launch) =>
       launch.health ? [{ ...launch, rate: rateOf(launch.health) }] : [],
     )
@@ -35,7 +39,7 @@ export function SuiteRunsHealth({
     ? scored.reduce((sum, launch) => sum + launch.rate, 0) / scored.length
     : null;
   // The newest launch, scored or not, so this agrees with the table's top row.
-  const latest = launches.at(-1) ?? null;
+  const latest = ordered.at(-1) ?? null;
   return (
     <section
       className="border-b border-border/50 px-5 py-3.5"
