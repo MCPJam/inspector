@@ -237,7 +237,11 @@ export function parseSkillFile(
       path: skillPath,
     };
   } catch (error) {
-    logger.error(`Error parsing skill file at ${skillPath}:`, error);
+    // Only the user's own frontmatter can throw here, so it is a warning like
+    // the validation failures above, not a Sentry capture.
+    logger.warn(`Skill at ${skillPath} has unparseable frontmatter`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
