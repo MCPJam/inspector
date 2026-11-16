@@ -77,11 +77,12 @@ unpublished-version logic in `.github/scripts/release-trigger.mjs` and
    (`.github/scripts/release-commit.mjs`). It then dispatches `release.yml`
    on that commit with the deploy flags.
 2. `release.yml` runs the full test suite and build, and waits for Deploy
-   Staging to pass on the commit, while it builds. Then it publishes the
+   Staging to pass on the commit or a later `main` commit containing it,
+   while it builds. Then it publishes the
    versions, deploys what Start release asked for, tags the commit and
    publishes the GitHub release.
-3. If `main` moved before that run started, or a newer push cancelled its
-   staging deploy, the run stands down without shipping and
+3. If `main` moved before that run started, the run stands down without
+   shipping and
    `release-trigger.yml` dispatches it again at the first commit that passes
    staging.
 
