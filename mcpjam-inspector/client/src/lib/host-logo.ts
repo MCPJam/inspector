@@ -21,8 +21,8 @@ export { UNKNOWN_HOST_LOGO };
  *
  * - The hint table places DECORATED names (`Cursor (staging)`), which an exact
  *   match cannot.
- * - The exact style-name pass places ids the hint table never listed (`codex`,
- *   `agentcore`, `n8n`).
+ * - The exact style-name pass places custom registered styles the hint table
+ *   cannot list.
  *
  * So this runs hints first — preserving what the canvas selector already
  * rendered for every name it covered — then the exact pass, then the generic MCP
@@ -44,8 +44,10 @@ const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/chatgpt[ -]?work/i, "chatgpt-work"],
   [/chatgpt[ -]?desktop/i, "chatgpt-desktop"],
   [/chatgpt|openai/i, "chatgpt"],
-  // The bare "Codex" resolves through the exact-name pass below.
   [/codex[ -]?cli/i, "codex-cli"],
+  [/codex/i, "codex"],
+  [/agent[ -]?core/i, "agentcore"],
+  [/n8n/i, "n8n"],
   [/opencode/i, "opencode"],
   [/copilot[ -]cli/i, "copilot-cli"],
   [/copilot/i, "copilot"],
@@ -88,8 +90,7 @@ export function resolveHostStyleByName(name: string): string | null {
     if (pattern.test(name)) return hostId;
   }
   // BOTH passes, in the same order the logo resolver runs them. The hint table
-  // alone misses every id it never listed — `codex`, `agentcore`, `n8n` — so a
-  // host named exactly "Codex" resolved to null and matched nothing.
+  // alone misses every custom registered style.
   return resolveHostStyleByDisplayName(name);
 }
 

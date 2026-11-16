@@ -29,10 +29,14 @@ describe("resolveHostLogoByName", () => {
     expect(resolveHostLogoByName("Copilot two")).toContain("copilot");
   });
 
-  it("places a style id the hint table does not list", () => {
-    // `codex` is a real style id but absent from the regex hints, so this only
-    // resolves through the exact-name pass.
-    expect(resolveHostLogoByName("Codex")).toContain("codex");
+  it("places renamed Codex, AgentCore and n8n clients", () => {
+    expect(resolveHostLogoByName("Codex")).toBe(getHostLogoSrc("codex"));
+    expect(resolveHostLogoByName("Codex QA")).toBe(getHostLogoSrc("codex"));
+    expect(resolveHostLogoByName("AgentCore QA")).toBe(
+      getHostLogoSrc("agentcore"),
+    );
+    expect(resolveHostLogoByName("n8n QA")).toBe(getHostLogoSrc("n8n"));
+    expect(resolveHostStyleByName("Codex QA")).toBe("codex");
   });
 
   it("places a plain known name", () => {
