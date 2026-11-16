@@ -297,6 +297,8 @@ import {
 } from "@/contexts/scenario-client-style-context";
 import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
+import { PaneDisplayProvider } from "@/contexts/pane-display-context";
+import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
@@ -2923,6 +2925,59 @@ describe("MCPAppsRenderer tool input streaming", () => {
         }),
       );
     });
+  });
+
+  it.each([
+    { hostStyle: "claude", style: CLAUDE_HOST_STYLE },
+    { hostStyle: "chatgpt", style: CHATGPT_HOST_STYLE },
+  ])("sends live $hostStyle pane theme overrides without reloading the widget", async ({ hostStyle, style }) => {
+    mockPlaygroundStoreState.isPlaygroundActive = true;
+    const savedHostContext = { theme: "light", locale: "fr-FR" };
+    const snapshot = { hostStyle, hostContext: savedHostContext };
+    const pane = (theme?: "light" | "dark") => (
+      <SavedClientProvider value={snapshot}>
+        <ScenarioHostStyleProvider value={hostStyle}>
+          <PaneDisplayProvider value={{ theme }}>
+            <HostedRenderer {...baseProps} />
+          </PaneDisplayProvider>
+        </ScenarioHostStyleProvider>
+      </SavedClientProvider>
+    );
+    const { rerender } = render(pane("dark"));
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("dark");
+    act(() => triggerReady());
+    const bridgeCount = mockAppBridgeCtor.mock.calls.length;
+
+    for (const theme of ["dark", "light", "dark", undefined] as const) {
+      rerender(pane(theme));
+      const effectiveTheme = theme ?? "light";
+      await vi.waitFor(() => {
+        expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            theme: effectiveTheme,
+            locale: "fr-FR",
+            styles: expect.objectContaining({
+              variables: expect.objectContaining({
+                "--color-background-primary":
+                  style.mcp.resolveStyleVariables(effectiveTheme)[
+                    "--color-background-primary"
+                  ],
+                "--color-text-primary":
+                  style.mcp.resolveStyleVariables(effectiveTheme)[
+                    "--color-text-primary"
+                  ],
+              }),
+            }),
+          }),
+        );
+      });
+    }
+
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(bridgeCount);
+    expect(mockBridge.close).not.toHaveBeenCalled();
+    expect(savedHostContext).toEqual({ theme: "light", locale: "fr-FR" });
+    expect(mockPreferencesState.themeMode).toBe("light");
   });
 
   it("keeps explicit host context theme inside the playground", async () => {

@@ -256,7 +256,15 @@ export function useWidgetHost(): WidgetHostImpl {
   // against the live profile; the renderer recomputes via `environment.profileKey`.
   const activeMcpProfileRef = useRef(activeMcpProfile);
   activeMcpProfileRef.current = activeMcpProfile;
-  const draftHostContext = useEffectiveHostContext();
+  const effectiveHostContext = useEffectiveHostContext();
+  const paneTheme = paneDisplay?.theme;
+  const draftHostContext = useMemo(
+    () =>
+      paneTheme
+        ? { ...effectiveHostContext, theme: paneTheme }
+        : effectiveHostContext,
+    [effectiveHostContext, paneTheme],
+  );
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
