@@ -335,6 +335,23 @@ describe("priceModelCall", () => {
     });
   });
 
+  it("does not price tiered tokens from a partial input count", () => {
+    const cost = priceModelCall({
+      usage: { cacheReadTokens: 250_000, outputTokens: 1_000 },
+      rate: sonnet,
+    });
+    expect(cost).toMatchObject({
+      completeness: "unavailable",
+      missing: ["input_tokens"],
+    });
+    expect(
+      priceModelCall({
+        usage: { cacheReadTokens: 0, outputTokens: 1_000 },
+        rate: sonnet,
+      }).amountUsd
+    ).toBeUndefined();
+  });
+
   it("does not price tiered tokens when the request's input is unknown", () => {
     const cost = priceModelCall({
       usage: { outputTokens: 1_000, webSearchRequests: 1 },
