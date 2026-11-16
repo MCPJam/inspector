@@ -55,7 +55,10 @@ import {
   selectionReasoningEffort,
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
-import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import {
+  getHarnessAdapter,
+  harnessUsesExternalAccount,
+} from "../../utils/harness/registry.js";
 
 /**
  * A host this turn resolved SERVER-SIDE, and where the pointer came from.
@@ -103,6 +106,17 @@ export function harnessOfRuntimeConfig(
 ): Harness | undefined {
   if (!runtimeConfig) return undefined;
   return isHarness(runtimeConfig.harness) ? runtimeConfig.harness : undefined;
+}
+
+/**
+ * The host's harness picks the model on the customer's own account (Cursor
+ * CLI), so the host's own runtime-chosen model (`cursor/auto`) runs on it.
+ */
+export function hostChoosesModel(
+  hostTarget: ChatSessionHostTarget | undefined,
+): boolean {
+  const harness = harnessOfRuntimeConfig(hostTarget?.runtimeConfig);
+  return harness !== undefined && harnessUsesExternalAccount(harness);
 }
 
 /**

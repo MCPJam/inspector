@@ -462,6 +462,24 @@ describe("executeClaimedEventRun", () => {
     );
   });
 
+  it("runs no harness: every runtime it resolves names none", async () => {
+    // Events has no harness executor, and no runtime declares the surface
+    // off any more, so the only guarantee is that a run never selects one.
+    const { deps } = await liveDeps();
+    const scripted = deps.resolveRuntime!;
+    resolveTurnRuntimeMock.mockImplementation((args) => scripted(args));
+    const outcome = await executeClaimedEventRun(claim(), {
+      ...deps,
+      resolveRuntime: undefined,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(resolveTurnRuntimeMock).toHaveBeenCalled();
+    for (const [args] of resolveTurnRuntimeMock.mock.calls) {
+      expect(args).not.toHaveProperty("harness");
+    }
+  });
+
   it("connects with the subscription's pinned OAuth connection", async () => {
     const { connect, deps } = await liveDeps();
     const pinned = claim();

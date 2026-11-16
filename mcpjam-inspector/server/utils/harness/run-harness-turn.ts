@@ -1947,8 +1947,8 @@ export async function runHarnessTurn(
         );
       }
       // A runtime never runs on a surface it declares it does not run on (Cursor
-      // in User Testing and MCP Events), whoever reached the turn. The callers'
-      // pre-turn checks refuse first; `direct` turns are checked by their routes.
+      // in User Testing), whoever reached the turn. The callers' pre-turn
+      // checks refuse first; `direct` turns are checked by their routes.
       const sourceSurface = harnessSurfaceOfSource(sourceType);
       const surfaceRefusal =
         sourceSurface && harnessSurfaceRefusal(harnessAdapter.id, sourceSurface);

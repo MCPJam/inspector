@@ -212,7 +212,7 @@ describe("resolveTurnRuntime — runtime shape", () => {
     ).not.toHaveProperty("maxOutputTokens");
   });
 
-  it.each(["swarm", "eval"] as const)(
+  it.each(["swarm", "eval", "direct"] as const)(
     "a Cursor client on a %s run is a harness turn on the organization's key",
     async (sourceType) => {
       // The sentinel names no provider model, so nothing is resolved against
@@ -241,26 +241,20 @@ describe("resolveTurnRuntime — runtime shape", () => {
     },
   );
 
-  it.each([
-    ["the v1 chat-session API", "direct", "Use it there, or choose a different client."],
-    ["an MCP Events run", "event", "Use it there, or choose a different client."],
-    ["User Testing session simulation", "scenario", "Choose a different client for this study."],
-  ] as const)(
-    "a Cursor client is refused on %s, whatever the model, before anything resolves",
-    async (_label, sourceType, next) => {
-      for (const modelDefinition of [CURSOR_SENTINEL_MODEL, MCPJAM_MODEL]) {
-        await expect(
-          resolveTurnRuntime(
-            baseArgs({ modelDefinition, harness: "cursor", sourceType }),
-          ),
-        ).rejects.toThrow(
-          `Cursor CLI runs only in the Playground, evals and swarms. ${next}`,
-        );
-      }
-      expect(resolveSyntheticModelSourceMock).not.toHaveBeenCalled();
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
+  it("a Cursor client is refused in User Testing session simulation, whatever the model, before anything resolves", async () => {
+    for (const modelDefinition of [CURSOR_SENTINEL_MODEL, MCPJAM_MODEL]) {
+      await expect(
+        resolveTurnRuntime(
+          baseArgs({ modelDefinition, harness: "cursor", sourceType: "scenario" }),
+        ),
+      ).rejects.toThrow(
+        "Cursor CLI runs only in the Playground, evals, swarms and the API. " +
+          "Choose a different client for this study.",
+      );
+    }
+    expect(resolveSyntheticModelSourceMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   it.each(["direct", "event", "swarm"] as const)(
     "the sentinel without its harness is refused on %s, not routed to a provider",

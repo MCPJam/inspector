@@ -333,7 +333,7 @@ describe("a Cursor CLI client", () => {
     expect(thrown).toMatchObject({
       status: 422,
       message:
-        "Cursor CLI runs only in the Playground, evals and swarms. " +
+        "Cursor CLI runs only in the Playground, evals, swarms and the API. " +
         "Choose a different client for this study.",
       details: { reason: "HARNESS_UNAVAILABLE", harness: "cursor" },
     });
