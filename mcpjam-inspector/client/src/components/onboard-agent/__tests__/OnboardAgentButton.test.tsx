@@ -112,8 +112,9 @@ describe("OnboardAgentButton", () => {
       },
       removeEventListener: vi.fn(),
     };
-    const matchMediaSpy = vi
-      .spyOn(window, "matchMedia")
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi
+      .fn()
       .mockReturnValue(mql as unknown as MediaQueryList);
     const user = userEvent.setup();
     render(<OnboardAgentButton />);
@@ -128,6 +129,28 @@ describe("OnboardAgentButton", () => {
     await waitFor(() =>
       expect(screen.queryByRole("tab", { name: "MCPJam CLI" })).toBeNull(),
     );
-    matchMediaSpy.mockRestore();
+    window.matchMedia = originalMatchMedia;
+  });
+
+  it("restarts the Copied timer on a repeat copy", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    copyMock.mockResolvedValue(true);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<OnboardAgentButton />);
+    await user.click(
+      screen.getByRole("button", { name: /Onboard your agent to MCPJam/ }),
+    );
+    const copy = screen.getByRole("button", {
+      name: "Copy npm i -g @mcpjam/cli",
+    });
+    await user.click(copy);
+    await waitFor(() => expect(copy).toHaveTextContent("Copied"));
+    act(() => vi.advanceTimersByTime(1000));
+    await user.click(copy);
+    act(() => vi.advanceTimersByTime(600));
+    expect(copy).toHaveTextContent("Copied");
+    act(() => vi.advanceTimersByTime(1000));
+    expect(copy).toHaveTextContent("Copy");
+    vi.useRealTimers();
   });
 });

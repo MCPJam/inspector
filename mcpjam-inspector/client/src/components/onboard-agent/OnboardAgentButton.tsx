@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -47,6 +47,9 @@ const COPIED_RESET_MS = 1500;
 
 function CommandRow({ id, command }: { id: string; command: string }) {
   const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
 
   const onCopy = async () => {
     const ok = await copyToClipboard(command);
@@ -57,7 +60,11 @@ function CommandRow({ id, command }: { id: string; command: string }) {
     });
     if (!ok) return;
     setCopied(true);
-    window.setTimeout(() => setCopied(false), COPIED_RESET_MS);
+    window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(
+      () => setCopied(false),
+      COPIED_RESET_MS,
+    );
   };
 
   return (
