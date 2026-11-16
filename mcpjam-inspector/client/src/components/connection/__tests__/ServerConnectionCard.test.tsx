@@ -404,6 +404,29 @@ describe("ServerConnectionCard", () => {
       expect(screen.getByText("Disconnected")).toBeInTheDocument();
     });
 
+    it("offers Check conformance on a connected server", () => {
+      render(
+        <ServerConnectionCard server={createServer()} {...defaultProps} />
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Check conformance" })
+      ).toBeInTheDocument();
+    });
+
+    it("leaves Check conformance off until the server connects", () => {
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "disconnected" })}
+          {...defaultProps}
+        />
+      );
+
+      expect(
+        screen.queryByRole("button", { name: "Check conformance" })
+      ).not.toBeInTheDocument();
+    });
+
     it("shows connecting status indicator", () => {
       const server = createServer({ connectionStatus: "connecting" });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
