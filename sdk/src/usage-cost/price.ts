@@ -84,6 +84,24 @@ function effectiveRates(
   };
 }
 
+/**
+ * A copy of the rate the result was priced from. The result is stored as
+ * history, so it must not share nested objects with a rate the caller may
+ * later edit.
+ */
+function snapshotRate(rate: RateEvidence): RateEvidence {
+  return {
+    ...rate,
+    rates: {
+      ...rate.rates,
+      ...(rate.rates.tiers
+        ? { tiers: rate.rates.tiers.map((tier) => ({ ...tier })) }
+        : {}),
+    },
+    ...(rate.assumptions ? { assumptions: [...rate.assumptions] } : {}),
+  };
+}
+
 function base(): Pick<ModelCallCost, "calculationVersion" | "currency"> {
   return {
     calculationVersion: MODEL_CALL_COST_CALCULATION_VERSION,
@@ -111,7 +129,7 @@ function unavailable(
     completeness: "unavailable",
     reason,
     missing,
-    ...(rate ? { rate } : {}),
+    ...(rate ? { rate: snapshotRate(rate) } : {}),
   };
 }
 
@@ -126,12 +144,19 @@ function estimate(
   const add = (part: keyof CostParts, femto: Femto) => {
     partFemto[part] = (partFemto[part] ?? 0n) + femto;
   };
+  // With context tiers and no input count, every token rate is unknown: the
+  // request may sit in a higher tier, so base rates would understate it.
+  const tierUnknown =
+    (rate.rates.tiers?.length ?? 0) > 0 &&
+    totalInputTokens(usage) === undefined;
 
   if (usage.uncachedInputTokens === undefined) missing.push("input_tokens");
   else add("input", tokenCostFemto(usage.uncachedInputTokens, rates.input));
 
   if (usage.outputTokens === undefined) missing.push("output_tokens");
-  else add("output", tokenCostFemto(usage.outputTokens, rates.output));
+  else if (!tierUnknown) {
+    add("output", tokenCostFemto(usage.outputTokens, rates.output));
+  }
 
   if (usage.cacheReadTokens) {
     if (rates.cacheRead === undefined) missing.push("cache_read_rate");
@@ -139,12 +164,15 @@ function estimate(
       add("cacheRead", tokenCostFemto(usage.cacheReadTokens, rates.cacheRead));
   }
 
-  if (usage.cacheWriteTokens) {
-    const oneHour = Math.min(
-      usage.cacheWrite1hTokens ?? 0,
-      usage.cacheWriteTokens
-    );
-    const defaultWrites = usage.cacheWriteTokens - oneHour;
+  // One-hour writes are a subset of all writes; a provider that reports only
+  // the subset still wrote at least that many tokens.
+  const cacheWrites = Math.max(
+    usage.cacheWriteTokens ?? 0,
+    usage.cacheWrite1hTokens ?? 0
+  );
+  if (cacheWrites > 0 && !tierUnknown) {
+    const oneHour = Math.min(usage.cacheWrite1hTokens ?? 0, cacheWrites);
+    const defaultWrites = cacheWrites - oneHour;
     if (defaultWrites > 0) {
       if (rates.cacheWrite === undefined) missing.push("cache_write_rate");
       else add("cacheWrite", tokenCostFemto(defaultWrites, rates.cacheWrite));
@@ -187,7 +215,7 @@ function estimate(
     parts,
     ...(missing.length > 0 ? { missing } : {}),
     ...(tier ? { tierAboveInputTokens: tier.aboveInputTokens } : {}),
-    rate,
+    rate: snapshotRate(rate),
   };
 }
 
@@ -199,7 +227,14 @@ function estimate(
  * evidence makes it unavailable.
  */
 export function priceModelCall(input: PriceModelCallInput): ModelCallCost {
-  const { usage, reported, rate } = input;
+  const { usage, rate } = input;
+  // An invalid amount is no evidence at all: it falls through to the rate.
+  const reported =
+    input.reported &&
+    Number.isFinite(input.reported.amountUsd) &&
+    input.reported.amountUsd >= 0
+      ? input.reported
+      : undefined;
   if (reported?.source === "provider_reported") return fromReported(reported);
 
   const runnerFallback =

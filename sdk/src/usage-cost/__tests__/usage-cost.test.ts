@@ -304,6 +304,64 @@ describe("priceModelCall", () => {
     });
   });
 
+  it("ignores an invalid reported amount instead of trusting it", () => {
+    for (const amountUsd of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect(
+        priceModelCall({
+          reported: { amountUsd, source: "provider_reported" },
+          usage: { uncachedInputTokens: 1_000, outputTokens: 100 },
+          rate: sonnet,
+        }).source
+      ).toBe("list_price");
+      expect(
+        priceModelCall({ reported: { amountUsd, source: "runner_reported" } })
+      ).toMatchObject({ completeness: "unavailable", reason: "no_usage" });
+    }
+  });
+
+  it("prices one-hour writes reported without a total write count", () => {
+    const cost = priceModelCall({
+      usage: {
+        uncachedInputTokens: 0,
+        outputTokens: 0,
+        cacheWrite1hTokens: 1_000,
+      },
+      rate: sonnet,
+    });
+    expect(cost).toMatchObject({
+      completeness: "complete",
+      amountUsd: 0.006,
+      parts: { cacheWrite: 0.006 },
+    });
+  });
+
+  it("does not price tiered tokens when the request's input is unknown", () => {
+    const cost = priceModelCall({
+      usage: { outputTokens: 1_000, webSearchRequests: 1 },
+      rate: sonnet,
+    });
+    expect(cost).toMatchObject({
+      completeness: "partial",
+      amountUsd: 0.01,
+      parts: { webSearch: 0.01 },
+      missing: ["input_tokens"],
+    });
+  });
+
+  it("stores a copy of the rate, not the caller's object", () => {
+    const rate: RateEvidence = structuredClone(sonnet);
+    const cost = priceModelCall({
+      usage: { uncachedInputTokens: 1, outputTokens: 1 },
+      rate,
+    });
+    rate.rates.input = 999;
+    for (const tier of rate.rates.tiers ?? []) tier.input = 999;
+    rate.assumptions = ["edited later"];
+    expect(cost.rate?.rates.input).toBe(3);
+    expect(cost.rate?.rates.tiers?.[0].input).toBe(6);
+    expect(cost.rate?.assumptions).toBeUndefined();
+  });
+
   it("keeps sub-cent amounts exact", () => {
     const cost = priceModelCall({
       usage: { uncachedInputTokens: 7, outputTokens: 3 },
