@@ -252,9 +252,9 @@ interface UseEvalHandlersProps {
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
-   * Prefix for handler-driven navigation (create case, duplicate, post-run
-   * landing). `ci-evals` stays on Runs (`/evals/runs/...`); `evaluate` stays
-   * on Evaluate (New) (`/evaluate/...`). Defaults to Suites (`/evals/...`).
+   * Selects the landing view after deleting a test case: `ci-evals` opens
+   * the suite's test-cases view; other values open its overview. All handler
+   * navigation uses `/evaluate`. Defaults to `evaluate`.
    */
   evalsNavigationContext?: EvalsNavigationContext;
   /** For user-facing server labels (names instead of raw Convex ids). */
