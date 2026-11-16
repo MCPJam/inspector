@@ -60,7 +60,7 @@ export function VariableMappingTable({
           {variables.map((variable) => (
             <TableRow key={variable.name}>
               <TableCell>
-                <code className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-xs text-primary">
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
                   {`{{${variable.name}}}`}
                 </code>
               </TableCell>
