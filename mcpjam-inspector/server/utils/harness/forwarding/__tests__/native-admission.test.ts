@@ -134,6 +134,78 @@ describe("native profile admission", () => {
       ),
     ).toContain(gap);
   });
+  describe("pins equal to the runtime's measured handshake", () => {
+    const nativeClient = {
+      clientInfo: { name: "fixture-cli", title: "Fixture", version: "1.2.3" },
+      capabilities: { sampling: {}, roots: { listChanged: true } },
+      supportedProtocolVersions: ["2025-06-18"],
+      mcpProtocolVersion: "2025-06-18" as const,
+    };
+    // As `toHttpConfig` builds a pinned connection: the exact declaration,
+    // repeated as the overlay the SDK then ignores.
+    const pinned = (overrides: Record<string, unknown> = {}) =>
+      candidate(
+        Object.assign(
+          {
+            url: "https://mcp.example/mcp",
+            clientInfo: { version: "1.2.3", name: "fixture-cli", title: "Fixture" },
+            clientCapabilities: { roots: { listChanged: true }, sampling: {} },
+            capabilities: { roots: { listChanged: true }, sampling: {} },
+            supportedProtocolVersions: ["2025-06-18"],
+            mcpProtocolVersion: "2025-06-18",
+          },
+          overrides,
+        ),
+      );
+
+    it("add no gap, in any key order", () => {
+      expect(nativeForwardingGaps(pinned())).toEqual(
+        expect.arrayContaining(["client-capabilities", "client-identity", "protocol-pins"]),
+      );
+      expect(nativeForwardingGaps({ ...pinned(), nativeClient })).toEqual([]);
+    });
+
+    it.each([
+      ["client-identity", { clientInfo: { name: "fixture-cli", version: "1.2.4" } }],
+      ["client-identity", { version: "1.2.3" }],
+      ["client-capabilities", { clientCapabilities: { sampling: {} } }],
+      ["protocol-pins", { supportedProtocolVersions: ["2025-06-18", "2025-11-25"] }],
+      ["protocol-pins", { mcpProtocolVersion: "2025-11-25" }],
+      ["protocol-pins", { versionNegotiation: "legacy-first" }],
+    ])("still count %s where a pin differs", (gap, override) => {
+      expect(nativeForwardingGaps({ ...pinned(override), nativeClient })).toContain(gap);
+    });
+
+    it("leaves a setting the profile does not pin to the runtime", () => {
+      expect(
+        nativeForwardingGaps({
+          ...candidate({ url: "https://mcp.example/mcp", clientCapabilities: {} }),
+          nativeClient,
+        }),
+      ).toEqual([]);
+    });
+
+    it("still needs a live handler for elicitation the runtime declares", () => {
+      const elicitation = {
+        ...nativeClient,
+        capabilities: { elicitation: { form: {} } },
+      };
+      const config = {
+        url: "https://mcp.example/mcp",
+        clientCapabilities: { elicitation: { form: {} } },
+      };
+      expect(nativeForwardingGaps({ ...candidate(config), nativeClient: elicitation })).toContain(
+        "client-capabilities",
+      );
+      expect(
+        nativeForwardingGaps({
+          ...candidate(config),
+          nativeClient: elicitation,
+          elicitationRuntimeVersion: "1.2.3",
+        }),
+      ).toEqual([]);
+    });
+  });
   it("keeps host-only promises and client-fulfilled tools", () => {
     expect(
       nativeForwardingGaps({
