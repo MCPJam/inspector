@@ -31,6 +31,22 @@ describe("OnboardAgentButton", () => {
     expect(logos).toEqual(["Claude", "Codex", "Cursor"]);
   });
 
+  it("keeps the label for 2xl and names the compact pill in a tooltip", async () => {
+    const user = userEvent.setup();
+    render(<OnboardAgentButton />);
+    const trigger = screen.getByRole("button", {
+      name: "Onboard your agent to MCPJam",
+    });
+    const label = Array.from(trigger.querySelectorAll("span")).find(
+      (span) => span.textContent === "Onboard your agent to MCPJam",
+    );
+    expect(label).toHaveClass("hidden", "2xl:inline");
+
+    await user.hover(trigger);
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Onboard your agent to MCPJam");
+  });
+
   it("opens on the CLI tab with the install and sign-in commands", async () => {
     const user = userEvent.setup();
     render(<OnboardAgentButton />);
