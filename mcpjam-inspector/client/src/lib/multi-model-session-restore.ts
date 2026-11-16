@@ -7,6 +7,7 @@ import {
   getMultiModelSessionGroup,
   type ChatHistorySession,
 } from "@/lib/apis/web/chat-history-api";
+import { getCachedChatHistoryDetail } from "@/components/chat-v2/history/chat-history-prefetch";
 import type { RecoveryPane } from "./comparison-recovery-record";
 import {
   readRecoveryRecord,
@@ -158,6 +159,7 @@ export function buildMultiModelRestore(args: {
 export async function fetchMultiModelRestore(args: {
   groupId: string;
   projectId: string;
+  /** Used only when the session saved no servers of its own. */
   selectedServers: string[];
   loadedSessions: readonly ChatHistorySession[];
 }): Promise<MultiModelRestore | null> {
@@ -173,5 +175,41 @@ export async function fetchMultiModelRestore(args: {
     // from it beats refusing to reopen the session.
     console.warn("[multi-model] group read failed, using loaded rows", error);
   }
-  return buildMultiModelRestore({ ...args, sessions });
+  const restore = buildMultiModelRestore({ ...args, sessions });
+  if (!restore) return null;
+  const savedServers = await readSavedServers(
+    restore.columnSessions[0],
+    args.projectId,
+  );
+  return savedServers
+    ? {
+        ...restore,
+        record: { ...restore.record, selectedServers: savedServers },
+      }
+    : restore;
+}
+
+/**
+ * The servers the session was saved with. Its columns share one selection, so
+ * the first column's is the session's. The column loads this same detail when
+ * it mounts, so the read also warms its cache.
+ */
+async function readSavedServers(
+  column: ChatHistorySession,
+  projectId: string,
+): Promise<string[] | null> {
+  try {
+    const detail = await getCachedChatHistoryDetail({
+      sessionId: column._id,
+      chatSessionId: column.chatSessionId,
+      projectId: projectId === "local" ? undefined : projectId,
+    });
+    const saved = detail.session.resumeConfig?.selectedServers;
+    return saved && saved.length > 0 ? saved : null;
+  } catch (error) {
+    // The column reports its own load failure when it mounts; without the
+    // saved servers the session still reopens with the current ones.
+    console.warn("[multi-model] saved servers unavailable", error);
+    return null;
+  }
 }

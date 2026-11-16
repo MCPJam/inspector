@@ -8,6 +8,7 @@ import {
   type ComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
 import { useMultiModelSessions } from "@/hooks/use-multi-model-sessions";
+import { useRecoveryColumnReads } from "@/hooks/use-recovery-column-reads";
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
 import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
@@ -3426,6 +3427,8 @@ export function PlaygroundMain({
       clearMultiModelUiState();
       compareTranscriptsRef.current = {};
       comparisonLayoutRestoredRef.current = false;
+      comparisonServersRestoredRef.current = false;
+      comparisonSelectionShownRef.current = false;
       setComparisonServersRestored(false);
       setComparisonRecovery(record);
       setMultiModelSessionGeneration((previous) => previous + 1);
@@ -4061,7 +4064,15 @@ export function PlaygroundMain({
     groupId: comparisonRecoveryGroupId,
     projectId: convexProjectId ?? "local",
     selectedServers,
+    liveColumnKeys: compareLanes.map((lane) => lane.id),
     applyRestore: restoreMultiModelSession,
+  });
+  const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
+  // What a compare column needs to restore its chat and to save its place.
+  const multiModelColumnProps = (columnKey: string) => ({
+    comparisonRecovery: recoveryReads.recoveryFor(columnKey),
+    onRecoveryColumnRead: recoveryReads.markRead,
+    multiModelPosition: multiModelSessions.positionFor(columnKey),
   });
   const handleSelectThread = useCallback(
     async (
@@ -4073,10 +4084,17 @@ export function PlaygroundMain({
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
-      if (await multiModelSessions.openFromHistory(session, siblings)) return;
-
       const selectionRequestId = historySelectionRequestIdRef.current + 1;
       historySelectionRequestIdRef.current = selectionRequestId;
+      const opened = await multiModelSessions.openFromHistory(
+        session,
+        siblings,
+        () => historySelectionRequestIdRef.current === selectionRequestId,
+      );
+      if (opened === "restored") {
+        setPendingDirectVisibility(session.directVisibility);
+      }
+      if (opened) return;
       setActiveHistorySessionId(session._id);
       setViewingHistoryReplay(true);
       setLoadingHistorySessionId(session._id);
@@ -7534,10 +7552,7 @@ export function PlaygroundMain({
                             order: columnIndex,
                             clientCount: multiHostColumns.length,
                           }}
-                          comparisonRecovery={comparisonRecovery}
-                          multiModelPosition={multiModelSessions.positionFor(
-                            `host:${column.compareId}`,
-                          )}
+                          {...multiModelColumnProps(`host:${column.compareId}`)}
                           usePageTools={webmcpPageToolsEnabled}
                           // Include `compareKind` in the key so a mode
                           // swap between multi-model and multi-host can't
@@ -7674,10 +7689,7 @@ export function PlaygroundMain({
                               order: modelIndex,
                               clientCount: modelCompareCards.length,
                             }}
-                            comparisonRecovery={comparisonRecovery}
-                            multiModelPosition={multiModelSessions.positionFor(
-                              `model:${compareId}`,
-                            )}
+                            {...multiModelColumnProps(`model:${compareId}`)}
                             usePageTools={webmcpPageToolsEnabled}
                             // Phase 3: include `compareKind` in the key so
                             // model-mode and host-mode keys never collide

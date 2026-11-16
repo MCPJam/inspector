@@ -185,8 +185,13 @@ interface MultiModelPlaygroundCardProps {
     profile: "chatgpt" | "codex";
   } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
-  /** A comparison being restored; read once when the column mounts. */
+  /**
+   * A comparison being restored; read once when the column mounts. Null means
+   * none; left out, the column reads the sign-in copy in sessionStorage.
+   */
   comparisonRecovery?: ComparisonAuthRecovery | null;
+  /** Told once the column has taken its entry from `comparisonRecovery`. */
+  onRecoveryColumnRead?: (columnKey: string) => void;
   /**
    * This column's position in its multi-model session; only ever grows.
    * Absent when the feature is off, and then the column saves no group.
@@ -350,6 +355,7 @@ export function MultiModelPlaygroundCard({
   extensionBinding = null,
   browserWorkspace,
   comparisonRecovery,
+  onRecoveryColumnRead,
   multiModelPosition,
   compareId,
   compareLabel,
@@ -530,13 +536,19 @@ export function MultiModelPlaygroundCard({
       : pluginComputerAttached,
   });
   const [recoveryColumn] = useState(() =>
-    (
-      comparisonRecovery ??
-      readComparisonAuthRecovery(hostedContext?.projectId ?? "local")
+    (comparisonRecovery !== undefined
+      ? comparisonRecovery
+      : readComparisonAuthRecovery(hostedContext?.projectId ?? "local")
     )?.columns.find(
       (column) => column.compareId === compareId && column.kind === compareKind,
     ),
   );
+  const readRecoveryColumnKey = recoveryColumn
+    ? `${compareKind}:${compareId}`
+    : null;
+  useEffect(() => {
+    if (readRecoveryColumnKey) onRecoveryColumnRead?.(readRecoveryColumnKey);
+  }, [onRecoveryColumnRead, readRecoveryColumnKey]);
   const [recoveryStatus, setRecoveryStatus] = useState<
     "loading" | "ready" | "failed"
   >(recoveryColumn ? "loading" : "ready");

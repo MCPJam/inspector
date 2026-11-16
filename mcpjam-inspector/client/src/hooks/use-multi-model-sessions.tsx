@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import type { ComparisonAuthRecovery } from "@/lib/comparison-auth-recovery";
 import {
@@ -16,13 +16,20 @@ export function useMultiModelSessions(deps: {
   groupId: string;
   projectId: string;
   selectedServers: string[];
+  /** The keys of the columns on screen; a column that leaves frees its key. */
+  liveColumnKeys: readonly string[];
   /** Puts the restored record in place; the layout and columns follow it. */
   applyRestore: (record: ComparisonAuthRecovery) => void;
 }) {
-  const { groupId, projectId, selectedServers, applyRestore } = deps;
+  const { groupId, projectId, selectedServers, liveColumnKeys, applyRestore } =
+    deps;
   const enabled = useMultiModelSessionsEnabled();
   const positions = useMultiModelPositions(groupId);
-  const seed = positions.seed;
+  const { seed, syncLiveColumns } = positions;
+  const liveColumns = liveColumnKeys.join("\n");
+  useEffect(() => {
+    syncLiveColumns(liveColumns ? liveColumns.split("\n") : []);
+  }, [liveColumns, syncLiveColumns]);
 
   const restore = useCallback(
     ({ record, positions: saved, highestPosition }: MultiModelRestore) => {
@@ -33,24 +40,28 @@ export function useMultiModelSessions(deps: {
   );
 
   /**
-   * True when the click reopened the whole session. A row passes its Sessions
-   * section as `siblings`, where the session finds the rest of its columns.
+   * "restored" when the click reopened the whole session, "stale" when another
+   * selection replaced it while it loaded, and null when the row opens on its
+   * own. A row passes its Sessions section as `siblings`, where the session
+   * finds the rest of its columns.
    */
   const openFromHistory = useCallback(
     async (
       session: ChatHistorySession,
-      siblings?: readonly ChatHistorySession[],
-    ): Promise<boolean> => {
-      if (!enabled || !session.multiModel || !siblings) return false;
+      siblings: readonly ChatHistorySession[] | undefined,
+      isCurrent: () => boolean,
+    ): Promise<"restored" | "stale" | null> => {
+      if (!enabled || !session.multiModel || !siblings) return null;
       const restored = await fetchMultiModelRestore({
         groupId: session.multiModel.groupId,
         projectId,
         selectedServers,
         loadedSessions: siblings,
       });
-      if (!restored) return false;
+      if (!isCurrent()) return "stale";
+      if (!restored) return null;
       restore(restored);
-      return true;
+      return "restored";
     },
     [enabled, projectId, restore, selectedServers],
   );
