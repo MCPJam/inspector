@@ -731,21 +731,85 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     };
     servePages(() => page);
     render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
-    const icon = (key: string) =>
-      screen
-        .getByTestId(`conformance-history-sort-${key}`)
+    // The header's name says the direction; its icon is aria-hidden.
+    const header = (name: string) => screen.getByRole("button", { name });
+    const icon = (button: HTMLElement) =>
+      button
         .querySelector('[data-testid="conformance-history-sort-icon"]')
         ?.getAttribute("class") ?? "";
 
     // Newest first by default: Date points down, the others show both ways.
-    expect(icon("date")).toContain("lucide-chevron-down");
-    expect(icon("server")).toContain("lucide-chevrons-up-down");
-    expect(icon("score")).toContain("lucide-chevrons-up-down");
+    expect(icon(header("Date, sorted descending"))).toContain(
+      "lucide-chevron-down",
+    );
+    expect(icon(header("Sort by server"))).toContain("lucide-chevrons-up-down");
+    expect(icon(header("Sort by score"))).toContain("lucide-chevrons-up-down");
 
+    await userEvent.setup().click(header("Date, sorted descending"));
+    await waitFor(() =>
+      expect(icon(header("Date, sorted ascending"))).toContain(
+        "lucide-chevron-up",
+      ),
+    );
+  });
+
+  it("waits for every run after a server switch instead of showing part of a sort", async () => {
+    const all: Page = {
+      page: [run("b1", "srv_beta", "2025-11-25", 9)],
+      isDone: true,
+      continueCursor: "",
+    };
+    const scored = (id: string, score: number, createdAt: number) =>
+      makeRun({ ...run(id, "srv_alpha", id, createdAt), score });
+    const alphaFirst: Page = {
+      page: [scored("a_low", 10, 3)],
+      isDone: false,
+      continueCursor: "alpha_2",
+    };
+    const alphaSecond: Page = {
+      page: [scored("a_high", 90, 1)],
+      isDone: true,
+      continueCursor: "",
+    };
+    // Convex reads undefined for Alpha's second page until the backend answers.
+    let alphaSecondLoaded = false;
+    servePages((args) =>
+      !args.targetKey
+        ? all
+        : args.paginationOpts.cursor === "alpha_2"
+          ? alphaSecondLoaded
+            ? alphaSecond
+            : undefined
+          : alphaFirst,
+    );
+    const { rerender } = render(
+      <ConformanceHistory projectId="proj_1" serverNames={serverNames} />,
+    );
     await userEvent
       .setup()
-      .click(screen.getByTestId("conformance-history-sort-date"));
-    await waitFor(() => expect(icon("date")).toContain("lucide-chevron-up"));
+      .click(screen.getByRole("button", { name: "Sort by score" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Score, sorted descending" }),
+      ).toBeDefined(),
+    );
+
+    await choose("conformance-history-server-filter", "Alpha");
+    await waitFor(() =>
+      expect(lastListArgs().paginationOpts.cursor).toBe("alpha_2"),
+    );
+
+    // Only Alpha's lower score is in: no table with it on top, the loader.
+    expect(screen.queryByTestId("conformance-history-row")).toBeNull();
+    expect(screen.getByTestId("conformance-history-loading")).toBeDefined();
+
+    alphaSecondLoaded = true;
+    rerender(
+      <ConformanceHistory projectId="proj_1" serverNames={serverNames} />,
+    );
+    await waitFor(() => expect(rowTexts()).toHaveLength(2));
+    expect(rowTexts()[0]).toContain("a_high");
+    expect(screen.queryByTestId("conformance-history-loading")).toBeNull();
   });
 
   it("holds the table still while a sort reads every run, then reorders once", async () => {

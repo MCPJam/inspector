@@ -279,6 +279,10 @@ export function ConformanceHistory({
   const visibleRows =
     holdOrder && settled.current ? settled.current.rows : sortedRows;
   if (!readingEveryRun) settled.current = { serverFilter, rows: sortedRows };
+  // A sort with no complete order of its own to hold (just switched servers,
+  // say) would show part of the history in the wrong order: the loader waits
+  // for all of it instead.
+  const awaitingOrder = readingEveryRun && query.length === 0 && !holdOrder;
   const filteredServerName = serverFilter
     ? (serverNames?.get(serverFilter) ?? serverFilter)
     : null;
@@ -308,7 +312,9 @@ export function ConformanceHistory({
       {/* Always in the DOM, out of the flow: the sorted header's spinner is
           what sighted users see, so the table never shifts for this. */}
       <p className="sr-only" role="status">
-        {readingEveryRun && rows.length > 0 ? "Loading every run…" : ""}
+        {readingEveryRun && rows.length > 0 && !awaitingOrder
+          ? "Loading every run…"
+          : ""}
       </p>
 
       {page === undefined && rows.length === 0 ? (
@@ -323,7 +329,7 @@ export function ConformanceHistory({
         ) : (
           notice("No conformance runs yet.", true)
         )
-      ) : visibleRows.length === 0 ? (
+      ) : visibleRows.length === 0 || awaitingOrder ? (
         readingEveryRun ? (
           <HistoryLoader />
         ) : (
