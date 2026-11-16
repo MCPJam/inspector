@@ -5,8 +5,9 @@
  * UNTRUSTED fences, and analysis-written fields go inside PROPOSAL blocks,
  * since analysis text can quote the server under test. Identifiers are
  * flattened before they are interpolated, and the heading names the kind of
- * work so an experiment never reads as a proven repair. A prompt carries only the selected option's scope and steps;
- * copying an alternative never copies the recommendation's instructions.
+ * work so an experiment never reads as a proven repair. A prompt carries only
+ * the selected option's scope and steps; copying an alternative never copies
+ * the recommendation's instructions.
  */
 import type {
   FindingOption,

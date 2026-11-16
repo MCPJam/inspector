@@ -218,7 +218,9 @@ describe("the observation view", () => {
     const lead = screen.getByTestId("problem-lead");
     expect(within(lead).getByText("Experiment to try:")).toBeVisible();
     expect(within(lead).getByText("Success check:")).toBeVisible();
-    expect(within(lead).getByText("Why:")).toBeVisible();
+    expect(within(lead).getByText("Why:").closest("li")).toHaveTextContent(
+      "It is the surface both iterations misread.",
+    );
     expect(
       within(lead).getByText(
         "Evidence reviewed for 2 of 3 iterations. 1 iteration has no checked cause or analysis option.",
