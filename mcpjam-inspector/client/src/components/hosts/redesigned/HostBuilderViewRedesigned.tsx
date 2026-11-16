@@ -562,7 +562,9 @@ export function HostBuilderViewRedesigned({
         options?.onAccepted?.();
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {
-        if (!options?.suppressErrorToast) toast.error(getBillingErrorMessage(err, "Failed to add server"));
+        const message = getBillingErrorMessage(err, "Failed to add server");
+        if (options?.suppressErrorToast) options.onRejected?.(message);
+        else toast.error(message);
       }
     },
     [createServer, projectId],

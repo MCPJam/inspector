@@ -359,10 +359,13 @@ export function AddServerModal({
         : {}),
     };
     setIsSubmitting(true);
-    const accepted = await submitServerDraft(onSubmit, finalFormData);
+    let rejectionReason: string | undefined;
+    const accepted = await submitServerDraft(onSubmit, finalFormData, (reason) => {
+      rejectionReason = reason;
+    });
     setIsSubmitting(false);
     if (!accepted) {
-      setSubmissionError("Couldn't add the server. Your draft is still here. Review the settings and try again.");
+      setSubmissionError(rejectionReason ?? "Couldn't add the server. Your draft is still here. Review the settings and try again.");
       return;
     }
     formState.resetForm();

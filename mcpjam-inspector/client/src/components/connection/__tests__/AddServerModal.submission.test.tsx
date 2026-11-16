@@ -42,6 +42,27 @@ it("keeps the full draft open when saving is rejected", async () => {
   expect(screen.queryByText("raw response body")).not.toBeInTheDocument();
 });
 
+it("shows the owner's reason when a save is refused for a fixable cause", async () => {
+  const onSubmit: ServerConnectionSubmit = (_data, options) => {
+    options?.onRejected?.(
+      'A server named "Asana" already exists in this workspace. Choose a different name.',
+    );
+  };
+  render(
+    <AddServerModal
+      isOpen
+      initialData={initialData}
+      onClose={vi.fn()}
+      onSubmit={onSubmit}
+    />,
+  );
+  submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "already exists in this workspace",
+  );
+  expect(screen.getByDisplayValue("Asana")).toBeInTheDocument();
+});
+
 it("only closes after the submission owner accepts the saved configuration", async () => {
   const onClose = vi.fn();
   const onSubmit: ServerConnectionSubmit = (_data, options) => {

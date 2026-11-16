@@ -2245,13 +2245,18 @@ export function ServersTab({
             // The wire-version pin can't be written until the hosted server
             // row exists — stash it and let the watcher effect apply it once
             // the Convex sync surfaces the row, then reconnect with the pin.
-            if (formData.mcpProtocolVersionOverride) {
-              setPendingAddProtocolPin({
-                serverName: formData.name,
-                version: formData.mcpProtocolVersionOverride,
-              });
-            }
-            return handleConnectServer(formData, options);
+            // Stash only once the save is accepted: a rejected draft must not
+            // leave a pin for whichever server later takes this name.
+            const version = formData.mcpProtocolVersionOverride;
+            return handleConnectServer(formData, {
+              ...options,
+              onAccepted: () => {
+                if (version) {
+                  setPendingAddProtocolPin({ serverName: formData.name, version });
+                }
+                options?.onAccepted?.();
+              },
+            });
           }}
           projectClientConfig={selectedProject?.clientConfig}
           organizationId={selectedProject?.organizationId ?? null}

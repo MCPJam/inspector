@@ -32,9 +32,8 @@ const record = (value: unknown): Record<string, unknown> =>
   isRecord(value) ? value : {};
 const clean = (value: unknown, limit = 2_000): string =>
   typeof value === "string"
-    ? redactStackLikeText(value)
-        .slice(0, limit)
-        .replace(/\u0000/g, "")
+    ? // Strip NULs first so a split credential name is still redacted.
+      redactStackLikeText(value.replace(/\u0000/g, "")).slice(0, limit)
     : "";
 
 export function readConnectionFailureFacts(

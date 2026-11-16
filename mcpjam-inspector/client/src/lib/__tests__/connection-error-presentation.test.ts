@@ -152,6 +152,14 @@ describe("connection error presentation", () => {
     expect(JSON.stringify(result)).not.toContain("supersecret");
   });
 
+  it("redacts a credential whose name is split by a NUL character", () => {
+    const result = presentConnectionError(
+      { message: "wire client_se\u0000cret=supersecret" },
+      context,
+    );
+    expect(JSON.stringify(result)).not.toContain("supersecret");
+  });
+
   it("bounds and sanitizes names and supports contextual operations without unavailable recovery actions", () => {
     const result = presentConnectionError(null, {
       serverName: "x".repeat(1000),

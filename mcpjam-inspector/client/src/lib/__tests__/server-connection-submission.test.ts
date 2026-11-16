@@ -35,6 +35,18 @@ it("accepts at the owner's acknowledgement rather than waiting for the connectio
   finish();
 });
 
+it("passes the owner's rejection reason to the caller", async () => {
+  const onRejected = vi.fn();
+  expect(
+    await submitServerDraft(
+      (_data, options) => options?.onRejected?.("Choose a different name."),
+      draft,
+      onRejected,
+    ),
+  ).toBe(false);
+  expect(onRejected).toHaveBeenCalledWith("Choose a different name.");
+});
+
 it("preserves the submitted draft and suppresses duplicate error toasts", async () => {
   await submitServerDraft((data, options) => {
     expect(data).toBe(draft);

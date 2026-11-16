@@ -3865,6 +3865,7 @@ export function useServerState({
       options?: {
         onAccepted?: () => void;
         suppressErrorToast?: boolean;
+        onRejected?: (reason: string) => void;
         suppressSuccessToast?: boolean;
         // Exact row to save to, for a rename: the new name is not in the
         // project-server snapshot yet, and a name lookup would fall through
@@ -3916,6 +3917,7 @@ export function useServerState({
 
       const validationError = validateForm(formData);
       if (validationError) {
+        options?.onRejected?.(validationError);
         showConnectionError(validationError);
         return;
       }
@@ -4058,6 +4060,9 @@ export function useServerState({
           name: formData.name,
           error: errorMessage,
         });
+        // Only the owner-worded name clash is safe to show in the form; a raw
+        // sync error stays behind the generic draft message.
+        if (workspaceNameTaken) options?.onRejected?.(errorMessage);
         showConnectionError(errorMessage);
         return;
       }
@@ -5049,7 +5054,13 @@ export function useServerState({
           name: serverName,
           error: result.error || "Connection failed",
         });
-        return { success: false, error: result.error };
+        // Keep the failure facts so token-import toasts pick the same
+        // recovery the server card does.
+        return {
+          success: false,
+          ...connectionFailureFields(result),
+          error: result.error,
+        };
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
@@ -5062,7 +5073,11 @@ export function useServerState({
           name: serverName,
           error: errorMessage,
         });
-        return { success: false, error: errorMessage };
+        return {
+          success: false,
+          ...connectionFailureFields(error),
+          error: errorMessage,
+        };
       }
     },
     [
