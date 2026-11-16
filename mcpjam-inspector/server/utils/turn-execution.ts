@@ -65,6 +65,8 @@ export type DirectRuntime = {
    * where the rail is (`resolveTurnRuntime`).
    */
   providerOptions?: RunDirectChatTurnOptions["providerOptions"];
+  /** Set for personal keys; see {@link RunDirectChatTurnOptions.priceStepCall}. */
+  priceStepCall?: RunDirectChatTurnOptions["priceStepCall"];
 };
 
 export type TurnRuntime = HostedRuntime | DirectRuntime;
@@ -241,6 +243,7 @@ export async function runUnifiedAssistantTurn(
     ...(runtime.providerOptions
       ? { providerOptions: runtime.providerOptions }
       : {}),
+    ...(runtime.priceStepCall ? { priceStepCall: runtime.priceStepCall } : {}),
     messageHistory: opts.messages,
     systemPrompt: opts.systemPrompt,
     temperature: opts.temperature,

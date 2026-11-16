@@ -33,6 +33,7 @@ import {
   type UnifiedTurnResult,
 } from "../../utils/turn-execution.js";
 import type { createLlmModel } from "../../utils/chat-helpers.js";
+import { createDirectCallPricer } from "../../utils/call-cost/direct-call-pricer.js";
 import type { PrepareChatV2Result } from "../../utils/chat-v2-orchestration.js";
 import { buildPinnedTurnAccounting, runPinnedTurn } from "./pinned-turn.js";
 import type { PinnedTurnSsePayload } from "./pinned-turn-sse.js";
@@ -376,6 +377,16 @@ export async function driveLocalEvalTurn(
       llmModel: admittedModel ?? llmModel,
       modelId: test.model,
       ...(providerOptions ? { providerOptions } : {}),
+      // A personal key is priced here. A local org call is not: the org's
+      // rates live in the backend, which prices it on usage writeback.
+      ...(params.beforeModelCall
+        ? {}
+        : {
+            priceStepCall: createDirectCallPricer({
+              providerKey: test.provider,
+              modelId: test.model,
+            }),
+          }),
     },
     streamSink: "none",
     messages: appendPluginModelContext(

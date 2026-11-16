@@ -982,4 +982,63 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     expect(fullHistory[0]).toEqual(sharedMsg);
     expect(fullHistory[1]).toEqual(distinctResponse);
   });
+
+  it("saves the backend's price for a one-call local turn on its llm span, and never prices it here", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    const orgCost = {
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd: 0.0042,
+      source: "customer_rate",
+      funding: "customer",
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ ok: true, cost: orgCost }));
+    streamTextMock.mockImplementationOnce((options: any) => {
+      queueMicrotask(async () => {
+        await options.prepareStep({ stepNumber: 0, messages: [] });
+        await options.onStepFinish({
+          usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          response: { messages: [{ role: "assistant", content: "Hi" }] },
+          finishReason: "stop",
+          toolCalls: [],
+        });
+        await options.onFinish({
+          steps: [{ response: { messages: [{ role: "assistant", content: "Hi" }] } }],
+          totalUsage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          finishReason: "stop",
+          text: "Hi",
+        });
+      });
+      return defaultStreamTextReturn();
+    });
+
+    const onConversationComplete = vi.fn();
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      admission: ADMISSION,
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" }] as any,
+      systemPrompt: "s",
+      tools: {} as any,
+      onConversationComplete,
+    });
+    const reader = response.body?.getReader();
+    if (reader) while (!(await reader.read()).done);
+    await vi.waitFor(() => expect(onConversationComplete).toHaveBeenCalled());
+
+    const turnTrace = onConversationComplete.mock.calls[0]![1] as {
+      spans: Array<{ category: string; cost?: unknown }>;
+    };
+    expect(turnTrace.spans.filter((span) => span.cost)).toEqual([
+      expect.objectContaining({ category: "llm", cost: orgCost }),
+    ]);
+    // Only the writeback went out: no list-price lookup for an org call.
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://convex.example/stream/org/local-usage",
+    ]);
+  });
 });

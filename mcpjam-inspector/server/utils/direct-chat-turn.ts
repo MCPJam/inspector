@@ -64,6 +64,7 @@ import {
   gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
+import type { StepCallPricer } from "./call-cost/direct-call-pricer.js";
 
 /**
  * Stream parts that mean the model has produced something — the subset AI
@@ -437,6 +438,12 @@ export interface RunDirectChatTurnOptions {
    * observability; chat currently omits.
    */
   experimentalTelemetry?: Parameters<typeof streamText>[0]["experimental_telemetry"];
+  /**
+   * Prices each step's one provider call for its llm span. Set for personal
+   * keys, which only this machine can price; org calls are priced by the
+   * backend, which holds the org's rates.
+   */
+  priceStepCall?: StepCallPricer;
 }
 
 export interface RunDirectChatTurnHandle {
@@ -607,6 +614,7 @@ export function runDirectChatTurn(
     shouldPauseAfterStep,
     suspendedToolCallIds,
     transformStepMessages,
+    priceStepCall,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -939,7 +947,16 @@ export function runDirectChatTurn(
           ? step.response.timestamp.toISOString()
           : undefined;
 
-      emitAiSdkOnStepFinish(traceContext, Date.now(), {
+      // Read before pricing so a slow rate lookup never stretches the span.
+      // No pricer, no await: unpriced routes settle the step as before.
+      const stepFinishedAt = Date.now();
+      const cost = priceStepCall
+        ? await priceStepCall({
+            usage: step.usage,
+            providerMetadata: step.providerMetadata,
+          })
+        : undefined;
+      emitAiSdkOnStepFinish(traceContext, stepFinishedAt, {
         modelId,
         inputTokens: stepUsage?.inputTokens,
         outputTokens: stepUsage?.outputTokens,
@@ -951,6 +968,7 @@ export function runDirectChatTurn(
         responseId: step?.response?.id,
         responseTimestamp,
         ttfcMs,
+        cost,
       });
 
       setToolSpanMessageRangesFromResults(

@@ -402,6 +402,7 @@ export function emitAiSdkOnStepFinish(
     stepIndex: sn,
     status: spanMeta?.status ?? "ok",
     ...createOffsetInterval(ctx.runStartedAt, stepMeta.startAt, llmEnd),
+    ...(spanMeta?.cost ? { cost: spanMeta.cost } : {}),
   };
   applyStepMeta(llmSpan, {
     modelId: spanMeta?.modelId ?? stepMeta.modelId,

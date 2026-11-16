@@ -2,6 +2,11 @@ import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import type { ModelCallCostEvidence } from "@mcpjam/sdk";
+import {
+  readLocalUsageCost,
+  withLocalUsageCost,
+} from "./call-cost/local-usage-cost.js";
 /**
  * Org BYOK Stream Handler
  *
@@ -765,7 +770,7 @@ function buildLocalOrgOnPersist(params: {
     params;
   return async (event) => {
     // Best-effort usage accounting must not delay transcript persistence.
-    postLocalUsage({
+    const usageCost = postLocalUsage({
       projectId: options.projectId,
       providerKey: options.provider.providerKey,
       model: options.modelId,
@@ -794,6 +799,7 @@ function buildLocalOrgOnPersist(params: {
       logger.warn("[org/local] Failed to post local usage", {
         error: err instanceof Error ? err.message : String(err),
       });
+      return undefined;
     });
 
     // Usage is recorded even when a partial transcript cannot be persisted.
@@ -801,7 +807,10 @@ function buildLocalOrgOnPersist(params: {
 
     const fullHistory: ModelMessage[] = [...options.messages];
     appendDedupedModelMessages(fullHistory, event.responseMessages);
-    const outcome = await onConversationComplete(fullHistory, event.turnTrace);
+    const outcome = await onConversationComplete(
+      fullHistory,
+      await withLocalUsageCost(event.turnTrace, usageCost),
+    );
     if (outcome) {
       onOutcome?.(outcome, event.turnTrace.turnId);
     }
@@ -861,9 +870,9 @@ export async function postLocalUsage(params: {
    * of that selection and rebuilds the stored record from its plan.
    */
   execution?: LocalExecutionRecord;
-}): Promise<void> {
+}): Promise<ModelCallCostEvidence | undefined> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) return;
+  if (!convexHttpUrl) return undefined;
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/local-usage`;
   const controller = new AbortController();
@@ -918,7 +927,10 @@ export async function postLocalUsage(params: {
         status: response.status,
         preview: preview.slice(0, 200),
       });
+      return undefined;
     }
+    // The backend prices the record it stored, with the org's rates.
+    return readLocalUsageCost(await response.json());
   } finally {
     clearTimeout(timeout);
   }
