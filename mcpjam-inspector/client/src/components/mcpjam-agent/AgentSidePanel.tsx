@@ -137,7 +137,7 @@ export function AgentSidePanel({
   const handleNewChat = useCallback(() => {
     abandonCurrentEvalTurn();
     // Off the case's Describe editor no eval chat opens; a general one does.
-    if (evalScope && newEvalChat(evalScope)) return;
+    if (evalScope && newEvalChat(evalScope) !== "") return;
     setActiveSession(null, null);
   }, [setActiveSession, evalScope, abandonCurrentEvalTurn]);
 
