@@ -23,7 +23,7 @@ const AUTH = "https://auth.example.com";
 const REVIEWER = "MCPJAM_REVIEWER_SUB_PASSWORD";
 
 function typeAct(value = `{{secret:${REVIEWER}}}`) {
-  return { kind: "act", verb: "type", value } as Extract<
+  return { kind: "act", verb: "type", target: { a11yRef: "e1" }, value } as Extract<
     BrowserAction,
     { kind: "act" }
   >;
@@ -229,6 +229,20 @@ describe("the field's own document", () => {
         childFrames: [{ frame: { id: "child", securityOrigin: framed } }],
       },
     })),
+  });
+
+  it("refuses a limited credential on any verb but a ref'd type, a dialog reply included", () => {
+    for (const action of [
+      { kind: "act", verb: "accept_dialog", value: `{{secret:${REVIEWER}}}` },
+      { kind: "act", verb: "type", target: { selector: "#pw" }, value: `{{secret:${REVIEWER}}}` },
+      { kind: "act", verb: "type", value: `{{secret:${REVIEWER}}}` },
+    ]) {
+      const message = refusal(() =>
+        resolveActSecrets(action as never, limited, `${AUTH}/login`),
+      );
+      expect(message).toMatch(/^secret_origin_refused: .*ref/);
+      expect(message).not.toContain(PASSWORD);
+    }
   });
 
   it("names where a substituted act's limited credential may land", () => {

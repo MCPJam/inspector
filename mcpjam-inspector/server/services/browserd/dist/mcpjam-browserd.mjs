@@ -1177,6 +1177,14 @@ function resolveActSecrets(action, secrets, pageUrl) {
       )
     );
   }
+  if (limit && (action.verb !== "type" || !action.target || !("a11yRef" in action.target))) {
+    throw new Error(
+      formatBrowserdError(
+        "secret_origin_refused",
+        "a credential limited to a sign-in origin is typed only with `type` into a field named by a ref; nothing was typed"
+      )
+    );
+  }
   const valueChanged = value !== void 0 && value !== action.value;
   const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
   if (!valueChanged && !fieldsChanged) return action;
@@ -8185,7 +8193,12 @@ var ChromiumDriver = class {
         this.navigationStops.set(tabId, watch);
       }
       const before = watch.stop.stopped();
-      const result = before ? { ok: true } : await this.executeInBarrier(command, context);
+      let result = { ok: true };
+      try {
+        if (!before) result = await this.executeInBarrier(command, context);
+      } catch (error) {
+        if (!watch.stop.stopped()) throw error;
+      }
       const stoppedAt = before ?? watch.stop.stopped();
       if (stoppedAt) {
         this.navigationStops.delete(tabId);

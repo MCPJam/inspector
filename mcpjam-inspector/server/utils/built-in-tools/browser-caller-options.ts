@@ -46,8 +46,11 @@ export function secretDeliveryOutcome(
     | undefined,
 ): SecretDeliveryOutcome {
   if (!response) return "unknown";
-  // Not admitted: a person holds the browser, or the page moved first.
-  if (response.status !== "ok") return "not_typed";
+  // A stale observation is refused before the act runs. Any other refusal of
+  // the command, a person taking the browser partway through included, cannot
+  // prove the value never reached the field.
+  if (response.status === "stale_observation") return "not_typed";
+  if (response.status !== "ok") return "unknown";
   if (response.result?.ok) return "typed";
   return BEFORE_TYPING.test(response.result?.error ?? "")
     ? "not_typed"

@@ -121,6 +121,17 @@ export function resolveActSecrets(
       ),
     );
   }
+  // Here, not only where a field is typed into: a direct command can carry a
+  // limited credential on any verb (a dialog reply, say), and that verb may
+  // never reach the field checks.
+  if (limit && (action.verb !== "type" || !action.target || !("a11yRef" in action.target))) {
+    throw new Error(
+      formatBrowserdError(
+        "secret_origin_refused",
+        "a credential limited to a sign-in origin is typed only with `type` into a field named by a ref; nothing was typed",
+      ),
+    );
+  }
   const valueChanged = value !== undefined && value !== action.value;
   const fieldsChanged =
     fields !== undefined &&

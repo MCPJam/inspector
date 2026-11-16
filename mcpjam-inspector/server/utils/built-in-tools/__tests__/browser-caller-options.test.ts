@@ -1,17 +1,19 @@
-vi.mock("../../computers/browser-consent.js", () => ({
-  verifyLocalBrowserConsent: vi.fn(async () => true),
-}));
 /**
  * The caller-only options an unattended run sets on the browser tools: a stop
  * at the page the run ends on, credentials limited to one origin, and a gate
  * before a credential leaves this process. The model sees none of them.
  */
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../computers/browser-consent.js", () => ({
+  verifyLocalBrowserConsent: vi.fn(async () => true),
+}));
 import { buildBrowserTools, BrowserTokenMemory } from "../browser";
 import type { BrowserSessionHandle } from "../../../services/browserd/browser-session";
 import {
   createFeatureCheck,
   requiredDaemonFeatures,
+  secretDeliveryOutcome,
 } from "../browser-caller-options";
 
 const CALLBACK = "https://app.mcpjam.com/oauth/callback";
@@ -191,6 +193,10 @@ describe("credentials limited to an origin", () => {
       commandId: refused.sent[0].command.commandId,
       outcome: "not_typed",
     });
+    // A person taking the browser partway through cannot prove nothing was typed.
+    const taken = secretDeliveryOutcome({ status: "lease_blocked" });
+    expect(taken).toBe("unknown");
+    expect(secretDeliveryOutcome({ status: "stale_observation" })).toBe("not_typed");
     const unclear = build(
       { secrets: { ...limited, afterDeliver } },
       { reply: () => ({ ok: false, error: "act_failed: the page threw" }) },
