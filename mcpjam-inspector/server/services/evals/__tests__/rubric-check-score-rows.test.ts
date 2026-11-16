@@ -138,6 +138,37 @@ describe("rubric-check rows", () => {
     expect(fallback.evaluationConfig.hash).toBe(jev.evaluationConfig.hash);
   });
 
+  test("a library yes/no question becomes a q: row the library card can find", () => {
+    // The verdict the backend stamped on a real dev run (template v2).
+    const { scores } = contract({
+      ...verdict,
+      templateVersion: 2,
+      questions: [
+        {
+          key: "q:answer-grounded-in-results-grounded",
+          kind: "boolean",
+          label: "Every claim is backed by a tool result",
+          contentDigest: "d-grounded",
+          passThreshold: 0.5,
+          status: "scored",
+          value: 0.97,
+          passed: true,
+          probability: 0.97,
+          rationale: "Yes · P(yes) 0.97",
+          evidence: ["decided by Jev"],
+        },
+      ],
+    });
+    expect(scores).toEqual([
+      expect.objectContaining({
+        scorerId: "judge:rubricChecks:q:answer-grounded-in-results-grounded",
+        status: "scored",
+        value: 0.97,
+        passed: true,
+      }),
+    ]);
+  });
+
   test("an unanswered question is an error row, never a zero", () => {
     const polite = contract(verdict).scores.find(
       (row) => row.scorerId === "judge:rubricChecks:c:polite",
