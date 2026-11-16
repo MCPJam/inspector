@@ -38,6 +38,7 @@ import {
   writeError,
   writeResult,
 } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
 import {
   addPlatformOptions,
   addProjectOption,
@@ -438,6 +439,7 @@ export function registerTestCommand(
             `\nReceived ${signal}; stopping and writing the partial report…\n`
           );
         }
+        recordCommandOutcome("interrupted");
         controller.abort(new Error(`interrupted by ${signal}`));
       };
       process.on("SIGINT", onSignal);
@@ -535,6 +537,7 @@ export function registerTestCommand(
         if (error instanceof CliError) {
           writeError(error, globalOptions.format);
           setProcessExitCode(error.exitCode);
+          recordCommandOutcome("error", error.code);
           return;
         }
         throw error;
@@ -579,6 +582,10 @@ export function registerTestCommand(
         // A rendering failure after evidence came back establishes nothing.
         writeError(error, globalOptions.format);
         setProcessExitCode(LOCAL_TEST_EXIT.notEstablished);
+        recordCommandOutcome(
+          "error",
+          error instanceof CliError ? error.code : undefined
+        );
         return;
       }
       // After the report, so stdout stays one document; reported, never a

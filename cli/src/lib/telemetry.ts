@@ -10,6 +10,13 @@ import type { Command } from "commander";
 import { deploymentPolicy } from "@mcpjam/sdk/internal/deployment";
 import { PostHog } from "posthog-node";
 import {
+  argvOptsOutOfTelemetry,
+  recordCommandOutcome,
+  resolveRegisteredCommandPath,
+  UNKNOWN_COMMAND,
+  type CommandOutcome,
+} from "./command-outcome.js";
+import {
   getUpdateCacheDir,
   type CachePathOptions,
   type StderrLike,
@@ -23,6 +30,9 @@ const TELEMETRY_EVENT_NAME = "cli_command";
 const CONFORMANCE_EVENT_NAME = "conformance_run_triggered";
 const TELEMETRY_STATE_VERSION = 1;
 const DEFAULT_FLUSH_TIMEOUT_MS = 3_000;
+/** A forced quit was asked for twice, so it waits on telemetry for less. */
+const FORCED_EXIT_FLUSH_TIMEOUT_MS = 1_000;
+const INTERRUPTED_EXIT_CODE = 130;
 
 const SAFE_ERROR_CODES = new Set([
   "USAGE_ERROR",
@@ -96,6 +106,9 @@ interface TelemetryDecision {
 interface ActiveTelemetryRun {
   cliVersion: string;
   options: TelemetryOptions;
+  program: Command;
+  initializedAtMs: number;
+  forcedExitStarted: boolean;
   command?: string;
   commandOptOut: boolean;
   startedAtMs?: number;
@@ -189,6 +202,9 @@ export function initTelemetry(
   const run: ActiveTelemetryRun = {
     cliVersion,
     options,
+    program,
+    initializedAtMs: Date.now(),
+    forcedExitStarted: false,
     commandOptOut: false,
     shouldCapture: false,
     captured: false,
@@ -213,23 +229,25 @@ export function initTelemetry(
   });
 
   return {
-    async flush() {
-      const client = run.client;
-      if (!client) {
-        return;
-      }
-
-      try {
-        const timeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
-        await withTimeout(
-          flushClient(run, client, timeoutMs),
-          timeoutMs,
-        );
-      } catch {
-        // Telemetry is best-effort and must never affect CLI behavior.
-      }
-    },
+    flush: () =>
+      flushRun(run, options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS),
   };
+}
+
+async function flushRun(
+  run: ActiveTelemetryRun,
+  timeoutMs: number,
+): Promise<void> {
+  const client = run.client;
+  if (!client) {
+    return;
+  }
+
+  try {
+    await withTimeout(flushClient(run, client, timeoutMs), timeoutMs);
+  } catch {
+    // Telemetry is best-effort and must never affect CLI behavior.
+  }
 }
 
 async function flushClient(
@@ -247,6 +265,7 @@ async function flushClient(
 
 export function captureCommandEvent(
   exitCode: number,
+  outcome: CommandOutcome,
   errorCode?: string,
 ): void {
   const run = activeRun;
@@ -279,6 +298,7 @@ export function captureCommandEvent(
       command: run.command,
       success: exitCode === 0,
       exit_code: exitCode,
+      outcome,
       duration_ms: Math.max(0, Date.now() - run.startedAtMs),
       cli_version: run.cliVersion,
       os: process.platform,
@@ -296,7 +316,9 @@ export function captureCommandEvent(
     }
 
     const safeErrorCode =
-      exitCode === 0 ? undefined : normalizeTelemetryErrorCode(errorCode);
+      outcome === "error" || outcome === "usage_error"
+        ? normalizeTelemetryErrorCode(errorCode)
+        : undefined;
     if (safeErrorCode) {
       properties.error_code = safeErrorCode;
     }
@@ -305,6 +327,51 @@ export function captureCommandEvent(
   } catch {
     // Telemetry is best-effort and must never affect CLI behavior.
   }
+}
+
+/**
+ * Count a usage error. Commander raises most of them while parsing, before
+ * `preAction` names the command, so the command is resolved from argv
+ * against the registered tree: the longest matching path of registered
+ * names, or "(unknown)". Unmatched argv tokens are never sent.
+ */
+export function captureUsageErrorEvent(argv: readonly string[]): void {
+  const run = activeRun;
+  if (!run || run.captured) {
+    return;
+  }
+
+  if (!run.command) {
+    const commandPath = resolveRegisteredCommandPath(run.program, argv);
+    run.command =
+      commandPath.length > 0 ? commandPath.join(" ") : UNKNOWN_COMMAND;
+    run.commandOptOut = argvOptsOutOfTelemetry(argv);
+    run.startedAtMs = run.initializedAtMs;
+    run.shouldCapture = commandPath[0] !== "telemetry";
+  }
+
+  captureCommandEvent(2, "usage_error", "USAGE_ERROR");
+}
+
+/**
+ * The forced quit of a long-running command (its second Ctrl+C). Records the
+ * run as interrupted, waits at most 1s for telemetry, then exits with 130.
+ * Called again while that wait is running, it exits at once.
+ */
+export async function exitInterrupted(
+  exit: (code: number) => void = (code) => process.exit(code),
+): Promise<void> {
+  const run = activeRun;
+  if (!run || run.forcedExitStarted) {
+    exit(INTERRUPTED_EXIT_CODE);
+    return;
+  }
+
+  run.forcedExitStarted = true;
+  recordCommandOutcome("interrupted");
+  captureCommandEvent(INTERRUPTED_EXIT_CODE, "interrupted");
+  await flushRun(run, FORCED_EXIT_FLUSH_TIMEOUT_MS);
+  exit(INTERRUPTED_EXIT_CODE);
 }
 
 /**

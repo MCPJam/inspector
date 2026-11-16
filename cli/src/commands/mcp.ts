@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { Command } from "commander";
 import packageJson from "../../package.json" with { type: "json" };
 import { createMcpJamMcpServer } from "../lib/mcp-server.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 export function registerMcpCommands(program: Command): void {
@@ -20,7 +21,10 @@ export function registerMcpCommands(program: Command): void {
 
       const transport = new StdioServerTransport();
       let resolveClosed!: () => void;
-      const stopOnSignal = () => resolveClosed();
+      const stopOnSignal = () => {
+        recordCommandOutcome("interrupted");
+        resolveClosed();
+      };
       const closed = new Promise<void>((resolve) => {
         resolveClosed = resolve;
         handle.server.server.onclose = resolve;
