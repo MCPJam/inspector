@@ -12,16 +12,13 @@ delivery question; features that only show static state do not ship here.
 
 ## What it shows
 
-| Feature | Decision it serves |
+| Part | Question it answers |
 |---|---|
-| Deploy-diff | Should we cut a release today? |
-| Release readiness | Where is the release, and what is it waiting on? |
-| Release dry-run | What will Start release ship? |
-| Release progress stepper | Is the running release done yet / stuck? |
-| Drift & freshness alerts | Is anything rotting I need to address? |
+| Release card | Which version is next, where does it stand, what is live? One button: **Start release**, or **Retry release** after a failure. |
+| Steps | Is the running release done yet, or stuck? |
+| Services | What is live where? MCP promotes to production from its own tile. |
 
-The scaffold (this commit) only ships a protected hello-world page. Each
-feature lands in a follow-up commit.
+Detail sits behind a click (what's in a release, the run, the last release).
 
 ## Running locally
 
@@ -63,10 +60,9 @@ Soundcheck is never *published* — it is not part of the customer release
 surface, and nothing customers receive depends on it.
 
 Note for anyone editing `release.yml`: `src/components/release-progress.tsx`
-hardcodes the job list, and `release-readiness.tsx` / `release-verdict.tsx`
-mirror its gates. `src/lib/release-state.ts` mirrors the run naming and
-unpublished-version logic in `.github/scripts/release-trigger.mjs` and
-`unpublished-versions.mjs`. All of these are hand-synced and will silently drift.
+hardcodes the job list. `src/lib/release-status.ts` and `release-state.ts`
+mirror the run naming and unpublished-version logic in
+`.github/scripts/release-trigger.mjs` and `unpublished-versions.mjs`. All of these are hand-synced and will silently drift.
 
 ## How a release runs
 
@@ -89,8 +85,9 @@ unpublished-version logic in `.github/scripts/release-trigger.mjs` and
 `main-push-guard.yml` checks every commit that reaches `main` without a pull
 request, and alerts #prs if one changes more than versions.
 
-**Publish** (action `publish`) dispatches `release.yml` by hand. It is the
-retry path: the trigger does not retry a run that failed or was cancelled.
+**Retry release** (action `publish`) dispatches `release.yml` by hand. The
+card offers it when versions on `main` are not on npm and no release is
+running: the trigger does not retry a run that failed or was cancelled.
 
 ## Secrets & rotation
 

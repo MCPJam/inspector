@@ -128,7 +128,7 @@ jobs:
             unpublished="$(node .github/scripts/unpublished-versions.mjs)"
             if [ "$(jq '.releases | length' <<<"$unpublished")" != "0" ]; then
               echo "$unpublished"
-              echo "::error::main already carries versions npm does not have. Finish that release first with Publish in Soundcheck."
+              echo "::error::main already carries versions npm does not have. Finish that release first with Retry release in Soundcheck."
               exit 1
             fi
 

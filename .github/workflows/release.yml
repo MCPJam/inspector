@@ -3,13 +3,13 @@ name: Release
 # Ships the versions `main` already carries. Start release (prepare-release.yml)
 # pushes them as a version commit and dispatches this on it straight away;
 # release-trigger.yml dispatches it again if `main` moved first. Dispatching it
-# by hand (Soundcheck's "Publish") is the retry path. It never writes to `main`.
+# by hand (Soundcheck's "Retry release") is the retry path. It never writes to `main`.
 #
 # How a run goes. Steps 1 and 2 run at the same time; nothing in step 3 or 4
 # starts until `verified` says step 1 passed. `shipped` fails the run when
 # the versions did not reach npm, so green means shipped.
 #
-# To retry a failed release, dispatch this again (Soundcheck's "Publish").
+# To retry a failed release, dispatch this again (Soundcheck's "Retry release").
 # GitHub's "Re-run failed jobs" re-runs the failed jobs but not the publish
 # and deploy steps they held back.
 #
@@ -212,7 +212,7 @@ jobs:
               const ownFailure = runs.find((run) => run.head_sha === headSha && run.conclusion === "failure");
               if (ownFailure) {
                 core.setFailed(
-                  `Deploy Staging failed on ${headSha}: ${ownFailure.html_url}. Fix or re-run it, then retry the release with Publish in Soundcheck.`
+                  `Deploy Staging failed on ${headSha}: ${ownFailure.html_url}. Fix or re-run it, then retry the release with Retry release in Soundcheck.`
                 );
                 return;
               }
@@ -1273,7 +1273,7 @@ jobs:
           PUBLISHED: ${{ needs.publish-packages.result }}
           FINALIZED: ${{ needs.finalize.result }}
         run: |
-          retry="To retry, use Publish in Soundcheck (or dispatch release.yml). GitHub's \"Re-run failed jobs\" does not run the publish steps again."
+          retry="To retry, use Retry release in Soundcheck (or dispatch release.yml). GitHub's \"Re-run failed jobs\" does not run the publish steps again."
           if [ "$PUBLISH_ANY" = "true" ] && [ "$PUBLISHED" != "success" ]; then
             echo "::error::Nothing reached npm: publish-packages was ${PUBLISHED}. $retry"
             exit 1

@@ -68,30 +68,24 @@ export function Tile({
   );
 }
 
-/**
- * Page-level section with a numbered label, title, and description.
- * Purely structural — no editorial typography.
- */
+/** Page-level section: a quiet title, optional one-line description. */
 export function Section({
-  numeral,
   title,
   description,
-  children
+  children,
+  id
 }: {
-  numeral: string;
   title: string;
   description?: string;
   children: ReactNode;
+  id?: string;
 }) {
   return (
-    <section className="mb-12">
+    <section id={id} className="mt-16 scroll-mt-8">
       <header className="mb-5">
-        <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          Section {numeral}
-        </div>
-        <h2 className="mt-1.5 text-xl font-semibold text-foreground">{title}</h2>
+        <h2 className="text-sm font-medium text-foreground">{title}</h2>
         {description ? (
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             {description}
           </p>
         ) : null}
