@@ -93,7 +93,7 @@ describe("first-run connection failure card", () => {
     expect(screen.queryByText(raw)).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("error-card-technical-toggle"));
     expect(screen.getByText(raw, { exact: false })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Copy error" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy error message" })).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Start OAuth" }));
     expect(onConnectOwnServer).toHaveBeenLastCalledWith(
@@ -114,7 +114,7 @@ describe("first-run connection failure card", () => {
     expect(
       screen.getByText("Upstream said no in an unfamiliar way"),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Copy error" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy error message" })).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
     expect(onConnectOwnServer).toHaveBeenCalledTimes(2);

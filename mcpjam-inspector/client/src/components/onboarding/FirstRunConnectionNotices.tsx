@@ -67,7 +67,7 @@ export function ConnectionFailureNotice({
       density="card"
       defaultOpen
       rawInTechnical
-      copyLabel="Copy error"
+      copyLabel="Copy error message"
       className="mt-3"
     />
   );
