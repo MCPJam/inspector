@@ -16,6 +16,7 @@ describe("Button contrast variant", () => {
       "text-card",
       "border-card-foreground",
       "hover:bg-foreground",
+      "focus-visible:outline-solid",
       "focus-visible:outline-2",
       "focus-visible:outline-offset-4",
       "focus-visible:outline-card-foreground",
