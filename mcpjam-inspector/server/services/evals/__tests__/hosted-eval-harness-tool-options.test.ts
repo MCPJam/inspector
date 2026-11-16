@@ -288,6 +288,6 @@ describe("hosted eval on a host-executed harness builds MCP tools under the HOST
 // AI SDK flag). That is pinned where it is decided —
 // `harness/__tests__/host-executed-mcp-tools.test.ts` and
 // `run-harness-turn-host-executed-options.test.ts` — and is not re-asserted
-// here: an eval that sets `requireToolApproval` on a Codex host is REFUSED by
-// `harnessToolApprovalRefusalReason` before any tool is built, so this file
-// could only ever test the refusal, which has its own coverage.
+// here: an eval runs a harness with the switch off (`turnApprovalPolicy`), so
+// a host's `requireToolApproval` never reaches this projection, and the policy
+// has its own coverage.
