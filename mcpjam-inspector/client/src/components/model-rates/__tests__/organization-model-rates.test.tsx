@@ -8,7 +8,11 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ModelRateRow } from "../model-rate-format";
+import {
+  formatDay,
+  timeToDayInput,
+  type ModelRateRow,
+} from "../model-rate-format";
 import { OrganizationModelRates } from "../organization-model-rates";
 import { __resetListPricesForTests } from "../use-list-prices";
 
@@ -31,6 +35,13 @@ vi.mock("convex/react", () => ({
     if (convex.throws) throw convex.throws;
     return convex.queries.get(getFunctionName(query));
   }),
+  useQueries: (queries: Record<string, { query: never }>) =>
+    Object.fromEntries(
+      Object.entries(queries).map(([key, { query }]) => [
+        key,
+        convex.queries.get(getFunctionName(query)),
+      ]),
+    ),
   useMutation: (mutation: Parameters<typeof getFunctionName>[0]) =>
     getFunctionName(mutation) === "organizationModelRates:set"
       ? convex.set
@@ -44,6 +55,15 @@ const sonnet: ModelRateRow = {
   effectiveAt: Date.UTC(2026, 9, 1),
   revision: 1,
   createdBy: { name: "Ada Admin" },
+};
+
+const DAY = 24 * 60 * 60 * 1000;
+const scheduled: ModelRateRow = {
+  ...sonnet,
+  rateId: "r2",
+  rates: { currency: "USD", input: 2, output: 10 },
+  effectiveAt: Date.now() + 30 * DAY,
+  revision: 2,
 };
 
 const providers = [
@@ -147,6 +167,67 @@ describe("OrganizationModelRates", () => {
         rateId: "r1",
       }),
     );
+  });
+
+  it("shows the price in force today beside a scheduled one", () => {
+    convex.queries.set("organizationModelRates:list", [scheduled]);
+    convex.queries.set("organizationModelRates:history", [scheduled, sonnet]);
+    mount(false);
+    const until = formatDay(scheduled.effectiveAt);
+    const row = screen.getByText(`In force until ${until}`).closest("tr")!;
+    expect(row).toHaveTextContent("$2.4");
+    expect(row).toHaveTextContent("$12");
+    expect(row).toHaveTextContent(formatDay(sonnet.effectiveAt));
+    expect(
+      screen.getByText("anthropic/claude-sonnet-4.5").closest("tr"),
+    ).toHaveTextContent("Scheduled");
+  });
+
+  it("says no price is in force before a first scheduled price", () => {
+    convex.queries.set("organizationModelRates:list", [scheduled]);
+    convex.queries.set("organizationModelRates:history", [scheduled]);
+    mount(false);
+    expect(
+      screen.getByText(
+        `No price in force until ${formatDay(scheduled.effectiveAt)}.`,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps a scheduled price's date when an admin edits it", async () => {
+    convex.queries.set("organizationModelRates:list", [scheduled]);
+    convex.queries.set("organizationModelRates:history", [scheduled, sonnet]);
+    mount(true);
+    fireEvent.click(screen.getByRole("button", { name: /Edit/ }));
+    expect(screen.getByLabelText("Effective date")).toHaveValue(
+      timeToDayInput(scheduled.effectiveAt),
+    );
+    fireEvent.change(screen.getByLabelText("Output price"), {
+      target: { value: "9" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save price" }));
+    await waitFor(() => expect(convex.set).toHaveBeenCalledTimes(1));
+    expect(convex.set.mock.calls[0]![0]).toMatchObject({
+      rates: { input: 2, output: 9 },
+      effectiveAt: scheduled.effectiveAt,
+    });
+  });
+
+  it("says long-context prices are kept and keeps them on save", async () => {
+    const tiers = [{ aboveInputTokens: 200_000, input: 6, output: 22.5 }];
+    convex.queries.set("organizationModelRates:list", [
+      { ...sonnet, rates: { ...sonnet.rates, tiers } },
+    ]);
+    mount(true);
+    fireEvent.click(screen.getByRole("button", { name: /Edit/ }));
+    expect(
+      screen.getByText(
+        "Saving keeps the long-context prices for calls above 200,000 input tokens. To remove them, retire this price and add it again.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save price" }));
+    await waitFor(() => expect(convex.set).toHaveBeenCalledTimes(1));
+    expect(convex.set.mock.calls[0]![0]).toMatchObject({ rates: { tiers } });
   });
 
   it("shows the backend's refusal in the form and keeps it open", async () => {

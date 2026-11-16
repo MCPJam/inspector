@@ -1,11 +1,12 @@
-import { useMutation, useQuery } from "convex/react";
+import { useMemo } from "react";
+import { useMutation, useQueries, useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { convexErrMessage, isConvexQueryNotServed } from "@/lib/convex-error";
 import type { SavedModelRate } from "./model-rate-dialog";
-import type { ModelRateRow } from "./model-rate-format";
+import { revisionInForce, type ModelRateRow } from "./model-rate-format";
 import { ModelRatesPanel, ModelRatesTable } from "./model-rates-panel";
 
 export const ORG_MODEL_RATES_QUERY = "organizationModelRates:list";
@@ -23,6 +24,12 @@ const setRate = ref<"mutation", Org & SavedModelRate>(
 const retireRate = ref<"mutation", Org & { rateId: string }>(
   "organizationModelRates:retire",
 );
+
+const seriesOf = (organizationId: string, rate: ModelRateRow): Series => ({
+  organizationId,
+  modelId: rate.modelId,
+  ...(rate.providerKey ? { providerKey: rate.providerKey } : {}),
+});
 
 /** Not served by this deployment yet; until it is, the section stays hidden. */
 export function isOrgModelRatesUnavailable(error: Error): boolean {
@@ -76,6 +83,29 @@ function OrganizationModelRatesPanel({
   providers,
 }: Props) {
   const rates = useQuery(listRates, { organizationId });
+  // `list` gives a series' newest revision, which can start later. For
+  // those, the price in force today comes from the series' history.
+  const scheduled = useMemo(
+    () =>
+      Object.fromEntries(
+        (rates ?? [])
+          .filter((rate) => rate.effectiveAt > Date.now())
+          .map((rate) => [
+            rate.rateId,
+            { query: rateHistory, args: seriesOf(organizationId, rate) },
+          ]),
+      ),
+    [rates, organizationId],
+  );
+  const histories = useQueries(scheduled);
+  const now = Date.now();
+  const inForce = new Map(
+    Object.entries(histories).flatMap(([rateId, revisions]) =>
+      Array.isArray(revisions)
+        ? [[rateId, revisionInForce(revisions, now) ?? null] as const]
+        : [],
+    ),
+  );
   const save = useMutation(setRate);
   const retire = useMutation(retireRate);
   const options = (providers ?? []).map((provider) => ({
@@ -92,6 +122,7 @@ function OrganizationModelRatesPanel({
       }`}
       emptyText="No prices yet. Calls on your providers are estimated at the public list price where one exists."
       rates={rates}
+      inForce={inForce}
       canEdit={isAdmin}
       requireProvider={false}
       providers={options}
@@ -110,11 +141,7 @@ function OrganizationModelRatesPanel({
       }
       renderHistory={(rate) => (
         <OrganizationRateHistory
-          series={{
-            organizationId,
-            modelId: rate.modelId,
-            ...(rate.providerKey ? { providerKey: rate.providerKey } : {}),
-          }}
+          series={seriesOf(organizationId, rate)}
           providers={options}
         />
       )}

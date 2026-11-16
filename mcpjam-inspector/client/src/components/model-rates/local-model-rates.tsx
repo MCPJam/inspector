@@ -2,8 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 import { authFetch } from "@/lib/session-token";
-import type { ModelRateRow } from "./model-rate-format";
-import { ModelRatesPanel } from "./model-rates-panel";
+import {
+  parseModelRateRow,
+  revisionInForce,
+  type ModelRateRow,
+} from "./model-rate-format";
+import { ModelRatesPanel, type InForceRates } from "./model-rates-panel";
 
 const BASE = "/api/mcp/model-rate-overrides";
 
@@ -12,6 +16,15 @@ const PROVIDERS =
   "anthropic openai google deepseek mistral xai openrouter azure bedrock ollama custom"
     .split(" ")
     .map((key) => ({ key, name: getProviderDisplayName(key) }));
+
+/** A refusal the local server explained, as opposed to not reaching it. */
+class ServerMessage extends Error {}
+
+/** Rows the panel can show; a malformed one is dropped, not thrown on. */
+const rowsOf = (value: unknown): ModelRateRow[] =>
+  Array.isArray(value)
+    ? value.flatMap((row) => parseModelRateRow(row) ?? [])
+    : [];
 
 /** The local server's answer, or an error carrying its message. */
 async function request(path: string, body?: unknown) {
@@ -25,18 +38,18 @@ async function request(path: string, body?: unknown) {
           body: JSON.stringify(body),
         },
   );
-  let parsed: { ok?: unknown; message?: unknown; rates?: unknown } = {};
+  let parsed: Record<string, unknown> = {};
   try {
     parsed = JSON.parse(await response.text()) ?? {};
   } catch {
     parsed = {}; // A proxy's HTML error page: answered below.
   }
   if (!response.ok || parsed.ok !== true) {
-    throw new Error(
-      typeof parsed.message === "string"
-        ? parsed.message
-        : "Could not reach the Inspector server. Check that it is running and try again.",
-    );
+    throw typeof parsed.message === "string"
+      ? new ServerMessage(parsed.message)
+      : new Error(
+          "Could not reach the Inspector server. Check that it is running and try again.",
+        );
   }
   return parsed;
 }
@@ -52,17 +65,37 @@ export function LocalModelRates() {
 
 function LocalModelRatesPanel() {
   const [rates, setRates] = useState<ModelRateRow[]>();
+  const [inForce, setInForce] = useState<InForceRates>();
   const [loadError, setLoadError] = useState<string>();
   const reload = useCallback(async () => {
     try {
-      const { rates: loaded } = await request("");
-      setRates(Array.isArray(loaded) ? (loaded as ModelRateRow[]) : []);
+      const loaded = rowsOf((await request("")).rates);
+      // The list gives each series' newest revision, which can start later.
+      // For those, the price in force today comes from the series' history.
+      const now = Date.now();
+      const current = await Promise.all(
+        loaded
+          .filter((rate) => rate.effectiveAt > now)
+          .map(async (rate) => {
+            const series = new URLSearchParams({
+              providerKey: rate.providerKey ?? "",
+              modelId: rate.modelId,
+            });
+            const { revisions } = await request(`?${series}`);
+            const row = revisionInForce(rowsOf(revisions), now) ?? null;
+            return [rate.rateId, row] as const;
+          }),
+      );
+      setRates(loaded);
+      setInForce(new Map(current));
       setLoadError(undefined);
-    } catch {
-      // The server reports its own storage failures; a raw fetch error tells
-      // the user nothing they can act on, so the panel names the next step.
+    } catch (error) {
+      // Show the server's own message, such as a storage failure. A raw
+      // fetch error tells the user nothing they can act on.
       setLoadError(
-        "Could not load the prices stored on this machine. Try reloading the page.",
+        error instanceof ServerMessage
+          ? error.message
+          : "Could not load the prices stored on this machine. Try reloading the page.",
       );
     }
   }, []);
@@ -76,6 +109,7 @@ function LocalModelRatesPanel() {
       description="Stored on this machine only and never uploaded. Calls on your own provider keys are estimated at these prices instead of the public list price."
       emptyText="No prices yet. Calls on your own provider keys are estimated at the public list price where one exists."
       rates={rates}
+      inForce={inForce}
       loadError={loadError}
       canEdit
       requireProvider

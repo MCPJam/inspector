@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalModelRates } from "../local-model-rates";
+import { formatDay } from "../model-rate-format";
 import { __resetListPricesForTests } from "../use-list-prices";
 
 const flag = vi.hoisted(() => ({ on: true }));
@@ -14,7 +15,11 @@ vi.mock("@/hooks/useTraceCostEnabled", () => ({
   useTraceCostEnabled: () => flag.on,
 }));
 vi.mock("@/lib/convex-site-url", () => ({ getConvexSiteUrl: () => null }));
-const server = vi.hoisted(() => ({ authFetch: vi.fn() }));
+const server = vi.hoisted(() => ({
+  authFetch: vi.fn(),
+  rates: [] as unknown[],
+  revisions: [] as unknown[],
+}));
 vi.mock("@/lib/session-token", () => ({ authFetch: server.authFetch }));
 
 const llama = {
@@ -27,14 +32,27 @@ const llama = {
   createdAt: Date.UTC(2026, 9, 1),
 };
 
+const DAY = 24 * 60 * 60 * 1000;
+const scheduled = {
+  ...llama,
+  rateId: "r2",
+  rates: { currency: "USD", input: 0.3, output: 0.6 },
+  effectiveAt: Date.now() + 30 * DAY,
+  revision: 2,
+};
+
 describe("LocalModelRates", () => {
   beforeEach(() => {
     __resetListPricesForTests();
+    server.rates = [llama];
+    server.revisions = [];
     server.authFetch.mockImplementation(
       async (url: string, init?: RequestInit) =>
         init?.method === "POST"
           ? Response.json({ ok: true, rate: llama })
-          : Response.json({ ok: true, rates: [llama] }),
+          : url.includes("?")
+            ? Response.json({ ok: true, revisions: server.revisions })
+            : Response.json({ ok: true, rates: server.rates }),
     );
   });
 
@@ -113,6 +131,60 @@ describe("LocalModelRates", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not load the prices stored on this machine. Try reloading the page.",
     );
+  });
+
+  it("shows the local server's own message when loading fails", async () => {
+    server.authFetch.mockResolvedValue(
+      Response.json(
+        {
+          ok: false,
+          code: "storage_error",
+          message:
+            "Could not read the rates stored on this machine. Check that the .mcpjam folder in your home directory is writable, then try again.",
+        },
+        { status: 500 },
+      ),
+    );
+    render(<LocalModelRates />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not read the rates stored on this machine. Check that the .mcpjam folder",
+    );
+  });
+
+  it("drops a malformed row and shows the rest", async () => {
+    server.rates = [{ rateId: "r9", modelId: "broken", revision: 1 }, llama];
+    render(<LocalModelRates />);
+    expect(await screen.findByText("llama3.2")).toBeTruthy();
+    expect(screen.queryByText("broken")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows the price in force today beside a scheduled one", async () => {
+    server.rates = [scheduled];
+    server.revisions = [scheduled, llama];
+    render(<LocalModelRates />);
+    const until = formatDay(scheduled.effectiveAt);
+    const row = (await screen.findByText(`In force until ${until}`)).closest(
+      "tr",
+    )!;
+    expect(row).toHaveTextContent("$0.1");
+    expect(row).toHaveTextContent("$0.2");
+    expect(row).toHaveTextContent(formatDay(llama.effectiveAt));
+    expect(server.authFetch).toHaveBeenCalledWith(
+      "/api/mcp/model-rate-overrides?providerKey=ollama&modelId=llama3.2",
+      undefined,
+    );
+  });
+
+  it("says no price is in force before a scheduled one starts", async () => {
+    server.rates = [scheduled];
+    server.revisions = [scheduled];
+    render(<LocalModelRates />);
+    expect(
+      await screen.findByText(
+        `No price in force until ${formatDay(scheduled.effectiveAt)}.`,
+      ),
+    ).toBeTruthy();
   });
 
   it("keeps a raw network error out of the load failure", async () => {

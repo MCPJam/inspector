@@ -26,7 +26,11 @@ import {
   type ModelRateField,
   type ModelRateInputResult,
 } from "@/shared/model-rate-input";
-import { dayInputToTime, type ModelRateRow } from "./model-rate-format";
+import {
+  dayInputToTime,
+  timeToDayInput,
+  type ModelRateRow,
+} from "./model-rate-format";
 
 export type SavedModelRate = Extract<
   ModelRateInputResult,
@@ -53,6 +57,12 @@ const TEXT_FIELDS: ReadonlyArray<[keyof Draft, string, string]> = [
   ["note", "Note", "Optional"],
 ];
 
+/** A scheduled rate keeps its date; anything else starts the new revision now. */
+const scheduledDay = (editing: ModelRateRow | undefined) =>
+  editing && editing.effectiveAt > Date.now()
+    ? timeToDayInput(editing.effectiveAt)
+    : "";
+
 function draftFrom(editing: ModelRateRow | undefined): Draft {
   const rate = (field: ModelRateField) =>
     editing?.rates[field]?.toString() ?? "";
@@ -63,7 +73,7 @@ function draftFrom(editing: ModelRateRow | undefined): Draft {
     output: rate("output"),
     cacheRead: rate("cacheRead"),
     cacheWrite: rate("cacheWrite"),
-    effectiveDay: "",
+    effectiveDay: scheduledDay(editing),
     note: "",
   };
 }
@@ -102,8 +112,16 @@ export function ModelRateDialog({
     setError(undefined);
   }, [open, editing]);
 
+  // This form cannot edit context tiers, so it says they are kept.
+  const tierFloor = editing?.rates.tiers?.length
+    ? Math.min(...editing.rates.tiers.map((tier) => tier.aboveInputTokens))
+    : undefined;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    // An unchanged date keeps the scheduled time exactly, which another
+    // admin may have set in another time zone.
+    const keepsSchedule =
+      draft.effectiveDay !== "" && draft.effectiveDay === scheduledDay(editing);
     const result = normalizeModelRateInput(
       {
         modelId: draft.modelId,
@@ -111,7 +129,9 @@ export function ModelRateDialog({
         rates: Object.fromEntries(
           MODEL_RATE_FIELDS.map((field) => [field, readNumber(draft[field])]),
         ),
-        effectiveAt: dayInputToTime(draft.effectiveDay),
+        effectiveAt: keepsSchedule
+          ? editing?.effectiveAt
+          : dayInputToTime(draft.effectiveDay),
         note: draft.note,
       },
       { now: Date.now(), requireProvider },
@@ -204,9 +224,14 @@ export function ModelRateDialog({
             ))}
           </div>
           <p className="text-xs text-muted-foreground">
-            Leave the effective date empty to start now. Without a cache
-            price, cached tokens stay unpriced.
+            Leave the effective date empty to start now. Without a cache price,
+            cached tokens stay unpriced.
           </p>
+          {tierFloor !== undefined ? (
+            <p className="text-xs text-muted-foreground">
+              {`Saving keeps the long-context prices for calls above ${tierFloor.toLocaleString("en-US")} input tokens. To remove them, retire this price and add it again.`}
+            </p>
+          ) : null}
           <FieldError>{error}</FieldError>
           <DialogFooter>
             <Button

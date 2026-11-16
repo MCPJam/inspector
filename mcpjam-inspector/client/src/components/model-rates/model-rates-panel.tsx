@@ -44,20 +44,58 @@ const HEADINGS =
     ",",
   );
 
+/**
+ * For each scheduled rate, by `rateId`, the revision in force until it
+ * starts, or null when none is. A rate missing here shows no such row.
+ */
+export type InForceRates = ReadonlyMap<string, ModelRateRow | null>;
+
 /** Prices per million tokens; `actions` adds the controls a row offers. */
 export function ModelRatesTable({
   rates,
   providers,
   defaultAuthor,
   actions,
+  inForce,
 }: {
   rates: ModelRateRow[];
   providers: readonly Provider[];
   defaultAuthor: string;
   actions?: (rate: ModelRateRow) => ReactNode;
+  inForce?: InForceRates;
 }) {
   const listPrices = useListPrices(rates.length > 0);
   const now = Date.now();
+  /** The price, date, author and revision cells of one revision. */
+  const revisionCells = (rate: ModelRateRow) => {
+    const status =
+      rate.retiredAt !== undefined
+        ? "Retired"
+        : rate.effectiveAt > now
+          ? "Scheduled"
+          : undefined;
+    return (
+      <>
+        {MODEL_RATE_FIELDS.map((field) => (
+          <TableCell key={field} className="tabular-nums">
+            {formatRate(rate.rates[field])}
+          </TableCell>
+        ))}
+        <TableCell className="whitespace-nowrap">
+          {formatDay(rate.effectiveAt)}
+          {status ? (
+            <Badge variant="outline" className="ml-2">
+              {status}
+            </Badge>
+          ) : null}
+        </TableCell>
+        <TableCell>
+          {rate.createdBy?.name || rate.createdBy?.email || defaultAuthor}
+        </TableCell>
+        <TableCell className="tabular-nums">{rate.revision}</TableCell>
+      </>
+    );
+  };
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -74,17 +112,13 @@ export function ModelRatesTable({
         <TableBody>
           {rates.map((rate) => {
             const listPrice = listPrices.get(rate.modelId);
-            const status =
-              rate.retiredAt !== undefined
-                ? "Retired"
-                : rate.effectiveAt > now
-                  ? "Scheduled"
-                  : undefined;
+            const current = inForce?.get(rate.rateId);
+            const until = formatDay(rate.effectiveAt);
             const provider = rate.providerKey
               ? (providers.find((p) => p.key === rate.providerKey)?.name ??
                 rate.providerKey)
               : "Any provider";
-            return (
+            return [
               <TableRow key={rate.rateId} className="align-top">
                 <TableCell>
                   <div className="font-mono text-xs text-foreground">
@@ -99,32 +133,38 @@ export function ModelRatesTable({
                     ))}
                 </TableCell>
                 <TableCell>{provider}</TableCell>
-                {MODEL_RATE_FIELDS.map((field) => (
-                  <TableCell key={field} className="tabular-nums">
-                    {formatRate(rate.rates[field])}
-                  </TableCell>
-                ))}
-                <TableCell className="whitespace-nowrap">
-                  {formatDay(rate.effectiveAt)}
-                  {status ? (
-                    <Badge variant="outline" className="ml-2">
-                      {status}
-                    </Badge>
-                  ) : null}
-                </TableCell>
-                <TableCell>
-                  {rate.createdBy?.name ||
-                    rate.createdBy?.email ||
-                    defaultAuthor}
-                </TableCell>
-                <TableCell className="tabular-nums">{rate.revision}</TableCell>
+                {revisionCells(rate)}
                 {actions ? (
                   <TableCell className="whitespace-nowrap text-right">
                     {actions(rate)}
                   </TableCell>
                 ) : null}
-              </TableRow>
-            );
+              </TableRow>,
+              current === undefined ? null : (
+                <TableRow
+                  key={`${rate.rateId}:in-force`}
+                  className="align-top text-muted-foreground"
+                >
+                  {current ? (
+                    <>
+                      <TableCell className="text-xs">
+                        {`In force until ${until}`}
+                      </TableCell>
+                      <TableCell />
+                      {revisionCells(current)}
+                      {actions ? <TableCell /> : null}
+                    </>
+                  ) : (
+                    <TableCell
+                      colSpan={HEADINGS.length + (actions ? 1 : 0)}
+                      className="text-xs"
+                    >
+                      {`No price in force until ${until}.`}
+                    </TableCell>
+                  )}
+                </TableRow>
+              ),
+            ];
           })}
         </TableBody>
       </Table>
@@ -150,6 +190,7 @@ export function ModelRatesPanel({
   onSave,
   onRetire,
   renderHistory,
+  inForce,
 }: {
   title: string;
   description: string;
@@ -165,6 +206,7 @@ export function ModelRatesPanel({
   onSave: (rate: SavedModelRate) => Promise<void>;
   onRetire: (rate: ModelRateRow) => Promise<void>;
   renderHistory?: (rate: ModelRateRow) => ReactNode;
+  inForce?: InForceRates;
 }) {
   const [editing, setEditing] = useState<ModelRateRow | "new">();
   const [retiring, setRetiring] = useState<ModelRateRow>();
@@ -214,6 +256,7 @@ export function ModelRatesPanel({
           rates={rates}
           providers={providers}
           defaultAuthor={defaultAuthor}
+          inForce={inForce}
           actions={(rate) => [
             renderHistory && action("History", () => setHistoryOf(rate)),
             canEdit && action("Edit", () => setEditing(rate)),
