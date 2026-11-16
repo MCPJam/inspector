@@ -6,16 +6,17 @@ name: Release
 # now") is the retry path. It never writes to `main`, whose rulesets take
 # changes only through a reviewed pull request.
 #
-# How a run goes, in order. Every job after step 1 needs `preflight`, so a
-# failure in step 1 stops the whole release before anything ships.
+# How a run goes. Steps 1 and 2 run at the same time; nothing in step 3 or 4
+# starts until `verified` says step 1 passed.
 #
 #   1. Verify    `tests` + `build-and-test` run the full test suite and build on
 #                this exact commit. PRs run only the tests their diff can affect
 #                (.github/scripts/ci-scope.mjs), so this is where every test
-#                runs. `preflight` then checks staging is green and works out
-#                what to publish.
+#                runs. `preflight` checks staging is green and works out what to
+#                publish. `verified` passes only when all three did.
 #   2. Build     npm packages, Docker image, desktop apps, and the local harness
-#                conformance evidence the release contract needs.
+#                conformance evidence the release contract needs. These start
+#                with step 1 instead of after it, because they ship nothing.
 #   3. Publish   npm (`publish-packages`), Docker (`docker-publish`), the evals
 #                GitHub Action (`publish-evals-action`).
 #   4. Deploy    only what the version PR ticked: backend prod, webapp, then the
@@ -24,6 +25,10 @@ name: Release
 #                `announce-start` / `announce-finish` post to Slack.
 #
 # `skip_verify` skips step 1's tests and the staging check, for an urgent fix.
+#
+# Every job that changes something outside this run (a production deploy, a
+# publish, a tag) needs `verified`, directly or through a job that does. A new
+# one must too.
 run-name: ${{ inputs.versions != '' && format('Release {0}', inputs.versions) || 'Release' }}
 
 on:
@@ -100,7 +105,8 @@ jobs:
   # Step 1: the full suite on the commit being shipped. A PR runs only the tests
   # its diff can affect and nothing tests `main` after a merge, so a break those
   # miss, or one that only shows when two PRs meet, is caught here, before
-  # anything publishes.
+  # anything publishes. They run beside the builds; `verified` holds the
+  # publish and deploy jobs until they pass.
   # Read-only token: these jobs run the repo's tests, not release steps. Only
   # the secrets the suites use are passed, never the release's own.
   tests:
@@ -118,19 +124,30 @@ jobs:
       contents: read
     uses: ./.github/workflows/lint.yml
 
+  # The gate between building and shipping: passes only when preflight did and,
+  # unless skip_verify, the full suite and build passed on this commit.
+  # `!cancelled()` because `tests` and `build-and-test` are skipped on purpose
+  # under skip_verify.
+  verified:
+    needs: [preflight, tests, build-and-test]
+    if: >-
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      (fromJSON(inputs.skip_verify) ||
+       (needs.tests.result == 'success' && needs.build-and-test.result == 'success'))
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - run: echo "Preflight passed, and the full suite and build passed or skip_verify is set."
+
   preflight:
-    needs: [tests, build-and-test]
     # A trigger dispatch names the commit it found green, but a dispatch can
     # only target `main`, so a push landing in between would run this on a
     # commit nobody checked. Stand down instead: every job below skips, the
     # run ends green without publishing, and the newer commit's own checks
-    # trigger the release again. `!cancelled()` because `tests` and
-    # `build-and-test` are skipped on purpose under skip_verify.
-    if: >-
-      !cancelled() &&
-      (inputs.trigger_sha == '' || inputs.trigger_sha == github.sha) &&
-      (fromJSON(inputs.skip_verify) ||
-       (needs.tests.result == 'success' && needs.build-and-test.result == 'success'))
+    # trigger the release again.
+    if: inputs.trigger_sha == '' || inputs.trigger_sha == github.sha
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     outputs:
       publish_any: ${{ steps.plan.outputs.publish_any }}
@@ -483,11 +500,13 @@ jobs:
   # The evals GitHub Action's release, independent of npm and the app deploys:
   # it ships as a git tag other repos point `uses:` at. Both jobs sit out every
   # release that did not touch `actions/evals`, so the usual release is
-  # unchanged. Needs only `preflight` and the smoke — `finalize` and
+  # unchanged. Needs only `preflight`, `verified` and the smoke — `finalize` and
   # `publish-packages` are skipped for scopes that publish nothing, and the
   # action does not depend on either.
   evals-action-smoke:
-    needs: preflight
+    # After `verified`: the smoke spends eval credits, and the action ships
+    # nothing faster for starting early.
+    needs: [preflight, verified]
     # Runs whenever the action changed, including when the repo variables are
     # unset — the called workflow fails loudly on empty inputs, which is the
     # point. Skipping here instead meant the gate quietly became a no-op and
@@ -500,18 +519,19 @@ jobs:
     secrets: inherit
 
   publish-evals-action:
-    needs: [preflight, evals-action-smoke]
+    needs: [preflight, verified, evals-action-smoke]
     # The tag moves only on a smoke that actually PASSED. It used to move on
     # anything that was not a failure, which included `skipped` — so with the
     # smoke's repo variables unset, every published tag was untested.
     #
     # `!cancelled()` is kept so a cancelled run does not read as success, and
     # `preflight` is re-asserted by hand because the change detection runs
-    # before preflight's green-CI gate: a preflight that fails later still
+    # before preflight's staging check: a preflight that fails later still
     # reports `evals_action_changed: true`.
     if: >-
       !cancelled() &&
       needs.preflight.result == 'success' &&
+      needs.verified.result == 'success' &&
       needs.preflight.outputs.evals_action_changed == 'true' &&
       needs.evals-action-smoke.result == 'success'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
@@ -676,6 +696,7 @@ jobs:
   publish-packages:
     needs:
       - preflight
+      - verified
       - local-harness-contract
       - build-packages
       - deploy-backend-prod
@@ -699,6 +720,7 @@ jobs:
     if: |
       always() &&
       needs.preflight.result == 'success' &&
+      needs.verified.result == 'success' &&
       (
         needs.preflight.outputs.publish_inspector != 'true' ||
         needs.local-harness-contract.result == 'success'
@@ -857,6 +879,7 @@ jobs:
   deploy-backend-prod:
     needs:
       - preflight
+      - verified
     # Runs ahead of publish-packages, and now ALONGSIDE the desktop builds
     # rather than behind them — it consumes no build artifact, and waiting cost
     # ~12 min on the critical path of every full release.
@@ -874,6 +897,7 @@ jobs:
     if: |
       always() &&
       needs.preflight.result == 'success' &&
+      needs.verified.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       fromJSON(inputs.deploy_backend_prod)
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
@@ -958,12 +982,14 @@ jobs:
   deploy-webapp:
     needs:
       - preflight
+      - verified
       - build-packages
       - deploy-backend-prod
     if: |
       !cancelled() &&
       fromJSON(inputs.deploy_webapp) &&
       needs.preflight.result == 'success' &&
+      needs.verified.result == 'success' &&
       needs.build-packages.result == 'success' &&
       (
         !fromJSON(inputs.deploy_backend_prod) ||
@@ -1054,6 +1080,7 @@ jobs:
   finalize:
     needs:
       - preflight
+      - verified
       - publish-packages
       - deploy-backend-prod
       - deploy-webapp
@@ -1069,6 +1096,7 @@ jobs:
     if: |
       always() &&
       needs.preflight.result == 'success' &&
+      needs.verified.result == 'success' &&
       (
         needs.publish-packages.result == 'success' ||
         needs.preflight.outputs.desktop_only == 'true'
