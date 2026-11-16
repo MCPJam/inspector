@@ -39,8 +39,13 @@ Keep this link private: it signs a browser in.
 Open that exact link in the browser; the bare client URL does not
 carry the session token. Never paste the link into a PR, comment or log.
 
-Signed-in flows (WorkOS) need real accounts; if the change needs one, say so
-in the PR instead of faking it.
+Signed-in flows (WorkOS) need a real account. With access to the
+`mcpjam-backend` checkout, run `npm run agent-env -- up --name <change>`
+there: it creates a disposable backend running your backend code, a test
+account and an instance profile. Start this instance with that profile
+(`--env-file`), then run `npm run agent-env -- sign-in` to get a Playwright
+storage state, once per browser context. Without that checkout, say in the
+PR which signed-in checks you could not run instead of faking them.
 
 ## Guest mode
 
