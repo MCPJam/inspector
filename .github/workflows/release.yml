@@ -11,7 +11,8 @@ name: Release
 #   1. Verify    `tests` + `build-and-test` run the full test suite and build on
 #                this exact commit. PRs run only the tests their diff can affect
 #                (.github/scripts/ci-scope.mjs), so this is where every test
-#                runs. `staging` waits for Deploy Staging to pass on this commit,
+#                runs. `staging` waits for Deploy Staging to pass on this commit
+#                (or a later `main` commit containing it),
 #                `preflight` works out what to publish, and `verified` passes
 #                only when all four did.
 #   2. Build     npm packages, Docker image, desktop apps, and the local harness
@@ -133,7 +134,6 @@ jobs:
     if: >-
       !cancelled() &&
       needs.preflight.result == 'success' &&
-      needs.staging.outputs.stand_down != 'true' &&
       (fromJSON(inputs.skip_verify) ||
        (needs.staging.result == 'success' &&
         needs.tests.result == 'success' &&
@@ -144,75 +144,81 @@ jobs:
     steps:
       - run: echo "Preflight passed, and staging, the full suite and build passed or skip_verify is set."
 
-  # Deploy Staging runs on every push to `main`, the version commit's
-  # included, and takes 10-17 minutes, so this waits for it beside the tests
-  # and builds instead of before them. Behind `skip_verify`, like the tests:
-  # all three answer "has this SHA been exercised before it ships". Skipping
-  # it also skips what `deploy-webapp`'s `require_staging_green: false` relies
-  # on, so a skip_verify release that also deploys the webapp ships a SHA no
-  # staging run has smoked.
+  # Deploy Staging runs on every push to `main` and takes 10-17 minutes, so
+  # this waits for it beside the tests and builds instead of before them.
+  # Behind `skip_verify`, like the tests: all three answer "has this SHA been
+  # exercised before it ships". Skipping it also skips what `deploy-webapp`'s
+  # `require_staging_green: false` relies on, so a skip_verify release that
+  # also deploys the webapp ships a SHA no staging run has smoked.
   #
-  # A push to `main` cancels the staging run before it. When that happens to
-  # this commit, this run stands down like preflight does (nothing ships, the
-  # run ends green) and release-trigger.yml releases the new tip once its own
-  # staging passes.
+  # A push to `main` cancels the staging run before it, and `main` takes
+  # merges every few minutes, so this commit's own run rarely finishes. A
+  # green run on any later `main` commit counts too: that commit contains
+  # this one, so staging has run this code. A failed run on this exact
+  # commit fails the release at once; a failed later one does not, since a
+  # still later run may pass.
   staging:
     if: ${{ !fromJSON(inputs.skip_verify) && (inputs.trigger_sha == '' || inputs.trigger_sha == github.sha) }}
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 40
+    timeout-minutes: 50
     permissions:
       actions: read
-    outputs:
-      stand_down: ${{ steps.wait.outputs.stand_down }}
+      contents: read
     steps:
-      - name: Wait for a green staging deploy of this commit
-        id: wait
+      - name: Wait for a green staging deploy of this commit or a later one
         uses: actions/github-script@v9
         with:
           script: |
             const workflowId = "deploy-staging.yml";
             const { owner, repo } = context.repo;
             const headSha = context.sha;
-            const deadline = Date.now() + 35 * 60 * 1000;
-            for (;;) {
-              // Unfiltered and paged by hand: GitHub's search index behind the
-              // status and branch filters can lag minutes behind.
-              const runs = [];
-              const iterator = github.paginate.iterator(
-                github.rest.actions.listWorkflowRuns,
-                { owner, repo, workflow_id: workflowId, per_page: 100 }
-              );
-              let pages = 0;
-              for await (const { data } of iterator) {
-                runs.push(...data.filter((run) => run.head_sha === headSha));
-                if (++pages >= 3) break;
+            const deadline = Date.now() + 45 * 60 * 1000;
+            // sha -> whether it contains headSha. Commits never change, so
+            // one comparison per sha is enough.
+            const contains = new Map([[headSha, true]]);
+            const containsRelease = async (sha) => {
+              if (!contains.has(sha)) {
+                const { data } = await github.rest.repos.compareCommits({ owner, repo, base: headSha, head: sha });
+                contains.set(sha, data.status === "ahead" || data.status === "identical");
               }
-              if (runs.some((run) => run.conclusion === "success")) {
-                core.info(`Deploy Staging passed on ${headSha}.`);
+              return contains.get(sha);
+            };
+            for (;;) {
+              // Unfiltered: GitHub's search index behind the status and branch
+              // filters can lag minutes behind. Newest first.
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: workflowId, per_page: 100,
+              });
+              const runs = [];
+              for (const run of data.workflow_runs) {
+                if (run.event !== "push" || run.head_branch !== "main") continue;
+                if (run.head_repository?.full_name !== `${owner}/${repo}`) continue;
+                if (await containsRelease(run.head_sha)) runs.push(run);
+              }
+              const green = runs.find((run) => run.conclusion === "success");
+              if (green) {
+                core.info(
+                  green.head_sha === headSha
+                    ? `Deploy Staging passed on ${headSha}: ${green.html_url}`
+                    : `Deploy Staging passed on ${green.head_sha}, which contains ${headSha}: ${green.html_url}`
+                );
                 return;
               }
-              const active = runs.filter((run) => run.status !== "completed");
-              if (runs.length > 0 && active.length === 0) {
-                const { data: main } = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
-                if (runs.every((run) => run.conclusion === "cancelled") && main.commit.sha !== headSha) {
-                  core.notice(
-                    `A newer push cancelled Deploy Staging on ${headSha}. Standing down: release-trigger.yml releases ${main.commit.sha} once its staging passes.`
-                  );
-                  core.setOutput("stand_down", "true");
-                  return;
-                }
+              const ownFailure = runs.find((run) => run.head_sha === headSha && run.conclusion === "failure");
+              if (ownFailure) {
                 core.setFailed(
-                  `Deploy Staging ended "${runs[0].conclusion}" on ${headSha}: ${runs[0].html_url}. Fix or re-run it, then re-run this release's failed jobs.`
+                  `Deploy Staging failed on ${headSha}: ${ownFailure.html_url}. Fix or re-run it, then re-run this release's failed jobs.`
                 );
                 return;
               }
               if (Date.now() > deadline) {
-                core.setFailed(`No green Deploy Staging run for ${headSha} within 35 minutes.`);
+                core.setFailed(`No green Deploy Staging run on ${headSha} or a later main commit within 45 minutes.`);
                 return;
               }
-              core.info(runs.length === 0
-                ? `No Deploy Staging run for ${headSha} yet; checking again in 30s.`
-                : `Deploy Staging is running on ${headSha}: ${active[0].html_url}`);
+              const active = runs.find((run) => run.status !== "completed");
+              core.info(active
+                ? `Deploy Staging is running on ${active.head_sha}: ${active.html_url}`
+                : `No green Deploy Staging run on ${headSha} or later yet; checking again in 30s.`);
               await new Promise((resolve) => setTimeout(resolve, 30_000));
             }
 
