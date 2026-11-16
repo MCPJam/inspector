@@ -122,11 +122,25 @@ describe("eval-trace-capture", () => {
     }
   });
 
-  it("backend LLM failure without cost evidence adds no llm span", () => {
+  it("backend LLM failure with usage but no cost keeps an llm span without cost", () => {
     const spans: EvalTraceSpan[] = [];
-    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, runAt + 5, {
-      inputTokens: 10,
-    });
+    const meta = { inputTokens: 10, outputTokens: 0 };
+    const end = runAt + 5;
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, end, meta);
+    const categories = spans.map((span) => span.category);
+    expect(categories).toEqual(["step", "llm", "error"]);
+    const llm = spans.filter((span) => span.category === "llm");
+    expect(llm).toEqual([
+      expect.objectContaining({ status: "error", ...meta }),
+    ]);
+    expect(llm[0]).not.toHaveProperty("cost");
+  });
+
+  it("backend LLM failure with neither usage nor cost adds no llm span", () => {
+    const spans: EvalTraceSpan[] = [];
+    const meta = { modelId: "gpt-test" };
+    const end = runAt + 5;
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, end, meta);
     expect(spans.map((span) => span.category)).toEqual(["step", "error"]);
   });
 
