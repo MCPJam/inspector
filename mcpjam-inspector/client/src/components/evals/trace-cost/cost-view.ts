@@ -24,14 +24,21 @@ export type CostRowTarget =
  * Sum the costs on llm spans, the only spans that carry one. Undefined when
  * none does: a trace recorded before costs were captured shows no cost rather
  * than "unavailable" on every call. Once one call has evidence, a call
- * without it counts as unpriced.
+ * without it counts as unpriced. `unplacedCalls` are calls no span stands
+ * for, such as a harness call no step matched; each counts once.
  */
 export function rollupLlmSpanCosts(
   spans: readonly EvalTraceSpan[],
+  unplacedCalls: ReadonlyArray<ModelCallCostEvidence | undefined> = [],
 ): ModelCostRollup | undefined {
   const llm = spans.filter((span) => span.category === "llm");
-  if (!llm.some((span) => span.cost)) return undefined;
-  return aggregateModelCallCosts(llm.map((span) => span.cost));
+  if (!llm.some((span) => span.cost) && unplacedCalls.length === 0) {
+    return undefined;
+  }
+  return aggregateModelCallCosts([
+    ...llm.map((span) => span.cost),
+    ...unplacedCalls,
+  ]);
 }
 
 export function selectRowCost(

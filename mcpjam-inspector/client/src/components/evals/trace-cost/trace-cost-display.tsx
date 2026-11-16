@@ -1,5 +1,7 @@
 import { useMemo, type ReactNode } from "react";
+import { useQuery } from "convex/react";
 import { Badge } from "@mcpjam/design-system/badge";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -10,6 +12,13 @@ import {
   type CostView,
   type RowCost,
 } from "./cost-view";
+import {
+  isIterationModelCallsUnavailable,
+  listIterationModelCalls,
+  unmatchedModelCalls,
+  type IterationCostContext,
+  type UnmatchedModelCall,
+} from "./iteration-model-calls";
 
 /**
  * Every component here renders nothing while the `trace-cost` flag is off,
@@ -167,32 +176,122 @@ export function TraceCostHoverBlock({ cost }: { cost: RowCost | undefined }) {
   );
 }
 
-/** The whole trace's total, above the timeline. */
-export function TraceCostSummary({
-  spans,
-}: {
+type SummaryProps = {
   spans: readonly EvalTraceSpan[] | null | undefined;
-}) {
+  /** Set for an eval iteration: its stored total and whether a harness ran it. */
+  iteration?: IterationCostContext;
+};
+
+/** The whole trace's total, above the timeline. */
+export function TraceCostSummary({ spans, iteration }: SummaryProps) {
+  const enabled = useTraceCostEnabled();
+  if (!enabled || !iteration?.harness) {
+    return <CostSummaryCard spans={spans} iteration={iteration} />;
+  }
+  // Until every deployment serves the query, the summary shows what it
+  // knows without the unmatched calls.
+  return (
+    <ErrorBoundary
+      key={iteration.iterationId}
+      name="trace-cost-model-calls"
+      isExpectedError={isIterationModelCallsUnavailable}
+      fallback={<CostSummaryCard spans={spans} iteration={iteration} />}
+    >
+      <HarnessCostSummary spans={spans} iteration={iteration} />
+    </ErrorBoundary>
+  );
+}
+
+function HarnessCostSummary({
+  spans,
+  iteration,
+}: SummaryProps & { iteration: IterationCostContext }) {
+  const calls = useQuery(listIterationModelCalls, {
+    iterationId: iteration.iterationId,
+  });
+  const unmatched = useMemo(() => unmatchedModelCalls(calls), [calls]);
+  return (
+    <CostSummaryCard
+      spans={spans}
+      iteration={iteration}
+      unmatched={unmatched}
+    />
+  );
+}
+
+function CostSummaryCard({
+  spans,
+  iteration,
+  unmatched = [],
+}: SummaryProps & { unmatched?: UnmatchedModelCall[] }) {
+  // The iteration's stored total already counts every call it recorded,
+  // unmatched ones included; without it, unmatched calls join the spans' sum.
   const cost = useMemo<RowCost | undefined>(() => {
-    const rollup = rollupLlmSpanCosts(spans ?? []);
+    const rollup =
+      iteration?.rollup ??
+      rollupLlmSpanCosts(
+        spans ?? [],
+        unmatched.map((call) => call.cost),
+      );
     return rollup && { kind: "rollup", rollup };
-  }, [spans]);
+  }, [spans, iteration?.rollup, unmatched]);
   const view = useCostView(cost);
   if (!view) return null;
   return (
     <div
       data-testid="trace-cost-summary"
-      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs text-muted-foreground"
+      className="shrink-0 space-y-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs text-muted-foreground"
     >
-      <span className="text-[10px] font-semibold uppercase tracking-wide">
-        Trace cost
-      </span>
-      {view.amountUsd !== undefined ? (
-        <span className="text-sm font-semibold text-foreground">
-          <CostAmount amountUsd={view.amountUsd} estimated={view.estimated} />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wide">
+          Trace cost
         </span>
-      ) : null}
-      <CostFacts view={view} />
+        {view.amountUsd !== undefined ? (
+          <span className="text-sm font-semibold text-foreground">
+            <CostAmount amountUsd={view.amountUsd} estimated={view.estimated} />
+          </span>
+        ) : null}
+        <CostFacts view={view} />
+      </div>
+      {unmatched.length > 0 ? <UnmatchedCalls calls={unmatched} /> : null}
+    </div>
+  );
+}
+
+/** Harness calls no step's span stands for, each with its own cost. */
+function UnmatchedCalls({ calls }: { calls: UnmatchedModelCall[] }) {
+  return (
+    <div data-testid="trace-cost-unmatched-calls" className="space-y-1">
+      <div className="text-[10px] font-semibold uppercase tracking-wide">
+        Model calls not matched to a step
+      </div>
+      <ul className="space-y-0.5">
+        {calls.map((call) => {
+          const view =
+            call.cost && describeRowCost({ kind: "call", cost: call.cost });
+          return (
+            <li
+              key={call.generationId}
+              className="flex flex-wrap items-baseline gap-x-2"
+            >
+              <span className="min-w-0 truncate font-mono text-foreground">
+                {call.modelId}
+              </span>
+              <span className="font-medium text-foreground">
+                {view?.amountUsd !== undefined ? (
+                  <CostAmount
+                    amountUsd={view.amountUsd}
+                    estimated={view.estimated}
+                  />
+                ) : (
+                  "Cost unavailable"
+                )}
+              </span>
+              {view?.sourceLabel ? <span>{view.sourceLabel}</span> : null}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import type { ModelMessage } from "ai";
 import {
   appendDedupedModelMessages,
+  createEvalSpanIntegration,
   createEvalSpanSink,
   patchEvalSpansMessageRangesFromSteps,
+  runnerCallCost,
 } from "../src/eval-trace-spans";
 
 describe("appendDedupedModelMessages", () => {
@@ -69,5 +71,69 @@ describe("patchEvalSpansMessageRangesFromSteps", () => {
     ]);
     expect(step?.messageStartIndex).toBe(9);
     expect(step?.messageEndIndex).toBe(10);
+  });
+});
+
+describe("runner call cost on eval spans", () => {
+  const stepEnd = (providerMetadata?: unknown) =>
+    ({
+      stepNumber: 0,
+      usage: {
+        inputTokens: 120,
+        inputTokenDetails: { noCacheTokens: 100, cacheReadTokens: 20 },
+        outputTokens: 30,
+        outputTokenDetails: { textTokens: 30 },
+        totalTokens: 150,
+      },
+      providerMetadata,
+      finishReason: "stop",
+      response: { modelId: "gpt-4o", id: "resp-1" },
+    }) as never;
+
+  function recordOneStep(providerMetadata?: unknown) {
+    const integration = createEvalSpanIntegration({ rel: () => 0 });
+    integration.onStepStart?.({ stepNumber: 0, modelId: "gpt-4o" } as never);
+    integration.onStepEnd?.(stepEnd(providerMetadata));
+    return integration.getSpans();
+  }
+
+  it("keeps reported dollars on the llm span only, as the customer's runner-supplied usage", () => {
+    const spans = recordOneStep({ openrouter: { usage: { cost: 0.004 } } });
+
+    expect(spans.filter((span) => span.cost)).toEqual([
+      expect.objectContaining({
+        category: "llm",
+        cost: expect.objectContaining({
+          completeness: "complete",
+          amountUsd: 0.004,
+          source: "provider_reported",
+          funding: "customer",
+          usageSource: "runner",
+          usage: {
+            uncachedInputTokens: 100,
+            cacheReadTokens: 20,
+            outputTokens: 30,
+          },
+        }),
+      }),
+    ]);
+  });
+
+  it("records an unpriced call as unavailable rather than guessing a rate", () => {
+    const llm = recordOneStep().find((span) => span.category === "llm");
+
+    expect(llm?.cost).toMatchObject({
+      completeness: "unavailable",
+      reason: "no_rate",
+      usageSource: "runner",
+    });
+    expect(llm?.cost?.amountUsd).toBeUndefined();
+  });
+
+  it("says no usage when the step reported none", () => {
+    expect(runnerCallCost(undefined, undefined)).toMatchObject({
+      completeness: "unavailable",
+      reason: "no_usage",
+    });
   });
 });

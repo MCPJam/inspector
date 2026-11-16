@@ -63,6 +63,7 @@ import {
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
 import { selectRowCost, type RowCost } from "./trace-cost/cost-view";
+import type { IterationCostContext } from "./trace-cost/iteration-model-calls";
 import {
   TraceCostChips,
   TraceCostHoverBlock,
@@ -1915,6 +1916,8 @@ export interface TraceTimelineProps {
   fillContent?: boolean;
   /** "auto" puts the span detail beside the waterfall when there is room. */
   detailPlacement?: TraceDetailPlacement;
+  /** An eval iteration's stored cost total and harness calls, for the summary. */
+  iterationCost?: IterationCostContext;
 }
 
 export function TraceTimeline({
@@ -1938,6 +1941,7 @@ export function TraceTimeline({
   turnRuntimeByPromptIndex,
   fillContent = false,
   detailPlacement = "below",
+  iterationCost,
 }: TraceTimelineProps) {
   const { containerRef, direction } = useTraceDetailDirection(detailPlacement);
   const beside = direction === "horizontal";
@@ -2547,7 +2551,7 @@ export function TraceTimeline({
           </div>
         </div>
       ) : null}
-      <TraceCostSummary spans={recordedSpans} />
+      <TraceCostSummary spans={recordedSpans} iteration={iterationCost} />
 
       <div
         ref={containerRef}
