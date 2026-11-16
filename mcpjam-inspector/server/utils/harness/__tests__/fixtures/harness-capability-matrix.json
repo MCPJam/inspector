@@ -232,6 +232,7 @@
       "externalAccountCredentialEnv": [
         "CURSOR_API_KEY"
       ],
+      "fingerprintsMcpConfig": true,
       "forwardingRuntime": {
         "boundApprovals": true,
         "configurationVersion": "acp-forward-v1",
@@ -248,7 +249,6 @@
       "pinnedRuntimeVersion": "2026.11.05-86047df",
       "promptImageInput": true,
       "requiresComputer": true,
-      "sessionStableMcpConfig": true,
       "skills": {
         "frontmatter": {
           "descriptionMaxLength": 1024,

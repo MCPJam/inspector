@@ -58,6 +58,9 @@ export type HarnessBrokerStartResult =
       /** Present exactly when the lease runs on the org's own key. */
       orgUpstream?: HarnessOrgLeaseUpstream;
       forwarding?: { owners: ForwardingOwner[]; origin: string };
+      /** Where egress injects the lane's session grant, when the start asked
+       *  for one and the backend installed it. */
+      sessionGrantOrigin?: string;
     }
   | {
       ok: false;
@@ -162,6 +165,16 @@ export function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown>
     : { sandboxRowId: box.sandboxRowId };
 }
 
+function httpsOrigin(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function startHarnessModelBroker(args: {
   box: HarnessBrokerBox;
   harnessId: HarnessId;
@@ -186,6 +199,8 @@ export async function startHarnessModelBroker(args: {
    */
   expectedCredentialRevision?: string;
   nativeForwarding?: NativeForwardingSelection;
+  /** The lane lease whose session envelopes this turn's MCP config carries. */
+  sessionGrant?: { laneId: string; leaseId: string };
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBrokerStartResult> {
@@ -217,6 +232,14 @@ export async function startHarnessModelBroker(args: {
         ...boxRequestFields(args.box),
         harnessId: args.harnessId,
         ...(args.nativeForwarding ? { nativeForwarding: args.nativeForwarding } : {}),
+        ...(args.sessionGrant
+          ? {
+              sessionGrant: {
+                harnessSessionId: args.sessionGrant.laneId,
+                leaseId: args.sessionGrant.leaseId,
+              },
+            }
+          : {}),
         ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         ...(args.runId ? { runId: args.runId } : {}),
@@ -298,8 +321,14 @@ export async function startHarnessModelBroker(args: {
     await revokeHarnessModelBroker({ runId: payload.runId, ...(args.box.kind === "computer" ? { projectId: args.box.projectId } : {}), bearer: args.bearer });
     return { ok: false, status: 502, error: "Native forwarding owner binding was not confirmed." };
   }
+  // A backend that installed no grant names no origin; the turn then keeps
+  // per-turn tokens.
+  const sessionGrantOrigin = args.sessionGrant
+    ? httpsOrigin(payload?.grantOrigin)
+    : undefined;
   return {
     ...(forwarding ? { forwarding } : {}),
+    ...(sessionGrantOrigin ? { sessionGrantOrigin } : {}),
     ok: true,
     runId: payload.runId,
     expiresAt: payload.expiresAt,

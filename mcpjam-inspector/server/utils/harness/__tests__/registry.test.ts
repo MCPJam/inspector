@@ -1797,4 +1797,16 @@ it("gives the dedicated Copilot CLI client its own MCP client: proxied, or forwa
   );
   expect(doStart).not.toHaveBeenCalled();
   await expect(refreshed.doStart({} as never)).resolves.toBe("session");
+
+  // A chat lane's session configuration is the one the paused turn started
+  // with, so the continuation goes through.
+  const sessionStable = copilot.forwardingRuntime!.refresh(
+    { doStart } as never,
+    {},
+    "digest",
+    { sessionStable: true },
+  );
+  await expect(
+    sessionStable.doStart({ continueFrom: {} } as never),
+  ).resolves.toBe("session");
 });

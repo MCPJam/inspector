@@ -22,6 +22,11 @@ export type ForwardingRuntimeContract = {
     runtime: T,
     servers: HarnessMcpJson["mcpServers"],
     policyDigest: string,
+    context?: {
+      /** This turn's MCP configuration is the lane's session configuration,
+       *  identical to the one a paused turn started with. */
+      sessionStable?: boolean;
+    },
   ): T;
 };
 
