@@ -3,17 +3,15 @@
 /**
  * The release card's one button. The card decides what it does (start a
  * release from pending changesets, or retry versions already on main); the
- * operator only chooses what else ships with it.
+ * operator chooses nothing else.
  *
- * A plain release (npm, GitHub release, desktop) is one click. Anything that
- * also deploys production services, or skips the tests, asks once more and
- * names what it will touch.
+ * One click ships everything: npm, GitHub release, desktop, the hosted app and
+ * the backend. Only skipping the tests asks once more.
  */
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@mcpjam/design-system/button";
-import { Toggle } from "@mcpjam/design-system/toggle";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   Dialog,
@@ -39,26 +37,20 @@ export function ReleaseButton({
   version: string;
 }) {
   const router = useRouter();
-  const [hosted, setHosted] = useState(false);
-  const [backend, setBackend] = useState(false);
   const [skipTests, setSkipTests] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<DispatchResult | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const extras = [
-    hosted ? "the hosted app" : null,
-    backend ? "the backend" : null
-  ].filter((x): x is string => x !== null);
-  const needsConfirm = extras.length > 0 || skipTests;
+  const needsConfirm = skipTests;
   const started = result?.kind === "ok" || result?.kind === "partial";
 
   function send() {
     startTransition(async () => {
       const outcome = await dispatchRelease({
         action,
-        deploy_backend_prod: backend,
-        deploy_webapp: hosted,
+        deploy_backend_prod: true,
+        deploy_webapp: true,
         deploy_mcp_production: false,
         skip_verify: skipTests
       });
@@ -79,27 +71,6 @@ export function ReleaseButton({
         >
           {isPending ? "Starting…" : started ? "Started" : BUTTON_LABEL[action]}
         </Button>
-        <span className="mx-1 text-xs text-muted-foreground">also deploy</span>
-        <Toggle
-          variant="outline"
-          size="sm"
-          pressed={hosted}
-          onPressedChange={setHosted}
-          disabled={started}
-          className="px-3"
-        >
-          Hosted app
-        </Toggle>
-        <Toggle
-          variant="outline"
-          size="sm"
-          pressed={backend}
-          onPressedChange={setBackend}
-          disabled={started}
-          className="px-3"
-        >
-          Backend
-        </Toggle>
       </div>
 
       <details className="group text-xs text-muted-foreground">
@@ -139,9 +110,7 @@ export function ReleaseButton({
               {BUTTON_LABEL[action]} {version}?
             </DialogTitle>
             <DialogDescription>
-              {extras.length > 0
-                ? `This also deploys ${extras.join(" and ")} to production.`
-                : "This publishes to npm."}
+              This publishes to npm and deploys the hosted app and backend to production.
               {skipTests
                 ? " It ships without waiting for the full tests or a green staging deploy."
                 : " Nothing ships until the full tests and staging pass."}
