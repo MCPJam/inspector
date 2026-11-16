@@ -173,8 +173,14 @@ export function attestationVerifyArgs(path, { repo, workflow }) {
 
 const execFileAsync = promisify(execFile);
 
-/** Runs `gh attestation verify`; resolves to null when verified, else why not. */
-export async function verifyAttestation(path, options) {
+/**
+ * `gh attestation verify` failing to start Sigstore's verifier, as opposed to
+ * a verdict on the bytes. Concurrent runs share one trust-root cache and
+ * collide while initializing it.
+ */
+const SIGSTORE_INIT_FAILURE = /verifier is not available|no valid Sigstore verifiers|initialization may have failed/i;
+
+async function verifyAttestationOnce(path, options) {
   try {
     await execFileAsync("gh", attestationVerifyArgs(path, options), { maxBuffer: 16 * 1024 * 1024 });
     return null;
@@ -182,6 +188,28 @@ export async function verifyAttestation(path, options) {
     const stderr = typeof error?.stderr === "string" ? error.stderr.trim().split("\n").slice(-2).join(" ") : "";
     return stderr || (error instanceof Error ? error.message : String(error));
   }
+}
+
+let verifyQueue = Promise.resolve(null);
+
+/**
+ * Runs `gh attestation verify`; resolves to null when verified, else why not.
+ * One at a time, so no two runs initialize the shared trust-root cache at
+ * once, and an initialization failure is retried: it says nothing about the
+ * bytes. Any other failure is the answer.
+ */
+export function verifyAttestation(path, options, { attempts = 3, backoffMs = 2000 } = {}) {
+  const run = verifyQueue.then(async () => {
+    let failure = null;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      failure = await verifyAttestationOnce(path, options);
+      if (failure === null || !SIGSTORE_INIT_FAILURE.test(failure) || attempt === attempts) return failure;
+      await new Promise((resolve) => setTimeout(resolve, backoffMs * attempt));
+    }
+    return failure;
+  });
+  verifyQueue = run;
+  return run;
 }
 
 // ── Conformance evidence ─────────────────────────────────────────────────────
