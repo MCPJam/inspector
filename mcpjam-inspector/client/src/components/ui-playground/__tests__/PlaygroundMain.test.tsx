@@ -2520,6 +2520,41 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("sends an 'Ask agent to run' prompt that arrives while a composer submit is being prepared after that submit", async () => {
+      mockUseChatSession.messages = [];
+      useAgentToolPromptBridge.setState({ pending: null });
+      render(<PlaygroundMain {...defaultProps} />);
+      await act(async () => {
+        (
+          composerProps() as unknown as {
+            onChangeFileAttachments: (files: unknown[]) => void;
+          }
+        ).onChangeFileAttachments([
+          {
+            id: "f1",
+            file: new File(["x"], "note.txt", { type: "text/plain" }),
+          },
+        ]);
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "draft with a file" },
+      });
+
+      // The rail's gates finish before the composer's file conversion does.
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+        useAgentToolPromptBridge
+          .getState()
+          .requestRun("Run read_file on /etc/hosts");
+      });
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      expect(
+        sendMessage.mock.calls.map(([options]) => options.text),
+      ).toEqual(["draft with a file", "Run read_file on /etc/hosts"]);
+      useAgentToolPromptBridge.setState({ pending: null });
+    });
+
     it("sends a starter prompt once when it is clicked twice while the server connects", async () => {
       mockUseChatSession.messages = [];
       mockSharedAppState.servers["test-server"] = {

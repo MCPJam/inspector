@@ -5996,6 +5996,10 @@ export function PlaygroundMain({
         composer.setInput(text);
         return;
       }
+      // A composer submit being prepared was asked first: this prompt goes
+      // after it. The rail never runs inside that lock, so this can't wait on
+      // itself.
+      await composerSend.settled();
       if (isCompareMode) {
         if (!queueBroadcastRequest({
           text,
@@ -6024,6 +6028,7 @@ export function PlaygroundMain({
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,
       ensureLocalHarnessReadyForSend,
+      composerSend.settled,
       isCompareMode,
       queueBroadcastRequest,
       trackSendMessage,
