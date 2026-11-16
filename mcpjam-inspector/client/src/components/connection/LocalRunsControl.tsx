@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Label } from "@mcpjam/design-system/label";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -65,7 +65,9 @@ export function LocalRunsControl({
   // The newest list version, read when the save completes: a reload that
   // landed while the write was pending isn't the one the save triggered.
   const listVersionRef = useRef(listVersion);
-  listVersionRef.current = listVersion;
+  useLayoutEffect(() => {
+    listVersionRef.current = listVersion;
+  }, [listVersion]);
   const copy = allowed ? COPY.stop : COPY.allow;
   const apply = async () => {
     setSaving(true);
