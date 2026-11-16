@@ -346,12 +346,14 @@ function azureDeploymentProblem(
  * or without it, an Azure model or judge saved without a deployment. Like the
  * runner, the policy is checked first: a model the policy already refuses
  * gets no deployment problem, since adding a deployment wouldn't let it run.
+ * No problems while the config is unknown.
  */
 export function orgConfigProblemsOf(
-  orgConfig: PreflightOrgConfig,
+  orgConfig: PreflightOrgConfig | undefined,
   models: readonly PreflightModel[],
   judge?: PreflightJudge,
 ): string[] {
+  if (!orgConfig) return [];
   const policy = orgRequiresOwnKeys(orgConfig);
   const problems = new Set(
     policy ? orgKeyProblemsOf(orgConfig, models, judge) : [],

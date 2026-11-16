@@ -164,9 +164,7 @@ export function runPreflight(input: {
     )
       disabledProviders.add(provider);
   }
-  const problems = orgConfig
-    ? orgConfigProblemsOf(orgConfig, input.models, input.judge)
-    : [];
+  const problems = orgConfigProblemsOf(orgConfig, input.models, input.judge);
   return {
     disconnected,
     removed,
@@ -530,13 +528,11 @@ export function useSuiteRunPreflight({
           outOfCreditsReasonForEnvironments: (environmentIds) =>
             creditsReasonFor(modelsForEnvironments(environmentIds)),
           orgConfigProblemsForEnvironments: (environmentIds) =>
-            visibleOrgConfig
-              ? orgConfigProblemsOf(
-                  visibleOrgConfig,
-                  modelsForEnvironments(environmentIds),
-                  preflightJudgeOf(suite),
-                )
-              : [],
+            orgConfigProblemsOf(
+              visibleOrgConfig,
+              modelsForEnvironments(environmentIds),
+              preflightJudgeOf(suite),
+            ),
         }),
     serverName: (ref) =>
       getMcpServerDisplayName(ref, { remoteServers: projectServers }),
