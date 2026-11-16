@@ -42,12 +42,12 @@ export function AuthUpperArea({
         <div className="flex-1 min-w-0 h-full pr-2" />
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
-        <OnboardAgentButton />
+        {user && <OnboardAgentButton />}
         <AgentSidePanelTrigger />
         {!user && !isLoading && (
           <>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => {
                 track("login_button_clicked", { location: "header" });

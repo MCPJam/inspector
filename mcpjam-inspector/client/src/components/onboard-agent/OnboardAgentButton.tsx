@@ -118,13 +118,12 @@ export function OnboardAgentButton() {
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               aria-label={TRIGGER_LABEL}
               className={cn(
-                "hidden gap-2 rounded-full border-chrome-control-border px-1.5 text-card-foreground lg:inline-flex 2xl:pl-3",
-                "hover:border-ring hover:bg-background hover:text-card-foreground",
-                open && "border-ring ring-ring/30 ring-[3px]",
+                "hidden gap-2 px-1.5 lg:inline-flex 2xl:pl-2.5",
+                open && "bg-chrome-control-hover",
               )}
             >
               <span className="hidden 2xl:inline">{TRIGGER_LABEL}</span>
