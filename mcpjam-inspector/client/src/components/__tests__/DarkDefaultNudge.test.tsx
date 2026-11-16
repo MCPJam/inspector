@@ -88,6 +88,21 @@ describe("DarkDefaultNudge", () => {
     expect(mocks.dismiss).toHaveBeenCalledWith("toast-1");
   });
 
+  it("stays quiet when the seen marker cannot be saved", () => {
+    // The test setup resets this override after each test.
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      render(<DarkDefaultNudge />);
+      expect(mocks.custom).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("stays quiet for someone who already picked a theme", () => {
     localStorage.setItem("themeMode", "light");
     render(<DarkDefaultNudge />);
