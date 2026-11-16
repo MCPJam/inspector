@@ -16,6 +16,7 @@ import {
   UNKNOWN_COMMAND,
   type CommandOutcome,
 } from "./command-outcome.js";
+import type { McpJamToolCall } from "./mcp-tool-runner.js";
 import {
   getUpdateCacheDir,
   type CachePathOptions,
@@ -28,6 +29,7 @@ const TELEMETRY_STATE_FILE = "telemetry.json";
 const TELEMETRY_EVENT_NAME = "cli_command";
 /** One per conformance run, the same name the SDK and the Inspector send. */
 const CONFORMANCE_EVENT_NAME = "conformance_run_triggered";
+const MCP_TOOL_EVENT_NAME = "cli_mcp_tool_called";
 const TELEMETRY_STATE_VERSION = 1;
 const DEFAULT_FLUSH_TIMEOUT_MS = 3_000;
 /** A forced quit was asked for twice, so it waits on telemetry for less. */
@@ -52,6 +54,17 @@ export type TelemetryDisableReason =
   | "state";
 
 export type TelemetryTransport = "http" | "stdio";
+
+/** Which conformance family ran. `run` is `conformance run`, which mixes them. */
+export type ConformanceSuiteName =
+  | "protocol"
+  | "oauth"
+  | "apps"
+  | "tasks"
+  | "events"
+  | "run";
+/** One test, or a suite of several from a config file. */
+export type ConformanceRunMode = "single" | "suite";
 
 export interface TelemetryState {
   version: 1;
@@ -380,7 +393,10 @@ export async function exitInterrupted(
  * nothing itself, so the ping follows the CLI's own opt-outs and install id.
  * At most once per command. Always `run_source: "cli"`, also in CI.
  */
-export function captureConformanceRunEvent(): void {
+export function captureConformanceRunEvent(
+  suite: ConformanceSuiteName,
+  mode: ConformanceRunMode,
+): void {
   const run = activeRun;
   if (!run || !run.shouldCapture || run.conformanceCaptured || !run.command) {
     return;
@@ -403,7 +419,50 @@ export function captureConformanceRunEvent(): void {
       decision,
       resolveInstallId(run, decision.state),
       CONFORMANCE_EVENT_NAME,
-      { run_source: "cli" },
+      { run_source: "cli", suite, mode, cli_version: run.cliVersion },
+    );
+  } catch {
+    // Telemetry is best-effort and must never affect CLI behavior.
+  }
+}
+
+/**
+ * One `cli_mcp_tool_called` per tool call that `mcpjam mcp` serves, under the
+ * same opt-outs and install id as the command. The tool name is from a fixed
+ * list, and nothing about arguments, results or error text is sent.
+ */
+export function captureMcpToolEvent(call: McpJamToolCall): void {
+  const run = activeRun;
+  if (!run || !run.shouldCapture || !run.command) {
+    return;
+  }
+
+  try {
+    const decision = resolveTelemetryDecision({
+      ...run.options,
+      commandOptOut: run.commandOptOut,
+    });
+
+    if (!decision.enabled) {
+      return;
+    }
+
+    const properties: Record<string, unknown> = {
+      tool: call.tool,
+      success: call.success,
+      duration_ms: Math.max(0, Math.round(call.durationMs)),
+      cli_version: run.cliVersion,
+    };
+    if (!call.success) {
+      properties.error_code = normalizeTelemetryErrorCode(call.errorCode);
+    }
+
+    sendEvent(
+      run,
+      decision,
+      resolveInstallId(run, decision.state),
+      MCP_TOOL_EVENT_NAME,
+      properties,
     );
   } catch {
     // Telemetry is best-effort and must never affect CLI behavior.
@@ -425,7 +484,18 @@ function sendEvent(
   const client = getOrCreateClient(run);
   const pendingCapture = client.capture({ distinctId, event, properties });
   if (pendingCapture) {
-    run.pendingCaptures.push(pendingCapture.catch(() => {}));
+    // Dropped once settled: `mcpjam mcp` can send one per tool call for hours.
+    const settled: Promise<void> = pendingCapture
+      .catch(() => {
+        // A failed send is dropped, like every other telemetry failure.
+      })
+      .then(() => {
+        const index = run.pendingCaptures.indexOf(settled);
+        if (index !== -1) {
+          run.pendingCaptures.splice(index, 1);
+        }
+      });
+    run.pendingCaptures.push(settled);
   }
 }
 
