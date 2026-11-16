@@ -233,6 +233,14 @@ export function ToolList({
           </div>
         ) : (
           <div className="space-y-3">
+            {!hasConnectedServer && appToolCount === 0 && !searchQuery.trim() ? (
+              <div className="border-b border-border text-center pt-2 pb-4 px-2 space-y-3">
+                <p className="text-xs text-muted-foreground text-pretty">
+                  {NO_SERVER_COPY}
+                </p>
+                {connectServerAction}
+              </div>
+            ) : null}
             {browserTools ? (
               <BrowserToolsSection
                 tools={browserTools.tools}
@@ -356,14 +364,6 @@ export function ToolList({
                 localExecution={builtinToolsRunLocally}
               />
             )}
-            {!hasConnectedServer && appToolCount === 0 && !searchQuery.trim() ? (
-              <div className="border-t border-border text-center pt-4 pb-6 px-2 space-y-3">
-                <p className="text-xs text-muted-foreground text-pretty">
-                  {NO_SERVER_COPY}
-                </p>
-                {connectServerAction}
-              </div>
-            ) : null}
           </div>
         )}
       </div>

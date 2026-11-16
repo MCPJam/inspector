@@ -408,7 +408,7 @@ describe("ToolList", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("offers to connect a server below a harness's built-ins when none is connected", () => {
+  it("offers to connect a server above a harness's built-ins when none is connected", () => {
     const onAddServerRequested = vi.fn();
     render(
       <ToolList
@@ -420,12 +420,13 @@ describe("ToolList", () => {
       />,
     );
 
-    expect(screen.getByText("Bash")).toBeInTheDocument();
+    const prompt = screen.getByText(
+      "No server connected yet. Connect one to load its tools and use them in chat.",
+    );
     expect(
-      screen.getByText(
-        "No server connected yet. Connect one to load its tools and use them in chat.",
-      ),
-    ).toBeInTheDocument();
+      prompt.compareDocumentPosition(screen.getByText("Bash")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /connect a server/i }));
     expect(onAddServerRequested).toHaveBeenCalledTimes(1);
   });
