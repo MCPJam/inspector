@@ -17,11 +17,11 @@
  *     a 404 or an integrity (hash) mismatch is NEVER retried — the snapshot is
  *     immutable, so those can only recur.
  */
-import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
   PinnedSkillIntegrityError,
   SwarmAgentError,
   type PinnedServerSkill,
+  type FetchedPinnedSkill,
 } from "../swarm-agent.js";
 
 export const PINNED_SKILL_CACHE_MAX = 256;
@@ -29,14 +29,14 @@ export const PINNED_SKILL_CACHE_TTL_MS = 15 * 60 * 1000;
 const RETRY_DELAYS_MS = [250, 1000];
 
 interface CacheEntry {
-  artifact: PinnedSkillArtifact;
+  artifact: FetchedPinnedSkill;
   expiresAt: number;
 }
 
 // Map iteration order is insertion order; re-inserting on read makes the first
 // key the least-recently-used — the classic Map-as-LRU.
 const cache = new Map<string, CacheEntry>();
-const inFlight = new Map<string, Promise<PinnedSkillArtifact>>();
+const inFlight = new Map<string, Promise<FetchedPinnedSkill>>();
 
 /** Default retry policy: transient transport errors and 5xx retry; a 404, an
  * integrity mismatch, or an abort never do. */
@@ -81,9 +81,9 @@ function raceCallerAbort<T>(shared: Promise<T>, signal: AbortSignal): Promise<T>
 }
 
 async function fetchWithRetry(
-  fetcher: () => Promise<PinnedSkillArtifact>,
+  fetcher: () => Promise<FetchedPinnedSkill>,
   retryDelaysMs: readonly number[]
-): Promise<PinnedSkillArtifact> {
+): Promise<FetchedPinnedSkill> {
   let attempt = 0;
   // attempts = 1 initial + retryDelaysMs.length retries
   for (;;) {
@@ -115,15 +115,16 @@ async function fetchWithRetry(
 export async function resolvePinnedSkillCached(args: {
   projectId: string;
   contentHash: string;
+  aggregateHash?: string;
   /** A captured MCP-server skill's server and URI; absent for the rest. */
   serverSkill?: PinnedServerSkill;
-  fetcher: () => Promise<PinnedSkillArtifact>;
+  fetcher: () => Promise<FetchedPinnedSkill>;
   retryDelaysMs?: readonly number[];
   signal?: AbortSignal;
-}): Promise<PinnedSkillArtifact> {
+}): Promise<FetchedPinnedSkill> {
   const key = JSON.stringify([
     args.projectId,
-    args.contentHash,
+    args.aggregateHash ?? args.contentHash,
     args.serverSkill?.serverId ?? null,
     args.serverSkill?.skillUri ?? null,
   ]);

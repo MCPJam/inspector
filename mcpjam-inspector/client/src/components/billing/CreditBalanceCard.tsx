@@ -26,6 +26,13 @@ import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import {
+  NATIVE_HARNESS_TURNS_TOOLTIP,
+  nativeHarnessTurnsLeftPercent,
+  nativeHarnessTurnsLeftText,
+  useNativeHarnessTrial,
+} from "@/hooks/use-native-harness-trial";
+import { useNativeHarnessEnabled } from "@/hooks/useNativeHarnessEnabled";
+import {
   formatEvalIterationResetTime,
   getEvalIterationQuotaLabel,
 } from "@/lib/eval-iteration-quota";
@@ -65,6 +72,10 @@ export function CreditBalanceCard({
     });
   const sponsoredAllowance = useSwarmSponsorshipAllowance(
     Boolean(organizationId),
+  );
+  const nativeHarnessEnabled = useNativeHarnessEnabled();
+  const nativeTrial = useNativeHarnessTrial(
+    nativeHarnessEnabled ? organizationId : null,
   );
   const topUpEligible = balance?.topUpEligible !== false;
   const [isTopupOpen, setIsTopupOpen] = useState(false);
@@ -382,6 +393,19 @@ export function CreditBalanceCard({
             ariaValueText={`${sponsoredAllowance.remaining.toLocaleString()} of ${sponsoredAllowance.granted.toLocaleString()} sponsored swarm conversations remaining`}
             isLoading={false}
             testId="usage-swarm-sponsored"
+          />
+        ) : null}
+
+        {nativeTrial ? (
+          <UsageRow
+            label="Native harness turns"
+            tooltip={NATIVE_HARNESS_TURNS_TOOLTIP}
+            rightText={nativeHarnessTurnsLeftText(nativeTrial)}
+            fillPercent={nativeHarnessTurnsLeftPercent(nativeTrial)}
+            ariaLabel="Native harness turns remaining"
+            ariaValueText={`${nativeTrial.remaining.toLocaleString()} of ${nativeTrial.granted.toLocaleString()} native harness turns remaining`}
+            isLoading={false}
+            testId="usage-native-harness-turns"
           />
         ) : null}
 

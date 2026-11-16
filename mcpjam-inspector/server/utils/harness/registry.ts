@@ -1,4 +1,3 @@
-import { withCursorHostToolApproval } from "./cursor-host-tool-approval";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 /**
@@ -21,9 +20,7 @@ import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
 import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
-import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
-import { withAcpPermissionCallInput } from "./acp-permission-input.js";
-import { withCursorLoginAuthentication } from "./cursor-login-auth.js";
+import { createCursorHarness } from "./cursor-harness.js";
 import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
 export {
   CURSOR_CLI_CHECKSUMS,
@@ -393,9 +390,6 @@ type HarnessRuntimeAdapterBase = {
   /** The runtime refuses to resume when its MCP config changes, so each lane
    *  gets session handles in place of per-turn tokens. */
   sessionStableMcpConfig?: boolean;
-  /** A client that selects this runtime directly tests its own MCP client, so
-   *  a turn with servers it cannot pass through is refused. */
-  requiredForwarding?: "pass-through";
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
@@ -506,6 +500,12 @@ export type HarnessCreateArgs = {
   forwardingMcpJson?: HarnessMcpJson;
   /** Only set after exact-route discovery admission. */
   requireNativeToolDiscovery?: boolean;
+  /**
+   * Start the runtime without its non-essential network traffic. Set only for
+   * a hosted box, where the CLI holds a placeholder credential; a local run
+   * keeps the person's own settings. Adapters without such traffic ignore it.
+   */
+  quietStartup?: boolean;
   /**
    * The reasoning effort this turn asked for. An adapter that lists efforts in
    * `supportedReasoningEfforts` MUST apply it through its own runtime option;
@@ -912,8 +912,12 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     elicitationHandler,
     forwardingMcpJson,
     requireNativeToolDiscovery,
+    quietStartup,
   }) {
     const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
+    // Telemetry, error reports, auto-update, feature flags and availability
+    // checks (https://code.claude.com/docs/en/network-config).
+    if (quietStartup) env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     // This pin disables discovery behind a gateway unless explicitly enabled.
     // Preserve the existing eager route; small forwarded catalogs stay eager.
     if (
@@ -1177,10 +1181,9 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     nativeVersionNegotiation: "legacy-first",
     refresh: (runtime) => runtime,
   },
-  // Off: no live turn has shown the headless CLI loading the folder. ACP
-  // supports skills (`DEFAULT_ACP_SKILLS_DIRECTORY`), so this is an unchecked
-  // path rather than a capability wall.
-  supportsSkills: false,
+  // The ACP adapter writes each turn's skills to the CLI's private home
+  // (`cursor-skill-parity.test.ts`).
+  supportsSkills: true,
   skills: HARNESS_SKILLS.cursor,
   supportsPluginBundles: false,
   // Cursor does not emit file-change stream parts.
@@ -1222,21 +1225,10 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     // host-configured workdir here used to be an injection surface.
     '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
   createHarness({ auth, mcpJson }) {
-    // Dual-`ai` boundary cast, same as the other two adapters.
-    return withAcpPermissionCallInput(withCursorHostToolApproval(withCursorLoginAuthentication(pinCursorHarnessBootstrap(
-      createCursor({
-        // An explicit empty key prevents ambient credential lookup. The backend
-        // installs the temporary login before the runtime process starts.
-        auth,
-        // The framework replaces even empty keys with placeholders by default.
-        // Keep the CLI on its installed login instead of trying a fake API key.
-        credentialForwarding: () => "",
-        // REQUIRED by this arm's signature: `session-config` delivery has no
-        // other channel, so a construction that forgot the servers would be a
-        // silently tool-less turn. The type makes that unwritable.
-        mcpServers: toAcpMcpServers(mcpJson),
-      }) as unknown as HarnessAgentAdapter,
-    ))));
+    // REQUIRED by this arm's signature: `session-config` delivery has no
+    // other channel, so a construction that forgot the servers would be a
+    // silently tool-less turn. The type makes that unwritable.
+    return createCursorHarness({ auth, mcpServers: toAcpMcpServers(mcpJson) });
   },
 };
 
@@ -1250,17 +1242,18 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   defaultPermissionMode: "allow-all",
   approvalPermissionMode: "allow-reads",
   liveApprovalRuntime: true,
-  // Only registered host tools and forwarded servers are exposed. The CLI
-  // denies any other request.
+  // Only registered host tools, forwarded servers and the built-in `skill`
+  // tool are exposed. The CLI denies any other request.
   supportsNativeToolApproval: true,
   supportsHostExecutedToolApproval: true,
-  // Its MCP calls reach a server only through MCPJam's forwarder, whose gate
-  // asks the user about each request.
+  // The CLI asks before each MCP call and the bridge puts that to the host.
+  // On a forwarded turn MCPJam answers it, and the forwarder's gate asks.
   supportsMcpToolApproval: true,
+  // The CLI's own MCP client dials MCPJam's per-server proxy, or the
+  // forwarder when forwarding opens. The VS Code and Microsoft 365 Copilot
+  // profiles keep MCPJam's client (`resolveAgentLoop`).
   mcpDelivery: HARNESS_MCP_DELIVERY["copilot-cli"],
-  // The dedicated client exists to exercise the CLI's own MCP client; the
-  // VS Code and Microsoft 365 Copilot profiles keep MCPJam's.
-  requiredForwarding: "pass-through",
+  mcpNativeDelivery: "session-config",
   forwardingRuntime: {
     runtimeVersion: "1.0.92",
     configurationVersion: "copilot-native-mcp-v1",
@@ -1269,7 +1262,7 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     passThroughOnly: true,
     refresh: (runtime) => refuseForwardedContinuation(runtime),
   },
-  supportsSkills: false,
+  supportsSkills: true,
   skills: HARNESS_SKILLS["copilot-cli"],
   supportsPluginBundles: false,
   listBuiltinTools: () => [],
@@ -1278,14 +1271,13 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("copilot-cli"),
   supportsModel: supportsModelFor("copilot-cli"),
   toNativeModel: (modelId, upstream) => upstream?.nativeModelId ?? modelId,
-  createHarness: ({ modelId, upstream, auth, startupTimeoutMs, forwardingMcpJson }) =>
+  createHarness: ({ modelId, upstream, auth, startupTimeoutMs, mcpJson, forwardingMcpJson }) =>
     createCopilotCli({
       model: upstream?.nativeModelId ?? modelId,
       auth,
       startupTimeoutMs,
-      ...(forwardingMcpJson
-        ? { nativeMcpServers: forwardingMcpJson.mcpServers }
-        : {}),
+      nativeMcpServers: mcpJson.mcpServers,
+      ...(forwardingMcpJson ? { correlateNativeMcp: true } : {}),
     }),
 };
 
@@ -1303,7 +1295,7 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   supportsMcpToolApproval: false,
   supportsHostExecutedToolApproval: true,
   mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
-  supportsSkills: false,
+  supportsSkills: true,
   skills: HARNESS_SKILLS.opencode,
   supportsPluginBundles: false,
   fileChangeToolName: undefined,

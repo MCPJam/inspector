@@ -197,6 +197,7 @@ describe("modern MRTR gate", () => {
     }) as never;
   const service = (current = manager(), getAuthorization?: () => Promise<string>) =>
     createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as never,
       bearer: "disposable",
       getAuthorization,
@@ -224,7 +225,7 @@ describe("modern MRTR gate", () => {
       parent: { kind: "mrtr", id: "continuation", round, inputRequestKey: key },
       requestedSchema: schema(key),
       expiresAt: Date.now() + 60_000,
-    });
+    }, "subject");
   const answer = (round: number, key: string, response: unknown) =>
     seams.resume.mockImplementationOnce(async (options) => {
       const prepared = await options.prepareLeg(

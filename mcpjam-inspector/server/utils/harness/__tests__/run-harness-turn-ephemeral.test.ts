@@ -95,9 +95,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -107,6 +104,11 @@ vi.mock("../harness-model-broker.js", () => ({
     proxyBaseUrl: "https://broker.example",
     delivery: "e2b-network-transform",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -119,6 +121,11 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../harness-bake-observer.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../harness-bake-observer.js")>()),
+  watchNewBoxForStaleBake: vi.fn(),
+}));
+
 import { runHarnessTurn } from "../run-harness-turn";
 import { startHarnessModelBroker } from "../harness-model-broker.js";
 import { revokeHarnessModelBroker } from "../harness-model-broker.js";
@@ -126,10 +133,12 @@ import {
   reserveHarnessBox,
   renewHarnessBoxReservation,
   releaseHarnessBoxReservation,
-} from "../harness-model-broker.js";
+} from "../harness-box-reservation.js";
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
 import { ScenarioHarnessRepublishRequiredError } from "../../scenario-runtime-config.js";
+import { claimHarnessSessionState } from "../harness-session-state.js";
+import { watchNewBoxForStaleBake } from "../harness-bake-observer.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -181,6 +190,7 @@ afterEach(() => {
   vi.mocked(reserveHarnessBox).mockClear();
   vi.mocked(renewHarnessBoxReservation).mockClear();
   vi.mocked(releaseHarnessBoxReservation).mockClear();
+  vi.mocked(watchNewBoxForStaleBake).mockClear();
 });
 
 describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
@@ -288,6 +298,53 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
   });
 });
 
+describe("runHarnessTurn — a new conversation's box is watched for a stale bake", () => {
+  // Only a conversation's first turn is sure to run on a box booted just now,
+  // from the template the deployment boots today.
+  const chat = { sourceType: "direct", chatSessionId: "chat-1" };
+  const firstTurnClaim = () =>
+    vi.mocked(claimHarnessSessionState).mockResolvedValueOnce({
+      ok: true,
+      stateVersion: 0,
+      state: null,
+      fingerprintChanged: false,
+    });
+
+  it("watches the box on the conversation's first turn", async () => {
+    firstTurnClaim();
+    await runHarnessTurn(
+      baseOptions({ ...chat, harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).toHaveBeenCalledTimes(1);
+    expect(watchNewBoxForStaleBake).toHaveBeenCalledWith(
+      expect.any(Object),
+      "claude-code",
+    );
+  });
+
+  it("does not watch a later turn's box, which may predate the template", async () => {
+    // The default claim has a commit behind it (stateVersion 1).
+    await runHarnessTurn(
+      baseOptions({ ...chat, harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).not.toHaveBeenCalled();
+  });
+
+  it("does not watch a persistent computer, or a box with no conversation lane", async () => {
+    firstTurnClaim();
+    await runHarnessTurn(baseOptions(chat) as never, "none");
+    expect(resolveHarnessSandbox).toHaveBeenCalledTimes(1);
+    // An eval box: no lane, and its run may have frozen an older default.
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).not.toHaveBeenCalled();
+  });
+});
+
 describe("runHarnessTurn — a scenario harness never takes a persistent computer (5c)", () => {
   it("throws a typed 409 before reserving anything when a scenario scope has no box", async () => {
     const thrown = await runHarnessTurn(
@@ -344,6 +401,23 @@ describe("runHarnessTurn — broker lease owns preparation", () => {
     expect(harnessState.started).not.toHaveBeenCalled();
     expect(reserveHarnessBox).not.toHaveBeenCalled();
     expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
+  });
+  it("a box a preparation left uncertain ends the turn typed before anything runs in it", async () => {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
+      ok: false, status: 409, error: "The box was retired.", code: "box_retired",
+    });
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never, "none");
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onEngineError.mock.calls[0]![0]).toMatchObject({
+      phase: "setup",
+      message: "This conversation's computer was replaced. Send your message again.",
+      infra: { source: "sandbox_setup", code: "box_retired", httpStatus: 409 },
+    });
+    expect(harnessState.started).not.toHaveBeenCalled();
+    // The run's lease is revoked by run, as for any refused start.
+    const runId = vi.mocked(startHarnessModelBroker).mock.calls[0]![0].runId;
+    expect(revokeHarnessModelBroker).toHaveBeenCalledWith(expect.objectContaining({ runId }));
   });
 });
 

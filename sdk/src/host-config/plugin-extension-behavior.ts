@@ -254,6 +254,9 @@ export const PLUGIN_EXTENSION_STYLE_DEFAULTS: Readonly<
   Partial<Record<string, PluginExtensionStyleDefaults>>
 > = Object.freeze({
   chatgpt: OPENAI_DEFAULTS,
+  "chatgpt-desktop": OPENAI_DEFAULTS,
+  "chatgpt-work": OPENAI_DEFAULTS,
+  "chatgpt-work-desktop": OPENAI_DEFAULTS,
   codex: OPENAI_DEFAULTS,
   claude: CLAUDE_DEFAULTS,
   "claude-desktop": CLAUDE_DESKTOP_DEFAULTS,

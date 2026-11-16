@@ -30,7 +30,8 @@ async function fixture() {
   const build = new Function("claudeSdk", "nodeStream", "nodeChildProcess", `${sessionCode}; return {
     open: mcpjamOpenClaudeTurn, state: () => mcpjamWarmClaude
   };`);
-  const runtime = build({ query: () => query }, nodeStream, nodeChildProcess);
+  const sdk = { query: vi.fn(() => query) };
+  const runtime = build(sdk, nodeStream, nodeChildProcess);
   const controller = new AbortController();
   const options = { mcpServers: { fixture: { type: "http", url: "https://fixture.invalid" } } };
   await runtime.open({ options, prompt: (async function* () {})() }, { abortSignal: controller.signal }, {});
@@ -38,10 +39,9 @@ async function fixture() {
   retained.owner = undefined;
   const writes: unknown[] = [];
   retained.input.on("data", (value: unknown) => writes.push(value));
-  return {
-    query, runtime, writes,
-    open: () => runtime.open({ options, prompt: (async function* () { yield { uuid: "next" }; })() }, { abortSignal: controller.signal }, {}),
-  };
+  const next = (start: object) =>
+    runtime.open({ options, prompt: (async function* () { yield { uuid: "next" }; })() }, { abortSignal: controller.signal }, start);
+  return { query, sdk, runtime, writes, next, open: () => next({}) };
 }
 
 it("waits past the attach budget for confirmed MCP readiness before supplying a prompt", async () => {
@@ -68,4 +68,14 @@ it("retires an unready process at the MCP deadline without supplying a prompt", 
   expect(f.writes).toEqual([]);
   expect(f.query.close).toHaveBeenCalledOnce();
   expect(f.runtime.state()).toBeUndefined();
+});
+
+it("restarts the CLI from disk when a warm turn's environment changes, such as Claude Code's quiet start", async () => {
+  const f = await fixture();
+  await f.open();
+  expect(f.sdk.query).toHaveBeenCalledOnce();
+  f.runtime.state().owner = undefined;
+  await f.next({ env: { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" } });
+  expect(f.query.close).toHaveBeenCalledOnce();
+  expect(f.sdk.query).toHaveBeenCalledTimes(2);
 });

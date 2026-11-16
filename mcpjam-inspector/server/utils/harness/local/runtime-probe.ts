@@ -13,9 +13,9 @@
  *      (`launcher.mjs --mcpjam-probe`): both launcher guards are installed and
  *      the bridge's vendor import is resolved and loaded exactly as a session
  *      would, then it exits — no port, no model call;
- *   2. the vendor binary's version handshake: Claude Code's native CLI and
- *      Codex's `codex.js` each answer `--version`, and Codex's must name the
- *      `@openai/codex` version the pack carries.
+ *   2. the vendor binary's version handshake, as the runtime's definition
+ *      declares it (`vendorProbe`): the CLI answers `--version`, and where the
+ *      definition names a package manifest, with the version the pack carries.
  *
  * A candidate that fails is never activated, so it is never selected; the
  * user keeps working on the permitted previous pack, and the failure is
@@ -27,6 +27,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LOCAL_HARNESS_MANIFEST } from "./compatibility.js";
 import { ensureInspectorLayer } from "./inspector-layer.js";
+import { localRuntime } from "./runtimes/index.js";
+import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
 import type { LocalPackTarget, LocalPlatform, SupportedLocalHarnessId } from "./targets.js";
 
 const PROBE_TIMEOUT_MS = 45_000;
@@ -136,36 +138,28 @@ async function vendorHandshake(
   node: string,
   env: NodeJS.ProcessEnv,
 ): Promise<{ ok: true; version: string } | { ok: false; message: string }> {
-  if (args.harnessId === "claude-code") {
-    const binary = join(
-      args.packRoot,
-      "node_modules",
-      "@anthropic-ai",
-      `claude-agent-sdk-${args.target}`,
-      args.platform === "win32" ? "claude.exe" : "claude",
-    );
-    const answered = await run(binary, ["--version"], { cwd: args.packRoot, env });
+  const probe = localRuntime(args.harnessId).vendorProbe({ target: args.target, platform: args.platform });
+  const name = harnessDisplayName(args.harnessId);
+  const answered =
+    "node" in probe.run
+      ? await run(node, [join(...probe.run.node), ...probe.args], { cwd: args.packRoot, env })
+      : await run(join(args.packRoot, ...probe.run.binary), [...probe.args], { cwd: args.packRoot, env });
+  if (probe.version.from === "stdout") {
     const version = /\d+\.\d+\.\d+/.exec(answered.stdout)?.[0];
     if (answered.code !== 0 || version === undefined) {
-      return { ok: false, message: `the Claude Code CLI in the candidate pack did not answer --version (${said(answered)})` };
+      return { ok: false, message: `the ${name} CLI in the candidate pack did not answer --version (${said(answered)})` };
     }
     return { ok: true, version };
   }
-  if (args.harnessId === "codex") {
-    const pkg = JSON.parse(
-      await readFile(join(args.packRoot, "node_modules", "@openai", "codex", "package.json"), "utf8"),
-    ) as { version?: string };
-    const answered = await run(node, [join("node_modules", "@openai", "codex", "bin", "codex.js"), "--version"], {
-      cwd: args.packRoot,
-      env,
-    });
-    if (answered.code !== 0 || typeof pkg.version !== "string" || !answered.stdout.includes(pkg.version)) {
-      return {
-        ok: false,
-        message: `the Codex CLI in the candidate pack did not report @openai/codex ${pkg.version ?? "?"} (${said(answered)})`,
-      };
-    }
-    return { ok: true, version: pkg.version };
+  const pkg = JSON.parse(await readFile(join(args.packRoot, ...probe.version.path), "utf8")) as {
+    name?: string;
+    version?: string;
+  };
+  if (answered.code !== 0 || typeof pkg.version !== "string" || !answered.stdout.includes(pkg.version)) {
+    return {
+      ok: false,
+      message: `the ${name} CLI in the candidate pack did not report ${pkg.name ?? "its package"} ${pkg.version ?? "?"} (${said(answered)})`,
+    };
   }
-  return { ok: false, message: `no vendor handshake is defined for ${args.harnessId}` };
+  return { ok: true, version: pkg.version };
 }

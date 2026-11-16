@@ -117,7 +117,8 @@ export function reportSkillsDelivered(
 /**
  * Report a harness turn from what its box writer did with the plan. The box
  * holds one folder per name, so each planned skill is matched to the writer's
- * outcome by name.
+ * outcome by name; a captured server skill a `harness-tools` plan serves
+ * through MCPJam's skill tools is matched to what the turn served, by id.
  */
 export function reportBoxSkillsDelivered(
   surface: SkillsDeliveredSurface,
@@ -125,13 +126,22 @@ export function reportBoxSkillsDelivered(
   written: BoxSkillsResult,
 ): void {
   const delivered = new Set(written.delivered.map(({ name }) => name));
+  const served = new Set(
+    (written.servedByTools ?? []).map(({ skillId }) => skillId),
+  );
+  const familyOf = skillFamilies(skills.set);
+  const viaTools = (ref: SkillRef) =>
+    skills.serverSkillsVia === "harness-tools" &&
+    familyOf(ref) === "mcp-server";
   const failed = new Map(
     written.failed.map(({ name, error }) => [name, error]),
   );
   reportSkillsDelivered(surface, skills, {
-    delivered: skills.delivered.filter(({ name }) => delivered.has(name)),
+    delivered: skills.delivered.filter((ref) =>
+      viaTools(ref) ? served.has(ref.skillId) : delivered.has(ref.name),
+    ),
     failed: skills.delivered.flatMap((ref) => {
-      const error = failed.get(ref.name);
+      const error = viaTools(ref) ? undefined : failed.get(ref.name);
       return error === undefined ? [] : [{ ref, error }];
     }),
   });
@@ -168,7 +178,8 @@ function capture(properties: Record<string, string | number>): void {
  * A skill's family is the list of the turn's set that holds it. Library is the
  * family with no origin of its own, so it also takes a skill the set does not
  * hold: one whose ref another skill already holds, which the bare-name tools
- * still serve by name.
+ * still serve by name. A connected server's own skill on a live turn is known
+ * by its URI (`planWithLiveServerSkills`).
  */
 function skillFamilies(
   set: EffectiveCapabilitySet,
@@ -176,6 +187,9 @@ function skillFamilies(
   const families = new Map<string, SkillFamily>([
     ...set.pluginSkills.map((skill) => [skill.skillId, "plugin"] as const),
     ...set.serverSkills.map((skill) => [skill.skillId, "mcp-server"] as const),
+    ...(set.liveServerSkills?.skills ?? []).map(
+      (skill) => [skill.skillUri, "mcp-server"] as const,
+    ),
     ...set.localSkills.map((skill) => [skill.skillId, "local"] as const),
   ]);
   return (ref) => families.get(ref.skillId) ?? "library";

@@ -21,7 +21,6 @@ import {
   sha256,
   SKILL_URI,
 } from "../../../test/support/server-skill-wire";
-import { applySkillToolApproval } from "../../chat-v2-orchestration";
 import { getEffectiveSkillToolsAndPrompt } from "../effective-skill-tools";
 import { listLiveServerSkills } from "../live-server-skills";
 import { MAX_SERVER_SKILL_PROMPT_BYTES } from "../server-skill-reads";
@@ -137,11 +136,12 @@ describe("the skill list in the prompt", () => {
 });
 
 describe("loadSkill", () => {
-  it("follows the host's switch rather than forcing its own prompt", async () => {
+  it("never asks, whatever the host's switch says", async () => {
     // SEP-2640 does not require approval to read a skill's text; it requires
     // origin tagging (the banner). Its consent obligations cover code
     // execution, `allowed-tools`, nested activation and cross-origin reads,
-    // none of which a plain load performs.
+    // none of which a plain load performs. Nothing raises the declaration
+    // when the switch is on (`chat-v2-orchestration.test.ts`).
     const { tools } = await liveTurn(await makeServerSkillWire());
     const ask = (set: Record<string, unknown>, input: unknown) => {
       const declared = (set.loadSkill as SkillTool).needsApproval;
@@ -149,12 +149,6 @@ describe("loadSkill", () => {
     };
     expect(ask(tools, { name: REF })).toBe(false);
     expect(ask(tools, { uri: SKILL_URI })).toBe(false);
-    // A host that requires tool approval still gets one for a server's load.
-    const switchedOn = applySkillToolApproval(tools, {
-      pinned: false,
-      requireToolApproval: true,
-    });
-    expect(ask(switchedOn, { name: REF })).toBe(true);
   });
 
   it("loads a verified server skill behind the untrusted-content banner", async () => {

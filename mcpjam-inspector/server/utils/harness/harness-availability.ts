@@ -43,6 +43,10 @@ import {
   harnessWireApi,
 } from "@/shared/harness-connection-api";
 import { isGatewayModelId } from "@/shared/harness-gateway-model";
+import {
+  harnessSurfaceRefusal,
+  type HarnessSurface,
+} from "@/shared/harness-descriptors";
 import type {
   ModelConnectionRef,
   ModelSelection,
@@ -462,6 +466,8 @@ export function harnessReasoningEffortRefusalReason(args: {
  * the message text made a copy edit silently change admission behaviour.
  */
 export type HarnessUnavailableKind =
+  /** The runtime's descriptor declares it does not run on this surface. */
+  | "surface-unsupported"
   | "broker-disabled"
   | "enterprise-policy"
   | "computers-unconfigured"
@@ -506,6 +512,9 @@ export function checkHarnessRuntimeAvailable(args: {
   mcpClient?: "mcpjam" | "harness";
   /** The harness this host runs — selects the capability set. */
   harnessId: HarnessId;
+  /** Where the turn runs. Guests are decided by the backend's capability map,
+   *  and `local` comes from `localExecution`. */
+  surface: Exclude<HarnessSurface, "guests" | "local">;
   /** The host's resolved approval gate. The runtimes can't pause for native/MCP
    *  tool approval, so an approval host is rejected (capability-driven). */
   requireToolApproval: boolean;
@@ -612,6 +621,17 @@ export function checkHarnessRuntimeAvailable(args: {
   // local Codex turn the turn itself can serve.
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
+
+  // Whether the runtime runs here at all comes first: every other rule is
+  // about a turn this surface could run.
+  const surfaceRefusal =
+    harnessSurfaceRefusal(args.harnessId, args.surface) ??
+    (args.localExecution === true
+      ? harnessSurfaceRefusal(args.harnessId, "local")
+      : undefined);
+  if (surfaceRefusal) {
+    return { ok: false, kind: "surface-unsupported", reason: surfaceRefusal };
+  }
 
   // Does MCPJam supply this runtime's model credential, or does the runtime
   // authenticate on the CUSTOMER's own provider account? Three checks below

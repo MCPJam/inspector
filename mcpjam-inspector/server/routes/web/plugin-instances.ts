@@ -1285,6 +1285,7 @@ async function invoke(
     bearer,
     { hostId: instance.hostId, serverId: instance.owner.serverId },
     instance,
+    { ownerRef: { kind: "app", token: body.instanceToken } },
   );
   const resolveActivation: typeof runtime.resolve =
     origin === "quick-action"
@@ -1708,7 +1709,7 @@ for (const action of ["execute", "call-tool"] as const)
       const call = action === "call-tool" ? callSchema.parse(raw) : undefined;
       const body = call ?? executeSchema.parse(raw);
       const { admission, bearer, actor } = await admitted(c, body);
-      const current = getPluginFormApp({
+      const current = await getPluginFormApp({
         actor,
         bearer,
         token: body.instanceToken,

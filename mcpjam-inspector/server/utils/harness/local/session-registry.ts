@@ -30,6 +30,9 @@ export interface LocalHarnessSessionRecord {
   /** The broker run id, for revoking the lease server-side. */
   brokerRunId: string | null;
   gateway: LocalModelGateway | null;
+  /** The MCP relay of a session with no gateway to close it with (a runtime
+   *  login), held and closed on its own. */
+  relay?: { hold: () => void; close: () => Promise<void> };
   /**
    * Ends the supervised tree, and says whether it is actually down.
    *
@@ -215,6 +218,12 @@ async function endRecord(
     await record.gateway?.close();
   } catch (error) {
     errors.push(`gateway close: ${messageOf(error)}`);
+  }
+  try {
+    record.relay?.hold();
+    await record.relay?.close();
+  } catch (error) {
+    errors.push(`relay close: ${messageOf(error)}`);
   }
   try {
     await record.revokeLease?.();

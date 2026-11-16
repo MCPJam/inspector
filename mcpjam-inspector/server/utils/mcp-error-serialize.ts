@@ -12,6 +12,7 @@ export {
 } from "@mcpjam/sdk";
 export type { InsufficientScopeChallenge } from "@mcpjam/sdk";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
+import { scrubDeliveredSecretsDeep } from "../../shared/delivered-secret-registry.js";
 import { readAuthChallenge } from "./connection-effective-auth.js";
 
 export function serializeMcpError(error: unknown) {
@@ -85,7 +86,7 @@ export function jsonError(c: any, error: unknown, fallbackStatus = 500) {
     // switching to this shared serializer) so existing consumers/tests that read
     // the flag keep working; `mcpError.insufficientScope` still carries the
     // SEP-2350 step-up challenge.
-    {
+    scrubDeliveredSecretsDeep({
       success: false,
       error: details.message as string,
       mcpError: details,
@@ -95,7 +96,7 @@ export function jsonError(c: any, error: unknown, fallbackStatus = 500) {
       // promoted value, and a body that recomputes the declared one reports
       // `ambiguous` for a failure we just paged ourselves for.
       origin,
-    },
+    }),
     status,
   );
 }

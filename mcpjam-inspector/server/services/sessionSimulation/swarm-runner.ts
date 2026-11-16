@@ -1027,6 +1027,7 @@ async function runJourneyFanOut(
             ? undefined
             : checkHarnessRuntimeAvailable({
                 harnessId: dispatch.harnessId!,
+                surface: "swarms",
                 localExecution: localHarness,
                 requireToolApproval: target.requireToolApproval,
                 // PLUGIN servers count. A target whose MCP servers come solely
@@ -1167,9 +1168,17 @@ async function runJourneyFanOut(
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
-        const releaseLocalSlot = runsLocally(opts, (target.agentLoop ?? target.harness))
-          ? await acquireLocalHarnessSlot(attemptSignal)
-          : undefined;
+        let releaseLocalSlot: (() => void) | undefined;
+        if (runsLocally(opts, (target.agentLoop ?? target.harness))) {
+          try {
+            releaseLocalSlot = await acquireLocalHarnessSlot(attemptSignal);
+          } catch (err) {
+            // A stop scoped to credit-funded conversations ends this wait: go
+            // on to the target's sponsored conversations, not fail the target.
+            if (attemptSignal.aborted && creditStop.signal.aborted && !stopScheduling()) continue;
+            throw err;
+          }
+        }
         try {
         // Per-SESSION re-resolution — the granularity that actually bounds
         // staleness. Everything constructed below bakes this value in for the
@@ -1415,6 +1424,9 @@ async function runJourneyFanOut(
                   targetId,
                   sessionIdx,
                 });
+                // A stop scoped to credit-funded conversations still lets this
+                // target's sponsored ones run; `canStart` skips the rest.
+                if (creditStop.signal.aborted && !stopScheduling()) continue;
                 return;
               }
               // Otherwise the target asked for a REPRODUCIBLE shell and we
@@ -1476,6 +1488,24 @@ async function runJourneyFanOut(
                 durationMs: Date.now() - attemptStartedAt,
                 modelSource: modelId,
               });
+              // The organization's own limit (the native harness trial): no
+              // other target escapes it, so the run stops as it does when the
+              // same refusal reaches a turn.
+              if (isAccountLimit(undefined, provisioned.code)) {
+                spendCapTripped = true;
+                spendCapMessage = failure.errorMessage;
+                if (runHasSponsored) creditStop.abort();
+                else runStop.abort();
+                logEvent("run.spend_cap_short_circuit", {
+                  stopReason: "organization_usage_limit",
+                  scopedToCredits: runHasSponsored,
+                  runId,
+                  hostId,
+                  targetId,
+                  sessionIdx,
+                });
+                if (!runHasSponsored) return;
+              }
               continue;
             }
           }
@@ -2538,6 +2568,7 @@ async function resolveTargetPinnedSkills(args: {
       skills,
       pluginVersions: target.pluginVersions ?? [],
       serverIds: target.serverIds,
+      signal,
     });
   if (meta.length === 0) return frozen([]);
   const targetId = target.targetId;
@@ -2558,6 +2589,7 @@ async function resolveTargetPinnedSkills(args: {
     const artifact = await resolvePinnedSkillCached({
       projectId,
       contentHash: entry.contentHash,
+      aggregateHash: entry.aggregateHash,
       ...(serverSkill ? { serverSkill } : {}),
       // Caller-agnostic: the shared fetch keeps only its own request timeout, so
       // this run's cancellation can't fail another run coalesced on the same

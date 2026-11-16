@@ -11,14 +11,16 @@ const WARMER = "warm-node-modules.yml";
 // Every `nm-*` node_modules cache step in a workflow, with what decides whether
 // another job can restore it: the key, the `path` list (the cache's version is
 // derived from it), the job's container image, the NODE_VERSION its key
-// interpolates, and `runs-on` (Blacksmith keeps its own cache store).
+// interpolates, and `runs-on` (Blacksmith keeps its own cache store, shared by
+// every Blacksmith runner size, so the size is not part of the identity).
 function nodeModulesCaches(file) {
   const text = readFileSync(path.join(workflowsDir, file), "utf8");
   const node = /^  NODE_VERSION: "([^"]+)"$/m.exec(text)?.[1] ?? null;
   const jobs = text.slice(text.search(/^jobs:$/m)).split(/^  (?=[\w-]+:\s*$)/m);
   return jobs.flatMap((job) => {
     const container = /^    container: (\S+)$/m.exec(job)?.[1] ?? "none";
-    const runsOn = /^    runs-on: (.+)$/m.exec(job)?.[1] ?? null;
+    const runsOn =
+      /^    runs-on: (.+)$/m.exec(job)?.[1]?.replace(/blacksmith-\d+vcpu-/g, "blacksmith-") ?? null;
     return [...job.matchAll(/^\s+path: \|\n((?:\s+[^\s:]+\n)+)\s+key: (nm-.+)$/gm)].map(
       ([, paths, key]) => JSON.stringify({
         key,

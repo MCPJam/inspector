@@ -70,7 +70,8 @@ export type RunAssistantTurnStreamSink = "ui" | "none";
 /** Whether `runAssistantTurn` runs the chat-ingestion path itself. */
 export type RunAssistantTurnPersistMode = "handler" | "caller";
 
-export interface RunAssistantTurnOptions {
+export interface RunAssistantTurnOptions
+  extends Pick<MCPJamHandlerOptions, "turnTiming"> {
   messages: ModelMessage[];
   projectId?: string;
   scenarioId?: string;
@@ -104,7 +105,7 @@ export interface RunAssistantTurnOptions {
    * narrowed to the public values to avoid silent string churn.
    * `event` is an MCP Events trigger run (unattended, like eval/swarm).
    */
-  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event";
+  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event" | "readiness";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly
@@ -603,6 +604,7 @@ function buildHandlerOptions(
     // PR 5b-followup-2: pass-through structured-error callback.
     ...(opts.onEngineError ? { onEngineError: opts.onEngineError } : {}),
     ...(opts.failureReporter ? { failureReporter: opts.failureReporter } : {}),
+    ...(opts.turnTiming ? { turnTiming: opts.turnTiming } : {}),
     ...(opts.failureCapture ? { failureCapture: opts.failureCapture } : {}),
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     ...(opts.prepareAdvertisedTools
@@ -738,8 +740,7 @@ export async function runAssistantTurn(
     }
     handlerOptions.modelSelection = opts.modelSelection;
   }
-  const useHarness = harnessRequested;
-  const engineResult = useHarness
+  const engineResult = harnessRequested
     ? await runHarnessTurn(handlerOptions, opts.streamSink)
     : await runChatEngineLoop(handlerOptions, opts.streamSink);
 

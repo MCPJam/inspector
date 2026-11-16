@@ -41,6 +41,7 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
       expect(init?.headers).toEqual({
         "Content-Type": "application/json",
         Authorization: "Bearer bearer-token",
+        "x-mcpjam-delivery-contract": "1",
       });
       expect(JSON.parse(init?.body)).toEqual({
         projectId: "project-1",
@@ -751,6 +752,66 @@ describe("private authorization server fallback", () => {
     expect(importBody.tokens.access_token).toBe("locally-refreshed-token");
   });
 
+  it("scrubs the refresh material and reports the account it refreshed", async () => {
+    localRefreshMock.mockResolvedValue({
+      access_token: "locally-refreshed-token",
+      refresh_token: "rotated-refresh-token-0001",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any) =>
+        String(input).endsWith("/web/oauth/force-refresh")
+          ? privateAuthServer409({
+              refresh: { ...REFRESH_MATERIAL, connectionId: "cred-1" },
+            })
+          : new Response(JSON.stringify({ success: true }), { status: 200 }),
+      ),
+    );
+    const delivered: unknown[] = [];
+    await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-token",
+      "project-1",
+      "server-1",
+      { onDelivered: (facts) => delivered.push(facts) },
+    );
+    expect(delivered).toEqual([
+      { credentialId: "cred-1", boundOrigins: ["http://localhost:8001"] },
+    ]);
+    const { scrubDeliveredSecrets } = await import(
+      "../../../shared/delivered-secret-registry.js"
+    );
+    expect(
+      scrubDeliveredSecrets("stored-refresh-token rotated-refresh-token-0001"),
+    ).not.toMatch(/stored-refresh-token|rotated-refresh-token/);
+  });
+
+  it("refuses a locally refreshed token for a server that moved", async () => {
+    localRefreshMock.mockResolvedValue({ access_token: "locally-refreshed-token" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any) =>
+        String(input).endsWith("/web/oauth/force-refresh")
+          ? privateAuthServer409({
+              refresh: { ...REFRESH_MATERIAL, connectionId: "cred-1" },
+            })
+          : new Response(JSON.stringify({ success: true }), { status: 200 }),
+      ),
+    );
+    const onDelivered = vi.fn();
+    await expect(
+      refreshHostedOAuthAccessTokenWithLocalFallback(
+        "bearer-token",
+        "project-1",
+        "server-1",
+        { onDelivered, targetOrigin: "http://localhost:8002" },
+      ),
+    ).rejects.toMatchObject({
+      status: 401,
+      message: expect.stringContaining("now points at another address"),
+    });
+    expect(onDelivered).not.toHaveBeenCalled();
+  });
+
   it("keeps the existing refresh token when the authorization server omits one", async () => {
     // RFC 6749 §6: omitting refresh_token means "keep the one you have".
     // Storing the raw response would drop it, and the NEXT expiry would fail
@@ -1294,5 +1355,112 @@ describe("private authorization server fallback", () => {
     await expect(
       local({ serverId: "server-1", error: new Error("HTTP 401") })
     ).resolves.toEqual({ accessToken: "locally-refreshed" });
+  });
+});
+
+describe("a refreshed token's account and origins", () => {
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  const answer = (extra: Record<string, unknown>) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ success: true, accessToken: "next-token", ...extra }),
+      ),
+    );
+
+  it("reports which account and origins the backend refreshed", async () => {
+    answer({
+      credentialId: "cred-1",
+      boundOrigins: ["https://mcp.example.test"],
+    });
+    const delivered: unknown[] = [];
+    await forceRefreshHostedOAuthAccessToken("bearer", "project-1", "server-1", {
+      onDelivered: (facts) => delivered.push(facts),
+    });
+    expect(delivered).toEqual([
+      { credentialId: "cred-1", boundOrigins: ["https://mcp.example.test"] },
+    ]);
+  });
+
+  it("refuses a token the backend bound to another origin than the caller's", async () => {
+    answer({ credentialId: "cred-1", boundOrigins: ["https://moved.example.test"] });
+    const onDelivered = vi.fn();
+    await expect(
+      forceRefreshHostedOAuthAccessToken("bearer", "project-1", "server-1", {
+        serverName: "Lab server",
+        targetOrigin: "https://mcp.example.test",
+        onDelivered,
+      }),
+    ).rejects.toMatchObject({
+      status: 401,
+      message: expect.stringContaining('"Lab server" now points at another address'),
+      details: expect.objectContaining({ oauthRequired: true }),
+    });
+    expect(onDelivered).not.toHaveBeenCalled();
+  });
+
+  it("refuses a token tied to no account or origin when the caller sends it somewhere", async () => {
+    answer({});
+    await expect(
+      forceRefreshHostedOAuthAccessToken("bearer", "project-1", "server-1", {
+        targetOrigin: "https://mcp.example.test",
+      }),
+    ).rejects.toMatchObject({
+      status: 401,
+      message: expect.stringContaining("could not confirm which address"),
+    });
+    // A refresh pinned to an account is tied to it by the account.
+    await expect(
+      forceRefreshHostedOAuthAccessToken("bearer", "project-1", "server-1", {
+        connectionId: "cred-1",
+        targetOrigin: "https://mcp.example.test",
+      }),
+    ).resolves.toBe("next-token");
+  });
+
+  const handler = () =>
+    buildHostedOAuthUnauthorizedHandler({
+      bearerToken: "bearer",
+      projectId: "project-1",
+      serverId: "server-1",
+      serverName: "Lab server",
+      connectionId: "cred-1",
+      targetOrigin: "https://mcp.example.test",
+    });
+
+  it("refuses a refreshed token bound to another origin after a move", async () => {
+    answer({ boundOrigins: ["https://moved.example.test"] });
+    await expect(
+      handler()({ serverId: "server-1", error: new Error("HTTP 401") }),
+    ).rejects.toMatchObject({
+      status: 401,
+      message: expect.stringContaining("now points at another address"),
+    });
+  });
+
+  it("returns a refreshed token bound to the connection's own origin", async () => {
+    answer({ boundOrigins: ["https://mcp.example.test"] });
+    await expect(
+      handler()({ serverId: "server-1", error: new Error("HTTP 401") }),
+    ).resolves.toEqual({ accessToken: "next-token" });
+  });
+
+  it("returns the token when the backend names no origins", async () => {
+    answer({});
+    await expect(
+      handler()({ serverId: "server-1", error: new Error("HTTP 401") }),
+    ).resolves.toEqual({ accessToken: "next-token" });
   });
 });
