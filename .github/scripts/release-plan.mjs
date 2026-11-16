@@ -31,7 +31,7 @@ export function planRelease({ unpublished, inspectorVersion, inspectorReleaseExi
     throw new Error(
       "Nothing to release: every package version on main is already on npm, and " +
         `v${inspectorVersion} already has its GitHub release. Start a release from ` +
-        "Soundcheck, which opens the version PR, and merge it first.",
+        "Soundcheck first.",
     );
   }
   if (deployWebapp && !selected.inspector && !desktopOnly) {
@@ -40,8 +40,8 @@ export function planRelease({ unpublished, inspectorVersion, inspectorReleaseExi
     );
   }
 
-  // Only the backend dispatch payload reads this now; the version PR decides
-  // what ships.
+  // Only the backend dispatch payload reads this now; Start release's version
+  // commit decides what ships.
   const scope = desktopOnly
     ? "desktop-only"
     : !selected.inspector
