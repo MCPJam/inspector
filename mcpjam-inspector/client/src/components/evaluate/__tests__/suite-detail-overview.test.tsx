@@ -12,10 +12,12 @@ import {
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
 import { authoringRequest } from "@/lib/apis/eval-authoring-api";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
 import { useSuiteResultsPageEnabled } from "@/hooks/use-suite-results-page-enabled";
+import { SuiteRunsAsLine } from "../suite-runs-as";
+import { track } from "@/lib/analytics";
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,
@@ -39,9 +41,24 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
 vi.mock("@/hooks/use-is-member-actor", () => ({ useIsMemberActor: () => true }));
+// The suite pills pick a client logo for the theme.
+vi.mock("@/stores/preferences/preferences-provider", async (original) => ({
+  ...(await original<object>()),
+  usePreferencesStore: (select: (s: { themeMode: string }) => unknown) =>
+    select({ themeMode: "light" }),
+}));
 // Off unless a test turns the new Suite page on.
 vi.mock("@/hooks/use-suite-results-page-enabled", () => ({
   useSuiteResultsPageEnabled: vi.fn(() => undefined),
+}));
+vi.mock("@/lib/analytics", async (original) => ({
+  ...(await original<object>()),
+  track: vi.fn(),
+}));
+// The accounts line has its own tests; here it only has to land in the header.
+vi.mock("../suite-runs-as", async (original) => ({
+  ...(await original<object>()),
+  SuiteRunsAsLine: vi.fn(() => null),
 }));
 // An imported draft opens in the step editor, which renders the model picker.
 vi.mock("@/hooks/use-available-models", () => ({
@@ -1441,6 +1458,7 @@ describe("SuiteDetailOverview run delete", () => {
 });
 
 describe("SuiteDetailOverview — Runs card behind eval-suite-results-page", () => {
+  afterEach(() => vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined));
   const run = makeRun({ _id: "run-1", runNumber: 1 });
   const rows = [
     makeIteration({ _id: "it-1", suiteRunId: "run-1", resultSource: "reported" }),
@@ -1490,7 +1508,6 @@ describe("SuiteDetailOverview — Runs card behind eval-suite-results-page", () 
         }),
       );
     expect(onRunClick).toHaveBeenCalledWith("run-1");
-    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
   });
 
   it.each([undefined, false])(
@@ -1501,7 +1518,233 @@ describe("SuiteDetailOverview — Runs card behind eval-suite-results-page", () 
       expect(screen.queryByTestId("nav-suite-health")).toBeNull();
       expect(screen.getByTestId("metric-strip-pass-rate")).toBeTruthy();
       expect(screen.queryByRole("button", { name: /^About / })).toBeNull();
-      vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
     },
   );
+});
+
+describe("SuiteDetailOverview — header and results only behind eval-suite-results-page", () => {
+  afterEach(() => {
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
+    vi.mocked(SuiteRunsAsLine).mockImplementation(() => null);
+    vi.mocked(track).mockClear();
+  });
+  const pageViews = () =>
+    vi
+      .mocked(track)
+      .mock.calls.filter(([event]) => event === "eval_nav_page_viewed");
+  const run = makeRun({
+    _id: "run-1",
+    runNumber: 1,
+    effectiveModelId: "openai/gpt-5-nano",
+  });
+  const rows = [
+    makeIteration({
+      _id: "it-1",
+      suiteRunId: "run-1",
+      resultSource: "reported",
+    }),
+  ];
+  function renderSuitePage(
+    overrides: Partial<Parameters<typeof SuiteDetailOverview>[0]> = {},
+    flag: boolean | undefined = true,
+  ) {
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(flag);
+    const props = {
+      onEditSuite: vi.fn(),
+      onDescribeCases: vi.fn(),
+      ...overrides,
+    };
+    renderWithProviders(
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[run]}
+        runsLoading={false}
+        metricsByRun={metricsByRunFromIterations(rows)}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onSetupSdk={vi.fn()}
+        onEditCases={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onImportCases={vi.fn()}
+        onDeleteTestCasesBatch={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        {...props}
+      />,
+    );
+    return props;
+  }
+  const headerButtons = () =>
+    within(screen.getByTestId("suite-page-header"))
+      .getAllByRole("button")
+      .map((button) => button.textContent?.trim());
+
+  it("shows Export as SDK, Suite settings and Run, in that order, and the pills", () => {
+    renderSuitePage();
+    expect(headerButtons()).toEqual(["Export as SDK", "Suite settings", "Run"]);
+    expect(screen.getByRole("button", { name: "Run" })).toHaveAttribute(
+      "title",
+      "Pick clients, models and iterations, then run",
+    );
+    const header = screen.getByTestId("suite-page-header");
+    expect(within(header).getByTitle("Model")).toHaveTextContent("GPT-5 Nano");
+    expect(within(header).getByTitle("Client")).toHaveTextContent("Claude");
+  });
+
+  it("renders none of today's case authoring", () => {
+    renderSuitePage();
+    for (const text of [
+      "Test Cases",
+      "Add case",
+      "Configure suite evaluators",
+      "Setup SDK",
+      "Setup Run",
+    ]) {
+      expect(screen.queryByText(text)).toBeNull();
+    }
+    expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
+    expect(screen.queryByTestId("suite-detail-empty-cases")).toBeNull();
+  });
+
+  it("opens today's settings page from Suite settings, and hides it when the reader cannot edit", async () => {
+    const { onEditSuite } = renderSuitePage();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Suite settings" }));
+    expect(onEditSuite).toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ readOnlyConfig: true }, ["Export as SDK", "Run"]],
+    [{ onSetupSdk: undefined }, ["Suite settings", "Run"]],
+    [
+      { configLocked: true, onDuplicateSuite: vi.fn() },
+      ["Duplicate to edit", "Export as SDK", "Run"],
+    ],
+  ])("drops what the reader cannot use (%#)", (overrides, buttons) => {
+    renderSuitePage(overrides);
+    expect(headerButtons()).toEqual(buttons);
+  });
+
+  it.each(["runs", "test-cases"] as const)(
+    "shows today's No cases yet on the %s tab of an empty suite",
+    (view) => {
+      renderSuitePage({ cases: [], runs: [], view });
+      expect(screen.getByTestId("suite-detail-empty-cases")).toBeVisible();
+      expect(screen.getByTestId("suite-page-tabs")).toBeVisible();
+      expect(screen.queryByTestId("nav-suite-no-runs")).toBeNull();
+    },
+  );
+
+  it("opens Test cases first when adding cases from the Runs tab", async () => {
+    const onViewChange = vi.fn();
+    const { onDescribeCases } = renderSuitePage({
+      cases: [],
+      runs: [],
+      onViewChange,
+    });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /^Describe/ }));
+    expect(onViewChange).toHaveBeenCalledWith("test-cases");
+    expect(onDescribeCases).toHaveBeenCalled();
+  });
+
+  it("offers no way to add cases on a CI-locked empty suite", () => {
+    renderSuitePage({ cases: [], runs: [], configLocked: true });
+    expect(screen.getByTestId("suite-detail-empty-cases")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Describe/ })).toBeNull();
+  });
+
+  it("nudges a first run on the Runs tab, with Run and View test cases", async () => {
+    const onViewChange = vi.fn();
+    renderSuitePage({ runs: [], onViewChange });
+    const panel = screen.getByTestId("nav-suite-no-runs");
+    expect(panel).toHaveTextContent("No runs yet");
+    expect(panel).toHaveTextContent("Run your 1 test case to start a trend.");
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(
+      within(panel).getByRole("button", { name: "View test cases" }),
+    );
+    expect(onViewChange).toHaveBeenCalledWith("test-cases");
+    await user.click(within(panel).getByRole("button", { name: "Run" }));
+    expect(await screen.findByText(/^Setup Run · /)).toBeInTheDocument();
+  });
+
+  it("shows today's Test Cases list on the Test cases tab, without the Runs card", () => {
+    renderSuitePage({ view: "test-cases" });
+    expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Add case/ })).toBeVisible();
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+    expect(screen.queryByTestId("nav-suite-no-runs")).toBeNull();
+  });
+
+  it("asks for the other tab from the tab bar", async () => {
+    const onViewChange = vi.fn();
+    renderSuitePage({ onViewChange });
+    const tabs = screen.getByTestId("suite-page-tabs");
+    expect(
+      within(tabs).getByRole("button", { name: "Runs" }),
+    ).toHaveAttribute("aria-current", "page");
+    await userEvent
+      .setup()
+      .click(within(tabs).getByRole("button", { name: "Test cases" }));
+    expect(onViewChange).toHaveBeenCalledWith("test-cases");
+  });
+
+  it("blocks the no-runs Run for the same reason as the header's", () => {
+    renderSuitePage({
+      runs: [],
+      evalRunsDisabledReason: "Runs are paused for this organization.",
+    });
+    for (const scope of ["suite-page-header", "nav-suite-no-runs"]) {
+      expect(
+        within(screen.getByTestId(scope)).getByRole("button", { name: "Run" }),
+      ).toBeDisabled();
+    }
+  });
+
+  it("keeps the Runs as you line under the name", () => {
+    vi.mocked(SuiteRunsAsLine).mockImplementation(() => (
+      <p data-testid="suite-runs-as">Runs as you · Asana Dummy</p>
+    ));
+    renderSuitePage();
+    expect(
+      within(screen.getByTestId("suite-page-header")).getByTestId(
+        "suite-runs-as",
+      ),
+    ).toHaveTextContent("Runs as you · Asana Dummy");
+  });
+
+  it("counts one suite page view with the flag on", () => {
+    renderSuitePage();
+    expect(pageViews()).toEqual([
+      [
+        "eval_nav_page_viewed",
+        expect.objectContaining({
+          page: "suite",
+          ui: "nav",
+          project_id: "project-1",
+        }),
+      ],
+    ]);
+  });
+
+  it("keeps today's header and Test Cases card with the flag off", () => {
+    renderSuitePage({}, false);
+    expect(pageViews()).toEqual([]);
+    expect(screen.queryByTestId("suite-page-header")).toBeNull();
+    expect(screen.queryByTestId("suite-page-tabs")).toBeNull();
+    expect(
+      within(screen.getByTestId("suite-detail-identity")).getByRole("button", {
+        name: "Suite settings",
+      }),
+    ).toBeVisible();
+    expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
+  });
 });
