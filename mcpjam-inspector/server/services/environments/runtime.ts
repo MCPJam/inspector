@@ -27,7 +27,6 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
-import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { logger } from "../../utils/logger.js";
@@ -275,12 +274,13 @@ export function translateEnvironmentRuntimeError(
   const message = error instanceof Error ? error.message : String(error);
   if (/\bArgumentValidationError\b/.test(message)) {
     // Convex rejected the arguments before the resolver ran: a malformed id,
-    // or deploy skew on a field this backend does not know. Answer with the
-    // field only, since Convex's prose echoes the argument values back; the
-    // warn keeps skew visible in Axiom without a Sentry event per turn.
+    // or deploy skew on a field this backend does not know. Answer and log
+    // with the field only, since Convex's prose echoes the argument values
+    // back; the warn keeps skew visible in Axiom without a Sentry event per
+    // turn.
     const field = argumentValidationField(message);
     logger.warn("[environments] Convex rejected runtime arguments", {
-      detail: redactForLog(error),
+      field: field ?? "unknown",
     });
     return new WebRouteError(
       400,
