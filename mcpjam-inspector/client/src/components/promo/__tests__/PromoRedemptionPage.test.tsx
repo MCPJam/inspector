@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PromoRedemptionPage } from "../PromoRedemptionPage";
 import { savePromoIntent, clearPromoIntent } from "@/lib/promo-intent";
 import { useWorkosAuthUnavailableStore } from "@/stores/workos-auth-unavailable-store";
+import { WorkosAuthUnavailableDialog } from "@/components/auth/WorkosAuthUnavailableDialog";
 
 const mocks = vi.hoisted(() => ({
   user: { id: "account-1" } as { id: string } | null,
@@ -89,12 +90,35 @@ describe("redemption confirmation", () => {
   });
   it("explains where to sign in at an HTTP address instead of calling WorkOS", async () => {
     mocks.user = null;
-    vi.stubGlobal("location", new URL("http://192.168.1.50:6274/redeem"));
-    render(<PromoRedemptionPage />);
-    fireEvent.click(screen.getByRole("button", { name: "Sign in to claim" }));
-    await waitFor(() =>
-      expect(useWorkosAuthUnavailableStore.getState().open).toBe(true),
+    const assign = vi.fn();
+    vi.stubGlobal(
+      "location",
+      Object.assign(new URL("http://192.168.1.50:6274/redeem"), { assign }),
     );
+    render(
+      <>
+        <PromoRedemptionPage />
+        <WorkosAuthUnavailableDialog />
+      </>,
+    );
+    const authDialog = { name: "Sign in on app.mcpjam.com" };
+    for (const close of [
+      () => fireEvent.click(screen.getByRole("button", { name: "Cancel" })),
+      () => fireEvent.keyDown(document.activeElement!, { key: "Escape" }),
+    ]) {
+      fireEvent.click(screen.getByRole("button", { name: "Sign in to claim" }));
+      expect(await screen.findByRole("dialog", authDialog)).toBeVisible();
+      close();
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", authDialog)).toBeNull(),
+      );
+      // The auth dialog stacks over the page's own dialog, whose close clears
+      // the claim and leaves /redeem.
+      expect(
+        screen.getByRole("button", { name: "Sign in to claim" }),
+      ).toBeVisible();
+    }
+    expect(assign).not.toHaveBeenCalled();
     expect(mocks.signIn).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
   });

@@ -11,6 +11,10 @@ import { fileURLToPath } from "url";
  *
  * If this fails, take `signIn`/`signUp` from `useInspectorAuth`
  * (`@/hooks/use-inspector-auth`) instead of AuthKit's `useAuth`.
+ *
+ * It reads one file at a time and trusts allow-listed files whole, so an
+ * AuthKit `useAuth()` result passed to another file, or a new `signIn` call
+ * inside an allow-listed file, gets past it.
  */
 
 const CLIENT_SRC = resolve(fileURLToPath(import.meta.url), "../../..");
@@ -52,6 +56,12 @@ describe("WorkOS sign-in guard ratchet (PLB-506)", () => {
     path: relative(CLIENT_SRC, file).split(sep).join("/"),
     source: readFileSync(file, "utf8"),
   }));
+
+  it("scans the client source", () => {
+    expect(files.map(({ path }) => path)).toContain(
+      "hooks/use-inspector-auth.ts",
+    );
+  });
 
   it("starts account sign-in only through useInspectorAuth", () => {
     expect(
