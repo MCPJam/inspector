@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { ChevronsUpDown } from "lucide-react";
+import { ChevronsUpDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type HistorySortKey = "server" | "score" | "date";
@@ -175,9 +175,20 @@ export function ConformanceHistoryFilters({
 
 /**
  * The same up-and-down chevrons on every sortable column: full strength on
- * the sorted one, faint on the rest, and MCPJam orange while hovered.
+ * the sorted one, faint on the rest, and MCPJam orange while hovered. While
+ * History reads every run, the sorted one spins in the same spot instead, so
+ * the wait shows where the click was and the table below never moves.
  */
-function SortIcon({ active }: { active: boolean }) {
+function SortIcon({ active, loading }: { active: boolean; loading: boolean }) {
+  if (active && loading) {
+    return (
+      <Loader2
+        aria-hidden
+        data-testid="conformance-history-sort-loading"
+        className="size-4 shrink-0 animate-spin text-muted-foreground"
+      />
+    );
+  }
   return (
     <ChevronsUpDown
       aria-hidden
@@ -195,12 +206,15 @@ export function HistorySortHeader({
   sortKey,
   sort,
   onSort,
+  loading = false,
   className,
 }: {
   label: string;
   sortKey: HistorySortKey;
   sort: HistorySort;
   onSort: (sort: HistorySort) => void;
+  /** History is still reading every run; the sorted column shows a spinner. */
+  loading?: boolean;
   className?: string;
 }) {
   const direction = sort.key === sortKey ? sort.direction : null;
@@ -224,7 +238,7 @@ export function HistorySortHeader({
       data-sort-direction={direction ?? undefined}
     >
       <span className="truncate">{label}</span>
-      <SortIcon active={direction !== null} />
+      <SortIcon active={direction !== null} loading={loading} />
     </button>
   );
 }

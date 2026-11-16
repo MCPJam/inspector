@@ -617,6 +617,61 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
+  it("holds the table still while a sort reads every run, then reorders once", async () => {
+    const first: Page = {
+      page: [
+        run("a3", "srv_alpha", "2025-11-25", 3),
+        run("b2", "srv_beta", "2025-10-01", 2),
+      ],
+      isDone: false,
+      continueCursor: "cursor_2",
+    };
+    const second: Page = {
+      page: [run("a1", "srv_alpha", "2025-06-18", 1)],
+      isDone: true,
+      continueCursor: "",
+    };
+    // Convex reads undefined for the second page until the backend answers.
+    let secondLoaded = false;
+    servePages((args) =>
+      args.paginationOpts.cursor === "cursor_2"
+        ? secondLoaded
+          ? second
+          : undefined
+        : first,
+    );
+    const { rerender } = render(
+      <ConformanceHistory projectId="proj_1" serverNames={serverNames} />,
+    );
+    const newestFirst = rowTexts();
+
+    const date = screen.getByTestId("conformance-history-sort-date");
+    await userEvent.setup().click(date);
+    await waitFor(() =>
+      expect(lastListArgs().paginationOpts.cursor).toBe("cursor_2"),
+    );
+
+    // Not the loaded runs sorted oldest first: the last complete order stays.
+    expect(rowTexts()).toEqual(newestFirst);
+    expect(
+      screen.getByTestId("conformance-history-sort-loading"),
+    ).toBeInTheDocument();
+    // Announced, but not as a line that pushes the table down.
+    expect(screen.getByRole("status").textContent).toBe("Loading every run…");
+    expect(screen.getByRole("status").className).toContain("sr-only");
+
+    secondLoaded = true;
+    rerender(
+      <ConformanceHistory projectId="proj_1" serverNames={serverNames} />,
+    );
+
+    await waitFor(() => expect(rowTexts()).toHaveLength(3));
+    expect(rowTexts()[0]).toContain("2025-06-18");
+    expect(rowTexts()[2]).toContain("2025-11-25");
+    expect(screen.queryByTestId("conformance-history-sort-loading")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
   it("sorts Score highest first, then lowest, runs without a score last", async () => {
     const scored = (id: string, score: number | null, createdAt: number) =>
       makeRun({ ...run(id, "srv_alpha", id, createdAt), score });

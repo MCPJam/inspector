@@ -6,7 +6,7 @@
  * redacted artifact at `/conformance/shared/:token`.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -36,11 +36,13 @@ import type {
   SharedSuiteReport,
 } from "./conformance-shared-artifact";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
-import { RunResultRing } from "./RunResultRing";
+import {
+  ConformanceHistoryTable,
+  HISTORY_SOURCE_LABEL,
+} from "./ConformanceHistoryTable";
 import {
   ConformanceHistoryFilters,
   DEFAULT_HISTORY_SORT,
-  HistorySortHeader,
   isBackendHistoryOrder,
   searchAndSortHistory,
   type HistorySort,
@@ -93,22 +95,10 @@ export type ConformanceRunListItem = {
   sharingEnabled: boolean;
 };
 
-/** Where a run came from, in the words the History table uses. */
-export const HISTORY_SOURCE_LABEL: Record<string, string> = {
-  ui: "UI",
-  sdk: "SDK",
-  cli: "CLI",
-  github_action: "GitHub",
-  github_app: "GitHub",
-  api: "API",
-};
-
-export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
+export {
+  HISTORY_SOURCE_LABEL,
+  historyDateFormat,
+} from "./ConformanceHistoryTable";
 
 /** Runs per page while History shows the newest first. */
 const HISTORY_PAGE_SIZE = 20;
@@ -151,6 +141,14 @@ export function ConformanceHistory({
   const [readAll, setReadAll] = useState(false);
   /** Once there are runs, the toolbar stays up through every reload. */
   const [hadRuns, setHadRuns] = useState(false);
+  /**
+   * The rows as last shown with every run they needed, kept while a sort
+   * reads the rest of the history so the table switches order only once.
+   */
+  const settled = useRef<{
+    serverFilter: string | null;
+    rows: ConformanceRunListItem[];
+  } | null>(null);
 
   const page = useQuery(
     "conformanceRuns:listRuns" as any,
@@ -235,7 +233,7 @@ export function ConformanceHistory({
     }
   }
 
-  const visibleRows = searchAndSortHistory(rows, {
+  const sortedRows = searchAndSortHistory(rows, {
     query,
     sort,
     texts: (run) => [
@@ -247,15 +245,24 @@ export function ConformanceHistory({
     score: (run) => run.score,
     createdAt: (run) => run.createdAt,
   });
-  const readingEveryRun = readAll && (!page || !page.isDone);
+  // Also true on the render where a sort or search has just asked for every
+  // run, before the large page is set.
+  const readingEveryRun = readsEveryRun && !page?.isDone;
+  // A sort over part of the history leads with the wrong runs, then reorders
+  // once the rest arrives. Keep the last complete order up, dimmed, until then.
+  // A search narrows as pages arrive, so it shows them as they come.
+  const holdOrder =
+    readingEveryRun &&
+    query.length === 0 &&
+    settled.current !== null &&
+    settled.current.serverFilter === serverFilter &&
+    settled.current.rows.length > 0;
+  const visibleRows =
+    holdOrder && settled.current ? settled.current.rows : sortedRows;
+  if (!readingEveryRun) settled.current = { serverFilter, rows: sortedRows };
   const filteredServerName = serverFilter
     ? (serverNames?.get(serverFilter) ?? serverFilter)
     : null;
-
-  const header = "text-[11px] font-semibold tracking-[0.06em] text-foreground";
-  const columns =
-    "grid w-full grid-cols-[minmax(0,1.8fr)_repeat(6,minmax(0,1fr))] items-center gap-x-4";
-  const cell = "min-w-0 truncate";
 
   const notice = (text: string, status = false) => (
     <p
@@ -276,9 +283,11 @@ export function ConformanceHistory({
         serverNames={serverNames}
       />
 
-      {readingEveryRun && rows.length > 0
-        ? notice("Loading every run…", true)
-        : null}
+      {/* Always in the DOM, out of the flow: the sorted header's spinner is
+          what sighted users see, so the table never shifts for this. */}
+      <p className="sr-only" role="status">
+        {readingEveryRun && rows.length > 0 ? "Loading every run…" : ""}
+      </p>
 
       {page === undefined && rows.length === 0 ? (
         notice("Loading run history…", true)
@@ -290,7 +299,9 @@ export function ConformanceHistory({
           true,
         )
       ) : visibleRows.length === 0 ? (
-        readingEveryRun ? null : (
+        readingEveryRun ? (
+          notice("Loading every run…")
+        ) : (
           <p
             className="px-1 text-sm text-muted-foreground"
             role="status"
@@ -300,82 +311,15 @@ export function ConformanceHistory({
           </p>
         )
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
-            <HistorySortHeader
-              label="SERVER"
-              sortKey="server"
-              sort={sort}
-              onSort={setSort}
-              className={header}
-            />
-            <span className={`${cell} ${header}`}>PROTOCOL</span>
-            <HistorySortHeader
-              label="SCORE"
-              sortKey="score"
-              sort={sort}
-              onSort={setSort}
-              className={header}
-            />
-            <span className={`${cell} ${header}`}>CHECKS</span>
-            <span className={`${cell} ${header}`}>RESULT</span>
-            <HistorySortHeader
-              label="DATE"
-              sortKey="date"
-              sort={sort}
-              onSort={setSort}
-              className={header}
-            />
-            <span className={`${cell} ${header}`}>SOURCE</span>
-          </div>
-          <ul>
-            {visibleRows.map((run) => (
-              <li
-                key={run._id}
-                className="border-t border-border/60 first:border-t-0"
-              >
-                <button
-                  type="button"
-                  className={`${columns} bg-popover px-4.5 py-3.5 text-left text-popover-foreground transition-colors hover:bg-muted/30`}
-                  data-testid="conformance-history-row"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openRun(run._id);
-                  }}
-                >
-                  <span className={`${cell} text-sm font-semibold`}>
-                    {serverLabel(run)}
-                  </span>
-                  <span className={`${cell} text-[13px] text-muted-foreground`}>
-                    {run.protocolVersion ?? "Auto"}
-                  </span>
-                  <span
-                    className={`${cell} text-sm tabular-nums ${
-                      run.score == null ? "text-muted-foreground" : ""
-                    }`}
-                  >
-                    {run.score == null ? "—" : `${run.score}%`}
-                  </span>
-                  <span
-                    className={`${cell} text-sm font-semibold tabular-nums`}
-                  >
-                    {run.passed}/{run.applicable}
-                  </span>
-                  <span className="flex min-w-0 items-center">
-                    <RunResultRing run={run} />
-                  </span>
-                  <span className="whitespace-nowrap text-[13px] text-muted-foreground">
-                    {historyDateFormat.format(run.createdAt)}
-                  </span>
-                  <span className={`${cell} text-[13px] text-muted-foreground`}>
-                    {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ConformanceHistoryTable
+          rows={visibleRows}
+          sort={sort}
+          onSort={setSort}
+          loading={readingEveryRun}
+          dimmed={holdOrder}
+          serverLabel={serverLabel}
+          onOpenRun={openRun}
+        />
       )}
 
       {readsEveryRun || visibleRows.length === 0 ? null : page === undefined ? (
