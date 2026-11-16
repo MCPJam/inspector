@@ -10,7 +10,7 @@ export function TextPart({
   return (
     <Markdown
       content={text}
-      className={`max-w-full break-words overflow-auto text-foreground`}
+      className="max-w-full break-words overflow-auto text-foreground"
     />
   );
 }
