@@ -501,7 +501,8 @@ export class OAuthConformanceTest {
   }
 
   async run(): Promise<ConformanceResult> {
-    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "oauth", mode: "single" });
     const startedAt = Date.now();
     const steps: StepResult[] = [];
     let state = cloneEmptyFlowState();

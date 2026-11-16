@@ -29,6 +29,8 @@ export const ANALYTICS_EVENTS = {
   extension_launch_completed: { source: "client" },
   // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
   platform_launch_engagement: { source: "client" },
+  // One-time feature callouts (FeatureSpotlight); action is shown | closed.
+  feature_spotlight_engagement: { source: "client" },
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
@@ -61,6 +63,14 @@ export const ANALYTICS_EVENTS = {
    * route are customer conversation content and never ride an event.
    */
   api_chat_session_turn_completed: { source: "server" },
+  /**
+   * One harness turn's response closed, on the browser chat routes, the
+   * public API or a local runtime (`surface`). Where its time went and which
+   * start path it took: closed vocabularies, whole milliseconds and the
+   * verified organization id only (`shared/harness-turn-event.ts`). Never
+   * prompt text, paths, commands, tokens, URLs, sandbox ids or error messages.
+   */
+  harness_turn_completed: { source: "server" },
 
   // --- Directory readiness (server-authoritative; no client twin) ---
   /**

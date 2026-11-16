@@ -477,7 +477,8 @@ export class MCPAppsConformanceTest {
   async run(): Promise<MCPAppsConformanceResult> {
     const signal = this.config.signal;
     signal?.throwIfAborted();
-    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "apps", mode: "single" });
     const serverConfig = this.config.serverConfig;
     const runConfig =
       signal && "url" in serverConfig

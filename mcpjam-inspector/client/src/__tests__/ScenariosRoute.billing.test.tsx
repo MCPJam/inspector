@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockUserTestingTab, mockRouteContext } = vi.hoisted(() => ({
   mockUserTestingTab: vi.fn(() => <div>User Testing Tab</div>),
   mockRouteContext: {
-    billingUiEnabled: true,
     activeTabBillingLocked: false,
     activeTabBillingFeature: "scenarios" as string | null,
     convexProjectId: "project-1" as string | null,
@@ -36,12 +35,6 @@ vi.mock("react-router", async (importOriginal) => {
 // default here: this suite is about the billing path, not the sign-in one.
 vi.mock("@/hooks/use-is-member-actor", () => ({
   useIsMemberActor: () => true,
-}));
-// Flag on: this suite is about billing. The flag gate is covered in
-// `GatedFeatureRoutes.preview.test.tsx` and `SwarmsRoute.guest-gate.test.tsx`.
-vi.mock("@/hooks/useSandboxesEnabled", () => ({
-  useSandboxesEnabled: () => true,
-  useSandboxesEnabledState: () => true,
 }));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: { email: "member@example.com" }, isLoading: false }),
@@ -102,7 +95,6 @@ import { ScenariosRoute } from "../App";
 describe("ScenariosRoute gates", () => {
   beforeEach(() => {
     mockUserTestingTab.mockClear();
-    mockRouteContext.billingUiEnabled = true;
     mockRouteContext.activeTabBillingLocked = false;
     mockRouteContext.activeTabBillingFeature = "scenarios";
     mockRouteContext.convexProjectId = "project-1";
@@ -170,15 +162,4 @@ describe("ScenariosRoute gates", () => {
     expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
     expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
   });
-
-  it("renders the surface when billing UI is disabled", () => {
-    mockRouteContext.billingUiEnabled = false;
-    mockRouteContext.activeTabBillingLocked = true;
-
-    render(<ScenariosRoute />);
-
-    expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
-    expect(screen.queryByTestId("billing-upsell-gate")).not.toBeInTheDocument();
-  });
-
 });

@@ -237,10 +237,12 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
 }));
 vi.mock("../harness-model-broker.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../harness-model-broker.js")>()),
+  revokeHarnessModelBroker: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
   reserveHarnessBox: vi.fn(async () => ({ ok: true })),
   renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  revokeHarnessModelBroker: vi.fn(async () => ({ ok: true })),
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";

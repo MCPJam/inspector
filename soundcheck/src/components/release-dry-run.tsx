@@ -1,7 +1,7 @@
 /**
  * Release Dry-Run Preview tile.
  *
- * Shows what "Start release" would put in the version PR, i.e. what
+ * Shows what "Start release" would ship, i.e. what
  * `changeset version` would produce against `main`: per-package current → new
  * version, bump type, contributing changesets (with their descriptions =
  * release-note bodies), the projected release_tag, and whether desktop
@@ -77,8 +77,7 @@ export async function ReleaseDryRun() {
         <p className="text-sm leading-relaxed text-muted-foreground">
           No pending changesets.{" "}
           <code className="font-mono text-foreground">npx changeset status</code>{" "}
-          would report zero releases, so Start release has nothing to put in
-          a version PR.
+          would report zero releases, so Start release has nothing to ship.
         </p>
       </Tile>
     );

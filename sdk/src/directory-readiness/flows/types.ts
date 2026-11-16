@@ -128,6 +128,11 @@ export interface DirectoryFlowField {
     keys: [string, string];
     placeholders?: [string, string][];
     maxRows: number;
+    /**
+     * Rows show as they fill, one empty row at a time, up to `maxRows`.
+     * Without it every row shows, as a portal's fixed rows do.
+     */
+    grow?: true;
   };
   /** Characters, counted as the portal's counter counts them. */
   maxLength?: number;

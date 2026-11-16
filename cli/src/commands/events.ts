@@ -21,6 +21,7 @@ import {
   runEventsConformanceForCli,
 } from "../lib/events-conformance.js";
 import { conformanceExitCode } from "../lib/conformance-exit-code.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { setProcessExitCode, usageError } from "../lib/output.js";
 import {
   addHostOption,
@@ -427,6 +428,7 @@ function registerConformance(events: Command): void {
       );
     }
 
+    captureConformanceRunEvent("events", "single");
     const result = await withEventsConnection(options, ctx, (manager, serverId) =>
       runEventsConformanceForCli({
         manager,

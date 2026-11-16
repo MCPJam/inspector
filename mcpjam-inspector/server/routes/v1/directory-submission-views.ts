@@ -12,11 +12,11 @@ import type { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import {
   placeDirectoryResults,
+  directoryPlacementOf,
   validateDirectoryAnswers,
   withDirectoryFlowDefaults,
   type DirectoryAnswer,
   type DirectoryFlow,
-  type PlacedFinding,
   type PlacedStep,
 } from "@mcpjam/sdk";
 import type {
@@ -25,13 +25,19 @@ import type {
   PlatformDirectorySubmissionCounts,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionView,
+  PlatformDirectorySubmissionFinding,
 } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 
-type Finding = PlacedFinding["finding"];
+import {
+  changedFindingInputs,
+  type FindingWithInputs,
+} from "../../services/readiness/submission-finding-inputs.js";
+
+type Finding = FindingWithInputs;
 
 /** A run row as `claudeReadinessRuns` returns it. */
 export type RunRow = {
@@ -45,7 +51,13 @@ export type RunRow = {
 export type RunResults = {
   run: RunRow | null;
   /** Absent when the run has no report that could be read. */
-  report?: { findings: Finding[]; gradedAnswers?: DirectoryAnswer[] };
+  report?: {
+    findings: Finding[];
+    gradedAnswers?: DirectoryAnswer[];
+    pluginVersionId?: string;
+    flowVersion?: string;
+    expired?: boolean;
+  };
 };
 
 /** Newest first; more failed runs than this in a row read as none complete. */
@@ -67,7 +79,9 @@ export function readRefusal(error: unknown, resource: string) {
   );
 }
 
-export function toFlowSummary(flow: DirectoryFlow): PlatformDirectoryFlowSummary {
+export function toFlowSummary(
+  flow: DirectoryFlow,
+): PlatformDirectoryFlowSummary {
   const { id, directory, title, version, submissionUrl } = flow;
   const steps = flow.steps.map((step) => ({ id: step.id, title: step.title }));
   return { id, directory, title, version, submissionUrl, steps };
@@ -87,11 +101,36 @@ export function placeResults(
   row: Submission,
   results: RunResults,
 ): PlacedStep[] {
+  const report = results.report;
+  const findings = new Map(report?.findings.map((item) => [item.id, item]));
   return placeDirectoryResults({
     flow,
     answers: row.answers,
-    findings: results.report?.findings,
-    gradedAnswers: results.report?.gradedAnswers,
+    findings: report?.findings,
+    gradedAnswers: report?.gradedAnswers,
+    findingFreshness(finding) {
+      const saved = findings.get(finding.id) ?? finding;
+      const staleBecause = changedFindingInputs(saved, {
+        flow,
+        answers: row.answers,
+        pluginVersionId: row.pluginVersionId,
+      });
+      if (
+        !findings.get(finding.id)?.inputs &&
+        directoryPlacementOf(flow, finding.id)?.needs?.includes("package") &&
+        report?.pluginVersionId !== undefined &&
+        report.pluginVersionId !== row.pluginVersionId
+      ) {
+        staleBecause.push("pluginVersionId");
+      }
+      if (report?.flowVersion && report.flowVersion !== flow.version) {
+        staleBecause.push("rules");
+      }
+      return {
+        staleBecause,
+        expiredWithoutInputs: report?.expired && !findings.get(finding.id)?.inputs,
+      };
+    },
   });
 }
 
@@ -144,42 +183,52 @@ export async function latestResults(
   } catch (error) {
     throw readRefusal(error, "Readiness runs");
   }
-  const run = runs.find((each) => each.status === "completed" && each.hasReport);
-  return run ? resultsOf(convex, run) : { run: null };
+  const run = runs.find((each) => each.status === "completed");
+  if (!run) return { run: null };
+  return resultsOf(convex, run, row.id);
 }
 
 /** One run's results. The caller has read the run under its own bearer. */
 export async function resultsOf(
   convex: ConvexHttpClient,
   run: RunRow,
+  submissionId = run.submissionId,
 ): Promise<RunResults> {
-  if (!run.hasReport) return { run };
+  if (!run.hasReport) {
+    return submissionId ? durableResults(convex, submissionId, run) : { run };
+  }
   const [findings, inputs] = await Promise.all([
     readFindings(run.id),
-    convex
-      .query(runInputs, { runId: run.id })
-      .catch((error: unknown) => {
-        throw readRefusal(error, "Readiness run inputs");
-      }),
+    convex.query(runInputs, { runId: run.id }).catch((error: unknown) => {
+      throw readRefusal(error, "Readiness run inputs");
+    }),
   ]);
-  if (!findings) return { run };
-  // Without the frozen answers nothing reads as stale, rather than everything.
+  if (!findings) {
+    return submissionId ? durableResults(convex, submissionId, run) : { run };
+  }
   const graded: unknown = inputs?.answers;
-  return Array.isArray(graded) && graded.every(hasKey)
-    ? { run, report: { findings, gradedAnswers: graded } }
-    : { run, report: { findings } };
+  return {
+    run,
+    report: {
+      findings,
+      ...(Array.isArray(graded) && graded.every(hasKey) ? { gradedAnswers: graded } : {}),
+      pluginVersionId: inputs?.pluginVersionId,
+      flowVersion: inputs?.flowVersion,
+    },
+  };
 }
 
 /**
- * The findings in a run's stored report, or `undefined` when retention
- * removed it after the run was read. Over the service-token route, by RUN id,
- * as the report route reads it: the caller's own read of the run is the
- * authorization.
+ * A run's stored report, or `undefined` when retention removed it after the
+ * run was read. Over the service-token route, by RUN id, as the report route
+ * reads it: the caller's own read of the run is the authorization.
  */
-async function readFindings(runId: string): Promise<Finding[] | undefined> {
+export async function readStoredReport(
+  runId: string,
+): Promise<Record<string, unknown> | undefined> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   let status: number;
-  let report: { findings?: unknown };
+  let report: Record<string, unknown> | null;
   try {
     const response = await fetch(
       `${convexUrl}/internal/v1/claude-readiness/runs/report?runId=${encodeURIComponent(runId)}`,
@@ -195,8 +244,18 @@ async function readFindings(runId: string): Promise<Finding[] | undefined> {
     throw unreadableReport();
   }
   if (status === 404) return undefined;
+  if (status !== 200 || typeof report !== "object" || !report) {
+    throw unreadableReport();
+  }
+  return report;
+}
+
+/** The findings in a run's stored report, or `undefined` when retention removed it. */
+async function readFindings(runId: string): Promise<Finding[] | undefined> {
+  const report = await readStoredReport(runId);
+  if (!report) return undefined;
   const { findings } = report;
-  if (status !== 200 || !Array.isArray(findings) || !findings.every(isFinding)) {
+  if (!Array.isArray(findings) || !findings.every(isFinding)) {
     throw unreadableReport();
   }
   return findings;
@@ -221,4 +280,55 @@ function unreadableReport(): WebRouteError {
     ErrorCode.INTERNAL_ERROR,
     "The readiness report could not be read from storage. Try again in a minute.",
   );
+}
+
+/** The compact check rows survive report retention and partial reruns. */
+async function durableResults(
+  convex: ConvexHttpClient,
+  submissionId: string,
+  run: RunRow,
+): Promise<RunResults> {
+  const ref = makeFunctionReference<"query">(
+    "directorySubmissionResults:listDirectorySubmissionResults",
+  );
+  const findings: Finding[] = [];
+  let cursor: string | undefined;
+  do {
+    const page: {
+      page: PlatformDirectorySubmissionFinding[];
+      isDone: boolean;
+      continueCursor: string;
+    } = await convex
+      .query(ref, {
+        submissionId,
+        limit: 100,
+        ...(cursor ? { cursor } : {}),
+      })
+      .catch((error: unknown) => {
+        throw readRefusal(error, "Directory submission findings");
+      });
+    for (const row of page.page) {
+      if (row.runId !== run.id) continue;
+      findings.push({
+        id: row.checkId,
+        lane: row.lane,
+        class: row.class,
+        status: row.status,
+        title: row.title,
+        remediation: row.remediation,
+        notEvaluatedReason: row.notEvaluatedReason,
+        provenance: row.provenance ?? "declared",
+        requiresCapabilities: row.requiresCapabilities,
+        evaluatedAt: new Date(row.evaluatedAt).toISOString(),
+        engineVersion: row.engineVersion,
+        source: row.source ? JSON.parse(row.source) : {},
+        intrusiveness: row.intrusiveness ?? "passive",
+        inputs: row.inputs,
+      });
+    }
+    cursor = page.isDone ? undefined : page.continueCursor;
+  } while (cursor);
+  return findings.length
+    ? { run, report: { findings, expired: true } }
+    : { run };
 }

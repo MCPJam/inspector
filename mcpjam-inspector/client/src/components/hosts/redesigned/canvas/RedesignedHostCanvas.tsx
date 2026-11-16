@@ -48,6 +48,7 @@ import {
   SNAPPY_HOST_REVEAL,
 } from "../../transition-tokens";
 import { HostMatrixCard } from "./HostCapabilityMatrix";
+import { HostHarnessChoice } from "./HostHarnessChoice";
 
 const decorativeHandleClass = "!opacity-0 !w-2 !h-2";
 
@@ -66,6 +67,8 @@ const HostMatrixContext = createContext<{
   themeMode: HostThemeMode;
   /** Navigate to the Computer tab — threaded to the Computer island's "Open terminal" link. */
   onOpenComputer?: () => void;
+  /** The canvas only summarizes: the Harness section names the harness. */
+  readOnly?: boolean;
 } | null>(null);
 
 /* ============================================================
@@ -123,6 +126,16 @@ const HostMatrixNodeRenderer = memo(
           themeMode={ctx?.themeMode ?? "light"}
           selectedNodeId={ctx?.selectedNodeId ?? null}
           onSelectNode={ctx?.onSelectNode ?? (() => {})}
+          harness={
+            data.harness ? (
+              <HostHarnessChoice
+                hostId={data.harness.hostId}
+                isDirty={data.harness.isDirty}
+                readOnly={ctx?.readOnly === true}
+                modelLabel={data.agent?.modelLabel ?? null}
+              />
+            ) : undefined
+          }
         />
         <Handle
           type="source"
@@ -786,6 +799,7 @@ export function RedesignedHostCanvas({
             onSelectNode: () => onRequestEdit?.(),
             reportMatrixHeight,
             themeMode,
+            readOnly: true,
           }
         : {
             selectedNodeId,

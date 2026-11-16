@@ -6,6 +6,7 @@ import {
 } from "../../utils/host-runtime-config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { translateEnvironmentRuntimeError } from "../environments/runtime.js";
+import { startEarly, takeEarly } from "../../utils/early-start.js";
 
 const ensureClient = makeFunctionReference<
   "mutation",
@@ -47,6 +48,17 @@ export async function composeTurnEnvironment(args: {
           purpose: "chat",
         })
       ).hostId;
+    // Neither needs the other, so the environment is ensured while the host
+    // is read. A host that cannot be read is still the refusal reported, as
+    // when it was read first.
+    const ensured = startEarly(() =>
+      args.client.mutation(ensureEnvironment, {
+        projectId: args.projectId,
+        hostId,
+        serverSelection: { mode: "none" },
+        purpose: "chat",
+      }),
+    );
     const runtime = args.preparedHost
       ? { ok: true as const, config: args.preparedHost.config }
       : await fetchHostRuntimeConfig({
@@ -69,12 +81,7 @@ export async function composeTurnEnvironment(args: {
       );
     }
     const harness = runtime.config.agentLoop ?? runtime.config.harness ?? null;
-    const result = await args.client.mutation(ensureEnvironment, {
-      projectId: args.projectId,
-      hostId,
-      serverSelection: { mode: "none" },
-      purpose: "chat",
-    });
+    const result = await takeEarly(ensured);
     return { environmentId: result.environment.environmentId, harness };
   } catch (error) {
     throw translateEnvironmentRuntimeError(error);

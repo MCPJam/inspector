@@ -71,6 +71,27 @@ import {
   updateDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -1589,8 +1610,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: startDirectorySubmissionRunOperation,
     tier: "gated",
     proposal: {
+      // Naming a plan revision authorizes its calls, so the approval says so.
       describe: (input) =>
-        `Run the checks for directory submission ${named(input, "submission") ?? "(unnamed)"}`,
+        `Run the checks for directory submission ${named(input, "submission") ?? "(unnamed)"}${
+          typeof input.testPlanRevision === "number"
+            ? `, with the calls of its test plan revision ${input.testPlanRevision}`
+            : ""
+        }`,
       buttonLabel: "Run it",
       kind: "start",
       // Platform-paid, like the readiness starts: no money to warn about.
@@ -1601,6 +1627,77 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getDirectorySubmissionResultsOperation, tier: "direct" },
+  // A plan is saved like answers; its calls run only in a start a person approves.
+  { operation: getDirectorySubmissionTestPlanOperation, tier: "direct" },
+  { operation: draftDirectorySubmissionTestPlanOperation, tier: "direct" },
+  {
+    operation: saveDirectorySubmissionTestPlanOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `save_directory_submission_test_plan` calls no tool. A run makes the plan's calls, destructive ones included, only when `start_directory_submission_run` names the plan's `revision` as `testPlanRevision`: name it only for a plan the user has reviewed.",
+    ],
+  },
+  { operation: getDirectorySubmissionToolTestsOperation, tier: "direct" },
+  // A submission's test cases live in an eval suite. Linking it and importing
+  // a package's cases write MCPJam rows and call no tool; a run of the suite
+  // goes through run_eval_suite's own approval.
+  { operation: getDirectorySubmissionEvalsOperation, tier: "direct" },
+  { operation: setDirectorySubmissionEvalsOperation, tier: "direct" },
+  { operation: importDirectorySubmissionTestCasesOperation, tier: "direct" },
+  { operation: exportDirectorySubmissionTestCasesOperation, tier: "direct" },
+  // Reviewer sign-in: each start or resume begins a run that signs in to the
+  // submission's server, so a person approves it. Reading and stopping do not.
+  {
+    operation: createReviewerAttemptOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Sign in as the reviewer for directory submission ${named(input, "submission") ?? "(unnamed)"}`,
+      buttonLabel: "Sign in",
+      kind: "start",
+      // MCPJam runs the sign-in; there is no money to warn about.
+      confirmSeverity: "none",
+    },
+    promptNotes: [
+      "- `create_reviewer_attempt` takes secret NAMES only. Never write a password into a call: ask the user to save it in the app as a materialized project secret whose name starts with `MCPJAM_REVIEWER_`, then pass that name.",
+    ],
+  },
+  { operation: listReviewerAttemptsOperation, tier: "direct" },
+  { operation: getReviewerAttemptOperation, tier: "direct" },
+  {
+    operation: resumeReviewerAttemptOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Continue the reviewer sign-in ${named(input, "attempt") ?? "(unnamed)"}`,
+      buttonLabel: "Continue",
+      kind: "start",
+      confirmSeverity: "none",
+    },
+  },
+  { operation: cancelReviewerAttemptOperation, tier: "direct" },
+  // Picking a submission up from its id, and recording what happened in the
+  // directory. The records spend nothing and name the agent's principal.
+  {
+    operation: getDirectorySubmissionHandoffOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Given a directory submission's id or link, call `get_directory_submission_handoff` first: it says where the submission stands and lists `nextActions`, each an operation with the input to send. Do not ask the user again for anything it already holds.",
+    ],
+  },
+  { operation: listDirectorySubmissionFindingsOperation, tier: "direct" },
+  { operation: getDirectorySubmissionFindingOperation, tier: "direct" },
+  { operation: exportDirectorySubmissionOperation, tier: "direct" },
+  { operation: listDirectorySubmissionEventsOperation, tier: "direct" },
+  {
+    operation: recordDirectorySubmissionStatusOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Record a directory status, snapshot or finding only as the user told you (`reported`) or as you saw it in the portal (`observed`), never inferred from MCPJam's own results. A record is never edited: to correct one, record a newer one.",
+    ],
+  },
+  { operation: recordDirectorySubmissionSnapshotOperation, tier: "direct" },
+  { operation: importDirectoryFindingOperation, tier: "direct" },
   {
     operation: startConformanceRunOperation,
     tier: "gated",
@@ -2679,6 +2776,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  create_reviewer_handoff:
+    "The response contains a single-use browser sign-in link for the requester. Create it from Readiness or a direct API or CLI call so it does not enter the agent transcript.",
   // Swarms operations the agent may not even PROPOSE. All three are
   // `risk: destructive` in the SDK catalog, and the rule this surface applies
   // is the one the gated block above states: a proposal makes spend

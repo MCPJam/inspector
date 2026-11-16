@@ -44,7 +44,8 @@ describe("CI metadata on SDK upload payloads", () => {
   beforeEach(() => {
     vi.stubGlobal("process", {
       ...process,
-      env: { MCPJAM_GIT_AUTODETECT: "false" },
+      // DO_NOT_TRACK as in vitest.setup.ts: usage pings must not reach PostHog.
+      env: { MCPJAM_GIT_AUTODETECT: "false", DO_NOT_TRACK: "1" },
     });
     vi.stubEnv("MCPJAM_API_KEY", "sk_test_key");
     vi.stubEnv("MCPJAM_BASE_URL", input.baseUrl);

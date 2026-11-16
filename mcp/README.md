@@ -73,10 +73,31 @@ beta; they are listed [after the table](#held-tools).
 | `create_directory_submission` | Start a rehearsal of a directory's form for a saved server, prefilled from your account. Nothing is sent to the directory. In beta. | — |
 | `list_directory_submissions` | List a project's directory submissions, newest first, optionally for one server or one flow. | — |
 | `get_directory_submission` | Read one submission: each answer with who set it and whether it was confirmed, the portal's checks, and the latest results by step. | — |
-| `update_directory_submission` | Save answers to a submission. A stale revision is refused only for the fields someone else changed since. In beta. | — |
+| `update_directory_submission` | Save answers to a submission, or its gate: which checks fail a run. A stale revision is refused only for the fields someone else changed since. In beta. | — |
 | `delete_directory_submission` | Delete a directory submission and its answers. | — |
 | `start_directory_submission_run` | Grade a submission's server and saved answers, and get a run to poll. In beta. | — |
-| `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale. | — |
+| `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale, and the run's verdict under the submission's gate. | — |
+| `create_reviewer_attempt` | Start MCPJam signing in to a submission's server as the directory's reviewer, with credentials named as project secrets, never their values. In beta. | — |
+| `list_reviewer_attempts` | List a submission's reviewer sign-in attempts, newest first, with their state and stages. | — |
+| `get_reviewer_attempt` | Read one reviewer sign-in attempt: its state, each stage with its evidence, and what it waits for. | — |
+| `resume_reviewer_attempt` | Continue a reviewer sign-in attempt that waits for a person, in a new run. In beta. | — |
+| `cancel_reviewer_attempt` | Stop a reviewer sign-in attempt that is running or waiting for a person. | — |
+| `get_directory_submission_handoff` | The first call when resuming a submission from its id or a link: status, blockers, missing answers, next actions and what only a person can still do in the portal. | — |
+| `list_directory_submission_findings` | Page through a submission's findings by status, step or lane; every finding is reachable however many there are. | — |
+| `get_directory_submission_finding` | Read one check's result on a submission with the evidence behind it. | — |
+| `export_directory_submission` | Export a submission's pack as JSON or Markdown, the same bytes the page and the CLI save, with no secret in it. | — |
+| `list_directory_submission_events` | List the statuses, snapshots and directory findings recorded about a submission, with who recorded each and how they knew. | — |
+| `record_directory_submission_status` | Record a submission's status in the directory, reported or observed, in the directory's own words. In beta. | — |
+| `record_directory_submission_snapshot` | Record which server revision a copy of the catalog holds, such as what the directory's client still has. In beta. | — |
+| `import_directory_finding` | Keep what a directory said about a submission, word for word, apart from MCPJam's own findings. In beta. | — |
+| `get_directory_submission_test_plan` | Read a submission's saved test plan: what each tool's calls may change, which run, the cases in order, the budget and cleanup, and what keeps it from running. | — |
+| `draft_directory_submission_test_plan` | Draft a test plan that calls every tool the server lists, destructive calls last, with what still needs filling in. Saves nothing. | — |
+| `save_directory_submission_test_plan` | Save a submission's test plan as its next revision, at the revision you read; a plan saved since is never overwritten. In beta. | — |
+| `get_directory_submission_tool_tests` | Read what a run's test plan calls showed, tool by tool, valid input apart from expected refusals, with the calls that may have changed data named. | — |
+| `get_directory_submission_evals` | Read the eval suite holding a submission's test cases, its linked run, and each case's result there: how it was graded, whether the judge's verdict counts, and the client that ran it. | — |
+| `set_directory_submission_evals` | Link a submission to the eval suite in its project that holds its test cases, or to the run that last ran them, at the revision you read. In beta. | — |
+| `import_directory_submission_test_cases` | Import the review test cases a ChatGPT plugin package declares into the submission's linked suite; importing a version again writes nothing. In beta. | — |
+| `export_directory_submission_test_cases` | Export the linked suite's cases as the successful and graceful-failure lists ChatGPT's form takes, as a JSON file's exact bytes. | — |
 | `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
 | `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
 | `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |
