@@ -45,7 +45,10 @@ vi.mock("../../harness-proxy-strategy", async (original) => ({
 }));
 vi.mock("../../harness-connection-profile", async (original) => ({
   ...(await original<typeof import("../../harness-connection-profile")>()),
-  harnessConnectionProfile: () => ({ clientCapabilities: {}, timeout: 300_000 }),
+  harnessConnectionProfile: () => ({
+    clientCapabilities: {},
+    timeout: 300_000,
+  }),
 }));
 
 it("covers every registered harness", assertFullMatrix);
@@ -143,7 +146,10 @@ describe.each(CASES)("$id lifecycle", ({ id, adapter }) => {
     // Only the catalog version moved, and every request opens its own
     // connection, since the agent can outlive the turn.
     expect(changed[0]!.proxyUrl).not.toBe(first[0]!.proxyUrl);
-    expect({ ...changed[0], proxyUrl: "" }).toEqual({ ...first[0], proxyUrl: "" });
+    expect({ ...changed[0], proxyUrl: "" }).toEqual({
+      ...first[0],
+      proxyUrl: "",
+    });
     expect(first[0]).toMatchObject({ closeConnection: true });
   });
 });
