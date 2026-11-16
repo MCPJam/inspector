@@ -323,7 +323,7 @@ describe("the connection", () => {
                 ok: true,
                 requestId: "req_1",
                 serverUrl: "https://connector.example.com/mcp",
-                authorizationServerUrl: "https://acme.authkit.app",
+                authorizationServerUrl: null,
                 registrationMode: "dynamic",
                 requestedName: "Acme",
                 account: { name: "reviewer-sub_1" },
@@ -595,7 +595,7 @@ describe("the stop at MCPJam's callback", () => {
         status: vi.fn(async () => ({
           kind: "ok",
           bootId: "boot_1",
-          features: ["secret-origins", "navigation-stop"],
+          features: ["secret-origins", "navigation-stop-persistent"],
         })),
         sendCommand,
       },
@@ -660,7 +660,7 @@ describe("the stop at MCPJam's callback", () => {
     );
   });
 
-  it("asks every command that can navigate to stop there, and reads the stopped URL as the page", async () => {
+  it("keeps the callback stop armed on every command and reads the stopped URL as the page", async () => {
     const { handle, commands } = daemon();
     ensureLiveBrowserSession.mockResolvedValue(handle);
     const { browser } = await deps().desktop.reserve(
@@ -676,9 +676,8 @@ describe("the stop at MCPJam's callback", () => {
     expect(page.url).toBe(`${CALLBACK}?code=${CODE}&state=${STATE}`);
     expect(commands).toHaveLength(daemonReads);
     for (const command of commands) {
-      const navigates =
-        command.action.kind === "navigate" || command.action.kind === "act";
-      expect(command.stopAt).toBe(navigates ? CALLBACK : undefined);
+      expect(command.stopAt).toBe(CALLBACK);
+      expect(command.stopAtPersistent).toBe(true);
     }
   });
 

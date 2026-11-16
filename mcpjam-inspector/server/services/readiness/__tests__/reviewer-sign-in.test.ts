@@ -78,7 +78,7 @@ function makeDeps(
   let index = 0;
   const writes: ReviewerAttemptWrite[] = [];
   const browser = {
-    features: options.features ?? ["secret-origins", "navigation-stop"],
+    features: options.features ?? ["secret-origins", "navigation-stop-persistent"],
     open: vi.fn(async (_url: string) => {}),
     read: vi.fn(async () => pages[Math.min(index, pages.length - 1)]!),
     type: vi.fn(
@@ -262,16 +262,56 @@ describe("rehearseReviewerSignIn", () => {
     expect(deps.desktop.release).toHaveBeenCalledTimes(1);
   });
 
-  it("treats a form that asks for the password again as a refusal", async () => {
+  it("stops for a person when the submitted form does not advance", async () => {
     const { deps, writes } = makeDeps([
       emailPage(),
       passwordPage(),
       passwordPage(),
     ]);
-    expect((await run(deps)).kind).toBe("failed");
+    expect((await run(deps)).kind).toBe("waiting-for-person");
     expect(writes.at(-1)!.stage!.detail).toContain(
-      "asked for the password again",
+      "could not tell whether they were accepted",
     );
+  });
+
+  it("waits for a submitted username page to advance without retyping", async () => {
+    const { deps, browser } = makeDeps([
+      emailPage(), passwordPage(), consentPage(), callbackPage("code=c&state=s"),
+    ]);
+    const originalRead = browser.read.getMockImplementation()!;
+    let reads = 0;
+    browser.read.mockImplementation(async () => {
+      reads += 1;
+      if (reads === 2) return emailPage();
+      return originalRead();
+    });
+    expect((await run(deps)).kind).toBe("connected");
+    expect(browser.type).toHaveBeenCalledTimes(2);
+  });
+
+  it("clicks consent only once while the callback is loading", async () => {
+    const { deps, browser } = makeDeps([
+      emailPage(), passwordPage(), consentPage(), callbackPage("code=c&state=s"),
+    ]);
+    const originalRead = browser.read.getMockImplementation()!;
+    let reads = 0;
+    browser.read.mockImplementation(async () => {
+      reads += 1;
+      if (reads === 4) return consentPage();
+      return originalRead();
+    });
+    expect((await run(deps)).kind).toBe("connected");
+    expect(browser.click).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report consent as passed if its page never advances", async () => {
+    const { deps, browser, writes } = makeDeps([
+      emailPage(), passwordPage(), consentPage(),
+    ]);
+    expect((await run(deps)).kind).toBe("waiting-for-person");
+    expect(browser.click).toHaveBeenCalledTimes(1);
+    expect(stagesOf(writes)).not.toContain("consent:passed");
+    expect(stagesOf(writes)).toContain("consent:blocked");
   });
 
   it("stops at a verification code for a person, with what the page asked", async () => {

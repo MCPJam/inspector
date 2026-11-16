@@ -164,6 +164,29 @@ describe("a command that stops at a page", () => {
     expect(sent(cdp, "Fetch.enable")).toEqual([]);
   });
 
+  it("catches a callback that arrives between the click and the next read", async () => {
+    const { cdp, driver } = await stack();
+    const first = await driver.execute({
+      ...click(CALLBACK),
+      stopAtPersistent: true,
+    });
+    expect(first.stoppedAt).toBeUndefined();
+    expect(sent(cdp, "Fetch.disable")).toHaveLength(0);
+    cdp.emit("Fetch.requestPaused", paused(ANSWER));
+    await flush();
+    const result = await driver.execute({
+      commandId: "read",
+      source: "inspector",
+      action: { kind: "observe", mode: "text" },
+      stopAt: CALLBACK,
+      stopAtPersistent: true,
+    });
+    expect(result.stoppedAt).toBe(ANSWER);
+    expect(result.output).toBeUndefined();
+    expect(sent(cdp, "Fetch.failRequest")).toHaveLength(1);
+    expect(sent(cdp, "Fetch.disable")).toHaveLength(1);
+  });
+
   it("returns the URL to the caller and keeps it out of the ledger", async () => {
     const TOKEN = "per-boot-token-sample";
     const ledger = new CommandLedger({ bootId: "boot-1" });
@@ -198,5 +221,6 @@ describe("a command that stops at a page", () => {
 
   it("is announced, so a server checks before it relies on one", () => {
     expect(BROWSERD_WEBMCP_FEATURES).toContain("navigation-stop");
+    expect(BROWSERD_WEBMCP_FEATURES).toContain("navigation-stop-persistent");
   });
 });

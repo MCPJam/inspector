@@ -139,8 +139,9 @@ export type ReviewerSignInOutcome =
 export const REVIEWER_SIGN_IN_TIMEOUT_MS = 6 * 60_000;
 /** R5's label for a stage read off another provider's page. */
 export const APPROXIMATED_PREFIX = "Approximated: ";
-const MAX_PAGE_READS = 12;
+const MAX_PAGE_READS = 20;
 const UNRECOGNIZED_RETRIES = 3;
+const CONSENT_SETTLE_RETRIES = 10;
 const SETTLE_WAIT_MS = 1_500;
 const PAGE_STAGES = new Set(["sign-in", "verification", "consent"]);
 const START_AGAIN = "Start a new attempt.";
@@ -319,6 +320,9 @@ async function drivePages(drive: Drive): Promise<Ending> {
   const typed = new Set<"username" | "password">();
   let signedIn = false;
   let unrecognized = 0;
+  let repeated = 0;
+  let consentClicked = false;
+  let pendingConsent: ReviewerStage | undefined;
   for (let read = 0; read < MAX_PAGE_READS; read += 1) {
     const seen = readSignInPage(await abortable(browser.read(), signal), {
       callbackUrl: link.callbackUrl,
@@ -327,29 +331,44 @@ async function drivePages(drive: Drive): Promise<Ending> {
     });
     // The password went in and the page moved past the form: it was accepted.
     const movedOn = ["callback", "verification", "consent"].includes(seen.kind);
+    if (seen.kind === "callback" && pendingConsent) {
+      await record(drive, pendingConsent);
+      pendingConsent = undefined;
+    }
     if (movedOn && typed.has("password") && !signedIn) {
       signedIn = true;
       const detail = "MCPJam signed in with the reviewer's saved credentials.";
       await record(drive, await stageOf(drive, "sign-in", "passed", detail));
     }
     if (seen.kind === "callback") return finishConnect(drive, seen.params);
-    // A form asking again for what was just submitted is refusing it.
+    // A submitted form can remain visible while its next page loads.
     const again =
       seen.kind === "credentials" &&
       (seen.password
         ? typed.has("password")
         : Boolean(seen.username) && typed.has("username"));
-    if (seen.kind === "refused" || again) {
-      const quote =
-        seen.kind === "refused"
-          ? `"${scrub(seen.quote)}"`
-          : `it asked for the ${seen.kind === "credentials" && seen.password ? "password" : "username"} again`;
+    if (seen.kind === "refused") {
+      const quote = `"${scrub(seen.quote)}"`;
       return stop(
         "sign-in",
         "failed",
         `The sign-in page refused the reviewer's credentials: ${quote}. Check the saved username and password, then ${START_AGAIN.toLowerCase()}`,
       );
     }
+    if (again) {
+      repeated += 1;
+      if (repeated > UNRECOGNIZED_RETRIES) {
+        return stop(
+          "sign-in",
+          "blocked",
+          "The sign-in page did not advance after the credentials were submitted, so MCPJam could not tell whether they were accepted.",
+          PERSON_SIGN_IN,
+        );
+      }
+      await abortable((drive.deps.sleep ?? pause)(SETTLE_WAIT_MS), signal);
+      continue;
+    }
+    if (seen.kind !== "consent" || !consentClicked) repeated = 0;
     if (seen.kind === "verification") {
       return stop(
         "verification",
@@ -359,6 +378,19 @@ async function drivePages(drive: Drive): Promise<Ending> {
       );
     }
     if (seen.kind === "consent") {
+      if (consentClicked) {
+        repeated += 1;
+        if (repeated > CONSENT_SETTLE_RETRIES) {
+          return stop(
+            "consent",
+            "blocked",
+            "The consent page did not advance after MCPJam clicked the approval button.",
+            "Check the consent page, then resume this attempt.",
+          );
+        }
+        await abortable((drive.deps.sleep ?? pause)(SETTLE_WAIT_MS), signal);
+        continue;
+      }
       if (!seen.approve) {
         return stop(
           "consent",
@@ -368,8 +400,9 @@ async function drivePages(drive: Drive): Promise<Ending> {
         );
       }
       const detail = `MCPJam approved access on the consent page ("${scrub(seen.approve.name)}").`;
-      await record(drive, await stageOf(drive, "consent", "passed", detail));
+      pendingConsent = await stageOf(drive, "consent", "passed", detail);
       await abortable(browser.click(seen.approve.ref), signal);
+      consentClicked = true;
       continue;
     }
     if (seen.kind === "credentials") {
@@ -440,7 +473,7 @@ async function rehearse(
   }
   // Without a stop at MCPJam's callback, its app would take the code before
   // this run could read it, so nothing is started.
-  if (!browser.features.includes("navigation-stop")) {
+  if (!browser.features.includes("navigation-stop-persistent")) {
     return ending({
       stage: "connected",
       status: "failed",
