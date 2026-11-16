@@ -9,7 +9,8 @@
     "start": "next start --hostname 0.0.0.0 --port ${PORT:-3100}",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:auth": "node --test tests/auth-smoke.test.mjs"
+    "test:auth": "node --test tests/auth-smoke.test.mjs",
+    "test:release": "node --experimental-strip-types --test tests/release-status.test.mjs"
   },
   "dependencies": {
     "@mcpjam/design-system": "*",

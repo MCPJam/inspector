@@ -537,6 +537,38 @@ export async function getJobAnnotations(
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+   Releases (the last shipped release on the release card)
+   ────────────────────────────────────────────────────────────────────────── */
+
+export interface LatestRelease {
+  tag: string;
+  htmlUrl: string;
+  publishedAt: string | null;
+  /** Asset file names, for telling whether desktop builds were attached. */
+  assetNames: string[];
+}
+
+export async function getLatestRelease(
+  owner: string,
+  repo: string
+): Promise<LatestRelease> {
+  const raw = (await githubFetch(`/repos/${owner}/${repo}/releases/latest`, {
+    revalidate: 60
+  })) as {
+    tag_name: string;
+    html_url: string;
+    published_at: string | null;
+    assets?: { name: string }[];
+  };
+  return {
+    tag: raw.tag_name,
+    htmlUrl: raw.html_url,
+    publishedAt: raw.published_at,
+    assetNames: (raw.assets ?? []).map((a) => a.name)
+  };
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
    Workflow dispatch (Run Release button — write scope)
    ────────────────────────────────────────────────────────────────────────── */
 

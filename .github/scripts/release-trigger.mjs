@@ -66,7 +66,7 @@ export function decideRelease({
   const last = releaseRuns.find((r) => r.displayTitle === releaseRunName(label));
   if (last && last.conclusion !== "success")
     return skip(
-      `The automatic release of ${label} ended "${last.conclusion}". Retry it with Publish in Soundcheck.`
+      `The automatic release of ${label} ended "${last.conclusion}". Retry it with Retry release in Soundcheck.`
     );
 
   return {
