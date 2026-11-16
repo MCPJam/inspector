@@ -58,9 +58,11 @@ function LocalModelRatesPanel() {
       const { rates: loaded } = await request("");
       setRates(Array.isArray(loaded) ? (loaded as ModelRateRow[]) : []);
       setLoadError(undefined);
-    } catch (error) {
+    } catch {
+      // The server reports its own storage failures; a raw fetch error tells
+      // the user nothing they can act on, so the panel names the next step.
       setLoadError(
-        `Could not load the prices stored on this machine. ${error instanceof Error ? error.message : String(error)}`,
+        "Could not load the prices stored on this machine. Try reloading the page.",
       );
     }
   }, []);

@@ -111,8 +111,18 @@ describe("LocalModelRates", () => {
     );
     render(<LocalModelRates />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not load the prices stored on this machine. Could not reach the Inspector server. Check that it is running and try again.",
+      "Could not load the prices stored on this machine. Try reloading the page.",
     );
+  });
+
+  it("keeps a raw network error out of the load failure", async () => {
+    server.authFetch.mockRejectedValue(new TypeError("Failed to fetch"));
+    render(<LocalModelRates />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Could not load the prices stored on this machine. Try reloading the page.",
+    );
+    expect(alert).not.toHaveTextContent("Failed to fetch");
   });
 
   it("renders nothing and asks for nothing with the flag off", () => {

@@ -3,7 +3,7 @@ import { makeFunctionReference } from "convex/server";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
-import { convexErrMessage, isConvexQueryUnavailable } from "@/lib/convex-error";
+import { convexErrMessage, isConvexQueryNotServed } from "@/lib/convex-error";
 import type { SavedModelRate } from "./model-rate-dialog";
 import type { ModelRateRow } from "./model-rate-format";
 import { ModelRatesPanel, ModelRatesTable } from "./model-rates-panel";
@@ -24,11 +24,9 @@ const retireRate = ref<"mutation", Org & { rateId: string }>(
   "organizationModelRates:retire",
 );
 
-/** Not served by this deployment yet; the rule `ServerUrlChangeHistory` uses. */
+/** Not served by this deployment yet; until it is, the section stays hidden. */
 export function isOrgModelRatesUnavailable(error: Error): boolean {
-  const message = typeof error?.message === "string" ? error.message : "";
-  if (!message.includes(`Q(${ORG_MODEL_RATES_QUERY})`)) return false;
-  return isConvexQueryUnavailable(error) || message.includes("Server Error");
+  return isConvexQueryNotServed(error, ORG_MODEL_RATES_QUERY);
 }
 
 /** Runs a backend write, rejecting with the message the form shows. */

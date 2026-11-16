@@ -183,6 +183,15 @@ describe("OrganizationModelRates", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("renders nothing when production redacts the missing query", () => {
+    vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    convex.throws = new Error(
+      "[CONVEX Q(organizationModelRates:list)] [Request ID: da0bbc6cf9261481] Server Error",
+    );
+    const { container } = mount(true);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("renders nothing and reads nothing with the flag off", async () => {
     flag.on = false;
     const { container } = mount(true);
