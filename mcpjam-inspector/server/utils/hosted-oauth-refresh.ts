@@ -328,6 +328,9 @@ export async function forceRefreshHostedOAuthAccessToken(
                 typeof body.policy === "string"
                   ? body.policy
                   : "credentialExportPolicy",
+              // Which part of a shared or uploaded account's rule refused;
+              // `not_acknowledged` is the one an admin fixes.
+              ...(typeof body.cause === "string" ? { cause: body.cause } : {}),
             }
           : {
               secretOriginMismatch: true,

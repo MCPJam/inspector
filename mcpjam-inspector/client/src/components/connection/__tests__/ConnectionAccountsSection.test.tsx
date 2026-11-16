@@ -268,8 +268,12 @@ describe("ConnectionAccountsSection", () => {
         setSharing: mocks.setSharing,
       });
       mount({ onAuthenticate: auth });
-      // Without the share switch, the note says it is shared.
-      expect(screen.getByText(/Your hosted runs can act/)).toBeTruthy();
+      // With the eval flag off there is no share switch, but an admin still
+      // gets Allow local runs, which doesn't wait for that flag.
+      expect(
+        screen.getByRole("switch", { name: "Allow local runs" }),
+      ).toBeTruthy();
+      expect(screen.queryByText(/ask a project admin to turn on/)).toBeNull();
       await user.click(
         screen.getByRole("button", { name: /Connect another account/ }),
       );
@@ -286,10 +290,48 @@ describe("ConnectionAccountsSection", () => {
       });
     });
 
+    it("gives an admin both switches when the eval flag is on", () => {
+      mocks.sharing.mockReturnValue({
+        isAdmin: true,
+        canShare: true,
+        setSharing: mocks.setSharing,
+      });
+      mount();
+      expect(
+        screen.getByRole("switch", { name: "Shared with the project" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("switch", { name: "Allow local runs" }),
+      ).toBeTruthy();
+    });
+
+    it.each([
+      [true, /^Shared with the project\. Your runs, including your local app's/],
+      [false, /ask a project admin to turn on Allow local runs\.$/],
+    ])(
+      "shows a member no switch, and whether local runs are allowed (%s)",
+      (localDeliveryAllowed, copy) => {
+        mocks.hook.mockReturnValue({
+          connections: project,
+          shared: true,
+          loaded: true,
+          localDeliveryAllowed,
+        });
+        mocks.sharing.mockReturnValue({
+          isAdmin: false,
+          canShare: false,
+          setSharing: mocks.setSharing,
+        });
+        mount();
+        expect(screen.getByText(copy)).toBeTruthy();
+        expect(screen.queryByRole("switch")).toBeNull();
+      },
+    );
+
     it.each([
       [
         true,
-        "No project accounts yet. Connect one so members' hosted runs can use it.",
+        "No project accounts yet. Connect one so members' runs can use it.",
       ],
       [false, "No project accounts yet. Ask a project admin to connect one."],
     ])("says what to do when there are none (admin: %s)", (isAdmin, copy) => {

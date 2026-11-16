@@ -27,6 +27,7 @@ import {
   type OAuthConnection,
 } from "@/shared/oauth-connections";
 import { SignInSharingControl } from "./SignInSharingControl";
+import { LocalRunsControl } from "./LocalRunsControl";
 
 /**
  * The account a credential reaches, named the way the server named it, with
@@ -56,7 +57,10 @@ function captionOf(
   if (connection.needsReauth) return undefined;
   const named = connection.label || connection.profile?.name;
   return (
-    [named === identity ? undefined : named, connection.isDefault ? "Default" : null]
+    [
+      named === identity ? undefined : named,
+      connection.isDefault ? "Default" : null,
+    ]
       .filter(Boolean)
       .join(" · ") || undefined
   );
@@ -75,7 +79,7 @@ export function ConnectionAccountsSection({
   onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
   onSwitch: () => void | Promise<void>;
 }) {
-  const { connections, shared, loaded, error, refetch } =
+  const { connections, shared, localDeliveryAllowed, loaded, error, refetch } =
     useHostedOAuthConnections(projectId, serverId, enabled);
   const sharing = useSignInSharing({ projectId, serverId, enabled });
   if (!enabled || !projectId || !serverId) return null;
@@ -86,25 +90,38 @@ export function ConnectionAccountsSection({
       error={error}
       onReload={refetch}
       isAdmin={sharing.isAdmin}
+      localDeliveryAllowed={localDeliveryAllowed}
       sharingControl={
-        loaded && sharing.canShare ? (
-          <SignInSharingControl
-            shared={shared}
-            accountCount={shared ? connections.length : 0}
-            onChange={async (next) => {
-              await sharing.setSharing(next);
-              // So the live connection signs in with the new kind of account.
-              // The sharing change is saved either way, so a failed reconnect
-              // gets its own message instead of failing the change.
-              try {
-                await onSwitch();
-              } catch {
-                toast.error(
-                  "Sharing changed, but the server could not reconnect. Reconnect it to use the new accounts.",
-                );
-              }
-            }}
-          />
+        // Allow local runs doesn't wait for the eval flag: local runs are for
+        // every organization, and local apps often read flags as off.
+        loaded && (sharing.canShare || (sharing.isAdmin && shared)) ? (
+          <div className="space-y-2">
+            {sharing.canShare ? (
+              <SignInSharingControl
+                shared={shared}
+                accountCount={shared ? connections.length : 0}
+                onChange={async (next) => {
+                  await sharing.setSharing(next);
+                  // So the live connection signs in with the new kind of account.
+                  // The sharing change is saved either way, so a failed reconnect
+                  // gets its own message instead of failing the change.
+                  try {
+                    await onSwitch();
+                  } catch {
+                    toast.error(
+                      "Sharing changed, but the server could not reconnect. Reconnect it to use the new accounts.",
+                    );
+                  }
+                }}
+              />
+            ) : null}
+            {shared && sharing.isAdmin ? (
+              <LocalRunsControl
+                allowed={localDeliveryAllowed}
+                onChange={sharing.setLocalRuns}
+              />
+            ) : null}
+          </div>
         ) : null
       }
       onAuthenticate={onAuthenticate}
@@ -139,12 +156,15 @@ export function ConnectionAccountsList({
   onReload,
   isAdmin,
   sharingControl,
+  localDeliveryAllowed,
   onAuthenticate,
   onUpdate,
 }: {
   connections: OAuthConnection[];
   /** Undefined until the server's list answers. */
   shared: boolean | undefined;
+  /** On a shared server: whether members' local apps may use its accounts. */
+  localDeliveryAllowed?: boolean;
   error?: string;
   /** Loads the list again after it failed to load. */
   onReload?: () => void;
@@ -213,14 +233,15 @@ export function ConnectionAccountsList({
       {shared && !sharingControl ? (
         <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
           <Users aria-hidden className="mt-px size-3.5 shrink-0" />
-          Shared with the project. Your hosted runs can act as these accounts,
-          and project admins manage them.
+          {localDeliveryAllowed
+            ? "Shared with the project. Your runs, including your local app's, can act as these accounts, and project admins manage them."
+            : "Shared with the project. Your hosted runs can act as these accounts, and project admins manage them. To use them from your local app, ask a project admin to turn on Allow local runs."}
         </p>
       ) : null}
       {shared && !connections.length ? (
         <p className="text-xs text-muted-foreground">
           {isAdmin
-            ? "No project accounts yet. Connect one so members' hosted runs can use it."
+            ? "No project accounts yet. Connect one so members' runs can use it."
             : "No project accounts yet. Ask a project admin to connect one."}
         </p>
       ) : null}
