@@ -6,6 +6,7 @@
       "displayName": "Claude Code",
       "forwardingRuntime": {
         "configurationVersion": "tool-search-auto-v1",
+        "correlationKey": "claudecode/toolUseId",
         "nativeClient": {
           "capabilities": {
             "elicitation": {
