@@ -61,7 +61,7 @@ const {
   getToolsMock: vi.fn(),
   acquirePlaygroundHarnessBoxMock: vi.fn(),
   releaseBoxMock: vi.fn(),
-  backend: { chatEnvironments: true },
+  backend: { chatEnvironments: true, visibleSkillScope: true },
 }));
 
 // The box is the conversation's throwaway machine: a harness turn here binds
@@ -80,6 +80,8 @@ vi.mock("convex/browser", () => ({
     query(...args: unknown[]) {
       const name = typeof args[0] === "string" ? args[0] : getFunctionName(args[0] as Parameters<typeof getFunctionName>[0]);
       if (name === "projects:getProjectCapabilities") return Promise.resolve(backend.chatEnvironments ? { chatEnvironmentVersion: 1 } : {});
+      if (name === "projectEnvironments:getCapabilities")
+        return Promise.resolve(backend.visibleSkillScope ? { visibleSkillScope: true } : {});
       return queryMock(...args);
     }
     mutation(...args: unknown[]) {
@@ -228,6 +230,7 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   vi.clearAllMocks();
   backend.chatEnvironments = true;
+  backend.visibleSkillScope = true;
   process.env.CONVEX_URL = "https://convex.test";
   process.env.CONVEX_HTTP_URL = "https://convex.test";
   // Everything `isComputersDataPlaneConfigured()` reads. Set here rather than
@@ -1264,6 +1267,20 @@ describe("an environment's skills reach the engine that runs", () => {
     expect(
       resolveEnvironmentForRuntimeMock.mock.lastCall?.[1],
     ).not.toHaveProperty("skillScope");
+  });
+
+  it("runs a server-list turn on a backend that does not accept skillScope", async () => {
+    backend.visibleSkillScope = false;
+    resolveEnvironmentForRuntimeMock.mockImplementation(async (_client, args) => {
+      if ("skillScope" in args) throw new Error("Server Error");
+      return environmentSpec({});
+    });
+
+    const response = await turn(firstTurn({ serverIds: ["srv_1"] }));
+
+    expect(response.status).toBe(200);
+    expect(resolveEnvironmentForRuntimeMock).toHaveBeenCalledTimes(1);
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledTimes(1);
   });
 
   it("records the skills the turn handed its engine, with the environment", async () => {
