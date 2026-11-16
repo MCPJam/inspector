@@ -527,10 +527,16 @@ describe("one chat turn at a time (real AI SDK)", () => {
     browserRelease.hold = new Promise<void>((done) => {
       releaseBrowser = done;
     });
+    const context = [
+      {
+        toolCallId: "app-call-1",
+        context: { structuredContent: { board: "e4" } },
+      },
+    ];
     let sent = false;
     await act(async () => {
       void result.current
-        .sendMessage({ text: "App follow-up" })
+        .sendMessage({ text: "App follow-up", widgetModelContext: context })
         .then((value) => (sent = value));
     });
     await act(async () => {
@@ -540,6 +546,8 @@ describe("one chat turn at a time (real AI SDK)", () => {
       });
     });
     await waitFor(() => expect(scenario.bodies).toHaveLength(2));
+    // The approved step does not take the waiting send's widget context.
+    expect(scenario.bodies[1]).not.toHaveProperty("widgetModelContext");
 
     await act(async () => releaseBrowser());
     await act(async () => {});
@@ -551,6 +559,7 @@ describe("one chat turn at a time (real AI SDK)", () => {
     expect(scenario.bodies.map((body) => body.expectedVersion)).toEqual([
       4, 5, 6,
     ]);
+    expect(scenario.bodies[2].widgetModelContext).toEqual(context);
     await act(async () => scenario.releases[2]());
   });
 

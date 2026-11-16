@@ -5622,10 +5622,6 @@ export function useChatSession(
         // These belong to this turn, so they wait until the previous one ends.
         savedClientSendGuard.begin();
         chatToolCallRequestIdsRef.current.clear();
-        pendingWidgetModelContextRef.current =
-          widgetModelContext && widgetModelContext.length > 0
-            ? widgetModelContext
-            : undefined;
         // Hosted preflight: resolve selected runtime server NAMES → persisted
         // Convex ids (persisting ad-hoc/App servers) BEFORE the synchronous
         // transport body builds, so the hosted send never carries a display
@@ -5647,6 +5643,10 @@ export function useChatSession(
         // session and ingest it into that transcript.
         const sessionAtSend = chatSessionIdRef.current;
         const browserProjectAtSend = browserProjectIdRef.current;
+        let preparedServers: {
+          serverIds: string[];
+          serverNames: string[];
+        } | null = null;
         // NEVER for an environment target. The environment's servers already
         // carry authoritative Convex ids and are re-resolved server-side; some
         // of them are plugin-contributed and deliberately absent from
@@ -5668,8 +5668,6 @@ export function useChatSession(
             // to the NEW target, so sending would run a message composed for
             // one bundle against another. Fail closed and let the user resend.
             if (hostedTargetKeyRef.current !== targetAtSend) {
-              pendingWidgetModelContextRef.current = undefined;
-              resolvedHostedServersRef.current = null;
               toast.error(
                 "The chat target changed while this message was being prepared. Send it again to run it against the current selection.",
               );
@@ -5680,20 +5678,16 @@ export function useChatSession(
             // while this message was being prepared, so the POST would land in
             // a transcript this message was never composed for. Fail closed.
             if (chatSessionIdRef.current !== sessionAtSend) {
-              pendingWidgetModelContextRef.current = undefined;
-              resolvedHostedServersRef.current = null;
               toast.error(
                 "The chat changed while this message was being prepared. Send it again to run it in the current thread.",
               );
               return false;
             }
-            resolvedHostedServersRef.current = {
+            preparedServers = {
               serverIds: resolved.map((r) => r.serverId),
               serverNames: serverNamesSnapshot,
             };
           } catch (error) {
-            pendingWidgetModelContextRef.current = undefined;
-            resolvedHostedServersRef.current = null;
             toast.error(
               error instanceof Error
                 ? error.message
@@ -5705,8 +5699,6 @@ export function useChatSession(
         // A scenario's servers come from the scenario, not this selection.
         if (usesWebEngine && !hostedScenarioId && !hostedEnvironmentId && !hostedEnsureServerIds &&
             hostedSelectedServerIds.length !== serverNamesSnapshot.length) {
-          pendingWidgetModelContextRef.current = undefined;
-          resolvedHostedServersRef.current = null;
           toast.error("Save the selected servers before sending this message.");
           return false;
         }
@@ -5721,8 +5713,6 @@ export function useChatSession(
             );
           }
         } catch (error) {
-          pendingWidgetModelContextRef.current = undefined;
-          resolvedHostedServersRef.current = null;
           toast.error(
             error instanceof Error
               ? error.message
@@ -5734,11 +5724,7 @@ export function useChatSession(
         // continuation) may have begun during the preflight above.
         await idleGate.waitForIdle();
         try {
-          if (!sendIsCurrent() || (isCurrent && !isCurrent())) {
-            pendingWidgetModelContextRef.current = undefined;
-            resolvedHostedServersRef.current = null;
-            return false;
-          }
+          if (!sendIsCurrent() || (isCurrent && !isCurrent())) return false;
           savedClientSendGuard.assertCurrent();
           // Prompt and skill messages ride with their own send, so one that
           // waited never lands them in the middle of the previous reply.
@@ -5793,6 +5779,13 @@ export function useChatSession(
           const requestOptions = cancelSignIn
             ? { body: { scopeStepUpCancel: cancelSignIn } }
             : undefined;
+          // Set only now: an approval step that started while this send was
+          // prepared must not take its context or servers.
+          pendingWidgetModelContextRef.current =
+            widgetModelContext && widgetModelContext.length > 0
+              ? widgetModelContext
+              : undefined;
+          if (preparedServers) resolvedHostedServersRef.current = preparedServers;
           appMessageTurnRef.current = pluginMessage !== undefined;
           let sent: Promise<void>;
           if (pluginMessage) {
