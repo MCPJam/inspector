@@ -24,7 +24,7 @@ export function VariableChip({
       className={cn(
         "inline-flex rounded-sm px-1.5 py-0.5 font-mono text-[11px]",
         known
-          ? "bg-primary/10 text-primary"
+          ? "bg-muted text-foreground"
           : "bg-destructive/10 text-destructive",
       )}
     >
