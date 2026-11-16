@@ -514,6 +514,7 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   createProjectDisabledReason?: string;
   /** The servers the Conformance page offers, for its intro card's action. */
   conformanceServers?: Record<string, ServerWithName>;
+  announcementsEnabled?: boolean;
 }
 
 export function MCPSidebar({
@@ -534,6 +535,7 @@ export function MCPSidebar({
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
   conformanceServers,
+  announcementsEnabled = true,
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
@@ -861,7 +863,7 @@ export function MCPSidebar({
                     wrapItem={(url, row) =>
                       url === "/conformance" ? (
                         <ConformanceSpotlight
-                          enabled
+                          enabled={announcementsEnabled}
                           servers={conformanceServers}
                           onConformancePage={activeTab === "conformance"}
                           onNavigate={appNavigate}
