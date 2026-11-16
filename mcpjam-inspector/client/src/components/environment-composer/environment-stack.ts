@@ -138,7 +138,11 @@ export type EnvironmentStack = {
   /** Optional; null/empty = each client's own server picks. */
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
-  /** Set only by the create-suite page's Skills field. */
+  /**
+   * Set by the create-suite page's Skills field, and seeded from a saved
+   * environment that holds them. The Skills pill shows them from there
+   * (`stack-skills.ts`).
+   */
   serverSkillSelection?: ProjectEnvironmentServerSkillSelection | null;
   skillScope?: ProjectEnvironmentSkillScope | null;
   computerEnvironmentId: string | null;

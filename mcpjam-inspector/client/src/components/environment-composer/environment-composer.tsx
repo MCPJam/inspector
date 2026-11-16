@@ -28,6 +28,7 @@ import { ServerPicker } from "@/components/hosts/server-picker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
+import { stackSkillChoices } from "@/components/environment-composer/stack-skills";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
   composerStateFromEnvironments,
@@ -300,8 +301,6 @@ export function EnvironmentComposer({
     maxTargets,
   };
   const targetCount = composerTargetCount(value);
-  const serverSkillCount =
-    value.stack.serverSkillSelection?.serverSkillIds.length ?? 0;
 
   const patchStack = useCallback(
     (patch: Partial<EnvironmentStack>) => {
@@ -523,25 +522,8 @@ export function EnvironmentComposer({
             projectId={projectId}
             value={value.stack.skillSelection}
             onChange={(skillSelection) => patchStack({ skillSelection })}
-            // A saved environment on "All shared Library skills" seeds its
-            // scope into the stack. The strip shows it and turns it off; it
-            // doesn't offer to turn it on, which is the Evaluate field's.
-            allLibrary={
-              value.stack.skillScope
-                ? {
-                    state: true,
-                    serverSkillCount,
-                    onToggle: () => patchStack({ skillScope: null }),
-                    onLeaveOut: (_skillId, rest) =>
-                      patchStack({
-                        skillScope: null,
-                        skillSelection: rest.length
-                          ? { mode: "explicit", skillIds: rest }
-                          : null,
-                      }),
-                  }
-                : undefined
-            }
+            // A saved environment's scope and server skills ride in its stack.
+            {...stackSkillChoices(value.stack, patchStack)}
             disabled={slotsDisabled}
             testId={testId("skills-picker")}
             inModal={inModal}
