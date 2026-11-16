@@ -193,7 +193,7 @@ function SortIcon({ active, loading }: { active: boolean; loading: boolean }) {
     <ChevronsUpDown
       aria-hidden
       className={cn(
-        "size-4 shrink-0 transition-colors group-hover:text-primary",
+        "size-4 shrink-0 transition-colors duration-200 ease-out group-hover:text-primary",
         active ? "text-foreground" : "text-muted-foreground/50",
       )}
     />
@@ -231,13 +231,22 @@ export function HistorySortHeader({
             : `Sort by ${name.toLowerCase()}`
       }
       className={cn(
-        "group flex w-fit min-w-0 max-w-full cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-primary",
+        "group flex w-fit min-w-0 max-w-full cursor-pointer items-center gap-1.5 text-left transition-colors duration-200 ease-out hover:text-primary",
         className,
       )}
       data-testid={`conformance-history-sort-${sortKey}`}
       data-sort-direction={direction ?? undefined}
     >
-      <span className="truncate">{label}</span>
+      {/* Bold on hover, eased in: the system font is variable on macOS, so the
+          weight animates instead of snapping. The invisible bold copy (a
+          pseudo-element, so not in the text) holds the label at its bold
+          width: the icon never shifts. */}
+      <span
+        data-label={label}
+        className="flex min-w-0 flex-col overflow-hidden whitespace-nowrap transition-[font-weight] duration-200 ease-out group-hover:font-bold after:invisible after:h-0 after:overflow-hidden after:font-bold after:content-[attr(data-label)]"
+      >
+        {label}
+      </span>
       <SortIcon active={direction !== null} loading={loading} />
     </button>
   );
