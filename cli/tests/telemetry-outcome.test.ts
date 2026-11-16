@@ -84,6 +84,8 @@ test("parse errors are usage_error with the registered command path only", async
     [["tools", "cal", "--url", secret], "tools"],
     [["server", "probe", "--bogus-flag"], "server probe"],
     [["--format", "json", "tools"], "tools"],
+    // A required value is consumed even when it starts with "-", as commander does.
+    [["--format", "--timeout", "server", "telemetry"], "server"],
   ];
 
   for (const [argv, command] of cases) {
