@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { ChevronsUpDown, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronsUpDown, ChevronUp, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type HistorySortKey = "server" | "score" | "date";
@@ -174,13 +174,20 @@ export function ConformanceHistoryFilters({
 }
 
 /**
- * The same up-and-down chevrons on every sortable column: full strength on
- * the sorted one, faint on the rest, and MCPJam orange while hovered. While
- * History reads every run, the sorted one spins in the same spot instead, so
- * the wait shows where the click was and the table below never moves.
+ * Faint up-and-down chevrons on a column that can be sorted; on the sorted
+ * one, a single chevron at full strength that points the way it is sorted
+ * (up ascending, down descending). MCPJam orange while hovered. While History
+ * reads every run, the sorted one spins in the same spot instead, so the wait
+ * shows where the click was and the table below never moves.
  */
-function SortIcon({ active, loading }: { active: boolean; loading: boolean }) {
-  if (active && loading) {
+function SortIcon({
+  direction,
+  loading,
+}: {
+  direction: HistorySortDirection | null;
+  loading: boolean;
+}) {
+  if (direction && loading) {
     return (
       <Loader2
         aria-hidden
@@ -189,12 +196,19 @@ function SortIcon({ active, loading }: { active: boolean; loading: boolean }) {
       />
     );
   }
+  const Icon =
+    direction === "asc"
+      ? ChevronUp
+      : direction === "desc"
+        ? ChevronDown
+        : ChevronsUpDown;
   return (
-    <ChevronsUpDown
+    <Icon
       aria-hidden
+      data-testid="conformance-history-sort-icon"
       className={cn(
         "size-4 shrink-0 transition-colors duration-200 ease-out group-hover:text-primary",
-        active ? "text-foreground" : "text-muted-foreground/50",
+        direction ? "text-foreground" : "text-muted-foreground/50",
       )}
     />
   );
@@ -247,7 +261,7 @@ export function HistorySortHeader({
       >
         {label}
       </span>
-      <SortIcon active={direction !== null} loading={loading} />
+      <SortIcon direction={direction} loading={loading} />
     </button>
   );
 }

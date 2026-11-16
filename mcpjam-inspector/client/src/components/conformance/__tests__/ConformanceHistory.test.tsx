@@ -702,6 +702,31 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
+  it("points the sorted column's chevron the way it is sorted", async () => {
+    const page: Page = {
+      page: [run("a1", "srv_alpha", "2025-11-25", 2)],
+      isDone: true,
+      continueCursor: "",
+    };
+    servePages(() => page);
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+    const icon = (key: string) =>
+      screen
+        .getByTestId(`conformance-history-sort-${key}`)
+        .querySelector('[data-testid="conformance-history-sort-icon"]')
+        ?.getAttribute("class") ?? "";
+
+    // Newest first by default: Date points down, the others show both ways.
+    expect(icon("date")).toContain("lucide-chevron-down");
+    expect(icon("server")).toContain("lucide-chevrons-up-down");
+    expect(icon("score")).toContain("lucide-chevrons-up-down");
+
+    await userEvent
+      .setup()
+      .click(screen.getByTestId("conformance-history-sort-date"));
+    await waitFor(() => expect(icon("date")).toContain("lucide-chevron-up"));
+  });
+
   it("holds the table still while a sort reads every run, then reorders once", async () => {
     const first: Page = {
       page: [
