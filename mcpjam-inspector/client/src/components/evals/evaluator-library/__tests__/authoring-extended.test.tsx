@@ -45,6 +45,18 @@ describe("ModelQuestionCard", () => {
     expect(onChange.mock.calls[0][0].options[1].passes).toBe(true);
   });
 
+  it("names the score slider", () => {
+    renderWithProviders(
+      <ModelQuestionCard
+        value={{ ...question, kind: "score" }}
+        onChange={() => {}}
+      />,
+    );
+    expect(
+      screen.getByRole("slider", { name: "Passing score" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the model call count for a per-match question", () => {
     renderWithProviders(
       <ModelQuestionCard
