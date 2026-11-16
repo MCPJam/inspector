@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { ArrowDownUp } from "lucide-react";
+import { ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type HistorySortKey = "server" | "score" | "date";
@@ -174,12 +174,12 @@ export function ConformanceHistoryFilters({
 }
 
 /**
- * The same up-and-down arrow on every sortable column: full strength on the
- * sorted one, faint on the rest, and MCPJam orange while hovered.
+ * The same up-and-down chevrons on every sortable column: full strength on
+ * the sorted one, faint on the rest, and MCPJam orange while hovered.
  */
 function SortIcon({ active }: { active: boolean }) {
   return (
-    <ArrowDownUp
+    <ChevronsUpDown
       aria-hidden
       className={cn(
         "size-4 shrink-0 transition-colors group-hover:text-primary",
