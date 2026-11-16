@@ -335,7 +335,6 @@
         "headlessLoading": "native",
         "readFolders": [
           ".agents/skills",
-          ".claude/skills",
           ".config/opencode/skills",
           ".config/opencode/skill"
         ],
@@ -348,7 +347,7 @@
       "supportsMcpToolApproval": false,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
-      "supportsSkills": false
+      "supportsSkills": true
     },
     "descriptor": {
       "controls": {
