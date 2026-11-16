@@ -11,7 +11,8 @@ import {
 } from "../secret-substitution";
 import { withSecretScrub } from "../browser-driver";
 import { ChromiumDriver } from "../chromium-driver";
-import { insertSecretInNode } from "../node-target";
+import { insertSecretInNode, SecretNotTypedError } from "../node-target";
+import { secretDeliveryOutcome } from "../../../../utils/built-in-tools/browser-caller-options";
 import { BrowserdRequestHandler } from "../request-handler";
 import { CommandLedger, type BrowserLedgerRow } from "../command-ledger";
 import { HandoffLease } from "../lease";
@@ -405,13 +406,8 @@ describe("a limited credential reaches its field by the field, not by focus", ()
     expect(own.sent[0]).toBe("Page.getFrameTree");
   });
 
-  it("types nothing in another origin's document, without focus, or with the field gone", async () => {
-    for (const answer of [
-      "wrong_origin",
-      "not_focused",
-      "not_inserted",
-      undefined,
-    ]) {
+  it("says nothing was typed only when the field certainly refused it", async () => {
+    for (const answer of ["wrong_origin", "not_focused", "not_inserted"]) {
       await expect(
         insertSecretInNode(
           cdpAnswering(answer).cdp,
@@ -420,7 +416,7 @@ describe("a limited credential reaches its field by the field, not by focus", ()
           limit,
           () => {},
         ),
-      ).rejects.toThrow(/^unsupported_target: .*nothing was typed/);
+      ).rejects.toMatchObject({ code: "unsupported_target" });
     }
     await expect(
       insertSecretInNode(
@@ -430,7 +426,68 @@ describe("a limited credential reaches its field by the field, not by focus", ()
         limit,
         () => {},
       ),
-    ).rejects.toThrow(/^target_not_found/);
+    ).rejects.toMatchObject({ code: "target_not_found" });
+    // An answer it cannot read may hide a typed value: no refusal code.
+    const unread = insertSecretInNode(
+      cdpAnswering(undefined).cdp,
+      7,
+      PASSWORD,
+      limit,
+      () => {},
+    );
+    await expect(unread).rejects.toThrow(/may have been typed/);
+    await expect(unread).rejects.not.toBeInstanceOf(SecretNotTypedError);
+  });
+
+  it("gives the password try back through the driver only for a certain refusal", async () => {
+    const run = async (callFunctionOn: () => unknown) => {
+      const page = fakePage({
+        url: `${AUTH}/login`,
+        cdpReplies: {
+          "Accessibility.getFullAXTree": axTree({
+            role: "RootWebArea",
+            children: [{ role: "textbox", name: "Password", id: 41 }],
+          }),
+          "Page.getFrameTree": {
+            frameTree: { frame: { id: "main", securityOrigin: AUTH } },
+          },
+          "Page.createIsolatedWorld": { executionContextId: 5 },
+          "DOM.resolveNode": { object: { objectId: "field-1" } },
+          "Runtime.callFunctionOn": callFunctionOn,
+        },
+      });
+      const { context } = fakeContext({ pages: [page] });
+      const driver = new ChromiumDriver(context);
+      const step = (action: unknown): BrowserCommand =>
+        ({ commandId: `c-${Math.random()}`, source: "agent", action }) as never;
+      await driver.execute(step({ kind: "navigate", url: `${AUTH}/login` }));
+      await driver.execute(step({ kind: "observe", mode: "a11y" }));
+      const result = await driver.execute(
+        step({
+          kind: "act",
+          verb: "type",
+          target: { a11yRef: "e1" },
+          value: `{{secret:${REVIEWER}}}`,
+          observe: "none",
+        }),
+        { secrets: [{ name: REVIEWER, value: PASSWORD, origins: [AUTH] }] },
+      );
+      return {
+        result,
+        outcome: secretDeliveryOutcome({ status: "ok", result }),
+      };
+    };
+    const refused = await run(() => ({ result: { value: "not_focused" } }));
+    expect(refused.result.error).toMatch(
+      /^unsupported_target: .*nothing was typed/,
+    );
+    expect(refused.outcome).toBe("not_typed");
+    const lost = await run(() => {
+      throw new Error("Target closed");
+    });
+    expect(lost.result.ok).toBe(false);
+    expect(lost.outcome).toBe("unknown");
+    expect(JSON.stringify([refused, lost])).not.toContain(PASSWORD);
   });
 
   it("never types into a node recovered by role and name, which may be in another frame", async () => {

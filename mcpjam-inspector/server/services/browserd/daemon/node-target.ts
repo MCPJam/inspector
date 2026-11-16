@@ -296,6 +296,26 @@ export async function replaceTextInNode(
  * node from any other frame is refused. Nothing typed is an error the caller
  * reads as `not_typed`: refused before a value reached a field.
  */
+/**
+ * The credential reached no field, and the call that said so is certain of
+ * it. The driver passes `code` through, which a caller reads as `not_typed`.
+ */
+export class SecretNotTypedError extends Error {
+  constructor(
+    readonly code: "target_not_found" | "unsupported_target",
+    detail: string,
+  ) {
+    super(detail);
+    this.name = "SecretNotTypedError";
+  }
+}
+
+const REFUSED_BEFORE_TYPING = new Set([
+  "wrong_origin",
+  "not_focused",
+  "not_inserted",
+]);
+
 export async function insertSecretInNode(
   cdp: CdpLike,
   backendNodeId: number,
@@ -310,18 +330,19 @@ export async function insertSecretInNode(
 ): Promise<void> {
   const objectId = await isolatedObjectId(cdp, backendNodeId, limit.frameId);
   if (!objectId) {
-    throw new Error(
-      "target_not_found: the field could not be resolved; nothing was typed",
+    throw new SecretNotTypedError(
+      "target_not_found",
+      "the field could not be resolved; nothing was typed",
     );
   }
   guard();
-  let outcome: { result?: { value?: unknown } } | undefined;
-  try {
-    outcome = (await cdp.send("Runtime.callFunctionOn", {
-      objectId,
-      returnByValue: true,
-      arguments: [{ value: text }, { value: [...limit.origins] }],
-      functionDeclaration: `function (value, origins) {
+  // A failed call is not caught here: whether the value went in is unknown,
+  // and the caller must not take it for a refusal.
+  const outcome = (await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value: text }, { value: [...limit.origins] }],
+    functionDeclaration: `function (value, origins) {
         const view = this.ownerDocument && this.ownerDocument.defaultView;
         if (!view || !origins.includes(view.origin)) return "wrong_origin";
         this.focus();
@@ -332,16 +353,18 @@ export async function insertSecretInNode(
           ? "typed"
           : "not_inserted";
       }`,
-    })) as typeof outcome;
-  } catch {
-    // The node or its world went away: nothing typed, reported below.
-    outcome = undefined;
-  }
-  if (outcome?.result?.value !== "typed") {
-    throw new Error(
-      "unsupported_target: the field did not take the credential in its own document; nothing was typed",
+  })) as { result?: { value?: unknown } } | undefined;
+  const answer = outcome?.result?.value;
+  if (answer === "typed") return;
+  if (typeof answer === "string" && REFUSED_BEFORE_TYPING.has(answer)) {
+    throw new SecretNotTypedError(
+      "unsupported_target",
+      "the field did not take the credential in its own document; nothing was typed",
     );
   }
+  throw new Error(
+    "the credential's field answered nothing MCPJam could read, so it may have been typed",
+  );
 }
 
 /** The node, resolved in an isolated world of `frameId` (or the main frame). */

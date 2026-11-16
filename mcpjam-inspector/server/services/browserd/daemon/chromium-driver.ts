@@ -49,6 +49,7 @@ import {
   pointForRefAcrossFrames,
   insertSecretInNode,
   replaceTextInNode,
+  SecretNotTypedError,
   resolveRefNode,
   selectOptionOnNode,
   type ResolvedRefNode,
@@ -1675,13 +1676,21 @@ export class ChromiumDriver implements BrowserDriver {
         // type into whatever has focus (the model's previous click). A limited
         // credential goes in by the field itself, never by focus.
         if (refNode && limited) {
-          await insertSecretInNode(
-            await needOwnerCdp(),
-            refNode.backendNodeId,
-            text,
-            { ...(frameId ? { frameId } : {}), origins: limited },
-            stillOurs,
-          );
+          try {
+            await insertSecretInNode(
+              await needOwnerCdp(),
+              refNode.backendNodeId,
+              text,
+              { ...(frameId ? { frameId } : {}), origins: limited },
+              stillOurs,
+            );
+          } catch (error) {
+            // Kept as its code, so the caller can tell nothing was typed.
+            if (error instanceof SecretNotTypedError) {
+              throw new ActError(error.code, error.message);
+            }
+            throw error;
+          }
         } else if (refNode) {
           await replaceTextInNode(
             await needOwnerCdp(),

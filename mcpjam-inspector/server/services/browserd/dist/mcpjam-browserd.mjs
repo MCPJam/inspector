@@ -5429,21 +5429,33 @@ async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
   }
   await input.send("Input.insertText", { text });
 }
+var SecretNotTypedError = class extends Error {
+  constructor(code, detail) {
+    super(detail);
+    this.code = code;
+    this.name = "SecretNotTypedError";
+  }
+  code;
+};
+var REFUSED_BEFORE_TYPING = /* @__PURE__ */ new Set([
+  "wrong_origin",
+  "not_focused",
+  "not_inserted"
+]);
 async function insertSecretInNode(cdp, backendNodeId, text, limit, guard) {
   const objectId = await isolatedObjectId(cdp, backendNodeId, limit.frameId);
   if (!objectId) {
-    throw new Error(
-      "target_not_found: the field could not be resolved; nothing was typed"
+    throw new SecretNotTypedError(
+      "target_not_found",
+      "the field could not be resolved; nothing was typed"
     );
   }
   guard();
-  let outcome;
-  try {
-    outcome = await cdp.send("Runtime.callFunctionOn", {
-      objectId,
-      returnByValue: true,
-      arguments: [{ value: text }, { value: [...limit.origins] }],
-      functionDeclaration: `function (value, origins) {
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value: text }, { value: [...limit.origins] }],
+    functionDeclaration: `function (value, origins) {
         const view = this.ownerDocument && this.ownerDocument.defaultView;
         if (!view || !origins.includes(view.origin)) return "wrong_origin";
         this.focus();
@@ -5454,15 +5466,18 @@ async function insertSecretInNode(cdp, backendNodeId, text, limit, guard) {
           ? "typed"
           : "not_inserted";
       }`
-    });
-  } catch {
-    outcome = void 0;
-  }
-  if (outcome?.result?.value !== "typed") {
-    throw new Error(
-      "unsupported_target: the field did not take the credential in its own document; nothing was typed"
+  });
+  const answer2 = outcome?.result?.value;
+  if (answer2 === "typed") return;
+  if (typeof answer2 === "string" && REFUSED_BEFORE_TYPING.has(answer2)) {
+    throw new SecretNotTypedError(
+      "unsupported_target",
+      "the field did not take the credential in its own document; nothing was typed"
     );
   }
+  throw new Error(
+    "the credential's field answered nothing MCPJam could read, so it may have been typed"
+  );
 }
 async function isolatedObjectId(cdp, backendNodeId, frameId) {
   try {
@@ -8747,13 +8762,20 @@ var ChromiumDriver = class {
         ) : void 0;
         if (refusal) throw new ActError2("secret_origin_refused", refusal);
         if (refNode && limited) {
-          await insertSecretInNode(
-            await needOwnerCdp(),
-            refNode.backendNodeId,
-            text,
-            { ...frameId ? { frameId } : {}, origins: limited },
-            stillOurs
-          );
+          try {
+            await insertSecretInNode(
+              await needOwnerCdp(),
+              refNode.backendNodeId,
+              text,
+              { ...frameId ? { frameId } : {}, origins: limited },
+              stillOurs
+            );
+          } catch (error) {
+            if (error instanceof SecretNotTypedError) {
+              throw new ActError2(error.code, error.message);
+            }
+            throw error;
+          }
         } else if (refNode) {
           await replaceTextInNode(
             await needOwnerCdp(),
