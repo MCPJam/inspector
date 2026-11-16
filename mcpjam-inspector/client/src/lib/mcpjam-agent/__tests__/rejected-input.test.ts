@@ -99,3 +99,51 @@ describe("oversized agent input recovery", () => {
     },
   );
 });
+
+describe("oversized history behind a short message", () => {
+  // The 413 body as the client receives it, with the repro's numbers.
+  const sizeRefusal = (estimatedInputTokens: number) =>
+    JSON.stringify({
+      ok: false,
+      code: "guest_input_too_large",
+      limit: 32000,
+      estimatedInputTokens,
+      error: `Guest input is estimated at ${estimatedInputTokens} tokens, above the 32000 token limit.`,
+    });
+  const userText = (id: string, text: string): UIMessage => ({
+    id,
+    role: "user",
+    parts: [{ type: "text", text }],
+  });
+  const paste = userText("paste", "x".repeat(63698));
+
+  it("keeps blocking when the refused paste is the newest turn and tools ran", () => {
+    expect(conversationTooLarge([paste, toolReply], sizeRefusal(33649))).toBe(
+      true,
+    );
+  });
+
+  it("blocks a short message sent after a reload brought the paste back", () => {
+    const reloaded = [
+      paste,
+      toolReply,
+      userText("hi", "hi"),
+      userText("again", "hello again"),
+    ];
+    expect(conversationTooLarge(reloaded, sizeRefusal(33121))).toBe(true);
+  });
+
+  it("lets a large newest turn be replaced when the rest fits", () => {
+    expect(
+      conversationTooLarge(
+        [...history, userText("big", "x".repeat(90000))],
+        sizeRefusal(33000),
+      ),
+    ).toBe(false);
+  });
+
+  it("falls back to the tool rule when the refusal has no numbers", () => {
+    const reloaded = [paste, toolReply, userText("again", "hello again")];
+    expect(conversationTooLarge(reloaded, refusal)).toBe(false);
+  });
+});

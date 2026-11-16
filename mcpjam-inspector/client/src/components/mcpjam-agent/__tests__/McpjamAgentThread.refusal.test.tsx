@@ -100,7 +100,14 @@ describe("McpjamAgentThread refusal copy", () => {
   });
 
   it("explains oversized input and restores the rejected prompt for editing", () => {
-    sessionState.messages = [{ id: "rejected", role: "user", parts: [] }];
+    // The refused paste holds most of the estimate, so dropping it fits.
+    sessionState.messages = [
+      {
+        id: "rejected",
+        role: "user",
+        parts: [{ type: "text", text: "x".repeat(16000) }],
+      },
+    ];
     const body = {
       code: "guest_input_too_large",
       estimatedInputTokens: 37002,

@@ -459,6 +459,22 @@ export function isGuestInputTooLargeMessage(
   return codes.has("guest_input_too_large");
 }
 
+/** The guest size refusal's numbers, when its body carries them. */
+export function guestInputTooLargeNumbers(
+  message: string,
+): { limit: number; estimatedInputTokens: number } | null {
+  for (const parsed of collectJsonCandidates(message)) {
+    const { limit, estimatedInputTokens } = (parsed ?? {}) as Record<
+      string,
+      unknown
+    >;
+    if (typeof limit === "number" && typeof estimatedInputTokens === "number") {
+      return { limit, estimatedInputTokens };
+    }
+  }
+  return null;
+}
+
 /** Plain copy for an Ask MCPJam refusal, not its transport envelope. */
 export function describeAgentRefusalMessage(
   message: string | null | undefined,
