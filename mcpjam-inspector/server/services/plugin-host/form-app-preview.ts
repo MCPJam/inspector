@@ -38,7 +38,7 @@ export async function openPluginFormAppPreview(
   options: PluginFormPreviewServiceOptions,
 ) {
   if (options.target.type !== "mcp_app_tool") return refuse();
-  const service = createPluginFormService(options);
+  const service = await createPluginFormService(options);
   try {
     const tools = await service.authorizeTools([options.target.name]);
     const resolved = tools.get(options.target.name)!;
@@ -146,7 +146,7 @@ export async function openPluginFormAppPreview(
 }
 
 /** Re-establish original source/actor/pending authority for every child request. */
-export function getPluginFormApp(
+export async function getPluginFormApp(
   options: Omit<
     PluginFormPreviewServiceOptions,
     "target" | "sourceToken" | "parent"
@@ -154,7 +154,7 @@ export function getPluginFormApp(
 ) {
   const child = children.get(options.token);
   if (!child || child.target.type !== "mcp_app_tool") return refuse();
-  const service = createPluginFormService({
+  const service = await createPluginFormService({
     ...options,
     sourceToken: child.sourceToken,
     parent: child.parent,

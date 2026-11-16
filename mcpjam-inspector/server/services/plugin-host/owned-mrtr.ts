@@ -46,7 +46,9 @@ import {
   type PluginToolCallParams,
   type TrustedInvocationOwner,
 } from "./invocation.js";
-import { pluginFormSources } from "./form-sources.js";
+import { pluginFormSources, type PluginFormSource } from "./form-sources.js";
+import type { PluginFormOwnerRef } from "./form-source-control.js";
+import type { PluginInstanceIdentity } from "./instances.js";
 
 /**
  * Forms turned off while an operation's form was pending: its answer is never
@@ -146,6 +148,11 @@ export function createOwnedPluginMrtr(deps: {
   /** The client's CURRENT Forms toggle, as of the latest `assertCurrent`
    * (one fresh admission read). Absent counts as on. */
   formsEnabled?: () => boolean;
+  /** The verified identity the form's sources are bound to. */
+  identity: PluginInstanceIdentity;
+  /** The owner's stored row. With it, sources are stored and any replica
+   * can restore them; without it they stay in this process. */
+  ownerRef?: PluginFormOwnerRef;
 }) {
   const formsOff = () => deps.formsEnabled?.() === false;
   const formSchema = (params: Record<string, unknown> | undefined) =>
@@ -165,13 +172,17 @@ export function createOwnedPluginMrtr(deps: {
   let operation: Operation | undefined;
   let captured: PluginInvocationSuspension | undefined;
   const readCaptured = (): PluginInvocationSuspension | undefined => captured;
-  const bindSources = (op: Operation, pending: PluginInvocationSuspension) => {
+  const bindSources = async (
+    op: Operation,
+    pending: PluginInvocationSuspension,
+  ) => {
     const requests = pending.pending
       .inputRequests as import("../../../shared/mrtr-continuation.js").MrtrInputRequestDisplay[];
     const bound: ReturnType<typeof pluginFormSources.bind>[] = [];
     try {
-      const displays = requests.map((request) => {
-        const lease = pluginFormSources.bind({
+      const displays = [];
+      for (const request of requests) {
+        const source: PluginFormSource = {
           owner: op.authorization.owner,
           ...deps.sourceBinding,
           invocationId: op.invocationId,
@@ -188,10 +199,18 @@ export function createOwnedPluginMrtr(deps: {
           fileResources,
           ...(uploadTarget() ? { uploadTarget: uploadTarget() } : {}),
           expiresAt: pending.pending.expiresAt as number,
-        });
+        };
+        const lease = deps.ownerRef
+          ? await pluginFormSources.bindStored(
+              source,
+              deps.identity,
+              deps.ownerRef,
+              op.signal,
+            )
+          : pluginFormSources.bind(source, deps.identity.subject);
         bound.push(lease);
-        return { ...request, pluginFormSourceToken: lease.token };
-      });
+        displays.push({ ...request, pluginFormSourceToken: lease.token });
+      }
       return new PluginInvocationSuspension({
         ...pending.pending,
         inputRequests: displays,
@@ -341,7 +360,7 @@ export function createOwnedPluginMrtr(deps: {
               "Form cancelled: Forms is turned off for this client",
             );
           }
-          return bindSources(
+          return await bindSources(
             { authorization, invocationId, params, signal },
             suspended,
           );
@@ -456,6 +475,7 @@ export function createOwnedPluginMrtr(deps: {
               );
               const original = pluginFormSources.find(
                 authorization.owner,
+                deps.identity.subject,
                 invocationId,
                 {
                   kind: "mrtr",
@@ -556,7 +576,7 @@ export function createOwnedPluginMrtr(deps: {
       }
       if (result.outcome === "input_required") {
         try {
-          return bindSources(
+          return await bindSources(
             { authorization, invocationId, params, signal },
             new PluginInvocationSuspension({
               status: "input_required",

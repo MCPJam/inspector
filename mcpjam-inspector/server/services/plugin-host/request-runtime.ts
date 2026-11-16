@@ -18,6 +18,7 @@ import {
   ownedLegacyFormCapabilities,
 } from "./owned-legacy.js";
 import { pluginFormSources } from "./form-sources.js";
+import type { PluginFormOwnerRef } from "./form-source-control.js";
 import { pluginInstances } from "./instances.js";
 import type {
   ResolvedInvocationContext,
@@ -243,6 +244,8 @@ export function createPluginRequestRuntime(
     /** The extension governing a retained owner that has no activation
      * (a mention lease). An App's own kind decides it otherwise. */
     extension?: keyof PluginExtensionCapabilities;
+    /** The owner's stored row, so MRTR form sources are stored too. */
+    ownerRef?: PluginFormOwnerRef;
   } = {},
 ) {
   const currentBearer = () => admission.getAuthorization?.() ?? Promise.resolve(bearer);
@@ -519,7 +522,7 @@ export function createPluginRequestRuntime(
                     .fileResources,
                   ...(uploadTarget() ? { uploadTarget: uploadTarget() } : {}),
                 };
-                const handle = pluginFormSources.bind(source);
+                const handle = pluginFormSources.bind(source, expected.subject);
                 return {
                   ...handle,
                   deliver: async (result) => {
@@ -527,7 +530,7 @@ export function createPluginRequestRuntime(
                     input.signal.throwIfAborted();
                     pluginFormSources.get(
                       handle.token,
-                      source.owner,
+                      { ...source.owner, subject: expected.subject },
                       source.parent,
                     );
                     // The client's CURRENT Forms toggle decides delivery.
@@ -597,6 +600,8 @@ export function createPluginRequestRuntime(
               fileResources: extensions.capabilities.fileResources,
               fileResourcesEnabled: () => latest?.capabilities.fileResources === true,
               formsEnabled,
+              identity: { ...expected.owner, subject: expected.subject },
+              ownerRef: options.ownerRef,
             })
           : undefined;
     }
