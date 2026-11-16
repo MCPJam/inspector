@@ -195,7 +195,12 @@ export function CreateHostDialog({
   // rollout flag that resolves after the dialog opens only changes the list.
   const userPickedTemplateRef = useRef(false);
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Every close path ends the pick, including a parent that closes the
+      // dialog without `handleClose`.
+      userPickedTemplateRef.current = false;
+      return;
+    }
     if (visibleCatalogHosts.length === 0) return;
     const requested = initialTemplateId ?? DEFAULT_CATALOG_HOST_ID;
     setSelectedTemplateId((current) =>

@@ -56,7 +56,7 @@ describe("native profile admission", () => {
       expect(nativeForwardingGaps({ ...candidate({ ...config, capabilities: overlay, eraCapabilities: { modern: overlay } }), elicitationRuntimeVersion: "2.1.245" })).toEqual([]);
     }
     const effective = candidate(config).manager.getInitializationInfo();
-    expect(nativeForwardingGaps({ ...candidate({ url: config.url, capabilities: config.clientCapabilities }, effective), elicitationRuntimeVersion: "2.1.245" })).toContain("capability-overrides");
+    expect(nativeForwardingGaps({ ...candidate({ url: config.url, capabilities: config.clientCapabilities }, "2025-11-25", effective), elicitationRuntimeVersion: "2.1.245" })).toContain("capability-overrides");
   });
   it.each([
     { elicitation: { form: {}, url: {} } },
