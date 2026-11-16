@@ -86,6 +86,9 @@ test("parse errors are usage_error with the registered command path only", async
     [["--format", "json", "tools"], "tools"],
     // A required value is consumed even when it starts with "-", as commander does.
     [["--format", "--timeout", "server", "telemetry"], "server"],
+    // The scan stops at the first operand commander rejects.
+    [["not-a-command", "server"], "(unknown)"],
+    [["tools", "cal", "server"], "tools"],
   ];
 
   for (const [argv, command] of cases) {
