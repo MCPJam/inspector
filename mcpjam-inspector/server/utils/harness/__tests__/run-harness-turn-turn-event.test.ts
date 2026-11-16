@@ -65,7 +65,11 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   ),
 }));
 
-vi.mock("../registry.js", () => ({
+vi.mock("../registry.js", async () => ({
+  // The snapshot restore reads the runtime's conversation-state declaration.
+  harnessConversationState: (
+    await vi.importActual<typeof import("../registry.js")>("../registry.js")
+  ).harnessConversationState,
   buildBrokerDummyAuth: vi.fn(() => ({
     anthropic: {
       apiKey: "",
