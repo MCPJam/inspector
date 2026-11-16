@@ -83,7 +83,8 @@ const isEstimate = (source: CostSource) =>
 const UNAVAILABLE_REASON: Record<UnavailableCostReason, string> = {
   no_usage: "No token usage was reported for this call.",
   no_rate: "No price is on record for this model.",
-  invalid_rate: "The price on record for this model is invalid.",
+  invalid_rate:
+    "The price on record for this model was invalid. Set a price under Model prices to price future calls.",
   unsupported_currency: "The price on record is not in US dollars.",
 };
 
@@ -157,7 +158,8 @@ function describeCall(cost: ModelCallCostEvidence): CostView {
 function describeRollup(rollup: ModelCostRollup): CostView {
   const priced = rollup.totalCalls - rollup.unavailableCalls;
   const noun = rollup.totalCalls === 1 ? "call" : "calls";
-  const partly = rollup.partialCalls > 0 ? `, ${rollup.partialCalls} partly` : "";
+  const partly =
+    rollup.partialCalls > 0 ? `, ${rollup.partialCalls} partly` : "";
   return {
     amountUsd:
       rollup.completeness === "unavailable"
@@ -172,5 +174,7 @@ function describeRollup(rollup: ModelCostRollup): CostView {
 }
 
 export function describeRowCost(cost: RowCost): CostView {
-  return cost.kind === "call" ? describeCall(cost.cost) : describeRollup(cost.rollup);
+  return cost.kind === "call"
+    ? describeCall(cost.cost)
+    : describeRollup(cost.rollup);
 }
