@@ -314,6 +314,8 @@ export async function insertSecretInNode(
       this.focus();
       if (this.getRootNode().activeElement !== this) return "not_focused";
       if (typeof this.select === "function") this.select();
+      // The page may define its own select(), which runs here: ask again.
+      if (this.getRootNode().activeElement !== this) return "not_focused";
       return this.ownerDocument.execCommand("insertText", false, value)
         ? "typed"
         : "not_inserted";

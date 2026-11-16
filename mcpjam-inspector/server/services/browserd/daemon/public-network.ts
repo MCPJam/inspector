@@ -14,14 +14,15 @@
  * is public, and connects to the address it checked. So a redirect, a
  * worker, a WebSocket and a name that resolves privately (DNS rebinding
  * included) are all judged at the one place they cannot route around.
- * Addresses are judged by `egressTier`, the hosted inspector's own rules.
+ * Addresses are judged by `egressTier`, the hosted inspector's own rules,
+ * and refused in the ranges that only look public (`NOT_GLOBAL`).
  *
  * Booted per session (`MCPJAM_BROWSERD_NETWORK=public`) and announced as
  * `BROWSERD_PUBLIC_NETWORK_FEATURE`, so a caller that needs it refuses a
  * daemon that does not say it is on.
  */
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import { egressTier } from "../../../utils/egress-tier.js";
 import {
   BrowserPolicyError,
@@ -36,6 +37,30 @@ export type BrowserEgressPolicy = Pick<
 
 const WEB_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
 
+/**
+ * Not globally reachable, though `egressTier` calls them public: the IETF,
+ * documentation and benchmarking ranges. Kept here rather than in
+ * `egressTier`, whose `never` tier the hosted guard refuses in every mode,
+ * and `198.18.0.0/15` is where a local VPN's fake-IP DNS answers.
+ */
+const NOT_GLOBAL = new BlockList();
+NOT_GLOBAL.addSubnet("192.0.0.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("192.0.2.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("198.18.0.0", 15, "ipv4");
+NOT_GLOBAL.addSubnet("198.51.100.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("203.0.113.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("2001:db8::", 32, "ipv6");
+
+/** Public by `egressTier`, and not in a range that only looks public. */
+function isPublicHost(host: string): boolean {
+  if (egressTier(host) !== "public") return false;
+  const address = host.replace(/^\[|\]$/g, "");
+  const family = isIP(address);
+  return (
+    family === 0 || !NOT_GLOBAL.check(address, family === 6 ? "ipv6" : "ipv4")
+  );
+}
+
 const REFUSED =
   "this browser reaches public internet addresses only, and this destination is not one.";
 
@@ -48,9 +73,7 @@ export function isPublicWebUrl(raw: string): boolean {
     // Not a URL: nothing to reach.
     return false;
   }
-  return (
-    WEB_PROTOCOLS.has(url.protocol) && egressTier(url.hostname) === "public"
-  );
+  return WEB_PROTOCOLS.has(url.protocol) && isPublicHost(url.hostname);
 }
 
 export function createPublicNetworkPolicy(
@@ -66,7 +89,7 @@ export function createPublicNetworkPolicy(
         !Number.isInteger(port) ||
         port < 1 ||
         port > 65535 ||
-        egressTier(name) !== "public"
+        !isPublicHost(name)
       ) {
         throw new BrowserPolicyError(REFUSED);
       }
@@ -76,7 +99,7 @@ export function createPublicNetworkPolicy(
       // Every answer, not the first: the proxy may fall back to any of them.
       if (
         addresses.length === 0 ||
-        addresses.some(({ address }) => egressTier(address) !== "public")
+        addresses.some(({ address }) => !isPublicHost(address))
       ) {
         throw new BrowserPolicyError(REFUSED);
       }

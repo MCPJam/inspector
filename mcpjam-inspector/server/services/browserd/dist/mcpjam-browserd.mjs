@@ -5445,6 +5445,8 @@ async function insertSecretInNode(cdp, backendNodeId, text, guard) {
       this.focus();
       if (this.getRootNode().activeElement !== this) return "not_focused";
       if (typeof this.select === "function") this.select();
+      // The page may define its own select(), which runs here: ask again.
+      if (this.getRootNode().activeElement !== this) return "not_focused";
       return this.ownerDocument.execCommand("insertText", false, value)
         ? "typed"
         : "not_inserted";
@@ -11451,7 +11453,7 @@ function adaptContext(context, options = {}) {
 
 // server/services/browserd/daemon/public-network.ts
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 
 // server/utils/private-egress-allowlist.ts
 import { isIPv6 } from "node:net";
@@ -11561,6 +11563,19 @@ function egressTier(hostname2) {
 
 // server/services/browserd/daemon/public-network.ts
 var WEB_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:", "ws:", "wss:"]);
+var NOT_GLOBAL = new BlockList();
+NOT_GLOBAL.addSubnet("192.0.0.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("192.0.2.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("198.18.0.0", 15, "ipv4");
+NOT_GLOBAL.addSubnet("198.51.100.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("203.0.113.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("2001:db8::", 32, "ipv6");
+function isPublicHost(host2) {
+  if (egressTier(host2) !== "public") return false;
+  const address = host2.replace(/^\[|\]$/g, "");
+  const family = isIP(address);
+  return family === 0 || !NOT_GLOBAL.check(address, family === 6 ? "ipv6" : "ipv4");
+}
 var REFUSED = "this browser reaches public internet addresses only, and this destination is not one.";
 function isPublicWebUrl(raw) {
   let url;
@@ -11569,7 +11584,7 @@ function isPublicWebUrl(raw) {
   } catch {
     return false;
   }
-  return WEB_PROTOCOLS.has(url.protocol) && egressTier(url.hostname) === "public";
+  return WEB_PROTOCOLS.has(url.protocol) && isPublicHost(url.hostname);
 }
 function createPublicNetworkPolicy(resolve2 = lookup) {
   return {
@@ -11579,11 +11594,11 @@ function createPublicNetworkPolicy(resolve2 = lookup) {
     allowsRequest: isPublicWebUrl,
     async resolveDestination(hostname2, port) {
       const name = hostname2.replace(/^\[|\]$/g, "");
-      if (!Number.isInteger(port) || port < 1 || port > 65535 || egressTier(name) !== "public") {
+      if (!Number.isInteger(port) || port < 1 || port > 65535 || !isPublicHost(name)) {
         throw new BrowserPolicyError(REFUSED);
       }
       const addresses = isIP(name) ? [{ address: name, family: isIP(name) }] : await resolve2(name, { all: true, verbatim: true });
-      if (addresses.length === 0 || addresses.some(({ address }) => egressTier(address) !== "public")) {
+      if (addresses.length === 0 || addresses.some(({ address }) => !isPublicHost(address))) {
         throw new BrowserPolicyError(REFUSED);
       }
       return addresses;

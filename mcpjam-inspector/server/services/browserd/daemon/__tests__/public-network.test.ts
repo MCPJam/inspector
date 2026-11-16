@@ -30,6 +30,10 @@ describe("a public-only browser", () => {
       "https://auth.example.com/login",
       "http://93.184.216.34/",
       "wss://auth.example.com/socket",
+      // Neighbours of the ranges that only look public.
+      "http://198.20.0.1/",
+      "http://198.51.101.1/",
+      "http://203.0.114.1/",
     ]) {
       expect(isPublicWebUrl(url)).toBe(true);
     }
@@ -43,6 +47,13 @@ describe("a public-only browser", () => {
       "http://192.168.1.1/",
       "http://[::ffff:a9fe:a9fe]/",
       "http://[fd00:ec2::254]/",
+      // Not globally reachable, though they look public.
+      "http://198.18.0.1/",
+      "http://192.0.2.1/",
+      "http://198.51.100.1/",
+      "http://203.0.113.1/",
+      "http://[2001:db8::1]/",
+      "http://[::ffff:198.18.0.1]/",
       "file:///etc/passwd",
       "chrome://settings",
       "not a url",
