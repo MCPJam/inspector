@@ -300,7 +300,7 @@ import {
   getScenarioShellStyle,
   normalizeScenarioHostStyleId,
 } from "@/lib/scenario-client-style";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
@@ -1594,7 +1594,12 @@ export function TestTemplateEditor({
   // config, surfaced read-only below rather than as a selectable option. An
   // environment suite lists its environments' clients instead.
   const quickRunHostOptions = useMemo<
-    Array<{ value: string; label: string; namedHostId: string }>
+    Array<{
+      value: string;
+      label: string;
+      namedHostId: string;
+      hostStyle?: string | null;
+    }>
   >(() => {
     if (isEnvironmentSuite) {
       return (
@@ -1607,6 +1612,7 @@ export function TestTemplateEditor({
           value: hostId,
           label: host?.displayName ?? host?.name ?? hostId,
           namedHostId: hostId,
+          hostStyle: host?.hostStyle,
         };
       });
     }
@@ -1616,6 +1622,9 @@ export function TestTemplateEditor({
         value: attachment.namedHostId,
         label: attachment.hostName ?? attachment.namedHostId,
         namedHostId: attachment.namedHostId,
+        hostStyle: projectHosts.find(
+          (host) => host.hostId === attachment.namedHostId,
+        )?.hostStyle,
       }),
     );
   }, [
@@ -1753,7 +1762,10 @@ export function TestTemplateEditor({
     ) ?? quickRunHostOptions[0];
   const selectedQuickRunHostLogoSrc =
     selectedQuickRunHostOption?.namedHostId != null
-      ? resolveHostLogoByName(selectedQuickRunHostOption.label)
+      ? resolveHostLogo({
+          name: selectedQuickRunHostOption.label,
+          hostStyle: selectedQuickRunHostOption.hostStyle,
+        })
       : null;
   // Effective host for an attachment-less suite — its own configured host
   // style, defaulting to MCPJam. Mirrors the server's `loadSuiteHostConfig`
