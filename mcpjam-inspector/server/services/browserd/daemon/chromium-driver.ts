@@ -47,6 +47,7 @@ import {
   focusBackendNodeId,
   pointForBackendNodeId,
   pointForRefAcrossFrames,
+  insertSecretInNode,
   replaceTextInNode,
   resolveRefNode,
   selectOptionOnNode,
@@ -149,7 +150,10 @@ const DEFAULT_TAB = DEFAULT_QUEUE_KEY;
  * outer one wrong.
  */
 class ActError extends Error {
-  constructor(readonly code: BrowserdErrorCode, message: string) {
+  constructor(
+    readonly code: BrowserdErrorCode,
+    message: string,
+  ) {
     super(message);
     this.name = "ActError";
   }
@@ -338,6 +342,11 @@ export interface ChromiumDriverOptions {
   /** Opt-in behaviour; absent means the previous release's. @see BrowserdFeatures */
   features?: BrowserdFeatures;
   /**
+   * Open http(s) pages only. Set with the public-only network, whose proxy
+   * never sees a `file:` or `chrome:` page.
+   */
+  webOnly?: boolean;
+  /**
    * Where typed secrets are remembered, so observations can be scrubbed.
    * Constructed when absent; injectable for tests.
    */
@@ -506,6 +515,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly pageTextMaxBytes: number;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   private readonly features: BrowserdFeatures;
+  private readonly webOnly: boolean;
   /** Values this boot has typed into a page, and what to show instead. */
   private readonly secrets: BrowserSecretRegistry;
   private readonly lease:
@@ -674,6 +684,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.pageTextMaxBytes =
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.features = options.features ?? {};
+    this.webOnly = options.webOnly === true;
     this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
@@ -997,6 +1008,19 @@ export class ChromiumDriver implements BrowserDriver {
     if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
+        if (
+          this.webOnly &&
+          action.url !== "about:blank" &&
+          !/^https?:\/\//i.test(action.url)
+        ) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "browser_policy_refused",
+              "this browser opens http and https pages only; nothing was opened",
+            ),
+          };
+        }
         // `navigate` is the only verb that may CREATE a tab (P2).
         if (action.newTab) {
           // A new tab needs a NAME the caller chose, because the tabId is the
@@ -1070,8 +1094,8 @@ export class ChromiumDriver implements BrowserDriver {
             kind === "back"
               ? page.goBack()
               : kind === "forward"
-              ? page.goForward()
-              : page.reload(),
+                ? page.goForward()
+                : page.reload(),
           permit,
           action.observe,
         );
@@ -1258,8 +1282,8 @@ export class ChromiumDriver implements BrowserDriver {
         error instanceof ActError
           ? error.code
           : /timeout|not found|no element|strict mode/i.test(message)
-          ? "target_not_found"
-          : "act_failed";
+            ? "target_not_found"
+            : "act_failed";
       // Same rule as the success path: the act may have failed, but the page
       // it failed on can still be someone's now. `afterAct` asks `permit()`
       // before it reads anything, and `observation` asks again on the way out,
@@ -1638,8 +1662,16 @@ export class ChromiumDriver implements BrowserDriver {
             : undefined;
         if (refusal) throw new ActError("secret_origin_refused", refusal);
         // With a ref or a selector, REPLACE the field's value; without either,
-        // type into whatever has focus (the model's previous click).
-        if (refNode) {
+        // type into whatever has focus (the model's previous click). A limited
+        // credential goes in by the field itself, never by focus.
+        if (refNode && limited) {
+          await insertSecretInNode(
+            await needOwnerCdp(),
+            refNode.backendNodeId,
+            text,
+            stillOurs,
+          );
+        } else if (refNode) {
           await replaceTextInNode(
             await needOwnerCdp(),
             refNode.backendNodeId,
@@ -2697,7 +2729,7 @@ export class ChromiumDriver implements BrowserDriver {
     const activeTabId =
       this.activeTabId && read.some(({ id }) => id === this.activeTabId)
         ? this.activeTabId
-        : read[0]?.id ?? null;
+        : (read[0]?.id ?? null);
     const active = read.find(({ id }) => id === activeTabId);
     this.stateSeq += 1;
     return {

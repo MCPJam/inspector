@@ -4,6 +4,11 @@ import {
   secureDriverContext,
   type LocalBrowserSecurityPolicy,
 } from "../local/security-policy.js";
+import type { BrowserEgressPolicy } from "./public-network.js";
+
+/** Keeps WebRTC to the proxy, so its UDP cannot reach what the proxy refuses. */
+const DISABLE_NON_PROXIED_UDP =
+  "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 /**
  * The live Playwright implementation of the driver's browser boundary.
  *
@@ -709,6 +714,11 @@ export function registerCdpAttacher(
 export interface LaunchBrowserdContextOptions {
   /** Present only on local managed browsers; hosted policy is unchanged. */
   securityPolicy?: LocalBrowserSecurityPolicy;
+  /**
+   * Hosted only: every request goes through the egress proxy under this
+   * policy, the public-only network of `public-network.ts`.
+   */
+  egressPolicy?: BrowserEgressPolicy;
   /** Profile directory; run-scoped when an ephemeral browser imports an archive. */
   userDataDir: string;
   /** Headed under Xfce in the sandbox; tests may force headless. */
@@ -841,7 +851,8 @@ export async function launchBrowserdContext(
     }
   }
   const { chromium } = await import("playwright");
-  const proxy = policy ? await startLocalBrowserProxy(policy) : undefined;
+  const egress = policy ?? options.egressPolicy;
+  const proxy = egress ? await startLocalBrowserProxy(egress) : undefined;
   const finish = async (
     context: import("playwright").BrowserContext,
     onClose?: () => Promise<unknown>,
@@ -900,10 +911,16 @@ export async function launchBrowserdContext(
       // Chromium cannot start its renderer sandbox as uid 0 (the image builds
       // as root), so it is disabled only in that case.
       chromiumSandbox: process.getuid?.() !== 0,
-      args: buildBrowserdLaunchArgs(options.extraArgs, {
-        surface,
-        ...(userAgent ? { userAgent } : {}),
-      }),
+      args: buildBrowserdLaunchArgs(
+        options.egressPolicy
+          ? // WebRTC's UDP would otherwise reach addresses the proxy never sees.
+            [...(options.extraArgs ?? []), DISABLE_NON_PROXIED_UDP]
+          : options.extraArgs,
+        {
+          surface,
+          ...(userAgent ? { userAgent } : {}),
+        },
+      ),
     };
 
     const launchProfileContext = async (

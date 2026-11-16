@@ -281,6 +281,52 @@ export async function replaceTextInNode(
 }
 
 /**
+ * Put an origin-limited credential into ONE field, never wherever focus is.
+ *
+ * `Input.insertText` types into the browser's focus, and the origin check,
+ * the focus and the insert are separate round trips: a script on the page
+ * could move focus into another site's frame between them. Here the focus,
+ * the check that it took and the insert are one synchronous call in the
+ * field's own frame, so no page script runs between them, and
+ * `execCommand("insertText")` edits only that frame's document. It fires the
+ * same `input` event typing does. Nothing typed is an error the caller reads
+ * as `not_typed`: refused before a value reached a field.
+ */
+export async function insertSecretInNode(
+  cdp: CdpLike,
+  backendNodeId: number,
+  text: string,
+  /** Asked immediately before the value lands. See `resolveRefNode`. */
+  guard: () => void,
+): Promise<void> {
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (!objectId) {
+    throw new Error(
+      "target_not_found: the field could not be resolved; nothing was typed",
+    );
+  }
+  guard();
+  const outcome = (await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value: text }],
+    functionDeclaration: `function (value) {
+      this.focus();
+      if (this.getRootNode().activeElement !== this) return "not_focused";
+      if (typeof this.select === "function") this.select();
+      return this.ownerDocument.execCommand("insertText", false, value)
+        ? "typed"
+        : "not_inserted";
+    }`,
+  })) as { result?: { value?: unknown } } | undefined;
+  if (outcome?.result?.value !== "typed") {
+    throw new Error(
+      "unsupported_target: the field did not keep focus to take the credential; nothing was typed",
+    );
+  }
+}
+
+/**
  * Choose an option in a `<select>`, by value or by visible label.
  *
  * Both, because a model reading an accessibility tree sees the LABEL and has
@@ -455,26 +501,24 @@ async function resolveObjectId(
  * children already answer in top-frame space and never reach here. Refuses
  * when a link is missing or the point falls outside a host's box.
  */
-export async function pointForRefAcrossFrames(
-  args: {
-    /** The session the element itself lives in. */
-    cdp: CdpLike;
-    backendNodeId: number;
-    label: string;
-    /** The element's own frame, and the chain up to the page. */
-    sessionFrameId: string;
-    frames: ReadonlyMap<
-      string,
-      {
-        hostBackendNodeId: number;
-        parentSessionFrameId?: string;
-        frameId: string;
-      }
-    >;
-    /** Resolve a session by its frame id; the page session for `undefined`. */
-    sessionFor: (sessionFrameId: string | undefined) => CdpLike | undefined;
-  },
-): Promise<ActPoint> {
+export async function pointForRefAcrossFrames(args: {
+  /** The session the element itself lives in. */
+  cdp: CdpLike;
+  backendNodeId: number;
+  label: string;
+  /** The element's own frame, and the chain up to the page. */
+  sessionFrameId: string;
+  frames: ReadonlyMap<
+    string,
+    {
+      hostBackendNodeId: number;
+      parentSessionFrameId?: string;
+      frameId: string;
+    }
+  >;
+  /** Resolve a session by its frame id; the page session for `undefined`. */
+  sessionFor: (sessionFrameId: string | undefined) => CdpLike | undefined;
+}): Promise<ActPoint> {
   const local = await pointForBackendNodeId(
     args.cdp,
     args.backendNodeId,
@@ -522,7 +566,10 @@ export async function pointForRefAcrossFrames(
           "frame first, then observe again",
       );
     }
-    point = { x: Math.round(point.x + host.x), y: Math.round(point.y + host.y) };
+    point = {
+      x: Math.round(point.x + host.x),
+      y: Math.round(point.y + host.y),
+    };
     current = frame.parentSessionFrameId;
   }
   // Hop limit hit before the top frame: a partially translated point would

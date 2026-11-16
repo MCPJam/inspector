@@ -32,6 +32,7 @@ var BROWSERD_WEBMCP_FEATURES = [
   /** A callback stop can remain armed between commands on the same tab. */
   "navigation-stop-persistent"
 ];
+var BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -5428,6 +5429,33 @@ async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
   }
   await input.send("Input.insertText", { text });
 }
+async function insertSecretInNode(cdp, backendNodeId, text, guard) {
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (!objectId) {
+    throw new Error(
+      "target_not_found: the field could not be resolved; nothing was typed"
+    );
+  }
+  guard();
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value: text }],
+    functionDeclaration: `function (value) {
+      this.focus();
+      if (this.getRootNode().activeElement !== this) return "not_focused";
+      if (typeof this.select === "function") this.select();
+      return this.ownerDocument.execCommand("insertText", false, value)
+        ? "typed"
+        : "not_inserted";
+    }`
+  });
+  if (outcome?.result?.value !== "typed") {
+    throw new Error(
+      "unsupported_target: the field did not keep focus to take the credential; nothing was typed"
+    );
+  }
+}
 async function selectOptionOnNode(cdp, backendNodeId, value, label) {
   const objectId = await resolveObjectId(cdp, backendNodeId);
   if (!objectId) {
@@ -5584,7 +5612,10 @@ async function pointForRefAcrossFrames(args) {
         `${args.label} is scrolled out of view inside its frame; scroll the frame first, then observe again`
       );
     }
-    point = { x: Math.round(point.x + host2.x), y: Math.round(point.y + host2.y) };
+    point = {
+      x: Math.round(point.x + host2.x),
+      y: Math.round(point.y + host2.y)
+    };
     current = frame.parentSessionFrameId;
   }
   if (current !== void 0) {
@@ -7868,6 +7899,7 @@ var ChromiumDriver = class {
   pageTextMaxBytes;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   features;
+  webOnly;
   /** Values this boot has typed into a page, and what to show instead. */
   secrets;
   lease;
@@ -8009,6 +8041,7 @@ var ChromiumDriver = class {
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.features = options.features ?? {};
+    this.webOnly = options.webOnly === true;
     this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
@@ -8246,6 +8279,15 @@ var ChromiumDriver = class {
     if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
+        if (this.webOnly && action.url !== "about:blank" && !/^https?:\/\//i.test(action.url)) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "browser_policy_refused",
+              "this browser opens http and https pages only; nothing was opened"
+            )
+          };
+        }
         if (action.newTab) {
           if (command.tabId === void 0) {
             return {
@@ -8672,7 +8714,14 @@ var ChromiumDriver = class {
           limited
         ) : void 0;
         if (refusal) throw new ActError2("secret_origin_refused", refusal);
-        if (refNode) {
+        if (refNode && limited) {
+          await insertSecretInNode(
+            await needOwnerCdp(),
+            refNode.backendNodeId,
+            text,
+            stillOurs
+          );
+        } else if (refNode) {
           await replaceTextInNode(
             await needOwnerCdp(),
             refNode.backendNodeId,
@@ -10442,12 +10491,12 @@ function secureDriverContext(context, policy) {
 
 // server/services/browserd/local/egress-proxy.ts
 function pinnedAddressOptions(addresses) {
-  const lookup = (_hostname, options, callback) => {
+  const lookup2 = (_hostname, options, callback) => {
     if (options.all) callback(null, addresses);
     else callback(null, addresses[0].address, addresses[0].family);
   };
   return {
-    lookup,
+    lookup: lookup2,
     autoSelectFamily: true,
     autoSelectFamilyAttemptTimeout: 250
   };
@@ -10853,6 +10902,7 @@ function defaultIsAlive(pid) {
 }
 
 // server/services/browserd/daemon/chromium-launch.ts
+var DISABLE_NON_PROXIED_UDP = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 var NAV_TIMEOUT_MS = 3e4;
 var DOM_SIGNAL_FN = `() => {
@@ -11233,7 +11283,8 @@ async function launchBrowserdContext(options) {
     }
   }
   const { chromium } = await import("playwright");
-  const proxy = policy ? await startLocalBrowserProxy(policy) : void 0;
+  const egress = policy ?? options.egressPolicy;
+  const proxy = egress ? await startLocalBrowserProxy(egress) : void 0;
   const finish = async (context, onClose) => {
     try {
       if (policy) {
@@ -11278,10 +11329,16 @@ async function launchBrowserdContext(options) {
       // Chromium cannot start its renderer sandbox as uid 0 (the image builds
       // as root), so it is disabled only in that case.
       chromiumSandbox: process.getuid?.() !== 0,
-      args: buildBrowserdLaunchArgs(options.extraArgs, {
-        surface,
-        ...userAgent ? { userAgent } : {}
-      })
+      args: buildBrowserdLaunchArgs(
+        options.egressPolicy ? (
+          // WebRTC's UDP would otherwise reach addresses the proxy never sees.
+          [...options.extraArgs ?? [], DISABLE_NON_PROXIED_UDP]
+        ) : options.extraArgs,
+        {
+          surface,
+          ...userAgent ? { userAgent } : {}
+        }
+      )
     };
     const launchProfileContext = async (contextMode) => {
       const cleared = await clearStaleSingletonLock(options.userDataDir);
@@ -11388,6 +11445,148 @@ function adaptContext(context, options = {}) {
       } finally {
         await options.onClose?.();
       }
+    }
+  };
+}
+
+// server/services/browserd/daemon/public-network.ts
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+
+// server/utils/private-egress-allowlist.ts
+import { isIPv6 } from "node:net";
+function normalizeEgressHost(host2) {
+  let normalized = host2.trim().toLowerCase();
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    normalized = normalized.slice(1, -1);
+  }
+  return normalized.replace(/\.+$/, "");
+}
+function ipv4Bytes(text) {
+  if (!/^(?:0|[1-9]\d{0,2})(?:\.(?:0|[1-9]\d{0,2})){3}$/.test(text)) {
+    return null;
+  }
+  const octets = text.split(".").map(Number);
+  return octets.every((octet) => octet <= 255) ? octets : null;
+}
+function ipv6Bytes(text) {
+  if (text.includes("%") || !isIPv6(text)) return null;
+  let hex = text;
+  const dotted = /^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (dotted) {
+    const v4 = ipv4Bytes(dotted[2]);
+    if (!v4) return null;
+    hex = `${dotted[1]}${(v4[0] << 8 | v4[1]).toString(16)}:${(v4[2] << 8 | v4[3]).toString(16)}`;
+  }
+  const groups = (part) => part === "" ? [] : part.split(":").map((group) => parseInt(group, 16));
+  const halves = hex.split("::");
+  const hextets = halves.length === 2 ? (() => {
+    const left = groups(halves[0]);
+    const right = groups(halves[1]);
+    return [
+      ...left,
+      ...new Array(8 - left.length - right.length).fill(0),
+      ...right
+    ];
+  })() : groups(hex);
+  if (hextets.length !== 8) return null;
+  return hextets.flatMap((hextet) => [hextet >> 8, hextet & 255]);
+}
+
+// server/utils/egress-tier.ts
+function parseIpv4Octets(host2) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host2);
+  if (!m) return null;
+  const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+  if (o.some((n) => n > 255)) return null;
+  return [o[0], o[1], o[2], o[3]];
+}
+var METADATA_NAMES = /* @__PURE__ */ new Set([
+  "metadata",
+  "metadata.google.internal",
+  "metadata.goog"
+]);
+var MACHINE_LOCAL_NAMES = /* @__PURE__ */ new Set([
+  "ip6-localhost",
+  "ip6-loopback",
+  "host.docker.internal",
+  "gateway.docker.internal"
+]);
+var AWS_IPV6_METADATA = ipv6Bytes("fd00:ec2::254");
+function egressTier(hostname2) {
+  const host2 = normalizeEgressHost(hostname2);
+  if (!host2) return "never";
+  if (METADATA_NAMES.has(host2)) return "never";
+  if (host2 === "localhost" || host2.endsWith(".localhost") || MACHINE_LOCAL_NAMES.has(host2)) {
+    return "private";
+  }
+  const v4 = parseIpv4Octets(host2);
+  if (v4) {
+    const [a, b, c, d] = v4;
+    if (a === 169 && b === 254) return "never";
+    if (a === 0) return "never";
+    if (a >= 224) return "never";
+    if (a === 100 && b === 100 && c === 100 && d === 200) return "never";
+    if (a === 127) return "private";
+    if (a === 10) return "private";
+    if (a === 192 && b === 168) return "private";
+    if (a === 172 && b >= 16 && b <= 31) return "private";
+    if (a === 100 && b >= 64 && b <= 127) return "private";
+    return "public";
+  }
+  if (host2.includes(":")) {
+    const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host2);
+    if (mapped) return egressTier(mapped[1]);
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host2);
+    if (mappedHex) {
+      const high = parseInt(mappedHex[1], 16);
+      const low = parseInt(mappedHex[2], 16);
+      return egressTier(
+        `${high >> 8 & 255}.${high & 255}.${low >> 8 & 255}.${low & 255}`
+      );
+    }
+    if (host2 === "::") return "never";
+    if (/^fe[89ab]/.test(host2)) return "never";
+    if (/^ff[0-9a-f]{2}:/.test(host2)) return "never";
+    const bytes = ipv6Bytes(host2);
+    if (bytes && AWS_IPV6_METADATA && bytes.every((byte, i) => byte === AWS_IPV6_METADATA[i])) {
+      return "never";
+    }
+    if (host2 === "::1") return "private";
+    if (/^f[cd]/.test(host2)) return "private";
+    return "public";
+  }
+  return "public";
+}
+
+// server/services/browserd/daemon/public-network.ts
+var WEB_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:", "ws:", "wss:"]);
+var REFUSED = "this browser reaches public internet addresses only, and this destination is not one.";
+function isPublicWebUrl(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  return WEB_PROTOCOLS.has(url.protocol) && egressTier(url.hostname) === "public";
+}
+function createPublicNetworkPolicy(resolve2 = lookup) {
+  return {
+    isActive: () => true,
+    onRevoked: () => () => {
+    },
+    allowsRequest: isPublicWebUrl,
+    async resolveDestination(hostname2, port) {
+      const name = hostname2.replace(/^\[|\]$/g, "");
+      if (!Number.isInteger(port) || port < 1 || port > 65535 || egressTier(name) !== "public") {
+        throw new BrowserPolicyError(REFUSED);
+      }
+      const addresses = isIP(name) ? [{ address: name, family: isIP(name) }] : await resolve2(name, { all: true, verbatim: true });
+      if (addresses.length === 0 || addresses.some(({ address }) => egressTier(address) !== "public")) {
+        throw new BrowserPolicyError(REFUSED);
+      }
+      return addresses;
     }
   };
 }
@@ -11852,9 +12051,7 @@ var DEFAULT_ON_FEATURES = [
   "a11yFrames",
   "scrollableMarkers"
 ];
-var OPT_IN_FEATURES = [
-  "keystrokeTyping"
-];
+var OPT_IN_FEATURES = ["keystrokeTyping"];
 function namedIn(raw) {
   return new Set(
     (raw ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
@@ -11904,6 +12101,7 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // persistent profile — the mode a human's logins depend on — rather than
     // silently wiping state because a typo read as "ephemeral".
     contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
+    networkPolicy: env.MCPJAM_BROWSERD_NETWORK === "public" ? "public" : "open",
     // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
     // for the video encoder, and a headless Chromium draws on no display at
     // all — so the daemon would advertise `h264`, spawn a grab of an empty X
@@ -11952,6 +12150,9 @@ function announcedFeatures(config, env = process.env) {
     features.push("h264");
   }
   if (config.recordingEnabled) features.push("record");
+  if (config.networkPolicy === "public") {
+    features.push(BROWSERD_PUBLIC_NETWORK_FEATURE);
+  }
   return features;
 }
 function extraArgsFor(config) {
@@ -12030,7 +12231,8 @@ async function main() {
     headless: config.headless,
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode,
-    deviceScaleFactor: config.deviceScaleFactor
+    deviceScaleFactor: config.deviceScaleFactor,
+    ...config.networkPolicy === "public" ? { egressPolicy: createPublicNetworkPolicy() } : {}
   });
   const lease = new HandoffLease();
   let encoder;
@@ -12040,6 +12242,7 @@ async function main() {
   const driver = new ChromiumDriver(context, {
     lease,
     features: parseBrowserdFeatures(),
+    webOnly: config.networkPolicy === "public",
     viewport: {
       /**
        * The DAEMON's default is `fixed`, and the door widens it.

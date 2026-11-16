@@ -11,6 +11,7 @@ import {
 } from "../secret-substitution";
 import { withSecretScrub } from "../browser-driver";
 import { ChromiumDriver } from "../chromium-driver";
+import { insertSecretInNode } from "../node-target";
 import { BrowserdRequestHandler } from "../request-handler";
 import { CommandLedger, type BrowserLedgerRow } from "../command-ledger";
 import { HandoffLease } from "../lease";
@@ -23,10 +24,12 @@ const AUTH = "https://auth.example.com";
 const REVIEWER = "MCPJAM_REVIEWER_SUB_PASSWORD";
 
 function typeAct(value = `{{secret:${REVIEWER}}}`) {
-  return { kind: "act", verb: "type", target: { a11yRef: "e1" }, value } as Extract<
-    BrowserAction,
-    { kind: "act" }
-  >;
+  return {
+    kind: "act",
+    verb: "type",
+    target: { a11yRef: "e1" },
+    value,
+  } as Extract<BrowserAction, { kind: "act" }>;
 }
 
 function refusal(run: () => unknown): string {
@@ -55,7 +58,11 @@ describe("resolveActSecrets with origins", () => {
     expect(message).toContain("https://collector.test");
     expect(message).not.toContain(PASSWORD);
     // A look-alike host and a page with no origin are other pages too.
-    for (const page of ["https://auth.example.com.evil.test/", "about:blank", undefined]) {
+    for (const page of [
+      "https://auth.example.com.evil.test/",
+      "about:blank",
+      undefined,
+    ]) {
       expect(() => resolveActSecrets(typeAct(), limited, page)).toThrow(
         /secret_origin_refused/,
       );
@@ -75,13 +82,21 @@ describe("resolveActSecrets with origins", () => {
 
   it("types a reviewer credential sent with no origins nowhere", () => {
     const message = refusal(() =>
-      resolveActSecrets(typeAct(), [{ name: REVIEWER, value: PASSWORD }], `${AUTH}/login`),
+      resolveActSecrets(
+        typeAct(),
+        [{ name: REVIEWER, value: PASSWORD }],
+        `${AUTH}/login`,
+      ),
     );
     expect(message).toMatch(/^secret_origin_refused: /);
     expect(message).not.toContain(PASSWORD);
     // An empty list limits any secret to no page.
     expect(() =>
-      resolveActSecrets(typeAct("{{secret:P}}"), [{ name: "P", value: PASSWORD, origins: [] }], `${AUTH}/`),
+      resolveActSecrets(
+        typeAct("{{secret:P}}"),
+        [{ name: "P", value: PASSWORD, origins: [] }],
+        `${AUTH}/`,
+      ),
     ).toThrow(/secret_origin_refused/);
   });
 
@@ -106,7 +121,8 @@ describe("secret origins, through the driver", () => {
     const registry = driver.secretRegistry();
     const wrapped = withSecretScrub(
       registry,
-      (command, ctx) => (ctx ? driver.execute(command, ctx) : driver.execute(command)),
+      (command, ctx) =>
+        ctx ? driver.execute(command, ctx) : driver.execute(command),
       (tabId) => driver.documentKey(tabId),
     );
     return { page, registry, wrapped };
@@ -122,7 +138,9 @@ describe("secret origins, through the driver", () => {
 
   it("types nothing and registers nothing on a page outside the origins", async () => {
     const { page, registry, wrapped } = stack("https://collector.test/login");
-    await wrapped(step({ kind: "navigate", url: "https://collector.test/login" }));
+    await wrapped(
+      step({ kind: "navigate", url: "https://collector.test/login" }),
+    );
     const out = await wrapped(step(typePassword), {
       secrets: [{ name: REVIEWER, value: PASSWORD, origins: [AUTH] }],
     });
@@ -204,11 +222,18 @@ describe("the request handler and secret origins", () => {
       bootId: "boot-1",
     }));
     const { handler, ledger } = handlerWith(submit);
-    await handler.handle(post([{ name: REVIEWER, value: PASSWORD, origins: [AUTH] }]));
+    await handler.handle(
+      post([{ name: REVIEWER, value: PASSWORD, origins: [AUTH] }]),
+    );
     const [row] = ledger
       .read({ limit: 10 })
-      .entries.filter((entry): entry is BrowserLedgerRow => entry.kind === "command");
-    expect(row).toMatchObject({ ok: false, errorCode: "secret_origin_refused" });
+      .entries.filter(
+        (entry): entry is BrowserLedgerRow => entry.kind === "command",
+      );
+    expect(row).toMatchObject({
+      ok: false,
+      errorCode: "secret_origin_refused",
+    });
     expect(JSON.stringify(ledger.read({ limit: 10 }))).not.toContain(PASSWORD);
   });
 
@@ -234,7 +259,12 @@ describe("the field's own document", () => {
   it("refuses a limited credential on any verb but a ref'd type, a dialog reply included", () => {
     for (const action of [
       { kind: "act", verb: "accept_dialog", value: `{{secret:${REVIEWER}}}` },
-      { kind: "act", verb: "type", target: { selector: "#pw" }, value: `{{secret:${REVIEWER}}}` },
+      {
+        kind: "act",
+        verb: "type",
+        target: { selector: "#pw" },
+        value: `{{secret:${REVIEWER}}}`,
+      },
       { kind: "act", verb: "type", value: `{{secret:${REVIEWER}}}` },
     ]) {
       const message = refusal(() =>
@@ -259,7 +289,9 @@ describe("the field's own document", () => {
   it("allows a field in a frame on an allowed origin", async () => {
     const cdp = cdpWith("https://collector.test");
     expect(await receivingFrameRefusal(cdp, undefined, [AUTH])).toBeUndefined();
-    expect(await receivingFrameRefusal(cdpWith(AUTH), "child", [AUTH])).toBeUndefined();
+    expect(
+      await receivingFrameRefusal(cdpWith(AUTH), "child", [AUTH]),
+    ).toBeUndefined();
   });
 
   it("refuses a field framed in from another origin, or one it cannot read", async () => {
@@ -273,7 +305,12 @@ describe("the field's own document", () => {
     expect(
       await receivingFrameRefusal(cdpWith("://null"), "missing", [AUTH]),
     ).toMatch(/could not read/);
-    const broken = { on: () => {}, send: vi.fn(async () => { throw new Error("gone"); }) };
+    const broken = {
+      on: () => {},
+      send: vi.fn(async () => {
+        throw new Error("gone");
+      }),
+    };
     expect(await receivingFrameRefusal(broken, undefined, [AUTH])).toMatch(
       /could not read/,
     );
@@ -287,12 +324,69 @@ describe("the field's own document", () => {
       ({ commandId: `c-${Math.random()}`, source: "agent", action }) as never;
     await driver.execute(step({ kind: "navigate", url: `${AUTH}/login` }));
     const out = await driver.execute(
-      step({ kind: "act", verb: "type", value: `{{secret:${REVIEWER}}}`, observe: "none" }),
+      step({
+        kind: "act",
+        verb: "type",
+        value: `{{secret:${REVIEWER}}}`,
+        observe: "none",
+      }),
       { secrets: limited },
     );
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(/secret_origin_refused/);
     expect(out.error).not.toContain(PASSWORD);
     expect(page.calls.acts).toEqual([]);
+  });
+});
+
+describe("a limited credential reaches its field by the field, not by focus", () => {
+  function cdpAnswering(value: unknown, resolved = true) {
+    const sent: string[] = [];
+    const cdp = {
+      on: () => {},
+      send: vi.fn(
+        async (
+          method: string,
+          params?: { arguments?: Array<{ value: unknown }> },
+        ) => {
+          sent.push(method);
+          if (method === "DOM.resolveNode")
+            return resolved ? { object: { objectId: "field-1" } } : {};
+          if (method === "Runtime.callFunctionOn") {
+            expect(params?.arguments?.[0]?.value).toBe(PASSWORD);
+            return { result: { value } };
+          }
+          return {};
+        },
+      ),
+    };
+    return { cdp, sent };
+  }
+
+  it("focuses, checks and inserts in one call in the field's frame", async () => {
+    const { cdp, sent } = cdpAnswering("typed");
+    const guard = vi.fn(() => {
+      expect(sent).not.toContain("Runtime.callFunctionOn");
+    });
+    await insertSecretInNode(cdp, 7, PASSWORD, guard);
+    expect(guard).toHaveBeenCalledTimes(1);
+    // Never through the browser's focus, which a page could move.
+    expect(sent).toEqual(["DOM.resolveNode", "Runtime.callFunctionOn"]);
+  });
+
+  it("types nothing when the field did not keep focus, or is gone", async () => {
+    for (const answer of ["not_focused", "not_inserted", undefined]) {
+      await expect(
+        insertSecretInNode(cdpAnswering(answer).cdp, 7, PASSWORD, () => {}),
+      ).rejects.toThrow(/^unsupported_target: .*nothing was typed/);
+    }
+    await expect(
+      insertSecretInNode(
+        cdpAnswering("typed", false).cdp,
+        7,
+        PASSWORD,
+        () => {},
+      ),
+    ).rejects.toThrow(/^target_not_found/);
   });
 });
