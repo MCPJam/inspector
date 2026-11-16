@@ -335,7 +335,10 @@ export function captureCommandEvent(
  * against the registered tree: the longest matching path of registered
  * names, or "(unknown)". Unmatched argv tokens are never sent.
  */
-export function captureUsageErrorEvent(argv: readonly string[]): void {
+export function captureUsageErrorEvent(
+  argv: readonly string[],
+  exitCode = 2,
+): void {
   const run = activeRun;
   if (!run || run.captured) {
     return;
@@ -350,7 +353,7 @@ export function captureUsageErrorEvent(argv: readonly string[]): void {
     run.shouldCapture = commandPath[0] !== "telemetry";
   }
 
-  captureCommandEvent(2, "usage_error", "USAGE_ERROR");
+  captureCommandEvent(exitCode, "usage_error", "USAGE_ERROR");
 }
 
 /**

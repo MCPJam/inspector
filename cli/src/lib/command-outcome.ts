@@ -81,7 +81,12 @@ export function resolveCommandOutcome(
   if (recorded?.outcome === "check_failed") {
     return { outcome: "check_failed" };
   }
-  return { outcome: "error", errorCode: recorded?.errorCode ?? "UNKNOWN_ERROR" };
+  // A command that caught and printed its own usage error still had one.
+  const errorCode = recorded?.errorCode ?? "UNKNOWN_ERROR";
+  return {
+    outcome: errorCode === "USAGE_ERROR" ? "usage_error" : "error",
+    errorCode,
+  };
 }
 
 /**
