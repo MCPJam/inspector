@@ -180,11 +180,16 @@ export async function main(
 
     const normalizedError = normalizeCliError(error);
     writeError(normalizedError, format);
-    const { outcome, errorCode } = resolveCommandOutcome(
-      normalizedError.exitCode,
-      normalizedError.code,
-    );
-    captureCommandEvent(normalizedError.exitCode, outcome, errorCode);
+    if (normalizedError.code === "USAGE_ERROR") {
+      // An option parser can throw one before `preAction` names the command.
+      captureUsageErrorEvent(argv, normalizedError.exitCode);
+    } else {
+      const { outcome, errorCode } = resolveCommandOutcome(
+        normalizedError.exitCode,
+        normalizedError.code,
+      );
+      captureCommandEvent(normalizedError.exitCode, outcome, errorCode);
+    }
     await telemetry.flush();
     return {
       exitCode: normalizedError.exitCode,

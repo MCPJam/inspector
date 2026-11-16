@@ -7,6 +7,8 @@ import {
   resetCommandOutcome,
   resolveCommandOutcome,
 } from "../src/lib/command-outcome.js";
+import { recordLocalTestOutcome } from "../src/lib/local-test-exit-code.js";
+import { setProcessExitCode } from "../src/lib/output.js";
 import { exitInterrupted, initTelemetry } from "../src/lib/telemetry.js";
 import {
   captureProcessOutput,
@@ -100,6 +102,22 @@ test("parse errors are usage_error with the registered command path only", async
   }
 });
 
+test("an invalid option value thrown before the action runs is usage_error", async () => {
+  for (const argv of [
+    ["--timeout", "0", "server", "probe", "--url", DEAD_URL],
+    ["server", "probe", "--timeout", "0", "--url", DEAD_URL],
+  ]) {
+    const { exitCode, events } = await runMain(argv);
+    const label = argv.join(" ");
+
+    assert.equal(exitCode, 2, label);
+    assert.equal(events.length, 1, label);
+    assert.equal(events[0].properties.command, "server probe", label);
+    assert.equal(events[0].properties.outcome, "usage_error", label);
+    assert.equal(events[0].properties.error_code, "USAGE_ERROR", label);
+  }
+});
+
 test("parse errors honor --no-telemetry and skip telemetry commands", async () => {
   for (const argv of [
     ["--no-telemetry", "srver"],
@@ -108,6 +126,48 @@ test("parse errors honor --no-telemetry and skip telemetry commands", async () =
   ]) {
     const { events } = await runMain(argv);
     assert.equal(events.length, 0, argv.join(" "));
+  }
+});
+
+test("a usage error a command caught and printed itself stays usage_error", () => {
+  const savedExitCode = process.exitCode;
+  try {
+    resetCommandOutcome();
+    setProcessExitCode(2);
+    recordCommandOutcome("error", "USAGE_ERROR");
+    assert.deepEqual(resolveCommandOutcome(2), {
+      outcome: "usage_error",
+      errorCode: "USAGE_ERROR",
+    });
+  } finally {
+    resetCommandOutcome();
+    process.exitCode = savedExitCode;
+  }
+});
+
+test("mcpjam test counts only a failed verdict as check_failed", () => {
+  const savedExitCode = process.exitCode;
+  const outcomeFor = (exitCode: number) => {
+    resetCommandOutcome();
+    setProcessExitCode(exitCode);
+    recordLocalTestOutcome(exitCode);
+    return resolveCommandOutcome(exitCode);
+  };
+  try {
+    assert.deepEqual(outcomeFor(0), { outcome: "ok" });
+    assert.deepEqual(outcomeFor(1), { outcome: "check_failed" });
+    assert.deepEqual(outcomeFor(3), { outcome: "error", errorCode: "AUTH_FAILED" });
+    assert.deepEqual(outcomeFor(4), { outcome: "error", errorCode: "UNKNOWN_ERROR" });
+    assert.deepEqual(outcomeFor(5), { outcome: "error", errorCode: "UNKNOWN_ERROR" });
+
+    resetCommandOutcome();
+    recordCommandOutcome("interrupted");
+    setProcessExitCode(4);
+    recordLocalTestOutcome(4);
+    assert.deepEqual(resolveCommandOutcome(4), { outcome: "interrupted" });
+  } finally {
+    resetCommandOutcome();
+    process.exitCode = savedExitCode;
   }
 });
 
