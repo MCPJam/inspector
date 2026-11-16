@@ -59,7 +59,9 @@ describe("CodeEvaluatorPanel", () => {
         fileName="quoted-cart-total.ts"
         code={code}
         errorLine={3}
-        consoleOutput="TypeError at line 3"
+        consoleOutput={
+          "TypeError at line 3\n    at evaluate (quoted-cart-total.ts:3)"
+        }
       />,
     );
     const source = screen.getByRole("region", {
@@ -67,9 +69,11 @@ describe("CodeEvaluatorPanel", () => {
     });
     const marked = source.querySelector("[data-error-line]");
     expect(marked).toHaveTextContent('return { kind: "scored", score: 1 };');
-    expect(screen.getByRole("log", { name: "Console" })).toHaveTextContent(
-      "TypeError at line 3",
+    const log = screen.getByRole("log", { name: "Console" });
+    expect(log.textContent).toBe(
+      "TypeError at line 3\n    at evaluate (quoted-cart-total.ts:3)",
     );
+    expect(log).toHaveClass("whitespace-pre-wrap");
     for (const limit of RUNNER_LIMITS) {
       expect(screen.getByText(limit)).toBeInTheDocument();
     }
