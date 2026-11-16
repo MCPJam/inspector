@@ -497,9 +497,18 @@ export const argMatcherSchema = z.object({
  * loader accepted the new value — exactly the divergence
  * `scripts/eval-suite-schema-artifacts.ts` refuses to publish.
  */
+/** Library evaluator ids are short slugs such as `no-wasted-calls`. */
+export const MAX_EVALUATOR_ID_CHARS = 64;
+
 const checkPolicyShape = {
   role: z.enum(["gating", "advisory", "required"]).optional(),
   severity: z.literal("warn").optional(),
+  evaluator: z
+    .object({
+      id: z.string().min(1).max(MAX_EVALUATOR_ID_CHARS),
+      version: z.number().int().positive(),
+    })
+    .optional(),
 };
 
 /**
@@ -850,7 +859,7 @@ export const casePredicatesSchema = z.object({
 export type CasePredicates = z.infer<typeof casePredicatesSchema>;
 export type PredicatePlaceholder =
   (typeof PREDICATE_PLACEHOLDER_STRINGS)[number];
-export type { CheckPolicy } from "./policy.js";
+export type { CheckEvaluatorOrigin, CheckPolicy } from "./policy.js";
 
 /**
  * How a tool failure surfaced. The plan requires `noToolErrors` to distinguish

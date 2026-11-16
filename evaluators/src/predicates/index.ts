@@ -55,6 +55,7 @@ export type {
   CasePredicates,
   PredicatePlaceholder,
   CheckPolicy,
+  CheckEvaluatorOrigin,
 } from "./types.js";
 export {
   predicateSchema,

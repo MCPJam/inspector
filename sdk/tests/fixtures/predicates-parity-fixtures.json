@@ -985,6 +985,16 @@
         "role": "advisory",
         "severity": "warn"
       }
+    },
+    {
+      "label": "noToolErrors — added from a library evaluator",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors",
+          "version": 1
+        }
+      }
     }
   ],
   "reject": [
@@ -2176,6 +2186,38 @@
         "path": "/a~2"
       },
       "why": "every \"~\" in path must be followed by 0 or 1"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with an empty id",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "",
+          "version": 1
+        }
+      },
+      "why": "evaluator.id must be 1 to 64 characters"
+    },
+    {
+      "label": "noToolErrors — evaluator tag with version 0",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors",
+          "version": 0
+        }
+      },
+      "why": "evaluator.version must be a positive whole number"
+    },
+    {
+      "label": "noToolErrors — evaluator tag missing its version",
+      "value": {
+        "type": "noToolErrors",
+        "evaluator": {
+          "id": "actionable-tool-errors"
+        }
+      },
+      "why": "evaluator needs both id and version"
     }
   ]
 }
