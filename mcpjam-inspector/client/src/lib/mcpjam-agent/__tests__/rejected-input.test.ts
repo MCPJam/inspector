@@ -147,6 +147,24 @@ describe("oversized history behind a short message", () => {
     ).toBe(false);
   });
 
+  it("reads the numbers from a wrapped refusal too", () => {
+    const reloaded = [paste, toolReply, userText("again", "hello again")];
+    const wrapped = JSON.stringify({ error: sizeRefusal(33121) });
+    expect(conversationTooLarge(reloaded, wrapped)).toBe(true);
+  });
+
+  it("lets a chat exactly at the limit send, as the backend refuses only above it", () => {
+    const again = userText("again", "hello again");
+    const share = JSON.stringify(again).length / 3;
+    const reloaded = [paste, toolReply, again];
+    expect(conversationTooLarge(reloaded, sizeRefusal(32000 + share))).toBe(
+      false,
+    );
+    expect(conversationTooLarge(reloaded, sizeRefusal(32001 + share))).toBe(
+      true,
+    );
+  });
+
   it("falls back to the tool rule when the refusal has no numbers", () => {
     const reloaded = [paste, toolReply, userText("again", "hello again")];
     expect(conversationTooLarge(reloaded, refusal)).toBe(false);
