@@ -109,7 +109,7 @@ export function ServerInfoContent({
   // are compatible at runtime.
   if (
     serverDeclaresSkillsExtension(
-      serverCapabilities as Parameters<typeof serverDeclaresSkillsExtension>[0]
+      serverCapabilities as Parameters<typeof serverDeclaresSkillsExtension>[0],
     )
   ) {
     capabilities.push("Skills");
@@ -156,7 +156,7 @@ export function ServerInfoContent({
     // Shared and uploaded accounts are never revealed, so they offer no
     // reveal for the backend to refuse.
     const revealable = (connection: { hostedOnly?: boolean } | undefined) =>
-      !(loaded && shared) && connection?.hostedOnly !== true;
+      loaded && !shared && connection?.hostedOnly !== true;
     const targets =
       connections.length > 1
         ? connections.map((connection, index) => ({
@@ -202,7 +202,9 @@ export function ServerInfoContent({
                 </div>
               ) : !target.revealable ? (
                 <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
-                  Tokens of shared and uploaded accounts can't be revealed.
+                  {loaded
+                    ? "Tokens of shared and uploaded accounts can't be revealed."
+                    : "Reveal is available once this server's accounts have loaded."}
                 </div>
               ) : !tokens ? (
                 canRevealHostedOAuthTokens ? (

@@ -79,8 +79,15 @@ export function ConnectionAccountsSection({
   onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
   onSwitch: () => void | Promise<void>;
 }) {
-  const { connections, shared, localDeliveryAllowed, loaded, error, refetch } =
-    useHostedOAuthConnections(projectId, serverId, enabled);
+  const {
+    connections,
+    shared,
+    localDeliveryAllowed,
+    loaded,
+    landed,
+    error,
+    refetch,
+  } = useHostedOAuthConnections(projectId, serverId, enabled);
   const sharing = useSignInSharing({ projectId, serverId, enabled });
   if (!enabled || !projectId || !serverId) return null;
   return (
@@ -118,6 +125,7 @@ export function ConnectionAccountsSection({
             {shared && sharing.isAdmin ? (
               <LocalRunsControl
                 allowed={localDeliveryAllowed}
+                listVersion={landed}
                 onChange={sharing.setLocalRuns}
               />
             ) : null}
