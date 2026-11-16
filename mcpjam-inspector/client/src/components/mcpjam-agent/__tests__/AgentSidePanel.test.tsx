@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { useEvalAgentScopes } from "@/lib/mcpjam-agent/eval-scope";
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 import { AgentSidePanel } from "../AgentSidePanel";
 
 const chatState = vi.hoisted(() => ({ status: "ready" }));
@@ -50,6 +51,7 @@ beforeEach(() => {
   chatState.status = "ready";
   vi.clearAllMocks();
   useDescribeFlow.setState({ sessions: {} });
+  useDescribeSurface.setState({ scope: null });
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     value: 609,
@@ -151,6 +153,20 @@ it("opens a general chat when an eval chat is away from its case editor", () => 
   fireEvent.click(screen.getByRole("button", { name: "Start new chat" }));
   expect(useAgentPanelStore.getState().activeSessionId).toBeNull();
   expect(screen.getByText("General composer")).toBeVisible();
+});
+
+it("opens a fresh eval chat when the eval chat is on its case editor", () => {
+  useDescribeSurface.setState({
+    scope: useEvalAgentScopes.getState().scopes["eval-panel"],
+  });
+  render(
+    <AgentSidePanel projectId="p" organizationId={null} activeTab="evaluate" />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Start new chat" }));
+  const sessionId = useAgentPanelStore.getState().activeSessionId;
+  expect(sessionId).toMatch(/^eval-/);
+  expect(sessionId).not.toBe("eval-panel");
+  expect(screen.queryByText("General composer")).toBeNull();
 });
 
 it("pauses an active generation on close and does not resume automatically on reopen", () => {

@@ -7,7 +7,7 @@
  * opens the out-of-credits dialog, which would offer to sell credits that
  * cannot clear the refusal.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { UIMessage } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -47,11 +47,55 @@ vi.mock("@/hooks/use-mcpjam-agent-session", () => ({
   }),
 }));
 
-// The transcript isn't under test, and its tool parts need app state.
-vi.mock("@/components/chat-v2/thread", () => ({ Thread: () => null }));
+// The transcript isn't under test, and its tool parts need app state. Its
+// follow-up callback is kept so a test can send as a widget would.
+const transcript = vi.hoisted(() => ({
+  sendFollowUpMessage: undefined as ((text: string) => void) | undefined,
+}));
+vi.mock("@/components/chat-v2/thread", () => ({
+  Thread: (props: { sendFollowUpMessage: (text: string) => void }) => {
+    transcript.sendFollowUpMessage = props.sendFollowUpMessage;
+    return null;
+  },
+}));
+vi.mock("@/lib/mcpjam-agent/eval-workspace", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/mcpjam-agent/eval-workspace")
+  >()),
+  isEvalContextReady: () => true,
+}));
 
 import { McpjamAgentThread } from "../McpjamAgentThread";
+import { McpjamAgentHero } from "../McpjamAgentHero";
+import {
+  keepDraftForNewChat,
+  takeKeptDraft,
+} from "@/lib/mcpjam-agent/pending-prompt";
+import { useDescribeFlow } from "@/lib/mcpjam-agent/describe-flow";
+import { useEvalAgentScopes } from "@/lib/mcpjam-agent/eval-scope";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+
+// Tools ran after the refused turn, so the chat can't send anything more.
+const blockedChat: UIMessage[] = [
+  {
+    id: "request",
+    role: "user",
+    parts: [{ type: "text", text: "Create a server" }],
+  },
+  {
+    id: "tool-reply",
+    role: "assistant",
+    parts: [
+      {
+        type: "tool-ui_create_server",
+        toolCallId: "create-server",
+        state: "output-available",
+        input: {},
+        output: { serverId: "created-server" },
+      },
+    ],
+  },
+];
 
 function renderWithError(body: unknown) {
   sessionState.error = new Error(JSON.stringify(body));
@@ -81,6 +125,9 @@ describe("McpjamAgentThread refusal copy", () => {
     sessionState.submit.mockClear();
     sessionState.onNewChat.mockClear();
     sessionState.messages = [];
+    useEvalAgentScopes.setState({ scopes: {} });
+    useDescribeFlow.setState({ sessions: {} });
+    takeKeptDraft();
   });
 
   it("shows one plain line for a spent budget, not the raw body", () => {
@@ -120,26 +167,7 @@ describe("McpjamAgentThread refusal copy", () => {
   });
 
   it("keeps the text and offers a new chat once tools ran before the refusal", () => {
-    sessionState.messages = [
-      {
-        id: "request",
-        role: "user",
-        parts: [{ type: "text", text: "Create a server" }],
-      },
-      {
-        id: "tool-reply",
-        role: "assistant",
-        parts: [
-          {
-            type: "tool-ui_create_server",
-            toolCallId: "create-server",
-            state: "output-available",
-            input: {},
-            output: { serverId: "created-server" },
-          },
-        ],
-      },
-    ];
+    sessionState.messages = blockedChat;
     renderWithError({ code: "guest_input_too_large" });
     expect(
       screen.getByText(
@@ -154,6 +182,65 @@ describe("McpjamAgentThread refusal copy", () => {
     expect(composer).toHaveValue("What already happened?");
     fireEvent.click(screen.getByRole("button", { name: "Start new chat" }));
     expect(sessionState.onNewChat).toHaveBeenCalledOnce();
+    // The next chat's composer picks the kept text up.
+    expect(takeKeptDraft()).toBe("What already happened?");
+  });
+
+  it("leaves the typed text alone when a widget sends in a blocked chat", () => {
+    sessionState.messages = blockedChat;
+    renderWithError({ code: "guest_input_too_large" });
+    const composer = screen.getByRole("textbox");
+    fireEvent.change(composer, { target: { value: "My own question" } });
+    act(() => transcript.sendFollowUpMessage?.("Widget follow-up"));
+    expect(sessionState.submit).not.toHaveBeenCalled();
+    expect(composer).toHaveValue("My own question");
+  });
+
+  it("disables Continue on a paused eval chat that is too large to send", () => {
+    useEvalAgentScopes.setState({
+      scopes: {
+        "agent-refusal-session": {
+          kind: "evals",
+          version: 1,
+          id: "scope",
+          projectId: "project-1",
+          suiteId: "suite-1",
+          suiteName: "Support",
+        },
+      },
+    });
+    useDescribeFlow.setState({
+      sessions: {
+        "agent-refusal-session": {
+          phase: "describing",
+          questionUsed: false,
+          needsResume: true,
+        },
+      },
+    });
+    sessionState.messages = blockedChat;
+    renderWithError({ code: "guest_input_too_large" });
+    expect(
+      screen.getByRole("button", { name: "Continue", exact: true }),
+    ).toBeDisabled();
+  });
+
+  it("opens a new composer with the text kept from a chat that was too large", () => {
+    keepDraftForNewChat("Carried over");
+    render(
+      <PreferencesStoreProvider themeMode="dark" themePreset="default">
+        <McpjamAgentHero surface="test" onSessionStart={vi.fn()} />
+      </PreferencesStoreProvider>,
+    );
+    expect(screen.getByRole("textbox")).toHaveValue("Carried over");
+    expect(takeKeptDraft()).toBe("");
+  });
+
+  it("opens with the text kept from a chat that was too large", () => {
+    keepDraftForNewChat("Carried over");
+    renderThread();
+    expect(screen.getByRole("textbox")).toHaveValue("Carried over");
+    expect(takeKeptDraft()).toBe("");
   });
 
   it("still sends a replacement when no tool ran before the refusal", () => {

@@ -58,7 +58,11 @@ import {
   appendRecentMcpjamAgentSession,
   loadRecentMcpjamAgentSessions,
 } from "@/components/mcpjam-agent/recent-sessions";
-import { pendingAgentPromptKey } from "@/lib/mcpjam-agent/pending-prompt";
+import {
+  keepDraftForNewChat,
+  pendingAgentPromptKey,
+  takeKeptDraft,
+} from "@/lib/mcpjam-agent/pending-prompt";
 import {
   CONVERSATION_TOO_LARGE_MESSAGE,
   describeAgentRefusalMessage,
@@ -114,6 +118,10 @@ export function McpjamAgentThread({
   const contextLoading = Boolean(evalScope && !isEvalContextReady(evalScope));
   const scopeMissing = sessionId.startsWith("eval-") && !evalScope;
   const [draft, setDraft] = useState("");
+  useEffect(() => {
+    const kept = takeKeptDraft();
+    if (kept) setDraft(kept);
+  }, []);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Peek at the hero-stashed pending prompt at mount so we can render an
@@ -163,11 +171,9 @@ export function McpjamAgentThread({
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      // Nothing sent from this chat can get through, so keep the text.
-      if (tooLarge) {
-        setDraft(trimmed);
-        return;
-      }
+      // Nothing sent from this chat can get through. The composer keeps its
+      // text; other senders (widgets, Continue) must not replace it.
+      if (tooLarge) return;
       if (!canAccept) return;
       if (!isReady) {
         useEvalPromptQueue.getState().enqueue(sessionId, trimmed);
@@ -496,7 +502,7 @@ export function McpjamAgentThread({
                 <div className="flex gap-2">
                   <Button
                     size="sm"
-                    disabled={!isReady || isStreaming}
+                    disabled={!isReady || isStreaming || tooLarge}
                     onClick={() =>
                       handleSubmit(
                         "Continue preparing the test from my previous description and expected outcome. Use the current case context.",
@@ -562,7 +568,10 @@ export function McpjamAgentThread({
                     variant="outline"
                     size="sm"
                     className="mt-2 block text-foreground"
-                    onClick={onNewChat}
+                    onClick={() => {
+                      keepDraftForNewChat(draft.trim());
+                      onNewChat();
+                    }}
                   >
                     Start new chat
                   </Button>

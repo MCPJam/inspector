@@ -90,6 +90,11 @@ describe("oversized agent input recovery", () => {
     expect(conversationTooLarge([...history, rejected], refusal)).toBe(false);
   });
 
+  it("doesn't block a refusal with no user message, since no tools ran after one", () => {
+    expect(conversationTooLarge([], refusal)).toBe(false);
+    expect(conversationTooLarge([toolReply], refusal)).toBe(false);
+  });
+
   it.each([undefined, "Network error", '{"code":"platform_capacity"}'])(
     "never blocks on an unrelated error: %s",
     (message) => {
