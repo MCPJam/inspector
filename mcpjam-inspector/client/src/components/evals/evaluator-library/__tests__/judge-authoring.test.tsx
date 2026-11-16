@@ -71,6 +71,7 @@ describe("OutputFormatControl", () => {
     );
     expect(screen.getByText("Pass at")).toBeInTheDocument();
     expect(screen.getByText("0.70")).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Pass at" })).toBeInTheDocument();
   });
 
   it("toggles explanation before the answer", () => {
@@ -108,11 +109,13 @@ describe("ReviewerExampleRow", () => {
     expect(screen.getByText("changed to")).toHaveClass("sr-only");
     fireEvent.click(screen.getByRole("button", { name: "Exclude" }));
     expect(onIncludedChange).toHaveBeenLastCalledWith(false);
+    onIncludedChange.mockClear();
     fireEvent.click(
       screen.getByRole("checkbox", {
         name: "Use Run #3 · Iteration #4 as an example",
       }),
     );
-    expect(onIncludedChange).toHaveBeenLastCalledWith(false);
+    expect(onIncludedChange).toHaveBeenCalledOnce();
+    expect(onIncludedChange).toHaveBeenCalledWith(false);
   });
 });
