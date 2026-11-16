@@ -111,15 +111,63 @@ export type {
   PlatformDirectorySubmissionCounts,
   PlatformDirectorySubmissionCreateBody,
   PlatformDirectorySubmissionDeleted,
+  PlatformDirectorySubmissionPlugin,
   PlatformDirectorySubmissionResults,
   PlatformDirectorySubmissionRunBody,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
   PlatformDirectorySubmissionView,
 } from "./directory-submission-types.js";
+export type {
+  PlatformDirectorySubmissionEvent,
+  PlatformDirectorySubmissionEventBody,
+  PlatformDirectorySubmissionExportFile,
+  PlatformDirectorySubmissionFinding,
+  PlatformDirectorySubmissionFindingsQuery,
+  PlatformDirectorySubmissionHandoff,
+  PlatformDirectorySubmissionSnapshotsView,
+} from "./directory-submission-handoff-types.js";
+export type {
+  PlatformDirectoryTestArgumentDraft,
+  PlatformDirectoryTestArgumentDrafting,
+  PlatformDirectoryTestArgumentUndecided,
+  PlatformDirectoryTestCaseCounts,
+  PlatformDirectoryTestPlanCatalog,
+  PlatformDirectoryTestPlanDraft,
+  PlatformDirectoryTestPlanRevision,
+  PlatformDirectoryTestPlanSaveBody,
+  PlatformDirectoryTestPlanSaved,
+  PlatformDirectoryTestPlanView,
+  PlatformDirectoryToolTestSweep,
+  PlatformDirectoryToolTests,
+} from "./directory-test-plan-types.js";
+export type {
+  PlatformDirectoryEvalCaseList,
+  PlatformDirectoryEvalCaseSource,
+  PlatformDirectoryPortalTestCase,
+  PlatformDirectorySubmissionEvalExport,
+  PlatformDirectorySubmissionEvalImport,
+  PlatformDirectorySubmissionEvalLink,
+  PlatformDirectorySubmissionEvalLinkBody,
+  PlatformDirectorySubmissionEvalResult,
+  PlatformDirectorySubmissionEvalRun,
+  PlatformDirectorySubmissionEvals,
+} from "./directory-submission-eval-types.js";
+export { directoryTestPlanSchema } from "./directory-test-plan-schema.js";
 export { directorySubmissionConflict } from "./directory-submission-client.js";
-// The nine directory submission operations and their input and result types.
+export type {
+  PlatformReviewerAttempt,
+  PlatformReviewerAttemptCreateBody,
+  PlatformReviewerAttemptStart,
+  PlatformReviewerAttemptState,
+  PlatformReviewerStage,
+} from "./directory-reviewer-attempt-types.js";
+// The directory submission operations and their input and result types.
 export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
+export * from "./directory-submission-handoff-operations.js";
+export * from "./directory-test-plan-operations.js";
+export * from "./directory-submission-eval-operations.js";
 
 export {
   computeRunTargets,

@@ -52,6 +52,7 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
+import { localHostAllowlistMiddleware } from "./middleware/local-host-allowlist";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -67,6 +68,7 @@ import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
+import { shutdownLocalTurnParks } from "./utils/harness/local/approval-park.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -485,6 +487,9 @@ app.use("*", securityHeadersMiddleware);
 // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
 // than another line in the security headers — see indexing-headers.ts.
 app.use("*", indexingHeadersMiddleware);
+
+// 1c. Host allowlist (blocks DNS rebinding), local mode only.
+if (!HOSTED_MODE) app.use("*", localHostAllowlistMiddleware);
 
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
@@ -1133,6 +1138,9 @@ async function shutdown() {
     // the context is what makes Chromium release its profile's singleton lock,
     // so a skipped teardown here is a browser the NEXT run cannot launch.
     await shutdownLocalBrowserSessions();
+    // Local runtimes kept between turns stop with this Inspector rather than
+    // run detached until the next boot's janitor (bounded internally).
+    await shutdownLocalTurnParks();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.

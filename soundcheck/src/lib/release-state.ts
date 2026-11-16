@@ -7,8 +7,8 @@
  *      which versions them and opens the version PR.
  *   2. The version PR is open. Merging it is the release.
  *   3. `main` carries versions npm does not have yet. release-trigger.yml
- *      dispatches release.yml at the first commit where Tests, Build and Test
- *      and Deploy Staging are all green, and release.yml publishes them.
+ *      dispatches release.yml at the first commit where Deploy Staging is
+ *      green; release.yml runs the full tests, then publishes them.
  *
  * Hand-synced with .github/scripts (release-pr.mjs, release-trigger.mjs,
  * unpublished-versions.mjs): Soundcheck only sees the GitHub API, never the

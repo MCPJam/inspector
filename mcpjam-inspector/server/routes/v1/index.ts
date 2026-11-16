@@ -71,7 +71,11 @@ import hostCatalog from "./host-catalog.js";
 import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
+import directoryReviewerAttempts from "./directory-reviewer-attempts.js";
 import directorySubmissions from "./directory-submissions.js";
+import directorySubmissionHandoff from "./directory-submission-handoff.js";
+import directoryTestPlans from "./directory-test-plans.js";
+import directorySubmissionEvals from "./directory-submission-evals.js";
 import conformanceRuns from "./conformance-runs.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
@@ -183,10 +187,15 @@ v1.route("/", serverSkills);
 v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", readiness);
+// Reviewer sign-in attempts, under their submission: guest-DENIED like it.
+v1.route("/", directoryReviewerAttempts);
 // Directory submissions and the directory flows they rehearse. Guest-DENIED
 // by default (no GUEST_ALLOWED_V1_RULES entry): writes need a project member,
 // and a run started here dials the submission's server.
 v1.route("/", directorySubmissions);
+v1.route("/", directorySubmissionHandoff);
+v1.route("/", directoryTestPlans);
+v1.route("/", directorySubmissionEvals);
 v1.route("/", conformanceRuns);
 v1.route("/", clients);
 v1.route("/", harness);
@@ -210,9 +219,7 @@ v1.route("/", plugins);
 // member-gated, and a share-link visitor has no business enumerating skills.
 v1.route("/", skills);
 // Goals + goal runs — the public API for Swarms, with the pre-rename
-// `/journeys` paths kept alongside as deprecated aliases. Flag-gated beta
-// (`sandboxes-enabled`, enforced server-side on writes), so these are absent
-// from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
+// `/journeys` paths kept alongside as deprecated aliases.
 // Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
 // none should — a goal run spends hosted-model credits.
 // GENERATION MOUNTS FIRST, and the order is load-bearing rather than
@@ -250,11 +257,10 @@ v1.route("/", swarms);
 // against the org's shared daily ledger.
 v1.route("/", swarmInsights);
 // Scenarios — publishing a project environment for user testing. WRITES, so
-// they live here rather than in the read-proxy catalog. Publishing is behind
-// the `sandboxes-enabled` beta flag server-side; unpublishing deliberately is
-// not. Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches these,
-// and the existing scenario guest GETs (which share-link flows depend on) stay
-// exactly as they are until a guest security review says otherwise.
+// they live here rather than in the read-proxy catalog. Guest-DENIED by
+// default: no GUEST_ALLOWED_V1_RULES entry matches these, and the existing
+// scenario guest GETs (which share-link flows depend on) stay exactly as they
+// are until a guest security review says otherwise.
 v1.route("/", scenarios);
 // Studies — the list, one study's merged read, and everything you do with a
 // study ONCE IT EXISTS: read what it produced, and control who can reach it.

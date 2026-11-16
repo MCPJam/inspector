@@ -46,42 +46,53 @@ function hasBearerAuthorizationHeader(headers: unknown): boolean {
   return false;
 }
 
-function redactServerConfig(config: unknown) {
+function isNonEmptyRecord(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Object.keys(value as Record<string, unknown>).length > 0
+  );
+}
+
+/**
+ * The config fields the browser reads from this list: the connection card and
+ * edit form (`url`, `command`, `args`, `timeout`, capabilities), the wire
+ * version pin, and which secrets exist. Projected rather than redacted, so a
+ * credential the SDK keeps on the config (`accessToken` after a refresh) or a
+ * field added later stays in this process unless it is named here.
+ */
+const LISTED_CONFIG_FIELDS = [
+  "url",
+  "command",
+  "args",
+  "timeout",
+  "capabilities",
+  "clientCapabilities",
+  "mcpProtocolVersion",
+] as const;
+
+function listedServerConfig(config: unknown) {
   if (!config || typeof config !== "object") {
     return config;
   }
   const record = config as Record<string, unknown>;
-  const redacted: Record<string, unknown> = { ...record };
-  if ("env" in redacted) {
-    redacted.hasEnv =
-      !!redacted.env &&
-      typeof redacted.env === "object" &&
-      Object.keys(redacted.env as Record<string, unknown>).length > 0;
-    delete redacted.env;
+  const listed: Record<string, unknown> = {};
+  for (const field of LISTED_CONFIG_FIELDS) {
+    if (record[field] !== undefined) listed[field] = record[field];
   }
-  const requestInit = redacted.requestInit;
+  if ("env" in record) listed.hasEnv = isNonEmptyRecord(record.env);
+  const requestInit = record.requestInit;
   if (
     requestInit &&
     typeof requestInit === "object" &&
-    !Array.isArray(requestInit)
+    "headers" in requestInit
   ) {
-    const nextRequestInit = { ...(requestInit as Record<string, unknown>) };
-    if ("headers" in nextRequestInit) {
-      redacted.hasHeaders =
-        !!nextRequestInit.headers &&
-        typeof nextRequestInit.headers === "object" &&
-        Object.keys(nextRequestInit.headers as Record<string, unknown>).length >
-          0;
-      // Flag bearer auth before the header value is stripped, so the edit form
-      // can keep the auth type as "bearer" and preserve the hidden token.
-      redacted.hasBearerToken = hasBearerAuthorizationHeader(
-        nextRequestInit.headers
-      );
-      delete nextRequestInit.headers;
-    }
-    redacted.requestInit = nextRequestInit;
+    listed.hasHeaders = isNonEmptyRecord(requestInit.headers);
+    // Flagged so the edit form keeps the auth type as "bearer" and the
+    // hidden token stays where it is.
+    listed.hasBearerToken = hasBearerAuthorizationHeader(requestInit.headers);
   }
-  return redacted;
+  return listed;
 }
 
 const servers = new Hono();
@@ -97,7 +108,7 @@ servers.get("/", async (c) => {
         id,
         name: id,
         status,
-        config: redactServerConfig(config),
+        config: listedServerConfig(config),
       }));
 
     return c.json({

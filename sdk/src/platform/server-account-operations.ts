@@ -105,7 +105,7 @@ export const listServerAccountsOperation: PlatformOperation<
   name: "list_server_accounts",
   title: "List a server's accounts",
   description:
-    "List the accounts a saved MCP server signs in with: each one's id, name, whether runs use it by default, whether it needs reconnecting, and whether it is for hosted runs only. Never a token. You see your own personal accounts, or the project accounts of a server shared with the project.",
+    "List the accounts a saved MCP server signs in with: each one's id, name, whether runs use it by default, whether it needs reconnecting, and whether it is a shared or uploaded account whose token is never revealed. Never a token. You see your own personal accounts, or the project accounts of a server shared with the project.",
   readOnly: true,
   permalink: derivePermalinks(serverPermalink),
   inputSchema: serverScopedInput,
@@ -146,7 +146,7 @@ export const uploadServerAccountTokensOperation: PlatformOperation<
   name: "upload_server_account_tokens",
   title: "Upload tokens to a server account",
   description:
-    "Store an access token on a saved server's account, by id or name. A name no account has creates one (`created: true`); otherwise the token is replaced in place and the id stays. THE TOKEN TRAVELS IN THIS CALL, so read it from a file or an environment variable. Nothing checks who the token belongs to: the name is your own label, and a replacement replaces the token whoever it belongs to. The account is for hosted runs only: no local app, browser or sandbox receives its token.",
+    "Store an access token on a saved server's account, by id or name. A name no account has creates one (`created: true`); otherwise the token is replaced in place and the id stays. THE TOKEN TRAVELS IN THIS CALL, so read it from a file or an environment variable. Nothing checks who the token belongs to: the name is your own label, and a replacement replaces the token whoever it belongs to. The token is never revealed, and never sent to a browser or a sandbox. Hosted runs use it. On a server shared with the project, members' local apps receive it once a project admin allows local runs; on your own server, only your local app does.",
   readOnly: false,
   risk: "exposure",
   permalink: derivePermalinks(serverPermalink),

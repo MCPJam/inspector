@@ -138,6 +138,60 @@ describe("accountSetGroup", () => {
     );
   });
 
+  it("refuses a chosen account the backend withheld in the backend's words, not as a reconnect", () => {
+    const withheld = {
+      connectionId: DUMMY,
+      label: "Dummy",
+      isDefault: false,
+      accessToken: null,
+      unavailableReason: "credential_export_denied",
+      unavailablePolicy: "hostedOnlyAccount",
+      unavailableCause: "not_acknowledged",
+      unavailableMessage:
+        "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+    };
+    const run = () =>
+      group([DUMMY], authorized({ oauthConnections: [withheld] }));
+    // After the server and account it is about.
+    expect(refusal(run)).toBe(`Asana Dummy: ${withheld.unavailableMessage}`);
+    expect(() => run()).toThrow(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          exportDenied: true,
+          policy: "hostedOnlyAccount",
+          cause: "not_acknowledged",
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "an upload on a shared server",
+      { accountKind: "shared", accountUploaded: true },
+    ],
+    ["an older backend's upload", { accountKind: "uploaded" }],
+  ] as const)(
+    "asks for a fresh upload, not a sign-in, when %s has no token",
+    (_label, kind) => {
+      const expired = {
+        connectionId: DUMMY,
+        label: "CI account",
+        isDefault: false,
+        accessToken: null,
+        unavailableReason: "refresh_token_unavailable",
+        ...kind,
+      };
+      expect(
+        refusal(() =>
+          group([DUMMY], authorized({ oauthConnections: [expired] })),
+        ),
+      ).toBe(
+        "Asana CI account has no usable uploaded token. Upload a fresh token for it, or choose another account in the suite's settings.",
+      );
+    },
+  );
+
   it("refuses when a chosen account was removed", () => {
     expect(
       refusal(() => group([DUMMY], authorized({ oauthConnections: [] }))),

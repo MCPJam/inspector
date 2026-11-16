@@ -16,6 +16,8 @@ import "../../types/hono";
 import { getRequestLogger } from "../../utils/request-logger";
 import { classifyTunnelError } from "../../utils/error-classify";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import { tunnelRefusal } from "../../utils/delivered-oauth-credential.js";
+import { normalizeServerId } from "./http-adapters.js";
 
 const tunnels = new Hono();
 
@@ -34,6 +36,11 @@ function safeHostname(url: string): string {
 tunnels.post("/create/:serverId", async (c) => {
   const authHeader = c.req.header("authorization");
   const serverId = c.req.param("serverId");
+  const refusal = tunnelRefusal(
+    c.mcpClientManager,
+    normalizeServerId(c.mcpClientManager, serverId),
+  );
+  if (refusal) return c.json({ error: refusal }, 403);
 
   // Serialized per server: grant minting rotates the secret server-side,
   // so overlapping creates would race the edge's view of the live grant.
@@ -129,6 +136,11 @@ tunnels.post("/create/:serverId", async (c) => {
 tunnels.post("/rotate/:serverId", async (c) => {
   const authHeader = c.req.header("authorization");
   const serverId = c.req.param("serverId");
+  const refusal = tunnelRefusal(
+    c.mcpClientManager,
+    normalizeServerId(c.mcpClientManager, serverId),
+  );
+  if (refusal) return c.json({ error: refusal }, 403);
 
   let full = false;
   try {

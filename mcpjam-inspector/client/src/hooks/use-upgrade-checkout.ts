@@ -14,7 +14,7 @@ import { toast } from "@/lib/toast";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 /** Which wall the user was standing at. Drives the return confirmation copy. */
-export type UpgradeOrigin = "evals" | "credits";
+export type UpgradeOrigin = "evals" | "credits" | "native_harness";
 
 /**
  * Marks a hosted-checkout return so the confirmation lands on the surface the
@@ -119,7 +119,10 @@ export function readUpgradeReturnToken(
     }
     return {
       organizationId: parsed.organizationId,
-      origin: parsed.origin === "credits" ? "credits" : "evals",
+      origin:
+        parsed.origin === "credits" || parsed.origin === "native_harness"
+          ? parsed.origin
+          : "evals",
       userId: currentUserId,
       waited: parsed.waited === true,
     };

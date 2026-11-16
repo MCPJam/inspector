@@ -7,7 +7,7 @@ import { listBaseServers, managerAccountsAtRun } from "../../utils/mcp-connectio
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
-import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
+import type { MCPClientManager, MCPServerConfig, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
 import {
   caseIntentSchema,
@@ -1377,6 +1377,7 @@ export function filterAndRemapReplayConfigs(
   replayConfigs: MCPServerReplayConfig[],
   resolvedServerIds: string[],
   persistedServerIds: string[],
+  serverConfig?: (serverId: string) => MCPServerConfig | undefined,
 ): MCPServerReplayConfig[] {
   const persistedIdByResolvedId = new Map<string, string>();
 
@@ -1390,7 +1391,12 @@ export function filterAndRemapReplayConfigs(
 
   return replayConfigs.flatMap((config) => {
     const persistedServerId = persistedIdByResolvedId.get(config.serverId);
-    if (!persistedServerId) {
+    // A credential the backend delivered stays in this process, so its
+    // connection is never stored for replay.
+    if (
+      !persistedServerId ||
+      serverConfig?.(config.serverId)?.credentialSource === "mcpjam-backend"
+    ) {
       return [];
     }
 
@@ -3063,6 +3069,7 @@ export async function prepareEvalRun(
     clientManager.getServerReplayConfigs(),
     resolvedServerIds,
     persistedServerRefs,
+    (serverId) => clientManager.getServerConfig(serverId),
   );
   if (replayConfigsToStore.length > 0) {
     try {

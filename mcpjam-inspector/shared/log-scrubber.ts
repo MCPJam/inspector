@@ -35,6 +35,7 @@
  * `server/utils/` for that reason.
  */
 import { scrubCredentialsInText } from "./credential-urls";
+import { scrubDeliveredSecrets } from "./delivered-secret-registry";
 import {
   authHeaderLike,
   jwtLike,
@@ -258,8 +259,9 @@ function scrubString(s: string): string {
   // Then URLs: reducing one to its origin also removes any credential in
   // its userinfo or query, so the narrower patterns below never see half of
   // one. Then the same patterns as the model path, with log-specific
-  // replacement strings.
-  return scrubCredentialsInText(s)
+  // replacement strings. Exact values the backend delivered go first of all:
+  // a bare token has no shape for any pattern to find.
+  return scrubCredentialsInText(scrubDeliveredSecrets(s))
     .replace(URL_LIKE(), reduceUrlMatch)
     .replace(authHeaderLike(), "$1[redacted]")
     .replace(tokenLike(), "Bearer [redacted-token]")

@@ -36,7 +36,11 @@ export {
   validateDirectoryAnswerInput,
   validateDirectoryAnswers,
 } from "./validate.js";
-export { directoryPlacementOf, placeDirectoryResults } from "./place.js";
+export {
+  directoryFindingPlace,
+  directoryPlacementOf,
+  placeDirectoryResults,
+} from "./place.js";
 export type { PlaceDirectoryResultsInput } from "./place.js";
 export { directoryVerdict } from "./verdict.js";
 export type {

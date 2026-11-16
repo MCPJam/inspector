@@ -40,7 +40,7 @@ The **History** tab in the server detail modal shows a timeline of every revisio
 Click any revision row to expand it. The expanded panel shows:
 
 - **Diff view** (default for revisions 2 and later): lists tools added, removed, or changed compared to the previous revision. A changed tool opens to a git-style diff of each field that changed: description lines with the changed words highlighted, and schemas and annotations as JSON. Server info changes show their old and new values, such as the version and the instructions.
-- **Snapshot view** — lists all tools captured at that revision, with each tool's name and description.
+- **Snapshot view**: lists all tools captured at that revision, with each tool's name and description.
 
 A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
 
@@ -50,14 +50,14 @@ The same revisions can be read without opening the Inspector, so a script or an 
 
 Personal OAuth servers support connecting more than one account. When a server uses OAuth, the server detail modal's **Config** tab shows a **Connected accounts** section under Authentication that lists every connected credential.
 
-Each row shows the account's email address (or name) on the first line, and a caption on the second line — the name you gave it, plus **Default** when chat uses that account, or **Needs reconnect** when the tokens are expired or revoked.
+Each row shows the account's email address (or name) on the first line, and a caption on the second line: the name you gave it, plus **Default** when chat uses that account, or **Needs reconnect** when the tokens are expired or revoked.
 
 Open the row menu (⋯) to act on an account:
 
-- **Rename** — opens an inline field to give the account a name. The name appears in chat when the model picks an account.
-- **Use in chat** — promotes the row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified. This option is hidden on the row that is already the default.
-- **Reconnect** — re-runs the OAuth flow for that row, replacing only that credential.
-- **Remove** — deletes the credential. If the removed row was the default, the next available account becomes the default.
+- **Rename**: opens an inline field to give the account a name. The name appears in chat when the model picks an account.
+- **Use in chat**: promotes the row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified. This option is hidden on the row that is already the default.
+- **Reconnect**: re-runs the OAuth flow for that row, replacing only that credential.
+- **Remove**: deletes the credential. If the removed row was the default, the next available account becomes the default.
 
 To add another account, click **Connect another account** at the bottom of the list. Up to 8 accounts per server.
 
@@ -119,7 +119,7 @@ You can configure environment variables with STDIO. Click "Add Variable" in the 
 
 ## HTTP servers
 
-Connect to any Streamable HTTP MCP server by selecting **HTTP** in the transport dropdown and pasting in the URL — typically ending in `/mcp`.
+Connect to any Streamable HTTP MCP server by selecting **HTTP** in the transport dropdown and pasting in the URL, typically ending in `/mcp`.
 
 <Frame>
   <img
@@ -139,8 +139,8 @@ Expand **Custom Headers** to add arbitrary request headers (for example, proxy a
 MCPJam is compliant with the MCP authorization spec and supports Dynamic Client Registration (DCR), client pre-registration, and Client ID Metadata Documents (CIMD). You can:
 
 1. Choose **No Authentication**
-2. Choose **Bearer Token** — use this if you already have an API token and don't need to register an OAuth client.
-3. Choose **OAuth** — follow [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to obtain a bearer token. You can optionally set scopes or a custom client ID and secret. For step-by-step debugging, see the [OAuth Debugger](/inspector/guided-oauth).
+2. Choose **Bearer Token**: use this if you already have an API token and don't need to register an OAuth client.
+3. Choose **OAuth**: follow [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to obtain a bearer token. You can optionally set scopes or a custom client ID and secret. For step-by-step debugging, see the [OAuth Debugger](/inspector/guided-oauth).
 
 ### Request timeout
 
@@ -158,7 +158,7 @@ Each tunnel is scoped to a single server and secured at the network edge: the tu
 2. Click **Create Tunnel** on the server card you want to expose.
 3. Copy the tunnel URL from the server card and paste it into your MCP client (for example, ChatGPT's custom connector settings).
 
-The tunnel URL is stable — the base domain stays the same across sessions. If you close and recreate a tunnel for the same server, you get the same domain with a new secret key.
+The tunnel URL is stable. The base domain stays the same across sessions. If you close and recreate a tunnel for the same server, you get the same domain with a new secret key.
 
 ### Rotate the secret
 
@@ -173,7 +173,7 @@ Click the **log icon** on the tunnel pill to open the recent-requests panel. It 
 Click the **close (×) button** on the tunnel pill to stop remote access. The tunnel closes immediately and all remote connections are terminated. The domain is reserved so a future tunnel for the same server reuses it.
 
 <Warning>
-  Anyone with the full tunnel URL — including its secret key — can access this
+  Anyone with the full tunnel URL, including its secret key, can access this
   server. Share it carefully, rotate it if it leaks, and close the tunnel when
   you are done.
 </Warning>

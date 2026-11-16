@@ -123,6 +123,16 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   create_directory_submission: "directory-readiness",
   update_directory_submission: "directory-readiness",
   start_directory_submission_run: "directory-readiness",
+  // A reviewer sign-in starts a run, as a submission's run does.
+  create_reviewer_attempt: "directory-readiness",
+  create_reviewer_handoff: "directory-readiness",
+  resume_reviewer_attempt: "directory-readiness",
+  record_directory_submission_status: "directory-readiness",
+  record_directory_submission_snapshot: "directory-readiness",
+  import_directory_finding: "directory-readiness",
+  save_directory_submission_test_plan: "directory-readiness",
+  set_directory_submission_evals: "directory-readiness",
+  import_directory_submission_test_cases: "directory-readiness",
   // Resuming runs a run again under the gate it started under: `conformance`
   // for a server's run, `directory-readiness` for a submission's. The backend
   // checks which one the run needs.
@@ -251,7 +261,21 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_directory_submissions: null,
   get_directory_submission: null,
   get_directory_submission_results: null,
+  get_directory_submission_test_plan: null,
+  draft_directory_submission_test_plan: null,
+  get_directory_submission_tool_tests: null,
+  get_directory_submission_evals: null,
+  export_directory_submission_test_cases: null,
   delete_directory_submission: null,
+  // Reading and stopping a reviewer sign-in stay open, as on the backend.
+  list_reviewer_attempts: null,
+  get_reviewer_attempt: null,
+  cancel_reviewer_attempt: null,
+  get_directory_submission_handoff: null,
+  list_directory_submission_findings: null,
+  get_directory_submission_finding: null,
+  export_directory_submission: null,
+  list_directory_submission_events: null,
   list_personas: null,
   get_persona: null,
   delete_persona: null,

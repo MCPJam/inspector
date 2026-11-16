@@ -40,7 +40,7 @@ on:
         default: false
         type: boolean
       skip_verify:
-        description: "Tick skip_verify in the version PR: release on merge without waiting for green checks"
+        description: "Tick skip_verify in the version PR: release on merge without the full test run or staging"
         required: false
         default: false
         type: boolean

@@ -55,9 +55,24 @@ describe("session credentials are never delivered over HTTP", () => {
       ).status,
     ).toBe(403);
   });
+  it("answers no other route for an unconfigured host either", async () => {
+    for (const path of ["/", "/health", "/api/mcp/servers"]) {
+      const response = await app.request(path, {
+        headers: {
+          Host: "evil.example:6274",
+          "X-MCP-Session-Auth": `Bearer ${token}`,
+        },
+      });
+      expect(response.status).toBe(403);
+      expect((await response.json()).code).toBe("HOST_NOT_ALLOWED");
+    }
+  });
   it("only confirms a credential already held by the caller", async () => {
     const response = await app.request("/api/session-token", {
-      headers: { Host: "localhost", "X-MCP-Session-Auth": `Bearer ${token}` },
+      headers: {
+        Host: "localhost:6274",
+        "X-MCP-Session-Auth": `Bearer ${token}`,
+      },
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });

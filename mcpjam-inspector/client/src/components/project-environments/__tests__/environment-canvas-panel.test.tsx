@@ -10,7 +10,8 @@
  *
  * The canvas + builder are the REAL modules here — both are pure and jsdom-safe,
  * as the existing `RedesignedHostCanvas` suite already proves. Only the data
- * hooks (network + Convex) are mocked.
+ * hooks (network + Convex) are mocked, and the card's Harness section, which
+ * reads Convex itself.
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +64,10 @@ vi.mock("@/hooks/useProjects", () => ({
 vi.mock("@/lib/app-navigation", () => ({
   useAppNavigate: () => mockNavigate,
   buildHostsPath: (hostId: string) => `/hosts/${hostId}`,
+}));
+// Its states are HostHarnessChoice.test.tsx's.
+vi.mock("@/components/hosts/redesigned/canvas/HostHarnessChoice", () => ({
+  HostHarnessChoice: () => null,
 }));
 
 import {
