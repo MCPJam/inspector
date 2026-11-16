@@ -49,6 +49,7 @@ import {
   formatBrowserdError,
   HOSTED_DISPLAY,
   type BrowserCommand,
+  type BrowserCommandSecret,
 } from "./protocol";
 import type {
   BrowserContextMode,
@@ -110,8 +111,9 @@ export interface SessionCommandOptions {
   /**
    * Values for the command's `{{secret:NAME}}` placeholders. Never a command
    * field: the command is echoed into the ledger, trace and durable mirror.
+   * Send one with `origins` only to a daemon announcing `secret-origins`.
    */
-  secrets?: ReadonlyArray<{ name: string; value: string }>;
+  secrets?: ReadonlyArray<BrowserCommandSecret>;
 }
 
 export interface SessionClient {

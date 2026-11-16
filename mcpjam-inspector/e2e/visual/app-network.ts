@@ -212,12 +212,6 @@ export async function prepareApp(
     ({ theme, time, localAccessToken, seedOnboarding, origin }) => {
       if (window.location.origin !== origin) return;
       localStorage.setItem("themeMode", theme);
-      // Match a returning visitor; the promotional sprites animate independently
-      // of the navigation and screens covered by these snapshots.
-      localStorage.setItem(
-        "mcpjam:platform-launch-2026-09:status",
-        "dismissed",
-      );
       localStorage.setItem("mcpjam.local-access", localAccessToken);
       if (!seedOnboarding) return;
       for (const key of [

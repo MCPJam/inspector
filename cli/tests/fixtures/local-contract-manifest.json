@@ -64,7 +64,8 @@
         "resume",
         "report",
         "flows",
-        "submission"
+        "submission",
+        "reviewer"
       ]
     },
     "resources": {

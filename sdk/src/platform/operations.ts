@@ -138,6 +138,36 @@ import {
   startDirectorySubmissionRunOperation,
   updateDirectorySubmissionOperation,
 } from "./directory-submission-operations.js";
+import {
+  cancelReviewerAttemptOperation,
+  createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
+  getReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  resumeReviewerAttemptOperation,
+} from "./directory-reviewer-attempt-operations.js";
+import {
+  exportDirectorySubmissionOperation,
+  getDirectorySubmissionFindingOperation,
+  getDirectorySubmissionHandoffOperation,
+  importDirectoryFindingOperation,
+  listDirectorySubmissionEventsOperation,
+  listDirectorySubmissionFindingsOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  recordDirectorySubmissionStatusOperation,
+} from "./directory-submission-handoff-operations.js";
+import {
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+} from "./directory-test-plan-operations.js";
+import {
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
+} from "./directory-submission-eval-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2459,8 +2489,12 @@ export type {
   UploadServerAccountTokensResult,
 } from "./server-account-operations.js";
 
-// Directory submission operations, from a module that exports nothing else.
+// Directory submission operations, from modules that export nothing else.
 export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
+export * from "./directory-submission-handoff-operations.js";
+export * from "./directory-test-plan-operations.js";
+export * from "./directory-submission-eval-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19361,6 +19395,32 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  // A submission's reviewer sign-in attempts.
+  createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  // Resuming one from its id: the summary, findings, pack and the records.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  // A submission's test plan: the calls its runs may make, and what they showed.
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  // A submission's test cases, as the eval suite that holds them.
+  getDirectorySubmissionEvalsOperation,
+  setDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  exportDirectorySubmissionTestCasesOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,

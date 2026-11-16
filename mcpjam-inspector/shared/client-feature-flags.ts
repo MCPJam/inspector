@@ -8,9 +8,9 @@
  * the two match. (MJ-015)
  */
 export const CLIENT_FEATURE_FLAG_KEYS = [
-  "billing-entitlements-ui",
   "browser-workspace-enabled",
   "claude-code-host-enabled",
+  "client-agent-loop",
   "codex-host-enabled",
   "conformance-tasks-update-check",
   "copilot-cli-harness",
@@ -29,18 +29,16 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "hosted-browser-enabled",
   "integrations-tab",
   "learn-more-enabled",
-  "local-browser-enabled",
   "local-codex-enabled",
   "local-computer-enabled",
   "local-copilot-cli-enabled",
+  "local-cursor-enabled",
   "local-harness-enabled",
   "mcp-events-enabled",
   "mcp-tasks",
   "mcpjam-compatibility",
-  "mcpjam-conformance",
   "mcpjam-directory-readiness",
   "mcpjam-learning",
-  "multi-account-connections-enabled",
   "org-model-gateways",
   "platform-post-launch",
   "plugin-extensions-enabled",
@@ -50,7 +48,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "registry-enabled",
   "run-disclosure-enabled",
   "sandbox-images-enabled",
-  "sandboxes-enabled",
   "scheduled-evals-enabled",
   "shared-slack-channel-enabled",
   "skills-enabled",
@@ -60,7 +57,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "trace-destinations",
   "unified-sessions-enabled",
   "unified-share-evals",
-  "xaa",
 ] as const;
 
 export type ClientFeatureFlagKey = (typeof CLIENT_FEATURE_FLAG_KEYS)[number];

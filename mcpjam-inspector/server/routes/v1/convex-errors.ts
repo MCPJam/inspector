@@ -66,6 +66,7 @@
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { redactForLog } from "./redact-log-message.js";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "@/shared/native-harness-trial";
 
 type ConvexErrorData = {
   code?: unknown;
@@ -75,6 +76,8 @@ type ConvexErrorData = {
   reason?: unknown;
   /** The gated feature's key, on a `FEATURE_UNAVAILABLE` refusal. */
   feature?: unknown;
+  /** The billing page that lifts a native harness trial refusal. */
+  upgradeUrl?: unknown;
 };
 
 /**
@@ -418,6 +421,23 @@ export function translateConvexWriteError(
   if (code === "account_suspended") {
     return new WebRouteError(403, ErrorCode.FORBIDDEN, structuredMessage ?? "Account suspended. Contact support.", { code });
   }
+  // The Free plan's native harness trial is used up, so the backend refused
+  // to put a client on its native harness. The same FORBIDDEN a refused native
+  // turn answers, with the reason a program branches on and the billing page
+  // the backend named.
+  if (code === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE) {
+    const upgradeUrl = data?.upgradeUrl;
+    return new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      structuredMessage ??
+        "This organization has used its free native harness turns. Upgrade to keep using them.",
+      {
+        reason: code,
+        ...(typeof upgradeUrl === "string" && upgradeUrl ? { upgradeUrl } : {}),
+      },
+    );
+  }
   if (kind === "forbidden") {
     return adminFailureIsForbidden
       ? new WebRouteError(
@@ -496,7 +516,7 @@ export function translateConvexWriteError(
     );
   }
 
-  // The `sandboxes-enabled` beta gate (mcpjam-backend lib/sandboxesGate.ts).
+  // A beta feature gate (mcpjam-backend lib/featureGates.ts).
   //
   // Handled BEFORE the generic branches, and given a real 403 with the real
   // message, because the default treatment would be actively misleading: the
@@ -507,9 +527,8 @@ export function translateConvexWriteError(
   // rather than that a feature is not available to them yet.
   //
   // The message is the backend's, forwarded verbatim: it is already
-  // customer-facing, already feature-parameterized ("Swarms" vs "User
-  // testing"), and re-writing it here would create a second place to keep
-  // that copy correct.
+  // customer-facing, already feature-parameterized, and re-writing it here
+  // would create a second place to keep that copy correct.
   //
   // `details.code` keeps the reason a program branches on, since the public
   // code is the generic FORBIDDEN, and `details.feature` names the gated
@@ -539,7 +558,7 @@ export function translateConvexWriteError(
   }
 
   // An anonymous guest tried to author something that needs an account
-  // (mcpjam-backend lib/sandboxesGate.ts, REEV-6).
+  // (mcpjam-backend lib/signInRequired.ts, REEV-6).
   //
   // Here for the same reason as `FEATURE_UNAVAILABLE` directly above — the
   // generic FORBIDDEN branch would collapse this to a 404 and tell the caller

@@ -20,7 +20,7 @@ const OPTIONS = [
   ["deploy_webapp", "Deploy the webapp to production"],
   [
     "skip_verify",
-    "Release as soon as this merges, without waiting for green checks (skip_verify)",
+    "Urgent fix: release as soon as this merges, without the full test run or staging (skip_verify)",
   ],
 ];
 
@@ -73,7 +73,7 @@ export function versionPrBody({ releases, options, runUrl, sourceSha }) {
 
 ${versions}
 
-Merging this **is** the release. Once \`main\` is green (Tests, Build and Test and Deploy Staging on the same commit), or right away if skip_verify is ticked below, Release runs by itself: it publishes these versions to npm, deploys what is ticked below, tags the commit and publishes the GitHub release. Nothing is pushed back to \`main\`.
+Merging this **is** the release. Once staging is green on \`main\`, or right away if skip_verify is ticked below, Release runs by itself: it runs the full test suite, publishes these versions to npm, deploys what is ticked below, tags the commit and publishes the GitHub release. Nothing is pushed back to \`main\`.
 
 ${renderReleaseOptions(offered)}
 

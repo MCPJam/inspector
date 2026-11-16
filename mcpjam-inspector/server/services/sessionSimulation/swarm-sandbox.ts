@@ -30,6 +30,7 @@ import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import type { TrustedSandboxBinding } from "../../utils/built-in-tools/registry.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { parseBrowserToolPolicy } from "../evals/browser-tool-policy.js";
+import { accountLimitCode } from "../../../shared/swarm-attempt-error.js";
 
 /** The catalog id for the browser tool set (mirrors the backend catalog). */
 const BROWSER_TOOL_ID = "browser";
@@ -404,8 +405,16 @@ async function provisionAttemptBox(
       // An `ok`-but-unusable body reaches here too and is likewise transient.
       const status = result.ok ? 0 : result.status;
       const retryable = status === 503 || status === 0;
+      // The organization's own limit (the native harness trial) keeps its
+      // code: the runner stops the whole run on it, not just this session.
+      const accountLimit = result.ok
+        ? undefined
+        : accountLimitCode(undefined, result.code);
       last = {
-        code: status === 503 ? "sandbox_at_capacity" : "sandbox_error",
+        code:
+          status === 503
+            ? "sandbox_at_capacity"
+            : (accountLimit ?? "sandbox_error"),
         message: result.ok
           ? "The control plane returned an incomplete provisioning response."
           : describeAttemptSandboxRefusal(result),

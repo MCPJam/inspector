@@ -180,6 +180,19 @@ describe("agent op registry", () => {
         // the agent as its author.
         "create_directory_submission",
         "update_directory_submission",
+        // A test plan revision: it calls nothing until a start names it.
+        "save_directory_submission_test_plan",
+        // A submission's eval suite and the cases a package declares: they
+        // call no tool until someone runs the suite.
+        "set_directory_submission_evals",
+        "import_directory_submission_test_cases",
+        // Stops a reviewer sign-in, as cancel_readiness_run stops a run.
+        "cancel_reviewer_attempt",
+        // What happened in the directory, as the user told it or as seen in
+        // the portal: append-only records that spend nothing.
+        "record_directory_submission_status",
+        "record_directory_submission_snapshot",
+        "import_directory_finding",
         "ensure_adhoc_environment",
         "name_environment",
         createEvalSuiteOperation.name,
@@ -902,6 +915,14 @@ describe("agent op registry", () => {
         client,
       }),
     ).toEqual(input);
+  });
+
+  it("says on a submission run's approval when it makes a test plan's calls", () => {
+    const describeRun = proposalMetaFor("start_directory_submission_run").description;
+    expect(describeRun({ submission: "sub_1" })).toBe("Run the checks for directory submission sub_1");
+    expect(describeRun({ submission: "sub_1", testPlanRevision: 3 })).toBe(
+      "Run the checks for directory submission sub_1, with the calls of its test plan revision 3",
+    );
   });
 
   it("freezes a directory install pin and endpoint at mint time", async () => {
@@ -2033,6 +2054,22 @@ describe("tier derives from operation.risk", () => {
         "platform-paid, so risk is none and would derive direct, but the run " +
         "dials the submission's server and persists a project row.",
     },
+    create_reviewer_attempt: {
+      tier: "gated",
+      reason:
+        "MCPJam runs the sign-in, so risk is none and would derive direct. " +
+        "Gated because it starts a run that signs in to the submission's " +
+        "server with the project's reviewer credentials.",
+    },
+    resume_reviewer_attempt: {
+      tier: "gated",
+      reason: "The same as create_reviewer_attempt: it starts the next run that signs in.",
+    },
+    create_reviewer_handoff: {
+      tier: "excluded",
+      reason:
+        "The result carries a single-use browser sign-in link. Even a gated call would put it in the agent transcript.",
+    },
     generate_eval_cases: {
       tier: "gated",
       reason:
@@ -2308,6 +2345,10 @@ const EXPECTED_PROMPT_NOTES = [
   "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
   "- `update_directory_submission` records you as the author of each answer you write. `confirm` states that a declaration (data handling, acknowledgments) is true: confirm one only when the user told you it is. A 409 names the `conflictingKeys` someone else changed since your `expectedRevision`; read the submission again before you reapply your change.",
   "- `start_directory_submission_run` returns a RECEIPT. Poll `get_readiness_run` until it finishes, then read `get_directory_submission_results`, which places each finding under the portal step and field it belongs to.",
+  "- `save_directory_submission_test_plan` calls no tool. A run makes the plan's calls, destructive ones included, only when `start_directory_submission_run` names the plan's `revision` as `testPlanRevision`: name it only for a plan the user has reviewed.",
+  "- `create_reviewer_attempt` takes secret NAMES only. Never write a password into a call: ask the user to save it in the app as a materialized project secret whose name starts with `MCPJAM_REVIEWER_`, then pass that name.",
+  "- Given a directory submission's id or link, call `get_directory_submission_handoff` first: it says where the submission stands and lists `nextActions`, each an operation with the input to send. Do not ask the user again for anything it already holds.",
+  "- Record a directory status, snapshot or finding only as the user told you (`reported`) or as you saw it in the portal (`observed`), never inferred from MCPJam's own results. A record is never edited: to correct one, record a newer one.",
   "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
   "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",

@@ -37,7 +37,7 @@ new EvalSuite(options?: EvalSuiteConfig)
 </Note>
 
 <Note>
-When an API key is available — via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable — all test results are consolidated into a single run and saved to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
+When an API key is available, via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable, all test results are consolidated into a single run and saved to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
 </Note>
 
 ### Example
@@ -106,14 +106,12 @@ Later edits, renames, and deletion do not change previously saved results.
 Set `mcpjam.enabled: false` to run without uploading results.
 
 `runWithClient` uses MCPJam inference for Anthropic Claude and OpenAI GPT-5 models, billed to
-that project. It requires a backend that returns saved client versions. The
-optional `baseUrl` is the MCPJam app origin for a custom deployment.
+that project. The optional `baseUrl` is the MCPJam app origin for a custom deployment.
 
 Your code owns server connections, credentials, and MCP connection settings;
 the client's saved server IDs and connection overrides are not applied to those
-connections. The first release does not launch cloud computers, browsers, saved
-skills, built-in tools, or interactive approvals. Clients requiring these
-features fail before tests execute. Existing `run(executor)` calls keep their
+connections. A client that needs built-in tools, interactive approvals, or
+other hosted resources fails before tests execute. Existing `run(executor)` calls keep their
 current behavior.
 
 The client's **Progressive tools** setting applies as it does in hosted runs. See
@@ -147,10 +145,8 @@ result.failures; // clients whose setup or run threw
   `"<client> / <test>"`.
 - `mcpjam.externalRunId` becomes a prefix: each client's run is
   `<id>:<client>`, so a retry lands on the same runs.
-- An MCPJam backend that predates run groups stores the runs without grouping
-  them.
 
-A single string keeps today's single-client result: no `clients`, `failures` or `runGroupId`, and setup errors throw as before.
+A single string returns a single-client result: no `clients`, `failures` or `runGroupId`, and setup errors throw.
 
 ### add()
 
@@ -366,7 +362,7 @@ precision(): number
 ```
 
 <Warning>
-  **Changed in 3.0.** These returned `accuracy()` — the suite's pass rate —
+  **Changed in 3.0.** These returned `accuracy()`, the suite's pass rate,
   under all three names. They now aggregate real tool-call counts and **throw**
   when no test in the suite declared `expectedToolCalls`. Tests without
   expectations are skipped in the aggregate rather than counted as perfect. See
@@ -399,7 +395,7 @@ unexpectedToolCallRate(): number
 ### falsePositiveRate()
 
 <Warning>
-  **Deprecated in 3.0** — use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
+  **Deprecated in 3.0**: use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
   It returned `failures / iterations`, which is the failure rate. Suites with no
   `expectedToolCalls` still get that legacy value; suites with expectations now
   delegate to `unexpectedToolCallRate()`.
@@ -540,8 +536,8 @@ console.log("✅ All quality gates passed");
 
 ### CI gate on per-case pass rates
 
-A per-test threshold asks the OTHER question — the one a hosted suite's
-**per-case pass rate** asks — and the two do not agree. Nine of ten tests
+A per-test threshold asks the OTHER question, the one a hosted suite's
+**per-case pass rate** asks, and the two do not agree. Nine of ten tests
 always passing and one always failing gives a suite accuracy of 0.9, which
 clears the gate above, while the tenth test's own rate is 0. Gate on whichever
 question you actually mean; a fraction is not a percentage of the other one.

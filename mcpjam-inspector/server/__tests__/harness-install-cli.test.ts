@@ -34,7 +34,7 @@ describe("the harness install entry point", () => {
   });
 
   it("refuses a harness it has no pack for, rather than installing a default", async () => {
-    await expect(harnessInstall(undefined, "cursor")).rejects.toThrow(/unknown harness/);
+    await expect(harnessInstall(undefined, "opencode")).rejects.toThrow(/unknown harness/);
     await expect(harnessStatus("__proto__")).rejects.toThrow(/unknown harness/);
   });
 

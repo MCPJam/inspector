@@ -25,6 +25,7 @@ const defaultImplementations = {
   getClient: () => ({}),
   getManagedClient: () => ({}),
   hasServer: () => true,
+  getServerConfig: () => undefined,
   listServers: () => [],
   getServerSummaries: () => [],
   getConnectionStatus: () => "connected",

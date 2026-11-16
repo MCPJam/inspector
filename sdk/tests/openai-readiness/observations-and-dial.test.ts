@@ -104,6 +104,21 @@ describe("the gatherer dials tools/list", () => {
     );
   });
 
+  it("keeps the server's instructions, which the model reads too", async () => {
+    const evidence = await gatherOpenAIReadinessEvidence({
+      target: TARGET,
+      mode: "mcp-only",
+      fetchFn: wireFetch({
+        initialize: [
+          { ...INITIALIZE, instructions: "Answer questions about the docs." },
+        ],
+        "tools/list": [{ tools: [WELL_ANNOTATED] }],
+      }),
+    });
+
+    expect(evidence.instructions).toBe("Answer questions about the docs.");
+  });
+
   it("does not dial when the caller already holds an attributable listing", async () => {
     const fetchFn = vi.fn(wireFetch({ initialize: [INITIALIZE] }));
     const evidence = await gatherOpenAIReadinessEvidence({

@@ -73,6 +73,7 @@ import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { TurnResources } from "./resources.js";
+import type { TurnTiming } from "../../utils/turn-timing.js";
 
 type ManagedSetup = Extract<
   Awaited<ReturnType<typeof resolveManagedTurnSetup>>,
@@ -84,6 +85,7 @@ export async function prepareManagedTools(args: {
   bearerToken: string;
   localIngress: boolean;
   resources: TurnResources;
+  timing: TurnTiming;
   setup: Pick<
     ManagedSetup,
     | "hostedBody"
@@ -112,7 +114,7 @@ export async function prepareManagedTools(args: {
     "validatedPageTools"
   >;
 }) {
-  const { c, rawBody, bearerToken, localIngress, resources } = args;
+  const { c, rawBody, bearerToken, localIngress, resources, timing } = args;
   let scenarioBox: HarnessBox | undefined;
   let {
     hostedBody,
@@ -159,6 +161,7 @@ export async function prepareManagedTools(args: {
       : {}),
     harness: resolvedExecution.harness,
     signal: c.req.raw.signal as AbortSignal | undefined,
+    timing,
   };
   const earlyPlaygroundBox = startPlaygroundBoxEarly(
     resources, playgroundBoxReason, playgroundBoxArgs, Boolean(c.get("guestId")),
@@ -303,7 +306,7 @@ export async function prepareManagedTools(args: {
     // The shared box holder: the box's idle clock keeps running for as long
     // as this turn does (a long harness turn would otherwise outlive the
     // scenario TTL), and stops when the turn's stream completes.
-    const acquired = await acquireHarnessBox({
+    const acquired = await timing.timeBoxAcquisition(() => acquireHarnessBox({
       surface: "scenario",
       provision: async () => {
         provisioned = await provisionScenarioSandbox({
@@ -326,7 +329,7 @@ export async function prepareManagedTools(args: {
             }
           : { ok: false as const, refusal: provisioned };
       },
-    });
+    }));
     if (acquired.ok) {
       scenarioBox = acquired.box;
       resources.own(() => acquired.box.release());

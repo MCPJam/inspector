@@ -6,7 +6,7 @@ icon: "bell"
 
 The `events` commands exercise a server's MCP Events (triggers) from the terminal: see what it declares, poll it, hold a stream open, or register a webhook, and print what arrives.
 
-They follow the working-group draft pinned at [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md). The lifecycle rules come from the same SDK coordinator the Inspector's Events tab uses, so a `watch` subscribes, refreshes, polls and unsubscribes exactly as the app does.
+They follow the working-group draft pinned at [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md).
 
 <Note>
   Every events command connects directly to the server you name, like `tools call`, and takes the same connection flags (`--url`, `--header`, `--access-token`, `--credentials-file`, `--command`, …).

@@ -98,6 +98,8 @@ export type {
 export * from "./directory-readiness/flows/index.js";
 /** The decision scan, for the same reason: its barrel is pure by contract. */
 export * from "./directory-readiness/decisions/index.js";
+/** The reviewer path's fields and findings; its barrel is pure by contract. */
+export * from "./directory-readiness/reviewer/index.js";
 
 /**
  * Directory test plans, so a page can draft, edit and check a plan and show
@@ -105,6 +107,10 @@ export * from "./directory-readiness/decisions/index.js";
  * contract and its modules export only public names.
  */
 export * from "./directory-readiness/test-plan/index.js";
+
+/** The handoff summary and export pack builders: pure, over the same flows. */
+export * from "./directory-readiness/handoff.js";
+export * from "./directory-readiness/handoff-markdown.js";
 
 export {
   CLAUDE_OBSERVATION_IDS,
