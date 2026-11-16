@@ -482,12 +482,16 @@ describe("a limited credential reaches its field by the field, not by focus", ()
       /^unsupported_target: .*nothing was typed/,
     );
     expect(refused.outcome).toBe("not_typed");
-    const lost = await run(() => {
-      throw new Error("Target closed");
-    });
-    expect(lost.result.ok).toBe(false);
-    expect(lost.outcome).toBe("unknown");
-    expect(JSON.stringify([refused, lost])).not.toContain(PASSWORD);
+    for (const failure of ["Target closed", "Runtime.callFunctionOn timeout"]) {
+      const lost = await run(() => {
+        throw new Error(failure);
+      });
+      // The value may have gone in: never read as a field that was not there.
+      expect(lost.result.error).toMatch(/^act_failed: /);
+      expect(lost.outcome).toBe("unknown");
+      expect(JSON.stringify(lost)).not.toContain(PASSWORD);
+    }
+    expect(JSON.stringify(refused)).not.toContain(PASSWORD);
   });
 
   it("never types into a node recovered by role and name, which may be in another frame", async () => {

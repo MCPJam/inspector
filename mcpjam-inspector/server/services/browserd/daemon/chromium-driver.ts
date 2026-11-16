@@ -1689,7 +1689,13 @@ export class ChromiumDriver implements BrowserDriver {
             if (error instanceof SecretNotTypedError) {
               throw new ActError(error.code, error.message);
             }
-            throw error;
+            if (error instanceof LeaseTakenMidAct) throw error;
+            // Anything else may have typed: never left to the prose match
+            // below, which reads a "timeout" as a target that was not found.
+            throw new ActError(
+              "act_failed",
+              error instanceof Error ? error.message : String(error),
+            );
           }
         } else if (refNode) {
           await replaceTextInNode(

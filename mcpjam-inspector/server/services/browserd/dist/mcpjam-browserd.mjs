@@ -8784,7 +8784,11 @@ var ChromiumDriver = class {
             if (error instanceof SecretNotTypedError) {
               throw new ActError2(error.code, error.message);
             }
-            throw error;
+            if (error instanceof LeaseTakenMidAct) throw error;
+            throw new ActError2(
+              "act_failed",
+              error instanceof Error ? error.message : String(error)
+            );
           }
         } else if (refNode) {
           await replaceTextInNode(
