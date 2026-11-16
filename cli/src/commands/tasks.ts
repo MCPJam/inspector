@@ -47,6 +47,7 @@ import {
   usageError,
   writeResult,
 } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
 import {
   buildMrtrBeforeConnect,
   sanitizeTerminalText,
@@ -663,7 +664,10 @@ export async function withWatchSignals<T>(
   fn: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
-  const onSignal = () => controller.abort();
+  const onSignal = () => {
+    recordCommandOutcome("interrupted");
+    controller.abort();
+  };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
