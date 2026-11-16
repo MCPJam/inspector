@@ -69,6 +69,7 @@ export function TourHandoff({ onDismiss }: { onDismiss: () => void }) {
         {formShown || settled ? null : (
           <motion.div
             key="cover"
+            data-testid="evaluate-tour-handoff-cover"
             className="absolute inset-0 bg-background"
             exit={{ opacity: 0 }}
             transition={{ duration: reducedMotion ? 0 : 0.3 }}
