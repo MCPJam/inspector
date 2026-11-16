@@ -124,6 +124,30 @@ describe("createChatTurnQueue", () => {
     await expect(secondResult).resolves.toBe(2);
   });
 
+  it("lets a stale queued send drop without waiting for the user, so the next send starts at once", async () => {
+    const run = createChatTurnQueue();
+    const gate = createIdleGate();
+    const first = deferred();
+    void run(async () => ({ result: 1, turn: first.promise }), gate);
+    gate.set({ idle: false, awaitingUser: false });
+    let current = true;
+    const stale = vi.fn(async () => ({ result: false }));
+    const staleResult = run(stale, gate, () => current);
+
+    first.resolve();
+    gate.set({ idle: true, awaitingUser: true });
+    await flush();
+    expect(stale).not.toHaveBeenCalled();
+
+    current = false;
+    gate.recheck();
+    await expect(staleResult).resolves.toBe(false);
+
+    const fresh = vi.fn(async () => ({ result: true }));
+    void run(fresh, gate);
+    expect(fresh).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for the previous turn's request even when the status already reads idle", async () => {
     const run = createChatTurnQueue();
     const gate = createIdleGate();

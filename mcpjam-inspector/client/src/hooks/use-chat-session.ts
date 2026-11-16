@@ -3952,8 +3952,13 @@ export function useChatSession(
   );
   // Preparing a send waits on server-id preflight; a selection or model change
   // in that window refuses the send.
+  const sendPreparationSignature = stableStringifyJson({
+    ...sendIdentity,
+    selectedServers,
+    requestChoice,
+  });
   const sendPreparationGuard = useSavedClientSendGuard(
-    stableStringifyJson({ ...sendIdentity, selectedServers, requestChoice }),
+    sendPreparationSignature,
   );
 
   const transport = useMemo(() => {
@@ -5524,7 +5529,9 @@ export function useChatSession(
       idle: status === "ready" || status === "error",
       awaitingUser: awaitingUserApproval || awaitingAppRound,
     });
-  }, [idleGate, status, awaitingUserApproval, awaitingAppRound]);
+    // A settings change makes waiting sends stale: they drop now, without
+    // waiting for the user to answer the old turn.
+  }, [idleGate, status, awaitingUserApproval, awaitingAppRound, sendPreparationSignature]);
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -5831,6 +5838,7 @@ export function useChatSession(
       return runTurn(
         async (waited) => ({ result: await startTurn(waited), turn }),
         idleGate,
+        sendIsCurrent,
       );
     },
     [
@@ -6956,10 +6964,11 @@ export function useChatSession(
     setHarnessStartupPhase(null);
     savedClientSendGuard.cancel();
     sendPreparationGuard.cancel();
+    idleGate.recheck();
     const store = useHostedMrtrStore.getState();
     for (const round of store.rounds) void store.cancel(round.key);
     stop();
-  }, [stop, savedClientSendGuard, sendPreparationGuard, status, canStopApproval, stopApproval, stopActiveTurn]);
+  }, [stop, savedClientSendGuard, sendPreparationGuard, idleGate, status, canStopApproval, stopApproval, stopActiveTurn]);
 
   const submitBlocked =
     stoppingHarness || stopFailed ||

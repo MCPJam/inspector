@@ -265,8 +265,8 @@ vi.mock("ai", async () => ({
   },
 }));
 
-const selectedServers: string[] = [];
-function useHarness() {
+const noServers: string[] = [];
+function useHarness(selectedServers: string[] = noServers) {
   const chat = useChatSession({ selectedServers });
   const sendBaselineRef = useRef<{ sessionId: string; version: number } | null>(
     null,
@@ -550,5 +550,57 @@ describe("one chat turn at a time (real AI SDK)", () => {
       4, 5, 6,
     ]);
     await act(async () => scenario.releases[2]());
+  });
+
+  it("drops a send waiting on an approval when the settings change, so the next send goes at once", async () => {
+    scenario.firstAsksApproval = true;
+    const { result, rerender } = renderHook(
+      ({ servers }) => useHarness(servers),
+      { initialProps: { servers: noServers } },
+    );
+    await act(async () => {
+      void result.current.sendMessage({ text: "delete the file" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("streaming"));
+    let queued: Promise<boolean> | undefined;
+    await act(async () => {
+      queued = result.current.sendMessage({ text: "App follow-up" });
+    });
+    await act(async () => scenario.releases[0]());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    // The approval stays unanswered.
+    rerender({ servers: ["other-server"] });
+    await expect(queued).resolves.toBe(false);
+    expect(
+      toastError.mock.calls.filter(
+        ([, options]) => options?.id === "chat-turn-dropped",
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => {
+      void result.current.sendMessage({ text: "next message" });
+    });
+    await waitFor(() => expect(scenario.bodies).toHaveLength(2));
+    await act(async () => scenario.releases[1]());
+  });
+
+  it("drops a send waiting on an approval when the user stops", async () => {
+    scenario.firstAsksApproval = true;
+    const { result } = renderHook(() => useHarness());
+    await act(async () => {
+      void result.current.sendMessage({ text: "delete the file" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("streaming"));
+    let queued: Promise<boolean> | undefined;
+    await act(async () => {
+      queued = result.current.sendMessage({ text: "App follow-up" });
+    });
+    await act(async () => scenario.releases[0]());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => result.current.stop());
+    await expect(queued).resolves.toBe(false);
+    expect(scenario.bodies).toHaveLength(1);
   });
 });
