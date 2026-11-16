@@ -32,6 +32,12 @@ vi.mock("../../../utils/checked-address-fetch.js", async (importActual) => ({
   createCheckedAddressFetch: () => gatewayFetch,
 }));
 
+const { reportMock } = vi.hoisted(() => ({ reportMock: vi.fn() }));
+
+vi.mock("../../../utils/route-error-report.js", () => ({
+  reportRouteFailure: reportMock,
+}));
+
 function postTest(body: Record<string, unknown>) {
   const app = new Hono();
   app.use("/api/*", requestLogContextMiddleware);
@@ -111,5 +117,25 @@ describe("POST /api/web/org-gateway-test", () => {
       message: "Couldn't check your role in this organization. Try again.",
     });
     expect(gatewayFetch).not.toHaveBeenCalled();
+    expect(reportMock).toHaveBeenCalledOnce();
+  });
+
+  it("refuses an organization id Convex can't parse with 403 and no report", async () => {
+    queryMock.mockRejectedValue(
+      new Error(
+        '[CONVEX Q(organizationModelProviderTest:canTestProviderConnection)] Server Error\nArgumentValidationError: Value does not match validator.\nPath: .organizationId\nValue: "not-an-org"\nValidator: v.id("organizations")',
+      ),
+    );
+
+    const res = await postTest({ ...REQUEST, organizationId: "not-an-org" });
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "FORBIDDEN",
+      message:
+        "Only organization admins and owners can test a custom provider. Ask an admin to add it.",
+    });
+    expect(gatewayFetch).not.toHaveBeenCalled();
+    expect(reportMock).not.toHaveBeenCalled();
   });
 });

@@ -66,6 +66,17 @@ async function assertMayTestGateway(
       { organizationId },
     );
   } catch (error) {
+    // Convex rejected an id that does not parse as `v.id("organizations")`.
+    // It names no organization the caller administers, so it gets the same
+    // 403 as one they don't, not a 502 and a Sentry capture.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/\bArgumentValidationError\b/.test(message)) {
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        GATEWAY_TEST_ADMINS_ONLY,
+      );
+    }
     reportRouteFailure("Gateway test role check failed", error, {
       source: "org-gateway-test.role-check",
       hop: "mcpjam_internal",
