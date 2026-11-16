@@ -1,0 +1,232 @@
+{
+  "darwin-arm64": {
+    "opencode-darwin-arm64": {
+      "spec": "opencode-darwin-arm64@1.18.34",
+      "tarballBytes": 45264760,
+      "integrity": "sha512-ioBEvc3nUA64waDIVsphh92LgJgyTbq+uRd0OurdqqT9WEI9rp4J7NrA24NfL6epCa1Xr06TnRx5+th9W3T/sA==",
+      "files": {
+        "bin/opencode": {
+          "sha256": "sha256:7b63b34fafabded7d9231f6a9032755d0cdeaf8b9d2b70df8e25535471469eea",
+          "bytes": 144257280,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:a559531562341fd3d9f9f732a3df57fe6a2ce5e703b7944501ffc08d054c66f9",
+          "bytes": 144,
+          "mode": "755"
+        }
+      }
+    },
+    "@vscode/ripgrep-darwin-arm64": {
+      "spec": "@vscode/ripgrep-darwin-arm64@1.18.0",
+      "tarballBytes": 1923210,
+      "integrity": "sha512-r3ktHSvbFycQNF6sl7sNDPocpsI7J+mEzh1IaZFkY0spm3k2Z9t8hPAeOK7+p0l6p6/swkQC14XWX01low+94Q==",
+      "files": {
+        "LICENSE": {
+          "sha256": "sha256:ccf06b70760761ae1437395117bcf911501e3dc85385d84c7eba20d5dfab55dd",
+          "bytes": 1113,
+          "mode": "644"
+        },
+        "README.md": {
+          "sha256": "sha256:03d51fba7bea0228af759d607ee1499f10105256b9ebe4b22068bc386be5f7f8",
+          "bytes": 238,
+          "mode": "644"
+        },
+        "bin/rg": {
+          "sha256": "sha256:6ef40346bf31fcce79d9614c7745c198542925a0c7d4911e1ffe794c53392ac1",
+          "bytes": 4528512,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:bc015e2f2531af12c8fbafaff39634628cbfb5d771a0cef6901ede3d62bb97fe",
+          "bytes": 350,
+          "mode": "644"
+        }
+      }
+    }
+  },
+  "darwin-x64": {
+    "opencode-darwin-x64": {
+      "spec": "opencode-darwin-x64@1.18.34",
+      "tarballBytes": 48879002,
+      "integrity": "sha512-o8KXQ4jP5zfEHJAYpCz5Ifs0aa5dX+26wyLbxHEvfyGJu8hrBoNiJed3PE0uiPIlHCrj5yzF0b6k5aWonaPcTw==",
+      "files": {
+        "bin/opencode": {
+          "sha256": "sha256:f97abb1fb2e701b4a4bcc06361e41c81d1837d9e60c3e7d65dfaca9827422ac3",
+          "bytes": 151188432,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:90a0a34b4fd933c45287278d6326d40a19823b9890661c24d8e525735286fa2c",
+          "bytes": 140,
+          "mode": "755"
+        }
+      }
+    },
+    "@vscode/ripgrep-darwin-x64": {
+      "spec": "@vscode/ripgrep-darwin-x64@1.18.0",
+      "tarballBytes": 1980562,
+      "integrity": "sha512-25b4gWbL138dGuQU244ebCKKc0q05ULBMoFSz9oAEUHNeqK/lOJViDS7DRvbDazzAzSEdan391Znks/R5mkaTQ==",
+      "files": {
+        "LICENSE": {
+          "sha256": "sha256:ccf06b70760761ae1437395117bcf911501e3dc85385d84c7eba20d5dfab55dd",
+          "bytes": 1113,
+          "mode": "644"
+        },
+        "README.md": {
+          "sha256": "sha256:ea5cf45324fd814a85f1c9805e782e1a82e47fa9c458a9fb9a5aa8f21e4100e2",
+          "bytes": 233,
+          "mode": "644"
+        },
+        "bin/rg": {
+          "sha256": "sha256:f999495980a5e6f1e7d26461ef5768b4013a62df610ed7d77a8b2de247a5b228",
+          "bytes": 4742676,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:bbcc24ac05dcf32368189d0c2a0e882b84cac8bef008c5ae454e45defe5e4e80",
+          "bytes": 344,
+          "mode": "644"
+        }
+      }
+    }
+  },
+  "linux-x64": {
+    "opencode-linux-x64": {
+      "spec": "opencode-linux-x64@1.18.34",
+      "tarballBytes": 60309530,
+      "integrity": "sha512-RTAMjCve4euxP2QKLuvRmdoW5J5DQK1DiZqt+7slfixyjAEi79QC2Df2oYKogibaAI4IEU8uzenoJeEl3k+UEw==",
+      "files": {
+        "bin/opencode": {
+          "sha256": "sha256:9ca0b9953d49997601655e54f846a3efa464f237e47c6f1b04716d0f2e64c4c2",
+          "bytes": 185632896,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:8d78724de7d61fd793c23edcaad3a623fc25cd3e81d0b9490fa7b67ffe4dd15b",
+          "bytes": 138,
+          "mode": "755"
+        }
+      }
+    },
+    "@vscode/ripgrep-linux-x64": {
+      "spec": "@vscode/ripgrep-linux-x64@1.18.0",
+      "tarballBytes": 2351856,
+      "integrity": "sha512-mQ3bVrUpnD2vs7QT0vX90Lt0cnUq467uFtEktIdsJJmW296RoSULRGqWgzG1AKxyBpNDD6l4ZO4qKf6SgyC23Q==",
+      "files": {
+        "LICENSE": {
+          "sha256": "sha256:ccf06b70760761ae1437395117bcf911501e3dc85385d84c7eba20d5dfab55dd",
+          "bytes": 1113,
+          "mode": "644"
+        },
+        "README.md": {
+          "sha256": "sha256:ec49547c1d3a97cdb8c8eb8711cd40e60be3f3ec88e9739a7b93e8ba75d6e265",
+          "bytes": 237,
+          "mode": "644"
+        },
+        "bin/rg": {
+          "sha256": "sha256:193906679498de4d939345b937fa24e0e69a03c244bd70c859f5e41232713f21",
+          "bytes": 5728032,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:6d88b87c2fcf4c2a4fa82a8db4eab9f09df4c025858bbaa1c685337914211df1",
+          "bytes": 341,
+          "mode": "644"
+        }
+      }
+    }
+  },
+  "linux-arm64": {
+    "opencode-linux-arm64": {
+      "spec": "opencode-linux-arm64@1.18.34",
+      "tarballBytes": 60094599,
+      "integrity": "sha512-ZSjqcH0MEbAzLEmkRC9Aop1PbWZxe2NuKONAE/x8MRQdjKdOepX7M50UpjbsNoiLMkP584Z98Mg4a42fJhouvA==",
+      "files": {
+        "bin/opencode": {
+          "sha256": "sha256:415487fcd9b3f06addd6877435783f3d5a236c029066b0dd6597d64980b15351",
+          "bytes": 185116816,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:1071656678521b9227959edff04f99f76dc8c0955f44bcfdf857e0828ad1ead0",
+          "bytes": 142,
+          "mode": "755"
+        }
+      }
+    },
+    "@vscode/ripgrep-linux-arm64": {
+      "spec": "@vscode/ripgrep-linux-arm64@1.18.0",
+      "tarballBytes": 2095071,
+      "integrity": "sha512-lQ/5zTG++U0E3IhVgS4EPTTn/U4okncaRMM5GOFfOYZywS4nuD31GhkHbNYlDk5CuDC68+hYJ0/eQeyCKJDA+g==",
+      "files": {
+        "LICENSE": {
+          "sha256": "sha256:ccf06b70760761ae1437395117bcf911501e3dc85385d84c7eba20d5dfab55dd",
+          "bytes": 1113,
+          "mode": "644"
+        },
+        "README.md": {
+          "sha256": "sha256:354a72ea81f978e05ba5b575d639fa46b016e94727a2990cef5dab69cc91aba3",
+          "bytes": 242,
+          "mode": "644"
+        },
+        "bin/rg": {
+          "sha256": "sha256:e152ea689d6e8420357e592f0d8253b96476c164118ca3e6e13074fa1705ddda",
+          "bytes": 4771240,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:aed5c2398783f786dc1bc1d76ec11c74450fada892fbbb4047658cd3d3589ad0",
+          "bytes": 347,
+          "mode": "644"
+        }
+      }
+    }
+  },
+  "win32-x64": {
+    "opencode-windows-x64": {
+      "spec": "opencode-windows-x64@1.18.34",
+      "tarballBytes": 60230073,
+      "integrity": "sha512-Nbw1JUHcMd+6Zab97tvhiR/wzMBrtFbHMog3w+HssBqt0068BLdpPadLmo72+vPtBu+ZxXIZzqNB9R3qtca7qg==",
+      "files": {
+        "bin/opencode.exe": {
+          "sha256": "sha256:5283c2cd5b4285855daa97e6f7d17bf48146227cdf2a940e79e0f2b7869fd06e",
+          "bytes": 180599176,
+          "mode": "755"
+        },
+        "package.json": {
+          "sha256": "sha256:a078b0fceb5ed8cfdada3986c10d1df8f71c18c017d6801b6e8354ecd2890661",
+          "bytes": 140,
+          "mode": "755"
+        }
+      }
+    },
+    "@vscode/ripgrep-win32-x64": {
+      "spec": "@vscode/ripgrep-win32-x64@1.18.0",
+      "tarballBytes": 2111160,
+      "integrity": "sha512-KNPvtElldqILHdnAetujPaowkNbpqJy3ssIGGN6F6Kve9Qi+nNLI2DN01O83JjCEVQbCzl8Ov3QZ9Eov3BR8Dg==",
+      "files": {
+        "LICENSE": {
+          "sha256": "sha256:ccf06b70760761ae1437395117bcf911501e3dc85385d84c7eba20d5dfab55dd",
+          "bytes": 1113,
+          "mode": "644"
+        },
+        "README.md": {
+          "sha256": "sha256:063255cba31a62944d17a6cde784cb50a3323dd811be1b36c377e6274248d9b6",
+          "bytes": 234,
+          "mode": "644"
+        },
+        "bin/rg.exe": {
+          "sha256": "sha256:f9dde63498b3193f098355dbec97af99dc4f6b8fa0df5ed04114a03012c042cb",
+          "bytes": 5429760,
+          "mode": "644"
+        },
+        "package.json": {
+          "sha256": "sha256:30ace0312c036e473902c568312c1ff1190f0e9f40640d95e6695b2fad893301",
+          "bytes": 341,
+          "mode": "644"
+        }
+      }
+    }
+  }
+}

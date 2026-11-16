@@ -34,6 +34,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "local-copilot-cli-enabled",
   "local-cursor-enabled",
   "local-harness-enabled",
+  "local-opencode-enabled",
   "mcp-events-enabled",
   "mcp-tasks",
   "mcpjam-compatibility",

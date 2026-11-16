@@ -31,7 +31,7 @@ describe("harness descriptors", () => {
     });
     expect(HARNESS_DESCRIPTORS.cursor.orgKeys).toBe(false);
     expect(HARNESS_DESCRIPTORS.opencode.orgKeys).toBe(true);
-    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "cursor", "copilot-cli"]);
+    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "cursor", "copilot-cli", "opencode"]);
   });
   it("grants MCPJam extensions by client ownership", () => {
     expect(usesMcpjamClient({})).toBe(true);
@@ -70,7 +70,6 @@ describe("harness surface support", () => {
       "cursor guests",
       "cursor user-testing",
       "opencode guests",
-      "opencode local",
     ]);
   });
   it("names the surface each turn source runs on", () => {
