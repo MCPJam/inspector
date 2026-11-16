@@ -192,11 +192,11 @@ describe("ConformanceHistory", () => {
 
     // The history sits in a shrink-0 container above the suites; a
     // viewport-height empty state pushed them out of view.
-    const emptyState = screen
-      .getByText("No conformance runs yet")
-      .closest(".flex.items-center.justify-center");
-    expect(emptyState).not.toBeNull();
-    expect(emptyState!.className).not.toMatch(/100vh/);
+    const emptyState = screen.getByTestId("conformance-history-empty");
+    expect(emptyState.textContent).toContain("No conformance runs yet");
+    expect(emptyState.outerHTML).not.toMatch(/100vh/);
+    // Overview's empty state, sample score card and all.
+    expect(emptyState.textContent).toContain("OVERALL SCORE");
   });
 
   it("keeps loaded rows while the next page loads", async () => {
@@ -326,11 +326,8 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     await choose("conformance-history-server-filter", "Alpha");
 
     expect(
-      (await screen.findByTestId("conformance-history-no-match")).textContent,
-    ).toContain("No conformance runs found");
-    expect(
-      screen.getByTestId("conformance-history-no-match").textContent,
-    ).toContain("“Alpha”");
+      await screen.findByRole("heading", { name: "No runs for Alpha yet" }),
+    ).toBeDefined();
     expect(screen.queryByText("No conformance runs yet")).toBeNull();
 
     await choose("conformance-history-server-filter", "All servers");
@@ -407,20 +404,23 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     const user = userEvent.setup();
     await user.type(screen.getByTestId("conformance-history-search"), "zzz");
 
-    const empty = await screen.findByTestId("conformance-history-no-match");
+    const empty = await screen.findByTestId("conformance-history-empty");
     expect(
-      within(empty).getByRole("heading", { name: "No conformance runs found" }),
+      within(empty).getByRole("heading", { name: "No runs match “zzz”" }),
     ).toBeDefined();
     expect(empty.textContent).toContain(
-      "We couldn’t find any test runs matching “zzz”. Try adjusting your query or resetting your filters.",
+      "Try another search, or clear it to see every run.",
     );
-    expect(empty.textContent).toContain("Looking for another server?");
+    // Overview's empty state, sample score card and all.
+    expect(empty.textContent).toContain("OVERALL SCORE");
     expect(screen.queryByTestId("conformance-history-row")).toBeNull();
     // Outside the Conformance page there is no run to start.
-    expect(screen.queryByRole("button", { name: "Run new check" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Run conformance checks" }),
+    ).toBeNull();
 
     await user.click(
-      within(empty).getByRole("button", { name: "Clear search filter" }),
+      within(empty).getByRole("button", { name: "Clear search" }),
     );
     expect(
       (screen.getByTestId("conformance-history-search") as HTMLInputElement)
@@ -448,7 +448,7 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     await user.type(screen.getByTestId("conformance-history-search"), "zzz");
 
     await user.click(
-      await screen.findByRole("button", { name: "Run new check" }),
+      await screen.findByRole("button", { name: "Run conformance checks" }),
     );
     expect(runRequest).toHaveBeenCalledTimes(1);
   });
@@ -660,14 +660,12 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
         .getAllByRole("status")
         .map((status) => status.textContent)
         .join(" ");
-    await screen.findByTestId("conformance-history-no-match");
-    expect(announced()).toContain("No conformance runs found");
-    expect(announced()).toContain("“zzz”");
+    await screen.findByTestId("conformance-history-empty");
+    expect(announced()).toContain("No runs match “zzz”");
 
     await user.clear(screen.getByTestId("conformance-history-search"));
     await choose("conformance-history-server-filter", "Alpha");
-    await waitFor(() => expect(announced()).toContain("“Alpha”"));
-    expect(announced()).toContain("No conformance runs found");
+    await waitFor(() => expect(announced()).toContain("No runs for Alpha yet"));
   });
 
   it("sorts from the column headers, not a sort dropdown", () => {

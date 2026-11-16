@@ -96,6 +96,7 @@ import { toast } from "@/lib/toast";
 import { MCP_TASKS_CHECK_IDS, TASKS_CHECK_CATALOG } from "@mcpjam/sdk/browser";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
+import { useConformanceRunRequest } from "../conformance-run-request";
 import {
   ConformanceServerPicker,
   ProtocolVersionSelect,
@@ -3405,6 +3406,37 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={alpha} servers={[alpha, notion]} {...props} />,
     );
     await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+  });
+
+  it("lets History start a run with no server picked, as the header does", async () => {
+    // History's empty states read the page's run request; without a picked
+    // server the page must still provide it, or they lose their Run.
+    function HistoryRun() {
+      const request = useConformanceRunRequest();
+      return request ? (
+        <button type="button" onClick={request.run}>
+          History run
+        </button>
+      ) : null;
+    }
+    const alpha = createHttpServer({ name: "alpha" });
+    window.history.replaceState(null, "", "/conformance?view=history");
+    render(
+      <ConformanceTab
+        server={null}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        history={<HistoryRun />}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "History run" }));
+
+    // The same setup steps the header's Run opens.
+    expect(
+      await screen.findByRole("button", { name: "Continue" }),
+    ).toBeInTheDocument();
+    window.history.replaceState(null, "", "/");
   });
 
   it("connects the page's server when it arrives after step 1 opened", async () => {

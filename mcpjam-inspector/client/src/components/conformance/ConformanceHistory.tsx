@@ -41,7 +41,7 @@ import {
   ConformanceHistoryTable,
   HISTORY_SOURCE_LABEL,
 } from "./ConformanceHistoryTable";
-import { ConformanceHistoryNoResults } from "./ConformanceHistoryNoResults";
+import { ConformanceHistoryEmpty } from "./ConformanceHistoryEmpty";
 import {
   ConformanceHistoryFilters,
   DEFAULT_HISTORY_SORT,
@@ -117,6 +117,10 @@ function HistoryLoader() {
     </div>
   );
 }
+
+const NO_RUNS_TITLE = "No conformance runs yet";
+const NO_RUNS_DESCRIPTION =
+  "Runs from the Inspector, the CLI, GitHub, and the API land here.";
 
 /** Runs per page while History shows the newest first. */
 const HISTORY_PAGE_SIZE = 20;
@@ -240,11 +244,9 @@ export function ConformanceHistory({
 
     if (rows.length === 0) {
       return (
-        <EmptyState
-          icon={FlaskConical}
-          title="No conformance runs yet"
-          className="h-auto py-10"
-          description="Runs from the Inspector, the CLI, GitHub, and the API land here."
+        <ConformanceHistoryEmpty
+          title={NO_RUNS_TITLE}
+          description={NO_RUNS_DESCRIPTION}
         />
       );
     }
@@ -287,15 +289,6 @@ export function ConformanceHistory({
     ? (serverNames?.get(serverFilter) ?? serverFilter)
     : null;
 
-  const notice = (text: string, status = false) => (
-    <p
-      className="px-1 text-sm text-muted-foreground"
-      role={status ? "status" : undefined}
-    >
-      {text}
-    </p>
-  );
-
   return (
     <section
       className="flex flex-1 flex-col space-y-3"
@@ -321,22 +314,28 @@ export function ConformanceHistory({
         <HistoryLoader />
       ) : rows.length === 0 ? (
         filteredServerName ? (
-          <ConformanceHistoryNoResults
-            match={filteredServerName}
-            clearLabel="Clear server filter"
-            onClear={() => changeServerFilter(null)}
+          <ConformanceHistoryEmpty
+            title={`No runs for ${filteredServerName} yet`}
+            description="Run a check on it, or clear the filter to see every server's runs."
+            clear={{
+              label: "Clear server filter",
+              onClear: () => changeServerFilter(null),
+            }}
           />
         ) : (
-          notice("No conformance runs yet.", true)
+          <ConformanceHistoryEmpty
+            title={NO_RUNS_TITLE}
+            description={NO_RUNS_DESCRIPTION}
+          />
         )
       ) : visibleRows.length === 0 || awaitingOrder ? (
         readingEveryRun ? (
           <HistoryLoader />
         ) : (
-          <ConformanceHistoryNoResults
-            match={search.trim()}
-            clearLabel="Clear search filter"
-            onClear={() => setSearch("")}
+          <ConformanceHistoryEmpty
+            title={`No runs match “${search.trim()}”`}
+            description="Try another search, or clear it to see every run."
+            clear={{ label: "Clear search", onClear: () => setSearch("") }}
           />
         )
       ) : (
