@@ -74,7 +74,7 @@ function LocalModelRatesPanel() {
     <ModelRatesPanel
       title="Model prices on this machine"
       description="Stored on this machine only and never uploaded. Calls on your own provider keys are estimated at these prices instead of the public list price."
-      emptyText="No prices yet. Calls on your own keys are estimated at the public list price where one exists."
+      emptyText="No prices yet. Calls on your own provider keys are estimated at the public list price where one exists."
       rates={rates}
       loadError={loadError}
       canEdit
