@@ -108,6 +108,22 @@ describe("startSessionSnapshotRestore", () => {
     ]);
   });
 
+  it("lets a cancelled turn interrupt the writes, but not the download's timeout", async () => {
+    mockBackend(await snapshotBytes());
+    const cancel = new AbortController();
+    const restore = start({ abortSignal: cancel.signal });
+    await restore!.ready();
+    const box = newBox();
+    const signals: Array<AbortSignal | undefined> = [];
+    const run = box.session.run;
+    box.session.run = (args) => {
+      signals.push(args.abortSignal);
+      return run(args);
+    };
+    await restore!.apply(box.session, WORKDIR);
+    expect(signals).toEqual([cancel.signal, cancel.signal]);
+  });
+
   it("writes only once, even if the session is created again after a failure", async () => {
     mockBackend(await snapshotBytes());
     const restore = start();
