@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Label } from "@mcpjam/design-system/label";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -62,12 +62,16 @@ export function LocalRunsControl({
     if (saved && (saved.value === allowed || saved.version !== listVersion))
       setSaved(null);
   }, [allowed, listVersion, saved]);
+  // The newest list version, read when the save completes: a reload that
+  // landed while the write was pending isn't the one the save triggered.
+  const listVersionRef = useRef(listVersion);
+  listVersionRef.current = listVersion;
   const copy = allowed ? COPY.stop : COPY.allow;
   const apply = async () => {
     setSaving(true);
     try {
       await onChange(!allowed);
-      setSaved({ value: !allowed, version: listVersion });
+      setSaved({ value: !allowed, version: listVersionRef.current });
       toast.success(copy.done);
     } catch (failure) {
       const refusal = describeConvexFailure(failure, copy.failed);

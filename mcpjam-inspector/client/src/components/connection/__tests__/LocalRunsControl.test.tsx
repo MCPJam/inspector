@@ -96,6 +96,29 @@ describe("LocalRunsControl", () => {
     expect(screen.getByRole("switch")).not.toBeChecked();
   });
 
+  it("waits for the save's own reload when another reload lands mid-save", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    const onChange = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    const { rerender } = render(
+      <LocalRunsControl allowed={false} listVersion={1} onChange={onChange} />,
+    );
+    await flip(user);
+    await user.click(screen.getByRole("button", { name: "Allow local runs" }));
+    // An unrelated reload lands while the write is still pending.
+    rerender(
+      <LocalRunsControl allowed={false} listVersion={2} onChange={onChange} />,
+    );
+    finish();
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(screen.getByRole("switch")).toBeDisabled();
+    // The reload the save triggered lands.
+    rerender(<LocalRunsControl allowed listVersion={3} onChange={onChange} />);
+    expect(screen.getByRole("switch")).toBeEnabled();
+  });
+
   it("says the write failed when it fails for another reason", async () => {
     const user = userEvent.setup();
     mount(false, vi.fn().mockRejectedValue(new Error("network down")));
