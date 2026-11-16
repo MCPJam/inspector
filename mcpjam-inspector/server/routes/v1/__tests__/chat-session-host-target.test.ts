@@ -376,6 +376,22 @@ describe("host targeting dispatches the real harness", () => {
     expect(body.hostId).toBe(HOST);
   });
 
+  it("builds an API turn's tools without the host's approval switch, and nobody is asked", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ modelId: MODEL, requireToolApproval: true }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ requireToolApproval: false }),
+    );
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({ approvalMode: "auto-deny" }),
+    );
+  });
+
   it("returns a reply and skipped servers even when the entire environment is refused", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ harness: "claude-code", modelId: MODEL }));
     createManualHostedConnectionMock.mockResolvedValue({

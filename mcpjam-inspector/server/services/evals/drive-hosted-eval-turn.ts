@@ -39,6 +39,7 @@ import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
+import { engineApprovalMode } from "@/shared/tool-approval";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
 import {
@@ -824,7 +825,7 @@ export async function driveHostedEvalTurn(
       origin: "eval",
       streamSink: "none",
       persistMode: "caller",
-      approvalMode: "auto-deny",
+      approvalMode: engineApprovalMode("eval"),
       // Harness eval (host harness === "claude-code"): forward the host's real
       // approval intent. Evals cannot approve a gated native call interactively,
       // and non-approval hosts still run under allow-all.
