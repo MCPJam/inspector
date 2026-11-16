@@ -69,14 +69,14 @@ export function OutputFormatControl({
 
       {value.format === "score" ? (
         <div className="flex items-center gap-3">
-          <label
-            htmlFor={thresholdId}
+          <span
+            id={thresholdId}
             className="text-xs font-semibold text-muted-foreground"
           >
             Pass at
-          </label>
+          </span>
           <Slider
-            id={thresholdId}
+            thumbProps={{ "aria-labelledby": thresholdId }}
             min={0}
             max={1}
             step={0.05}
