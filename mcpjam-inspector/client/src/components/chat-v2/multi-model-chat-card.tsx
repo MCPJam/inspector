@@ -36,6 +36,7 @@ import {
   type CompareCardEffortProps,
 } from "@/components/chat-v2/compare-card-effort";
 import { useLatestTurnCost } from "@/components/chat-v2/compare-cost";
+import { useCompareCardStatus } from "@/components/chat-v2/compare-card-status";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
@@ -168,6 +169,7 @@ export function MultiModelChatCard({
     addToolApprovalResponse,
     startChatWithMessages,
     harnessStartupPhase,
+    consumeTurnAborted,
   } = useChatSession({
     pickedModelSelection: selection,
     selectionIntent: "picked",
@@ -229,23 +231,24 @@ export function MultiModelChatCard({
 
   const latestTurn = liveTraceEnvelope?.turns?.at(-1);
   const latestTurnCost = useLatestTurnCost(liveTraceEnvelope);
+  const cardStatus = useCompareCardStatus({
+    failed: Boolean(error),
+    isStreaming,
+    isThreadEmpty,
+    consumeTurnAborted,
+  });
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       modelId: compareId,
       durationMs: latestTurn?.durationMs ?? null,
       tokens: latestTurn?.usage?.totalTokens ?? 0,
       toolCount: latestTurn?.actualToolCalls?.length ?? 0,
+      promptIndex: latestTurn?.promptIndex,
       ...(latestTurnCost ? { cost: latestTurnCost } : {}),
-      status: error
-        ? "error"
-        : isStreaming
-        ? "running"
-        : isThreadEmpty
-        ? "idle"
-        : "ready",
+      status: cardStatus,
       hasMessages: !isThreadEmpty,
     }),
-    [compareId, error, isStreaming, isThreadEmpty, latestTurn, latestTurnCost],
+    [cardStatus, compareId, isThreadEmpty, latestTurn, latestTurnCost],
   );
 
   useEffect(() => {

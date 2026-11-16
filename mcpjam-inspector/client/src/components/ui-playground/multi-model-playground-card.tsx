@@ -62,6 +62,7 @@ import {
   ModelCompareCardHeader,
 } from "@/components/chat-v2/model-compare-card-header";
 import { useLatestTurnCost } from "@/components/chat-v2/compare-cost";
+import { useCompareCardStatus } from "@/components/chat-v2/compare-card-status";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
@@ -564,6 +565,7 @@ export function MultiModelPlaygroundCard({
     harnessStartupPhase,
     loadChatSession,
     selectedModel,
+    consumeTurnAborted,
   } = useChatSession({
     pickedModelSelection: selection,
     inheritedEnvironmentModel,
@@ -934,6 +936,14 @@ export function MultiModelPlaygroundCard({
   const latestTurnTokens = latestTurn?.usage?.totalTokens ?? 0;
   const latestTurnToolCount = latestTurn?.actualToolCalls?.length ?? 0;
   const latestTurnCost = useLatestTurnCost(effectiveLiveTraceEnvelope);
+  const latestTurnPromptIndex = latestTurn?.promptIndex;
+  const cardStatus = useCompareCardStatus({
+    failed: Boolean(error),
+    isStreaming,
+    isBusy: isExecuting,
+    isThreadEmpty,
+    consumeTurnAborted,
+  });
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       // `MultiModelCardSummary.modelId` is the legacy field name; in
@@ -944,23 +954,17 @@ export function MultiModelPlaygroundCard({
       durationMs: latestTurnDurationMs,
       tokens: latestTurnTokens,
       toolCount: latestTurnToolCount,
+      promptIndex: latestTurnPromptIndex,
       ...(latestTurnCost ? { cost: latestTurnCost } : {}),
-      status: error
-        ? "error"
-        : isStreaming || isExecuting
-          ? "running"
-          : isThreadEmpty
-            ? "idle"
-            : "ready",
+      status: cardStatus,
       hasMessages: !isThreadEmpty,
     }),
     [
+      cardStatus,
       compareId,
-      error,
-      isExecuting,
-      isStreaming,
       isThreadEmpty,
       latestTurnCost,
+      latestTurnPromptIndex,
       latestTurnDurationMs,
       latestTurnTokens,
       latestTurnToolCount,

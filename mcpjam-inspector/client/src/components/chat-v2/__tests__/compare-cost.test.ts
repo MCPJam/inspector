@@ -45,6 +45,7 @@ function card(
   modelId: string,
   cost: ModelCostRollup | undefined,
   status: MultiModelCardSummary["status"] = "ready",
+  promptIndex = 0,
 ): MultiModelCardSummary {
   return {
     modelId,
@@ -53,6 +54,7 @@ function card(
     toolCount: 0,
     status,
     hasMessages: true,
+    promptIndex,
     ...(cost ? { cost } : {}),
   };
 }
@@ -113,6 +115,7 @@ describe("costWinnerLabel", () => {
     ["an estimate against a reported amount", card("b", rollup(call(0.009, listPrice)))],
     ["a turn mixing reported and estimated calls", card("b", rollup(call(0.004), call(0.004, listPrice)))],
     ["a runner-reported turn", card("b", rollup(call(0.009, { source: "runner_reported" })))],
+    ["a card whose latest turn answered a follow-up", card("b", dear, "ready", 1)],
   ])("names no winner beside %s", (_label, other) => {
     const cards = [card("a", cheap), other];
     expect(cards.map((item) => costWinnerLabel(item, cards))).toEqual([
@@ -129,6 +132,12 @@ describe("costWinnerLabel", () => {
   it("names no winner for a card whose own turn has moved on", () => {
     const cards = [card("a", cheap), card("b", dear)];
     expect(costWinnerLabel(card("a", cheap, "running"), cards)).toBeUndefined();
+    expect(costWinnerLabel(card("a", cheap, "ready", 1), cards)).toBeUndefined();
+  });
+
+  it("names a winner once every card has answered the same follow-up", () => {
+    const cards = [card("a", cheap, "ready", 1), card("b", dear, "ready", 1)];
+    expect(costWinnerLabel(cards[0], cards)).toBe("Lowest cost");
   });
 });
 

@@ -51,6 +51,7 @@ function card(
     toolCount: 1,
     status: "ready",
     hasMessages: true,
+    promptIndex: 0,
     ...(cost ? { cost } : {}),
     ...overrides,
   };

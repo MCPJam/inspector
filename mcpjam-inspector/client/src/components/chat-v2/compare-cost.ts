@@ -82,30 +82,33 @@ function costBasis(rollup: ModelCostRollup): CostBasis | undefined {
     : undefined;
 }
 
-type CostWinner = { amountUsd: number; basis: CostBasis };
+type CostWinner = { amountUsd: number; basis: CostBasis; promptIndex: number };
 
 /**
  * The lowest cost across every compared card, or undefined when the cards
- * cannot be fairly ranked. Each card must have finished its turn without an
- * error, priced every call, and share one basis with the others: a partial
- * subtotal, a failed turn or an estimate set against a reported amount would
- * look cheaper than it is.
+ * cannot be fairly ranked. Each card must have finished the same prompt
+ * without an error or a stop, priced every call, and share one basis with the
+ * others: a partial subtotal, a failed or stopped turn, a follow-up only one
+ * card answered, or an estimate set against a reported amount would not be
+ * the same bill.
  */
 function findCostWinner(
   summaries: readonly MultiModelCardSummary[],
 ): CostWinner | undefined {
-  if (summaries.length < 2) return undefined;
+  const promptIndex = summaries[0]?.promptIndex;
+  if (summaries.length < 2 || promptIndex === undefined) return undefined;
   let basis: CostBasis | undefined;
   const amounts: number[] = [];
   for (const summary of summaries) {
     const cost = summary.status === "ready" ? summary.cost : undefined;
     if (!cost || cost.completeness !== "complete") return undefined;
+    if (summary.promptIndex !== promptIndex) return undefined;
     const cardBasis = costBasis(cost);
     if (!cardBasis || (basis && basis !== cardBasis)) return undefined;
     basis = cardBasis;
     amounts.push(cost.knownSubtotalUsd);
   }
-  return basis && { amountUsd: Math.min(...amounts), basis };
+  return basis && { amountUsd: Math.min(...amounts), basis, promptIndex };
 }
 
 /** "Lowest cost" or "Lowest estimated cost" when this card wins; otherwise undefined. */
@@ -116,7 +119,8 @@ export function costWinnerLabel(
   const winner = findCostWinner(allSummaries);
   const cost = summary?.status === "ready" ? summary.cost : undefined;
   if (!winner || !cost || cost.completeness !== "complete") return undefined;
-  return costBasis(cost) === winner.basis &&
+  return summary?.promptIndex === winner.promptIndex &&
+    costBasis(cost) === winner.basis &&
     cost.knownSubtotalUsd === winner.amountUsd
     ? COST_WINNER_LABEL[winner.basis]
     : undefined;
