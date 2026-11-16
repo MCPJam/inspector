@@ -64,7 +64,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     body: "Every run lands here with key takeaways. After you change your server, check that you're still passing your set threshold.",
     screen: "monitor",
     anchors: ["monitor-runs"],
-    placement: "bottom",
+    placement: "top",
   },
 ];
 

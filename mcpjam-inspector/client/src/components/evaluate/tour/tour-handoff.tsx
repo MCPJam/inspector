@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { TOUR_HANDOFF_COPY } from "./evaluate-tour-steps";
 import { useAnchorRects } from "./tour-geometry";
@@ -23,10 +24,13 @@ export function TourHandoff({ onDismiss }: { onDismiss: () => void }) {
   );
   const anchor = rects[0] ?? null;
   const seenRef = useRef(false);
+  const [formShown, setFormShown] = useState(false);
+  const reducedMotion = useReducedMotion() ?? false;
 
   useEffect(() => {
     if (anchor) {
       seenRef.current = true;
+      setFormShown(true);
     } else if (seenRef.current || settled) {
       onDismiss();
     }
@@ -60,6 +64,17 @@ export function TourHandoff({ onDismiss }: { onDismiss: () => void }) {
       className="pointer-events-none absolute inset-0 z-40"
       data-testid="evaluate-tour-handoff"
     >
+      {/* Hides the landing that renders before the form route does. */}
+      <AnimatePresence>
+        {formShown || settled ? null : (
+          <motion.div
+            key="cover"
+            className="absolute inset-0 bg-background"
+            exit={{ opacity: 0 }}
+            transition={{ duration: reducedMotion ? 0 : 0.3 }}
+          />
+        )}
+      </AnimatePresence>
       {anchor ? (
         <>
           <TourSpotlight rects={[anchor]} />

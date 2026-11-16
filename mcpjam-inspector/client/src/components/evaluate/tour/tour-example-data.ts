@@ -52,7 +52,7 @@ export const EXAMPLE_ITERATION = {
     question: "Did the model choose the right tool for the request?",
     check: "Reach read_me, create_view",
     expected: "Reach read_me, create_view",
-    actual: "Expected read_me, create_view; read_me was never called.",
+    actual: "read_me was never called.",
     fix: {
       tool: "create_view",
       before: "The",

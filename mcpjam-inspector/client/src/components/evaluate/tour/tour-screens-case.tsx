@@ -64,7 +64,7 @@ export function TourCaseScreen() {
     <div className="flex h-full min-h-0 flex-col">
       <TourBreadcrumb
         crumbs={caseCrumbs("Edit test case")}
-        trailing={<CaseTrailing />}
+        trailing={<ExampleDataPill />}
       />
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-4 py-5 sm:px-6">
         <div className="flex items-center justify-between gap-3">
@@ -163,8 +163,8 @@ export function TourCaseScreen() {
                 Expected outcome
               </p>
               <p className="text-xs text-muted-foreground">
-                Describe what success looks like. An AI judge checks
-                whether this goal was met.
+                Describe what success looks like. An AI judge checks whether
+                this goal was met.
               </p>
               <p className="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground">
                 {EXAMPLE_CASE.expectedOutcome}
