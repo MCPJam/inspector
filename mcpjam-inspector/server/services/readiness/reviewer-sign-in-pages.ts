@@ -107,7 +107,9 @@ function isCallback(url: string, callbackUrl: string): boolean {
 /** AuthKit-hosted sign-in, the supported path; anything else is approximated. */
 export function isAuthKitOrigin(origin: string): boolean {
   try {
-    return new URL(origin).hostname.endsWith(".authkit.app");
+    const url = new URL(origin);
+    return url.protocol === "https:" &&
+      (url.hostname.endsWith(".authkit.app") || url.hostname === "login.mcpjam.com");
   } catch {
     return false;
   }

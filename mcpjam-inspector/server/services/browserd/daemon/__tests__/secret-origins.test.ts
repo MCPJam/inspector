@@ -4,7 +4,11 @@
  * has. The refusal is the act's result, so the ledger records it.
  */
 import { describe, expect, it, vi } from "vitest";
-import { resolveActSecrets } from "../secret-substitution";
+import {
+  receivingFrameRefusal,
+  resolveActSecrets,
+  secretReceivingOrigins,
+} from "../secret-substitution";
 import { withSecretScrub } from "../browser-driver";
 import { ChromiumDriver } from "../chromium-driver";
 import { BrowserdRequestHandler } from "../request-handler";
@@ -128,14 +132,18 @@ describe("secret origins, through the driver", () => {
     expect(registry.hasExposure()).toBe(false);
   });
 
-  it("types it on the allowed origin", async () => {
-    const { page, wrapped } = stack(`${AUTH}/login`);
+  it("types it on the allowed origin only into a ref'd field, never by selector", async () => {
+    const { page, registry, wrapped } = stack(`${AUTH}/login`);
     await wrapped(step({ kind: "navigate", url: `${AUTH}/login` }));
     const out = await wrapped(step(typePassword), {
       secrets: [{ name: REVIEWER, value: PASSWORD, origins: [AUTH] }],
     });
-    expect(out.ok).toBe(true);
-    expect(page.calls.acts).toEqual([`fill:#pw:${PASSWORD}`]);
+    // A selector can reach into another site's frame; a ref names the field.
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/secret_origin_refused: .*ref/);
+    expect(page.calls.acts).toEqual([]);
+    expect(String(out.error)).not.toContain(PASSWORD);
+    expect(registry).toBeDefined();
   });
 });
 
@@ -206,5 +214,71 @@ describe("the request handler and secret origins", () => {
 
   it("announces the feature, so a server checks before sending origins", () => {
     expect(BROWSERD_WEBMCP_FEATURES).toContain("secret-origins");
+  });
+});
+
+describe("the field's own document", () => {
+  const limited = [{ name: REVIEWER, value: PASSWORD, origins: [AUTH] }];
+
+  /** A CDP session whose frame tree has a framed child on `framed`. */
+  const cdpWith = (framed: string, root = AUTH) => ({
+    on: () => {},
+    send: vi.fn(async () => ({
+      frameTree: {
+        frame: { id: "main", securityOrigin: root },
+        childFrames: [{ frame: { id: "child", securityOrigin: framed } }],
+      },
+    })),
+  });
+
+  it("names where a substituted act's limited credential may land", () => {
+    const out = resolveActSecrets(typeAct(), limited, `${AUTH}/login`);
+    expect(secretReceivingOrigins(out)).toEqual([AUTH]);
+    const unlimited = resolveActSecrets(
+      typeAct("{{secret:STRIPE_KEY}}"),
+      [{ name: "STRIPE_KEY", value: PASSWORD }],
+      "https://dashboard.stripe.test/",
+    );
+    expect(secretReceivingOrigins(unlimited)).toBeUndefined();
+  });
+
+  it("allows a field in a frame on an allowed origin", async () => {
+    const cdp = cdpWith("https://collector.test");
+    expect(await receivingFrameRefusal(cdp, undefined, [AUTH])).toBeUndefined();
+    expect(await receivingFrameRefusal(cdpWith(AUTH), "child", [AUTH])).toBeUndefined();
+  });
+
+  it("refuses a field framed in from another origin, or one it cannot read", async () => {
+    const framed = await receivingFrameRefusal(
+      cdpWith("https://collector.test"),
+      "child",
+      [AUTH],
+    );
+    expect(framed).toContain("https://collector.test");
+    expect(framed).toContain(AUTH);
+    expect(
+      await receivingFrameRefusal(cdpWith("://null"), "missing", [AUTH]),
+    ).toMatch(/could not read/);
+    const broken = { on: () => {}, send: vi.fn(async () => { throw new Error("gone"); }) };
+    expect(await receivingFrameRefusal(broken, undefined, [AUTH])).toMatch(
+      /could not read/,
+    );
+  });
+
+  it("types a limited credential into nothing without a ref", async () => {
+    const page = fakePage({ url: `${AUTH}/login` });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    const step = (action: unknown): BrowserCommand =>
+      ({ commandId: `c-${Math.random()}`, source: "agent", action }) as never;
+    await driver.execute(step({ kind: "navigate", url: `${AUTH}/login` }));
+    const out = await driver.execute(
+      step({ kind: "act", verb: "type", value: `{{secret:${REVIEWER}}}`, observe: "none" }),
+      { secrets: limited },
+    );
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/secret_origin_refused/);
+    expect(out.error).not.toContain(PASSWORD);
+    expect(page.calls.acts).toEqual([]);
   });
 });
