@@ -122,9 +122,9 @@ describe("library catalog edits", () => {
     );
     expect(grounded).toBeDefined();
     if (!grounded) return;
-    edits()?.add(
-      [],
-      [
+    edits()?.add({
+      checks: [],
+      questions: [
         {
           id: "answer-grounded-in-results-grounded",
           kind: "yesno",
@@ -134,7 +134,8 @@ describe("library catalog edits", () => {
           evaluator: { id: "answer-grounded-in-results", version: 1 },
         },
       ],
-    );
+      judges: [],
+    });
     expect(judgeConfig?.rubricChecks?.enabled).toBe(true);
     expect(judgeConfig?.rubricChecks?.questions).toHaveLength(1);
     edits()?.update("answer-grounded-in-results");
@@ -144,6 +145,39 @@ describe("library catalog edits", () => {
     edits()?.remove("answer-grounded-in-results");
     expect(judgeConfig?.rubricChecks?.questions).toBeUndefined();
     expect(predicates).toEqual([{ type: "noToolErrors" }]);
+  });
+
+  it("keeps a question and a judge added in one click, and removes the judge", () => {
+    let judgeConfig: Parameters<typeof librarySuiteEdits>[1] = undefined;
+    const edits = () =>
+      librarySuiteEdits(
+        { kind: "suite", predicates: [], onPredicatesChange: () => {} },
+        judgeConfig,
+        (next) => {
+          judgeConfig = next;
+        },
+      );
+    const judge = {
+      id: "answers-the-question-answers",
+      label: "Answers what the user asked",
+      prompt: "Did it answer? {{final_answer}}",
+      output: { kind: "passfail" as const },
+      evaluator: { id: "answers-the-question", version: 1 },
+    };
+    const question = {
+      id: "answer-grounded-in-results-grounded",
+      kind: "yesno" as const,
+      label: "Grounded",
+      instructions: "Check.",
+      pass: { answer: "yes" as const },
+      evaluator: { id: "answer-grounded-in-results", version: 1 },
+    };
+    edits()?.add({ checks: [], questions: [question], judges: [judge] });
+    expect(judgeConfig?.rubricChecks?.questions).toHaveLength(1);
+    expect(judgeConfig?.customJudges?.judges).toEqual([judge]);
+    edits()?.remove("answers-the-question");
+    expect(judgeConfig?.customJudges?.judges).toEqual([]);
+    expect(judgeConfig?.rubricChecks?.questions).toHaveLength(1);
   });
 
   it("maps a rubric-check row back to its library evaluator", () => {

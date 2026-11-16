@@ -85,6 +85,10 @@ export {
 } from "@/shared/hosted-criterion-id";
 import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
+import {
+  hostedCustomJudgeScoreDefinition,
+  type HostedCustomJudgeDefinitionInput,
+} from "./custom-judge-rows.js";
 
 /**
  * Version of the hosted predicate projection — the "predicate evaluator
@@ -371,6 +375,8 @@ export type HostedScoreDefinitionInputs = {
   agentActivityFired?: boolean;
   /** One per question the rubric-check pass asked (second pass only). */
   rubricChecks?: ReadonlyArray<HostedRubricCheckDefinitionInput>;
+  /** One per custom judge the job ran (second pass only). */
+  customJudges?: ReadonlyArray<HostedCustomJudgeDefinitionInput>;
 };
 
 /**
@@ -406,6 +412,9 @@ export function buildHostedScoreDefinitions(
   }
   for (const question of inputs.rubricChecks ?? []) {
     definitions.push(hostedRubricCheckScoreDefinition(question));
+  }
+  for (const judge of inputs.customJudges ?? []) {
+    definitions.push(hostedCustomJudgeScoreDefinition(judge));
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {

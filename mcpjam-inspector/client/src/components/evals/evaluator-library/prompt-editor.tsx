@@ -43,11 +43,14 @@ export function PromptEditor({
   onChange,
   variables,
   scope,
+  maxLength = MAX_JUDGE_INSTRUCTIONS_LENGTH,
 }: {
   value: string;
   onChange: (next: string) => void;
   variables: readonly PromptVariable[];
   scope: "iteration" | "conversation";
+  /** Defaults to the goal judge's instructions limit. */
+  maxLength?: number;
 }) {
   const id = useId();
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -74,7 +77,7 @@ export function PromptEditor({
         id={id}
         rows={6}
         value={value}
-        maxLength={MAX_JUDGE_INSTRUCTIONS_LENGTH}
+        maxLength={maxLength}
         aria-invalid={unknown.length > 0}
         aria-describedby={`${id}-help`}
         className="w-full rounded-md border border-input bg-background px-2.5 py-2 font-mono text-xs text-foreground"
@@ -130,7 +133,7 @@ export function PromptEditor({
           </span>
         ) : null}
         <span className="ml-auto">
-          {value.length}/{MAX_JUDGE_INSTRUCTIONS_LENGTH}
+          {value.length}/{maxLength}
         </span>
       </div>
     </div>

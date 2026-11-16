@@ -63,6 +63,7 @@ import type { CaseScorecardInput } from "./case-scorecard-model";
 import { buildCaseScorecard, withRunnerChecks } from "./case-scorecard-model";
 import {
   joinTrialResults,
+  customJudgeTrialRows,
   rubricCheckTrialRows,
   type JoinedScorecardGroup,
   type JoinedScorecardRow,
@@ -270,7 +271,10 @@ export function TrialScorecard({
           trace,
         }),
       ),
-      rubricCheckTrialRows(iteration),
+      [
+        ...rubricCheckTrialRows(iteration),
+        ...customJudgeTrialRows(iteration),
+      ],
     );
     // Keyed on the FIELDS, not the input object: callers build that object in
     // render, so an identity dep would rebuild — and re-digest every criterion

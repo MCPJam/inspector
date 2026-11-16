@@ -7,8 +7,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
-import type { Predicate } from "@mcpjam/sdk/predicates";
-import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import { ArrowLeft, Library } from "lucide-react";
 import { useState } from "react";
 import { formatCriterion } from "@/shared/predicate-kinds";
@@ -19,82 +17,51 @@ import {
   isAuthorable,
   isInSuite,
   LIBRARY_EVALUATORS,
-  missingChecks,
+  missingParts,
+  taggedJudges,
   taggedQuestions,
+  type LibraryAddition,
   type LibraryEvaluator,
+  type LibrarySuiteParts,
+  type LibrarySupport,
 } from "./library-catalog";
 
 /**
  * Opens the evaluator library from suite settings. Adding an evaluator hands
- * its checks to `onAdd`, which saves them like "Add assertion" does. Renders
- * nothing unless the evaluator-library flag is on and this deployment can
- * save at least one library evaluator.
+ * what the suite does not have yet to `onAdd`, which saves it like "Add
+ * assertion" does. Renders nothing unless the evaluator-library flag is on
+ * and this deployment can save at least one library evaluator.
  */
 export function EvaluatorLibraryButton({
-  predicates,
-  questions = [],
-  authorableKinds,
-  canAskYesNo = false,
+  suite,
+  support,
   onAdd,
 }: {
-  predicates: readonly Predicate[];
-  /** The suite's rubric-check questions, to mark evaluators already added. */
-  questions?: readonly RubricCheckQuestion[];
-  authorableKinds?: readonly Predicate["type"][];
-  /** Whether this deployment accepts yes/no rubric-check questions. */
-  canAskYesNo?: boolean;
-  onAdd: (
-    checks: readonly Predicate[],
-    questions: readonly RubricCheckQuestion[],
-  ) => void;
+  suite: LibrarySuiteParts;
+  support: LibrarySupport;
+  onAdd: (addition: LibraryAddition) => void;
 }) {
   const enabled = useEvaluatorLibraryEnabled();
-  const anyAuthorable = LIBRARY_EVALUATORS.some((e) =>
-    isAuthorable(e, authorableKinds, canAskYesNo),
-  );
+  const anyAuthorable = LIBRARY_EVALUATORS.some((e) => isAuthorable(e, support));
   if (!enabled || !anyAuthorable) return null;
-  return (
-    <EvaluatorLibraryDialog
-      predicates={predicates}
-      questions={questions}
-      authorableKinds={authorableKinds}
-      canAskYesNo={canAskYesNo}
-      onAdd={onAdd}
-    />
-  );
+  return <EvaluatorLibraryDialog suite={suite} support={support} onAdd={onAdd} />;
 }
 
 export function EvaluatorLibraryDialog({
-  predicates,
-  questions = [],
-  authorableKinds,
-  canAskYesNo = false,
+  suite,
+  support,
   onAdd,
 }: {
-  predicates: readonly Predicate[];
-  /** The suite's rubric-check questions, to mark evaluators already added. */
-  questions?: readonly RubricCheckQuestion[];
-  authorableKinds?: readonly Predicate["type"][];
-  /** Whether this deployment accepts yes/no rubric-check questions. */
-  canAskYesNo?: boolean;
-  onAdd: (
-    checks: readonly Predicate[],
-    questions: readonly RubricCheckQuestion[],
-  ) => void;
+  suite: LibrarySuiteParts;
+  support: LibrarySupport;
+  onAdd: (addition: LibraryAddition) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const available = LIBRARY_EVALUATORS.filter((e) =>
-    isAuthorable(e, authorableKinds, canAskYesNo),
-  );
+  const available = LIBRARY_EVALUATORS.filter((e) => isAuthorable(e, support));
   const selected = available.find((e) => e.id === selectedId);
-  const add = (evaluator: LibraryEvaluator) => {
-    const ids = new Set(questions.map((q) => q.id));
-    onAdd(
-      missingChecks(evaluator, predicates),
-      taggedQuestions(evaluator).filter((q) => !ids.has(q.id)),
-    );
-  };
+  const add = (evaluator: LibraryEvaluator) =>
+    onAdd(missingParts(evaluator, suite));
   return (
     <Dialog
       open={open}
@@ -117,13 +84,13 @@ export function EvaluatorLibraryDialog({
           <DialogDescription>
             {selected
               ? selected.question
-              : "Each evaluator adds a set of assertions to this suite. You can change or remove them afterwards like any other assertion."}
+              : "Each evaluator adds assertions, questions or judges to this suite. You can change or remove them afterwards."}
           </DialogDescription>
         </DialogHeader>
         {selected ? (
           <EvaluatorDetail
             evaluator={selected}
-            inSuite={isInSuite(selected, predicates, questions)}
+            inSuite={isInSuite(selected, suite)}
             onBack={() => setSelectedId(null)}
             onAdd={() => add(selected)}
           />
@@ -137,7 +104,7 @@ export function EvaluatorLibraryDialog({
                 icon={evaluator.icon}
                 tone={evaluator.tone}
                 builtFrom={builtFrom(evaluator)}
-                inSuite={isInSuite(evaluator, predicates, questions)}
+                inSuite={isInSuite(evaluator, suite)}
                 onOpen={() => setSelectedId(evaluator.id)}
                 onAdd={() => add(evaluator)}
               />
@@ -177,6 +144,23 @@ function EvaluatorDetail({
                 Yes/no question, passes on{" "}
                 {q.pass.answer === "yes" ? "Yes" : "No"}. Asked with the
                 goal-completion judge.
+              </span>
+            </span>
+            <span className="text-xs text-muted-foreground">Advisory</span>
+          </li>
+        ))}
+        {taggedJudges(evaluator).map((j) => (
+          <li
+            key={j.id}
+            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
+          >
+            <span>
+              {j.label}
+              <span className="block text-xs text-muted-foreground">
+                {j.output.kind === "score"
+                  ? `Judge prompt, passes at a score of ${j.output.threshold} or more.`
+                  : "Judge prompt, pass or fail."}{" "}
+                Runs with the goal-completion judge.
               </span>
             </span>
             <span className="text-xs text-muted-foreground">Advisory</span>

@@ -84,6 +84,7 @@ import {
   buildHostedScoreContract,
   type HostedRubricChecksVerdictLike,
 } from "./score-rows.js";
+import type { HostedCustomJudgesVerdictLike } from "./custom-judge-rows.js";
 import {
   HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
@@ -307,9 +308,17 @@ function readJudgeVerdict(
 export function readRubricChecksVerdict(
   metadata: Record<string, unknown> | undefined,
 ): HostedRubricChecksVerdictLike | undefined {
-  const verdict = metadata?.rubricChecksVerdict;
+  return readStoredVerdict(metadata, "rubricChecksVerdict");
+}
+
+/** A server-written verdict object off iteration metadata, by key. */
+function readStoredVerdict<T>(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): T | undefined {
+  const verdict = metadata?.[key];
   return typeof verdict === "object" && verdict !== null
-    ? (verdict as HostedRubricChecksVerdictLike)
+    ? (verdict as T)
     : undefined;
 }
 
@@ -513,6 +522,8 @@ export function deriveIterationPayload(args: {
   attributionVerdict: MetadataAttributionVerdictMetadata | undefined;
   /** Goal-completion channel only: its advisory rows ride this job's write. */
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
+  /** Same channel and rule as `rubricChecksVerdict`. */
+  customJudgesVerdict?: HostedCustomJudgesVerdictLike;
 }): { stage: Record<string, unknown>; scores?: unknown[]; config?: unknown } {
   const { iteration, judgeVerdict, attributionVerdict } = args;
   const metadata = iteration.metadata ?? {};
@@ -668,6 +679,9 @@ export function deriveIterationPayload(args: {
       : {}),
     ...(args.rubricChecksVerdict
       ? { rubricChecksVerdict: args.rubricChecksVerdict }
+      : {}),
+    ...(args.customJudgesVerdict
+      ? { customJudgesVerdict: args.customJudgesVerdict }
       : {}),
   });
   const evaluationConfig = storedTools?.length
@@ -911,12 +925,17 @@ export async function runJudgeSecondPass(
       !goalCompletionFailed
     ) {
       const rubricChecksVerdict = readRubricChecksVerdict(iteration.metadata);
+      const customJudgesVerdict = readStoredVerdict<HostedCustomJudgesVerdictLike>(
+        iteration.metadata,
+        "customJudgesVerdict",
+      );
       const { stage, scores, config } = deriveIterationPayload({
         iteration,
         mode,
         judgeVerdict,
         attributionVerdict: undefined,
         ...(rubricChecksVerdict ? { rubricChecksVerdict } : {}),
+        ...(customJudgesVerdict ? { customJudgesVerdict } : {}),
       });
       if (Object.keys(stage).length > 0) {
         const fields = stageFields(stage);

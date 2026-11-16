@@ -49,6 +49,7 @@ import type {
 } from "@mcpjam/sdk/contract";
 import {
   hostedCriterionId,
+  HOSTED_CUSTOM_JUDGE_SCORER_PREFIX,
   HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
 } from "@/shared/hosted-criterion-id";
 import {
@@ -656,6 +657,43 @@ export function rubricCheckTrialRows(
     rows.push({
       ...row,
       result: criterion ? uncertainIfUndecided(result) : result,
+      ...(evidence ? { evidence } : {}),
+    });
+  }
+  return rows;
+}
+
+/** The custom-judge rows this trial was graded with, from its score rows. */
+export function customJudgeTrialRows(
+  iteration: EvalIteration | null,
+): JoinedScorecardRow[] {
+  const metadata = iteration?.metadata;
+  if (!metadata) return [];
+  const scores = indexScores(
+    parseIterationScores(metadata),
+    parseEvaluationConfig(metadata),
+  );
+  const rows: JoinedScorecardRow[] = [];
+  for (const [scorerId, { score, definition }] of scores.byScorerId) {
+    if (!scorerId.startsWith(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX)) continue;
+    const id = scorerId.slice(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX.length);
+    const row: ScorecardRow = {
+      key: scorerId,
+      stage: "userValue",
+      provenance: "rubricCheck",
+      label: definition?.label?.replace(/^custom judge: /, "") || id,
+      kindLabel: "Judge",
+      role: "advisory",
+      roleLock: "judge",
+      editable: false,
+      customJudge: { id },
+      tooltip: "A judge prompt this suite wrote. Advisory.",
+      join: { kind: "judge", slot: "rubricChecks", scorerId },
+    };
+    const evidence = scoreEvidence(score, definition, row);
+    rows.push({
+      ...row,
+      result: resultFromScore(score, definition),
       ...(evidence ? { evidence } : {}),
     });
   }
