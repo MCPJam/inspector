@@ -171,7 +171,11 @@ export class PluginBundleCache {
         const parsed = await this.verifyEntry(
           root, identity.bundleHash, options?.profile,
         );
-        return { root, bundleHash: identity.bundleHash, parsed };
+        return {
+          root: join(root, parsed.interpretation.rootDirectory ?? ""),
+          bundleHash: identity.bundleHash,
+          parsed,
+        };
       } catch (error) {
         if (!options?.source) throw error;
         // A source lets us recover from a corrupted entry instead of dead-ending
@@ -224,9 +228,17 @@ export class PluginBundleCache {
         const adopted = await this.verifyEntry(
           root, identity.bundleHash, options.profile,
         );
-        return { root, bundleHash: identity.bundleHash, parsed: adopted };
+        return {
+          root: join(root, adopted.interpretation.rootDirectory ?? ""),
+          bundleHash: identity.bundleHash,
+          parsed: adopted,
+        };
       }
-      return { root, bundleHash: identity.bundleHash, parsed: verified };
+      return {
+        root: join(root, verified.interpretation.rootDirectory ?? ""),
+        bundleHash: identity.bundleHash,
+        parsed: verified,
+      };
     } catch (error) {
       await rm(tempRoot, { recursive: true, force: true }).catch(() => {});
       throw error;
