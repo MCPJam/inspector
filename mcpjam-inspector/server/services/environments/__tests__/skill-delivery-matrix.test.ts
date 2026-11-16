@@ -154,7 +154,12 @@ const PINNED: Record<Engine, Expected> = {
     serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
-  cursor: noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
+  cursor: {
+    delivered: RUN_SKILLS,
+    excluded: [],
+    serverSkillsVia: "box-files",
+    recorded: RUN_SKILLS,
+  },
   opencode: {
     delivered: RUN_SKILLS,
     excluded: [],
@@ -313,6 +318,15 @@ const liveRows = (
     serverSkillsVia: "harness-tools",
     recorded: recorded ? names : [],
   };
+  // These harnesses can read captured server skills from frozen runs, but
+  // live turns do not write captured server skills to their boxes.
+  const liveBoxNames = ["release-notes", "summarize", ...extra];
+  const boxFilesOnly: Expected = {
+    delivered: liveBoxNames,
+    excluded: [["docs/search", "server-skill-unsupported"]],
+    serverSkillsVia: "none",
+    recorded: recorded ? liveBoxNames : [],
+  };
   return {
     "mcpjam-agent": {
       delivered: refs,
@@ -324,8 +338,8 @@ const liveRows = (
     },
     "claude-code": harness,
     codex: harness,
-    cursor: noSkillsOn(refs),
-    opencode: harness,
+    cursor: boxFilesOnly,
+    opencode: boxFilesOnly,
     "copilot-cli": noSkillsOn(refs),
   };
 };
@@ -486,7 +500,12 @@ const OLDER_STUDY_TURN: Surface = {
       serverSkillsVia: "harness-tools",
       recorded: [],
     },
-    cursor: noSkillsOn(["release-notes"]),
+    cursor: {
+      delivered: ["release-notes"],
+      excluded: [],
+      serverSkillsVia: "none",
+      recorded: [],
+    },
     opencode: {
       delivered: ["release-notes"],
       excluded: [],
