@@ -23,7 +23,7 @@ const wasted = { id: "no-wasted-calls", version: 1 };
 const tagged: Predicate[] = [
   { type: "noToolErrors" },
   { type: "toolCallCountUnder", count: 10, evaluator: wasted },
-  { type: "noRepeatedIdenticalCall", evaluator: wasted },
+  { type: "noRepeatedIdenticalCall", role: "advisory", evaluator: wasted },
 ];
 
 function renderTable(predicates: Predicate[]) {
@@ -51,9 +51,12 @@ describe("library groups in the suite table", () => {
     const groups = screen.getAllByRole("region", { name: "No Wasted Calls" });
     expect(groups.length).toBeGreaterThan(0);
     expect(groups[0]).toHaveTextContent("v1");
-    fireEvent.click(
-      within(groups[0]).getByRole("button", { name: "Remove No Wasted Calls" }),
-    );
+    const remove = within(groups[0]).getByRole("button", {
+      name: "Remove No Wasted Calls",
+    });
+    // Suite settings sits inside a form; a default button would submit it.
+    expect(remove).toHaveAttribute("type", "button");
+    fireEvent.click(remove);
     expect(next()).toEqual([{ type: "noToolErrors" }]);
   });
 

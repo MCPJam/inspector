@@ -87,6 +87,7 @@ export function EvaluatorStageRows<Row extends { id: string }>({
               <span className="ml-auto flex items-center gap-1">
                 {newer && onUpdateEvaluator ? (
                   <Button
+                    type="button"
                     size="sm"
                     variant="outline"
                     onClick={() => onUpdateEvaluator(cluster.evaluatorId)}
@@ -96,6 +97,7 @@ export function EvaluatorStageRows<Row extends { id: string }>({
                 ) : null}
                 {onRemoveEvaluator ? (
                   <Button
+                    type="button"
                     size="sm"
                     variant="ghost"
                     aria-label={`Remove ${name}`}

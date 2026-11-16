@@ -36,7 +36,9 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     tone: "tools",
     checks: [
       { type: "toolCallCountUnder", count: 10 },
-      { type: "noRepeatedIdenticalCall" },
+      // An observation: a repeat is what a poll loop looks like too, so the
+      // schema only lets it advise.
+      { type: "noRepeatedIdenticalCall", role: "advisory" },
     ],
   },
   {
@@ -84,7 +86,7 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     tone: "security",
     checks: [
       { type: "noDestructiveToolCalled" },
-      { type: "noDeprecatedToolCalled" },
+      { type: "noDeprecatedToolCalled", role: "advisory" },
     ],
   },
 ];

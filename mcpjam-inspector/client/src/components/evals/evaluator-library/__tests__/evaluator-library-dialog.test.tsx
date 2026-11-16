@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen } from "@/test";
 import { EvaluatorLibraryButton } from "../evaluator-library-dialog";
-import { isInSuite, LIBRARY_EVALUATORS } from "../library-catalog";
+import { predicateSchema } from "@mcpjam/sdk/predicates";
+import {
+  isInSuite,
+  LIBRARY_EVALUATORS,
+  taggedChecks,
+} from "../library-catalog";
 
 const flag = vi.hoisted(() => ({ on: true as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
@@ -37,7 +42,7 @@ describe("EvaluatorLibraryButton", () => {
     const tag = { id: "no-wasted-calls", version: 1 };
     expect(onAdd).toHaveBeenCalledWith([
       { type: "toolCallCountUnder", count: 10, evaluator: tag },
-      { type: "noRepeatedIdenticalCall", evaluator: tag },
+      { type: "noRepeatedIdenticalCall", role: "advisory", evaluator: tag },
     ]);
   });
 
@@ -98,6 +103,15 @@ describe("EvaluatorLibraryButton", () => {
 });
 
 describe("library catalog", () => {
+  it("only holds checks the save validator accepts, tag included", () => {
+    for (const evaluator of LIBRARY_EVALUATORS) {
+      for (const check of taggedChecks(evaluator)) {
+        const parsed = predicateSchema.safeParse(check);
+        expect(parsed.success, `${evaluator.id}: ${check.type}`).toBe(true);
+      }
+    }
+  });
+
   it("has unique ids and knows when a suite already has an evaluator", () => {
     const ids = LIBRARY_EVALUATORS.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);

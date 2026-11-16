@@ -79,7 +79,7 @@ export function EvaluatorLibraryDialog({
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="outline">
+        <Button type="button" variant="outline">
           <Library aria-hidden />
           From library
         </Button>
@@ -154,11 +154,11 @@ function EvaluatorDetail({
         ))}
       </ul>
       <div className="flex justify-between gap-2">
-        <Button variant="ghost" onClick={onBack}>
+        <Button type="button" variant="ghost" onClick={onBack}>
           <ArrowLeft aria-hidden />
           All evaluators
         </Button>
-        <Button onClick={onAdd} disabled={inSuite}>
+        <Button type="button" onClick={onAdd} disabled={inSuite}>
           {inSuite ? "In this suite" : "Add to suite"}
         </Button>
       </div>

@@ -187,13 +187,23 @@ export function ProbeRow({
             {hasActions ? (
               <div className="flex gap-2">
                 {onRerun ? (
-                  <Button size="sm" variant="outline" onClick={onRerun}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={onRerun}
+                  >
                     <RefreshCw aria-hidden />
                     Re-run
                   </Button>
                 ) : null}
                 {onAcceptRisk && result === "failed" ? (
-                  <Button size="sm" variant="ghost" onClick={onAcceptRisk}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={onAcceptRisk}
+                  >
                     Accept risk
                   </Button>
                 ) : null}
