@@ -113,10 +113,12 @@ export function resolveRegisteredCommandPath(
     }
     if (token.startsWith("-")) {
       const next = tokens[index + 1];
+      const value = separateOptionValue(current, token);
+      // As commander does: a required value is the next token even when it
+      // starts with "-"; an optional one only when it doesn't.
       if (
         next !== undefined &&
-        !next.startsWith("-") &&
-        optionTakesSeparateValue(current, token)
+        (value === "required" || (value === "optional" && !next.startsWith("-")))
       ) {
         index += 1;
       }
@@ -134,20 +136,23 @@ export function resolveRegisteredCommandPath(
   return path;
 }
 
-/** Whether `token` is an option of `command` or a parent that reads the next token. */
-function optionTakesSeparateValue(command: Command, token: string): boolean {
+/** Whether `token`, an option of `command` or a parent, reads the next token. */
+function separateOptionValue(
+  command: Command,
+  token: string,
+): "required" | "optional" | "none" {
   if (token.includes("=") || /^-[^-]./.test(token)) {
-    return false;
+    return "none";
   }
   for (let cursor: Command | null = command; cursor; cursor = cursor.parent) {
     const option = cursor.options.find(
       (candidate) => candidate.long === token || candidate.short === token,
     );
     if (option) {
-      return option.required || option.optional;
+      return option.required ? "required" : option.optional ? "optional" : "none";
     }
   }
-  return false;
+  return "none";
 }
 
 /** `--no-telemetry` anywhere before `--`, for runs that never parsed. */
