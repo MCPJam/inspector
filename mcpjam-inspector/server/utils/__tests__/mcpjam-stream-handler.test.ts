@@ -1501,6 +1501,42 @@ describe("mcpjam-stream-handler", () => {
       for (const span of llm) expect(span).not.toHaveProperty("cost");
       expect(llm.map((span) => span.inputTokens)).toEqual([3, 10]);
     });
+
+    it("keeps the cost of a billed step that returned no content", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "finish",
+            finishReason: "length",
+            messageMetadata: {
+              inputTokens: 12,
+              outputTokens: 0,
+              totalTokens: 12,
+              cost: reportedCost,
+            },
+          },
+        ]),
+      );
+
+      await handleMCPJamFreeChatModel({ ...turnInput, tools: {} });
+      await lastExecution;
+
+      const spans = lastSnapshotSpans();
+      expect(spans.find((span) => span.category === "step")).toMatchObject({
+        status: "error",
+        inputTokens: 12,
+      });
+      expect(spans.filter((span) => span.cost)).toEqual([
+        expect.objectContaining({
+          category: "llm",
+          stepIndex: 0,
+          status: "error",
+          inputTokens: 12,
+          cost: reportedCost,
+        }),
+      ]);
+      expect(writtenChunks.some((chunk) => chunk?.type === "error")).toBe(true);
+    });
   });
 
   it("flushes buffered hosted rpc logs first and streams live hosted rpc logs as data parts", async () => {

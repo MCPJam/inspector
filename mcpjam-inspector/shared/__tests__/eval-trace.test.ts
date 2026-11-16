@@ -243,6 +243,8 @@ describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
     for (const cost of [
       { calculationVersion: 1, currency: "USD", completeness: "complete" },
       { calculationVersion: 1, currency: "EUR", completeness: "complete", amountUsd: 1 },
+      // An amount that does not say whether it is a report or an estimate.
+      { calculationVersion: 1, currency: "USD", completeness: "complete", amountUsd: 1 },
       "0.0042",
     ]) {
       const parsed = evalTraceSpanZ.safeParse({ ...span, cost });

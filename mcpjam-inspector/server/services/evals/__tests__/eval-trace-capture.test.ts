@@ -95,7 +95,7 @@ describe("eval-trace-capture", () => {
     expect(spans.filter((s) => s.category === "error")).toHaveLength(1);
   });
 
-  it("backend cost lands on the llm span only, on success and tool failure", () => {
+  it("backend cost lands on the llm span only, on success and on failures", () => {
     const cost = {
       calculationVersion: 1,
       currency: "USD" as const,
@@ -111,11 +111,23 @@ describe("eval-trace-capture", () => {
     pushBackendStepToolFailureSpans(
       toolFailure, runAt, 0, 0, runAt, llm, runAt + 10, runAt + 15, meta,
     );
-    for (const spans of [success, toolFailure]) {
+    const llmFailure: EvalTraceSpan[] = [];
+    pushBackendStepLlmFailureSpans(
+      llmFailure, runAt, 0, 0, runAt, runAt, runAt + 10, meta,
+    );
+    for (const spans of [success, toolFailure, llmFailure]) {
       expect(spans.filter((span) => span.cost)).toEqual([
         expect.objectContaining({ category: "llm", cost, inputTokens: 10 }),
       ]);
     }
+  });
+
+  it("backend LLM failure without cost evidence adds no llm span", () => {
+    const spans: EvalTraceSpan[] = [];
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, runAt + 5, {
+      inputTokens: 10,
+    });
+    expect(spans.map((span) => span.category)).toEqual(["step", "error"]);
   });
 
   it("AI SDK: one step, no tools — step + LLM only", () => {

@@ -60,7 +60,10 @@ export function selectRowCost(
 export function formatModelCost(amountUsd: number): string {
   if (amountUsd === 0) return "$0.00";
   if (amountUsd < 0.0001) return "<$0.0001";
-  if (amountUsd < 1) return `$${amountUsd.toFixed(4)}`;
+  // Choose the form on the rounded value: 0.99996 rounds to a dollar and must
+  // read "$1.00", not "$1.0000".
+  const fourPlaces = amountUsd.toFixed(4);
+  if (Number(fourPlaces) < 1) return `$${fourPlaces}`;
   return `$${amountUsd.toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,

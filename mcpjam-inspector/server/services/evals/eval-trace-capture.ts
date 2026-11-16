@@ -707,6 +707,24 @@ export function pushBackendStepLlmFailureSpans(
   };
   applyStepMeta(stepSpan, { ...meta, status: "error" });
   spans.push(stepSpan);
+  // Cost evidence means the provider answered and billed the call, even if it
+  // returned no content. Rollups read cost from llm spans only, so the call
+  // keeps one; the step span never carries the cost.
+  if (meta?.cost) {
+    const llmSpan: EvalTraceSpan = {
+      id: `${stepParentId}-llm`,
+      parentId: stepParentId,
+      name: formatRecordedLlmSpanName(meta.modelId),
+      category: "llm",
+      promptIndex,
+      stepIndex,
+      status: "error",
+      ...createOffsetInterval(runStartedAt, llmPhaseStartAbs, failAbs),
+      cost: meta.cost,
+    };
+    applyStepMeta(llmSpan, { ...meta, status: "error" });
+    spans.push(llmSpan);
+  }
   spans.push({
     id: `${stepParentId}-err`,
     parentId: stepParentId,
