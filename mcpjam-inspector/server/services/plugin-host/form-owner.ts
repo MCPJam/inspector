@@ -1,6 +1,10 @@
 import type { PluginFormOwnerRef } from "./form-source-control.js";
+import { readAfterAdmission } from "./durable-controls.js";
 import { pluginInstances, type PluginInstanceIdentity } from "./instances.js";
-import { PluginInvocationError } from "./invocation.js";
+import {
+  PluginInvocationError,
+  type TrustedInvocationOwner,
+} from "./invocation.js";
 import { modelApps } from "./model-apps.js";
 
 /**
@@ -38,3 +42,26 @@ async function restoreOwner(
   await modelApps.restore(ref.token, identity, signal);
 }
 
+/**
+ * Every form step's owner check: this process's copy, the admission read,
+ * then the owner's stored row (never beside it), then the copy again. Without
+ * `ownerRef`, or with `fenceOwner` false for a model call whose row is not
+ * written yet, the owner lives only in this process and its copy decides.
+ */
+export async function assertPluginFormOwnerCurrent<T>(input: {
+  owner: TrustedInvocationOwner;
+  identity: PluginInstanceIdentity;
+  ownerRef?: PluginFormOwnerRef;
+  fenceOwner?: boolean;
+  admit: () => Promise<T>;
+  signal: AbortSignal;
+}) {
+  pluginInstances.getFormOwner(input.owner, input.identity);
+  const admitted = await readAfterAdmission(input.admit, async () => {
+    if (input.ownerRef && input.fenceOwner !== false)
+      await restorePluginFormOwner(input.ownerRef, input.identity, input.signal);
+  });
+  input.signal.throwIfAborted();
+  pluginInstances.getFormOwner(input.owner, input.identity);
+  return admitted;
+}

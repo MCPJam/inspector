@@ -19,7 +19,7 @@ import {
 } from "./owned-legacy.js";
 import { pluginFormSources } from "./form-sources.js";
 import type { PluginFormOwnerRef } from "./form-source-control.js";
-import { pluginInstances } from "./instances.js";
+import { assertPluginFormOwnerCurrent } from "./form-owner.js";
 import type {
   ResolvedInvocationContext,
   PluginToolCallParams,
@@ -244,8 +244,11 @@ export function createPluginRequestRuntime(
     /** The extension governing a retained owner that has no activation
      * (a mention lease). An App's own kind decides it otherwise. */
     extension?: keyof PluginExtensionCapabilities;
-    /** The owner's stored row, so MRTR form sources are stored too. */
+    /** The owner's stored row, so MRTR form sources are stored too. Every
+     * form step reads it again after admission unless `fenceOwner` is false
+     * (a model call whose row is not written yet). */
     ownerRef?: PluginFormOwnerRef;
+    fenceOwner?: boolean;
   } = {},
 ) {
   const currentBearer = () => admission.getAuthorization?.() ?? Promise.resolve(bearer);
@@ -390,11 +393,14 @@ export function createPluginRequestRuntime(
       humanInput();
       signal.throwIfAborted();
       if (!expected) throw denied();
-      pluginInstances.getFormOwner(expected.owner, {
-        ...expected.owner,
-        subject: expected.subject,
+      await assertPluginFormOwnerCurrent({
+        owner: expected.owner,
+        identity: { ...expected.owner, subject: expected.subject },
+        ownerRef: options.ownerRef,
+        fenceOwner: options.fenceOwner,
+        admit: () => admission.revalidate({ signal }),
+        signal,
       });
-      await admission.revalidate({ signal });
       const fresh = await readPluginExecutionContext({
         projectId: admission.projectId,
         expectedActorId: admission.actorId,
@@ -1173,6 +1179,7 @@ export function createPluginRequestRuntime(
       params: PluginToolCallParams,
       submission: PluginContinuationSubmission,
       signal: AbortSignal,
+      pending?: PluginInvocationSuspension,
     ) => {
       const mrtr = ownedMrtr();
       if (!mrtr) {
@@ -1194,6 +1201,7 @@ export function createPluginRequestRuntime(
         params,
         submission,
         signal,
+        pending,
       );
     },
     /** Logs entries for the client, returned with this request's response. */
