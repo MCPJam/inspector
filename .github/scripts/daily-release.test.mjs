@@ -16,7 +16,9 @@ test("stays quiet while release work is running", () => {
   const url = "https://github.com/MCPJam/inspector/actions/runs/1";
   const decision = dailyReleaseDecision({ ...ready, activeRun: url });
   assert.equal(decision.dispatch, false);
-  assert.ok(decision.reason.includes(url));
+  const match = decision.reason.match(/https:\/\/\S+/);
+  assert.ok(match);
+  assert.equal(new URL(match[0]).href, new URL(url).href);
 });
 
 test("leaves unpublished versions for the existing release to complete", () => {
