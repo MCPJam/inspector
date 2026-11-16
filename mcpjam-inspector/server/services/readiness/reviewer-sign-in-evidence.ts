@@ -53,7 +53,7 @@ export class SignInEvidence {
   private lastUrl: string | undefined;
   /** The page the password went in on, until the page moves on. */
   private passwordOn: string | undefined;
-  /** The page moved on after the password; held at the next picture. */
+  /** The page moved on after the password: progress, before any picture of it. */
   private movedOn = false;
   private actsAfterProgress = 0;
 
@@ -93,7 +93,7 @@ export class SignInEvidence {
 
   /** Whether the page moved on after the password: progress, not a sign-in. */
   get progressed() {
-    return this.signInSegment !== undefined;
+    return this.movedOn;
   }
 
   /** Whether the agent acted after that, which makes consent a stage. */
@@ -146,21 +146,28 @@ export class SignInEvidence {
     const output = record(result);
     const raw = screenshotOf(result);
     const image = raw ? capture(raw) : undefined;
+    // An act after the page moved on begins the next stage: the sign-in keeps
+    // what it had, and this act's picture is the next stage's.
+    if (this.movedOn && tool === "browser_act") {
+      if (!this.signInSegment) this.holdSignIn();
+      this.actsAfterProgress += 1;
+    }
     if (image) this.segment = { newest: image, typedSinceFrame: false };
     else if (output?.screenshotSuppressed === true)
       this.segment.newest = "suppressed";
     const url = urlOf(result);
     if (url) this.lastUrl = url;
-    if (this.progressed && tool === "browser_act") this.actsAfterProgress += 1;
     if (this.passwordOn !== undefined && url && url !== this.passwordOn) {
       this.movedOn = true;
     }
-    // The page moved on after the password: its first look is the sign-in's
-    // picture, held until the sign-in closes, and what follows is the next
-    // stage's. Nothing passes here.
-    if (this.movedOn && !this.progressed && this.segment.newest) {
-      this.signInSegment = this.segment;
-      this.segment = fresh();
-    }
+    // The first safe look at the page after the password is the sign-in's
+    // picture, held until the sign-in closes. A suppressed one is not: a
+    // later look before the next act still can be. Nothing passes here.
+    if (this.movedOn && !this.signInSegment && image) this.holdSignIn();
+  }
+
+  private holdSignIn() {
+    this.signInSegment = this.segment;
+    this.segment = fresh();
   }
 }

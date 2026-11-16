@@ -273,6 +273,36 @@ describe("a page that moves on after the password", () => {
     ]);
   });
 
+  it("keeps the first safe picture of it, not a suppressed one before it", async () => {
+    const browser = fakeBrowser([
+      shot(`${AUTH}/sign-in`),
+      shot(`${AUTH}/sign-in`),
+      { url: `${AUTH}/next`, screenshotSuppressed: true },
+      shot(`${AUTH}/next`),
+      shot(`${AUTH}/consent`),
+      { url: CALLBACK },
+    ]);
+    const { run, recorded } = agentWith(browser, async (tools) => {
+      await typePassword(tools);
+      await tools.browser_act!.execute({ verb: "click", ref: "e3" }, call);
+      await tools.browser_observe!.execute({}, call);
+      await tools.browser_act!.execute({ verb: "click", ref: "e4" }, call);
+      await tools.browser_act!.execute({ verb: "click", ref: "e5" }, call);
+    });
+    expect((await run()).kind).toBe("callback");
+    expect(
+      recorded.map((stage) => [
+        stage.stage,
+        stage.status,
+        stage.evidence?.screenshotStatus,
+      ]),
+    ).toEqual([
+      ["connect-link", "passed", "captured"],
+      ["sign-in", "passed", "captured"],
+      ["consent", "passed", "captured"],
+    ]);
+  });
+
   it("is not confirmed by a callback without a code", async () => {
     const browser = fakeBrowser(
       [
