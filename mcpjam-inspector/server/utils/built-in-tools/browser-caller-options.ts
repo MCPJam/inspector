@@ -39,6 +39,8 @@ export type BrowserSecretReport = (
 const BEFORE_TYPING =
   /^(stale_ref|stale_observation|secret_origin_refused|secret_too_short|secret_unresolved|target_not_found|target_covered|out_of_viewport|unsupported_target|unknown_tab)\b/;
 
+const BEFORE_RUNNING = new Set(["stale_observation", "busy", "at_capacity"]);
+
 /** What a daemon's answer says about the credential it was sent with. */
 export function secretDeliveryOutcome(
   response:
@@ -46,10 +48,11 @@ export function secretDeliveryOutcome(
     | undefined,
 ): SecretDeliveryOutcome {
   if (!response) return "unknown";
-  // A stale observation is refused before the act runs. Any other refusal of
-  // the command, a person taking the browser partway through included, cannot
-  // prove the value never reached the field.
-  if (response.status === "stale_observation") return "not_typed";
+  // Refused before the act runs: a stale observation, or a queue that turned
+  // the command away before claiming it (`daemon/command-queue.ts`). Any
+  // other refusal, a person taking the browser partway through or an id that
+  // already ran (`expired`), cannot prove the value never reached the field.
+  if (BEFORE_RUNNING.has(response.status)) return "not_typed";
   if (response.status !== "ok") return "unknown";
   if (response.result?.ok) return "typed";
   return BEFORE_TYPING.test(response.result?.error ?? "")

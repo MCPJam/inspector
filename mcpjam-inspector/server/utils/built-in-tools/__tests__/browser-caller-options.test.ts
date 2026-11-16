@@ -196,7 +196,11 @@ describe("credentials limited to an origin", () => {
     // A person taking the browser partway through cannot prove nothing was typed.
     const taken = secretDeliveryOutcome({ status: "lease_blocked" });
     expect(taken).toBe("unknown");
-    expect(secretDeliveryOutcome({ status: "stale_observation" })).toBe("not_typed");
+    for (const status of ["stale_observation", "busy", "at_capacity"]) {
+      expect(secretDeliveryOutcome({ status })).toBe("not_typed");
+    }
+    // An id that already ran may have typed it.
+    expect(secretDeliveryOutcome({ status: "expired" })).toBe("unknown");
     const unclear = build(
       { secrets: { ...limited, afterDeliver } },
       { reply: () => ({ ok: false, error: "act_failed: the page threw" }) },
