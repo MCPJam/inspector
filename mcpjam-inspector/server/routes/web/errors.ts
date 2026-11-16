@@ -527,14 +527,16 @@ export interface MapRuntimeErrorOptions {
    */
   boundary?: OriginCaptureBoundary;
   /**
-   * A surface's own capture rule, computed from the MAPPED error (its status
-   * and code), for the same reason `boundary` travels with the mapping: the
-   * first capture decision stamps the error, so a policy applied afterwards
+   * A surface's own capture rule, computed from the MAPPED error (its status,
+   * code and details), for the same reason `boundary` travels with the mapping:
+   * the first capture decision stamps the error, so a policy applied afterwards
    * would decide nothing. See `CapturePolicy`.
    */
-  capture?: (mapped: { status: number; code: string }) =>
-    | CapturePolicy
-    | undefined;
+  capture?: (mapped: {
+    status: number;
+    code: string;
+    details?: Record<string, unknown>;
+  }) => CapturePolicy | undefined;
 }
 
 /**
@@ -618,6 +620,7 @@ export function mapRuntimeError(
     const capture = options?.capture?.({
       status: error.status,
       code: error.code,
+      details: error.details,
     });
     const decision = maybeCaptureOriginError(error, error.normalized, {
       source: "web.mapRuntimeError",
@@ -640,6 +643,7 @@ export function mapRuntimeError(
   const capture = options?.capture?.({
     status: routeError.status,
     code: routeError.code,
+    details: routeError.details,
   });
   const decision = maybeCaptureOriginError(routeError, routeError.normalized, {
     source: "web.mapRuntimeError",

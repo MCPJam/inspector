@@ -125,6 +125,37 @@ describe("mcpjam-agent route failure capture", () => {
     });
   });
 
+  // HONO-8W: a turn sent with a project from an org the caller is not in. The
+  // backend refuses the org model config; that is access control working.
+  it("answers a project the caller cannot access 403 FORBIDDEN, as routine", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example/");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        { ok: false, error: "Not a member of this project" },
+        { status: 403 },
+      ),
+    );
+    try {
+      const response = await post();
+      const body = (await response.json()) as {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+
+      expect(response.status).toBe(403);
+      expect(body.code).toBe("FORBIDDEN");
+      expect(body.details).toEqual({ code: "project_access_refused" });
+      expect(streamWebChatTurnMock).not.toHaveBeenCalled();
+      expect(captureException).toHaveBeenCalledTimes(1);
+      expect(context().tags.page_class).toBe("routine");
+      expect(context().level).toBe("warning");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    }
+  });
+
   it("captures a deliberate 4xx the origin policy would decline, as routine", async () => {
     streamWebChatTurnMock.mockRejectedValue(
       new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "bad history"),

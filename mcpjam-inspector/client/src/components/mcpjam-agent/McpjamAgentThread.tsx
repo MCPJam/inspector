@@ -42,6 +42,7 @@ import { Thread } from "@/components/chat-v2/thread";
 import { MarkdownLinkBaseProvider } from "@/components/chat-v2/thread/memomized-markdown";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { LoadingIndicatorContent } from "@/components/chat-v2/shared/loading-indicator-content";
+import { formatErrorMessage } from "@/components/chat-v2/shared/chat-helpers";
 import { UserMessageBubble } from "@/components/chat-v2/thread/user-message-bubble";
 import {
   ScenarioHostStyleProvider,
@@ -529,14 +530,16 @@ export function McpjamAgentThread({
                 {/* Ask MCPJam is MCPJam-paid, so its own refusals come
                     first: they are about MCPJam's budget, not the reader's
                     credits, and the credits copy would be wrong twice over.
-                    The raw body is the last resort — it reads as a crash. */}
+                    A raw JSON body is never shown — it reads as a crash. */}
                 {describeAgentRefusalMessage(session.error.message) ??
                   // The organization requires its own keys, which Ask MCPJam
                   // can't run on yet (`org_runtime_unsupported`): the
                   // backend's sentence, never its JSON envelope.
                   orgKeysRefusalSentence(session.error.message) ??
                   describeMCPJamLimitMessage(session.error.message) ??
-                  session.error.message ??
+                  // Any other route error: its own `message`, never the
+                  // envelope with its RPC logs. Plain text passes through.
+                  formatErrorMessage(session.error)?.message ??
                   "Something went wrong."}
                 {rejectedInputTurn(session.messages, session.error.message) && (
                   <Button

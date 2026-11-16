@@ -12,6 +12,8 @@ import {
   resolveOrgProviderRuntimeForTarget,
   resolveSyntheticModelSource,
 } from "../org-model-config";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors";
+import { PROJECT_ACCESS_REFUSED_CODE } from "../../../shared/agent-failure-class";
 import type { ModelDefinition } from "@/shared/types";
 import { withGithubCredentialPolicy } from "../../services/github-checks/credential-policy";
 import { ModelResolutionRefusalError } from "../model-resolution-local";
@@ -164,6 +166,70 @@ describe("resolveOrgModelConfig", () => {
         { bearerToken: "user-self-hosted" },
       ),
     ).rejects.not.toMatchObject({ name: "ServiceCredentialUnavailableError" });
+  });
+
+  it("types the backend's project-membership refusal as 403 FORBIDDEN", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json(
+        { ok: false, error: "Not a member of this project" },
+        { status: 403 },
+      ),
+    );
+
+    const failure = await resolveOrgModelConfig(
+      { projectId: "project_org_config_not_member" },
+      { bearerToken: "user-other-org" },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(WebRouteError);
+    expect(failure).toMatchObject({
+      status: 403,
+      code: ErrorCode.FORBIDDEN,
+      details: { code: PROJECT_ACCESS_REFUSED_CODE },
+      message: "Not a member of this project",
+    });
+  });
+
+  it.each([
+    [
+      "a provider key the credential broker refused",
+      () =>
+        Response.json(
+          { ok: false, error: "provider_secret_refused: base URL changed" },
+          { status: 403 },
+        ),
+    ],
+    [
+      "a credential the twin does not serve",
+      () =>
+        Response.json(
+          {
+            ok: false,
+            code: "credential_not_allowed",
+            error: "Sign in to MCPJam in the Inspector.",
+          },
+          { status: 403 },
+        ),
+    ],
+    [
+      "a JSON body that is not an object",
+      () => Response.json(["Not a member of this project"], { status: 403 }),
+    ],
+    ["a 403 with no body", () => new Response(null, { status: 403 })],
+  ])("keeps %s an untyped failure", async (_label, answer) => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example/";
+    process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => answer());
+
+    const failure = await resolveOrgModelConfig(
+      { projectId: `project_org_config_other_403_${_label.length}` },
+      { bearerToken: "user-other-403" },
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(WebRouteError);
   });
 
   it("refuses as hosted-only with neither a credential nor a bearer", async () => {
