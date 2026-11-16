@@ -32,6 +32,7 @@ import {
 } from "../shared/readiness-runs.js";
 import {
   reviewerAccountForRun,
+  reviewerAuthorizerFor,
   runnableReviewerAttemptId,
 } from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
@@ -441,6 +442,9 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     reviewer: await reviewerAccountForRun(convex, submissionId, (connectionId) =>
       authorizeServer(c, convexAuthToken, projectId, serverId, { connectionId }),
     ),
+    ...(reviewerAttemptId
+      ? { authorizeReviewer: await reviewerAuthorizerFor(c, convexAuthToken, projectId, serverId) }
+      : {}),
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: startRefusal,
   });
