@@ -92,11 +92,11 @@ export function resolveCommandOutcome(
 /**
  * The registered command path that argv names, for errors commander raises
  * before any action runs. Walks argv from the root, descending into a
- * subcommand whenever a token matches its name or an alias. Options are
- * skipped with the value they take, so `--format telemetry` is not read as
- * the `telemetry` command; other tokens are skipped too. The result holds
- * registered names only, so no argv text leaves the machine. An empty result
- * means nothing matched.
+ * subcommand whenever a token matches its name or an alias, and stopping at
+ * the first operand that doesn't. Options are skipped with the value they
+ * take, so `--format telemetry` is not read as the `telemetry` command. The
+ * result holds registered names only, so no argv text leaves the machine. An
+ * empty result means nothing matched.
  */
 export function resolveRegisteredCommandPath(
   program: Command,
@@ -127,10 +127,12 @@ export function resolveRegisteredCommandPath(
     const next = current.commands.find(
       (command) => command.name() === token || command.aliases().includes(token),
     );
-    if (next) {
-      path.push(next.name());
-      current = next;
+    if (!next) {
+      // Commander stops here too: never name a command it didn't reach.
+      break;
     }
+    path.push(next.name());
+    current = next;
   }
 
   return path;
