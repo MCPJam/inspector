@@ -24,6 +24,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "evaluate-enabled",
   "evaluate-observe-first",
   "evaluate-run-result-pages",
+  "evaluator-library",
   "evals-start-recording",
   "guest-credit-wall-copy",
   "hosted-browser-enabled",
