@@ -188,6 +188,8 @@ export async function runEventsConformanceForCli(
       );
     }
     return await runEventsConformance({
+      // The CLI counts the run itself, under its own opt-outs.
+      __suppressTelemetry: true,
       manager: args.manager,
       serverId: args.serverId,
       profile: args.profile,

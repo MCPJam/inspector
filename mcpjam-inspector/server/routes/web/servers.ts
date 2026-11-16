@@ -307,6 +307,8 @@ export async function runHostedDoctor(
   const doctorFetch = hostedMcpBaseFetch();
 
   const result = await runServerDoctor({
+    // A hosted doctor run is not SDK usage, so the SDK sends nothing for it.
+    __suppressTelemetry: true,
     config: { ...config, baseFetch: doctorFetch },
     target: {
       kind: "http",
