@@ -2932,7 +2932,21 @@ describe("MCPAppsRenderer tool input streaming", () => {
     { hostStyle: "chatgpt", style: CHATGPT_HOST_STYLE },
   ])("sends live $hostStyle pane theme overrides without reloading the widget", async ({ hostStyle, style }) => {
     mockPlaygroundStoreState.isPlaygroundActive = true;
-    const savedHostContext = { theme: "light", locale: "fr-FR" };
+    const savedHostContext = {
+      theme: "dark",
+      locale: "fr-FR",
+      styles: {
+        variables: {
+          // Stale values from the saved client theme: they must lose to the
+          // preset when the pane picks the opposite theme.
+          "--color-background-primary": "rgb(14, 14, 14)",
+          "--color-text-primary": "rgb(237, 237, 237)",
+          "--color-text-secondary":
+            "light-dark(rgba(61, 61, 58, 1), rgba(194, 192, 182, 1))",
+          "--font-sans": "Custom Sans",
+        },
+      },
+    };
     const snapshot = { hostStyle, hostContext: savedHostContext };
     const pane = (theme?: "light" | "dark") => (
       <SavedClientProvider value={snapshot}>
@@ -2951,7 +2965,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     for (const theme of ["dark", "light", "dark", undefined] as const) {
       rerender(pane(theme));
-      const effectiveTheme = theme ?? "light";
+      const effectiveTheme = theme ?? savedHostContext.theme;
       await vi.waitFor(() => {
         expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
           expect.objectContaining({
@@ -2960,13 +2974,20 @@ describe("MCPAppsRenderer tool input streaming", () => {
             styles: expect.objectContaining({
               variables: expect.objectContaining({
                 "--color-background-primary":
-                  style.mcp.resolveStyleVariables(effectiveTheme)[
-                    "--color-background-primary"
-                  ],
+                  effectiveTheme === savedHostContext.theme
+                    ? "rgb(14, 14, 14)"
+                    : style.mcp.resolveStyleVariables(effectiveTheme)[
+                        "--color-background-primary"
+                      ],
                 "--color-text-primary":
-                  style.mcp.resolveStyleVariables(effectiveTheme)[
-                    "--color-text-primary"
-                  ],
+                  effectiveTheme === savedHostContext.theme
+                    ? "rgb(237, 237, 237)"
+                    : style.mcp.resolveStyleVariables(effectiveTheme)[
+                        "--color-text-primary"
+                      ],
+                "--color-text-secondary":
+                  "light-dark(rgba(61, 61, 58, 1), rgba(194, 192, 182, 1))",
+                "--font-sans": "Custom Sans",
               }),
             }),
           }),
@@ -2976,7 +2997,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     expect(mockAppBridgeCtor).toHaveBeenCalledTimes(bridgeCount);
     expect(mockBridge.close).not.toHaveBeenCalled();
-    expect(savedHostContext).toEqual({ theme: "light", locale: "fr-FR" });
+    expect(savedHostContext.theme).toBe("dark");
+    expect(savedHostContext.styles.variables["--color-text-primary"]).toBe(
+      "rgb(237, 237, 237)",
+    );
     expect(mockPreferencesState.themeMode).toBe("light");
   });
 

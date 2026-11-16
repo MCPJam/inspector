@@ -258,13 +258,39 @@ export function useWidgetHost(): WidgetHostImpl {
   activeMcpProfileRef.current = activeMcpProfile;
   const effectiveHostContext = useEffectiveHostContext();
   const paneTheme = paneDisplay?.theme;
-  const draftHostContext = useMemo(
-    () =>
-      paneTheme
-        ? { ...effectiveHostContext, theme: paneTheme }
-        : effectiveHostContext,
-    [effectiveHostContext, paneTheme],
-  );
+  const draftHostContext = useMemo(() => {
+    if (!paneTheme) return effectiveHostContext;
+    const next: Record<string, unknown> = {
+      ...effectiveHostContext,
+      theme: paneTheme,
+    };
+    const configuredTheme = extractHostTheme(effectiveHostContext);
+    if (configuredTheme && configuredTheme !== paneTheme) {
+      // A saved client's concrete --color-* values are bound to its own
+      // theme. When the pane overrides that theme they must fall back to
+      // the host preset's per-theme palette; `light-dark()` values already
+      // follow the new theme via color-scheme and stay.
+      const styles = next.styles;
+      if (styles && typeof styles === "object" && !Array.isArray(styles)) {
+        const variables = (styles as { variables?: unknown }).variables;
+        if (
+          variables &&
+          typeof variables === "object" &&
+          !Array.isArray(variables)
+        ) {
+          const filtered = Object.fromEntries(
+            Object.entries(variables).filter(
+              ([key, value]) =>
+                !key.startsWith("--color-") ||
+                (typeof value === "string" && value.includes("light-dark(")),
+            ),
+          );
+          next.styles = { ...styles, variables: filtered };
+        }
+      }
+    }
+    return next;
+  }, [effectiveHostContext, paneTheme]);
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
