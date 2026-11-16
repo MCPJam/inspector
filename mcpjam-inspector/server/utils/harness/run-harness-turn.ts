@@ -1277,6 +1277,7 @@ export async function runHarnessTurn(
     // per tool result and then dropped, so the map cannot outgrow the turn.
     const hostExecutedRawResults = new Map<string, unknown>();
     const retainedResourceSources = new Map<string, RetainedResourcePresentation>();
+    const retainedResourceRefusals = new Set<string>();
     let pendingScopeChallenge: HarnessScopeStepUpEvent | undefined;
     let suspendedHarnessToolCallId: string | undefined;
     let scopeStepUpCreation: Promise<void> | undefined;
@@ -1800,7 +1801,7 @@ export async function runHarnessTurn(
           chatSessionId, hostRendersApps: streamSink === "ui" && options.harnessHostCapabilities !== undefined,
           scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
         }),
-        laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
+        laneId: () => continuity?.laneId, sources: retainedResourceSources, refused: retainedResourceRefusals, turnId,
       });
       const hostExecutedMcp =
         !nativeMcpDelivery && (selectedServers?.length ?? 0) > 0
@@ -3818,7 +3819,8 @@ export async function runHarnessTurn(
             hostExecutedRawResults.delete(toolCallId);
             const retainedSource = retainedResourceSources.get(toolCallId);
             retainedResourceSources.delete(toolCallId);
-            const hostPresentation = withRetainedResourceSource(rawHostExecuted, retainedSource ? {...retainedSource, version: 1, toolCallId} : undefined);
+            const retainedRefused = retainedResourceRefusals.delete(toolCallId);
+            const hostPresentation = withRetainedResourceSource(rawHostExecuted, retainedSource ? {...retainedSource, version: 1, toolCallId} : undefined, retainedRefused);
             const modelOutput = (part as { output?: unknown }).output ??
               (part as { result?: unknown }).result;
             if (hasRawHostExecuted && !errorEvent) {

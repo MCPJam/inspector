@@ -361,7 +361,8 @@ function reportNativeFailure(error: unknown) {
     reportRouteFailure(
       "Native MCP forwarding failed",
       new Error(
-        error instanceof ExecutionControlError ? error.code :
+        error instanceof ExecutionControlError
+          ? [error.code, error.reason].filter(Boolean).join(":") :
         error instanceof Error ? error.name : "Unknown forwarding failure",
       ),
       { source: "web.harness-forwarding", hop: "user_server_hop" },
