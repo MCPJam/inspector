@@ -50,15 +50,33 @@ NOT_GLOBAL.addSubnet("198.18.0.0", 15, "ipv4");
 NOT_GLOBAL.addSubnet("198.51.100.0", 24, "ipv4");
 NOT_GLOBAL.addSubnet("203.0.113.0", 24, "ipv4");
 NOT_GLOBAL.addSubnet("2001:db8::", 32, "ipv6");
+NOT_GLOBAL.addSubnet("2001::", 32, "ipv6"); // Teredo
+NOT_GLOBAL.addSubnet("2001:2::", 48, "ipv6"); // benchmarking
+NOT_GLOBAL.addSubnet("2002::", 16, "ipv6"); // 6to4, deprecated
+NOT_GLOBAL.addSubnet("3fff::", 20, "ipv6"); // documentation
+NOT_GLOBAL.addSubnet("64:ff9b:1::", 48, "ipv6"); // local-use NAT64
+
+/** NAT64's well-known prefix reaches the IPv4 address in its last 32 bits. */
+const NAT64 = new BlockList();
+NAT64.addSubnet("64:ff9b::", 96, "ipv6");
+
+function embeddedIpv4(address: string): string | undefined {
+  if (isIP(address) !== 6 || !NAT64.check(address, "ipv6")) return undefined;
+  const tail = address.split(":").slice(-2);
+  if (tail.length === 1 || tail[1]?.includes(".")) return tail.at(-1);
+  const [high, low] = tail.map((part) => parseInt(part || "0", 16));
+  return [high! >> 8, high! & 255, low! >> 8, low! & 255].join(".");
+}
 
 /** Public by `egressTier`, and not in a range that only looks public. */
 function isPublicHost(host: string): boolean {
   if (egressTier(host) !== "public") return false;
   const address = host.replace(/^\[|\]$/g, "");
   const family = isIP(address);
-  return (
-    family === 0 || !NOT_GLOBAL.check(address, family === 6 ? "ipv6" : "ipv4")
-  );
+  if (family === 0) return true;
+  if (NOT_GLOBAL.check(address, family === 6 ? "ipv6" : "ipv4")) return false;
+  const translated = embeddedIpv4(address);
+  return translated === undefined || isPublicHost(translated);
 }
 
 const REFUSED =

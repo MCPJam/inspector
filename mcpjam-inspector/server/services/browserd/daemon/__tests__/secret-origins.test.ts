@@ -17,7 +17,7 @@ import { CommandLedger, type BrowserLedgerRow } from "../command-ledger";
 import { HandoffLease } from "../lease";
 import { BROWSERD_WEBMCP_FEATURES } from "../../protocol";
 import type { BrowserAction, BrowserCommand } from "../../protocol";
-import { fakeContext, fakePage } from "./fake-page";
+import { axTree, fakeContext, fakePage } from "./fake-page";
 
 const PASSWORD = "reviewer-password-sample-1";
 const AUTH = "https://auth.example.com";
@@ -347,13 +347,28 @@ describe("a limited credential reaches its field by the field, not by focus", ()
       send: vi.fn(
         async (
           method: string,
-          params?: { arguments?: Array<{ value: unknown }> },
+          params?: {
+            frameId?: string;
+            executionContextId?: number;
+            arguments?: Array<{ value: unknown }>;
+          },
         ) => {
           sent.push(method);
-          if (method === "DOM.resolveNode")
+          if (method === "Page.getFrameTree")
+            return { frameTree: { frame: { id: "main" } } };
+          if (method === "Page.createIsolatedWorld") {
+            expect(params?.frameId).toBeDefined();
+            return { executionContextId: 77 };
+          }
+          if (method === "DOM.resolveNode") {
+            expect(params?.executionContextId).toBe(77);
             return resolved ? { object: { objectId: "field-1" } } : {};
+          }
           if (method === "Runtime.callFunctionOn") {
-            expect(params?.arguments?.[0]?.value).toBe(PASSWORD);
+            expect(params?.arguments?.map((arg) => arg.value)).toEqual([
+              PASSWORD,
+              [AUTH],
+            ]);
             return { result: { value } };
           }
           return {};
@@ -362,22 +377,49 @@ describe("a limited credential reaches its field by the field, not by focus", ()
     };
     return { cdp, sent };
   }
+  const limit = { frameId: "login", origins: [AUTH] };
 
-  it("focuses, checks and inserts in one call in the field's frame", async () => {
+  it("checks the field's own origin, focuses and inserts in one call, in an isolated world", async () => {
     const { cdp, sent } = cdpAnswering("typed");
     const guard = vi.fn(() => {
       expect(sent).not.toContain("Runtime.callFunctionOn");
     });
-    await insertSecretInNode(cdp, 7, PASSWORD, guard);
+    await insertSecretInNode(cdp, 7, PASSWORD, limit, guard);
     expect(guard).toHaveBeenCalledTimes(1);
-    // Never through the browser's focus, which a page could move.
-    expect(sent).toEqual(["DOM.resolveNode", "Runtime.callFunctionOn"]);
+    // Never through the browser's focus, which a page could move, and never
+    // in the page's own world, whose methods a page could replace.
+    expect(sent).toEqual([
+      "Page.createIsolatedWorld",
+      "DOM.resolveNode",
+      "Runtime.callFunctionOn",
+    ]);
+    // The session's own frame when none was named.
+    const own = cdpAnswering("typed");
+    await insertSecretInNode(
+      own.cdp,
+      7,
+      PASSWORD,
+      { origins: [AUTH] },
+      () => {},
+    );
+    expect(own.sent[0]).toBe("Page.getFrameTree");
   });
 
-  it("types nothing when the field did not keep focus, or is gone", async () => {
-    for (const answer of ["not_focused", "not_inserted", undefined]) {
+  it("types nothing in another origin's document, without focus, or with the field gone", async () => {
+    for (const answer of [
+      "wrong_origin",
+      "not_focused",
+      "not_inserted",
+      undefined,
+    ]) {
       await expect(
-        insertSecretInNode(cdpAnswering(answer).cdp, 7, PASSWORD, () => {}),
+        insertSecretInNode(
+          cdpAnswering(answer).cdp,
+          7,
+          PASSWORD,
+          limit,
+          () => {},
+        ),
       ).rejects.toThrow(/^unsupported_target: .*nothing was typed/);
     }
     await expect(
@@ -385,8 +427,53 @@ describe("a limited credential reaches its field by the field, not by focus", ()
         cdpAnswering("typed", false).cdp,
         7,
         PASSWORD,
+        limit,
         () => {},
       ),
     ).rejects.toThrow(/^target_not_found/);
+  });
+
+  it("never types into a node recovered by role and name, which may be in another frame", async () => {
+    let tree = axTree({
+      role: "RootWebArea",
+      children: [{ role: "textbox", name: "Password", id: 41 }],
+    });
+    const page = fakePage({
+      url: `${AUTH}/login`,
+      cdpReplies: {
+        "Accessibility.getFullAXTree": () => tree,
+        "DOM.describeNode": (params?: Record<string, unknown>) => {
+          if (params?.backendNodeId === 41) throw new Error("no node with id");
+          return {};
+        },
+        "Page.getFrameTree": {
+          frameTree: { frame: { id: "main", securityOrigin: AUTH } },
+        },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    const step = (action: unknown): BrowserCommand =>
+      ({ commandId: `c-${Math.random()}`, source: "agent", action }) as never;
+    await driver.execute(step({ kind: "navigate", url: `${AUTH}/login` }));
+    await driver.execute(step({ kind: "observe", mode: "a11y" }));
+    // A re-render: the same role and name now on a new node.
+    tree = axTree({
+      role: "RootWebArea",
+      children: [{ role: "textbox", name: "Password", id: 91 }],
+    });
+    const out = await driver.execute(
+      step({
+        kind: "act",
+        verb: "type",
+        target: { a11yRef: "e1" },
+        value: `{{secret:${REVIEWER}}}`,
+        observe: "none",
+      }),
+      { secrets: [{ name: REVIEWER, value: PASSWORD, origins: [AUTH] }] },
+    );
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/^stale_ref: .*nothing was typed/);
+    expect(out.error).not.toContain(PASSWORD);
   });
 });

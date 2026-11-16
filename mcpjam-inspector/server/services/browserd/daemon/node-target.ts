@@ -286,45 +286,91 @@ export async function replaceTextInNode(
  * `Input.insertText` types into the browser's focus, and the origin check,
  * the focus and the insert are separate round trips: a script on the page
  * could move focus into another site's frame between them. Here the focus,
- * the check that it took and the insert are one synchronous call in the
- * field's own frame, so no page script runs between them, and
- * `execCommand("insertText")` edits only that frame's document. It fires the
- * same `input` event typing does. Nothing typed is an error the caller reads
- * as `not_typed`: refused before a value reached a field.
+ * the checks and the insert are one synchronous call, so no page script runs
+ * between them, and `execCommand("insertText")` edits only the field's own
+ * document. It fires the same `input` event typing does.
+ *
+ * IN AN ISOLATED WORLD of the checked frame, so `focus`, `select` and
+ * `execCommand` are the browser's own: a page cannot replace them to move the
+ * value. The call also asks the field's own document for its origin, so a
+ * node from any other frame is refused. Nothing typed is an error the caller
+ * reads as `not_typed`: refused before a value reached a field.
  */
 export async function insertSecretInNode(
   cdp: CdpLike,
   backendNodeId: number,
   text: string,
+  limit: {
+    /** The frame whose origin was checked; the session's own when absent. */
+    frameId?: string;
+    origins: readonly string[];
+  },
   /** Asked immediately before the value lands. See `resolveRefNode`. */
   guard: () => void,
 ): Promise<void> {
-  const objectId = await resolveObjectId(cdp, backendNodeId);
+  const objectId = await isolatedObjectId(cdp, backendNodeId, limit.frameId);
   if (!objectId) {
     throw new Error(
       "target_not_found: the field could not be resolved; nothing was typed",
     );
   }
   guard();
-  const outcome = (await cdp.send("Runtime.callFunctionOn", {
-    objectId,
-    returnByValue: true,
-    arguments: [{ value: text }],
-    functionDeclaration: `function (value) {
-      this.focus();
-      if (this.getRootNode().activeElement !== this) return "not_focused";
-      if (typeof this.select === "function") this.select();
-      // The page may define its own select(), which runs here: ask again.
-      if (this.getRootNode().activeElement !== this) return "not_focused";
-      return this.ownerDocument.execCommand("insertText", false, value)
-        ? "typed"
-        : "not_inserted";
-    }`,
-  })) as { result?: { value?: unknown } } | undefined;
+  let outcome: { result?: { value?: unknown } } | undefined;
+  try {
+    outcome = (await cdp.send("Runtime.callFunctionOn", {
+      objectId,
+      returnByValue: true,
+      arguments: [{ value: text }, { value: [...limit.origins] }],
+      functionDeclaration: `function (value, origins) {
+        const view = this.ownerDocument && this.ownerDocument.defaultView;
+        if (!view || !origins.includes(view.origin)) return "wrong_origin";
+        this.focus();
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        if (typeof this.select === "function") this.select();
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        return this.ownerDocument.execCommand("insertText", false, value)
+          ? "typed"
+          : "not_inserted";
+      }`,
+    })) as typeof outcome;
+  } catch {
+    // The node or its world went away: nothing typed, reported below.
+    outcome = undefined;
+  }
   if (outcome?.result?.value !== "typed") {
     throw new Error(
-      "unsupported_target: the field did not keep focus to take the credential; nothing was typed",
+      "unsupported_target: the field did not take the credential in its own document; nothing was typed",
     );
+  }
+}
+
+/** The node, resolved in an isolated world of `frameId` (or the main frame). */
+async function isolatedObjectId(
+  cdp: CdpLike,
+  backendNodeId: number,
+  frameId: string | undefined,
+): Promise<string | undefined> {
+  try {
+    const frame =
+      frameId ??
+      (
+        (await cdp.send("Page.getFrameTree")) as {
+          frameTree?: { frame?: { id?: string } };
+        }
+      ).frameTree?.frame?.id;
+    if (!frame) return undefined;
+    const world = (await cdp.send("Page.createIsolatedWorld", {
+      frameId: frame,
+      worldName: "mcpjam-secret",
+    })) as { executionContextId?: number };
+    const resolved = (await cdp.send("DOM.resolveNode", {
+      backendNodeId,
+      executionContextId: world.executionContextId,
+    })) as { object?: { objectId?: string } };
+    return resolved.object?.objectId;
+  } catch {
+    // No world or no node: nothing is typed, which the caller reports.
+    return undefined;
   }
 }
 

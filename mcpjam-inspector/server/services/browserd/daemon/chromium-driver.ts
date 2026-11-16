@@ -1652,11 +1652,21 @@ export class ChromiumDriver implements BrowserDriver {
             "a credential limited to a sign-in origin is typed only into a field named by a ref; nothing was typed",
           );
         }
+        // The node the agent observed, never one recovered by role and name,
+        // which may sit in a frame other than the one checked below.
+        if (limited && refNode?.recovered) {
+          throw new ActError(
+            "stale_ref",
+            `${refLabel} is no longer on the page, and a credential limited to a sign-in origin goes only into the field that was observed; nothing was typed. Observe again and use the new ref.`,
+          );
+        }
+        const frameId =
+          refs?.entries.get(refLabel)?.frameId ?? refNode?.sessionFrameId;
         const refusal =
           refNode && limited
             ? await receivingFrameRefusal(
                 await needOwnerCdp(),
-                refs?.entries.get(refLabel)?.frameId ?? refNode.sessionFrameId,
+                frameId,
                 limited,
               )
             : undefined;
@@ -1669,6 +1679,7 @@ export class ChromiumDriver implements BrowserDriver {
             await needOwnerCdp(),
             refNode.backendNodeId,
             text,
+            { ...(frameId ? { frameId } : {}), origins: limited },
             stillOurs,
           );
         } else if (refNode) {

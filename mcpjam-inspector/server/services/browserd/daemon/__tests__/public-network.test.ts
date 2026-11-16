@@ -16,6 +16,7 @@ const ANSWERS: Record<string, string[]> = {
   "auth.example.com": ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"],
   "rebind.example.com": ["93.184.216.34", "127.0.0.1"],
   "metadata.example.com": ["169.254.169.254"],
+  "nat64.example.com": ["64:ff9b::a9fe:a9fe"],
   "nothing.example.com": [],
 };
 const fakeLookup = (async (name: string) =>
@@ -34,6 +35,8 @@ describe("a public-only browser", () => {
       "http://198.20.0.1/",
       "http://198.51.101.1/",
       "http://203.0.114.1/",
+      // NAT64 to a public IPv4 address.
+      "http://[64:ff9b::808:808]/",
     ]) {
       expect(isPublicWebUrl(url)).toBe(true);
     }
@@ -54,6 +57,13 @@ describe("a public-only browser", () => {
       "http://203.0.113.1/",
       "http://[2001:db8::1]/",
       "http://[::ffff:198.18.0.1]/",
+      "http://[2001:2::1]/",
+      "http://[3fff::1]/",
+      "http://[2001:0:4136:e378::1]/",
+      "http://[2002:a00:1::1]/",
+      "http://[64:ff9b:1::a00:5]/",
+      // NAT64 to a private IPv4 address.
+      "http://[64:ff9b::a00:5]/",
       "file:///etc/passwd",
       "chrome://settings",
       "not a url",
@@ -70,6 +80,7 @@ describe("a public-only browser", () => {
     for (const name of [
       "rebind.example.com",
       "metadata.example.com",
+      "nat64.example.com",
       "nothing.example.com",
       "localhost",
       "127.0.0.1",

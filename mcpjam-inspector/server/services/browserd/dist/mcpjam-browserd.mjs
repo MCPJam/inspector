@@ -5429,33 +5429,56 @@ async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
   }
   await input.send("Input.insertText", { text });
 }
-async function insertSecretInNode(cdp, backendNodeId, text, guard) {
-  const objectId = await resolveObjectId(cdp, backendNodeId);
+async function insertSecretInNode(cdp, backendNodeId, text, limit, guard) {
+  const objectId = await isolatedObjectId(cdp, backendNodeId, limit.frameId);
   if (!objectId) {
     throw new Error(
       "target_not_found: the field could not be resolved; nothing was typed"
     );
   }
   guard();
-  const outcome = await cdp.send("Runtime.callFunctionOn", {
-    objectId,
-    returnByValue: true,
-    arguments: [{ value: text }],
-    functionDeclaration: `function (value) {
-      this.focus();
-      if (this.getRootNode().activeElement !== this) return "not_focused";
-      if (typeof this.select === "function") this.select();
-      // The page may define its own select(), which runs here: ask again.
-      if (this.getRootNode().activeElement !== this) return "not_focused";
-      return this.ownerDocument.execCommand("insertText", false, value)
-        ? "typed"
-        : "not_inserted";
-    }`
-  });
+  let outcome;
+  try {
+    outcome = await cdp.send("Runtime.callFunctionOn", {
+      objectId,
+      returnByValue: true,
+      arguments: [{ value: text }, { value: [...limit.origins] }],
+      functionDeclaration: `function (value, origins) {
+        const view = this.ownerDocument && this.ownerDocument.defaultView;
+        if (!view || !origins.includes(view.origin)) return "wrong_origin";
+        this.focus();
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        if (typeof this.select === "function") this.select();
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        return this.ownerDocument.execCommand("insertText", false, value)
+          ? "typed"
+          : "not_inserted";
+      }`
+    });
+  } catch {
+    outcome = void 0;
+  }
   if (outcome?.result?.value !== "typed") {
     throw new Error(
-      "unsupported_target: the field did not keep focus to take the credential; nothing was typed"
+      "unsupported_target: the field did not take the credential in its own document; nothing was typed"
     );
+  }
+}
+async function isolatedObjectId(cdp, backendNodeId, frameId) {
+  try {
+    const frame = frameId ?? (await cdp.send("Page.getFrameTree")).frameTree?.frame?.id;
+    if (!frame) return void 0;
+    const world = await cdp.send("Page.createIsolatedWorld", {
+      frameId: frame,
+      worldName: "mcpjam-secret"
+    });
+    const resolved = await cdp.send("DOM.resolveNode", {
+      backendNodeId,
+      executionContextId: world.executionContextId
+    });
+    return resolved.object?.objectId;
+  } catch {
+    return void 0;
   }
 }
 async function selectOptionOnNode(cdp, backendNodeId, value, label) {
@@ -8710,9 +8733,16 @@ var ChromiumDriver = class {
             "a credential limited to a sign-in origin is typed only into a field named by a ref; nothing was typed"
           );
         }
+        if (limited && refNode?.recovered) {
+          throw new ActError2(
+            "stale_ref",
+            `${refLabel} is no longer on the page, and a credential limited to a sign-in origin goes only into the field that was observed; nothing was typed. Observe again and use the new ref.`
+          );
+        }
+        const frameId = refs?.entries.get(refLabel)?.frameId ?? refNode?.sessionFrameId;
         const refusal = refNode && limited ? await receivingFrameRefusal(
           await needOwnerCdp(),
-          refs?.entries.get(refLabel)?.frameId ?? refNode.sessionFrameId,
+          frameId,
           limited
         ) : void 0;
         if (refusal) throw new ActError2("secret_origin_refused", refusal);
@@ -8721,6 +8751,7 @@ var ChromiumDriver = class {
             await needOwnerCdp(),
             refNode.backendNodeId,
             text,
+            { ...frameId ? { frameId } : {}, origins: limited },
             stillOurs
           );
         } else if (refNode) {
@@ -11570,11 +11601,28 @@ NOT_GLOBAL.addSubnet("198.18.0.0", 15, "ipv4");
 NOT_GLOBAL.addSubnet("198.51.100.0", 24, "ipv4");
 NOT_GLOBAL.addSubnet("203.0.113.0", 24, "ipv4");
 NOT_GLOBAL.addSubnet("2001:db8::", 32, "ipv6");
+NOT_GLOBAL.addSubnet("2001::", 32, "ipv6");
+NOT_GLOBAL.addSubnet("2001:2::", 48, "ipv6");
+NOT_GLOBAL.addSubnet("2002::", 16, "ipv6");
+NOT_GLOBAL.addSubnet("3fff::", 20, "ipv6");
+NOT_GLOBAL.addSubnet("64:ff9b:1::", 48, "ipv6");
+var NAT64 = new BlockList();
+NAT64.addSubnet("64:ff9b::", 96, "ipv6");
+function embeddedIpv4(address) {
+  if (isIP(address) !== 6 || !NAT64.check(address, "ipv6")) return void 0;
+  const tail = address.split(":").slice(-2);
+  if (tail.length === 1 || tail[1]?.includes(".")) return tail.at(-1);
+  const [high, low] = tail.map((part) => parseInt(part || "0", 16));
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
 function isPublicHost(host2) {
   if (egressTier(host2) !== "public") return false;
   const address = host2.replace(/^\[|\]$/g, "");
   const family = isIP(address);
-  return family === 0 || !NOT_GLOBAL.check(address, family === 6 ? "ipv6" : "ipv4");
+  if (family === 0) return true;
+  if (NOT_GLOBAL.check(address, family === 6 ? "ipv6" : "ipv4")) return false;
+  const translated = embeddedIpv4(address);
+  return translated === void 0 || isPublicHost(translated);
 }
 var REFUSED = "this browser reaches public internet addresses only, and this destination is not one.";
 function isPublicWebUrl(raw) {
