@@ -164,7 +164,7 @@ function PassControl({
     <div className="flex items-center gap-3 text-xs">
       <span className="text-muted-foreground">Passes at</span>
       <Slider
-        aria-label="Passing score"
+        thumbProps={{ "aria-label": "Passing score" }}
         className="max-w-48"
         min={0}
         max={1}
