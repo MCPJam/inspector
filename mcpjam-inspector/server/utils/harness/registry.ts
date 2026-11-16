@@ -1188,15 +1188,13 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // The ACP adapter fingerprints its MCP servers, headers included, on every
   // resume, so a per-turn token there would end the session each turn.
   sessionStableMcpConfig: true,
-  // Pass-through only: Cursor's client talks to the server and MCPJam renders
-  // nothing. Approval bindings correlate calls (no tool-call id reaches the
-  // server), Cursor declines elicitation itself, and the session-stable config
-  // never changes between turns, so there is nothing to refresh.
+  // Approval bindings correlate calls (no tool-call id reaches the server),
+  // Cursor declines elicitation itself, and the session-stable config never
+  // changes between turns, so there is nothing to refresh.
   forwardingRuntime: {
     runtimeVersion: "2026.11.05-86047df",
     configurationVersion: "acp-forward-v1",
     ownedInput: false,
-    passThroughOnly: true,
     boundApprovals: true,
     nativeClient: CURSOR_CLI_NATIVE_CLIENT,
     refresh: (runtime) => runtime,
@@ -1280,7 +1278,6 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     configurationVersion: "copilot-native-mcp-v1",
     // Stamped by the bridge's pre-call hook with the stream's tool call id.
     correlationKey: COPILOT_CORRELATION_KEY,
-    passThroughOnly: true,
     nativeClient: COPILOT_CLI_NATIVE_CLIENT,
     refresh: (runtime) => refuseForwardedContinuation(runtime),
   },
