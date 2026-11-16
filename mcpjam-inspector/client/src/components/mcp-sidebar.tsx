@@ -918,9 +918,14 @@ export function MCPSidebar({
           {isAuthenticated && user && activeOrganizationId ? (
             <SidebarCredits
               organizationId={activeOrganizationId}
-              onExplorePlans={() =>
+              onOpenBilling={() =>
                 appNavigate(
                   buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "plans"),
                 )
               }
             />
