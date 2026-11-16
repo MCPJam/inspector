@@ -1767,20 +1767,24 @@ it("keeps every declared forwarding contract aligned with its qualified runtime 
   expect(getHarnessAdapter("opencode").forwardingRuntime).toBeUndefined();
 });
 
-it("forwards the dedicated Copilot CLI client on pass-through only", async () => {
+it("gives the dedicated Copilot CLI client its own MCP client: proxied, or forwarded on pass-through", async () => {
   const copilot = getHarnessAdapter("copilot-cli");
+  // The CLI's own client dials MCPJam's per-server proxy from its session
+  // configuration, and forwards natively where pass-through is admitted.
+  expect(copilot).toMatchObject({
+    mcpDelivery: "harness",
+    mcpNativeDelivery: "session-config",
+    supportsMcpToolApproval: true,
+  });
   expect(copilot.forwardingRuntime).toMatchObject({
     runtimeVersion: copilot.pinnedRuntimeVersion,
     configurationVersion: "copilot-native-mcp-v1",
     correlationKey: "mcpjam/toolCallId",
     passThroughOnly: true,
   });
-  expect(copilot.requiredForwarding).toBe("pass-through");
-  // Forwarded calls wait at MCPJam's forwarder gate, so approval holds.
-  expect(copilot.supportsMcpToolApproval).toBe(true);
+  // No runtime is refused for its route any more.
   for (const id of registeredHarnessIds())
-    if (id !== "copilot-cli")
-      expect(getHarnessAdapter(id).requiredForwarding).toBeUndefined();
+    expect(getHarnessAdapter(id)).not.toHaveProperty("requiredForwarding");
 
   const doStart = vi.fn(async () => "session");
   const refreshed = copilot.forwardingRuntime!.refresh(

@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { runBridge } from "@ai-sdk/harness/bridge";
+import { runBridge, type BridgeTurn } from "@ai-sdk/harness/bridge";
 import {
   CopilotClient,
   RuntimeConnection,
@@ -13,8 +13,7 @@ import { buildHostToolCatalog } from "../../codex-appserver/bridge/host-tool-cat
 import { callHostTool } from "../../codex-appserver/bridge/host-tool-call.js";
 import { toMcpToolResult } from "../../codex-appserver/bridge/host-tool-result.js";
 import {
-  createNativeMcpTranslator,
-  nativeMcpPermission,
+  createNativeMcpCalls,
   nativeMcpSessionConfig,
   parseNativeMcpServers,
   stampNativeMcpCall,
@@ -87,6 +86,36 @@ const client = new CopilotClient({
   }),
 });
 
+/**
+ * The host's answer to one approval request. A Stop, or a host that went away
+ * mid-decision, answers no: nothing unapproved may run.
+ */
+function askHost(
+  turn: BridgeTurn,
+  approvalId: string,
+): Promise<{ approved: boolean; reason?: string }> {
+  return new Promise((resolve) => {
+    const stop = () => resolve({ approved: false });
+    if (turn.abortSignal.aborted) return stop();
+    turn.abortSignal.addEventListener("abort", stop, { once: true });
+    turn
+      .requestToolApproval(approvalId)
+      .then(
+        resolve,
+        (error: unknown) => {
+          turn.bridgeLog({
+            level: "warn",
+            subsystem: "approval",
+            message: "approval request failed; denying",
+            error,
+          });
+          resolve({ approved: false });
+        },
+      )
+      .finally(() => turn.abortSignal.removeEventListener("abort", stop));
+  });
+}
+
 type Start = {
   type: "start";
   model: string;
@@ -94,8 +123,11 @@ type Start = {
   instructions?: string;
   tools?: Parameters<typeof buildHostToolCatalog>[0];
   resumeThreadId?: string;
-  /** Forwarded servers the CLI's own MCP client dials this turn. */
+  /** MCPJam proxy or forwarder endpoints the CLI's own MCP client dials. */
   nativeMcpServers?: unknown;
+  /** Forwarded servers: stamp the forwarder's correlation id on each call. */
+  correlateNativeMcp?: boolean;
+  permissionMode?: string;
 };
 let threadId: string | undefined;
 await runBridge<Start>({
@@ -110,14 +142,20 @@ await runBridge<Start>({
     const nativeServers = parseNativeMcpServers(start.nativeMcpServers);
     const { mcpServers, mcpToolPatterns } =
       nativeMcpSessionConfig(nativeServers);
+    const nativeMcp = createNativeMcpCalls({
+      servers: nativeServers,
+      emit: (part) => turn.emit(part),
+      ...(start.permissionMode === "allow-all"
+        ? {}
+        : { ask: (approvalId: string) => askHost(turn, approvalId) }),
+    });
     const tools = descriptors.map(({ name, description, inputSchema }) => ({
       name,
       description,
       parameters: inputSchema,
       defer: "never" as const,
-      // The host's needsApproval gate owns dispatch. Forwarded MCP calls are
-      // approved at MCPJam's forwarder; every other CLI request is denied, and
-      // the only built-in tool exposed is `skill`.
+      // The host's needsApproval gate owns dispatch. MCP calls ask through
+      // `nativeMcp.permission`; every other CLI request is denied.
       skipPermission: true,
       handler: async (input: unknown) => {
         turn.abortSignal.throwIfAborted();
@@ -139,8 +177,9 @@ await runBridge<Start>({
         tools.map(({ name }) => name),
         mcpToolPatterns,
       ),
-      ...(mcpServers
-        ? { mcpServers, hooks: { onPreMcpToolCall: stampNativeMcpCall } }
+      ...(mcpServers ? { mcpServers } : {}),
+      ...(mcpServers && start.correlateNativeMcp
+        ? { hooks: { onPreMcpToolCall: stampNativeMcpCall } }
         : {}),
       ...(start.instructions
         ? {
@@ -158,8 +197,8 @@ await runBridge<Start>({
         apiKey,
       },
       onPermissionRequest: (
-        request: Parameters<typeof nativeMcpPermission>[0],
-      ) => nativeMcpPermission(request, nativeServers),
+        request: Parameters<typeof nativeMcp.permission>[0],
+      ) => nativeMcp.permission(request),
     };
     const resume = threadId ?? start.resumeThreadId;
     const session = resume
@@ -183,12 +222,9 @@ await runBridge<Start>({
       failTurn = reject;
     });
     let reply: { messageId: string; content: string } | undefined;
-    const translateNative = createNativeMcpTranslator(nativeServers, (part) =>
-      turn.emit(part),
-    );
     const unlisten = session.on((event) => {
       if (turn.abortSignal.aborted) return;
-      if (translateNative(event)) return;
+      if (nativeMcp.translate(event)) return;
       if (event.type === "assistant.message_delta" && event.data.deltaContent) {
         const id = event.data.messageId;
         if (!openText.has(id)) {

@@ -100,38 +100,17 @@ describe("checkHarnessRuntimeAvailable surface support", () => {
     }
   }
 
-  describe("a dedicated client that reaches servers only by forwarding", () => {
-    const refusedOn = ["api", "evals", "events", "swarms", "user-testing"] as const;
-    it.each(refusedOn)("is refused with servers on %s, in the planner's words", (surface) => {
-      const result = checkHarnessRuntimeAvailable(
-        args({ harnessId: "copilot-cli", surface, hasSelectedMcpServers: true }),
-      );
-      expect(result).toMatchObject({ ok: false, kind: "surface-unsupported" });
-      expect(result.ok ? "" : result.reason).toBe(
-        "GitHub Copilot CLI calls MCP servers only through its own client, and this turn cannot forward them. " +
-          (surface === "api"
-            ? "Open this client in the signed-in hosted Playground."
-            : "Use this client with MCP servers in the signed-in hosted Playground."),
-      );
-    });
-    it("runs with servers in the Playground and without servers anywhere", () => {
-      const runs = [
-        args({ harnessId: "copilot-cli", surface: "playground", hasSelectedMcpServers: true }),
-        ...refusedOn.map((surface) => args({ harnessId: "copilot-cli", surface })),
-      ];
-      for (const input of runs) {
-        const result = checkHarnessRuntimeAvailable(input);
-        expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
-      }
-    });
-    it("runs with servers everywhere as another client's agent loop", () => {
-      for (const surface of refusedOn) {
+  it("runs the dedicated GitHub Copilot CLI client with servers on every surface", () => {
+    // Where forwarding cannot open, its MCP client takes MCPJam's proxy.
+    const surfaces = ["playground", "api", "evals", "events", "swarms", "user-testing"] as const;
+    for (const surface of surfaces) {
+      for (const localExecution of [false, true]) {
         const result = checkHarnessRuntimeAvailable(
-          args({ harnessId: "copilot-cli", surface, hasSelectedMcpServers: true, agentLoop: true }),
+          args({ harnessId: "copilot-cli", surface, hasSelectedMcpServers: true, localExecution }),
         );
         expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
       }
-    });
+    }
   });
 
   it("runs GitHub Copilot CLI in evals, swarms and User Testing", () => {

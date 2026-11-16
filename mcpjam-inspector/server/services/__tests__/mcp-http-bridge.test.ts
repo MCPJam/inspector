@@ -10,6 +10,7 @@ import {
   handleJsonRpc,
   parseAndValidateJsonRpc,
 } from "../mcp-http-bridge";
+import { downstreamProtocolVersionOf } from "../bridge-protocol-version";
 import type { StreamFailureEvent } from "../../utils/stream-failure-reporter";
 
 function makeReporter() {
@@ -38,6 +39,39 @@ function failingManager(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("the protocol version a proxy answers initialize with", () => {
+  // MCPJam's own client negotiated 2026-07-28 with the server upstream.
+  const manager = failingManager({
+    getInitializationInfo: vi.fn().mockReturnValue({
+      protocolVersion: "2026-07-28",
+      serverCapabilities: { tools: { listChanged: true } },
+      serverVersion: { name: "orders", version: "1" },
+    }),
+  });
+  const initialize = (protocolVersion: unknown) => ({
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion, capabilities: {}, clientInfo: { name: "copilot-cli", version: "1.0.92" } },
+  });
+
+  it("is the one the client asked for, when the bridge speaks it", async () => {
+    const message = initialize("2025-11-25");
+    expect(downstreamProtocolVersionOf(message)).toBe("2025-11-25");
+    const response = await handleJsonRpc("orders", message, manager, "adapter", {
+      downstreamProtocolVersion: downstreamProtocolVersionOf(message),
+    });
+    expect(response).toMatchObject({
+      result: { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: true } } },
+    });
+  });
+
+  it("falls back to the upstream's for a version the bridge does not speak", () => {
+    expect(downstreamProtocolVersionOf(initialize("2099-01-01"))).toBeUndefined();
+    expect(downstreamProtocolVersionOf(initialize(7))).toBeUndefined();
+    expect(downstreamProtocolVersionOf({ method: "tools/list", params: { protocolVersion: "2025-11-25" } })).toBeUndefined();
+  });
 });
 
 it("preserves tool operation metadata without replacing upstream client identity", async () => {
