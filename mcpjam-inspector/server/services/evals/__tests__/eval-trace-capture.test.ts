@@ -95,6 +95,29 @@ describe("eval-trace-capture", () => {
     expect(spans.filter((s) => s.category === "error")).toHaveLength(1);
   });
 
+  it("backend cost lands on the llm span only, on success and tool failure", () => {
+    const cost = {
+      calculationVersion: 1,
+      currency: "USD" as const,
+      completeness: "complete" as const,
+      amountUsd: 0.0021,
+      source: "provider_reported" as const,
+    };
+    const meta = { inputTokens: 10, outputTokens: 4, totalTokens: 14, cost };
+    const llm = { startAbs: runAt, endAbs: runAt + 10 };
+    const success: EvalTraceSpan[] = [];
+    pushBackendStepSuccessSpans(success, runAt, 0, 0, runAt, llm, undefined, meta);
+    const toolFailure: EvalTraceSpan[] = [];
+    pushBackendStepToolFailureSpans(
+      toolFailure, runAt, 0, 0, runAt, llm, runAt + 10, runAt + 15, meta,
+    );
+    for (const spans of [success, toolFailure]) {
+      expect(spans.filter((span) => span.cost)).toEqual([
+        expect.objectContaining({ category: "llm", cost, inputTokens: 10 }),
+      ]);
+    }
+  });
+
   it("AI SDK: one step, no tools — step + LLM only", () => {
     vi.spyOn(Date, "now").mockReturnValue(runAt);
     const ctx = createAiSdkEvalTraceContext(runAt);

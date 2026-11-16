@@ -184,6 +184,7 @@ const PRESERVED_FIELDS = [
   "wireCorroborated",
   "evidenceRequestId",
   "evidenceStatus",
+  "cost",
 ] as const;
 
 describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
@@ -233,6 +234,21 @@ describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
         ttfcMs: "240",
       }).success,
     ).toBe(false);
+  });
+
+  // Inspector-only: hydration drops a span that fails the mirror, so a bad
+  // cost record is dropped on its own and the call it describes stays.
+  it("drops a malformed cost and keeps the span", () => {
+    const span = { id: "x", name: "LLM", category: "llm", startMs: 0, endMs: 1 };
+    for (const cost of [
+      { calculationVersion: 1, currency: "USD", completeness: "complete" },
+      { calculationVersion: 1, currency: "EUR", completeness: "complete", amountUsd: 1 },
+      "0.0042",
+    ]) {
+      const parsed = evalTraceSpanZ.safeParse({ ...span, cost });
+      expect(parsed.success).toBe(true);
+      expect(parsed.data?.cost).toBeUndefined();
+    }
   });
 
   it("accepts connection and discovery categories and rejects unknowns", () => {

@@ -3,8 +3,10 @@ import {
   aggregateModelCallCosts,
   extractReportedProviderCost,
   normalizeModelUsage,
+  parseModelCallCostEvidence,
   parseNormalizedModelUsage,
   priceModelCall,
+  toModelCallCostEvidence,
   usdPerTokenToPerMillion,
   type RateEvidence,
 } from "../index.js";
@@ -438,5 +440,78 @@ describe("usdPerTokenToPerMillion", () => {
     expect(usdPerTokenToPerMillion(3e-6)).toBe(3);
     expect(usdPerTokenToPerMillion(3.75e-7)).toBe(0.375);
     expect(usdPerTokenToPerMillion(1.25e-7)).toBe(0.125);
+  });
+});
+
+describe("parseModelCallCostEvidence", () => {
+  it("round-trips evidence built from a priced call", () => {
+    const cost = priceModelCall({
+      usage: {
+        uncachedInputTokens: 300_000,
+        outputTokens: 10,
+        cacheReadTokens: 5,
+      },
+      rate: sonnet,
+    });
+    const evidence = toModelCallCostEvidence(cost, {
+      usage: {
+        uncachedInputTokens: 300_000,
+        outputTokens: 10,
+        cacheReadTokens: 5,
+      },
+      usageSource: "provider",
+      funding: "customer",
+      recordedAt: 1_700_000_000_000,
+    });
+    const wire = JSON.parse(JSON.stringify(evidence));
+    expect(parseModelCallCostEvidence(wire)).toEqual(evidence);
+  });
+
+  it("rejects incoherent records instead of showing a wrong number", () => {
+    const base = { calculationVersion: 1, currency: "USD" };
+    expect(
+      parseModelCallCostEvidence({ ...base, completeness: "complete" })
+    ).toBeUndefined();
+    expect(
+      parseModelCallCostEvidence({
+        ...base,
+        completeness: "unavailable",
+        amountUsd: 0,
+      })
+    ).toBeUndefined();
+    expect(
+      parseModelCallCostEvidence({
+        ...base,
+        completeness: "done",
+        amountUsd: 1,
+      })
+    ).toBeUndefined();
+    expect(
+      parseModelCallCostEvidence({
+        ...base,
+        currency: "EUR",
+        completeness: "complete",
+        amountUsd: 1,
+      })
+    ).toBeUndefined();
+  });
+
+  it("drops unknown enum members and keeps an explicit zero", () => {
+    expect(
+      parseModelCallCostEvidence({
+        calculationVersion: 1,
+        currency: "USD",
+        completeness: "complete",
+        amountUsd: 0,
+        source: "guessed",
+        funding: "customer",
+      })
+    ).toEqual({
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd: 0,
+      funding: "customer",
+    });
   });
 });

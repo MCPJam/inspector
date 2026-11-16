@@ -3,6 +3,7 @@ import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
 import type { EvalTraceSpan, EvalTraceSpanStatus } from "@/shared/eval-trace";
+import type { ModelCallCostEvidence } from "@mcpjam/sdk";
 import {
   appendDedupedModelMessages,
   createOffsetInterval,
@@ -52,6 +53,8 @@ type StepSpanMeta = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
+  /** The step's one provider call; applied to the llm span alone, never the step. */
+  cost?: ModelCallCostEvidence;
 };
 
 /** Mutable state for `generateText` eval tracing (prepareStep + wrapped tools + onStepFinish). */
@@ -662,6 +665,7 @@ export function pushBackendStepSuccessSpans(
     stepIndex,
     status: meta?.status ?? "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
+    ...(meta?.cost ? { cost: meta.cost } : {}),
   };
   applyStepMeta(llmSpan, meta);
   spans.push(llmSpan);
@@ -749,6 +753,7 @@ export function pushBackendStepToolFailureSpans(
     stepIndex,
     status: "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
+    ...(meta?.cost ? { cost: meta.cost } : {}),
   };
   applyStepMeta(llmSpan, meta);
   spans.push(llmSpan);

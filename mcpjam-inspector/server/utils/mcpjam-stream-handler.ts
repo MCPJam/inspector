@@ -333,6 +333,7 @@ import {
   isMcpjamOwnedEmptyStep,
   type EmptyStepFacts,
 } from "./empty-step-failure.js";
+import { omitCallCost, readCallCostFromFinishChunk } from "./backend-call-cost.js";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -1958,7 +1959,7 @@ function createClientFinishChunk(
     (finishChunk
       ? readUsageFromFinishChunk(finishChunk)
       : { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
-  const metadata = source?.messageMetadata;
+  const metadata = omitCallCost(source?.messageMetadata);
   const messageMetadata =
     metadata &&
     typeof metadata === "object" &&
@@ -4498,6 +4499,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   const harnessSpanMeta = {
     provider,
     finishReason: readFinishReasonFromChunk(finishChunk),
+    cost: readCallCostFromFinishChunk(finishChunk),
     ttfcMs:
       typeof firstChunkAt === "number"
         ? Math.max(0, firstChunkAt - llmStartAbs)
@@ -4948,6 +4950,7 @@ async function processOneStep(ctx: StepContext): Promise<{
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           pushAggregateSpan: false,
+          cost: harnessSpanMeta.cost,
         },
       );
       setStepSpanMessageRanges(

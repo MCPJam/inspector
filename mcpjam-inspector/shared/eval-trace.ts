@@ -3,6 +3,10 @@ import type { ModelMessage } from "ai";
 import { z } from "zod";
 import type { PromptTurnToolCall } from "./steps";
 import type { PredicateResult } from "@mcpjam/sdk/predicates";
+import {
+  parseModelCallCostEvidence,
+  type ModelCallCostEvidence,
+} from "@mcpjam/sdk/browser";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory =
@@ -31,6 +35,12 @@ export type EvalTraceSpan = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  /**
+   * What this provider call cost, priced once at capture and never re-priced
+   * on read. Set on `llm` spans only: the step span repeats the call's tokens,
+   * and a cost on both would count the call twice in every rollup.
+   */
+  cost?: ModelCallCostEvidence;
   /** Inclusive index of the first related trace message in the stored blob. */
   messageStartIndex?: number;
   /** Inclusive index of the last related trace message in the stored blob. */
@@ -591,6 +601,9 @@ export const evalTraceSpanZ = z.object({
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
   totalTokens: z.number().optional(),
+  // A malformed cost is dropped and the span kept: hydration drops spans that
+  // fail, and a bad price record must not hide the call it describes.
+  cost: z.unknown().transform(parseModelCallCostEvidence).optional(),
   messageStartIndex: z.number().optional(),
   messageEndIndex: z.number().optional(),
   // GenAI harness metadata — see EvalTraceSpan + OTEL_ATTR.

@@ -62,6 +62,13 @@ import {
   RecordedTraceToolbar,
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
+import { selectRowCost, type RowCost } from "./trace-cost/cost-view";
+import {
+  TraceCostChips,
+  TraceCostHoverBlock,
+  TraceCostInline,
+  TraceCostSummary,
+} from "./trace-cost/trace-cost-display";
 
 const ALL_AXIS_TICK_PERCENTS = [0, 25, 50, 75, 100] as const;
 
@@ -1519,12 +1526,14 @@ function turnRuntimeLabel(runtime: TraceTurnRuntime): string {
 
 function TimelineDetailPane({
   row,
+  recordedSpans,
   projectedMessages,
   transcriptMessages,
   onRevealInTranscript,
   turnRuntimeByPromptIndex,
 }: {
   row: TimelineRow | undefined;
+  recordedSpans?: EvalTraceSpan[] | null;
   projectedMessages?: boolean;
   transcriptMessages: TranscriptMessage[];
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
@@ -1656,6 +1665,7 @@ function TimelineDetailPane({
     row.kind === "span" && toolData.errorText ? toolData.errorText : null;
 
   const showRevealInChat = Boolean(revealSelection && onRevealInTranscript);
+  const rowCost = selectRowCost(row, recordedSpans);
 
   return (
     <div
@@ -1743,7 +1753,9 @@ function TimelineDetailPane({
                     : ""}
                 </>
               ) : null}
+              <TraceCostInline cost={rowCost} />
             </div>
+            <TraceCostChips cost={rowCost} />
 
             {row.kind === "span"
               ? (() => {
@@ -2366,6 +2378,7 @@ export function TraceTimeline({
       rowEndTimestamp:
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
       glyphCategory,
+      cost: selectRowCost(hoveredRow, recordedSpans),
     };
   }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount]);
 
@@ -2534,6 +2547,7 @@ export function TraceTimeline({
           </div>
         </div>
       ) : null}
+      <TraceCostSummary spans={recordedSpans} />
 
       <div
         ref={containerRef}
@@ -2951,6 +2965,7 @@ export function TraceTimeline({
               <TimelineDetailPane
                 projectedMessages={projectedMessages}
                 row={selectedRow}
+                recordedSpans={recordedSpans}
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
@@ -2983,6 +2998,7 @@ type HoveredRowInfo = {
   rowStartTimestamp: number | null;
   rowEndTimestamp: number | null;
   glyphCategory: EvalTraceSpanCategory | "prompt" | "interaction";
+  cost?: RowCost;
 };
 
 function HoveredRowInspector({
@@ -3116,6 +3132,7 @@ function HoveredRowInspector({
               </div>
             </div>
           </div>
+          <TraceCostHoverBlock cost={info.cost} />
         </div>
       </motion.div>
     </div>,
