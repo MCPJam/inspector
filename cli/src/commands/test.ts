@@ -24,6 +24,7 @@ import {
 import { resolveLocalServerBindings } from "../lib/local-server-bindings.js";
 import {
   LOCAL_TEST_EXIT,
+  recordLocalTestOutcome,
   localTestExitCodeForError,
   localTestExitCodeForResult,
 } from "../lib/local-test-exit-code.js";
@@ -599,6 +600,7 @@ export function registerTestCommand(
         artifactWriteFailed,
       });
       setProcessExitCode(exitCode);
+      recordLocalTestOutcome(exitCode);
     }
   );
 }
