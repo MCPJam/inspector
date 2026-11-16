@@ -146,6 +146,8 @@ export function createPluginOnboardingSend({
       text: "Run the attached onboarding skill.",
       metadata: { ...outgoingSenderMetadata, pluginOnboarding },
       prependMessages: skillMessages,
+      // Re-checked after any wait for a running turn.
+      isCurrent,
     });
     if (!sent) throw new Error("Onboarding could not start. Try again.");
     logPluginExtensionIssue({

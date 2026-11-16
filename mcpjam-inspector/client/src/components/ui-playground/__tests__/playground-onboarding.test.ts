@@ -86,7 +86,18 @@ describe("the Playground's onboarding send", () => {
         },
       },
       prependMessages: [expect.objectContaining({ role: expect.any(String) })],
+      isCurrent: expect.any(Function),
     });
+  });
+
+  it("lets a send that waited for a running turn re-check that its server is still in the chat", async () => {
+    const surface = deps([{ serverId: "server" }]);
+    await createPluginOnboardingSend(surface)(spec, "server", "t", "owner");
+    const [[message]] = surface.sendMessage.mock.calls;
+    const { isCurrent } = message as { isCurrent: () => boolean };
+    expect(isCurrent()).toBe(true);
+    surface.onboardingLiveRef.current.servers = [];
+    expect(isCurrent()).toBe(false);
   });
 
   it("names each try, and shows that name in Logs once it was sent", async () => {
