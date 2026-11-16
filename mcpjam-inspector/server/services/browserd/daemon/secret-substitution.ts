@@ -18,6 +18,7 @@ import {
 } from "../../../utils/secrets/secret-placeholders";
 import { isReviewerSecretName } from "../../../utils/secrets/reviewer-secrets";
 import { MIN_SCRUBBABLE_LENGTH } from "../../../../shared/secret-scrubber";
+import type { CdpLike } from "./webmcp-bridge";
 
 type ActAction = Extract<BrowserAction, { kind: "act" }>;
 
@@ -34,10 +35,23 @@ function originOf(url: string | undefined): string | undefined {
 /** An `http(s)` origin exactly as `URL` writes it: no path, no trailing slash. */
 export const isWebOrigin = (value: string) => originOf(value) === value;
 
+/** The origins a secret may be typed on; `undefined` means any page. */
+const allowedOrigins = (secret: BrowserCommandSecret) =>
+  secret.origins ?? (isReviewerSecretName(secret.name) ? [] : undefined);
+
+/**
+ * Where a substituted act's limited credentials may land, keyed by the act
+ * `resolveActSecrets` returned: the page's origin is checked there, the
+ * field's own document only once the driver has resolved the field.
+ */
+const receivingOrigins = new WeakMap<ActAction, readonly string[]>();
+
+export const secretReceivingOrigins = (action: ActAction) =>
+  receivingOrigins.get(action);
+
 /** Refuses a secret this page may not receive. Names origins, never a value. */
 function requireAllowedOrigin(secret: BrowserCommandSecret, pageUrl?: string) {
-  const allowed =
-    secret.origins ?? (isReviewerSecretName(secret.name) ? [] : undefined);
+  const allowed = allowedOrigins(secret);
   const origin = originOf(pageUrl);
   if (!allowed || (origin && allowed.includes(origin))) return;
   const detail = allowed.length
@@ -66,6 +80,7 @@ export function resolveActSecrets(
       typeof field.value === "string" ? [field.value] : [],
     ),
   ];
+  let limit: readonly string[] | undefined;
   for (const name of new Set(texts.flatMap(secretNamesIn))) {
     const secret = values.get(name);
     if (secret !== undefined && secret.length < MIN_SCRUBBABLE_LENGTH) {
@@ -79,7 +94,12 @@ export function resolveActSecrets(
       );
     }
     const limited = sent.get(name);
-    if (limited) requireAllowedOrigin(limited, pageUrl);
+    if (!limited) continue;
+    requireAllowedOrigin(limited, pageUrl);
+    const allowed = allowedOrigins(limited);
+    if (allowed) {
+      limit = limit ? limit.filter((entry) => allowed.includes(entry)) : allowed;
+    }
   }
   const value =
     action.value === undefined
@@ -106,11 +126,59 @@ export function resolveActSecrets(
     fields !== undefined &&
     fields.some((field, index) => field.value !== action.fields?.[index]?.value);
   if (!valueChanged && !fieldsChanged) return action;
-  return {
+  const resolved: ActAction = {
     ...action,
     ...(value === undefined ? {} : { value }),
     ...(fields === undefined
       ? {}
       : { fields: fields as NonNullable<ActAction["fields"]> }),
   };
+  if (limit) receivingOrigins.set(resolved, limit);
+  return resolved;
+}
+
+type FrameTree = {
+  frame?: { id?: string; securityOrigin?: string };
+  childFrames?: FrameTree[];
+};
+
+type FrameInfo = { id?: string; securityOrigin?: string };
+
+function findFrame(
+  tree: FrameTree | undefined,
+  frameId?: string,
+): FrameInfo | undefined {
+  if (!tree?.frame) return undefined;
+  if (frameId === undefined || tree.frame.id === frameId) return tree.frame;
+  for (const child of tree.childFrames ?? []) {
+    const found: FrameInfo | undefined = findFrame(child, frameId);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Why a limited credential may not go into a field in `frameId` (the session's
+ * own document when absent), or `undefined` when that frame's origin is one of
+ * `origins`. The page's origin says nothing about an embedded frame's. Read
+ * from Chrome's frame tree, which no script on the page can rewrite.
+ */
+export async function receivingFrameRefusal(
+  cdp: CdpLike,
+  frameId: string | undefined,
+  origins: readonly string[],
+): Promise<string | undefined> {
+  let origin: string | undefined;
+  try {
+    const answer = (await cdp.send("Page.getFrameTree")) as
+      | { frameTree?: FrameTree }
+      | undefined;
+    origin = findFrame(answer?.frameTree, frameId)?.securityOrigin;
+  } catch {
+    // A frame the browser cannot describe is refused below, like one elsewhere.
+    origin = undefined;
+  }
+  if (origin && origins.includes(origin)) return undefined;
+  const where = origin || "an origin the browser could not read";
+  return `this field is in a document on ${where}, and the credential can be typed only on ${origins.join(", ") || "no page"}, so nothing was typed. Observe again and type it into the form on that origin.`;
 }

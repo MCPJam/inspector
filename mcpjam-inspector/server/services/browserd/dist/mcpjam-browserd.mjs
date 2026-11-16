@@ -1127,8 +1127,11 @@ function originOf(url) {
   }
 }
 var isWebOrigin = (value) => originOf(value) === value;
+var allowedOrigins = (secret) => secret.origins ?? (isReviewerSecretName(secret.name) ? [] : void 0);
+var receivingOrigins = /* @__PURE__ */ new WeakMap();
+var secretReceivingOrigins = (action) => receivingOrigins.get(action);
 function requireAllowedOrigin(secret, pageUrl) {
-  const allowed = secret.origins ?? (isReviewerSecretName(secret.name) ? [] : void 0);
+  const allowed = allowedOrigins(secret);
   const origin = originOf(pageUrl);
   if (!allowed || origin && allowed.includes(origin)) return;
   const detail = allowed.length ? `"${secret.name}" can be typed only on ${allowed.join(", ")}, and this page is ${origin ?? "not on a web origin"}, so nothing was typed. Open the sign-in page on that origin, then type it there.` : `"${secret.name}" is a reviewer credential sent with no sign-in origin, so nothing was typed. Only MCPJam's reviewer sign-in can type it.`;
@@ -1143,6 +1146,7 @@ function resolveActSecrets(action, secrets, pageUrl) {
       (field) => typeof field.value === "string" ? [field.value] : []
     )
   ];
+  let limit;
   for (const name of new Set(texts.flatMap(secretNamesIn))) {
     const secret = values.get(name);
     if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
@@ -1154,7 +1158,12 @@ function resolveActSecrets(action, secrets, pageUrl) {
       );
     }
     const limited = sent.get(name);
-    if (limited) requireAllowedOrigin(limited, pageUrl);
+    if (!limited) continue;
+    requireAllowedOrigin(limited, pageUrl);
+    const allowed = allowedOrigins(limited);
+    if (allowed) {
+      limit = limit ? limit.filter((entry) => allowed.includes(entry)) : allowed;
+    }
   }
   const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
   const fields = action.fields?.map(
@@ -1171,11 +1180,34 @@ function resolveActSecrets(action, secrets, pageUrl) {
   const valueChanged = value !== void 0 && value !== action.value;
   const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
   if (!valueChanged && !fieldsChanged) return action;
-  return {
+  const resolved = {
     ...action,
     ...value === void 0 ? {} : { value },
     ...fields === void 0 ? {} : { fields }
   };
+  if (limit) receivingOrigins.set(resolved, limit);
+  return resolved;
+}
+function findFrame(tree, frameId) {
+  if (!tree?.frame) return void 0;
+  if (frameId === void 0 || tree.frame.id === frameId) return tree.frame;
+  for (const child of tree.childFrames ?? []) {
+    const found = findFrame(child, frameId);
+    if (found) return found;
+  }
+  return void 0;
+}
+async function receivingFrameRefusal(cdp, frameId, origins) {
+  let origin;
+  try {
+    const answer2 = await cdp.send("Page.getFrameTree");
+    origin = findFrame(answer2?.frameTree, frameId)?.securityOrigin;
+  } catch {
+    origin = void 0;
+  }
+  if (origin && origins.includes(origin)) return void 0;
+  const where = origin || "an origin the browser could not read";
+  return `this field is in a document on ${where}, and the credential can be typed only on ${origins.join(", ") || "no page"}, so nothing was typed. Observe again and type it into the form on that origin.`;
 }
 
 // server/services/browserd/daemon/auth.ts
@@ -8614,6 +8646,19 @@ var ChromiumDriver = class {
         );
       case "type": {
         const text = action.value ?? "";
+        const limited = secretReceivingOrigins(action);
+        if (limited && !refNode) {
+          throw new ActError2(
+            "secret_origin_refused",
+            "a credential limited to a sign-in origin is typed only into a field named by a ref; nothing was typed"
+          );
+        }
+        const refusal = refNode && limited ? await receivingFrameRefusal(
+          await needOwnerCdp(),
+          refs?.entries.get(refLabel)?.frameId ?? refNode.sessionFrameId,
+          limited
+        ) : void 0;
+        if (refusal) throw new ActError2("secret_origin_refused", refusal);
         if (refNode) {
           await replaceTextInNode(
             await needOwnerCdp(),
@@ -8636,6 +8681,12 @@ var ChromiumDriver = class {
         return;
       }
       case "fill_form": {
+        if (secretReceivingOrigins(action)) {
+          throw new ActError2(
+            "secret_origin_refused",
+            "fill_form cannot carry a credential limited to a sign-in origin; type it into the field's ref"
+          );
+        }
         const fields = action.fields;
         if (!Array.isArray(fields) || fields.length === 0 || fields.some(
           (field) => typeof field?.selector !== "string" || !field.selector || typeof field?.value !== "string"

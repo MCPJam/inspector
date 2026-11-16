@@ -72,7 +72,11 @@ import {
   createBrowserSecretRegistry,
   type BrowserSecretRegistry,
 } from "./secret-registry";
-import { resolveActSecrets } from "./secret-substitution";
+import {
+  receivingFrameRefusal,
+  resolveActSecrets,
+  secretReceivingOrigins,
+} from "./secret-substitution";
 import {
   armNavigationStop,
   isStopTarget,
@@ -1610,6 +1614,24 @@ export class ChromiumDriver implements BrowserDriver {
         );
       case "type": {
         const text = action.value ?? "";
+        // A limited credential goes only into a field named by a ref, in a
+        // frame on its origins: focus or a selector can reach another site's frame.
+        const limited = secretReceivingOrigins(action);
+        if (limited && !refNode) {
+          throw new ActError(
+            "secret_origin_refused",
+            "a credential limited to a sign-in origin is typed only into a field named by a ref; nothing was typed",
+          );
+        }
+        const refusal =
+          refNode && limited
+            ? await receivingFrameRefusal(
+                await needOwnerCdp(),
+                refs?.entries.get(refLabel)?.frameId ?? refNode.sessionFrameId,
+                limited,
+              )
+            : undefined;
+        if (refusal) throw new ActError("secret_origin_refused", refusal);
         // With a ref or a selector, REPLACE the field's value; without either,
         // type into whatever has focus (the model's previous click).
         if (refNode) {
@@ -1641,6 +1663,12 @@ export class ChromiumDriver implements BrowserDriver {
         // the envelope and passes the action through untouched, so a
         // `fill_form` with no fields would otherwise reach `for (const field
         // of undefined)`.
+        if (secretReceivingOrigins(action)) {
+          throw new ActError(
+            "secret_origin_refused",
+            "fill_form cannot carry a credential limited to a sign-in origin; type it into the field's ref",
+          );
+        }
         const fields = action.fields;
         if (
           !Array.isArray(fields) ||
