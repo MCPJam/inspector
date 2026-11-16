@@ -6,6 +6,8 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import {
   useEnsureAdhocEnvironments,
   useProjectEnvironments,
+  type ProjectEnvironmentServerSkillSelection,
+  type ProjectEnvironmentSkillSelection,
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
@@ -23,6 +25,7 @@ import { seedRunMatrix } from "../evaluate/suite-run-matrix";
 import {
   chooseTemplate,
   composeAdhocStack,
+  compositionKey,
   environmentComposition,
   lacksServerSource,
   sharedServerGroup,
@@ -36,6 +39,12 @@ import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import { convexErrMessage } from "@/lib/convex-error";
 import { toast } from "@/lib/toast";
 import type { EvalSuite } from "./types";
+import {
+  MERGED_ENVIRONMENTS_REASON,
+  SKILLS_READ_ONLY_REASON,
+  type SuiteSkillsEdit,
+} from "./suite-skills";
+import { SuiteSkillsField, SuiteSkillsHints } from "./suite-skills-field";
 
 type Selections = Record<string, ModelSelection>;
 type Stack = Parameters<
@@ -55,6 +64,8 @@ export type SuiteClientsDerivation = {
     /** The picked model's saved selection (source, connection, effort). */
     modelSelection?: SavedModelSelection;
     serverAttachmentId?: string;
+    skillSelection?: ProjectEnvironmentSkillSelection | null;
+    serverSkillSelection?: ProjectEnvironmentServerSkillSelection | null;
   };
   /** The attached environment this one takes the place of (schedule pin). */
   replaces?: string;
@@ -103,7 +114,8 @@ export class AmbiguousSuiteTemplateError extends Error {
  *  - a template the browser cannot copy losslessly (plugin pins, captured
  *    server skills, secret grants — see `unpreservableReason`);
  *  - any resulting environment with no server group and no plugin pin, which
- *    would run with no servers.
+ *    would run with no servers;
+ *  - a Skills field edit without backend derivation.
  */
 export function planSuiteClients(
   suite: EvalSuite,
@@ -128,11 +140,17 @@ export function planSuiteClients(
      * id, and an environment is reused only while its effort is unchanged.
      */
     modelSelections?: boolean;
+    /**
+     * A Skills field edit. Only the backend derivation can carry it: it
+     * copies everything else from the stored row, pins included.
+     */
+    skills?: SuiteSkillsEdit;
   } = {},
 ): SuiteClientsPlanItem[] {
   const group = options.group ?? null;
   const sourceHosts = options.sourceHosts ?? {};
   const lossless = options.lossless === true;
+  if (options.skills && !lossless) throw new Error(SKILLS_READ_ONLY_REASON);
   const attached = (suite.environmentIds ?? []).map((id) => {
     const row = environments.find(
       (environment) =>
@@ -186,17 +204,37 @@ export function planSuiteClients(
         efforts: options.modelSelections === true,
       });
       if (matches.length) {
+        // Two environments of one client and model with the same setup are one
+        // environment to the backend, so a skills edit that made them alike
+        // would drop one without a word.
+        const settled = new Map<string, boolean>();
         for (const row of matches) {
-          if (group === null || row.serverAttachmentId === group) {
+          const regroup = group !== null && row.serverAttachmentId !== group;
+          const skillSelection = options.skills?.(row);
+          if (options.skills) {
+            const edited = regroup || skillSelection !== undefined;
+            const after = compositionKey({
+              ...row,
+              ...(skillSelection !== undefined ? { skillSelection } : {}),
+              ...(regroup ? { serverAttachmentId: group } : {}),
+            });
+            if (settled.has(after) && (edited || settled.get(after)))
+              throw new Error(MERGED_ENVIRONMENTS_REASON);
+            settled.set(after, edited);
+          }
+          if (!regroup && skillSelection === undefined) {
             push({ environmentId: row.environmentId });
           } else if (lossless) {
-            // A new group for an existing environment: the backend copies
-            // everything else from the stored row.
+            // A new group or new skills for an existing environment: the
+            // backend copies everything else from the stored row.
             push({
               derive: {
                 sourceEnvironmentId: row.environmentId,
                 expectedRevision: row.revision,
-                overrides: { serverAttachmentId: group },
+                overrides: {
+                  ...(regroup ? { serverAttachmentId: group } : {}),
+                  ...(skillSelection !== undefined ? { skillSelection } : {}),
+                },
                 replaces: row.environmentId,
               },
             });
@@ -446,6 +484,7 @@ export function SuiteClientsSettings({
       group?: string | null;
       sourceHosts?: Record<string, string>;
       sourceEnvironmentId?: string;
+      skills?: SuiteSkillsEdit;
     } = {},
   ) => {
     if (inFlight.current || readOnly || loading || unresolved || !capable)
@@ -463,6 +502,7 @@ export function SuiteClientsSettings({
           lossless,
           sourceEnvironmentId: options.sourceEnvironmentId,
           modelSelections: modelSelectionsSupported,
+          skills: options.skills,
         });
       } catch (error) {
         if (error instanceof AmbiguousSuiteTemplateError) {
@@ -572,6 +612,13 @@ export function SuiteClientsSettings({
             disabled={disabled}
           />
         </div>
+        <SuiteSkillsField
+          projectId={projectId}
+          environments={attached}
+          disabled={disabled}
+          editable={lossless}
+          onEdit={(skills) => void commit(selections, { skills })}
+        />
       </div>
       <EvalTargetMatrix
         hideHeading
@@ -709,6 +756,13 @@ export function SuiteClientsSettings({
           every client to it.
         </p>
       ) : null}
+      {loading || unresolved ? null : (
+        <SuiteSkillsHints
+          projectId={projectId}
+          environments={attached}
+          findHost={(hostId) => hosts.find((host) => host.hostId === hostId)}
+        />
+      )}
     </div>
   );
 }
