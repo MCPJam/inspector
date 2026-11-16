@@ -40,7 +40,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   {
     id: "define",
     label: "Define",
-    title: "Run the prompts your users would",
+    title: "Run the prompts your users would send",
     body: "Write what a user would ask and the outcome you expect. Press Run to see what happens.",
     screen: "case",
     anchors: ["case-prompt", "case-outcome"],

@@ -153,6 +153,29 @@ describe("EvaluateTour", () => {
     );
   });
 
+  it("reports the stop it was heading to when skipped mid-transition", async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("evaluate-tour-start"));
+    await waitFor(() =>
+      expect(screen.getByText(TOUR_STOPS[0].title)).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByTestId("evaluate-tour-next"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`evaluate-tour-screen-${TOUR_STOPS[1].screen}`),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(TOUR_STOPS[1].title)).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByTestId("evaluate-tour"), { key: "Escape" });
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("closed");
+    expect(track).toHaveBeenCalledWith(
+      "evaluate_tour_skipped",
+      expect.objectContaining({ step: TOUR_STOPS[1].id }),
+    );
+  });
+
   it("closes from the intro on Escape", () => {
     render(<Harness />);
     act(() => {

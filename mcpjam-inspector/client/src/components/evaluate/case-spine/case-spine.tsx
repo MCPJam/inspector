@@ -1149,7 +1149,7 @@ export function CaseSpine({
               id="spine-expected-outcome-help"
               className="text-sm leading-5 text-secondary-foreground dark:text-muted-foreground"
             >
-              Describe what success looks like. The LLM as a judge checks
+              Describe what success looks like. An AI judge checks
               whether this goal was met.
             </p>
             <Textarea

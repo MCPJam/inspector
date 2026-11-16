@@ -163,7 +163,7 @@ export function TourCaseScreen() {
                 Expected outcome
               </p>
               <p className="text-xs text-muted-foreground">
-                Describe what success looks like. An AI reviewer checks
+                Describe what success looks like. An AI judge checks
                 whether this goal was met.
               </p>
               <p className="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground">
