@@ -2,6 +2,8 @@ import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 import { isNativeElicitationProfile } from "./native-elicitation-profile.js";
 import { isEnhancedModelPolicy } from "../harness-connection-profile.js";
+import { canonicalJson } from "../../tool-approval-token.js";
+import type { NativeClientHandshake } from "./runtime-contract.js";
 import type { HarnessHostCapabilityQualification } from "@/shared/harness-host-capabilities";
 
 type Candidate = {
@@ -23,9 +25,20 @@ type Candidate = {
   hostCapabilities?: HarnessHostCapabilityQualification;
   /** Set only with a live owned elicitation handler for this pinned runtime. */
   elicitationRuntimeVersion?: string;
-  /** The qualified runtime's declared native negotiation, if it has one. */
-  nativeVersionNegotiation?: "legacy-first";
+  /** The qualified runtime's measured handshake, if it has one. */
+  nativeClient?: NativeClientHandshake;
 };
+
+const PROTOCOL_SETTINGS = [
+  "mcpProtocolVersion",
+  "supportedProtocolVersions",
+  "versionNegotiation",
+] as const;
+
+/** A pin the runtime's own client shares adds nothing to its handshake. */
+function differsFromNative(value: unknown, native: unknown): boolean {
+  return value !== undefined && canonicalJson(value) !== canonicalJson(native);
+}
 
 /** UI host promises participate only on connections that declare MCP Apps. */
 export function usesAppHostCapabilities(
@@ -73,28 +86,39 @@ export function nativeForwardingGaps(candidate: Candidate): string[] {
     const elicitationProfile =
       isNativeElicitationProfile(capabilities, candidate.elicitationRuntimeVersion) &&
       initialized?.protocolVersion === "2025-11-25";
+    // The runtime's own client declares the same set. Elicitation it declares
+    // still needs this turn's live handler, as the profile above does.
+    const native = candidate.nativeClient;
+    const nativeProfile =
+      elicitationProfile ||
+      (!!native &&
+        !!capabilities &&
+        !differsFromNative(capabilities, native.capabilities) &&
+        (!("elicitation" in native.capabilities) ||
+          candidate.elicitationRuntimeVersion !== undefined));
     if (
-      (!capabilities || Object.keys(capabilities).length > 0) && !elicitationProfile
+      (!capabilities || Object.keys(capabilities).length > 0) && !nativeProfile
     )
       gaps.add("client-capabilities");
     // The SDK ignores both overlays when an exact declaration is installed.
     const inactiveOverrides =
-      elicitationProfile && Boolean(config.clientCapabilities);
+      nativeProfile && Boolean(config.clientCapabilities);
     if (
       !inactiveOverrides &&
       ((config.capabilities && Object.keys(config.capabilities).length > 0) ||
         config.eraCapabilities)
     )
       gaps.add("capability-overrides");
-    if (config.clientInfo || config.version) gaps.add("client-identity");
+    if (differsFromNative(config.clientInfo, native?.clientInfo) || config.version)
+      gaps.add("client-identity");
     // The runtime's own negotiation is no pin: the connection negotiates as
     // the runtime's client does, and what it lands on is judged below.
+    const protocol: Partial<Record<(typeof PROTOCOL_SETTINGS)[number], unknown>> =
+      config;
     if (
-      ("mcpProtocolVersion" in config && config.mcpProtocolVersion) ||
-      config.supportedProtocolVersions ||
-      ("versionNegotiation" in config &&
-        config.versionNegotiation !== undefined &&
-        config.versionNegotiation !== candidate.nativeVersionNegotiation)
+      PROTOCOL_SETTINGS.some((key) =>
+        differsFromNative(protocol[key], native?.[key]),
+      )
     )
       gaps.add("protocol-pins");
     if (

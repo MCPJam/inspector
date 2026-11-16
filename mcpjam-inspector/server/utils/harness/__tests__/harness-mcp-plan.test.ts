@@ -299,48 +299,13 @@ describe("harness MCP route table", () => {
   });
 });
 
-describe("a pass-through-only runtime", () => {
-  const passThroughOnly = { ...RUNTIME, passThroughOnly: true as const };
-
-  it("keeps its configured route, gaps listed, where others take the bridge", () => {
-    const plan = resolveHarnessMcpPlan(
-      facts({ forwardingRuntime: passThroughOnly, admit: BRIDGE }),
-    );
-    expect(observed(plan)).toEqual({
-      candidate: true,
-      surface: true,
-      useNativeForwarding: false,
-      enhancedApps: false,
-      nativeMcpDelivery: true,
-      label: "native-proxy",
-      gaps: ["app-host-capabilities", "unqualified-protocol"],
-    });
-    expect(plan.reasons).toEqual([
-      "forwarding not admitted; configured route retained",
-    ]);
-  });
-
-  it("still forwards a gap-free turn on pass-through", () => {
-    const plan = resolveHarnessMcpPlan(
-      facts({ forwardingRuntime: passThroughOnly, admit: NATIVE }),
-    );
-    expect(plan).toMatchObject({
-      upstream: "harness",
-      delivery: "mcp-endpoint",
-      forwardingKind: "pass-through",
-      gaps: [],
-      reasons: [],
-    });
-  });
-});
-
 describe("the dedicated GitHub Copilot CLI client", () => {
   // Its own MCP client either way: forwarded where forwarding opens,
   // MCPJam's per-server proxy everywhere else. Never refused for the route.
   const copilot = (overrides: Partial<Facts> = {}) =>
     facts({
       dispatch: { mcpClient: "harness" },
-      forwardingRuntime: { ...RUNTIME, passThroughOnly: true },
+      forwardingRuntime: RUNTIME,
       ...overrides,
     });
 
@@ -353,8 +318,17 @@ describe("the dedicated GitHub Copilot CLI client", () => {
     });
   });
 
+  it("takes the profiled bridge when admission bridges the turn", () => {
+    const plan = resolveHarnessMcpPlan(copilot({ admit: BRIDGE }));
+    expect(plan).toMatchObject({
+      upstream: "mcpjam",
+      delivery: "mcp-endpoint",
+      forwardingKind: "profiled",
+      reasons: [],
+    });
+  });
+
   it.each([
-    ["profiled forwarding", { admit: BRIDGE }, "forwarding not admitted; configured route retained"],
     ["no admission", { admit: RETAINED }, "forwarding not admitted; configured route retained"],
     ["the flag off", { forwardingEnabled: false }, "forwarding flag off"],
     ["an unenrolled organization", { forwardingOrganization: false }, "organization not enrolled"],

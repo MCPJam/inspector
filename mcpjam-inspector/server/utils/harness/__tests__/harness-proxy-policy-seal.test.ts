@@ -226,6 +226,23 @@ describe("sealHarnessSessionEnvelope (one value for a whole session)", () => {
     expect(unsealHarnessProxyToken(session(), "srv-b")).toBeNull();
   });
 
+  it("seals a bridged server as its own version, which only opens with its profile", () => {
+    const bridged = session({ delivery: "bridge" });
+    // An instance that predates the version refuses it instead of reading a
+    // pass-through envelope.
+    expect(bridged).toMatch(/^mcpjps5\./);
+    expect(bridged).toBe(session({ delivery: "bridge" }));
+    expect(unsealHarnessProxyToken(bridged, "srv-a")).toMatchObject({
+      session: true,
+      delivery: "bridge",
+      profile: { clientCapabilities: {}, timeout: 60_000 },
+    });
+    expect(unsealHarnessProxyToken(session(), "srv-a")).not.toHaveProperty("delivery");
+    expect(() => session({ delivery: "bridge", profile: undefined })).toThrow(
+      "needs its connection profile",
+    );
+  });
+
   it("refuses a tampered envelope", () => {
     const [prefix, iv, body] = session().split(".");
     const flipped = body!.slice(0, -2) + (body!.endsWith("A") ? "BB" : "AA");
