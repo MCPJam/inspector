@@ -11,7 +11,7 @@ vi.mock("@/lib/app-navigation", () => ({
   navigateApp: navigateMock,
   routePaths: { hosts: "/clients" },
 }));
-const mockResolveHostLogoByName = vi.hoisted(() => vi.fn());
+const mockResolveHostLogo = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
@@ -19,7 +19,7 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
 }));
 
 vi.mock("@/lib/host-logo", () => ({
-  resolveHostLogoByName: mockResolveHostLogoByName,
+  resolveHostLogo: mockResolveHostLogo,
 }));
 
 const hosts: HostListItem[] = [
@@ -71,8 +71,8 @@ function renderClientSelector({
 
 describe("ClientSelector", () => {
   beforeEach(() => {
-    mockResolveHostLogoByName.mockReset();
-    mockResolveHostLogoByName.mockReturnValue("/mcp.svg");
+    mockResolveHostLogo.mockReset();
+    mockResolveHostLogo.mockReturnValue("/mcp.svg");
   });
 
   it("keeps Add host reachable by constraining the host list height", async () => {
@@ -473,12 +473,21 @@ describe("ClientSelector", () => {
       modalThemeMode: "light",
     });
 
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Goose", "dark");
+    expect(mockResolveHostLogo).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Goose" }),
+      "dark",
+    );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
 
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Goose", "light");
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Cline", "light");
+    expect(mockResolveHostLogo).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Goose" }),
+      "light",
+    );
+    expect(mockResolveHostLogo).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Cline" }),
+      "light",
+    );
   });
 });
 
@@ -547,7 +556,7 @@ describe("ClientSelector with environment panes", () => {
   }
 
   beforeEach(() => {
-    mockResolveHostLogoByName.mockReturnValue("/mcp.svg");
+    mockResolveHostLogo.mockReturnValue("/mcp.svg");
   });
 
   it("shows two environment panes and no client that has no pane", async () => {

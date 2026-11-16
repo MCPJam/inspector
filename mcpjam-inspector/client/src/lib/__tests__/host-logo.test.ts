@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveHostLogo,
   resolveHostLogoByName,
   resolveHostStyleByName,
   UNKNOWN_HOST_LOGO,
@@ -74,5 +75,22 @@ describe("resolveHostLogoByName", () => {
     // The families themselves are unaffected.
     expect(resolveHostStyleByName("ChatGPT")).toBe("chatgpt");
     expect(resolveHostStyleByName("Claude Code")).toBe("claude-code");
+  });
+});
+
+describe("resolveHostLogo", () => {
+  it("uses the saved style over a name it cannot place", () => {
+    expect(resolveHostLogo({ name: "Codex QA", hostStyle: "codex" })).toBe(
+      getHostLogoSrc("codex"),
+    );
+  });
+
+  it("falls back to the name when the style is absent or unregistered", () => {
+    expect(resolveHostLogo({ name: "Cursor (staging)" })).toBe(
+      resolveHostLogoByName("Cursor (staging)"),
+    );
+    expect(
+      resolveHostLogo({ name: "Acme Internal Bot", hostStyle: "not-a-style" }),
+    ).toBe(UNKNOWN_HOST_LOGO);
   });
 });
