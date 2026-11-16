@@ -42,6 +42,33 @@ describe("useToolPreselect", () => {
     expect(onSelectTool).not.toHaveBeenCalled();
   });
 
+  it("keeps a tool the user already picked", () => {
+    location.state = { preselectTool: "get_issue" };
+    const onSelectTool = vi.fn();
+    const { rerender } = renderHook(
+      ({ tools }) =>
+        useToolPreselect({ tools, selectedTool: "search", onSelectTool }),
+      { initialProps: { tools: {} as Record<string, unknown> } },
+    );
+    rerender({ tools: { get_issue: {}, search: {} } });
+    expect(onSelectTool).not.toHaveBeenCalled();
+  });
+
+  it("applies again after a new navigation names another tool", () => {
+    location.state = { preselectTool: "get_issue" };
+    const onSelectTool = vi.fn();
+    const tools = { get_issue: {}, search: {} };
+    const { rerender } = renderHook(() =>
+      useToolPreselect({ tools, selectedTool: "", onSelectTool }),
+    );
+    expect(onSelectTool).toHaveBeenLastCalledWith("get_issue");
+
+    location.state = { preselectTool: "search" };
+    rerender();
+    expect(onSelectTool).toHaveBeenLastCalledWith("search");
+    expect(onSelectTool).toHaveBeenCalledTimes(2);
+  });
+
   it("ignores state that is not a preselect", () => {
     expect(readPreselectTool({ preselectTool: 3 })).toBeNull();
     expect(readPreselectTool("get_issue")).toBeNull();
