@@ -16,6 +16,17 @@ export function validateOAuthClientSecret(value: string): string | null {
     : null;
 }
 
+export function validateRequestTimeout(value: string): string | null {
+  if (!value.trim()) return null;
+  const timeout = Number(value);
+  return Number.isFinite(timeout) &&
+    timeout >= 1000 &&
+    timeout <= 600000 &&
+    timeout % 1000 === 0
+    ? null
+    : "Enter a timeout from 1000 to 600000 ms in steps of 1000, or leave it blank to use the default.";
+}
+
 export function getConfidentialCimdBlockReason(
   wantsConfidentialCimd: boolean,
   status: ConfidentialCimdCapabilityStatus,

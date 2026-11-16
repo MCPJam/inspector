@@ -37,6 +37,7 @@ import {
   getConfidentialCimdBlockReason,
   validateOAuthClientId,
   validateOAuthClientSecret,
+  validateRequestTimeout,
 } from "@/lib/server-form-validation";
 
 /**
@@ -573,6 +574,9 @@ export function useServerForm(
       }
     }
 
+    const timeoutError = validateRequestTimeout(requestTimeout);
+    if (timeoutError) return timeoutError;
+
     if (
       clientCapabilitiesOverrideEnabled &&
       clientCapabilitiesOverrideError != null
@@ -754,10 +758,11 @@ export function useServerForm(
      */
     revealedHeaders?: Record<string, string>;
   }): ServerFormData => {
-    const parsedTimeout = Number.parseInt(requestTimeout.trim(), 10);
-    const reqTimeout = Number.isFinite(parsedTimeout)
-      ? parsedTimeout
-      : undefined;
+    const parsedTimeout = Number(requestTimeout);
+    const reqTimeout =
+      requestTimeout.trim() && Number.isFinite(parsedTimeout)
+        ? parsedTimeout
+        : undefined;
     const clientCapabilities =
       clientCapabilitiesOverrideEnabled &&
       clientCapabilitiesOverrideError == null

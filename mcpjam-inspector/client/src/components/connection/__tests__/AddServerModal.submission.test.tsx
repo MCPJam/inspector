@@ -63,6 +63,38 @@ it("shows the owner's reason when a save is refused for a fixable cause", async 
   expect(screen.getByDisplayValue("Asana")).toBeInTheDocument();
 });
 
+it("keeps an invalid timeout draft and accepts it after correction", async () => {
+  const onClose = vi.fn();
+  const onSubmit = vi.fn<ServerConnectionSubmit>((_data, options) =>
+    options?.onAccepted?.(),
+  );
+  render(
+    <AddServerModal
+      isOpen
+      initialData={initialData}
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Connection overrides" }));
+  const timeout = screen.getByRole("spinbutton", { name: /Timeout/ });
+  fireEvent.change(timeout, { target: { value: "0" } });
+  submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Enter a timeout from 1000 to 600000 ms",
+  );
+  expect(timeout).toHaveValue(0);
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+  fireEvent.change(timeout, { target: { value: "1000" } });
+  submit();
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  expect(onSubmit).toHaveBeenCalledWith(
+    expect.objectContaining({ requestTimeout: 1000 }),
+    expect.anything(),
+  );
+});
+
 it("only closes after the submission owner accepts the saved configuration", async () => {
   const onClose = vi.fn();
   const onSubmit: ServerConnectionSubmit = (_data, options) => {
