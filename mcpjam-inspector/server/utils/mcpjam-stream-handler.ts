@@ -113,6 +113,7 @@ import {
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
   DEFAULT_TURN_MAX_STEPS,
@@ -179,14 +180,6 @@ export {
   UNVERIFIED_APPROVAL_RESULT,
   USED_APPROVAL_RESULT,
 };
-
-/**
- * The result an unattended turn (`approvalMode: "auto-deny"`) gives a call
- * that needed approval. Shared with the swarm runner, so the model reads one
- * answer whichever engine ran the turn.
- */
-export const SYNTHETIC_SESSION_APPROVAL_DENIAL =
-  "approval-denied (synthetic session)";
 
 let warnedLegacyUnsignedApproval = false;
 

@@ -2491,6 +2491,47 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(Object.keys(options.builtInTools!)).toEqual(["web_search"]);
   });
 
+  it("prepares an eval's tools without the host's approval switch", async () => {
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+    prepareMock.mockClear();
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      suiteHostConfig: { requireToolApproval: true },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    expect(prepareMock.mock.calls[0]?.[0]).toMatchObject({
+      requireToolApproval: false,
+    });
+  });
+
   it("omits builtInTools on the backend path when no project target exists", async () => {
     // Org-level targets (or no target at all) carry no projectId; the Exa
     // Convex route requires one, so the runner must omit the tool rather
