@@ -16,6 +16,7 @@ export function toastServerConnectionFailure(
 ): void {
   const { title, explanation, diagnostics } = presentConnectionError(error, {
     serverName,
+    recoveries: ["copy-details"],
   });
   const copyText = formatErrorDetailsForCopy(
     { ...diagnostics, title, oneLine: explanation },

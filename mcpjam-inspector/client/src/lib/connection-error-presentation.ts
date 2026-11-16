@@ -21,6 +21,9 @@ export type ConnectionFailureFacts = {
   credentialRefusal?: CredentialRefusal;
 };
 
+/** Local owner-reviewed copy; never construct this from a provider response. */
+export class ReviewedConnectionError extends Error {}
+
 export type ConnectionErrorPresentation = {
   title: string;
   explanation: string;
@@ -175,7 +178,8 @@ export function presentConnectionError(
       ? `Couldn't authorize ${name}.`
       : `Couldn't ${operation} to ${name}.`;
   let explanation: string;
-  let recovery: ConnectionErrorPresentation["recovery"] = "settings";
+  let recovery: ConnectionErrorPresentation["recovery"] =
+    context.recoveries?.includes("settings") ? "settings" : "copy-details";
   if (facts.code) {
     explanation =
       facts.code === "SESSION_REVOKED"
@@ -190,9 +194,11 @@ export function presentConnectionError(
       "The server address changed after its credentials were saved. Open the server settings and re-enter the credentials for the new address.";
   } else if (facts.credentialRefusal?.kind === "hosted_only") {
     explanation = credentialRefusalMessage(facts.credentialRefusal, name);
+  } else if (input instanceof ReviewedConnectionError) {
+    explanation = clean(input.message);
   } else if (entry.slug === "internal/unknown") {
     explanation =
-      !context.recoveries || context.recoveries.includes("settings")
+      context.recoveries?.includes("settings")
         ? "Open the server settings to review the connection, or copy the details for support."
         : "Copy the details for support.";
   } else {

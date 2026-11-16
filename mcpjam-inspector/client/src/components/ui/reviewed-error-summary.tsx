@@ -4,10 +4,12 @@ export function ReviewedErrorSummary({
   explanation,
   onCopy,
   copyState,
+  copyLabel = "Copy details",
 }: {
   explanation: string;
   onCopy: () => void;
   copyState: "idle" | "copied" | "failed";
+  copyLabel?: string;
 }) {
   return (
     <div className="mt-2 space-y-2">
@@ -17,7 +19,7 @@ export function ReviewedErrorSummary({
           ? "Copied details"
           : copyState === "failed"
             ? "Couldn't copy details. Try again."
-            : "Copy details"}
+            : copyLabel}
       </Button>
     </div>
   );

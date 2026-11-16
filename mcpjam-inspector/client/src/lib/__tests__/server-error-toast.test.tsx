@@ -11,9 +11,10 @@ import { toast } from "sonner";
 import { toast as appToast } from "@/lib/toast";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toastServerConnectionFailure } from "../server-error-toast";
-import { presentConnectionError } from "../connection-error-presentation";
+import { presentConnectionError, ReviewedConnectionError } from "../connection-error-presentation";
 import { formatErrorDetailsForCopy } from "../error-technical-details";
 import { WebApiError } from "../apis/web/base";
+import { PROJECT_NOT_PROVISIONED_ERROR_MESSAGE } from "../client-config";
 
 vi.mock("@/lib/clipboard", () => ({
   copyToClipboard: vi.fn(async () => true),
@@ -46,6 +47,25 @@ describe("toastServerConnectionFailure", () => {
 
     expect(await screen.findByText("Couldn't connect to Excalidraw (App).")).toBeInTheDocument();
     expect(screen.queryByText("Request failed (500)")).not.toBeInTheDocument();
+  });
+
+  it("offers copy details instead of unavailable settings for an unknown failure", async () => {
+    render(<Toaster />);
+    toastServerConnectionFailure("Asana", "unknown wire failure");
+    expect(await screen.findByText("Copy the details for support.")).toBeVisible();
+    expect(screen.queryByText(/Open the server settings/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy error message" })).toBeVisible();
+  });
+
+  it.each([
+    "Enter your server's URL.",
+    "MCPJam's hosted web app requires an HTTPS server URL. Use the desktop app for local servers.",
+    'A server named "Asana" already exists in this workspace. Choose a different name.',
+    PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+  ])("preserves trusted owner wording: %s", async (reviewedMessage) => {
+    render(<Toaster />);
+    toastServerConnectionFailure("Asana", new ReviewedConnectionError(reviewedMessage));
+    expect(await screen.findByText(reviewedMessage)).toBeVisible();
   });
 
   it("keeps a message that already names the server on one line", async () => {

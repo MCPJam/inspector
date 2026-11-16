@@ -238,9 +238,9 @@ export type AppAction =
       error: string;
       failureFacts?: ConnectionFailureFacts;
       /**
-       * Wire diagnostics are reconstructed with the original error at the reducer boundary.
+       * Diagnostics are revalidated with the original error at the reducer boundary.
        */
-      normalized?: unknown;
+      normalized?: NormalizedError;
       oauthTrace?: OAuthTrace;
     }
   | {

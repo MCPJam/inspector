@@ -42,6 +42,7 @@ export type ErrorCardProps = {
    */
   error: NormalizedError | WebApiError | Error | string | unknown;
   presentation?: ConnectionErrorPresentation;
+  copyLabel?: string;
   onRetry?: () => void;
   onDismiss?: () => void;
   /**
@@ -320,6 +321,7 @@ export function ErrorCard({
   open,
   onOpenChange,
   className,
+  copyLabel,
 }: ErrorCardProps) {
   const normalized = useMemo(() => presentation
     ? { ...presentation.diagnostics, title: presentation.title, oneLine: presentation.explanation }
@@ -576,7 +578,7 @@ export function ErrorCard({
               ? "Copied"
               : copyState === "failed"
                 ? "Copy failed"
-                : "Copy"}
+                : (copyLabel ?? "Copy")}
           </button>
         ) : null}
       </div>
@@ -642,8 +644,14 @@ export function ErrorCard({
             </button>
           ) : null}
         </div>
-        {presentation ? <ReviewedErrorSummary explanation={presentation.explanation}
-          onCopy={() => void handleCopy()} copyState={copyState} /> : null}
+        {presentation ? (
+          <ReviewedErrorSummary
+            explanation={presentation.explanation}
+            onCopy={() => void handleCopy()}
+            copyState={copyState}
+            copyLabel={copyLabel}
+          />
+        ) : null}
         {detailsPanel}
       </div>
     );
@@ -775,7 +783,7 @@ export function ErrorCard({
                 ? "Copied"
                 : copyState === "failed"
                   ? "Copy failed"
-                  : "Copy"}
+                  : (copyLabel ?? "Copy")}
             </button>
           </div>
 

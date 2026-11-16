@@ -698,7 +698,9 @@ function ProjectServerDetailModal({
       });
       const result = await onSubmit(finalFormData, server.name);
       if (!result.ok) {
-        setSaveError("Couldn't save the server. Your draft is still here. Review the settings and try again.");
+        setSaveError(
+          result.reason ?? "Couldn't save the server. Your draft is still here. Review the settings and try again."
+        );
         return;
       }
       // The modal stays open after a save, and the save may have replaced the

@@ -145,7 +145,10 @@ import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
 import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
 import { toastServerConnectionFailure } from "@/lib/server-error-toast";
-import { connectionFailureFields } from "@/lib/connection-error-presentation";
+import {
+  connectionFailureFields,
+  ReviewedConnectionError,
+} from "@/lib/connection-error-presentation";
 import { submitServerDraft } from "@/lib/server-connection-submission";
 import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -717,6 +720,8 @@ function remoteServerBelongsToProject(
 export interface ServerUpdateResult {
   ok: boolean;
   serverName: string;
+  /** Owner-worded refusal only; never a raw save error. */
+  reason?: string;
 }
 
 export type EnsureServerConnectionStatus =
@@ -1829,7 +1834,7 @@ export function useServerState({
           ),
         });
       }
-      throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
+      throw new ReviewedConnectionError(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
     [
       assertClientConfigSynced,
@@ -1894,7 +1899,7 @@ export function useServerState({
         }
         return result;
       }
-      throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
+      throw new ReviewedConnectionError(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
     [
       assertClientConfigSynced,
@@ -3918,7 +3923,7 @@ export function useServerState({
       const validationError = validateForm(formData);
       if (validationError) {
         options?.onRejected?.(validationError);
-        showConnectionError(validationError);
+        showConnectionError(new ReviewedConnectionError(validationError));
         return;
       }
 
@@ -4039,10 +4044,11 @@ export function useServerState({
         });
       }
       if (
-        HOSTED_MODE &&
-        isAuthenticated &&
-        !useLocalFallback &&
-        (syncErr || !hostedServerId)
+        workspaceNameTaken ||
+        (HOSTED_MODE &&
+          isAuthenticated &&
+          !useLocalFallback &&
+          (syncErr || !hostedServerId))
       ) {
         // Hosted project connects require a Convex server row before any
         // runtime connection starts. Continuing after a cloud save failure
@@ -4063,7 +4069,11 @@ export function useServerState({
         // Only the owner-worded name clash is safe to show in the form; a raw
         // sync error stays behind the generic draft message.
         if (workspaceNameTaken) options?.onRejected?.(errorMessage);
-        showConnectionError(errorMessage);
+        showConnectionError(
+          workspaceNameTaken
+            ? new ReviewedConnectionError(errorMessage)
+            : errorMessage,
+        );
         return;
       }
       if (!isAuthenticated || useLocalFallback) {
@@ -6792,17 +6802,17 @@ export function useServerState({
     ): Promise<ServerUpdateResult> => {
       const nextServerName = formData.name.trim();
       if (!nextServerName) {
-        toast.error("Server name is required");
-        return { ok: false, serverName: originalServerName };
+        const reason = "Enter a server name.";
+        toast.error(reason);
+        return { ok: false, serverName: originalServerName, reason };
       }
       const isRename = nextServerName !== originalServerName;
       const activeProjectServers =
         effectiveProjects[effectiveActiveProjectId]?.servers ?? {};
       if (isRename && activeProjectServers[nextServerName]) {
-        toast.error(
-          `A server named "${nextServerName}" already exists. Choose a different name.`,
-        );
-        return { ok: false, serverName: originalServerName };
+        const reason = `A server named "${nextServerName}" already exists. Choose a different name.`;
+        toast.error(reason);
+        return { ok: false, serverName: originalServerName, reason };
       }
       const originalServer =
         appState.servers[originalServerName] ??
@@ -6818,9 +6828,6 @@ export function useServerState({
         const mcpConfig = toMCPConfig(formData);
         if (isRename) {
           await handleDisconnect(originalServerName);
-          if (!renameTarget) {
-            await removeServerFromStateAndCloud(originalServerName);
-          }
         }
 
         const updatedServer: ServerWithName = {
@@ -6891,12 +6898,12 @@ export function useServerState({
           );
           // Nothing was written, so the success toast below would be a lie.
           if (!synced.ok) {
-            toast.error(
+            const reason =
               synced.reason === "workspace-name-taken"
                 ? `A server named "${nextServerName}" already exists in this workspace. Choose a different name.`
-                : "Could not save the server configuration. Please try again.",
-            );
-            return { ok: false, serverName: originalServerName };
+                : "Couldn't save the server configuration. Try again.";
+            toast.error(reason);
+            return { ok: false, serverName: originalServerName, reason };
           }
         }
         dispatch({
@@ -6908,6 +6915,8 @@ export function useServerState({
         if (renameTarget) {
           cleanupServerLocalArtifacts(originalServerName);
           dispatch({ type: "REMOVE_SERVER", name: originalServerName });
+        } else if (isRename) {
+          await removeServerFromStateAndCloud(originalServerName);
         }
 
         saveOAuthConfigToLocalStorage(formData);
@@ -6985,12 +6994,15 @@ export function useServerState({
       saveOAuthConfigToLocalStorage(formData);
 
       await handleDisconnect(originalServerName);
+      let configSaved = false;
+      let reason: string | undefined;
       const accepted = await submitServerDraft(
         (data, options) =>
           handleConnect(data, {
             ...options,
             hostedWriteTarget: renameTarget,
             onConfigSaved: () => {
+              configSaved = true;
               if (renameTarget) {
                 cleanupServerLocalArtifacts(originalServerName);
                 dispatch({ type: "REMOVE_SERVER", name: originalServerName });
@@ -6998,10 +7010,17 @@ export function useServerState({
             },
           }),
         formData,
+        (message) => {
+          reason = message;
+        },
       );
-      if (!accepted) {
+      if (!accepted || !configSaved) {
         if (isRename) dispatch({ type: "REMOVE_SERVER", name: nextServerName });
-        return { ok: false, serverName: originalServerName };
+        return {
+          ok: false,
+          serverName: originalServerName,
+          ...(reason ? { reason } : {}),
+        };
       }
       if (isRename && !renameTarget) {
         await removeServerFromStateAndCloud(originalServerName);

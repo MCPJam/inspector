@@ -3044,6 +3044,19 @@ describe("useServerState OAuth callback failures", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it.each(["", "http://example.com/mcp"])("keeps owner validation guidance on direct connect (%s)", async (url) => {
+    mockHostedMode.mockReturnValue(true);
+    const { result } = renderUseServerState(vi.fn());
+    await act(async () => {
+      await result.current.handleConnect({ name: "demo-server", type: "http", url });
+    });
+    expect(toastError).toHaveBeenCalledWith(
+      errorToastMessage("Couldn't connect to demo-server."),
+      expect.objectContaining({ description: url ? expect.stringContaining("HTTPS") : "Enter your server’s URL." }),
+    );
+    expect(testConnectionMock).not.toHaveBeenCalled();
+  });
+
   it("reports OAuth startup failure after accepting a draft", async () => {
     testConnectionMock.mockResolvedValueOnce({
       success: false,
@@ -3236,7 +3249,7 @@ describe("useServerState OAuth callback failures", () => {
     }));
     expect(toastError).toHaveBeenCalledWith(
       errorToastMessage("Couldn't connect to new-server."),
-      expect.objectContaining({ duration: 8000, description: expect.any(String) })
+      expect.objectContaining({ duration: 8000, description: PROJECT_NOT_PROVISIONED_ERROR_MESSAGE })
     );
   });
 
@@ -5028,8 +5041,10 @@ describe("syncServerToConvex name-collision recovery", () => {
     url: "https://example.com/mcp",
   };
 
-  it.each([true, false])("does not confirm or publish a rename when configuration saving rejects (save-only=%s)", async (saveOnly) => {
-    mockHostedMode.mockReturnValue(true);
+  it.each([
+    [true, true], [true, false], [false, true], [false, false],
+  ])("does not confirm or publish a rename when configuration saving rejects (save-only=%s, hosted=%s)", async (saveOnly, hosted) => {
+    mockHostedMode.mockReturnValue(hosted);
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";
     const row = { ...siblingRow, _id: "srv_demo", projectId: "project_default" };
@@ -5053,6 +5068,33 @@ describe("syncServerToConvex name-collision recovery", () => {
     expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" }));
     expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "UPSERT_SERVER", name: "Renamed" }));
     expect(toastSuccess).not.toHaveBeenCalledWith("Server configuration updated");
+  });
+
+  it.each([
+    [true, true], [true, false], [false, true], [false, false],
+  ])("returns the owner's workspace refusal to the edit form (save-only=%s, hosted=%s)", async (saveOnly, hosted) => {
+    mockHostedMode.mockReturnValue(hosted);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const twin = { ...siblingRow, name: "Renamed" };
+    mockConvexQuery.mockResolvedValue([twin]);
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+      activeProjectServersFlat: [twin],
+    });
+    await act(async () => {
+      expect(await result.current.handleUpdate("demo-server", {
+        name: "Renamed", type: "http", url: "https://example.com/mcp",
+        headers: { Authorization: "Bearer secret" },
+        secretPatch: { headers: { Authorization: "Bearer secret" } },
+      }, saveOnly)).toEqual({
+        ok: false, serverName: "demo-server",
+        reason: 'A server named "Renamed" already exists in this workspace. Choose a different name.',
+      });
+    });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "REMOVE_SERVER", name: "demo-server" });
+    expect(testConnectionMock).not.toHaveBeenCalled();
   });
 
   it("confirms a saved rename even when the subsequent connection fails", async () => {
@@ -5166,7 +5208,10 @@ describe("syncServerToConvex name-collision recovery", () => {
       );
     });
 
-    expect(outcome).toEqual({ ok: false, serverName: "demo-server" });
+    expect(outcome).toEqual({
+      ok: false, serverName: "demo-server",
+      reason: 'A server named "demo-server" already exists in this workspace. Choose a different name.',
+    });
     expect(toastSuccess).not.toHaveBeenCalledWith(
       "Server configuration updated"
     );

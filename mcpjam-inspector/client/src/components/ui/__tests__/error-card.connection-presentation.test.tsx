@@ -42,3 +42,11 @@ it("shows reviewed copy, recovery and separate Copy details before opening diagn
   fireEvent.click(screen.getByTestId("error-card-details"));
   expect(screen.getByText(input.message)).toBeInTheDocument();
 });
+
+it("honors a caller's copy label on the reviewed summary", () => {
+  render(<ErrorCard error="unknown failure"
+    presentation={presentConnectionError("unknown failure", { serverName: "Asana" })}
+    density="row" copyLabel="Copy error" />);
+  expect(screen.getByRole("button", { name: "Copy error" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Copy details" })).not.toBeInTheDocument();
+});

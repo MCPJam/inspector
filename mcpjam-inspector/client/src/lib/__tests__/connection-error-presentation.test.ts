@@ -6,6 +6,7 @@ import {
   presentConnectionError,
   readConnectionFailureFacts,
   connectionFailureFields,
+  ReviewedConnectionError,
 } from "../connection-error-presentation";
 
 const context = { serverName: "Prod Asana MCP" };
@@ -13,7 +14,7 @@ const context = { serverName: "Prod Asana MCP" };
 describe("connection error presentation", () => {
   it("keeps the reviewed Asana unknown fallback and does not infer sign-in", () => {
     const error = "Guest client secret reveal is not supported";
-    const result = presentConnectionError(error, context);
+    const result = presentConnectionError(error, { ...context, recoveries: ["settings", "copy-details"] });
     expect(result.title).toBe("Couldn't connect to Prod Asana MCP.");
     expect(result.explanation).toBe(
       "Open the server settings to review the connection, or copy the details for support.",
@@ -30,6 +31,20 @@ describe("connection error presentation", () => {
     expect(result.title).toBe("Couldn't connect to Prod Asana MCP.");
     expect(result.explanation).toBe("Copy the details for support.");
     expect(result.recovery).toBe("copy-details");
+  });
+
+  it("defaults to copy details when settings are not explicitly available", () => {
+    const result = presentConnectionError("unknown failure", context);
+    expect(result.explanation).toBe("Copy the details for support.");
+    expect(result.recovery).toBe("copy-details");
+  });
+
+  it("only trusts explicitly owner-reviewed errors, never a wire property or plain Error", () => {
+    const reviewedMessage = 'A server named "Asana" already exists in this workspace. Choose a different name.';
+    expect(presentConnectionError(new ReviewedConnectionError(reviewedMessage), context).explanation).toBe(reviewedMessage);
+    for (const input of [{ reviewedMessage }, { failureFacts: { reviewedMessage } }, new Error(reviewedMessage)]) {
+      expect(presentConnectionError(input, context).explanation).not.toBe(reviewedMessage);
+    }
   });
 
   it.each([
