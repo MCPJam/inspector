@@ -146,16 +146,18 @@ export function totalInputTokens(
   usage: NormalizedModelUsage | undefined
 ): number | undefined {
   if (
-    usage?.uncachedInputTokens === undefined &&
-    usage?.cacheReadTokens === undefined &&
-    usage?.cacheWriteTokens === undefined
+    !usage ||
+    (usage.uncachedInputTokens === undefined &&
+      usage.cacheReadTokens === undefined &&
+      usage.cacheWriteTokens === undefined &&
+      usage.cacheWrite1hTokens === undefined)
   ) {
     return undefined;
   }
   return (
     (usage.uncachedInputTokens ?? 0) +
     (usage.cacheReadTokens ?? 0) +
-    (usage.cacheWriteTokens ?? 0)
+    Math.max(usage.cacheWriteTokens ?? 0, usage.cacheWrite1hTokens ?? 0)
   );
 }
 
