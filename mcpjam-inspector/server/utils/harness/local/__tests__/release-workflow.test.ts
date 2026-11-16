@@ -35,7 +35,7 @@ describe("release critical path", () => {
     expect(publish.needs).toContain("local-harness-contract");
     const gate = String(publish.if).replace(/\s+/g, " ");
     expect(gate).toContain(
-      "( needs.preflight.outputs.publish_inspector != 'true' || needs.local-harness-contract.result == 'success' )",
+      "( needs.preflight.outputs.publish_inspector != 'true' || (needs.local-harness-contract.result == 'success' && needs.harness-consistency.result == 'success') )",
     );
     expect(gate).not.toContain("build-mac");
   });
@@ -43,13 +43,15 @@ describe("release critical path", () => {
   it("creates the immutable GitHub release only once every desktop asset exists, desktop-only included", () => {
     const { jobs } = workflow("release");
     const finalize = jobs.finalize;
-    expect(finalize.needs).toEqual(expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract"]));
+    expect(finalize.needs).toEqual(
+      expect.arrayContaining(["build-mac", "build-windows", "local-harness-contract", "harness-consistency"]),
+    );
     const gate = String(finalize.if).replace(/\s+/g, " ");
     expect(gate).toContain(
       "( needs.publish-packages.result == 'success' || needs.preflight.outputs.desktop_only == 'true' )",
     );
     expect(gate).toContain(
-      "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' ) )",
+      "( needs.preflight.outputs.build_inspector_artifacts != 'true' || ( needs.build-mac.result == 'success' && needs.build-windows.result == 'success' && needs.local-harness-contract.result == 'success' && needs.harness-consistency.result == 'success' ) )",
     );
     // The plan comes from the tested script, and desktop-only is an output.
     const preflight = jobs.preflight;
@@ -57,10 +59,28 @@ describe("release critical path", () => {
     const plan = preflight.steps.find((step: any) => step.id === "plan");
     expect(plan.run).toContain("node .github/scripts/release-plan.mjs");
     // A desktop-only run still proves the local runtime its desktop app offers.
-    for (const job of ["local-harness-evidence", "local-harness-evidence-permitted", "local-harness-contract"]) {
+    for (const job of ["local-harness-evidence", "local-harness-evidence-permitted", "local-harness-contract", "harness-consistency"]) {
       expect(String(jobs[job].if), job).toContain("build_inspector_artifacts");
       expect(String(jobs[job].if), job).not.toContain("publish_inspector");
     }
+  });
+
+  it("fails the run when the versions it set out to ship did not reach npm", () => {
+    const { jobs } = workflow("release");
+    const shipped = jobs.shipped;
+    expect(shipped.needs).toEqual(expect.arrayContaining(["preflight", "publish-packages", "finalize"]));
+    expect(String(shipped.if)).toContain("!cancelled()");
+    const run = shipped.steps[0].run as string;
+    expect(run).toMatch(/"\$PUBLISH_ANY" = "true" \] && \[ "\$PUBLISHED" != "success"/);
+    expect(run).toMatch(/exit 1/);
+  });
+
+  it("keeps the pack provenance check off the build path", () => {
+    const { jobs } = workflow("release");
+    const preflightRuns = jobs.preflight.steps.map((step: any) => step.run ?? "").join("\n");
+    expect(preflightRuns).not.toMatch(/check-local-harness-release/);
+    expect(jobs["harness-consistency"].needs).toBe("preflight");
+    expect(jobs["publish-packages"].needs).toContain("harness-consistency");
   });
 
   it("points production's hosted computers at the released commit's template only after the webapp deploys", () => {
@@ -126,10 +146,11 @@ describe("starting a release", () => {
     const steps: any[] = jobs.version.steps;
     const run = steps.find((step) => step.name === "Version, check and push to main").run as string;
     const at = (needle: string) => run.indexOf(needle);
-    // Versioned, gated and checked before the push, which only fast-forwards.
+    // Versioned and checked before the push, which only fast-forwards. The
+    // pack gate is not repeated here: the pin PR and Release both run it.
     expect(at("changeset version")).toBeGreaterThan(-1);
-    expect(at("changeset version")).toBeLessThan(at("check-local-harness-release.mjs"));
-    expect(at("check-local-harness-release.mjs")).toBeLessThan(at("release-commit.mjs check HEAD^ HEAD"));
+    expect(at("changeset version")).toBeLessThan(at("release-commit.mjs check HEAD^ HEAD"));
+    expect(run).not.toMatch(/check-local-harness-release/);
     expect(at("release-commit.mjs check HEAD^ HEAD")).toBeLessThan(at("git push origin HEAD:refs/heads/main"));
     expect(run).not.toMatch(/--force/);
     // Pushed with the release App's token, the only bypass actor on main.
@@ -256,14 +277,14 @@ describe("pack release boundaries", () => {
       .flatMap((job: any) => job.steps ?? [])
       .some((step: any) => /check-local-harness-release\.mjs[^\n]*--assets/.test(step.run ?? ""));
 
-  it("checks the published manifest before versioning a release and before publishing it", () => {
-    for (const name of ["prepare-release", "release"]) {
+  it("checks the published manifest before pinning a pack and before publishing a release", () => {
+    for (const name of ["local-harness-pack-prebuild", "release"]) {
       expect(runsAssetCheck(name), name).toBe(true);
     }
   });
 
   it("verifies the pinned packs' build provenance wherever it checks their assets", () => {
-    for (const name of ["prepare-release", "release"]) {
+    for (const name of ["local-harness-pack-prebuild", "release"]) {
       const steps = Object.values(workflow(name).jobs).flatMap((job: any) => job.steps ?? []);
       const gate = steps.find((step: any) => /check-local-harness-release\.mjs[^\n]*--assets/.test(step.run ?? ""));
       expect(gate.run, name).toMatch(/--verify-attestations/);
