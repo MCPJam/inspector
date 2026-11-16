@@ -154,12 +154,16 @@ import { admitWarmChatManager } from "../../utils/harness/warm-approval-binding.
 import { harnessApiWarmEnabled } from "../../utils/harness/harness-flags.js";
 import {
   describePlaygroundBoxRefusal,
+  playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
+  type PlaygroundBoxReason,
 } from "../../utils/harness/playground-box.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import type { HarnessBox } from "../../utils/harness/harness-box.js";
 import {
   assertHarnessDispatchable,
   engineLabel,
+  hostChoosesModel,
   hostRoutingSelectionForModel,
   hostSelectionForModel,
   resolveChatSessionEngine,
@@ -388,11 +392,15 @@ function releaseTurnSlot(key: string): void {
  * provider, or a Bedrock-shaped id. An Ollama model is still reachable — as
  * `ollama/<model>`, spelled out.
  */
-function assertUnambiguousModelId(modelId: string): void {
+function assertUnambiguousModelId(
+  modelId: string,
+  runtimeChoosesModel = false,
+): void {
   const id = modelId.trim();
-  // A RUNTIME-CHOSEN SENTINEL is unambiguous and still unrunnable HERE. This
-  // route has no harness — the runtime that would pick the model cannot be
-  // reached from it — so `cursor/auto` names nothing this surface can execute.
+  // A RUNTIME-CHOSEN SENTINEL is unambiguous, and it runs only as the model of
+  // a client whose harness picks it (`hostChoosesModel`): a Cursor CLI client's
+  // own model, which a caller gets by omitting modelId. A body's model is
+  // checked before any client is resolved, so a sentinel there is refused.
   //
   // Refused at this line, and not one line later, on purpose: everything below
   // is downstream of `claimTurnLease`, which CREATES the `chatSessions` row
@@ -405,10 +413,11 @@ function assertUnambiguousModelId(modelId: string): void {
   // point of it is that the model is unknown to MCPJam.
   const sentinelName = runtimeChosenModelSentinelName(id);
   if (isRuntimeAccountModel(id)) {
+    if (runtimeChoosesModel) return;
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `modelId "${modelId}" (${sentinelName ?? "Cursor account"}) requires the Cursor runtime and cannot run through this API. It only has meaning on a host whose harness provides that runtime. Send a real provider-prefixed model id instead.`,
+      `modelId "${modelId}" (${sentinelName ?? "Cursor account"}) runs only as a Cursor CLI client's own model. Target that client without modelId, or send a provider-prefixed model id.`,
       { reason: "MODEL_NOT_RUNNABLE" },
     );
   }
@@ -1262,7 +1271,7 @@ async function handleTurn(c: Context): Promise<Response> {
           "Choose a model for this session or configure one on its client.",
         );
       }
-      assertUnambiguousModelId(fallback);
+      assertUnambiguousModelId(fallback, hostChoosesModel(target.host));
       pins.modelId = fallback;
     }
     assertNativeDiscovery({ required: existing?.resumeConfig?.requireNativeToolDiscovery === true || target.resolvedEnvironment?.host.runtimeConfig.requireNativeToolDiscovery === true || target.host?.runtimeConfig.requireNativeToolDiscovery === true });
@@ -1387,6 +1396,26 @@ async function handleTurn(c: Context): Promise<Response> {
         modelId: String(modelDefinition.id),
         reason: engineDecision.warning,
       });
+    }
+    // A runtime on the customer's own account (Cursor) takes its box for that
+    // credential, checked here as the Playground does: a turn without a ready
+    // key reserves nothing and connects nothing.
+    const boxReason: PlaygroundBoxReason =
+      engine.kind === "harness" && harnessUsesExternalAccount(engine.harness)
+        ? "credential"
+        : "conversation";
+    if (engine.kind === "harness" && boxReason === "credential") {
+      const credentialRefusal = await playgroundCredentialRefusal({
+        harnessId: engine.harness,
+        bearer: authHeader,
+        projectId,
+        signal: abortController.signal,
+      });
+      if (credentialRefusal) {
+        return v1Error(c, "CONFLICT", credentialRefusal, {
+          reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+        });
+      }
     }
 
     if (body.browser) {
@@ -1550,7 +1579,7 @@ async function handleTurn(c: Context): Promise<Response> {
     };
     const earlyBox =
       engine.kind === "harness"
-        ? startPlaygroundBoxEarly(resources, "conversation", boxArgs, false)
+        ? startPlaygroundBoxEarly(resources, boxReason, boxArgs, false)
         : undefined;
 
     // --- Connect ----------------------------------------------------------
@@ -1793,11 +1822,9 @@ async function handleTurn(c: Context): Promise<Response> {
     // `projectComputers` row. Acquired before the model call so a refused box
     // spends nothing.
     if (engine.kind === "harness") {
-      // The preflight refuses every runtime on the customer's own account
-      // here, so the box is only ever the conversation's.
       const unavailable = playgroundHarnessBoxUnavailableReason(
         engine.harness,
-        "conversation",
+        boxReason,
       );
       if (unavailable) {
         return v1Error(c, "FEATURE_NOT_SUPPORTED", unavailable, {
@@ -1817,7 +1844,7 @@ async function handleTurn(c: Context): Promise<Response> {
         }
         const described = describePlaygroundBoxRefusal(
           engine.harness,
-          "conversation",
+          boxReason,
           acquired.refusal,
         );
         const rateLimited =

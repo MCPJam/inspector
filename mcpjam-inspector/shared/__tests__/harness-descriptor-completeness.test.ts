@@ -84,12 +84,14 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
       expect(descriptor.orgKeys).toBe(false);
       expect(descriptor.protocol).toBeNull();
       expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
-      // Its boxes get the organization's key only in evals, swarms and the
-      // Playground; the org-key checks enforce that with the same copy.
-      const name = descriptor.displayName;
-      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(orgKeySurfaceRefusal(name, "study"));
-      expect(harnessSurfaceRefusal(id, "api")).toBe(orgKeySurfaceRefusal(name, "elsewhere"));
-      expect(harnessSurfaceRefusal(id, "events")).toBe(orgKeySurfaceRefusal(name, "elsewhere"));
+      // Its key never reaches a box a guest or participant controls; the
+      // Playground, evals, swarms and the API check it before a box. The
+      // study refusal uses the same copy as the org-key checks.
+      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(
+        orgKeySurfaceRefusal(descriptor.displayName),
+      );
+      expect(harnessSurfaceRefusal(id, "api")).toBeUndefined();
+      expect(harnessSurfaceRefusal(id, "events")).toBeUndefined();
     }
   });
 

@@ -66,12 +66,17 @@ const {
 
 // The box is the conversation's throwaway machine: a harness turn here binds
 // it and never resolves a persistent computer. Only the acquisition is faked.
+// The org-key readiness check is the backend's answer; only its sentence is
+// faked here.
+const credentialRefusalMock = vi.hoisted(() => vi.fn());
 vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../../utils/harness/playground-box.js")
   >()),
   acquirePlaygroundHarnessBox: (...args: unknown[]) =>
     acquirePlaygroundHarnessBoxMock(...args),
+  playgroundCredentialRefusal: (...args: unknown[]) =>
+    credentialRefusalMock(...args),
 }));
 
 vi.mock("convex/browser", () => ({
@@ -165,6 +170,7 @@ vi.mock("../../../services/environments/skills-delivered-event.js", () => ({
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { MCPJAM_HOSTED_ORIGIN } from "../../../config.js";
 import { harnessSurfaceRefusal } from "@/shared/harness-descriptors";
+import { ORG_KEY_MISSING_MESSAGE } from "@/shared/org-key-surfaces";
 import { harnessUsesExternalAccount } from "../../../utils/harness/registry.js";
 import chatSessions from "../chat-sessions.js";
 import type { TurnSkills } from "../../../services/environments/turn-skills.js";
@@ -845,10 +851,9 @@ describe("a native turn the organization's trial no longer covers", () => {
   });
 });
 
-describe("a runtime this API does not run", () => {
-  // The declaration refuses it before any box, runtime or model call, with
-  // the reason the caller reads, and the lease is released for a retry.
-  const CURSOR_MODEL = "cursor/auto";
+describe("a client this API does not run", () => {
+  // Refused before any box, runtime or model call, with the reason the caller
+  // reads, and the lease is released for a retry.
   const refusedBeforeAnyWork = () => {
     expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
     expect(resolveTurnRuntimeMock).not.toHaveBeenCalled();
@@ -859,49 +864,11 @@ describe("a runtime this API does not run", () => {
     );
   };
 
-  beforeEach(() => {
-    resolveHostModelDefinitionMock.mockResolvedValue({
-      id: CURSOR_MODEL,
-      provider: "cursor",
-    });
-  });
-
-  it.each([
-    ["a host", { hostId: HOST }],
-    ["an environment", { environmentId: ENVIRONMENT }],
-  ])("refuses Cursor CLI on %s target", async (_target, pointer) => {
-    const cursor = { harness: "cursor", modelId: CURSOR_MODEL };
-    fetchHostRuntimeConfigMock.mockResolvedValue({
-      ok: true,
-      config: { hostId: HOST, ...cursor, selectedServerIds: ["srv_1"] },
-    });
-    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec(cursor));
-
-    const response = await turn(firstTurn(pointer));
-    const body = await response.json();
-
-    expect(response.status).toBe(422);
-    expect(body).toMatchObject({
-      code: "FEATURE_NOT_SUPPORTED",
-      message: harnessSurfaceRefusal("cursor", "api"),
-      details: {
-        reason: "HARNESS_UNAVAILABLE",
-        harness: "cursor",
-        kind: "surface-unsupported",
-      },
-    });
-    refusedBeforeAnyWork();
-  });
-
   it.each([
     ["a host", { hostId: HOST }],
     ["an environment", { environmentId: ENVIRONMENT }],
   ])("refuses a client running a vendor's agent loop on %s target", async (_target, pointer) => {
     // Such a host names no `harness`; reading only that field ran it emulated.
-    resolveHostModelDefinitionMock.mockResolvedValue({
-      id: MODEL,
-      provider: "anthropic",
-    });
     const vsCode = { agentLoop: "copilot-cli", modelId: MODEL };
     fetchHostRuntimeConfigMock.mockResolvedValue({
       ok: true,
@@ -949,16 +916,122 @@ describe("a runtime this API does not run", () => {
     expect(response.status).toBe(200);
     expect(body.engine).toBe("harness:copilot-cli");
   });
+});
 
-  it("runs no runtime that signs in with the customer's own account", () => {
-    // This route checks no account key before it boots a box, so a runtime
-    // admitted here on the customer's account would pay for a box its turn
-    // then refuses.
+describe("a runtime on the customer's own account (Cursor CLI)", () => {
+  const CURSOR_MODEL = "cursor/auto";
+  const cursor = { harness: "cursor", modelId: CURSOR_MODEL };
+  const pointers = [
+    ["a host", { hostId: HOST }],
+    ["an environment", { environmentId: ENVIRONMENT }],
+  ] as const;
+  // The client's own model: a caller omits modelId to run it.
+  const cursorTurn = (pointer: Record<string, unknown>) =>
+    turn(firstTurn({ ...pointer, modelId: undefined }));
+
+  beforeEach(() => {
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, ...cursor, selectedServerIds: ["srv_1"] },
+    });
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec(cursor));
+    resolveHostModelDefinitionMock.mockResolvedValue({
+      id: CURSOR_MODEL,
+      provider: "cursor",
+    });
+    credentialRefusalMock.mockResolvedValue(null);
+  });
+
+  it("runs here: no runtime declares the API off", () => {
     const ownAccount = HARNESS_IDS.filter(harnessUsesExternalAccount);
     expect(ownAccount.length).toBeGreaterThan(0);
     for (const id of ownAccount) {
-      expect(harnessSurfaceRefusal(id, "api")).toBeDefined();
+      expect(harnessSurfaceRefusal(id, "api")).toBeUndefined();
     }
+  });
+
+  it.each(pointers)(
+    "refuses a turn on %s without a ready key before any box or server",
+    async (_target, pointer) => {
+      credentialRefusalMock.mockResolvedValue(ORG_KEY_MISSING_MESSAGE);
+
+      const response = await cursorTurn(pointer);
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body).toMatchObject({
+        code: "CONFLICT",
+        message: ORG_KEY_MISSING_MESSAGE,
+        details: { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+      });
+      expect(credentialRefusalMock).toHaveBeenCalledWith(
+        expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
+      );
+      expect(createManualHostedConnectionMock).not.toHaveBeenCalled();
+      expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+      expect(resolveTurnRuntimeMock).not.toHaveBeenCalled();
+      expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+      expect(mutationMock).toHaveBeenCalledWith(
+        "chatSessions:releaseTurnLease",
+        expect.objectContaining({ turnId: "turn_1" }),
+      );
+    },
+  );
+
+  it.each(pointers)(
+    "runs the client on %s on its own model once the key is ready",
+    async (_target, pointer) => {
+      const response = await cursorTurn(pointer);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.engine).toBe("harness:cursor");
+      expect(resolveTurnRuntimeMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          harness: "cursor",
+          modelDefinition: expect.objectContaining({ id: CURSOR_MODEL }),
+        }),
+      );
+      // The key was checked before the box was asked for.
+      expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
+        expect.objectContaining({ harness: "cursor" }),
+      );
+      expect(credentialRefusalMock.mock.invocationCallOrder[0]).toBeLessThan(
+        acquirePlaygroundHarnessBoxMock.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
+
+  it("refuses its model named in the body before claiming a turn", async () => {
+    const response = await turn(firstTurn({ hostId: HOST, modelId: CURSOR_MODEL }));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      message: expect.stringContaining("Target that client without modelId"),
+      details: { reason: "MODEL_NOT_RUNNABLE" },
+    });
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses its model on a client whose harness does not choose it", async () => {
+    const claudeCode = { harness: "claude-code", modelId: CURSOR_MODEL };
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, ...claudeCode, selectedServerIds: ["srv_1"] },
+    });
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec(claudeCode),
+    );
+
+    const response = await cursorTurn({ hostId: HOST });
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).details).toMatchObject({
+      reason: "MODEL_NOT_RUNNABLE",
+    });
+    expect(credentialRefusalMock).not.toHaveBeenCalled();
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
   });
 });
 
