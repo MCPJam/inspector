@@ -17,6 +17,9 @@ const ANSWERS: Record<string, string[]> = {
   "rebind.example.com": ["93.184.216.34", "127.0.0.1"],
   "metadata.example.com": ["169.254.169.254"],
   "nat64.example.com": ["64:ff9b::a9fe:a9fe"],
+  "benchmark.example.com": ["2001:2::1"],
+  "docs6.example.com": ["3fff::1"],
+  "local-nat64.example.com": ["64:ff9b:1::a00:5"],
   "nothing.example.com": [],
 };
 const fakeLookup = (async (name: string) =>
@@ -81,6 +84,9 @@ describe("a public-only browser", () => {
       "rebind.example.com",
       "metadata.example.com",
       "nat64.example.com",
+      "benchmark.example.com",
+      "docs6.example.com",
+      "local-nat64.example.com",
       "nothing.example.com",
       "localhost",
       "127.0.0.1",
