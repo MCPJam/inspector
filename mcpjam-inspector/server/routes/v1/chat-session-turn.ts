@@ -8,9 +8,17 @@ import {
 } from "../../utils/built-in-tools/browser-refusal.js";
 import { buildSetupManifest } from "../../services/chat-turn/setup-manifest.js";
 import {
+  readChatCapabilities,
   resolveChatSessionEnvironment,
   unappliedBuiltInToolIds,
 } from "./chat-session-environment.js";
+import { type EarlyStart, startEarly, takeEarly } from "../../utils/early-start.js";
+import { shareToolListing } from "../../utils/turn-tool-listing.js";
+import { TurnResources } from "../../services/chat-turn/resources.js";
+import {
+  acquireOwnedPlaygroundHarnessBox,
+  startPlaygroundBoxEarly,
+} from "../../services/chat-turn/owned-playground-box.js";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
@@ -118,6 +126,8 @@ import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { resolveTurnRuntime } from "../../utils/resolve-turn-runtime.js";
 import { withSelectionRouting } from "../../utils/selection-rail.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
+import { TurnTiming } from "../../utils/turn-timing.js";
+import { harnessTurnEventSink } from "../../utils/harness/harness-turn-event.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
   releaseUncommittedHarnessLane,
@@ -131,22 +141,21 @@ import {
 import { logger } from "../../utils/logger.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
-import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
+import { environmentTurnSkills } from "../../services/environments/live-turn-skills.js";
+import type { BoxSkillsResult } from "../../utils/harness/box-skills-writer.js";
 import {
-  buildLiveEffectiveCapabilities,
-  type EffectiveCapabilitySet,
-} from "../../services/environments/effective-capabilities.js";
+  reportBoxSkillsDelivered,
+  reportSkillsDelivered,
+} from "../../services/environments/skills-delivered-event.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
+import { admitWarmChatManager } from "../../utils/harness/warm-approval-binding.js";
+import { harnessApiWarmEnabled } from "../../utils/harness/harness-flags.js";
 import {
-  acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
-  playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
-  type PlaygroundBoxReason,
 } from "../../utils/harness/playground-box.js";
 import type { HarnessBox } from "../../utils/harness/harness-box.js";
-import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   assertHarnessDispatchable,
   engineLabel,
@@ -156,6 +165,7 @@ import {
   type ChatSessionEngine,
 } from "./chat-session-host-target.js";
 import { v1Error, v1Resource } from "./envelope.js";
+import { nativeHarnessRefusalDetails } from "./native-harness-refusal.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
   chatSessionClient,
@@ -667,7 +677,7 @@ function narrowTarget(
  * that matters (a server must never get to choose the namespace its own skills
  * are addressed under, so `serverInfo.name` is never a candidate) — it just
  * reads as `p176vpy…/run-evals` instead of `mcpjam-staging-skills/run-evals`
- * in the `listSkills` catalog and in the origin banner on loaded skill content,
+ * in the prompt's skill list and in the origin banner on loaded skill content,
  * both of which the model and the user see.
  *
  * Returns `undefined` when nothing is labelled, so the call site can keep to
@@ -782,6 +792,11 @@ export function registerChatSessionTurnRoute(router: Hono): void {
 }
 
 async function handleTurn(c: Context): Promise<Response> {
+  // The recorder the browser routes start with: a harness turn's first text
+  // and closing event, timed from the start of the request.
+  const timing = new TurnTiming({
+    harnessTurnEvent: harnessTurnEventSink(c, "api"),
+  });
   // Graceful degradation on OSS/self-hosted installs: the hosted engine, the
   // delegated-token mint and the lease all require the backend wiring.
   if (!process.env.CONVEX_HTTP_URL || !process.env.CONVEX_URL) {
@@ -813,6 +828,8 @@ async function handleTurn(c: Context): Promise<Response> {
   let projectId: string;
   let runtimeChatSessionId: string;
   let priorMessages: ModelMessage[] = [];
+  /** A continuation's stored transcript, read beside the lease claim. */
+  let history: EarlyStart<ModelMessage[]> | undefined;
   let expectedVersion: number | undefined;
   let pins: {
     modelId: string;
@@ -937,9 +954,12 @@ async function handleTurn(c: Context): Promise<Response> {
         { reason: "HOST_TARGET_REQUIRED" },
       );
     }
-    priorMessages = configuring
-      ? []
-      : ((await loadResumeHistory(existing)) as ModelMessage[]);
+    if (!configuring) {
+      const session = existing;
+      history = startEarly(
+        async () => (await loadResumeHistory(session)) as ModelMessage[],
+      );
+    }
   } else {
     if (!body.projectId) {
       return v1Error(
@@ -963,12 +983,22 @@ async function handleTurn(c: Context): Promise<Response> {
     };
   }
 
+  /**
+   * The transcript is read while the turn goes on, and taken wherever the
+   * serial read would already have failed the turn: a transcript that cannot
+   * be read stays the error reported, before the brake and the lease.
+   */
+  const takeHistory = async () => {
+    if (history) priorMessages = await takeEarly(history);
+  };
+
   // --- Brake before spending ----------------------------------------------
   const orgKey =
     c.get("mcpjamOrganizationId") ??
     c.get("workosUserId") ??
     `project:${projectId}`;
   if (!acquireTurnSlot(orgKey)) {
+    await takeHistory();
     return v1Error(
       c,
       "RATE_LIMITED",
@@ -1035,10 +1065,17 @@ async function handleTurn(c: Context): Promise<Response> {
    */
   let modelCallStarted = false;
   /**
-   * The conversation's throwaway box, held for a harness turn. Released in the
-   * `finally` (idempotent), which leaves the box for the next turn.
+   * The conversation's throwaway box, held for a harness turn. `resources`
+   * owns its release, run in the `finally`, which leaves the box for the next
+   * turn; a box still being booked then is released when it arrives.
    */
   let conversationBox: HarnessBox | undefined;
+  const resources = new TurnResources((error) => {
+    logger.warn("[v1/chat-sessions] conversation box release failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+  let toolListing: ReturnType<typeof shareToolListing> | undefined;
   const abortController = new AbortController();
   const requestSignal = c.req.raw.signal;
   const onRequestAbort = () => abortController.abort();
@@ -1046,6 +1083,9 @@ async function handleTurn(c: Context): Promise<Response> {
   else requestSignal.addEventListener("abort", onRequestAbort, { once: true });
 
   try {
+    // Read beside the claim. The environment step takes it, so its refusal
+    // still comes after anything the claim answers.
+    const capabilities = startEarly(() => readChatCapabilities(client, projectId));
     // --- The lease. Before ANY model call. --------------------------------
     let lease: LeaseResult;
     try {
@@ -1061,6 +1101,7 @@ async function handleTurn(c: Context): Promise<Response> {
         ...(body.sessionId ? { sessionId: body.sessionId } : { projectId }),
       });
     } catch (error) {
+      await takeHistory();
       throw new WebRouteError(
         502,
         ErrorCode.SERVER_UNREACHABLE,
@@ -1070,6 +1111,7 @@ async function handleTurn(c: Context): Promise<Response> {
       );
     }
 
+    if (lease.status !== "claimed") await takeHistory();
     if (lease.status === "in_progress") {
       return v1Error(
         c,
@@ -1116,6 +1158,9 @@ async function handleTurn(c: Context): Promise<Response> {
     if (lease.status !== "claimed") throw new Error("Unexpected lease state");
     leaseTurnId = lease.turnId;
     executionOwnerToken = lease.executionOwnerToken;
+    // Taken once the lease is recorded, so the `finally` releases it when the
+    // transcript cannot be read, as for any turn that stops before a model.
+    await takeHistory();
     if (body.browser) {
       if (!executionOwnerToken)
         throw new SessionBrowserError(
@@ -1150,7 +1195,7 @@ async function handleTurn(c: Context): Promise<Response> {
       },
       // The turn's own controller, so a host fetch stops with the turn rather
       // than running on to its own timeout after the caller has gone.
-      { authHeader, signal: abortController.signal },
+      { authHeader, signal: abortController.signal, capabilities },
     );
     // A host-only turn deliberately pins NOTHING here. Pinning the resolved
     // server set would look like a convenience and behave like a trap twice
@@ -1472,6 +1517,25 @@ async function handleTurn(c: Context): Promise<Response> {
       body.browser ? 150_000 : TURN_WALL_CLOCK_MS,
     );
 
+    // A harness turn's box is booked now, while the turn connects, lists
+    // tools and prepares; it is taken, and a refusal reported, where the turn
+    // reaches the box below. Only a pinned environment is the box's grant,
+    // never the trace composition.
+    const boxArgs = {
+      bearer: authHeader.replace(/^Bearer\s+/i, ""),
+      projectId,
+      chatSessionId: runtimeChatSessionId,
+      ...(pins.environmentId ? { projectEnvironmentId: pins.environmentId } : {}),
+      ...(engine.kind === "harness" ? { harness: engine.harness } : {}),
+      signal: abortController.signal,
+      // Creating or waking it counts toward the turn's box wake.
+      timing,
+    };
+    const earlyBox =
+      engine.kind === "harness"
+        ? startPlaygroundBoxEarly(resources, "conversation", boxArgs, false)
+        : undefined;
+
     // --- Connect ----------------------------------------------------------
     const connectableSelection = selected.filter(
       (entry) => !target.unavailableServerIds?.includes(entry.id),
@@ -1492,16 +1556,20 @@ async function handleTurn(c: Context): Promise<Response> {
         timeoutMs: CONNECT_TIMEOUT_MS,
         tolerateServerRefusals: true,
         // This surface emulates no host persona — it is MCPJam's own agent —
-        // and it ships the fulfiller, since `prepareChatV2` merges
-        // `withServerSkills`, which loads only through the verified read path
-        // in `server-skills.ts`. Without the declaration the extension can
-        // never be active: the model is handed no `listSkills` / `loadSkill`
-        // at all, so a server that serves skills is indistinguishable from one
-        // that does not.
+        // and it ships the fulfiller, since `prepareChatV2` adds the
+        // servers' skills to the turn's set, whose tools load only through the
+        // verified read path in `server-skills.ts`. Without the declaration
+        // the extension can never be active: the model is handed none of a
+        // server's skills, so a server that serves skills is
+        // indistinguishable from one that does not.
         advertiseSkillsExtension: true,
       },
     );
     manager = connection.manager;
+    // Warm reuse on the web route's terms, with the organization the backend
+    // returned for this project, never one the request named.
+    if (harnessApiWarmEnabled())
+      admitWarmChatManager(manager, target.organizationId, connectableSelection.length > 0);
     const unavailable: Record<string, unknown> = {
       ...Object.fromEntries(
         (target.unavailableServerIds ?? []).map((id) => [
@@ -1522,6 +1590,9 @@ async function handleTurn(c: Context): Promise<Response> {
     // subtly broken one.
     const noTools = wantsNoTools(body);
 
+    // The policy read below and `prepareChatV2` share one `tools/list` per
+    // server, so the policy is decided on the tools the model is handed.
+    toolListing = shareToolListing(manager);
     const { excluded } = await computeExcludedToolNames(
       manager,
       selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id)),
@@ -1538,53 +1609,21 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
 
-    // The project's own skills, which this surface has never had. #4419 gave it
-    // a connected server's skills by advertising the extension above; the
-    // project pool was still invisible, so an agent driving MCPJam could read
-    // somebody else's skills but not its own.
-    //
-    // TWO shapes, because a turn that named an environment is not a live turn.
-    // An environment IS a decision about what runs, so its own resolved set is
-    // the answer — pinned skill selection, attached plugin skills, captured
-    // server skills and all. Only a turn pinning bare `serverIds` has no such
-    // decision behind it, and only that turn builds a live set from the
-    // project pool.
-    //
-    // The live shape stays lazy, like every other live surface: the catalog is
-    // one query and a body is fetched only for the skill the model loads. A
-    // catalog failure degrades to no skills rather than failing the turn.
-    let turnCapabilities: EffectiveCapabilitySet | undefined;
-    let capabilitiesAreLive = false;
-    // The project pool is a MEMBER resource: `listCloudRuntimeSkills` resolves
-    // `projectSkills:listSkills`, which is signed-in-only, and
-    // `getConvexBearerForRequest` forwards a guest bearer verbatim. The v1 mount
-    // already 401s guests on this path (`/chat-sessions/messages` is absent from
-    // `guest-allowed-paths.ts`), so this term is unreachable today — it is here
-    // because that allowlist is edited independently of this file, and the
-    // reachable twin of this exact gate on the local route is what produced
-    // CONVEX-19R.
-    const callerIsGuest = Boolean(c.get("guestId"));
-    if (target.environmentCapabilities) {
-      turnCapabilities = target.environmentCapabilities;
-    } else if (projectId && !callerIsGuest) {
-      try {
-        turnCapabilities = buildLiveEffectiveCapabilities({
-          standaloneSkills: await listCloudRuntimeSkills({
-            authHeader,
-            projectId,
-          }),
-        });
-        capabilitiesAreLive = true;
-      } catch (error) {
-        logger.warn(
-          "[v1/chat-session-turn] project skill catalog unavailable",
-          {
-            projectId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-      }
-    }
+    // One skill plan for this turn's engine, from the environment the turn
+    // resolved. A client's turn (a host or a bare server list) carries its
+    // client's selection, all visible by default, and its connected servers'
+    // own skills join when the prompt is built. A named environment's turn
+    // has exactly its own.
+    const turnSkills = environmentTurnSkills({
+      spec: target.resolvedEnvironment,
+      attribution: target.attribution,
+      ...(target.clientTurn ? { liveExtras: {} } : {}),
+      runtime:
+        engine.kind === "harness"
+          ? { kind: "harness", harnessId: engine.harness }
+          : { kind: "agent" },
+      modelContextTokens: modelDefinition.contextLength,
+    });
 
     const activeServerIds = selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id));
     const prepared = await prepareChatV2({
@@ -1592,29 +1631,15 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(builtInTools ? { builtInTools } : {}),
       selectedServers: activeServerIds,
       isolatedServers: activeServerIds,
-      ...(turnCapabilities
-        ? {
-            skillsSource: {
-              kind: "resolved" as const,
-              capabilities: turnCapabilities,
-              // Only a LIVE set composes live server skills, and that is the
-              // same rule `web-chat-turn` follows. An environment's server
-              // skills were CAPTURED; fetching more from the connection would
-              // falsify the claim that the set describes the turn — which is
-              // exactly what this flag exists to prevent. On the live arm it
-              // keeps #4419's server skills composed alongside the project's.
-              ...(capabilitiesAreLive
-                ? { composeLiveServerSkills: true as const }
-                : {}),
-              // The turn's own controller, so a lazy body or file read stops
-              // with the turn instead of running to its own fetch timeout.
-              abortSignal: abortController.signal,
-            },
-          }
-        : {}),
+      // MCPJam's agent gets its skill tools from the plan. A harness gets its
+      // skills on its box, so its prompt must not describe tools it lacks.
+      ...(engine.kind === "harness" ? {} : { skills: turnSkills.skills }),
+      // The turn's own controller, so a lazy body or file read stops with the
+      // turn instead of running to its own fetch timeout.
+      abortSignal: abortController.signal,
       // Without this every server-skill ref is namespaced by the raw server
-      // id, in the `listSkills` catalog the model reads AND in the origin
-      // banner prepended to loaded skill content.
+      // id, in the skill list the model reads AND in the origin banner
+      // prepended to loaded skill content.
       ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
@@ -1630,6 +1655,7 @@ async function handleTurn(c: Context): Promise<Response> {
       // and wants to see what it advertises, not a search/load indirection.
       progressiveToolDiscovery: { enabled: false },
     });
+    toolListing.end();
 
     // STEPS ARE NOT CALLS, which is why `maxToolCalls` is enforced here rather
     // than folded into the step budget. One step can emit several parallel
@@ -1642,9 +1668,9 @@ async function handleTurn(c: Context): Promise<Response> {
     //
     // The ZERO case clears the FINAL set rather than trusting the name
     // exclusion above. `prepareChatV2` applies `excludeMcpToolNames` and THEN
-    // merges skill/meta tools (`withServerSkills`), so a server advertising
-    // the skills extension would still hand the model executable `listSkills`
-    // / `loadSkill` entries on a turn that asked for no tools at all. Excluding
+    // merges skill/meta tools, so a server advertising the skills extension
+    // would still hand the model an executable `loadSkill` and its file
+    // tools on a turn that asked for no tools at all. Excluding
     // names bounds what is LOADED; clearing the set is what makes "zero" true.
     const tools = noTools
       ? ({} as ToolSet)
@@ -1697,7 +1723,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     const setupAtTurn = await buildSetupManifest({
       environment: target.resolvedEnvironment,
-      capabilities: turnCapabilities,
+      capabilities: turnSkills.skills.set,
       model: {
         id: String(modelDefinition.id),
         provider: modelDefinition.provider,
@@ -1735,7 +1761,13 @@ async function handleTurn(c: Context): Promise<Response> {
     const inputMessages = [...priorMessages, userMessage];
 
     let lastEngineError:
-      { message: string; code?: string; httpStatus?: number } | undefined;
+      | {
+          message: string;
+          code?: string;
+          httpStatus?: number;
+          infra?: { code?: string };
+        }
+      | undefined;
 
     // A cloud harness turn runs on this conversation's THROWAWAY box, the same
     // box the Playground gives it (keyed by the runtime chat session id), and
@@ -1743,54 +1775,31 @@ async function handleTurn(c: Context): Promise<Response> {
     // `projectComputers` row. Acquired before the model call so a refused box
     // spends nothing.
     if (engine.kind === "harness") {
-      // A harness that signs in with the customer's own account (Cursor) is
-      // on the box for its credential, as in the Playground.
-      const boxReason: PlaygroundBoxReason = harnessUsesExternalAccount(
-        engine.harness,
-      )
-        ? "credential"
-        : "conversation";
+      // The preflight refuses every runtime on the customer's own account
+      // here, so the box is only ever the conversation's.
       const unavailable = playgroundHarnessBoxUnavailableReason(
         engine.harness,
-        boxReason,
+        "conversation",
       );
       if (unavailable) {
         return v1Error(c, "FEATURE_NOT_SUPPORTED", unavailable, {
           reason: "NOT_A_DATA_PLANE",
         });
       }
-      // Only a pinned environment is the box's grant, never the trace
-      // composition; a Cursor key is the organization's, on no environment.
-      const boxEnvironmentId = pins.environmentId;
-      if (boxReason === "credential") {
-        // The credential check `runHarnessTurn` would fail, run BEFORE the box
-        // is booted: a refused turn must not pay for a box, nor fail past
-        // `modelCallStarted` and hold the lease to its TTL. Same function and
-        // inputs as the turn's own check.
-        const credentialRefusal = await playgroundCredentialRefusal({
-          harnessId: engine.harness,
-          bearer: authHeader,
-          projectId,
-          signal: abortController.signal,
-        });
-        if (credentialRefusal) {
-          return v1Error(c, "CONFLICT", credentialRefusal, {
-            reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
-          });
-        }
-      }
-      const acquired = await acquirePlaygroundHarnessBox({
-        bearer: authHeader.replace(/^Bearer\s+/i, ""),
-        projectId,
-        chatSessionId: runtimeChatSessionId,
-        ...(boxEnvironmentId ? { projectEnvironmentId: boxEnvironmentId } : {}),
-        harness: engine.harness,
-        signal: abortController.signal,
-      });
+      const acquired = earlyBox
+        ? await takeEarly(earlyBox)
+        : await acquireOwnedPlaygroundHarnessBox(resources, boxArgs);
       if (!acquired.ok) {
+        const trialRefusal = nativeHarnessRefusalDetails(
+          acquired.refusal.code,
+          c.get("mcpjamOrganizationId"),
+        );
+        if (trialRefusal) {
+          return v1Error(c, "FORBIDDEN", acquired.refusal.error, trialRefusal);
+        }
         const described = describePlaygroundBoxRefusal(
           engine.harness,
-          boxReason,
+          "conversation",
           acquired.refusal,
         );
         const rateLimited =
@@ -1835,11 +1844,18 @@ async function handleTurn(c: Context): Promise<Response> {
         body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: turnPins },
       });
     modelCallStarted = true;
+    // MCPJam's agent holds its skill tools, the connected servers' own among
+    // them, and its engine starts next. A harness turn reports from its box
+    // writer (`onBoxSkillsWritten` below).
+    if (engine.kind !== "harness" && prepared.effectiveSkills) {
+      reportSkillsDelivered("api", prepared.effectiveSkills);
+    }
     const result = await runUnifiedAssistantTurn({
       runtime: runtime.runtime as never,
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
+      turnTiming: timing,
       messages: inputMessages,
       modelDefinition,
       systemPrompt: appendBrowserRefusalContext(
@@ -1870,25 +1886,22 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(engine.kind === "harness" && conversationBox
         ? { harnessSandboxBinding: conversationBox.binding }
         : {}),
-      // The ENVIRONMENT's resolved skills, for the harness that will write them
-      // into its sandbox. Without this `selectHarnessSkillSource` falls to its
-      // `live` arm and the turn runs the whole PROJECT-WIDE catalog — the
-      // environment's decision honoured by the emulated engine (through
-      // `skillsSource` above) and silently discarded by the harness, which is
-      // the same class of mismatch as running the wrong engine.
-      //
-      // Harness-only and presence-semantic. The emulated arm ignores this
-      // field, so gating on the engine keeps every emulated turn byte-identical
-      // rather than relying on a downstream reader to stay uninterested.
-      //
-      // What still does NOT cross: per-skill SUPPORTING FILES and pinned plugin
-      // versions, which travel as `effectiveCapabilities` — an option
-      // `runAssistantTurn` does not expose (the browser route reaches it
-      // through `web-chat-turn`). So a harness turn here delivers the
-      // environment's skill BODIES, not its attachments. Narrower than the
-      // Playground, and no longer a different set.
-      ...(engine.kind === "harness" && target.environmentSkills !== undefined
-        ? { runtimeSkillsOverride: target.environmentSkills }
+      // The same plan's skills, for the harness that writes them into its
+      // sandbox, with the set that carries their supporting files and pinned
+      // plugin versions. Harness-only and presence-semantic: the emulated arm
+      // ignores these fields, so gating on the engine keeps every emulated
+      // turn byte-identical rather than relying on a downstream reader to
+      // stay uninterested.
+      ...(engine.kind === "harness" && turnSkills.box
+        ? {
+            runtimeSkillsOverride: turnSkills.box.skills,
+            ...(turnSkills.box.set
+              ? { effectiveCapabilities: turnSkills.box.set }
+              : {}),
+            ...(turnSkills.live ? { liveTurn: true } : {}),
+            onBoxSkillsWritten: (written: BoxSkillsResult) =>
+              reportBoxSkillsDelivered("api", turnSkills.skills, written),
+          }
         : {}),
       abortSignal: abortController.signal,
       ...(prepared.progressivePlan
@@ -1901,6 +1914,7 @@ async function handleTurn(c: Context): Promise<Response> {
         message: string;
         code?: string;
         httpStatus?: number;
+        infra?: { code?: string };
       }) => {
         lastEngineError = event;
       },
@@ -1908,8 +1922,14 @@ async function handleTurn(c: Context): Promise<Response> {
     unsettledHarnessCommit = result.harnessSessionCommit;
 
     await runtime.finalizeUsage(result);
+    // The record of what the turn ran with is written from its plan, so it
+    // names exactly the skills the engine was handed.
     if (result.turnTrace)
-      result.turnTrace = { ...result.turnTrace, setupAtTurn };
+      result.turnTrace = {
+        ...result.turnTrace,
+        ...(turnSkills.turnProvenance ?? {}),
+        setupAtTurn,
+      };
 
     // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
     // waiting on background agents ends that wait at the deadline and keeps
@@ -2024,6 +2044,13 @@ async function handleTurn(c: Context): Promise<Response> {
         toolCallCount: result.toolCalls.length,
         engine: engineLabel(engine),
       });
+      // A native harness the organization's trial no longer covers. Refused
+      // before the turn started, so nothing ran and nothing was charged.
+      const trialRefusal = nativeHarnessRefusalDetails(
+        lastEngineError?.infra?.code,
+        c.get("mcpjamOrganizationId"),
+      );
+      if (trialRefusal) return v1Error(c, "FORBIDDEN", message, trialRefusal);
       return v1Error(
         c,
         rateLimited ? "RATE_LIMITED" : "INTERNAL_ERROR",
@@ -2302,14 +2329,11 @@ async function handleTurn(c: Context): Promise<Response> {
     throw error;
   } finally {
     clearTimeout(wallClock);
+    toolListing?.end();
     // Not awaited: the release stops the heartbeat at once, and its `ended`
     // touch (up to 10s) must not hold the response. Every exit path reaches
     // this line.
-    void conversationBox?.release().catch((error: unknown) => {
-      logger.warn("[v1/chat-sessions] conversation box release failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+    void resources.dispose();
     if (browserOutbox)
       await flushBrowserEvidence(browserOutbox);
 

@@ -74,7 +74,8 @@ describe("bindTemplateSeedToOrg (QA-25)", () => {
   it("does not substitute a model from the full Anthropic catalog", () => {
     const models = SUPPORTED_MODELS.filter((row) => row.provider === "anthropic")
       .map((row) => orgRow(String(row.id), "anthropic", row));
-    const seed = { ...chatgptSeed, modelId: "anthropic/claude-haiku-5.5" };
+    // A hosted Anthropic model with no own-key row.
+    const seed = { ...chatgptSeed, modelId: "anthropic/claude-3-haiku" };
     expect(bindTemplateSeedToOrg(seed, on(models))).toEqual({
       kind: "needs_choice",
       input: seed,

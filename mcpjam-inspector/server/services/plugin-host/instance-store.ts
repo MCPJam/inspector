@@ -50,6 +50,8 @@ export interface PluginInstanceControlPort {
       ownerHash: string;
       expiresAt: number;
       contextToken?: string;
+      /** A Settings App: its row also keeps the versioned settings document. */
+      settings?: boolean;
     },
     signal: AbortSignal,
   ): Promise<{ token: string; control: DurablePluginInstanceControl }>;
@@ -81,6 +83,24 @@ export interface PluginInstanceControlPort {
     input: { expectedVersion: number; settingsJson: string },
     signal: AbortSignal,
   ): Promise<DurablePluginInstanceControl>;
+  /** An App opened from a Settings App action. The backend admits it only
+   * while the Settings App lives and its stored document lists the action;
+   * a retry with the same anchor gets the original handle. */
+  issueChild?(
+    childToken: string,
+    input: {
+      childAnchorHash: string;
+      childParentOwnerHash: string;
+      childParentScopeHash: string;
+      childSourceHash: string;
+      childBindingHash: string;
+      childSettingsAction: { name: string; revision: string };
+      ownerHash: string;
+      snapshotJson: string;
+      expiresAt: number;
+    },
+    signal: AbortSignal,
+  ): Promise<{ token: string; control: DurablePluginInstanceControl }>;
 }
 export const pluginInstanceIdentityHash = (identity: PluginInstanceIdentity) =>
   pluginReceiptHash([
@@ -174,6 +194,13 @@ export function createPluginInstanceControlPort(
     writeSettings: async (token, input, signal) =>
       (await request({ action: "settings", ...key(token), ...input }, signal))
         .control,
+    issueChild: async (childToken, input, signal) =>
+      checkedActivation(
+        await request(
+          { action: "issue-child", ...key(childToken), childToken, ...input },
+          signal,
+        ),
+      ),
     models: async (threadId, signal) =>
       (
         await request(

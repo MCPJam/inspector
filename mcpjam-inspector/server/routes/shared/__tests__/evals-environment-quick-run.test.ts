@@ -223,7 +223,7 @@ describe("environment quick runs", () => {
     expect(params.projectEnvironmentId).toBe("env-1");
     // An empty committed skill set stays empty on both channels.
     expect(params.pinnedHarnessSkills).toEqual([]);
-    expect(params.pinnedSkillSource).toBeUndefined();
+    expect(params.pinnedSkillSource).toMatchObject({ kind: "pins", pins: [] });
     expect(params.environment.serverBindings).toEqual([
       { serverName: "billing", projectServerId: "srv-1" },
     ]);

@@ -34,6 +34,7 @@ import type {
 import type { VersionNegotiationPreference } from "../mcp-client-manager/version-negotiation.js";
 
 import type { ModelSelection } from "./model-selection.js";
+import type { HostConfigPluginExtensionBehaviorV1 } from "./plugin-extension-behavior.js";
 
 export type { McpProtocolVersion };
 
@@ -357,14 +358,15 @@ export type PluginExtensionCapabilityKey =
 
 /**
  * Per-client "OpenAI plugin extensions" setting. `enabled` is the master
- * switch. `capabilities` is sparse: an absent key means "on whenever the
- * master switch is on", so only switched-off extensions need to be stored.
- * The whole object absent means "use the client style's default" (on for
- * ChatGPT and Codex, off for everything else).
+ * switch. `capabilities` and `behavior` are sparse: an absent key means the
+ * client style's default (`PLUGIN_EXTENSION_STYLE_DEFAULTS`), so only choices
+ * that differ from it need to be stored. The whole object absent means "use
+ * the client style's default" for the master switch too.
  */
 export type HostConfigPluginExtensionsV1 = {
-  enabled: boolean;
+  behavior?: HostConfigPluginExtensionBehaviorV1;
   capabilities?: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
+  enabled: boolean;
 };
 
 /**

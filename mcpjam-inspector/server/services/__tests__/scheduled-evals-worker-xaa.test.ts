@@ -48,6 +48,9 @@ vi.mock("../../routes/shared/evals.js", () => ({
   prepareEvalRun: (...args: unknown[]) => prepareEvalRun(...args),
   shouldSkipExecution: () => false,
 }));
+vi.mock("../evals/suite-account-choices.js", () => ({
+  loadSuiteConnectionIdSets: async () => undefined,
+}));
 vi.mock("../evals/compat-runtime.js", () => ({
   loadSuiteHostConfig: vi.fn().mockResolvedValue({}),
 }));

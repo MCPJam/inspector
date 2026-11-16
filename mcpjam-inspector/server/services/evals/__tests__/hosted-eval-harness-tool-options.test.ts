@@ -88,7 +88,6 @@ vi.mock("../../../utils/harness/e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../../../utils/harness/runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -119,13 +118,15 @@ vi.mock("../../../utils/harness/harness-session-state.js", async (
 });
 
 vi.mock("../../../utils/harness/harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../../../utils/harness/harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 import { driveHostedEvalTurn } from "../drive-hosted-eval-turn";

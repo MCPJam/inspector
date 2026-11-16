@@ -530,6 +530,55 @@ describe("the spine", () => {
     ).toBeNull();
   });
 
+  it("keeps the tool error switch below Expected outcome", async () => {
+    const user = userEvent.setup();
+    const onFailOnToolErrorChange = vi.fn();
+    const { rerender } = render(
+      <StatefulSpine onFailOnToolErrorChange={onFailOnToolErrorChange} />,
+    );
+    const section = screen.getByTestId("spine-expected-outcome-section");
+    const toggle = within(section).getByRole("switch", {
+      name: "Fail this case when a tool call returns an error",
+    });
+    expect(toggle).toBeChecked();
+    expect(
+      within(section).getByText(
+        "Any tool error fails this case, even if the model recovers.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(onFailOnToolErrorChange).toHaveBeenLastCalledWith(false);
+    rerender(
+      <StatefulSpine
+        onFailOnToolErrorChange={onFailOnToolErrorChange}
+        failOnToolError={false}
+      />,
+    );
+    expect(
+      screen.getByRole("switch", {
+        name: "Fail this case when a tool call returns an error",
+      }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByText(
+        "Tool errors alone don't fail this case. They still show in the trace.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it.each([{ readOnly: true, onFailOnToolErrorChange: vi.fn() }, {}])(
+    "hides the tool error switch when it cannot be used (%j)",
+    (props) => {
+      render(<StatefulSpine {...props} />);
+      expect(
+        screen.queryByRole("switch", {
+          name: "Fail this case when a tool call returns an error",
+        }),
+      ).toBeNull();
+    },
+  );
+
   it("nests each check under the action it follows", async () => {
     await openSpine({ steps: withClick });
     const [prompt, click] = screen.getAllByTestId("spine-action-row");

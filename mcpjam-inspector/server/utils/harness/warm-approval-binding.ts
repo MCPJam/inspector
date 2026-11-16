@@ -6,7 +6,24 @@ import { getManagerOrganization } from "../mcp-connections.js";
 import { hostedWarmAgentEnabled } from "./harness-flags.js";
 
 const warmManagers = new WeakSet<MCPClientManager>();
-/** Only the signed-in Playground's project check can admit a manager. */
+/**
+ * Let a turn's manager re-attach to its conversation's running agent. Two
+ * routes call this, each with the organization the backend verified for the
+ * turn's project, never one the request named:
+ *
+ * - The signed-in Playground (`services/chat-turn/managed-connections.ts`),
+ *   with the organization `/web/authorize-project` returned for the member.
+ * - The session API (`routes/v1/chat-session-turn.ts`), behind
+ *   `harnessApiWarmEnabled()`, with the organization the project's
+ *   capabilities read returned for the caller's organization-scoped token.
+ *
+ * Both are safe for the same reasons: a manager holding servers is admitted
+ * only when the backend authorized those servers for that organization, the
+ * organization's own switch still applies, and the turn's warm probe checks
+ * the agent before any prompt reaches it. The two routes never share a
+ * conversation, so neither reaches the other's agent: the API continues only
+ * sessions it created, and the Playground refuses to write to those.
+ */
 export function admitWarmChatManager(manager: MCPClientManager, projectOrg: string | undefined, hasServers: boolean) {
   if (hostedWarmAgentEnabled(projectOrg) && (!hasServers || getManagerOrganization(manager) === projectOrg))
     warmManagers.add(manager);

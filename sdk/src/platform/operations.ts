@@ -115,6 +115,59 @@ import {
   listConformanceRunsOperation,
   startConformanceRunOperation,
 } from "./conformance-operations.js";
+import {
+  diffServerRevisionsOperation,
+  getServerRevisionOperation,
+  listServerRevisionsOperation,
+} from "./server-revision-operations.js";
+import {
+  deleteServerAccountOperation,
+  getServerAccountOperation,
+  listServerAccountsOperation,
+  updateServerAccountOperation,
+  uploadServerAccountTokensOperation,
+} from "./server-account-operations.js";
+import {
+  createDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  getDirectoryFlowOperation,
+  getDirectorySubmissionOperation,
+  getDirectorySubmissionResultsOperation,
+  listDirectoryFlowsOperation,
+  listDirectorySubmissionsOperation,
+  startDirectorySubmissionRunOperation,
+  updateDirectorySubmissionOperation,
+} from "./directory-submission-operations.js";
+import {
+  cancelReviewerAttemptOperation,
+  createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
+  getReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  resumeReviewerAttemptOperation,
+} from "./directory-reviewer-attempt-operations.js";
+import {
+  exportDirectorySubmissionOperation,
+  getDirectorySubmissionFindingOperation,
+  getDirectorySubmissionHandoffOperation,
+  importDirectoryFindingOperation,
+  listDirectorySubmissionEventsOperation,
+  listDirectorySubmissionFindingsOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  recordDirectorySubmissionStatusOperation,
+} from "./directory-submission-handoff-operations.js";
+import {
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+} from "./directory-test-plan-operations.js";
+import {
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
+} from "./directory-submission-eval-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -1949,7 +2002,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
   name: "start_claude_readiness_run",
   title: "Start a Claude directory readiness run",
   description:
-    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -1999,7 +2052,7 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   name: "start_openai_readiness_run",
   title: "Start an OpenAI directory readiness run",
   description:
-    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; the verdict is available on the run after completion. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; the verdict is available on the run after completion. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2048,7 +2101,7 @@ export const startMuseReadinessRunOperation: PlatformOperation<
   name: "start_muse_readiness_run",
   title: "Start a Muse directory readiness run",
   description:
-    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval.",
+    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2097,7 +2150,7 @@ export const getReadinessRunOperation: PlatformOperation<
   name: "get_readiness_run",
   title: "Get a directory readiness run",
   description:
-    "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap.",
+    "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2157,7 +2210,7 @@ export const listReadinessRunsOperation: PlatformOperation<
   name: "list_readiness_runs",
   title: "List directory readiness runs",
   description:
-    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run.",
+    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2192,7 +2245,7 @@ export const cancelReadinessRunOperation: PlatformOperation<
   name: "cancel_readiness_run",
   title: "Cancel a directory readiness run",
   description:
-    "Stop a readiness run that is still going. The executing node learns within about half a minute, so the run's real terminal state arrives on a later `get_readiness_run` — this response reports the request, not the outcome.",
+    "Stop a readiness run that is still going. The executing node learns within about half a minute, so the run's real terminal state arrives on a later `get_readiness_run` — this response reports the request, not the outcome. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   // A write, and it declares its risk as every write must — but cancelling
   // STOPS work rather than starting it: it spends nothing, destroys no record,
   // and the run it interrupts is one somebody is paying to keep running.
@@ -2214,6 +2267,33 @@ export const cancelReadinessRunOperation: PlatformOperation<
       runId: result.runId,
       status: result.status,
     };
+  },
+};
+
+export const resumeReadinessRunOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  { project: SelectedProjectInfo; run: PlatformReadinessRunReceipt }
+> = {
+  name: "resume_readiness_run",
+  title: "Resume a directory readiness run",
+  description:
+    "Run again a readiness run that stopped on the server before it finished. Call it once when `get_readiness_run` reports `resumable: true`, then keep polling `get_readiness_run`. Only the person who started the run can resume it, because the server is graded with their credentials; it is refused for anyone else and for a run that is running, finished, or no longer waiting. Returns a receipt, not a verdict. Readiness is in beta: an organization outside the beta is refused, and the error names the feature.",
+  // The run's own requester finishing the run they started: nothing new is
+  // created and nothing is spent beyond what the start already allowed.
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.resumeReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), run };
   },
 };
 
@@ -2274,7 +2354,7 @@ export const getReadinessReportOperation: PlatformOperation<
   name: "get_readiness_report",
   title: "Get a directory readiness report",
   description:
-    "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app.",
+    "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2371,6 +2451,50 @@ export type {
   StartConformanceRunResult,
 } from "./conformance-operations.js";
 export type { ResolvedServerInfo, ServerScopedInput };
+
+// ── Server revision operations ───────────────────────────────────────
+// Defined in `server-revision-operations.ts`; re-exported like the above.
+
+export {
+  diffServerRevisionsOperation,
+  getServerRevisionOperation,
+  listServerRevisionsOperation,
+};
+export type {
+  DiffServerRevisionsInput,
+  DiffServerRevisionsResult,
+  GetServerRevisionInput,
+  GetServerRevisionResult,
+  ListServerRevisionsInput,
+  ListServerRevisionsResult,
+} from "./server-revision-operations.js";
+
+// ── Server account operations ────────────────────────────────────────
+// Defined in `server-account-operations.ts`; re-exported like the above.
+
+export {
+  deleteServerAccountOperation,
+  getServerAccountOperation,
+  listServerAccountsOperation,
+  updateServerAccountOperation,
+  uploadServerAccountTokensOperation,
+};
+export type {
+  DeleteServerAccountResult,
+  ListServerAccountsResult,
+  ServerAccountInput,
+  ServerAccountResult,
+  UpdateServerAccountInput,
+  UploadServerAccountTokensInput,
+  UploadServerAccountTokensResult,
+} from "./server-account-operations.js";
+
+// Directory submission operations, from modules that export nothing else.
+export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
+export * from "./directory-submission-handoff-operations.js";
+export * from "./directory-test-plan-operations.js";
+export * from "./directory-submission-eval-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -9064,7 +9188,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "The saved host (client) this turn executes AS — it decides which ENGINE runs. A host that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the real runtime; without one the turn runs MCPJam's emulated engine. The server reads the host's own config for this: harness and computer are never accepted from the request. PER-TURN, not pinned to the session — re-send it on every turn, and read the response's `engine` field to confirm what ran. A continuation of a session that named ONLY a host must re-send it: omitting it is refused (details.reason: 'HOST_TARGET_REQUIRED') rather than answered by the emulated engine. An environment already pins its own host, so pass this alongside environmentId only to assert which host you expect (a mismatch is rejected). A harness turn requires toolMode:'auto' with no allowedTools/maxToolCalls, because a harness builds its own tool set and this surface cannot narrow it. It also cannot be sent together with serverIds: hostId cannot be pinned beside them, so a later turn that omitted it would run the emulated engine on a session established on the harness (refused with details.kind: 'surface-unpinnable-host'). Use environmentId, or hostId alone plus per-turn allowedServerIds."
+      "The saved host (client) this turn executes AS — it decides which ENGINE runs. A host that declares an agent harness (Claude Code, Codex) runs the real runtime; without one the turn runs MCPJam's emulated engine. A runtime this API cannot run, such as Cursor CLI or a client running a vendor's agent loop, is refused before the turn (details.reason: 'HARNESS_UNAVAILABLE', with details.kind naming why). The server reads the host's own config for this: harness and computer are never accepted from the request. PER-TURN, not pinned to the session — re-send it on every turn, and read the response's `engine` field to confirm what ran. A continuation of a session that named ONLY a host must re-send it: omitting it is refused (details.reason: 'HOST_TARGET_REQUIRED') rather than answered by the emulated engine. An environment already pins its own host, so pass this alongside environmentId only to assert which host you expect (a mismatch is rejected). A harness turn requires toolMode:'auto' with no allowedTools/maxToolCalls, because a harness builds its own tool set and this surface cannot narrow it. It also cannot be sent together with serverIds: hostId cannot be pinned beside them, so a later turn that omitted it would run the emulated engine on a session established on the harness (refused with details.kind: 'surface-unpinnable-host'). Use environmentId, or hostId alone plus per-turn allowedServerIds."
     ),
   environmentId: z
     .string()
@@ -19230,6 +19354,18 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  // Server accounts. Tokens are write-only, and the upload and the update are
+  // excluded from the MCP catalog and the agent registry: the upload carries a
+  // token in its INPUT, and the default decides which account runs with no
+  // saved account choice sign in as.
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  uploadServerAccountTokensOperation,
+  updateServerAccountOperation,
+  deleteServerAccountOperation,
   listServerToolsOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -19247,7 +19383,44 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  // Directory submissions: one directory's form for a saved server, graded by runs.
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
+  // A submission's reviewer sign-in attempts.
+  createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  // Resuming one from its id: the summary, findings, pack and the records.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  // A submission's test plan: the calls its runs may make, and what they showed.
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  // A submission's test cases, as the eval suite that holds them.
+  getDirectorySubmissionEvalsOperation,
+  setDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  exportDirectorySubmissionTestCasesOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,

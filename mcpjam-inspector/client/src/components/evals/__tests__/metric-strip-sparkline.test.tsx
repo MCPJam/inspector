@@ -174,6 +174,51 @@ describe("MetricStrip sparkline hover", () => {
     const tooltip = within(sparkline).getByText("Run 2").closest(".top-full");
     expect(tooltip).toBeTruthy();
   });
+
+  it("marks the hovered bar by opacity, without a guide line or dots", () => {
+    render(<MetricStrip bars data={sampleData} />);
+    const latency = screen.getByTestId("metric-sparkline-latency");
+    const pairOpacity = () =>
+      [...latency.querySelectorAll("svg > g")].map((pair) =>
+        pair.getAttribute("opacity"),
+      );
+    // Pairs rest dimmed like single bars, so hover reads as emphasis.
+    expect(pairOpacity()).toEqual(["0.6", "0.6"]);
+    for (const metric of ["latency", "pass-rate", "tokens", "tool-calls"]) {
+      const chart = screen.getByTestId(`metric-sparkline-${metric}`);
+      fireEvent.mouseMove(chart, { clientX: 0 });
+      expect(chart.querySelector("circle")).toBeNull();
+      expect(chart.querySelector("line[stroke-dasharray]")).toBeNull();
+    }
+    expect(pairOpacity()).toEqual(["1", "0.6"]);
+  });
+
+  it("keeps the hover dot and guide line on line sparklines", () => {
+    // Point 1 of 60 sits at x≈4.9; measuring against the unpadded width
+    // picked point 2 there.
+    const series = Array.from({ length: 60 }, () => sampleData.series[1]);
+    render(<MetricStrip data={{ ...sampleData, series }} />);
+    const tokens = screen.getByTestId("metric-sparkline-tokens");
+    fireEvent.mouseMove(tokens, { clientX: 5 });
+    expect(within(tokens).getByText("Run 2")).toBeInTheDocument();
+    expect(tokens.querySelector("circle")).toBeTruthy();
+    expect(tokens.querySelector("line[stroke-dasharray]")).toBeTruthy();
+  });
+
+  it("selects the bar under the pointer across the padded plot area", () => {
+    const series = Array.from({ length: 20 }, () => sampleData.series[1]);
+    render(<MetricStrip bars data={{ ...sampleData, series }} />);
+    const latency = screen.getByTestId("metric-sparkline-latency");
+    const pairs = latency.querySelectorAll("svg > g");
+    // x=7 is on the first P95 bar, past the unpadded slot boundary at x=6.
+    fireEvent.mouseMove(latency, { clientX: 7 });
+    expect(within(latency).getByText("Run 1")).toBeInTheDocument();
+    expect(pairs[0]).toHaveAttribute("opacity", "1");
+    // x=113 is on the last P50 bar, before the unpadded boundary at x=114.
+    fireEvent.mouseMove(latency, { clientX: 113 });
+    expect(within(latency).getByText("Run 20")).toBeInTheDocument();
+    expect(pairs[19]).toHaveAttribute("opacity", "1");
+  });
 });
 
 describe("MetricStrip bars", () => {

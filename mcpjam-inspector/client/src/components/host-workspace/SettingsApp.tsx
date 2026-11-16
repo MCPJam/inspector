@@ -13,9 +13,12 @@ import {
   type WidgetHost,
 } from "@mcpjam/widget-react";
 import {
+  inlineThenMoveModes,
+  inlineThenMoveStart,
   openAIDisplayModes,
   negotiateResourceDisplayModes,
   pickOpenAIDisplayMode,
+  type DisplayBehavior,
 } from "@mcpjam/sdk/widget-runtime";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -27,7 +30,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useSavedClient } from "@/contexts/saved-client-context";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
-import { pluginExtensionsForHost } from "@/lib/client-config-v2-plugin-extensions";
+import { displayBehaviorForHost } from "@/lib/client-config-v2-plugin-extensions";
 import {
   negotiateRetainedAppHost,
   withCurrentHostContext,
@@ -52,7 +55,7 @@ const isMode = (value: unknown): value is SettingsDisplayMode =>
 export function settingsAppModes(
   host: WidgetHost,
   app: ServerSettingsApp,
-  openAIRules = host.surface.openAIDisplayModes === true,
+  behavior: DisplayBehavior | undefined = host.surface.displayBehavior,
 ) {
   const environment = host.environment;
   const matrix = host.resolvers
@@ -66,9 +69,18 @@ export function settingsAppModes(
   const modes = Array.isArray(configured)
     ? matrix.filter((mode) => configured.includes(mode))
     : matrix;
+  const hints =
+    behavior?.hints === "ui"
+      ? app.widgetContent.uiDisplayHints
+      : app.widgetContent.resourceDisplayHints;
+  if (behavior?.start === "inline-then-move") {
+    const allowed = inlineThenMoveModes(modes);
+    return { allowed, initial: inlineThenMoveStart(allowed) };
+  }
+  const openAIRules = behavior?.start === "hint-first";
   const allowed = (
     openAIRules ? openAIDisplayModes : negotiateResourceDisplayModes
-  )(modes, app.widgetContent.resourceDisplayHints);
+  )(modes, hints);
   const requested =
     environment.draftHostContext?.displayMode ??
     (environment.isPlaygroundActive
@@ -77,7 +89,7 @@ export function settingsAppModes(
   return {
     allowed,
     initial: openAIRules
-      ? pickOpenAIDisplayMode(allowed, app.widgetContent.resourceDisplayHints)
+      ? pickOpenAIDisplayMode(allowed, hints)
       : (allowed.find((mode) => mode === requested) ?? allowed[0]),
   };
 }
@@ -107,14 +119,15 @@ export function SettingsApp({
   const dialog = useSettingsDialogPresentation();
   const saved = useSavedClient();
   const profile = useActiveMcpProfile();
-  const openAIRules =
-    host.surface.openAIDisplayModes ??
-    pluginExtensionsForHost(
-      saved ?? {
-        hostStyle: host.environment.sharedHostStyle,
-        mcpProfile: profile,
-      },
-    ).capabilities.displayModes;
+  // A host that sets `displayBehavior`, even to undefined, decides it.
+  const displayBehavior = Object.hasOwn(host.surface, "displayBehavior")
+    ? host.surface.displayBehavior
+    : displayBehaviorForHost(
+        saved ?? {
+          hostStyle: host.environment.sharedHostStyle,
+          mcpProfile: profile,
+        },
+      );
   const [handle] = useState(() => ({
     instanceToken: app.childToken,
     instanceId: app.childToken,
@@ -129,13 +142,13 @@ export function SettingsApp({
   const currentOwned = useMemo(
     () =>
       createThreadAppHost(host, handle, serverId, "model", {
-        openAIDisplayModes: openAIRules,
+        displayBehavior,
         projectId: scope.projectId,
       }),
-    [host, handle, serverId, openAIRules, scope.projectId],
+    [host, handle, serverId, displayBehavior, scope.projectId],
   );
   const [opening] = useState(() => {
-    const modes = settingsAppModes(host, app, openAIRules);
+    const modes = settingsAppModes(host, app, displayBehavior);
     const owned = currentOwned;
     const owner = negotiateRetainedAppHost({
       ...owned,
@@ -153,7 +166,7 @@ export function SettingsApp({
   const [appModes, setAppModes] = useState<
     ("inline" | "fullscreen" | "pip")[] | undefined
   >();
-  const currentModes = settingsAppModes(host, app, openAIRules);
+  const currentModes = settingsAppModes(host, app, displayBehavior);
   const allowed = opening.allowed.filter(
     (value) =>
       currentModes.allowed.includes(value) &&

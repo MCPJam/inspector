@@ -296,7 +296,7 @@ describe("coverage and context", () => {
   });
 
   it("carries the policy snapshot date the corpus was pinned at", () => {
-    expect(gradeClaudeReadiness(input()).policySnapshotDate).toBe("2026-08-19");
+    expect(gradeClaudeReadiness(input()).policySnapshotDate).toBe("2026-11-13");
   });
 });
 
@@ -365,8 +365,11 @@ describe("the submission profile flows into the auth findings", () => {
     const result = gradeClaudeReadiness(
       input({ submissionProfile: { name: "only a name" } }),
     );
+    // The reviewer path reads no profile; with no submission it does not apply.
     const artifacts = result.findings.filter(
-      (finding) => finding.lane === "submission-artifacts",
+      (finding) =>
+        finding.lane === "submission-artifacts" &&
+        !finding.id.startsWith("both.reviewer.")
     );
     expect(artifacts.every((f) => f.status === "not-evaluated")).toBe(true);
     expect(artifacts[0].notEvaluatedReason).toMatch(/did not validate/);

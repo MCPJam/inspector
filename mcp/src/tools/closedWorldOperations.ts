@@ -26,6 +26,12 @@ const CLOSED_WORLD_OPERATIONS: ReadonlySet<string> = new Set([
   "set_eval_suite_environments",
   "get_eval_run_disclosure",
   "list_eval_suite_revisions",
+  "list_server_revisions",
+  "get_server_revision",
+  "diff_server_revisions",
+  // Not `delete_server_account`: it asks the token's issuer to revoke it.
+  "list_server_accounts",
+  "get_server_account",
   "list_eval_cases",
   "get_eval_case",
   "create_eval_case",

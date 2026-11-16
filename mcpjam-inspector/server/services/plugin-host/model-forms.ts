@@ -248,6 +248,7 @@ export function createModelFormExecutor(options: {
               throw new PluginInvocationError("INSTANCE_HOST_CHANGED");
             return modelApps.publish(
               result, model, execution.toolName, initial.revision, completed.tool._meta,
+              currentSignal,
             );
           },
           classifyFailure: () => "unknown",

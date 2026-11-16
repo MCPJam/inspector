@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { nativeToolCallId, readNativeToolResult } from "../native-results.js";
+import {
+  nativeToolCallId,
+  readNativeToolResult,
+  withoutHostCorrelation,
+} from "../native-results.js";
 
 it("uses only the runtime-selected metadata key for result correlation", () => {
   const params = { _meta: { callId: "codex-call", "claudecode/toolUseId": "claude-call" } };
@@ -133,5 +137,43 @@ describe("native tool result correlation", () => {
     await expect(
       readNativeToolResult(f.control, "turn", "toolu_incomplete"),
     ).rejects.toThrow("unavailable");
+  });
+});
+
+describe("MCPJam's own correlation key", () => {
+  const call = (meta: Record<string, unknown>) => {
+    const message = {
+      jsonrpc: "2.0" as const,
+      id: 4,
+      method: "tools/call",
+      params: { _meta: meta, arguments: { note: "one" }, name: "record_write" },
+    };
+    return { body: JSON.stringify(message), message };
+  };
+
+  it("is read for correlation and left out of the forwarded request", () => {
+    const forwarded = call({ "mcpjam/toolCallId": "call_1", progressToken: 1 });
+    expect(nativeToolCallId(forwarded.message.params, "mcpjam/toolCallId")).toBe("call_1");
+    const sent = withoutHostCorrelation(forwarded, "mcpjam/toolCallId");
+    expect(sent.message).toEqual({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { _meta: { progressToken: 1 }, arguments: { note: "one" }, name: "record_write" },
+    });
+    expect(sent.body).toBe(JSON.stringify(sent.message));
+  });
+
+  it("drops a metadata object that held only the key", () => {
+    const sent = withoutHostCorrelation(call({ "mcpjam/toolCallId": "call_1" }), "mcpjam/toolCallId");
+    expect(sent.message?.params).toEqual({ arguments: { note: "one" }, name: "record_write" });
+  });
+
+  it("forwards a runtime's own key and an unstamped request byte for byte", () => {
+    const codex = call({ callId: "codex-call" });
+    expect(withoutHostCorrelation(codex, "callId")).toBe(codex);
+    const unstamped = call({ progressToken: 1 });
+    expect(withoutHostCorrelation(unstamped, "mcpjam/toolCallId")).toBe(unstamped);
+    expect(withoutHostCorrelation({ body: "", message: undefined }, "mcpjam/toolCallId").body).toBe("");
   });
 });

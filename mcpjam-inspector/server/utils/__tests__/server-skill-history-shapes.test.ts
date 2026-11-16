@@ -33,7 +33,7 @@ import {
   applyActingServerSkillGate,
   replaceActingServerSkillGateWithRefusal,
 } from "../server-skill-acting-gate";
-import { heldEntryConflict } from "../server-skill-held-entry";
+import { heldEntryConflict } from "../computers/server-skill-held-entry";
 
 const ctx: ProvenanceContext = {
   key: randomBytes(32),

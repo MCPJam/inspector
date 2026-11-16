@@ -82,8 +82,10 @@ import {
   shouldTouchSessionCommand,
   shouldTouchSessionPanel,
 } from "../../utils/computers/activity-touch.js";
+import { browserBoxAwake } from "../../utils/computers/browser-box-awake.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { registerBrowserInputPing } from "./computer-browser-input-ping.js";
 import { browserProfileArchiveResponse } from "../../../shared/browser-session-header.js";
 
 /** How long a panel's lease lives without a heartbeat. The panel beats every
@@ -360,6 +362,13 @@ export function createComputerBrowserPanelRoutes(
   }
 
   const app = new Hono();
+  registerBrowserInputPing(app, {
+    authorize,
+    currentSession: (claims) =>
+      currentSession(browserTarget(claims), claims.sessionId),
+    touchSession,
+    touchActivity,
+  });
 
   app.get("/session", async (c) => {
     const auth = await authorize(c);
@@ -433,7 +442,11 @@ export function createComputerBrowserPanelRoutes(
       // browser now watches through `/computers/browser/stream`, which
       // authenticates upstream on the server with a password that never
       // leaves it.
-      if ("sandboxRowId" in target) {
+      //
+      // A paused box answers without its daemon, which is not running. A
+      // paused pane reads `asleep` to notice that something else woke it.
+      const asleep = !ensure && !browserBoxAwake(target, auth.status);
+      if (!asleep && "sandboxRowId" in target) {
         const readiness = await createClient(session).status();
         if (readiness.kind !== "ok" || readiness.bootId !== session.bootId) {
           return c.json(
@@ -447,7 +460,9 @@ export function createComputerBrowserPanelRoutes(
           );
         }
       }
-      const lease = await readLease(session);
+      const lease = asleep
+        ? { state: "unknown" as const }
+        : await readLease(session);
       return c.json({
         ok: true,
         ...(auth.claims.computerId
@@ -461,6 +476,8 @@ export function createComputerBrowserPanelRoutes(
         contextMode: session.contextMode,
         lease,
         yours: heldByCaller(lease, userId),
+        asleep,
+        ...(session.idleMs !== undefined ? { idleMs: session.idleMs } : {}),
       });
     } catch (error) {
       reportRouteFailure("browser panel session lookup failed", error, {
@@ -518,11 +535,10 @@ export function createComputerBrowserPanelRoutes(
         action,
         took: outcome.took,
       });
-      // HOLDING THE BROWSER IS BEING HERE. The pane beats this every ~30s
-      // while visible, which is the only presence signal on the VNC tier (no
-      // frame socket, so no pings) and the strongest one anywhere: somebody
-      // mid-login or mid-2FA is typing into this machine. Reclaiming it under
-      // them is the failure this guards.
+      // Holding the browser keeps the session row fresh, but it is not use:
+      // the backend answers `counted: false`, so the desktop still pauses five
+      // minutes after the last input. Typing over VNC reaches the backend as
+      // `/input-ping`, which does count.
       if (outcome.took && shouldTouchSessionPanel(session.sessionId)) {
         void touchSession({ sessionId: session.sessionId, kind: "panel" })
           .then(({ counted }) => {
@@ -917,9 +933,9 @@ export function createComputerBrowserPanelRoutes(
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
-      // The backend decides whether an open panel still counts — it stops
-      // counting once the browser has been idle of real commands for a while,
-      // so a tab left open over a weekend cannot hold a machine awake forever.
+      // The backend decides whether an open panel counts. Watching is not use,
+      // so it answers `counted: false` and the desktop pauses five minutes
+      // after the last command or input, however long the tab stays open.
       const { counted } = await touchSession({
         sessionId: session.sessionId,
         kind: "panel",

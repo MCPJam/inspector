@@ -35,6 +35,7 @@ import {
   type PluginNoticeData,
 } from "@/lib/plugins/plugin-notice-display";
 import { usePluginMessage } from "@/hooks/use-plugin-message";
+import { useSingleFlight } from "@/hooks/use-single-flight";
 import { useAppMessageDraft } from "@/components/host-workspace/use-app-message-draft";
 import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
 import {
@@ -49,6 +50,8 @@ import { TakeoverFormSlot } from "@/components/elicitation/TakeoverFormSlot";
 import { cancelComposerForms } from "@/components/elicitation/composer-form-store";
 import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
 import {
+  displayBehaviorForHost,
+  entrypointWithoutFullscreenForHost,
   pluginExtensionsForHost,
   pluginExtensionProfileForHost,
   type PluginExtensionsHostConfig,
@@ -70,6 +73,7 @@ import {
   useExtensionSlot,
   useExtensionStore,
   useExtensionWorkspaceState,
+  type ExtensionPorts,
 } from "@/components/host-workspace/ExtensionWorkspaceProvider";
 import { useElementViewportRect } from "@/components/host-workspace/use-element-rect";
 import {
@@ -302,6 +306,7 @@ import {
 } from "@/lib/compare-panes";
 import { useComparePaneSkillsSection } from "./compare-pane-skills";
 import { useComparePaneControls } from "./use-compare-pane-controls";
+import { useComparePaneDisplayStore } from "@/stores/compare-pane-display-store";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
@@ -334,6 +339,8 @@ import {
 } from "@/contexts/scenario-client-style-context";
 import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { useHarnessBoxPreparation } from "@/hooks/use-harness-box-preparation";
+import { useNativeHarnessHandoff } from "./use-native-harness-handoff";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
   getAppDraftInteractivity,
@@ -392,6 +399,7 @@ import {
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
+import { ChatAppDisplayBehaviorProvider } from "@/contexts/chat-app-display-behavior-context";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
 import {
   isToolPart,
@@ -399,6 +407,7 @@ import {
   getToolInfo,
 } from "@/components/chat-v2/thread/thread-helpers";
 import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
+import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { artifactStableKey } from "@/lib/artifact-urls";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
@@ -865,6 +874,7 @@ export function PlaygroundMain({
   const compareSeedSourceRef = useRef<Record<string, string>>({});
   // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const paneDisplays = useComparePaneDisplayStore((s) => s.byPane);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const patchHostContext = useHostContextStore((s) => s.patchHostContext);
@@ -992,7 +1002,6 @@ export function PlaygroundMain({
     projectId: convexProjectId,
     isAuthenticated: isConvexAuthenticated,
   });
-  const attachmentUploadInFlightRef = useRef(false);
   const projectOrganizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
@@ -1296,7 +1305,7 @@ export function PlaygroundMain({
     projectId: convexProjectId,
   });
   // Per-client "OpenAI plugin extensions" setting (C1): on by default only
-  // for the ChatGPT and Codex styles, never by visual family.
+  // for the ChatGPT, Codex and Claude styles, never by visual family.
   const pluginExtensions = useMemo(
     () =>
       pluginExtensionsForHost({
@@ -1308,6 +1317,16 @@ export function PlaygroundMain({
     [hostStyle, previewedHost?.config?.agentLoop, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
   );
   const pluginExtensionsEnabled = pluginExtensions.enabled;
+  // ChatGPT's or Claude's rules for this client's Apps: how they choose a
+  // display mode, and where an entry App that can't go fullscreen opens.
+  const pluginExtensionHost = {
+    hostStyle,
+    harness: previewedHost?.config?.harness,
+    mcpProfile: previewedHost?.config?.mcpProfile,
+  };
+  const displayBehavior = displayBehaviorForHost(pluginExtensionHost);
+  const entrypointWithoutFullscreen =
+    entrypointWithoutFullscreenForHost(pluginExtensionHost);
   // Who owns extension state for this client. Null turns every extension off.
   const extensionIdentity = useMemo<ExtensionOwnerIdentity | null>(
     () =>
@@ -1395,6 +1414,7 @@ export function PlaygroundMain({
     seedReasoningEffort,
     reasoningEffortLevelsFor,
     setReasoningEffortForModel,
+    hasPickedModel,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -1433,6 +1453,7 @@ export function PlaygroundMain({
     hiddenEnvironmentActive,
     outOfCreditsReason,
     harnessStartupPhase,
+    harnessBoxPreparation,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
     pluginContextReferences: currentExtensionContext,
@@ -1448,6 +1469,7 @@ export function PlaygroundMain({
     hostedOrgModelConfig,
     inheritedEnvironmentModel: isEnvironmentMode ? playgroundEnvironment.preview?.host : undefined,
     selectionIntent: isEnvironmentMode || previewedHostId ? "inherit" : "picked",
+    rememberPickedTarget: true,
     hostedContext: {
       ...(shouldUseOwnedExtensionModelRoute({
         flag: extensionsFlag,
@@ -1623,11 +1645,11 @@ export function PlaygroundMain({
     if (ids.length > 0 && serversById.size === 0) return;
 
     // The first seed of this mount (a page reload, or coming back to a host
-    // after it was unavailable) re-applies the host to the single chat, as it
-    // always has, but leaves the compare panes alone: pane 1 is a model and
-    // effort the user saved, and a reload must not swap it for the host's.
-    // Only a host SWITCH (or an edit of the host's config) moves the host's
-    // model into pane 1.
+    // after it was unavailable) leaves the compare panes alone: pane 1 is a
+    // model and effort the user saved, and a reload must not swap it for the
+    // host's. The single chat keeps a model the user picked for this host the
+    // same way. Only a host SWITCH (or an edit of the host's config) moves
+    // the host's model in.
     const isFirstSeedThisMount = last === null;
     lastSeededHostRef.current = { hostId: previewedHostId, configId, environment: isEnvironmentMode };
 
@@ -1663,7 +1685,7 @@ export function PlaygroundMain({
         availableModels,
         undefined,
       );
-      if (match) {
+      if (match && !(isFirstSeedThisMount && hasPickedModel)) {
         setSelectedModel(match, { selection: cfg.modelSelection });
         // A selected host's saved effort is the default for its own model
         // (a later pick on the chip wins and is remembered per model).
@@ -1729,6 +1751,7 @@ export function PlaygroundMain({
     setRequireToolApproval,
     setSelectedModel,
     seedReasoningEffort,
+    hasPickedModel,
   ]);
 
   // Currently selected protocol — derived from the selected tool's metadata
@@ -1856,6 +1879,9 @@ export function PlaygroundMain({
         },
         servers,
         capabilities: resolved.capabilities,
+        displayBehavior: hostConfig
+          ? displayBehaviorForHost(hostConfig)
+          : displayBehavior,
         profile: pluginExtensionProfileForHost(hostConfig),
       };
     },
@@ -1865,6 +1891,7 @@ export function PlaygroundMain({
       currentUserForSender?._id,
       convexProjectId,
       pluginExtensions,
+      displayBehavior,
       compareExtensionServers,
     ],
   );
@@ -1891,6 +1918,10 @@ export function PlaygroundMain({
   const sendPluginOnboardingRef = useRef<SendPluginOnboarding>(async () => {
     throw new Error("Onboarding is unavailable");
   });
+  // Assigned once the new-chat transition below exists.
+  const beginNewChatRef = useRef<ExtensionPorts["beginNewChat"]>(
+    async () => null,
+  );
   // In the Playground, extension state lives in ExtensionWorkspaceProvider
   // (around the whole panel group) and this center only registers its scope.
   // Embedded chats without the provider keep their own inline workspace.
@@ -1899,6 +1930,8 @@ export function PlaygroundMain({
       sendMessage: dispatchPluginMessage,
       runOnboarding: ((...args) =>
         runPluginOnboardingRef.current(...args)) as RunPluginOnboarding,
+      beginNewChat: (isCurrent: () => boolean) =>
+        beginNewChatRef.current(isCurrent),
     }),
     [dispatchPluginMessage],
   );
@@ -1931,6 +1964,8 @@ export function PlaygroundMain({
           // The client's per-extension toggles (C1). One switched off removes
           // only that capability; running Apps keep running.
           capabilities: pluginExtensions.capabilities,
+          displayBehavior,
+          entrypointWithoutFullscreen,
           profile: pluginExtensionProfileForHost(previewedHost?.config),
           // A save re-checks open Apps; it never reloads them by itself.
           hostRevision: previewedHost?.config?.id,
@@ -1947,12 +1982,20 @@ export function PlaygroundMain({
       sendMessage: dispatchPluginMessage,
       runOnboarding: (...args) => runPluginOnboardingRef.current(...args),
       capabilities: pluginExtensions.capabilities,
+      displayBehavior,
       launchProfile: pluginExtensionProfileForHost(previewedHost?.config),
       hostRevision: previewedHost?.config?.id,
     },
   );
   const extensionOwners = useExtensionOwners();
   const setGlobalTakeoverSlot = useExtensionSlot("takeover");
+  const setInlineAppSlot = useExtensionSlot("inline");
+  // A chat with an entry App opened inline shows the thread layout, with the
+  // App at its top and the footer composer, though it has no messages yet.
+  const showsInlineApp =
+    useExtensionWorkspaceState(
+      (state) => !!state.chats[chatSessionId]?.apps.some((row) => row.inline),
+    ) === true;
   const releaseExtensionChat = useExtensionChatRelease();
   // A global App takes the client area over; closing it returns to the chat.
   const globalTakeoverOpen =
@@ -2028,7 +2071,7 @@ export function PlaygroundMain({
     // not tear down running model Apps, only stop the next turn and the
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
-    pluginExtensions.capabilities.displayModes,
+    displayBehavior,
     pluginExtensionProfileForHost(previewedHost?.config),
   );
   usePublishPluginIcons(pluginIconsById, pluginNamesById);
@@ -2366,6 +2409,13 @@ export function PlaygroundMain({
   ]);
   const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
   const leadHost = hostSlots[0].host;
+  const { status: hostedCatalogStatus } = useHostedModelCatalog();
+  // Just after a page load (the sign-in redirect is one) a pane's saved model
+  // can be missing only because these have not loaded yet.
+  const compareModelsSettling =
+    isAuthLoading ||
+    !isSessionBootstrapComplete ||
+    hostedCatalogStatus === "loading";
   const currentClientResolutions = useMemo(
     () =>
       !isMultiHostMode
@@ -2386,6 +2436,7 @@ export function PlaygroundMain({
               : resolvePlaygroundClientColumn({
                   ...input,
                   hostId: paneHostId(pane) ?? "",
+                  modelsSettling: compareModelsSettling,
                 });
           }),
     [
@@ -2395,6 +2446,7 @@ export function PlaygroundMain({
       hostList,
       catalogModels,
       hostedOrgModelConfig,
+      compareModelsSettling,
       hostSlots[0].host,
       hostSlots[0].isLoading,
       hostSlots[1].host,
@@ -2451,12 +2503,20 @@ export function PlaygroundMain({
     },
     [activeProjectId, multiModelSessionGeneration, setPaneTarget],
   );
+  const connectedServerNames = useMemo(
+    () =>
+      Object.keys(servers).filter(
+        (name) => servers[name]?.connectionStatus === "connected",
+      ),
+    [servers],
+  );
   const paneControls = useComparePaneControls({
     sections: skillsSection,
     active: isMultiHostMode,
     panes: comparePanes,
     resolutions: clientResolutions,
     sharedServers: selectedServers,
+    connectedServers: connectedServerNames,
     serverIdByName: serversByName,
     orgConfig: hostedOrgModelConfig,
     restorePanes,
@@ -2466,6 +2526,26 @@ export function PlaygroundMain({
     targets: compareEnvironments.targets,
     paneEnvironments: compareEnvironments.byPane,
   });
+  // A client pane with its own servers shows their Apps, not the chat's.
+  const paneLaneServers = useMemo(
+    () =>
+      new Map(
+        comparePanes.flatMap((pane) => {
+          const names = paneControls.paneServers(pane.paneId)?.names;
+          if (!names) return [];
+          const laneServers = buildExtensionServers({
+            isEnvironmentMode: false,
+            environmentServers: [],
+            selectedServers: names,
+            serversByName,
+            servers,
+            pluginServers: NO_PLUGIN_SERVERS,
+          });
+          return [[pane.paneId, laneServers] as const];
+        }),
+      ),
+    [comparePanes, paneControls.paneServers, serversByName, servers],
+  );
   // The id alone: the panes themselves are republished on every render.
   const selectedComparePaneId = useComparePaneStore(
     (state) => state.selectedPaneId ?? state.panes[0]?.paneId ?? null,
@@ -2859,6 +2939,12 @@ export function PlaygroundMain({
     isThreadEmpty: !effectiveHasMessages,
   });
   composerOnResetRef.current = composer.onSessionReset;
+  // A new hosted harness chat's computer is set up while its first message is typed.
+  // Compare sends on the cards' conversations, not the hidden root session.
+  useHarnessBoxPreparation(
+    isCompareMode ? null : harnessBoxPreparation,
+    composer.input,
+  );
   // Project Environments (Phase 2). Selecting an environment activates the new
   // `executionTarget` synchronously, but the things that must agree with it do
   // not land in the same tick: the chat scope re-keys on the new target, and
@@ -4104,6 +4190,7 @@ export function PlaygroundMain({
     ]),
     begin: (isCurrent) => handleNewChat({ isCurrent }),
   });
+  beginNewChatRef.current = extensionThreadTransition.begin;
 
   // Archive-all clears the composer only once its archive request returns,
   // so App drafts wait for it as they wait for the discard dialog.
@@ -4554,6 +4641,15 @@ export function PlaygroundMain({
     ) {
       return true;
     }
+    // On the multi-select Playground, `serverName` is the app-wide selection,
+    // which may not be one of the servers this chat runs against. Only a
+    // server the user added here may hold up the send.
+    if (
+      playgroundServerSelectorProps?.isMultiSelectEnabled &&
+      !playgroundServerSelectorProps.selectedMultipleServers.includes(serverName)
+    ) {
+      return true;
+    }
 
     const connectionStatus = servers[serverName]?.connectionStatus;
     if (connectionStatus === "connected") {
@@ -4586,7 +4682,13 @@ export function PlaygroundMain({
     } finally {
       setIsPreparingServerForSend(false);
     }
-  }, [ensureServersReady, serverName, servers]);
+  }, [
+    ensureServersReady,
+    isEnvironmentMode,
+    playgroundServerSelectorProps,
+    serverName,
+    servers,
+  ]);
 
   const localAutoApprove = useLocalAutoApproveConsent({
     enabled: localHarnessRequested && requireToolApproval === false,
@@ -4738,7 +4840,7 @@ export function PlaygroundMain({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      void (async () => {
+      return (async () => {
         // Same gate as the composer, and for the same reason: a widget-driven
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
@@ -4772,12 +4874,15 @@ export function PlaygroundMain({
           composer.setInput(text);
           return;
         }
-        sendMessage({
+        const sent = sendMessage({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
         });
         setModelContextQueue([]);
+        // Settles once the message is dispatched, so Retry's lock covers the
+        // hosted preflight too.
+        await sent;
       })();
     },
     [
@@ -5340,7 +5445,8 @@ export function PlaygroundMain({
     skillResults.length > 0 ||
     fileAttachments.length > 0;
 
-  // Submit handler — shared by the composer form and eval Quick Run.
+  // Submit handler — the docked composer and the fullscreen overlays reach it
+  // through `performComposerSubmit`, one submit at a time.
 
   const submitComposer = useCallback(async (): Promise<boolean> => {
     if (isCompareMode && !ensureCompareReady()) return false;
@@ -5358,7 +5464,7 @@ export function PlaygroundMain({
       return false;
     }
     // The composer is disabled in this state, so this is the belt to that
-    // brace: Enter-to-send, starter chips and eval Quick Run all land here.
+    // brace: Enter-to-send and the fullscreen overlays' Send land here.
     if (conversationSendBlockedRef.current) {
       return false;
     }
@@ -5388,10 +5494,6 @@ export function PlaygroundMain({
     // et al. keep working).
     let composerText = composer.input;
     if (fileAttachments.length > 0 && computerAttachmentsActive) {
-      if (attachmentUploadInFlightRef.current) {
-        return false;
-      }
-      attachmentUploadInFlightRef.current = true;
       try {
         const entries = await computerAttachmentUpload.uploadAttachments(
           fileAttachments.map((a) => a.file),
@@ -5421,8 +5523,6 @@ export function PlaygroundMain({
           );
         }
         return false;
-      } finally {
-        attachmentUploadInFlightRef.current = false;
       }
     }
 
@@ -5515,15 +5615,23 @@ export function PlaygroundMain({
     computerAttachmentUpload,
   ]);
   // An App draft is refused for the whole submit, which captures the composer
-  // first and clears it last.
-  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
-    const release = appMessageDraft.hold();
-    try {
-      return await submitComposer();
-    } finally {
-      release();
-    }
-  }, [submitComposer, appMessageDraft.hold]);
+  // first and clears it last. One submit at a time: the gates above await the
+  // network with the draft still in the box, where a second Enter would send
+  // it again. The lock is released after the draft is cleared; until that
+  // render lands, the committed `isSubmitting` keeps Enter and Send refused.
+  const composerSend = useSingleFlight();
+  const performComposerSubmit = useCallback(
+    async (): Promise<boolean> =>
+      (await composerSend.run(async () => {
+        const release = appMessageDraft.hold();
+        try {
+          return await submitComposer();
+        } finally {
+          release();
+        }
+      })) ?? false,
+    [submitComposer, appMessageDraft.hold, composerSend.run],
+  );
 
   const onboardingDeps = {
     onboardingLiveRef,
@@ -5733,6 +5841,15 @@ export function PlaygroundMain({
     }
     return "";
   }, [messages]);
+  useNativeHarnessHandoff({
+    error,
+    projectId: convexProjectId,
+    hostId: previewedHostId,
+    chatSessionId,
+    refusedText: lastUserMessageText,
+    startNewChat: handleNewChat,
+    setComposerInput: composer.setInput,
+  });
   const handleRetryLastMessage = useCallback(() => {
     if (
       !lastUserMessageText ||
@@ -5741,9 +5858,18 @@ export function PlaygroundMain({
     ) {
       return;
     }
-    trackSendMessage({ single_model_send: true });
-    handleSendFollowUp(lastUserMessageText);
-  }, [lastUserMessageText, sendBlocked, trackSendMessage, handleSendFollowUp]);
+    // A resend of the same text: one at a time, like the composer.
+    void composerSend.run(async () => {
+      trackSendMessage({ single_model_send: true });
+      await handleSendFollowUp(lastUserMessageText);
+    });
+  }, [
+    lastUserMessageText,
+    sendBlocked,
+    trackSendMessage,
+    handleSendFollowUp,
+    composerSend.run,
+  ]);
   const errorRetryHandler =
     !isCompareMode &&
     lastUserMessageText &&
@@ -5774,7 +5900,10 @@ export function PlaygroundMain({
         composer.setInput(prompt);
         return;
       }
-      void (async () => {
+      // Shares the composer's lock: the chip clears the composer, so one
+      // clicked while a submit is being prepared would wipe that submit's
+      // attachments and the submit would still send its draft.
+      void composerSend.run(async () => {
         if (!(await ensureSelectedServerReadyForChat())) {
           composer.setInput(prompt);
           return;
@@ -5797,11 +5926,17 @@ export function PlaygroundMain({
           })) { composer.setInput(prompt); return; }
         } else {
           trackSendMessage({ single_model_send: true });
-          sendMessage({
+          // Held until dispatch: the chips stay on screen through the hosted
+          // preflight inside sendMessage, and a second click there would send.
+          const sent = await sendMessage({
             text: prompt,
             metadata: outgoingSenderMetadata,
             widgetModelContext: modelContextQueue,
           });
+          if (!sent) {
+            composer.setInput(prompt);
+            return;
+          }
         }
         setModelContextQueue([]);
         composer.setInput("");
@@ -5813,10 +5948,11 @@ export function PlaygroundMain({
         revokeFileAttachmentUrls(fileAttachments);
         setFileAttachments([]);
         onFirstMessageSent?.();
-      })();
+      });
     },
     [
       composer,
+      composerSend.run,
       composerDisabled,
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,
@@ -6113,6 +6249,7 @@ export function PlaygroundMain({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    isSubmitting: composerSend.pending,
     canStop: !isCompareMode && canStopApproval,
     placeholder,
     currentModel: selectedModel,
@@ -6252,8 +6389,8 @@ export function PlaygroundMain({
   const isWidgetFullTakeover =
     isMobileFullTakeover || isTabletFullscreenTakeover;
 
-  // ChatGPT and Codex (plugin extensions on): a model-invoked chat App that
-  // goes fullscreen moves into a right-rail tab with "Exit full screen",
+  // ChatGPT, Codex and Claude (Display modes on): a model-invoked chat App
+  // that goes fullscreen moves into a right-rail tab with "Exit full screen",
   // and the chat stays beside it. Other clients keep the full overlay.
   const railFullscreenEligible =
     hasExtensionProvider &&
@@ -6313,6 +6450,7 @@ export function PlaygroundMain({
             onEnter: (app) => extensionStore.setState({ modelFullscreen: app }),
             // Leaving from the App gives a narrow window its chat back.
             onExit: () => dismissRail(extensionStore),
+            reveal: () => revealRail(extensionStore),
           }
         : null,
     [
@@ -6341,15 +6479,22 @@ export function PlaygroundMain({
    * condition that matters here), and the trace-diagnostics shell has its own
    * composer with the device frame behind it set to `display: none`.
    */
+  const threadLayoutEmpty = isThreadEmpty && !showsInlineApp;
   const showPinnedConversationTargetNotice =
     !!(apiSessionNotice || conversationTargetNotice) &&
     isWidgetFullTakeover &&
     !showLiveTraceDiagnostics &&
-    !(isThreadEmpty && showSingleModelEmptyStateComposer);
+    !(threadLayoutEmpty && showSingleModelEmptyStateComposer);
 
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <OwnedModelAppPortsProvider value={ownedModelWorkspace.value}>
+      {/* While this chat's plugin extensions run (a scope exists only then), the
+          client's display rules reach every App in it, owned or not. The
+          provider alone isn't enough: it is mounted with the flag off too. */}
+      <ChatAppDisplayBehaviorProvider
+        value={extensionScope ? displayBehavior : undefined}
+      >
       <WidgetFullscreenPlacementContext.Provider value={railFullscreenPlacement}>
       <ChatDeepLinkProvider value={chatDeepLinks}>
       <WorkspaceFileActionsProvider value={threadApps.fileActions}>
@@ -6381,7 +6526,7 @@ export function PlaygroundMain({
               </div>
             </div>
           ) : null}
-          {isThreadEmpty ? (
+          {threadLayoutEmpty ? (
             // Empty state — centered (welcome + composer, or post-connect guide)
             <div
               data-testid="playground-empty-state-shell"
@@ -6557,6 +6702,7 @@ export function PlaygroundMain({
             >
               <div className="relative flex-1 min-h-0">
                 <StickToBottom.Content className="flex flex-col min-h-0">
+                  <div ref={setInlineAppSlot} />
                   <Thread
                     harnessStartupPhase={harnessStartupPhase}
                     chatSessionId={chatSessionId}
@@ -6672,11 +6818,11 @@ export function PlaygroundMain({
           (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
           {!isWidgetFullTakeover &&
             !showFullscreenChatOverlay &&
-            (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
+            (!threadLayoutEmpty || shouldShowUpsell || isAuthLoading) && (
               <div
                 className={cn(
                   "mx-auto w-full max-w-4xl shrink-0",
-                  isThreadEmpty ? "px-4 pb-4" : "p-3",
+                  threadLayoutEmpty ? "px-4 pb-4" : "p-3",
                 )}
               >
                 {errorMessage && (
@@ -6729,6 +6875,7 @@ export function PlaygroundMain({
                 !needsConversationTargetAck
               }
               isThinking={isStreamingActive}
+              isSubmitting={composerSend.pending}
               onStop={stopActiveChat}
               // Same submit path as the docked composer. Its own copy dropped
               // attached prompts/skills (it sent raw text and then cleared the
@@ -6743,6 +6890,7 @@ export function PlaygroundMain({
       </WorkspaceFileActionsProvider>
       </ChatDeepLinkProvider>
       </WidgetFullscreenPlacementContext.Provider>
+      </ChatAppDisplayBehaviorProvider>
     </OwnedModelAppPortsProvider>
   );
 
@@ -6873,6 +7021,7 @@ export function PlaygroundMain({
               !sendBlocked && composerHasContent && !needsConversationTargetAck
             }
             isThinking={isStreamingActive}
+            isSubmitting={composerSend.pending}
             onStop={stopActiveChat}
             onSend={() => {
               setIsTakeoverChatOpen(true);
@@ -7126,7 +7275,8 @@ export function PlaygroundMain({
                           </div>
                         );
                         const column = resolution.column;
-                        const columnTheme = extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
+                        const columnDisplay = paneDisplays[column.compareId];
+                        const columnTheme = columnDisplay?.theme ?? extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
                         return (
                         <MultiModelPlaygroundCard
                           className={compareLaneHidden(`host:${column.compareId}`)}
@@ -7141,7 +7291,7 @@ export function PlaygroundMain({
                             },
                             paneControls.environmentLaneServers.get(
                               column.compareId,
-                            ),
+                            ) ?? paneLaneServers.get(column.compareId),
                           )}
                           browserWorkspace={{
                             id: comparisonRecoveryGroupId,
@@ -7214,7 +7364,8 @@ export function PlaygroundMain({
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={column.hostSnapshot.hostStyle}
                           effectiveThreadTheme={columnTheme}
-                          deviceType={storeDeviceType}
+                          deviceType={columnDisplay?.deviceType ?? storeDeviceType}
+                          displayOverrides={columnDisplay}
                           hideInlineEdit={hideInlineEdit}
                           onWidgetStateChange={onWidgetStateChange}
                           toolRenderOverrides={externalToolRenderOverrides}

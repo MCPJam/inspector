@@ -4,6 +4,7 @@ import { analyticsTransport } from "./analytics-transport.js";
 import type { Context } from "hono";
 import { randomUUID } from "crypto";
 import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
+import type { LocalHarnessRolloutFlag } from "../../shared/harness-descriptors.js";
 import {
   rolloutActorId,
   rolloutPersonProperties,
@@ -16,6 +17,7 @@ import {
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
+import { scrubDeliveredSecretsDeep } from "../../shared/delivered-secret-registry.js";
 import {
   resolveFeatureFlagSource,
   rolloutAnswerWithoutPostHog,
@@ -158,7 +160,7 @@ export function captureServerEventForActor(
       event,
       distinctId: actor.distinctId,
       properties: {
-        ...properties,
+        ...scrubDeliveredSecretsDeep(properties),
         // Retry-dedupe key: posthog-node may resend on transient failures.
         $insert_id: randomUUID(),
         platform: serverPlatform(),
@@ -181,10 +183,10 @@ export function captureServerEventForActor(
  * caller's force-exit timer is the backstop).
  */
 /** Rollout evaluation does not emit exposure events or trust client flags. */
-export async function evaluateBrowserRollout(
-  key: "local-browser-enabled" | "hosted-browser-enabled",
+export async function evaluateHostedBrowserRollout(
   distinctId: string,
 ): Promise<boolean> {
+  const key = "hosted-browser-enabled";
   if (!rolloutActorId(distinctId)) return false;
   const answer = rolloutAnswerWithoutPostHog(key);
   if (answer !== undefined) return answer;
@@ -192,9 +194,6 @@ export async function evaluateBrowserRollout(
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
         sendFeatureFlagEvents: false,
-        ...(key === "local-browser-enabled"
-          ? { personProperties: { local_browser_security_version: "1" } }
-          : {}),
       })) === true
     );
   } catch {
@@ -202,18 +201,6 @@ export async function evaluateBrowserRollout(
   }
 }
 
-/**
- * The server-side rollout flag for each local harness. Codex rolls out on its
- * own flag (D3), whose cohort must be a subset of `codex-host-enabled` — the
- * backend refuses a Codex host config outside that cohort, so a user enabled
- * here but not there could pick Codex and then fail to create the host.
- */
-export const LOCAL_HARNESS_ROLLOUT_FLAG = {
-  "claude-code": "local-harness-enabled",
-  codex: "local-codex-enabled",
-} as const;
-export type LocalHarnessRolloutFlag =
-  (typeof LOCAL_HARNESS_ROLLOUT_FLAG)[keyof typeof LOCAL_HARNESS_ROLLOUT_FLAG];
 
 /** Same server-owned rollout decision for setup, launches and client visibility. */
 export async function evaluateLocalHarnessRollout(

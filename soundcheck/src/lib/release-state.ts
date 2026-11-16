@@ -1,32 +1,27 @@
 /**
- * Where the release pipeline stands, for the verdict and readiness tiles.
+ * Reads which release versions on `main` npm does not have yet, for the
+ * release card (see release-status.ts for how that becomes a status).
  *
- * A release goes through three states on `main`:
+ * A release goes through two states on `main`:
  *
  *   1. Pending changesets. "Start release" dispatches prepare-release.yml,
- *      which versions them and opens the version PR.
- *   2. The version PR is open. Merging it is the release.
- *   3. `main` carries versions npm does not have yet. release-trigger.yml
- *      dispatches release.yml at the first commit where Tests, Build and Test
- *      and Deploy Staging are all green, and release.yml publishes them.
+ *      which versions them, pushes the version commit to `main` and starts
+ *      release.yml on it.
+ *   2. `main` carries versions npm does not have yet. release.yml waits for
+ *      Deploy Staging and runs the full tests, then publishes them. If that
+ *      run stood down, release-trigger.yml dispatches it again at the first
+ *      commit where Deploy Staging is green.
  *
- * Hand-synced with .github/scripts (release-pr.mjs, release-trigger.mjs,
+ * Hand-synced with .github/scripts (release-commit.mjs, release-trigger.mjs,
  * unpublished-versions.mjs): Soundcheck only sees the GitHub API, never the
  * checkout, so it cannot import them.
  */
 
-import { getRepoFile, type WorkflowRun } from "@/lib/github";
-
-/** release-pr.mjs `VERSION_PR_BRANCH`. */
-export const VERSION_PR_BRANCH = "release/version-packages";
+import { getRepoFile } from "@/lib/github";
+import type { UnpublishedVersion } from "@/lib/release-status";
 
 /** The packages release.yml plans for. */
 const RELEASE_PACKAGE_DIRS = ["evaluators", "sdk", "cli", "mcpjam-inspector"];
-
-export interface UnpublishedVersion {
-  name: string;
-  newVersion: string;
-}
 
 /**
  * Packages whose version at `ref` npm does not have. Throws on any registry
@@ -55,25 +50,4 @@ export async function fetchUnpublishedVersions(
     })
   );
   return found.filter((v): v is UnpublishedVersion => v !== null);
-}
-
-/** release-trigger.mjs `releaseLabel`. */
-export function releaseLabel(unpublished: UnpublishedVersion[]): string {
-  const inspector = unpublished.find((r) => r.name === "@mcpjam/inspector");
-  return inspector
-    ? inspector.newVersion
-    : unpublished.map((r) => `${r.name} ${r.newVersion}`).join(", ");
-}
-
-/**
- * The trigger's own release.yml run for these versions (it names runs
- * `Release <label>`), newest first in `runs`. The trigger does not retry one
- * that failed or was cancelled, so that is the state to surface.
- */
-export function automaticReleaseRun(
-  runs: WorkflowRun[],
-  unpublished: UnpublishedVersion[]
-): WorkflowRun | null {
-  const title = `Release ${releaseLabel(unpublished)}`;
-  return runs.find((r) => r.displayTitle === title) ?? null;
 }

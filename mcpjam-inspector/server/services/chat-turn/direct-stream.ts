@@ -10,7 +10,7 @@ import { describeError, describeAsSlug } from "@mcpjam/sdk";
 import type {
   ProgressiveToolPlan,
   ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import { isAbortError } from "@/shared/abort-errors";
 import type { PersistChatOutcome } from "../../utils/chat-ingestion.js";
 import { writePersistReceipt } from "../../utils/chat-ingestion.js";

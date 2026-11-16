@@ -65,7 +65,8 @@ describe("effective setup capture", () => {
         modelDefinition: { id: "openai/gpt-5", name: "GPT-5", provider: "openai", hosted: true },
         selectedServerIds: ["server"],
         uiMessages: [],
-        effectiveCapabilities: input.capabilities,
+        // The setup reads the turn's skills off its plan's set.
+        skills: { set: input.capabilities } as never,
       },
       persist: {
         projectId: "project",

@@ -21,7 +21,7 @@ import {
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useHostList } from "@/hooks/useClients";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { cn } from "@/lib/utils";
 import { HostChipLogo } from "@/components/hosts/host-chip";
@@ -132,7 +132,7 @@ export function ClientsPill({
               {selectedHosts.map(({ hostId, host }) => (
                 <HostChipLogo
                   key={hostId}
-                  logoSrc={resolveHostLogoByName(host?.name ?? hostId)}
+                  logoSrc={resolveHostLogo(host ?? { name: hostId })}
                   name={host ? clientDisplayName(host) : hostId}
                   size="sm"
                   className="rounded-full ring-1 ring-background"
@@ -170,7 +170,7 @@ export function ClientsPill({
             {hosts.map((host) => {
               const checked = selected.includes(host.hostId);
               const hostName = clientDisplayName(host);
-              const hostLogo = resolveHostLogoByName(host.name);
+              const hostLogo = resolveHostLogo(host);
               const productBlocked =
                 !single &&
                 !checked &&

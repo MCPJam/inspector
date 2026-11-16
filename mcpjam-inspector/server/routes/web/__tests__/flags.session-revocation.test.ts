@@ -90,7 +90,9 @@ async function serveWithList(): Promise<RevokedSessionCache> {
 beforeEach(() => {
   feed = createRevokedSessionFeed();
   resetClientFlagsRateLimitForTests();
-  mocks.getAllFlags.mockReset().mockResolvedValue({ xaa: true });
+  mocks.getAllFlags
+    .mockReset()
+    .mockResolvedValue({ "learn-more-enabled": true });
 });
 
 afterEach(async () => {
@@ -118,7 +120,9 @@ describe("GET /api/web/flags — signed-out sessions (MJ-011)", () => {
     const response = await getFlags("token-bob");
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ flags: { xaa: true } });
+    expect(await response.json()).toEqual({
+      flags: { "learn-more-enabled": true },
+    });
     expect(mocks.getAllFlags.mock.calls[0][0]).toBe("user_01H00000000000000000000002");
   });
 

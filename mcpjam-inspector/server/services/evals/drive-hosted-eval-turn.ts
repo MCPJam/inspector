@@ -261,18 +261,19 @@ export interface DriveHostedEvalTurnParams {
   /** Reports what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: RunAssistantTurnOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
+  onBoxSkillsWritten?: RunAssistantTurnOptions["onBoxSkillsWritten"];
   /**
    * The run's PINNED skills, delivered to the harness verbatim.
    *
-   * Present (even empty) ⇒ the harness turn delivers exactly these and skips
-   * the live project-wide fetch, which is what keeps a frozen run frozen. An
-   * empty set is how `skillsOverride: "exclude"` reaches the harness — the A/B
-   * arm has to be deliberately skill-free, not accidentally so.
+   * Present (even empty) ⇒ the harness turn delivers exactly these, which is
+   * what keeps a frozen run frozen. An empty set is how
+   * `skillsOverride: "exclude"` reaches the harness — the A/B arm has to be
+   * deliberately skill-free, not accidentally so.
    *
    * The FROZEN-RUN channel (`pinnedHarnessSkills`), not the live-environment
-   * one (`runtimeSkillsOverride`). `selectHarnessSkillSource` ranks
-   * pinned → environment → live, and only the top rank promises that nothing
-   * live is consulted; `runtimeSkillsOverride` is for a turn whose environment
+   * one (`runtimeSkillsOverride`). `selectHarnessSkillSource` ranks pinned
+   * above environment, and only the top rank promises that nothing live is
+   * consulted; `runtimeSkillsOverride` is for a turn whose environment
    * re-resolves each time, which is the opposite of what a pinned run wants.
    */
   pinnedHarnessSkills?: RunAssistantTurnOptions["pinnedHarnessSkills"];
@@ -871,9 +872,12 @@ export async function driveHostedEvalTurn(
             ...(params.onHarnessPolicyBlocks
               ? { onHarnessPolicyBlocks: params.onHarnessPolicyBlocks }
               : {}),
+            ...(params.onBoxSkillsWritten
+              ? { onBoxSkillsWritten: params.onBoxSkillsWritten }
+              : {}),
             // Present-but-empty is meaningful (the "without skills" arm), so
             // this checks for undefined rather than truthiness. Absent would
-            // fall through to the harness's LIVE project-wide fetch, which is
+            // leave the box with whatever skills it already holds, which is
             // what unfreezes a frozen run.
             ...(params.pinnedHarnessSkills !== undefined
               ? { pinnedHarnessSkills: params.pinnedHarnessSkills }

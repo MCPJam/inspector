@@ -334,6 +334,52 @@ describe("a pass-through-only runtime", () => {
   });
 });
 
+describe("the dedicated GitHub Copilot CLI client", () => {
+  // Its own MCP client either way: forwarded where forwarding opens,
+  // MCPJam's per-server proxy everywhere else. Never refused for the route.
+  const copilot = (overrides: Partial<Facts> = {}) =>
+    facts({
+      dispatch: { mcpClient: "harness" },
+      forwardingRuntime: { ...RUNTIME, passThroughOnly: true },
+      ...overrides,
+    });
+
+  it("forwards on pass-through when admitted", () => {
+    const plan = resolveHarnessMcpPlan(copilot({ admit: NATIVE }));
+    expect(plan).toMatchObject({
+      upstream: "harness",
+      delivery: "mcp-endpoint",
+      forwardingKind: "pass-through",
+    });
+  });
+
+  it.each([
+    ["profiled forwarding", { admit: BRIDGE }, "forwarding not admitted; configured route retained"],
+    ["no admission", { admit: RETAINED }, "forwarding not admitted; configured route retained"],
+    ["the flag off", { forwardingEnabled: false }, "forwarding flag off"],
+    ["an unenrolled organization", { forwardingOrganization: false }, "organization not enrolled"],
+    ["an eval", { evalIterationId: "e" }, "eval iteration"],
+    ["a User Testing session", { scenarioId: "s" }, "scenario turn"],
+    ["a v1 API turn", { hostId: undefined }, "no host id"],
+    ["a member's computer", { localExecution: true, plane: "local-loopback" }, "local execution target"],
+  ] as const)("bridges through MCPJam's proxy on %s", (_name, overrides, reason) => {
+    const plan = resolveHarnessMcpPlan(copilot(overrides));
+    expect(plan).toMatchObject({ upstream: "mcpjam", delivery: "mcp-endpoint" });
+    expect(plan.forwardingKind).toBeUndefined();
+    expect(plan.reasons).toContain(reason);
+    expect(toDiscoveryDeliveryLabel(plan)).toBe("native-proxy");
+  });
+
+  it("keeps MCPJam's client when the turn routes between accounts", () => {
+    // `resolveAgentLoop` hands account routing to MCPJam's client.
+    const plan = resolveHarnessMcpPlan(
+      copilot({ dispatch: { mcpClient: "mcpjam" }, accountRouting: true }),
+    );
+    expect(plan).toMatchObject({ upstream: "mcpjam", delivery: "host-tools" });
+    expect(plan.reasons).toContain("account routing");
+  });
+});
+
 describe("the three route fields", () => {
   it.each([
     ["forwarded-native", NATIVE, "harness", "mcp-endpoint", "pass-through"],

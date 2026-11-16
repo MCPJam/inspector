@@ -44,6 +44,18 @@ describe("getSupportLevel", () => {
     );
   });
 
+  it("gives a boolean nobody measured no level", () => {
+    // A catalog row that left the value out: the matrix shows "—", so the
+    // list view, filters and coverage must not count it as "Off".
+    const f = hostConfigField("appsCap.toolCancelled");
+    const catalogRow = makeConfig({
+      hostStyle: "chatgpt",
+      rendersMcpApps: true,
+      mcpProfile: { profileVersion: 1, apps: { mcpAppsOverrides: {} } },
+    } as Partial<HostConfigDtoV2>);
+    expect(getSupportLevel(f, catalogRow)).toBeNull();
+  });
+
   it("maps tri-state undefined (Auto) to partial", () => {
     const f = hostConfigField("progressiveToolDiscovery");
     expect(getSupportLevel(f, makeConfig())).toBe("partial");
@@ -76,7 +88,9 @@ describe("getSupportLevel", () => {
   });
 
   it("returns null for scalar/data fields", () => {
-    expect(getSupportLevel(hostConfigField("modelId"), makeConfig())).toBeNull();
+    expect(
+      getSupportLevel(hostConfigField("modelId"), makeConfig()),
+    ).toBeNull();
     expect(
       getSupportLevel(hostConfigField("temperature"), makeConfig()),
     ).toBeNull();
@@ -118,14 +132,18 @@ describe("rowPassesSupportFilter", () => {
 
   it("'missing' keeps rows not supported by every host", () => {
     expect(rowPassesSupportFilter(sampling, oneMissing, "missing")).toBe(true);
-    expect(rowPassesSupportFilter(sampling, allAdvertise, "missing")).toBe(false);
+    expect(rowPassesSupportFilter(sampling, allAdvertise, "missing")).toBe(
+      false,
+    );
   });
 
   it("'supported' keeps rows supported by every host", () => {
     expect(rowPassesSupportFilter(sampling, allAdvertise, "supported")).toBe(
       true,
     );
-    expect(rowPassesSupportFilter(sampling, oneMissing, "supported")).toBe(false);
+    expect(rowPassesSupportFilter(sampling, oneMissing, "supported")).toBe(
+      false,
+    );
   });
 
   it("hides scalar rows under any non-'all' filter", () => {
@@ -144,13 +162,19 @@ describe("getSupportLevel — enum with support map", () => {
     path: "x",
     kind: {
       kind: "enum",
-      support: { all: "supported", "fullscreen-only": "partial", none: "neutral" },
+      support: {
+        all: "supported",
+        "fullscreen-only": "partial",
+        none: "neutral",
+      },
     },
     read: (cfg) => (cfg as { _v?: string })._v,
   } as unknown as HostConfigFieldDef;
 
   it("maps enum values via the support table", () => {
-    expect(getSupportLevel(enumField, { _v: "all" } as never)).toBe("supported");
+    expect(getSupportLevel(enumField, { _v: "all" } as never)).toBe(
+      "supported",
+    );
     expect(getSupportLevel(enumField, { _v: "fullscreen-only" } as never)).toBe(
       "partial",
     );
@@ -181,11 +205,13 @@ describe("getSupportLevel — mode-set", () => {
 
   it("aggregates the mode set into a single level", () => {
     expect(
-      getSupportLevel(modeSetField, { _m: ["inline", "fullscreen", "pip"] } as never),
+      getSupportLevel(modeSetField, {
+        _m: ["inline", "fullscreen", "pip"],
+      } as never),
     ).toBe("supported");
-    expect(getSupportLevel(modeSetField, { _m: ["inline", "fullscreen"] } as never)).toBe(
-      "partial",
-    );
+    expect(
+      getSupportLevel(modeSetField, { _m: ["inline", "fullscreen"] } as never),
+    ).toBe("partial");
     expect(getSupportLevel(modeSetField, { _m: ["inline"] } as never)).toBe(
       "neutral",
     );
@@ -216,7 +242,9 @@ describe("getSupportLevel — mode-set", () => {
     // Matches the matrix cell's Set check: dup inline + unknown 'foo' is still
     // only one declared mode present → neutral (not "supported" by length).
     expect(
-      getSupportLevel(modeSetField, { _m: ["inline", "inline", "foo"] } as never),
+      getSupportLevel(modeSetField, {
+        _m: ["inline", "inline", "foo"],
+      } as never),
     ).toBe("neutral");
   });
 });
@@ -232,16 +260,20 @@ describe("exploded effective capability rows", () => {
 
   it("registers a sandbox permission row per permission", () => {
     expect(hostConfigField("sandboxPerm.camera").label).toBe("camera");
-    expect(getSupportLevel(hostConfigField("sandboxPerm.camera"), makeConfig())).toBe(
-      "neutral",
-    );
+    expect(
+      getSupportLevel(hostConfigField("sandboxPerm.camera"), makeConfig()),
+    ).toBe("neutral");
   });
 });
 
 describe("fieldMatchesQuery / computeVisibleFieldIds", () => {
   it("matches a field by label substring", () => {
-    expect(fieldMatchesQuery(hostConfigField("temperature"), "temp")).toBe(true);
-    expect(fieldMatchesQuery(hostConfigField("temperature"), "zzz")).toBe(false);
+    expect(fieldMatchesQuery(hostConfigField("temperature"), "temp")).toBe(
+      true,
+    );
+    expect(fieldMatchesQuery(hostConfigField("temperature"), "zzz")).toBe(
+      false,
+    );
   });
 
   it("matches fields by subsection name", () => {
@@ -283,7 +315,10 @@ describe("getCapabilityCaveats", () => {
   it("returns no caveats for a clean empty capability", () => {
     const f = hostConfigField("capabilities.sampling");
     expect(
-      getCapabilityCaveats(f, makeConfig({ clientCapabilities: { sampling: {} } })),
+      getCapabilityCaveats(
+        f,
+        makeConfig({ clientCapabilities: { sampling: {} } }),
+      ),
     ).toEqual([]);
   });
 });

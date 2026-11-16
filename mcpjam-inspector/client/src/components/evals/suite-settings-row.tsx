@@ -12,6 +12,12 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
+import { Info } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
@@ -21,6 +27,16 @@ import {
   suiteSettingsChainSectionClass,
   SuiteSettingsChainNode,
 } from "./suite-settings-section-chain";
+
+/**
+ * The tabbed Suite settings page sets `data-settings-layout="inline"` on a
+ * `group/settings` ancestor. Rows then put the label (with the hint behind an
+ * info icon) on the left and the control on the right; without it they keep
+ * the stacked layout. CSS rather than a prop, so the page switches every row
+ * with one attribute.
+ */
+const INLINE_SECTION =
+  "group-data-[settings-layout=inline]/settings:grid group-data-[settings-layout=inline]/settings:gap-x-8 group-data-[settings-layout=inline]/settings:gap-y-3 group-data-[settings-layout=inline]/settings:py-5 md:group-data-[settings-layout=inline]/settings:grid-cols-[200px_minmax(0,1fr)]";
 
 export type SuiteSettingsRowError = {
   message: string;
@@ -93,22 +109,36 @@ function SectionHeader({
   onFixError: () => void;
 }) {
   return (
-    <div className="mb-5 space-y-2">
+    <div className="mb-5 space-y-2 group-data-[settings-layout=inline]/settings:mb-0">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1 space-y-1.5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h3
               className={cn(
-                "text-lg font-semibold tracking-tight text-foreground",
+                "text-lg font-semibold tracking-tight text-foreground group-data-[settings-layout=inline]/settings:text-sm group-data-[settings-layout=inline]/settings:font-medium",
                 labelClassName,
               )}
             >
               {title}
             </h3>
+            {hint ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={`About ${title}`}
+                    className="hidden text-muted-foreground hover:text-foreground group-data-[settings-layout=inline]/settings:inline-flex"
+                  >
+                    <Info className="size-3.5" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">{hint}</TooltipContent>
+              </Tooltip>
+            ) : null}
             {accessory}
           </div>
           {hint ? (
-            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground group-data-[settings-layout=inline]/settings:hidden">
               {hint}
             </p>
           ) : null}
@@ -255,7 +285,11 @@ export function SuiteSettingsRow({
 
   const sectionShell = chained
     ? suiteSettingsChainSectionClass(className)
-    : cn("scroll-mt-6 border-t border-border/50 py-8 first:border-t-0 first:pt-2", className);
+    : cn(
+        "scroll-mt-6 border-t border-border/50 py-8 first:border-t-0 first:pt-2",
+        INLINE_SECTION,
+        className,
+      );
 
   const sectionChrome = chained ? (
     <SuiteSettingsChainNode />

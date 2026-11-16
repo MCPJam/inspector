@@ -27,8 +27,13 @@
 export const ANALYTICS_EVENTS = {
   // One outcome per logical plugin App launch (closed vocabulary, no content).
   extension_launch_completed: { source: "client" },
+  // One outcome per form response, Settings save or App message
+  // (closed vocabulary, no content; shared/extension-operation-event.ts).
+  extension_operation_completed: { source: "client" },
   // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
   platform_launch_engagement: { source: "client" },
+  // One-time feature callouts (FeatureSpotlight); action is shown | closed.
+  feature_spotlight_engagement: { source: "client" },
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
@@ -61,6 +66,14 @@ export const ANALYTICS_EVENTS = {
    * route are customer conversation content and never ride an event.
    */
   api_chat_session_turn_completed: { source: "server" },
+  /**
+   * One harness turn's response closed, on the browser chat routes, the
+   * public API or a local runtime (`surface`). Where its time went and which
+   * start path it took: closed vocabularies, whole milliseconds and the
+   * verified organization id only (`shared/harness-turn-event.ts`). Never
+   * prompt text, paths, commands, tokens, URLs, sandbox ids or error messages.
+   */
+  harness_turn_completed: { source: "server" },
 
   // --- Directory readiness (server-authoritative; no client twin) ---
   /**
@@ -124,6 +137,15 @@ export const ANALYTICS_EVENTS = {
   skill_uploaded: { source: "client" },
   skill_injected: { source: "client" },
   skill_loaded: { source: "client" },
+  /**
+   * One turn's skills, in counts (server-authoritative; no client twin):
+   * handed to the engine by family (and how many of those the agent's prompt
+   * leaves unlisted), left out by reason, failed to arrive, and `outcome`
+   * (ok | partial | failed). Sent only by
+   * `server/services/environments/skills-delivered-event.ts`, and personless.
+   * NEVER a skill name, id, ref or content.
+   */
+  skills_delivered: { source: "server" },
 
   // --- Auth / activation funnel (migrated) ---
   login_button_clicked: { source: "client" },
@@ -277,7 +299,10 @@ export const ANALYTICS_EVENTS = {
   eval_generate_negative_tests_button_clicked: { source: "client" },
   eval_generate_tests_button_clicked: { source: "client" },
   eval_generate_tests_completed: { source: "client" },
+  eval_case_result_viewed: { source: "client" },
+  eval_iteration_viewed: { source: "client" },
   eval_run_insights_opened: { source: "client" },
+  eval_run_viewed: { source: "client" },
   eval_setup_next_step_button_clicked: { source: "client" },
   eval_setup_start_eval_run_button_clicked: { source: "client" },
   eval_suite_created: { source: "client" },

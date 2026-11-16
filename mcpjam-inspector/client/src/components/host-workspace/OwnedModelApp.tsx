@@ -46,6 +46,7 @@ import {
   useServerIconSources,
 } from "./plugin-icon-directory";
 import { createThreadAppHost } from "./thread-app-host";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import {
   createThreadAppApi,
   ThreadAppError,
@@ -85,11 +86,13 @@ export interface OwnedModelAppPorts {
     intent: PluginMessageIntent,
     isLive: () => boolean,
   ) => Promise<boolean>;
-  /** The client's Display modes toggle when the App opened (presentation only). */
-  openAIDisplayModes?: boolean;
+  /** The client's display behavior when the App opened (presentation only). */
+  displayBehavior?: DisplayBehavior;
   /** Compare lanes publish context without accepting App-initiated messages. */
   messagesEnabled?: boolean;
   observeLaunch?: (token: string) => ExtensionLaunchObservation | undefined;
+  /** Which client profile App messages are counted under. */
+  profile?: ExtensionLaunchProfile;
 }
 const ModelAppPortsContext = createContext<OwnedModelAppPorts | null>(null);
 /** Root composer owns publication and dispatch; render leaves own no chat session. */
@@ -102,8 +105,8 @@ export function useOwnedModelAppWorkspace(
    * context from the composer and the next turn in the same render; the Apps
    * keep running and their context returns when it is turned back on. */
   contextEnabled = true,
-  /** The client's Display modes toggle; read by each App when it opens. */
-  openAIDisplayModes = false,
+  /** The client's display behavior; read by each App when it opens. */
+  displayBehavior?: DisplayBehavior,
   launchProfile: ExtensionLaunchProfile = "chatgpt",
 ) {
   // Rotate synchronously: old asynchronous publications cannot enter a new chat,
@@ -236,10 +239,18 @@ export function useOwnedModelAppWorkspace(
       publishContext,
       sendMessage: dispatch,
       registerMessageSource,
-      openAIDisplayModes,
+      displayBehavior,
       observeLaunch,
+      profile: launchProfile,
     }),
-    [publishContext, dispatch, registerMessageSource, openAIDisplayModes, observeLaunch],
+    [
+      publishContext,
+      dispatch,
+      registerMessageSource,
+      displayBehavior,
+      observeLaunch,
+      launchProfile,
+    ],
   );
   const contexts =
     scope && contextEnabled && state.epoch === epoch ? state.contexts : {};
@@ -458,7 +469,7 @@ function ModelApp({
     const withContext = withAppContext(
       withModelAppResources(createThreadAppHost(base, handle, marker.serverId, "model", {
         projectId: scope.projectId,
-        openAIDisplayModes: ports?.openAIDisplayModes === true,
+        displayBehavior: ports?.displayBehavior,
       }), base, handle, marker.serverId, api, lifetime.signal),
       base,
       handle,
@@ -491,6 +502,7 @@ function ModelApp({
           threadId: scope.threadId,
           isLive: () => mounted.current && !lifetime.signal.aborted,
           send: ports.sendMessage,
+          profile: ports.profile,
         })
       : withFiles;
   }, [

@@ -103,7 +103,7 @@ async function fixture(
     expiresAt,
     fileResources,
     ...(local ? { uploadTarget: "local-stdio" as const } : {}),
-  });
+  }, "credential");
   cleanups.push(
     () =>
       pluginInstances.closePersistent(
