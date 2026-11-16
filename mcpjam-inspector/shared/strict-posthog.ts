@@ -15,6 +15,17 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     deployment: ["hosted", "self_hosted"],
     source: ["client"],
   },
+  // Sent at startup, often before the content grant arrives, so most launches
+  // reach the relay as strict. Without this entry every one of them is dropped.
+  app_launched: {
+    location: ["app"],
+    is_authenticated: "boolean",
+    platform: ["web", "npm", "docker", "mac", "win", "electron"],
+    deployment: ["hosted", "self_hosted"],
+    // Measures how long the content grant takes, to tune the launch timeout.
+    launch_trigger: ["immediate", "grant", "timeout", "hidden"],
+    policy_wait_ms: "count",
+  },
   send_message: {
     location: ["chat_tab", "ui_playground"],
     multi_model_enabled: "boolean",

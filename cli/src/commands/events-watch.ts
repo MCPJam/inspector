@@ -34,6 +34,8 @@ import {
 import { startEventsReceiver, type EventsReceiverHandle } from "../lib/events-receiver.js";
 import { EventsWatchSession, type EventsWatchResult } from "../lib/events-watch.js";
 import { cliError, usageError } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
+import { exitInterrupted } from "../lib/telemetry.js";
 import { parseNonNegativeInteger } from "../lib/server-config.js";
 import {
   addEventArgsOption,
@@ -306,6 +308,7 @@ export function registerWatch(events: Command): void {
         const onSignal = () => {
           signals += 1;
           if (signals === 1) {
+            recordCommandOutcome("interrupted");
             ctx.status("Stopping...");
             session.stop("signal");
             return;
@@ -313,7 +316,7 @@ export function registerWatch(events: Command): void {
           ctx.warn(
             "Forced exit: the server subscription (if any) remains until its TTL expires.",
           );
-          process.exit(130);
+          void exitInterrupted();
         };
         process.on("SIGINT", onSignal);
         process.on("SIGTERM", onSignal);

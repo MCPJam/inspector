@@ -3,9 +3,9 @@
  *
  * A tool is declared once, at build time, and then passes through a chain of
  * wrappers before an engine sees it: scope step-up observation, two eval-trace
- * wrappers, the skill approval wrap, the advertised subset gate. Each one
- * rebuilds the tool object — `{...tool, execute: …}` — and each one preserves
- * `needsApproval` today only because a spread happens to carry it.
+ * wrappers, the advertised subset gate. Each one rebuilds the tool object —
+ * `{...tool, execute: …}` — and each one preserves `needsApproval` today only
+ * because a spread happens to carry it.
  *
  * That is fine while the BYOK path is the only reader. Once every engine reads
  * `tool.needsApproval` (PR 2), a wrapper that drops it silently ungates the
@@ -15,10 +15,9 @@
  * parts of the tool, and a shared harness would hide that.
  *
  * BOTH FORMS matter. A boolean is the common case; a FUNCTION answers per
- * call (a captured server skill's ref, the acting-skill gate), and its
- * identity must survive: the gate marks its function so a runtime can read
- * the declaration under it, and a copy that merely returns the same value
- * would carry no mark.
+ * call (the acting-skill gate), and its identity must survive: the gate marks
+ * its function so a runtime can read the declaration under it, and a copy that
+ * merely returns the same value would carry no mark.
  */
 import { describe, expect, it, vi } from "vitest";
 import { tool, type ToolSet } from "ai";
@@ -33,7 +32,6 @@ import {
   wrapBackendToolsForTrace,
   wrapToolSetForEvalTrace,
 } from "../../services/evals/eval-trace-capture";
-import { applySkillToolApproval } from "../chat-v2-orchestration";
 
 /** The declaration a function-form tool carries, identity included. */
 const declaredPerCall = vi.fn(async () => true);
@@ -124,38 +122,6 @@ describe("ToolSet wrappers preserve the approval declaration", () => {
         () => new Set(["always_true"]),
       ) as Record<string, any>,
     );
-  });
-
-  it("the skill approval wrap, with the switch OFF", () => {
-    // The switch-off arm returns the input untouched, which is what leaves a
-    // function-form declaration intact.
-    expectDeclarationsPreserved(
-      applySkillToolApproval(fixture() as unknown as Record<string, unknown>, {
-        pinned: false,
-        requireToolApproval: false,
-      }) as Record<string, any>,
-    );
-  });
-
-  it("the skill approval wrap, pinned", () => {
-    expectDeclarationsPreserved(
-      applySkillToolApproval(fixture() as unknown as Record<string, unknown>, {
-        pinned: true,
-        requireToolApproval: true,
-      }) as Record<string, any>,
-    );
-  });
-
-  it("the skill approval wrap RAISES with the switch on, and only raises", () => {
-    // The one wrapper that legitimately rewrites the declaration. It may only
-    // raise: a tool that already gated must not come out free.
-    const raised = applySkillToolApproval(
-      fixture() as unknown as Record<string, unknown>,
-      { pinned: false, requireToolApproval: true },
-    ) as Record<string, any>;
-    for (const name of Object.keys(raised)) {
-      expect(raised[name].needsApproval, name).toBe(true);
-    }
   });
 
   it("applyPrepareAdvertisedTools narrows NAMES and never touches a tool", () => {

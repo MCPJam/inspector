@@ -180,6 +180,14 @@ export {
   USED_APPROVAL_RESULT,
 };
 
+/**
+ * The result an unattended turn (`approvalMode: "auto-deny"`) gives a call
+ * that needed approval. Shared with the swarm runner, so the model reads one
+ * answer whichever engine ran the turn.
+ */
+export const SYNTHETIC_SESSION_APPROVAL_DENIAL =
+  "approval-denied (synthetic session)";
+
 let warnedLegacyUnsignedApproval = false;
 
 function isModelVisibleImageOutput(value: unknown): boolean {
@@ -935,7 +943,10 @@ function applyToolRefresh(
 
 export interface MCPJamHandlerOptions {
   turnAuthorization?: TurnAuthorization;
-  /** The route's stage timing; a harness turn adds its stages and first text. */
+  /**
+   * The route's stage timing. A harness turn adds its stages and first text,
+   * and sends its closing event to the timing's `harnessTurnEvent` sink.
+   */
   turnTiming?: import("./turn-timing.js").TurnTiming;
   harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
@@ -4617,7 +4628,7 @@ async function processOneStep(ctx: StepContext): Promise<{
             toolName: part.toolName,
             output: {
               type: "error-text",
-              value: "approval-denied (synthetic session)",
+              value: SYNTHETIC_SESSION_APPROVAL_DENIAL,
             },
           };
           const bucket = deniedByAssistantIdx.get(i) ?? [];

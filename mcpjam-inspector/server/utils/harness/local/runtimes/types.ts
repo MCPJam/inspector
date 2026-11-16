@@ -82,6 +82,9 @@ export interface LocalRuntime<
     /** Flags whose paths are runtime state, kept in the session's own state
      *  directory and never in the granted workspace. */
     sessionStateFlags: readonly string[];
+    /** Flags whose value is a fixed word rather than a path, passed through
+     *  only when it is exactly this one. */
+    literalFlags?: Readonly<Record<string, string>>;
   };
   /** The Inspector layer's files for this runtime besides `launcher.mjs` and
    *  `layer.json`, as `scripts/bundle-local-harness-layer.mjs` names them. */
@@ -95,9 +98,65 @@ export interface LocalRuntime<
    *  spawn, besides the bridge's own channel. Anything else it offers is
    *  dropped, so an adapter change cannot quietly add one. */
   bridgeEnv: readonly string[];
-  /** The child's model credential: the gateway, named the way the CLI reads
-   *  it. The lease itself never reaches the child. */
-  childAuth(gateway: LocalModelGatewayEndpoint): HarnessAuth;
+  /** How the child authenticates, and so what a turn obtains before anything
+   *  spawns. */
+  credential: LocalRuntimeCredential;
   /** Runs shell commands through Git for Windows on Windows. */
   gitBashOnWindows: boolean;
+  /**
+   * For a runtime started through the AI SDK's ACP bridge. In the cloud the
+   * adapter installs the vendor CLI into an implementation directory and the
+   * bridge starts it from there. Locally the translator gives the bridge a
+   * directory in the session's own state instead, whose `implementation.json`
+   * starts the CLI from the verified pack.
+   */
+  acp?: {
+    /** The bridge flag that names the implementation directory. */
+    implementationDirFlag: string;
+    /** The CLI's executable and arguments. `inPack` makes a path in the pack absolute. */
+    agent(
+      inPack: (...segments: string[]) => string,
+      platform: NodeJS.Platform,
+    ): { executable: string; args: readonly string[] };
+  };
+  /**
+   * Set when its bridge keeps one live process that the conversation's next
+   * turn can attach to, so a completed turn may keep it (`kept-runtime.ts`).
+   * `processTools` names every tool call of this runtime that can leave a
+   * process running in it; a turn that made one is never kept, approved or
+   * not. Codex's bridge keeps its `app-server` while the configuration
+   * matches; Claude Code's CLI exits at the end of every turn.
+   */
+  keptBetweenTurns: { processTools: readonly string[] } | null;
 }
+
+/** A login the backend exchanged from the organization's own key for one
+ *  turn: the vendor's access token, which expires within the hour. */
+export interface LocalRuntimeLogin {
+  accessToken: string;
+  expiresAt: number;
+}
+
+/**
+ * How a runtime's child authenticates (`turn-credential.ts` obtains it).
+ *
+ *   gateway        MCPJam brokers the model. The turn takes a lease, holds it
+ *                  in a loopback gateway, and the child gets the gateway and a
+ *                  capability that means nothing elsewhere, named the way its
+ *                  CLI reads them. The lease never reaches the child.
+ *   runtime-login  The CLI reaches its own vendor on the organization's
+ *                  account (Cursor), so no gateway can stand in front of it.
+ *                  The backend exchanges the org key for a short-lived login,
+ *                  and the supervised process starts with it in its
+ *                  environment; the CLI keeps it in memory only. The adapter,
+ *                  which runs in this Inspector, gets an explicit environment
+ *                  instead, so it never looks for a login of the member's own
+ *                  on this machine. The org key never leaves the backend.
+ */
+export type LocalRuntimeCredential =
+  | { kind: "gateway"; childAuth(gateway: LocalModelGatewayEndpoint): HarnessAuth }
+  | {
+      kind: "runtime-login";
+      adapterAuth: HarnessAuth;
+      childEnv(login: LocalRuntimeLogin): Readonly<Record<string, string>>;
+    };

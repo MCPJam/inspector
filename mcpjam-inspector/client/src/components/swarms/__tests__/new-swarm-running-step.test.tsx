@@ -961,6 +961,30 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     },
   );
 
+  it("does not complete or leave while more goals are still launching", async () => {
+    runFixture.status = "completed";
+    runFixture.summary = { total: 2, succeeded: 2, failed: 0, rateLimited: 0 };
+    const onLeave = vi.fn();
+    const onRunsComplete = vi.fn();
+    const props = {
+      projectId: "proj-1",
+      runs: [{ runId: "run-1", journeyId: "j-1", personaId: "p-1", personaName: "Writer", personaRole: "Writer", label: "Writer · Refund" }],
+      fallbackColumns: [{ key: "environment:env-1", label: "Prod-like" }],
+      onLeave,
+      onOpenSession: vi.fn(),
+      onRunsComplete,
+    };
+    const view = render(<NewSwarmRunningStep {...props} launching />);
+    await screen.findByText("Starting swarm");
+    expect(screen.getByTestId("new-swarm-running-open-findings")).toBeDisabled();
+    expect(onRunsComplete).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalledWith("Swarm complete!");
+    expect(onLeave).not.toHaveBeenCalled();
+
+    view.rerender(<NewSwarmRunningStep {...props} launching={false} />);
+    await waitFor(() => expect(onRunsComplete).toHaveBeenCalledTimes(1));
+  });
+
   it("announces a finished wave and goes to Findings by itself", async () => {
     runFixture.status = "completed";
     runFixture.summary = { total: 2, succeeded: 2, failed: 0, rateLimited: 0 };

@@ -5,7 +5,6 @@ import { ConnectionAccountsSection } from "../ConnectionAccountsSection";
 const mocks = vi.hoisted(() => ({
   hook: vi.fn(),
   update: vi.fn(),
-  flag: vi.fn(),
   sharing: vi.fn(),
   setSharing: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
@@ -13,9 +12,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/hooks/use-hosted-oauth-connections", () => ({
   useHostedOAuthConnections: mocks.hook,
-}));
-vi.mock("@/hooks/useMultiAccountConnectionsEnabled", () => ({
-  useMultiAccountConnectionsEnabled: mocks.flag,
 }));
 vi.mock("@/lib/apis/web/oauth-connections", () => ({
   updateOAuthConnection: mocks.update,
@@ -71,7 +67,6 @@ describe("ConnectionAccountsSection", () => {
       shared: false,
       loaded: true,
     });
-    mocks.flag.mockReturnValue(true);
     mocks.sharing.mockReturnValue({
       isAdmin: false,
       canShare: false,
@@ -213,18 +208,6 @@ describe("ConnectionAccountsSection", () => {
     expect(addButton().disabled).toBe(true);
   });
 
-  it("hides add behind the rollout flag while still managing what exists", () => {
-    mocks.flag.mockReturnValue(false);
-    mount();
-    expect(
-      screen.queryByRole("button", { name: /Connect another account/ }),
-    ).toBeNull();
-    // A de-flagged org must still see and take down what it has.
-    expect(
-      screen.getByRole("button", { name: "Manage same@example.com: Side" }),
-    ).toBeTruthy();
-  });
-
   it("reconnects an account that needs it in place, by its own id", async () => {
     const user = userEvent.setup();
     const auth = vi.fn();
@@ -285,8 +268,12 @@ describe("ConnectionAccountsSection", () => {
         setSharing: mocks.setSharing,
       });
       mount({ onAuthenticate: auth });
-      // With the flag off there is no switch, so the note says it is shared.
-      expect(screen.getByText(/Your hosted runs can act/)).toBeTruthy();
+      // With the eval flag off there is no share switch, but an admin still
+      // gets Allow local runs, which doesn't wait for that flag.
+      expect(
+        screen.getByRole("switch", { name: "Allow local runs" }),
+      ).toBeTruthy();
+      expect(screen.queryByText(/ask a project admin to turn on/)).toBeNull();
       await user.click(
         screen.getByRole("button", { name: /Connect another account/ }),
       );
@@ -303,10 +290,48 @@ describe("ConnectionAccountsSection", () => {
       });
     });
 
+    it("gives an admin both switches when the eval flag is on", () => {
+      mocks.sharing.mockReturnValue({
+        isAdmin: true,
+        canShare: true,
+        setSharing: mocks.setSharing,
+      });
+      mount();
+      expect(
+        screen.getByRole("switch", { name: "Shared with the project" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("switch", { name: "Allow local runs" }),
+      ).toBeTruthy();
+    });
+
+    it.each([
+      [true, /^Shared with the project\. Your runs, including your local app's/],
+      [false, /ask a project admin to turn on Allow local runs\.$/],
+    ])(
+      "shows a member no switch, and whether local runs are allowed (%s)",
+      (localDeliveryAllowed, copy) => {
+        mocks.hook.mockReturnValue({
+          connections: project,
+          shared: true,
+          loaded: true,
+          localDeliveryAllowed,
+        });
+        mocks.sharing.mockReturnValue({
+          isAdmin: false,
+          canShare: false,
+          setSharing: mocks.setSharing,
+        });
+        mount();
+        expect(screen.getByText(copy)).toBeTruthy();
+        expect(screen.queryByRole("switch")).toBeNull();
+      },
+    );
+
     it.each([
       [
         true,
-        "No project accounts yet. Connect one so members' hosted runs can use it.",
+        "No project accounts yet. Connect one so members' runs can use it.",
       ],
       [false, "No project accounts yet. Ask a project admin to connect one."],
     ])("says what to do when there are none (admin: %s)", (isAdmin, copy) => {
@@ -332,7 +357,7 @@ describe("ConnectionAccountsSection", () => {
     it.each([
       ["a member", { isAdmin: false, canShare: false }, true, false],
       [
-        "an admin while the flag is off",
+        "an admin who cannot share",
         { isAdmin: true, canShare: false },
         true,
         false,
@@ -343,12 +368,7 @@ describe("ConnectionAccountsSection", () => {
         false,
         false,
       ],
-      [
-        "an admin while the flag is on",
-        { isAdmin: true, canShare: true },
-        true,
-        true,
-      ],
+      ["an admin who can share", { isAdmin: true, canShare: true }, true, true],
     ])("for %s", (_label, role, loaded, shown) => {
       mocks.hook.mockReturnValue({ connections: rows, shared: false, loaded });
       mocks.sharing.mockReturnValue({ ...role, setSharing: mocks.setSharing });

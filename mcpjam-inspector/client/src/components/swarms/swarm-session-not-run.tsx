@@ -116,7 +116,6 @@ export function SwarmSessionNotRun({
           data-testid="swarm-session-not-run-reason"
         >
           <ErrorCard
-            variant="inline"
             error={describeSwarmAttemptFailure(
               errorMessage,
               errorCode,

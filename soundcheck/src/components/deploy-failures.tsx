@@ -26,7 +26,7 @@ interface Target {
 
 const TARGETS: Target[] = [
   {
-    label: "Inspector · prepare-release.yml",
+    label: "Inspector · prepare-release.yml (Start release)",
     owner: "MCPJam",
     repo: "inspector",
     workflowFile: "prepare-release.yml"
@@ -36,6 +36,12 @@ const TARGETS: Target[] = [
     owner: "MCPJam",
     repo: "inspector",
     workflowFile: "release-trigger.yml"
+  },
+  {
+    label: "Inspector · main-push-guard.yml",
+    owner: "MCPJam",
+    repo: "inspector",
+    workflowFile: "main-push-guard.yml"
   },
   {
     label: "Inspector · release.yml",

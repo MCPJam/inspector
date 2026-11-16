@@ -37,6 +37,8 @@ describe("a harness client under the policy", () => {
     { hostId: "claude", harness: "claude-code" },
     { hostId: "codex", harness: "codex" },
     { hostId: "cursor", harness: "cursor" },
+    // A ChatGPT client paired with Codex: the vendor's loop, MCPJam's client.
+    { hostId: "chatgpt", agentLoop: "codex" },
     { hostId: "emulated" },
   ];
   const suite = {
@@ -88,8 +90,21 @@ describe("a harness client under the policy", () => {
     expect(
       problemsFor("claude", "openai/gpt-5", org("openai/gpt-5", "conn_openai")),
     ).toEqual([
-      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
+      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a custom provider that serves Anthropic Messages.",
     ]);
+  });
+
+  it("judges a client on its vendor's agent loop by that harness too", () => {
+    expect(
+      problemsFor("chatgpt", "openai/gpt-5", org("openai/gpt-5", "conn_openai")),
+    ).toBeUndefined();
+    expect(
+      problemsFor(
+        "chatgpt",
+        "anthropic/claude-sonnet-4.5",
+        org("anthropic/claude-sonnet-4.5", "conn_anthropic"),
+      )?.[0],
+    ).toMatch(/can't run on Codex/);
   });
 
   it("says the same for an MCPJam-provided model, instead of the generic line", () => {
@@ -99,7 +114,7 @@ describe("a harness client under the policy", () => {
       fallback,
     });
     expect(problems).toEqual([
-      "openai/gpt-5 can't run on Codex. This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider or a gateway that serves Responses.",
+      "openai/gpt-5 can't run on Codex. This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider or a custom provider that serves Responses.",
     ]);
   });
 
@@ -135,7 +150,7 @@ describe("a harness client under the policy", () => {
       expect(
         problemsFor("codex", "custom:litellm/gpt-5.5", onGateway("gpt-5.5"), messages),
       ).toEqual([
-        "custom:litellm/gpt-5.5 can't run on Codex. This gateway doesn't serve Responses, which Codex needs. Turn on Responses for it in Organization models, or choose another connection.",
+        "custom:litellm/gpt-5.5 can't run on Codex. This provider doesn't serve Responses, which Codex needs. Turn on Responses for it in Organization models, or choose another connection.",
       ]);
     });
 
@@ -153,7 +168,7 @@ describe("a harness client under the policy", () => {
       expect(
         problemsFor("claude", "custom:litellm/house-model", onGateway("house-model"), gateway(["anthropicMessages"])),
       ).toEqual([
-        "custom:litellm/house-model can't run on Claude Code. Map this gateway model to a model in Organization models to use it with Claude Code.",
+        "custom:litellm/house-model can't run on Claude Code. Map this provider model to a model in Organization models to use it with Claude Code.",
       ]);
     });
   });
@@ -226,7 +241,7 @@ describe("a harness client under the policy", () => {
         withKey("ready"),
       ),
     ).toEqual([
-      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
+      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a custom provider that serves Anthropic Messages.",
     ]);
     expect(
       problemsFor(

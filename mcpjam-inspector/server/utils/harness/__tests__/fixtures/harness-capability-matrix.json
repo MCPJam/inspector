@@ -26,7 +26,7 @@
         "readFolders": [
           ".claude/skills"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": true,
         "writeFolder": ".claude/skills"
       },
@@ -61,6 +61,7 @@
       "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
+      "runtimeName": "Claude Agent SDK",
       "runtimeVersion": "2.1.290",
       "unavailableOn": {}
     },
@@ -94,7 +95,7 @@
         "readFolders": [
           ".agents/skills"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": false,
         "writeFolder": ".agents/skills"
       },
@@ -140,6 +141,7 @@
         "high",
         "xhigh"
       ],
+      "runtimeName": "Codex App Server",
       "runtimeVersion": "0.163.0",
       "unavailableOn": {}
     },
@@ -211,6 +213,7 @@
       "orgKeys": true,
       "protocol": "openai-responses",
       "reasoningEfforts": [],
+      "runtimeName": "GitHub Copilot CLI",
       "runtimeVersion": "1.0.92",
       "unavailableOn": {}
     },
@@ -301,12 +304,12 @@
       "orgKeys": false,
       "protocol": null,
       "reasoningEfforts": [],
+      "runtimeName": "Cursor CLI",
       "runtimeVersion": "2026.11.05-86047df",
       "unavailableOn": {
         "api": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
         "events": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
         "guests": "Cursor CLI runs on the organization's own Cursor account, so guests can't use it.",
-        "local": "Cursor CLI can't run on your computer yet. Run it in the cloud instead.",
         "user-testing": "Cursor CLI runs only in the Playground, evals and swarms. Choose a different client for this study."
       }
     },
@@ -332,7 +335,6 @@
         "headlessLoading": "native",
         "readFolders": [
           ".agents/skills",
-          ".claude/skills",
           ".config/opencode/skills",
           ".config/opencode/skill"
         ],
@@ -345,7 +347,7 @@
       "supportsMcpToolApproval": false,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
-      "supportsSkills": false
+      "supportsSkills": true
     },
     "descriptor": {
       "controls": {
@@ -371,6 +373,7 @@
       "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
+      "runtimeName": "OpenCode",
       "runtimeVersion": "1.18.34",
       "unavailableOn": {
         "guests": "OpenCode isn't available to guests until it's tested with them.",

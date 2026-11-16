@@ -4,21 +4,19 @@
  *
  * Inputs, in priority order (see lib/release-state.ts for the stages):
  *   1. Is a release.yml run already in flight? → In flight.
- *   2. Does main carry versions npm does not have? The version PR merged and
- *      Release is waiting for a green main, or its automatic run failed.
- *   3. Is the version PR open? → merge it.
- *   4. Are there pending changesets? → Go: "Start release" opens the PR.
+ *   2. Does main carry versions npm does not have? Start release pushed them
+ *      and its Release run stood down or failed; release-trigger.yml retries
+ *      at the first commit where deploy-staging.yml passes.
+ *   3. Are there pending changesets? → Go: "Start release" versions and ships.
  *
- * The CI and staging gates only matter in (2): release-trigger.yml starts
- * Release at the first commit where test.yml, lint.yml and deploy-staging.yml
- * all passed, so they say how long the wait is, not whether to start.
+ * Release waits for staging and runs the full tests itself, so neither is a
+ * reason not to start.
  *
  * This component does its own fetches rather than reading from the readiness
  * tile, so the verdict renders even if the readiness tile is still streaming.
  */
 
 import {
-  findOpenPullRequest,
   findSuccessfulRunForSha,
   getBranchHead,
   listWorkflowRuns
@@ -27,8 +25,7 @@ import { fetchPendingChangesets } from "@/lib/changesets";
 import {
   automaticReleaseRun,
   fetchUnpublishedVersions,
-  releaseLabel,
-  VERSION_PR_BRANCH
+  releaseLabel
 } from "@/lib/release-state";
 import { shortSha } from "@/lib/format";
 import { Card, CardContent } from "@mcpjam/design-system/card";
@@ -107,17 +104,9 @@ export async function ReleaseVerdict() {
   // Fetch errors stay distinct from "nothing there": both would render as
   // "nothing to release" otherwise, and a silent API failure would let the
   // verdict confidently lie.
-  const [unpublishedResult, versionPrResult, changesetsResult] = await Promise.all([
+  const [unpublishedResult, changesetsResult] = await Promise.all([
     fetchUnpublishedVersions(INSPECTOR.owner, INSPECTOR.repo, headSha)
       .then((list) => ({ kind: "ok" as const, list }))
-      .catch((err: unknown) => ({
-        kind: "error" as const,
-        message: (err as Error).message
-      })),
-    findOpenPullRequest(INSPECTOR.owner, INSPECTOR.repo, VERSION_PR_BRANCH, {
-      revalidate: 30
-    })
-      .then((pr) => ({ kind: "ok" as const, pr }))
       .catch((err: unknown) => ({
         kind: "error" as const,
         message: (err as Error).message
@@ -159,57 +148,27 @@ export async function ReleaseVerdict() {
         <Verdict
           tone="failure"
           headline={`The release of ${label} ended "${last.conclusion}".`}
-          detail="It will not be retried by itself. Re-run its failed jobs in GitHub, or use Run release now below once the cause is fixed."
+          detail="It will not be retried by itself. Fix the cause, then use Publish below. Re-running failed jobs in GitHub does not publish."
         />
       );
     }
 
-    const [stagingRun, testRun, lintRun] = await Promise.all(
-      ["deploy-staging.yml", "test.yml", "lint.yml"].map((workflow) =>
-        findSuccessfulRunForSha(
-          INSPECTOR.owner,
-          INSPECTOR.repo,
-          workflow,
-          "main",
-          headSha
-        ).catch(() => null)
-      )
-    );
-    const waiting = [
-      testRun ? null : "test.yml",
-      lintRun ? null : "lint.yml",
-      stagingRun ? null : "deploy-staging.yml"
-    ].filter((name): name is string => name !== null);
+    const stagingRun = await findSuccessfulRunForSha(
+      INSPECTOR.owner,
+      INSPECTOR.repo,
+      "deploy-staging.yml",
+      "main",
+      headSha
+    ).catch(() => null);
     return (
       <Verdict
         tone="running"
-        headline={`${label} is merged and waiting for a green main.`}
+        headline={`${label} is on main and waiting for staging.`}
         detail={
-          waiting.length > 0
-            ? `Release starts by itself at the first commit where test.yml, lint.yml and deploy-staging.yml all pass. ${shortSha(headSha)} is waiting on ${waiting.join(", ")}.`
-            : `Everything is green on ${shortSha(headSha)}, so Release should start within a minute.`
+          stagingRun
+            ? `Staging is green on ${shortSha(headSha)}, so Release should start within a minute. It runs the full tests before publishing.`
+            : `Release starts by itself once staging deploys and passes its smoke test on the latest commit (now ${shortSha(headSha)}). It then runs the full tests before publishing.`
         }
-      />
-    );
-  }
-
-  if (versionPrResult.kind === "error") {
-    return (
-      <Verdict
-        tone="warning"
-        headline="Can't check for an open version PR."
-        detail={`${versionPrResult.message}. Soundcheck's GITHUB_PAT needs pull_requests:read.`}
-      />
-    );
-  }
-
-  const versionPr = versionPrResult.pr;
-  if (versionPr) {
-    return (
-      <Verdict
-        tone="info"
-        headline={`Version PR #${versionPr.number} is waiting for review.`}
-        detail={`Approve and merge "${versionPr.title}" to release. Everything after the merge runs by itself.`}
       />
     );
   }
@@ -242,7 +201,7 @@ export async function ReleaseVerdict() {
     <Verdict
       tone="success"
       headline="Ready to start a release."
-      detail={`${changesets.length} pending changeset${changesets.length === 1 ? "" : "s"} across ${pkgCount} package${pkgCount === 1 ? "" : "s"}. Start release opens the version PR.`}
+      detail={`${changesets.length} pending changeset${changesets.length === 1 ? "" : "s"} across ${pkgCount} package${pkgCount === 1 ? "" : "s"}. Start release versions them and ships in one run.`}
     />
   );
 }

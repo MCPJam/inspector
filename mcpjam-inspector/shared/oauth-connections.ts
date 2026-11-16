@@ -15,6 +15,8 @@ export interface OAuthConnection {
   needsReauth?: boolean;
   authorizedAt?: number;
   expiresAt?: number;
+  /** A shared or API-uploaded account, whose tokens are never revealed. */
+  hostedOnly?: boolean;
 }
 export interface AuthorizedOAuthConnection extends OAuthConnection {
   /**
@@ -25,6 +27,10 @@ export interface AuthorizedOAuthConnection extends OAuthConnection {
   /** Canonical per-account timestamp, including the legacy createdAt fallback. */
   credentialAuthorizedAt?: number;
   accessToken?: string | null;
+  /** Origins `accessToken` may be sent to; absent from older backends. */
+  boundOrigins?: string[];
+  /** Absent: the person's own sign-in. */
+  accountKind?: "shared" | "uploaded";
   unavailableReason?: string;
   /**
    * Built by the Inspector from the authorize result's default credential, not

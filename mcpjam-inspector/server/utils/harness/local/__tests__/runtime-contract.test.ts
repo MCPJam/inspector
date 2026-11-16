@@ -252,10 +252,14 @@ describe("the release gate's conformance evidence", () => {
     await rm(dir, { recursive: true, force: true });
     const { mkdir } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
-    const advertised: Record<string, string[]> = {
-      "claude-code": ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"],
-      codex: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"],
-    };
+    // Every harness the record pins a pack for, on every target its manifest
+    // advertises: the gate asks for exactly that, so a harness's first pin
+    // must not need this fixture edited.
+    const advertised: Record<string, string[]> = Object.fromEntries(
+      Object.entries(RUNTIME_COMPAT.harnesses)
+        .filter(([, harness]) => Object.keys(harness.targets).length > 0)
+        .map(([harnessId]) => [harnessId, readAdvertisedTargets(harnessId)]),
+    );
     for (const [harnessId, targets] of Object.entries(advertised)) {
       for (const target of targets) {
         if (opts.skip === `${harnessId}/${target}`) continue;

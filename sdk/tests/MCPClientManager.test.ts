@@ -480,6 +480,31 @@ describe("MCPClientManager", () => {
       }
     }, 15000);
 
+    it("keeps a config's credential headers out of the HTTP exchange log", async () => {
+      const isolated = await startMockHttpServer();
+      const exchanges: unknown[] = [];
+      const logManager = new MCPClientManager();
+
+      try {
+        await logManager.connectToServer("http-server-log", {
+          url: isolated.url,
+          requestInit: {
+            headers: { "X-Tenant-Key": "tok_EFTW41_SECRET_tenant" },
+          },
+          credentialHeaderNames: ["X-Tenant-Key"],
+          httpLogger: (exchange) => exchanges.push(exchange),
+          preferSSE: true,
+        });
+
+        expect(exchanges.length).toBeGreaterThan(0);
+        expect(JSON.stringify(exchanges)).toContain('"x-tenant-key":"<redacted>"');
+        expect(JSON.stringify(exchanges)).not.toContain("tok_EFTW41_SECRET");
+      } finally {
+        await logManager.disconnectAllServers();
+        await isolated.stop();
+      }
+    }, 15000);
+
     it("skips non-replayable HTTP configs with custom request state", () => {
       const replayManager = new MCPClientManager();
       seedRegisteredServer(replayManager, "custom-http", {
@@ -490,6 +515,24 @@ describe("MCPClientManager", () => {
             "X-Custom": "1",
           },
         },
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("never writes a credential the MCPJam backend delivered into a replay config", () => {
+      const replayManager = new MCPClientManager();
+      seedRegisteredServer(replayManager, "delivered-http", {
+        url: "https://example.com/mcp",
+        credentialSource: "mcpjam-backend",
+        requestInit: {
+          headers: { Authorization: "Bearer tok_EFTW41_SECRET_replay" },
+        },
+      });
+      seedRegisteredServer(replayManager, "refreshed-http", {
+        url: "https://example.com/mcp",
+        credentialSource: "mcpjam-backend",
+        accessToken: "tok_EFTW41_SECRET_refreshed",
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
