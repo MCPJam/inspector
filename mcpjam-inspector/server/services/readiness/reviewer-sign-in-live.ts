@@ -384,6 +384,7 @@ export function liveReviewerSignInDeps(input: {
           release: close,
         });
         if (recording) await keepRecording(lease, recording);
+        else logger.warn("[readiness] no sign-in recording was collected", { sandboxRowId });
       },
     },
     connect: {
@@ -419,9 +420,7 @@ export function liveReviewerSignInDeps(input: {
         });
         return {
           authorizationUrl: prepared.authorizationUrl,
-          authorizationServerOrigin: new URL(
-            String(claim.authorizationServerUrl),
-          ).origin,
+          authorizationServerOrigin: new URL(prepared.authorizationUrl).origin,
           callbackUrl: redirectUri,
         };
       },

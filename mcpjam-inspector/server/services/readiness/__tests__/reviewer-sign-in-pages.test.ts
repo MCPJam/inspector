@@ -159,6 +159,9 @@ describe("readSignInPage", () => {
 describe("isAuthKitOrigin", () => {
   it.each([
     ["https://acme.authkit.app", true],
+    ["https://login.mcpjam.com", true],
+    ["https://login.mcpjam.com.evil.example", false],
+    ["http://login.mcpjam.com", false],
     ["https://auth.acme.example", false],
     ["https://authkit.app.evil.example", false],
     ["not a url", false],

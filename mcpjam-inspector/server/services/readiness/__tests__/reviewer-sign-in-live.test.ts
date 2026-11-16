@@ -323,7 +323,7 @@ describe("the connection", () => {
                 ok: true,
                 requestId: "req_1",
                 serverUrl: "https://connector.example.com/mcp",
-                authorizationServerUrl: "https://acme.authkit.app",
+                authorizationServerUrl: null,
                 registrationMode: "dynamic",
                 requestedName: "Acme",
                 account: { name: "reviewer-sub_1" },
