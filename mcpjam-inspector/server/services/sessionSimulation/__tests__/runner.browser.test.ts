@@ -619,21 +619,25 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 
-  it("omits Cloud Skills under tool approval (headless can't approve)", async () => {
+  it("keeps Cloud Skills when the scenario requires tool approval", async () => {
     const fake = buildFakeBrowserContext({ computerUse: false });
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
-    // on any non-empty tool set, so emulated skill tools must not be injected
-    // when requireToolApproval is on (the skip stays correct even though
-    // empty projects no longer advertise phantom tools).
+    // No skill tool asks, so a visitor who can't approve has nothing to
+    // answer; commands still follow the switch.
     await runSyntheticHostSession(
       baseAdapter({ runtime: { requireToolApproval: true } }) as never,
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skills).toMatchObject({ agent: null, delivered: [] });
-    expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+    expect(prepareOpts.requireToolApproval).toBe(true);
+    expect(prepareOpts.skills.runtime).toEqual({ kind: "agent" });
+    expect(prepareOpts.skills.agent).toEqual({ kind: "live" });
+    expect(
+      prepareOpts.skills.set.standaloneSkills.map(
+        (skill: any) => skill.ref,
+      ),
+    ).toEqual(["pdf-tools"]);
   });
 
   it("plans a pinned target's turns from its frozen skills and records them on each turn", async () => {
@@ -689,7 +693,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     ).toEqual(["release-notes", "summarize", "search"]);
   });
 
-  it("withholds a pinned target's skills from MCPJam's agent under tool approval, and records none", async () => {
+  it("keeps a pinned target's skills when the scenario requires tool approval", async () => {
     createBrowserSessionContextMock.mockReturnValue(
       buildFakeBrowserContext({ computerUse: false }),
     );
@@ -703,10 +707,22 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       }) as never,
     );
 
+    // No skill tool asks, so a visitor who can't approve keeps them, and each
+    // turn records them.
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skills).toMatchObject({ agent: null, delivered: [] });
+    expect(prepareOpts.requireToolApproval).toBe(true);
+    expect(prepareOpts.skills.agent).toEqual({ kind: "frozen" });
+    expect(prepareOpts.skills.delivered.map((ref: any) => ref.ref)).toEqual([
+      "release-notes",
+      "acme/summarize",
+      "docs/search",
+    ]);
+    // Pinned means the target's own frozen set: the live catalog is not read.
+    expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
     const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
-    expect(persisted.turnTrace.skillsAtTurn).toEqual([]);
+    expect(
+      persisted.turnTrace.skillsAtTurn.map((row: any) => row.name),
+    ).toEqual(["release-notes", "summarize", "search"]);
   });
 
   it("records no skills on a turn of an older target, which reads them live", async () => {

@@ -40,6 +40,7 @@ import {
   resolveTurnRuntime,
   classifyTurnFailure,
 } from "../resolve-turn-runtime.js";
+import { getEffectiveSkillToolsAndPrompt } from "../computers/effective-skill-tools.js";
 import type { UnifiedTurnResult } from "../turn-execution.js";
 
 const MCPJAM_MODEL: ModelDefinition = {
@@ -383,7 +384,7 @@ describe("resolveTurnRuntime — runtime shape", () => {
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
   });
 
-  it("local BYOK + requireToolApproval=true with non-empty tools throws before building the model", async () => {
+  it("local BYOK + requireToolApproval=true with a tool that asks throws before building the model", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "local_byok",
       orgRuntime: {
@@ -397,12 +398,69 @@ describe("resolveTurnRuntime — runtime shape", () => {
         baseArgs({
           modelDefinition: LOCAL_MODEL,
           requireToolApproval: true,
-          tools: { search: { description: "noop" } } as never,
+          tools: {
+            search: {
+              description: "noop",
+              needsApproval: true,
+              execute: async () => ({}),
+            },
+            loadSkill: {
+              description: "load",
+              needsApproval: false,
+              execute: async () => "",
+            },
+          } as never,
         }),
       ),
     ).rejects.toThrow(/approval-required tool calls.*Disable tool approval/i);
 
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("local BYOK + requireToolApproval=true runs when only skill tools are advertised", async () => {
+    // Skill tools never ask, so a scenario with approval on and nothing else
+    // to call has no approval for this runtime to fail on.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as never,
+      },
+    });
+    const skills = getEffectiveSkillToolsAndPrompt({
+      explicitServerIds: [],
+      pluginServerIds: [],
+      effectiveServerIds: [],
+      servers: [],
+      pluginSkills: [],
+      standaloneSkills: [
+        {
+          ref: "pdf-processing",
+          skillId: "sk_library",
+          name: "pdf-processing",
+          description: "Process PDFs",
+          content: "BODY",
+          aggregateHash: "agg",
+          files: [],
+          channels: [],
+        },
+      ],
+      serverSkills: [],
+      localSkills: [],
+      pluginVersions: [],
+      problems: [],
+    });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: LOCAL_MODEL,
+        requireToolApproval: true,
+        tools: skills.tools,
+      }),
+    );
+
+    expect(rt.runtime.kind).toBe("direct");
+    expect(buildOrgModelFromResolvedConfigMock).toHaveBeenCalled();
   });
 });
 
