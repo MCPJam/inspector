@@ -579,6 +579,8 @@ export function harnessRuntimeFingerprint(parts: {
   selectedServers?: string[];
   unavailableServerIds?: readonly string[];
   permissionMode: string;
+  /** Session instructions retain the skill catalog they start with. */
+  serverSkillCatalog?: string;
   /**
    * INS-7: the plugin versions materialized for this turn. A resumed session
    * keeps whatever plugin runtime was delivered when it was CREATED, so an
@@ -732,6 +734,9 @@ export function harnessRuntimeFingerprint(parts: {
       : []),
     ...(parts.commandSandbox ? [`command-sandbox:${parts.commandSandbox}`] : []),
     ...(parts.credential ? [`credential:${parts.credential}`] : []),
+    ...(parts.serverSkillCatalog
+      ? [JSON.stringify(["server-skill-catalog", parts.serverSkillCatalog])]
+      : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -2025,8 +2030,6 @@ export async function runHarnessTurn(
       // MCP-server skills through MCPJam's skill tools, and the gate that holds
       // the runtime's commands while one is in use.
       const serverSkills = await harnessServerSkills(harnessAdapter, {
-        localUnattended:
-          !!harnessExecutionTarget && localScope === "unattended",
         mode: turnSkills.mode,
         live: turnSkills.live,
         pinnedHarnessSkills,
@@ -2046,10 +2049,11 @@ export async function runHarnessTurn(
             // falls to the NARROWEST mode rather than the adapter's default —
             // the turn is refused moments later in preparation, and until then
             // it must not be the widest thing on the menu.
-            (sourceType !== "eval" && sourceType !== "swarm") || requireToolApproval || localPermissionMode === null
+            (sourceType !== "eval" && sourceType !== "swarm") || requireToolApproval || serverSkills?.gated || localPermissionMode === null
             ? "allow-reads"
             : localPermissionMode
-          : requireToolApproval && harnessAdapter.supportsNativeToolApproval
+          : (requireToolApproval || (serverSkills?.gated && harnessAdapter.hostToolApprovalAtRuntime)) &&
+              harnessAdapter.supportsNativeToolApproval
             ? harnessAdapter.approvalPermissionMode
             : serverSkills?.gated
               ? COMMAND_GATE_PERMISSION_MODE
@@ -2086,6 +2090,7 @@ export async function runHarnessTurn(
         selectedServers: selectedServers ?? [],
         unavailableServerIds: options.unavailableServerIds,
         permissionMode,
+        serverSkillCatalog: serverSkills?.promptSection,
         // INS-7: fold the plugin runtime in, so a version upgrade / bundle
         // change forks the session instead of resuming onto a sandbox that
         // still holds the previously delivered plugin material.
@@ -2423,7 +2428,7 @@ export async function runHarnessTurn(
         });
         const preparation = await org.prepareLocal({
           target: harnessExecutionTarget,
-          scope: sourceType === "eval" || sourceType === "swarm" || sourceType === "event" ? "unattended" : "attended",
+          scope: localScope,
           harnessId: harnessAdapter.id,
           modelId,
           runId: localRunId,
@@ -2442,6 +2447,7 @@ export async function runHarnessTurn(
           bearer: await currentAuthorization(),
           getCleanupAuthorization: cleanupAuthorization,
           requireToolApproval,
+          holdNativeCommands: serverSkills?.gated,
           ...(approvalContinuation ? { approvalContinuation } : {}),
           ...(keptRuntime ? { keptRuntime } : {}),
           onKeptRuntime: turnEvent.keptRuntime,
@@ -2992,7 +2998,7 @@ export async function runHarnessTurn(
       }
       const commandGate = serverSkills?.gated
         ? commandGateTurn(options, {
-            local: !!localPrepared,
+            local: !!localPrepared && localScope === "attended",
             resumable: !!continuity,
             inUse: serverSkills.transcript.inUse,
           })
@@ -3435,6 +3441,11 @@ export async function runHarnessTurn(
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
       if (boxSkillsWritten) reportBoxSkillsWritten(boxSkillsWritten);
+      else if (serverSkills?.liveDelivery) {
+        reportBoxSkillsWritten(withServedSkills({
+          delivered: [], failed: [], notDelivered: [],
+        }, serverSkills));
+      }
 
       const stopHeartbeat = continuity ? startLeaseHeartbeat({
         owner: continuity.owner,
