@@ -195,9 +195,13 @@ describe("ConformanceHistory", () => {
 
     await user.click(screen.getByRole("button", { name: "Load more" }));
 
-    expect(screen.queryByText("Loading run history…")).toBeNull();
+    expect(screen.queryByTestId("conformance-history-loading")).toBeNull();
     expect(screen.getAllByTestId("conformance-history-row")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
+    // The button keeps its label and spins: no text swap that resizes it.
+    const loadMore = screen.getByRole("button", { name: "Load more" });
+    expect(loadMore).toBeDisabled();
+    expect(loadMore.getAttribute("aria-busy")).toBe("true");
+
   });
 });
 
@@ -484,8 +488,22 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     expect(
       screen.getByTestId("conformance-history-server-filter"),
     ).toBeDefined();
-    expect(screen.getByText("Loading run history…")).toBeDefined();
+    // The app's loading state where the table goes.
+    const loader = screen.getByTestId("conformance-history-loading");
+    expect(loader.getAttribute("role")).toBe("status");
+    expect(loader.textContent).toBe("Loading...");
   });
+
+  it("shows the app's centered loading state on the first load", () => {
+    servePages(() => undefined);
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+
+    const loader = screen.getByTestId("conformance-history-loading");
+    expect(loader.className).toContain("justify-center");
+    expect(loader.querySelector(".animate-spin")).not.toBeNull();
+    expect(loader.textContent).toBe("Loading...");
+  });
+
 
   it("does not read every run to sort one server's runs by name", async () => {
     const all: Page = {

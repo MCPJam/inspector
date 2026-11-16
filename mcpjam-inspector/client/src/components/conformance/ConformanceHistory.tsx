@@ -10,7 +10,8 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FlaskConical } from "lucide-react";
+import { LoadingState } from "@/components/evals/LoadingState";
+import { FlaskConical, Loader2 } from "lucide-react";
 import { useOpenRunFromHistory, useRunBack } from "./conformance-run-origin";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
@@ -99,6 +100,22 @@ export {
   HISTORY_SOURCE_LABEL,
   historyDateFormat,
 } from "./ConformanceHistoryTable";
+
+/**
+ * The app's loading state (the evals one), centered in all the height left
+ * below the toolbar, where the table will be.
+ */
+function HistoryLoader() {
+  return (
+    <div
+      className="flex min-h-64 flex-1 items-center justify-center"
+      role="status"
+      data-testid="conformance-history-loading"
+    >
+      <LoadingState />
+    </div>
+  );
+}
 
 /** Runs per page while History shows the newest first. */
 const HISTORY_PAGE_SIZE = 20;
@@ -214,11 +231,7 @@ export function ConformanceHistory({
   // Only the first load returns early: a reload keeps the toolbar and its focus.
   if (!hadRuns && serverFilter === null) {
     if (page === undefined && rows.length === 0) {
-      return (
-        <p className="text-sm text-muted-foreground" role="status">
-          Loading run history…
-        </p>
-      );
+      return <HistoryLoader />;
     }
 
     if (rows.length === 0) {
@@ -274,7 +287,10 @@ export function ConformanceHistory({
   );
 
   return (
-    <section className="space-y-3" aria-label="Run history">
+    <section
+      className="flex flex-1 flex-col space-y-3"
+      aria-label="Run history"
+    >
       <ConformanceHistoryFilters
         search={search}
         onSearchChange={setSearch}
@@ -290,7 +306,7 @@ export function ConformanceHistory({
       </p>
 
       {page === undefined && rows.length === 0 ? (
-        notice("Loading run history…", true)
+        <HistoryLoader />
       ) : rows.length === 0 ? (
         notice(
           filteredServerName
@@ -300,7 +316,7 @@ export function ConformanceHistory({
         )
       ) : visibleRows.length === 0 ? (
         readingEveryRun ? (
-          notice("Loading every run…")
+          <HistoryLoader />
         ) : (
           <p
             className="px-1 text-sm text-muted-foreground"
@@ -323,13 +339,21 @@ export function ConformanceHistory({
       )}
 
       {readsEveryRun || visibleRows.length === 0 ? null : page === undefined ? (
-        <Button variant="outline" size="sm" disabled>
-          Loading…
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          disabled
+          aria-busy
+        >
+          <Loader2 aria-hidden className="size-4 animate-spin" />
+          Load more
         </Button>
       ) : !page.isDone ? (
         <Button
           variant="outline"
           size="sm"
+          className="self-start"
           onClick={() => setCursor(page.continueCursor)}
         >
           Load more

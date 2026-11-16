@@ -566,7 +566,7 @@ export function ConformanceContent({
 
       <ConformanceTabPanel view={view}>
         {view === "history" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-6">
             {history}
           </div>
         ) : (
