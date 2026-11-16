@@ -5,6 +5,7 @@ import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { gatewayHost } from "@/shared/gateway-connection";
 import { pluralize } from "@/components/chat-v2/shared/chat-helpers";
 import { STATUS_TONE_CLASSES } from "../org-ai-config-presentation";
+import type { ConfigureSection } from "./ConfigureProviderSheet";
 import { blockedLabel, providerAttention } from "./gateway-works-with";
 
 /**
@@ -19,11 +20,8 @@ export function CustomProviderStatus({
 }: {
   provider: OrgModelProvider;
   requireOrgKeys: boolean;
-  /**
-   * Absent for members, who can't change the provider. `works-with` asks for
-   * the editor's "Works with" list.
-   */
-  onOpen?: (section?: "works-with") => void;
+  /** Absent for members, who can't change the provider. */
+  onOpen?: (section?: ConfigureSection) => void;
 }) {
   const models =
     provider.models ??

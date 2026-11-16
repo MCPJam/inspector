@@ -214,6 +214,8 @@ export function useGatewayDraft({
     testing,
     keyRequested,
     answered,
+    /** The URL, key and runtime are still the saved provider's. */
+    asSaved,
     dirty,
     keyProblem: baseUrlKeyProblem(editProvider, baseUrl, secret),
     setBaseUrl: editProbe(setBaseUrl),
