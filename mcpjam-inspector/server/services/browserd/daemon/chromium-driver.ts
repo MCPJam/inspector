@@ -917,9 +917,14 @@ export class ChromiumDriver implements BrowserDriver {
         this.navigationStops.set(tabId, watch);
       }
       const before = watch.stop.stopped();
-      const result = before
-        ? { ok: true }
-        : await this.executeInBarrier(command, context);
+      let result: BrowserCommandResult = { ok: true };
+      try {
+        if (!before) result = await this.executeInBarrier(command, context);
+      } catch (error) {
+        // A stopped navigation can reject the page's own `goto`; the stop is
+        // the answer, so only a failure without one is rethrown.
+        if (!watch.stop.stopped()) throw error;
+      }
       const stoppedAt = before ?? watch.stop.stopped();
       if (stoppedAt) {
         this.navigationStops.delete(tabId);

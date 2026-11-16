@@ -187,6 +187,24 @@ describe("a command that stops at a page", () => {
     expect(sent(cdp, "Fetch.disable")).toHaveLength(1);
   });
 
+  it("answers with the stop when the stopped navigation rejects the page's own goto", async () => {
+    const { page, cdp, driver } = await stack();
+    page.goto = async () => {
+      cdp.emit("Fetch.requestPaused", paused(ANSWER));
+      await flush();
+      throw new Error("net::ERR_FAILED");
+    };
+    const result = await driver.execute({
+      commandId: "open",
+      source: "inspector",
+      action: { kind: "navigate", url: `${CONSENT}?again=1` },
+      stopAt: CALLBACK,
+      stopAtPersistent: true,
+    });
+    expect(result.stoppedAt).toBe(ANSWER);
+    expect(sent(cdp, "Fetch.disable")).toHaveLength(1);
+  });
+
   it("returns the URL to the caller and keeps it out of the ledger", async () => {
     const TOKEN = "per-boot-token-sample";
     const ledger = new CommandLedger({ bootId: "boot-1" });
