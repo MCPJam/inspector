@@ -646,37 +646,9 @@ describe("harnessToolApprovalRefusalReason", () => {
     },
   );
 
-  // An eval or swarm has nobody to answer, so a runtime that CAN pause is
-  // refused there too: admitted, it failed at its first gated call (evals) or
-  // parked a pause nobody resumed (swarms).
-  it.each(["claude-code", "codex"] as const)(
-    "refuses %s under approval in an unattended run, servers or not",
-    (harnessId) => {
-      for (const hasSelectedMcpServers of [false, true]) {
-        expect(
-          harnessToolApprovalRefusalReason({
-            adapter: getHarnessAdapter(harnessId),
-            requireToolApproval: true,
-            hasSelectedMcpServers,
-            unattended: true,
-          }),
-        ).toMatch(/cannot wait for tool approval in evals or swarms/);
-      }
-    },
-  );
-
-  it("leaves an unattended run with approval off alone", () => {
-    expect(
-      harnessToolApprovalRefusalReason({
-        adapter: claudeCode,
-        requireToolApproval: false,
-        hasSelectedMcpServers: true,
-        unattended: true,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("still admits Claude Code under approval when someone can answer", () => {
+  // Who answers is the approval policy's, not this gate's: in an eval, a swarm
+  // or an API turn MCPJam denies each request a runtime that can pause raises.
+  it("admits Claude Code under approval whoever answers", () => {
     expect(
       harnessToolApprovalRefusalReason({
         adapter: claudeCode,

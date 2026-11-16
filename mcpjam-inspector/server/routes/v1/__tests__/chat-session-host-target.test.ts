@@ -392,6 +392,23 @@ describe("host targeting dispatches the real harness", () => {
     );
   });
 
+  it("runs a harness on an approval host with the switch off, and nobody is asked", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL, requireToolApproval: true }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requireToolApproval: false,
+        approvalMode: "auto-deny",
+      }),
+    );
+    expect((await response.json()).engine).toBe("harness:claude-code");
+  });
+
   it("returns a reply and skipped servers even when the entire environment is refused", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ harness: "claude-code", modelId: MODEL }));
     createManualHostedConnectionMock.mockResolvedValue({
@@ -1707,7 +1724,7 @@ describe("resolveChatSessionEngine", () => {
     });
   });
 
-  it("refuses an approval host: a synchronous turn has nobody to ask", () => {
+  it("runs an approval host: an API turn leaves the switch off", () => {
     const result = resolveChatSessionEngine({
       ...base,
       hostTarget: hostTarget({
@@ -1715,7 +1732,10 @@ describe("resolveChatSessionEngine", () => {
         requireToolApproval: true,
       }),
     });
-    expect(result).toMatchObject({ ok: false, kind: "surface-approval" });
+    expect(result).toMatchObject({
+      ok: true,
+      engine: { kind: "harness", harness: "claude-code" },
+    });
   });
 
   it("refuses per-turn tool narrowing a harness cannot honour", () => {
@@ -1757,7 +1777,7 @@ describe("resolveChatSessionEngine", () => {
     ).toMatchObject({ ok: false, kind: "surface-unpinnable-host" });
   });
 
-  it("outranks the approval rule, which is fixable on the host", () => {
+  it("refuses the unpinnable shape on an approval host too", () => {
     expect(
       resolveChatSessionEngine({
         ...base,

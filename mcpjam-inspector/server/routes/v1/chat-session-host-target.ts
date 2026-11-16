@@ -28,14 +28,15 @@ import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
  *      ran the emulated engine while the caller believes it observed the real
  *      runtime.
  *
- * WHAT IS DIFFERENT HERE, and refused rather than papered over: this surface
- * has no approval channel (it runs `approvalMode: "auto-deny"`), and its
- * `toolMode` / `allowedTools` / `maxToolCalls` policy is applied by NOT
- * ADVERTISING tools to the emulated engine. A harness rebuilds its own MCP
+ * WHAT IS DIFFERENT HERE, and refused rather than papered over: this
+ * surface's `toolMode` / `allowedTools` / `maxToolCalls` policy is applied by
+ * NOT ADVERTISING tools to the emulated engine. A harness rebuilds its own MCP
  * tool set inside the sandbox — from `.mcp.json` or from host-executed specs —
  * so neither the exclusion list nor the dispatch counter reaches it. Rather
  * than run a `read_only` harness turn with every tool live, those combinations
- * are refused by name. See {@link resolveChatSessionEngine}.
+ * are refused by name. See {@link resolveChatSessionEngine}. Approval is not
+ * refused: an API turn follows `turnApprovalPolicy("api")`, which leaves the
+ * host's switch off.
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import {
@@ -56,6 +57,7 @@ import {
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import { appliedToolApproval } from "@/shared/tool-approval";
 
 /**
  * A host this turn resolved SERVER-SIDE, and where the pointer came from.
@@ -145,7 +147,6 @@ export type ChatSessionEngineRefusal = {
     | HarnessUnavailableKind
     | "surface-agent-loop"
     | "surface-tool-policy"
-    | "surface-approval"
     | "surface-unpinnable-host";
   reason: string;
 };
@@ -214,13 +215,8 @@ export function hostRoutingSelectionForModel(
  *      cannot run one, whatever the request says.
  *   2. UNPINNABLE HOST. A property of the SESSION, fixable only by starting a
  *      different one. Nothing in the next request can change it.
- *   3. APPROVAL. Fixable on the HOST (`requireToolApproval`), keeping the
- *      session.
- *   4. TOOL POLICY. Fixable in the very next request — `toolMode: "auto"` with
+ *   3. TOOL POLICY. Fixable in the very next request — `toolMode: "auto"` with
  *      no `allowedTools`/`maxToolCalls`. The cheapest to fix, so it is last.
- *
- * 1, 3 and 4 keep the relative order they have always had; only the newest rule
- * was placed, and it was placed by that measure rather than by arrival.
  *
  * The two `surface-*` rules on top of it are properties of THIS route, not of
  * any harness, and each closes a hole the shared gate cannot see:
@@ -231,11 +227,6 @@ export function hostRoutingSelectionForModel(
  *     everything — the policy would evaporate while the response still reported
  *     `toolMode: "read_only"`. Refused, so the caller opts into `auto`
  *     deliberately and knows what it authorized.
- *   - APPROVAL. This surface runs `approvalMode: "auto-deny"` because a
- *     synchronous JSON turn has nobody to ask. A harness that CAN pause (Claude
- *     Code) would pause into a stream nothing is reading. The shared gate only
- *     refuses harnesses that cannot pause at all; the ones that can are refused
- *     here.
  *   - AN UNPINNABLE HOST ON A SESSION THAT PINS A TARGET. `hostId` is per-turn
  *     and the backend's resume allowlist cannot carry it, so the route's
  *     continuation guard leans on a session having pinned NO target of its own:
@@ -314,8 +305,12 @@ export function resolveChatSessionEngine(args: {
   const hostConfig = args.hostTarget.runtimeConfig;
   const name = getHarnessAdapter(harness).displayName;
 
-  // The host's own approval gate, read server-side like everything else here.
-  const requireToolApproval = hostConfig.requireToolApproval === true;
+  // The host's switch as an API turn applies it: off, so nothing pauses a
+  // synchronous turn that has nobody to ask.
+  const requireToolApproval = appliedToolApproval(
+    "api",
+    hostConfig.requireToolApproval,
+  );
 
   const hostEffort =
     args.reasoningEffort ??
@@ -371,19 +366,6 @@ export function resolveChatSessionEngine(args: {
         "an environmentId instead (an environment pins its own host, on every " +
         "turn including continuations), or send hostId ALONE and narrow the " +
         "host's servers per turn with allowedServerIds",
-    };
-  }
-
-  if (requireToolApproval) {
-    return {
-      ok: false,
-      harness,
-      kind: "surface-approval",
-      reason:
-        `this host requires tool approval, and the ${name} harness would pause ` +
-        "for it inside its sandbox — but a synchronous API turn has nobody to " +
-        "ask, so nothing could ever approve. Turn off requireToolApproval on " +
-        "this host, or drive it from the Playground",
     };
   }
 

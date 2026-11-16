@@ -1889,7 +1889,12 @@ async function handleTurn(c: Context): Promise<Response> {
       // authorized manager exactly as they do, and deriving a different
       // strategy is how a sandbox ends up pointed at the wrong manager.
       ...(engine.kind === "harness"
-        ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
+        ? {
+            harnessMcpProxy: resolveWebAuthorizedHarnessStrategy(),
+            // The switch as this surface applies it, so the harness reads the
+            // same policy the emulated engine's tools were built with.
+            requireToolApproval,
+          }
         : {}),
       ...(engine.kind === "harness" && conversationBox
         ? { harnessSandboxBinding: conversationBox.binding }

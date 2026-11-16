@@ -141,6 +141,14 @@ export function engineApprovalMode(
   return turnApprovalPolicy(origin).answer === "person" ? "prompt" : "auto-deny";
 }
 
+/** The answer a turn's `approvalMode` carries, for an engine that is handed
+ *  the setting rather than the origin, such as a harness. */
+export function approvalAnswerOf(
+  approvalMode: string | undefined,
+): TurnApprovalPolicy["answer"] {
+  return approvalMode === "auto-deny" ? "deny" : "person";
+}
+
 /** What the model reads when MCPJam denies a call nobody can answer, on
  *  every engine, so a run reads the same whichever one ran it. */
 export const SYNTHETIC_SESSION_APPROVAL_DENIAL =
