@@ -2,9 +2,6 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Exercise public access and legacy routing for every flag state.
-let flagState: boolean | undefined = undefined;
-
 const { mockRouteContext } = vi.hoisted(() => ({
   mockRouteContext: {
     activeTabBillingLocked: false,
@@ -14,11 +11,6 @@ const { mockRouteContext } = vi.hoisted(() => ({
     handleContinueEvalInChat: vi.fn(),
     handleConnect: vi.fn(),
   },
-}));
-
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: (key: string) =>
-    key === "evaluate-enabled" ? flagState : false,
 }));
 
 vi.mock("react-router", async (importOriginal) => {
@@ -68,10 +60,10 @@ vi.mock("@codemirror/lint", () => ({
   lintGutter: () => ({}),
 }));
 
-import { EvaluateRoute, EvalsRoute } from "../App";
+import { EvaluateRoute } from "../App";
+import { LegacyEvalRedirect } from "../components/routing/legacy-eval-redirect";
 
 afterEach(() => {
-  flagState = undefined;
   vi.clearAllMocks();
 });
 
@@ -84,36 +76,31 @@ afterEach(() => {
  */
 function renderRoute(element: React.ReactElement, initialPath = "/evaluate") {
   return render(
-    <MemoryRouter initialEntries={[initialPath]}>{element}</MemoryRouter>
+    <MemoryRouter initialEntries={[initialPath]}>{element}</MemoryRouter>,
   );
 }
 
-vi.mock("../components/EvalsTab", () => ({
-  EvalsTab: () => <div data-testid="legacy-tab" />,
-}));
-
 describe("public Evaluate and legacy access", () => {
-  it.each([undefined, false, true])("renders Evaluate with flag %s", (flag) => {
-    flagState = flag;
+  it("renders Evaluate", () => {
     renderRoute(<EvaluateRoute />);
     expect(screen.getByTestId("evaluate-tab")).toBeInTheDocument();
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
   });
 
-  it.each([undefined, false, true])("redirects legacy runs with flag %s without mounting legacy content", (flag) => {
-    flagState = flag;
+  it("redirects legacy runs with their project, query and hash", () => {
     const project = "k5700000000000000000000000a";
-    renderRoute(<EvalsRoute />, `/p/${project}/evals/suite/S/runs/R?iteration=I&case=C#trace`);
-    expect(screen.getByTestId("navigate")).toHaveAttribute(
-      "data-to", `/p/${project}/evaluate/suite/S/runs/R?iteration=I&case=C#trace`,
+    renderRoute(
+      <LegacyEvalRedirect />,
+      `/p/${project}/evals/suite/S/runs/R?iteration=I&case=C#trace`,
     );
-    expect(screen.queryByTestId("legacy-tab")).not.toBeInTheDocument();
+    expect(screen.getByTestId("navigate")).toHaveAttribute(
+      "data-to",
+      `/p/${project}/evaluate/suite/S/runs/R?iteration=I&case=C#trace`,
+    );
   });
 
-  it("redirects the legacy landing page even for previously enabled accounts", () => {
-    flagState = true;
-    renderRoute(<EvalsRoute />, "/evals");
-    expect(screen.queryByTestId("legacy-tab")).not.toBeInTheDocument();
+  it("redirects the legacy landing page", () => {
+    renderRoute(<LegacyEvalRedirect />, "/evals");
     expect(screen.getByTestId("navigate")).toHaveAttribute("data-to", "/evaluate");
   });
 });

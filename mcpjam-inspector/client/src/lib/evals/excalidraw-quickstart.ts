@@ -84,9 +84,8 @@ export type RunExcalidrawQuickstartOptions = {
    */
   environmentSuites?: boolean;
   /**
-   * Where to land once the suite exists. Defaults to the shipped Evals tab;
-   * Evaluate (New) passes its own so the quickstart does not drop the reader
-   * into the other surface's copy of the same suite.
+   * Where to land once the suite exists. Defaults to current Evaluate;
+   * callers can supply their own navigation adapter.
    */
   navigate?: (route: EvalRoute) => void;
 };

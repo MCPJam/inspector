@@ -773,7 +773,7 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "organizations":
       return <OrganizationsRoute />;
     case "evals":
-      return <EvalsRoute />;
+      return <LegacyEvalRedirect />;
     case "evaluate":
       return <EvaluateRoute />;
     case "home":
@@ -1619,11 +1619,6 @@ export function ToolsRoute() {
   );
 }
 
-/** Keep old suite and run bookmarks working without mounting legacy authoring. */
-export function EvalsRoute() {
-  return <LegacyEvalRedirect />;
-}
-
 /** The public Evaluate experience; sign-in and billing still apply. */
 export function EvaluateRoute() {
   return (
@@ -1979,8 +1974,8 @@ export function ScenariosRoute() {
   // whichever flag moves last silently decides what a visitor sees — so REEV-6
   // owns these two routes and the wrapper is removed from them.
   //
-  // It STAYS on Evals (`EvalsRoute`, `EvalRunnerRoute`). Evaluate is out of
-  // REEV-6's scope by decision, so nothing here replaces that gate.
+  // Evaluate keeps its own sign-in gate; its access policy is independent of
+  // the User Testing preview.
   //
   // What the preview has that the message does not: it shows the product, and
   // it offers sign-UP. Their message only offers sign-in, which is the wrong

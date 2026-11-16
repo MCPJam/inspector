@@ -6029,16 +6029,12 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   it.each(["/evals", "/evals/runs"])(
-    "redirects %s to Evaluate even when the legacy flag is enabled",
+    "redirects %s to Evaluate",
     async (legacyPath) => {
       clearHostedOAuthPendingState();
       clearScenarioSession();
       window.history.replaceState({}, "", legacyPath);
       mockHandleOAuthCallback.mockReset();
-      mockUseFeatureFlagEnabled.mockImplementation(
-        (flag: string) =>
-          flag === "playground-enabled" || flag === "evaluate-enabled",
-      );
 
       render(<App />);
 
