@@ -16,10 +16,8 @@ const { mockRouteContext } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../hooks/useEvaluateEnabled", () => ({
-  EVALUATE_FEATURE_FLAG: "evaluate-enabled",
-  useEvaluateEnabledState: () => flagState,
-  useEvaluateEnabled: () => flagState === true,
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => flagState,
 }));
 
 vi.mock("react-router", async (importOriginal) => {
@@ -101,7 +99,7 @@ describe("public Evaluate and legacy access", () => {
     expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
   });
 
-  it.each([undefined, false])("redirects legacy runs with flag %s without mounting legacy content", (flag) => {
+  it.each([undefined, false, true])("redirects legacy runs with flag %s without mounting legacy content", (flag) => {
     flagState = flag;
     const project = "k5700000000000000000000000a";
     renderRoute(<EvalsRoute />, `/p/${project}/evals/suite/S/runs/R?iteration=I&case=C#trace`);
@@ -111,10 +109,10 @@ describe("public Evaluate and legacy access", () => {
     expect(screen.queryByTestId("legacy-tab")).not.toBeInTheDocument();
   });
 
-  it("keeps legacy Evaluate accessible when the flag is on", () => {
+  it("redirects the legacy landing page even for previously enabled accounts", () => {
     flagState = true;
     renderRoute(<EvalsRoute />, "/evals");
-    expect(screen.getByTestId("legacy-tab")).toBeInTheDocument();
-    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("legacy-tab")).not.toBeInTheDocument();
+    expect(screen.getByTestId("navigate")).toHaveAttribute("data-to", "/evaluate");
   });
 });
