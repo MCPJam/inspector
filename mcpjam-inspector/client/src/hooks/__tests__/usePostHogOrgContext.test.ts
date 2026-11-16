@@ -37,16 +37,15 @@ it("never groups a guest's events", () => {
   expect(captured()).not.toHaveProperty("$groups");
 });
 
-it("stops grouping when the member signs out or the hook unmounts", () => {
-  const { rerender, unmount } = renderHook(
-    ({ member }) => usePostHogOrgContext("org_1", member),
-    { initialProps: { member: true } },
+it("stops grouping when the member signs out or leaves the organization", () => {
+  const { rerender } = renderHook(
+    ({ member, org }) => usePostHogOrgContext(org, member),
+    { initialProps: { member: true, org: "org_1" as string | null } },
   );
-  rerender({ member: false });
+  rerender({ member: false, org: "org_1" });
   track("server_connect_outcome", { outcome: "success" });
   expect(captured()).not.toHaveProperty("$groups");
-  rerender({ member: true });
-  unmount();
+  rerender({ member: true, org: null });
   track("server_connect_outcome", { outcome: "success" });
   expect(captured()).not.toHaveProperty("$groups");
 });
