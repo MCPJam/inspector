@@ -1,15 +1,23 @@
 /**
- * Native MCP for the forward-only GitHub Copilot CLI client.
+ * Native MCP for the GitHub Copilot CLI client: the CLI's own MCP client dials
+ * MCPJam's per-server proxy or, on a forwarded turn, MCPJam's forwarder.
  *
- * The CLI's own MCP client dials MCPJam's forwarder, and the forwarder's gate
- * asks the user about every request. So the CLI's own permission prompt is
- * answered here for forwarded servers only, and MCPJam's correlation id rides
- * in `_meta` so the forwarder can file each result under the call the stream
- * shows. Shapes measured on CLI 1.0.92 with SDK 1.0.11: `tool.execution_start`
- * names the configured server key and the server's tool, the permission
- * request and the pre-call hook carry the same `toolCallId`, and `metaToUse`
+ * The CLI asks before every MCP call. That prompt reaches the host as the
+ * shared approval pause, and the host decides who answers it: the person, or
+ * MCPJam on a forwarded turn, where the forwarder's own gate then asks about
+ * the request. A turn that approves everything (`allow-all`) is not asked.
+ *
+ * On a forwarded turn MCPJam's correlation id rides in `_meta`, so the
+ * forwarder can file each result under the call the stream shows. A proxied
+ * call carries no such key: the proxy passes request metadata to the server.
+ *
+ * Shapes measured on CLI 1.0.92 with SDK 1.0.11: `tool.execution_start` names
+ * the configured server key and the server's tool, then the permission request
+ * follows with the same `toolCallId` and the tool as the model sees it
+ * (`<server>-<tool>`); the pre-call hook carries that id too, and `metaToUse`
  * reaches the wire.
  */
+import { randomUUID } from "node:crypto";
 import type { BridgeEvent } from "@ai-sdk/harness/bridge";
 import type {
   MCPServerConfig,
@@ -36,13 +44,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
- * The servers a turn forwards, validated before the CLI may dial them. The
+ * The servers a turn delivers, validated before the CLI may dial them. The
  * same entry shape as Codex's `nativeMcpServersSchema`, checked by hand so the
  * in-sandbox bundle carries no schema library.
  */
 export function parseNativeMcpServers(value: unknown): NativeServers {
   if (value === undefined) return {};
-  if (!isRecord(value)) throw new Error("Invalid forwarded MCP servers.");
+  if (!isRecord(value)) throw new Error("Invalid MCP servers.");
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => {
       if (
@@ -61,13 +69,13 @@ export function parseNativeMcpServers(value: unknown): NativeServers {
             !Number.isFinite(entry.timeout) ||
             entry.timeout <= 0))
       )
-        throw new Error(`Invalid forwarded MCP server ${key}.`);
+        throw new Error(`Invalid MCP server ${key}.`);
       return [key, entry as NativeServer] as const;
     }),
   );
 }
 
-/** Session options that expose only the forwarded servers' tools. */
+/** Session options that expose only the delivered servers' tools. */
 export function nativeMcpSessionConfig(servers: NativeServers): {
   mcpServers?: Record<string, MCPServerConfig>;
   mcpToolPatterns: string[];
@@ -84,19 +92,6 @@ export function nativeMcpSessionConfig(servers: NativeServers): {
   };
 }
 
-/** Allow the CLI to call a forwarded server; the forwarder still asks. */
-export function nativeMcpPermission(
-  request: PermissionRequest,
-  servers: NativeServers,
-): PermissionRequestResult {
-  return request.kind === "mcp" &&
-    Object.hasOwn(servers, request.serverName) &&
-    typeof request.toolCallId === "string" &&
-    request.toolCallId.length > 0
-    ? { kind: "approve-once" }
-    : { kind: "denied-interactively-by-user" };
-}
-
 /** Add MCPJam's correlation id to the request `_meta` the CLI would send. */
 export function stampNativeMcpCall(
   input: Parameters<PreMcpToolCall>[0],
@@ -108,57 +103,116 @@ export function stampNativeMcpCall(
 }
 
 type Emit = (part: BridgeEvent) => void;
+/** The host's answer to one `tool-approval-request`. */
+type AskHost = (approvalId: string) => Promise<{ approved: boolean; reason?: string }>;
+
+// CLI 1.0.92 refuses SDK 1.0.11's `denied-interactively-by-user` as a
+// malformed answer, so a denial is the variant both accept.
+const DENIED = { kind: "reject" } as const;
+/** With feedback the CLI tells the model and the turn goes on, as a denied
+ *  call does on MCPJam's engine; without it the CLI ends the turn. */
+const denied = (reason?: string) =>
+  ({ kind: "reject", feedback: reason ?? "Denied" }) as const;
 
 /**
- * Translate forwarded calls into tool parts named `mcp__<server>__<tool>`,
- * the scheme host attribution already parses. The result is the CLI's view;
- * the turn shows the forwarder's recorded result in its place.
+ * One turn's native MCP calls. Calls are named `mcp__<server>__<tool>`, the
+ * scheme host attribution already parses; a result is the CLI's view of it.
+ *
+ * `ask` is absent when the turn approves every call. With it, each call to a
+ * configured server waits on the host's answer before the CLI may send it,
+ * so nothing reaches the server while the decision is pending.
  */
-export function createNativeMcpTranslator(servers: NativeServers, emit: Emit) {
-  const calls = new Map<string, string>();
-  return (event: SessionEvent): boolean => {
-    if (event.type === "tool.execution_start") {
-      const { mcpServerName, mcpToolName, toolCallId } = event.data;
-      if (!mcpServerName || !mcpToolName) return false;
-      if (!Object.hasOwn(servers, mcpServerName)) return false;
-      const toolName = `mcp__${mcpServerName}__${mcpToolName}`;
-      calls.set(toolCallId, toolName);
+export function createNativeMcpCalls(input: {
+  servers: NativeServers;
+  emit: Emit;
+  ask?: AskHost;
+}) {
+  const { servers, emit, ask } = input;
+  const open = new Map<string, string>();
+  const announce = (toolCallId: string, server: string, tool: string, args: unknown) => {
+    if (open.has(toolCallId)) return;
+    const toolName = `mcp__${server}__${tool}`;
+    open.set(toolCallId, toolName);
+    emit({
+      type: "tool-call",
+      toolCallId,
+      toolName,
+      input: JSON.stringify(args ?? {}),
+      providerExecuted: true,
+      dynamic: true,
+    });
+  };
+
+  return {
+    /** Tool parts for configured servers' calls; true when the event was one. */
+    translate(event: SessionEvent): boolean {
+      if (event.type === "tool.execution_start") {
+        const { mcpServerName, mcpToolName, toolCallId } = event.data;
+        if (!mcpServerName || !mcpToolName) return false;
+        if (!Object.hasOwn(servers, mcpServerName)) return false;
+        announce(toolCallId, mcpServerName, mcpToolName, event.data.arguments);
+        return true;
+      }
+      if (event.type === "tool.execution_complete") {
+        const toolName = open.get(event.data.toolCallId);
+        if (!toolName) return false;
+        open.delete(event.data.toolCallId);
+        const { success, result, error } = event.data;
+        emit({
+          type: "tool-result",
+          toolCallId: event.data.toolCallId,
+          toolName,
+          result: success
+            ? {
+                content: result?.contents ?? [
+                  { type: "text", text: result?.content ?? "" },
+                ],
+                ...(result?.structuredContent !== undefined
+                  ? { structuredContent: result.structuredContent }
+                  : {}),
+              }
+            : {
+                content: [{ type: "text", text: error?.message ?? "" }],
+                isError: true,
+              },
+          ...(success ? {} : { isError: true }),
+        });
+        return true;
+      }
+      return false;
+    },
+
+    /** The CLI's own permission prompt. Anything but a configured server's
+     *  correlated MCP call is denied: no other tool reaches the CLI. */
+    async permission(request: PermissionRequest): Promise<PermissionRequestResult> {
+      if (
+        request.kind !== "mcp" ||
+        !Object.hasOwn(servers, request.serverName) ||
+        typeof request.toolCallId !== "string" ||
+        request.toolCallId.length === 0
+      )
+        return DENIED;
+      if (!ask) return { kind: "approve-once" };
+      // Already announced by `tool.execution_start`; this covers the reverse order.
+      const prefix = `${request.serverName}-`;
+      const tool = request.toolName.startsWith(prefix)
+        ? request.toolName.slice(prefix.length)
+        : request.toolName;
+      announce(request.toolCallId, request.serverName, tool, request.args);
+      // Unique per call: the host applies a stored decision to any later
+      // request that reuses its id.
+      const approvalId = `copilot-approval-${randomUUID()}`;
+      emit({ type: "tool-approval-request", approvalId, toolCallId: request.toolCallId });
+      // The host pauses the turn at the end of a step, so the step ends here.
       emit({
-        type: "tool-call",
-        toolCallId,
-        toolName,
-        input: JSON.stringify(event.data.arguments ?? {}),
-        providerExecuted: true,
-        dynamic: true,
+        type: "finish-step",
+        finishReason: { unified: "tool-calls", raw: "awaiting-approval" },
+        usage: { inputTokens: { total: undefined }, outputTokens: { total: undefined } },
       });
-      return true;
-    }
-    if (event.type === "tool.execution_complete") {
-      const toolName = calls.get(event.data.toolCallId);
-      if (!toolName) return false;
-      calls.delete(event.data.toolCallId);
-      const { success, result, error } = event.data;
-      emit({
-        type: "tool-result",
-        toolCallId: event.data.toolCallId,
-        toolName,
-        result: success
-          ? {
-              content: result?.contents ?? [
-                { type: "text", text: result?.content ?? "" },
-              ],
-              ...(result?.structuredContent !== undefined
-                ? { structuredContent: result.structuredContent }
-                : {}),
-            }
-          : {
-              content: [{ type: "text", text: error?.message ?? "" }],
-              isError: true,
-            },
-        ...(success ? {} : { isError: true }),
-      });
-      return true;
-    }
-    return false;
+      const decision = await ask(approvalId);
+      return decision.approved
+        ? { kind: "approve-once", approvedInteractively: true }
+        : denied(decision.reason);
+    },
   };
 }

@@ -390,9 +390,6 @@ type HarnessRuntimeAdapterBase = {
   /** The runtime refuses to resume when its MCP config changes, so each lane
    *  gets session handles in place of per-turn tokens. */
   sessionStableMcpConfig?: boolean;
-  /** A client that selects this runtime directly tests its own MCP client, so
-   *  a turn with servers it cannot pass through is refused. */
-  requiredForwarding?: "pass-through";
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
@@ -1250,13 +1247,14 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   // denies any other request.
   supportsNativeToolApproval: true,
   supportsHostExecutedToolApproval: true,
-  // Its MCP calls reach a server only through MCPJam's forwarder, whose gate
-  // asks the user about each request.
+  // The CLI asks before each MCP call and the bridge puts that to the host.
+  // On a forwarded turn MCPJam answers it, and the forwarder's gate asks.
   supportsMcpToolApproval: true,
+  // The CLI's own MCP client dials MCPJam's per-server proxy, or the
+  // forwarder when forwarding opens. The VS Code and Microsoft 365 Copilot
+  // profiles keep MCPJam's client (`resolveAgentLoop`).
   mcpDelivery: HARNESS_MCP_DELIVERY["copilot-cli"],
-  // The dedicated client exists to exercise the CLI's own MCP client; the
-  // VS Code and Microsoft 365 Copilot profiles keep MCPJam's.
-  requiredForwarding: "pass-through",
+  mcpNativeDelivery: "session-config",
   forwardingRuntime: {
     runtimeVersion: "1.0.92",
     configurationVersion: "copilot-native-mcp-v1",
@@ -1274,14 +1272,13 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("copilot-cli"),
   supportsModel: supportsModelFor("copilot-cli"),
   toNativeModel: (modelId, upstream) => upstream?.nativeModelId ?? modelId,
-  createHarness: ({ modelId, upstream, auth, startupTimeoutMs, forwardingMcpJson }) =>
+  createHarness: ({ modelId, upstream, auth, startupTimeoutMs, mcpJson, forwardingMcpJson }) =>
     createCopilotCli({
       model: upstream?.nativeModelId ?? modelId,
       auth,
       startupTimeoutMs,
-      ...(forwardingMcpJson
-        ? { nativeMcpServers: forwardingMcpJson.mcpServers }
-        : {}),
+      nativeMcpServers: mcpJson.mcpServers,
+      ...(forwardingMcpJson ? { correlateNativeMcp: true } : {}),
     }),
 };
 

@@ -850,18 +850,18 @@ describe("a runtime this API does not run", () => {
     refusedBeforeAnyWork();
   });
 
-  it("refuses the dedicated GitHub Copilot CLI client with servers", async () => {
-    // An API turn never forwards, and this client reaches servers no other way.
+  it("runs the dedicated GitHub Copilot CLI client with servers", async () => {
+    // An API turn never forwards; the client's own MCP client takes MCPJam's proxy.
     resolveHostModelDefinitionMock.mockResolvedValue({
-      id: MODEL,
-      provider: "anthropic",
+      id: "openai/gpt-5.5",
+      provider: "openai",
     });
     fetchHostRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: {
         hostId: HOST,
         harness: "copilot-cli",
-        modelId: MODEL,
+        modelId: "openai/gpt-5.5",
         selectedServerIds: ["srv_1"],
       },
     });
@@ -869,16 +869,8 @@ describe("a runtime this API does not run", () => {
     const response = await turn(firstTurn({ hostId: HOST }));
     const body = await response.json();
 
-    expect(response.status).toBe(422);
-    expect(body.message).toBe(
-      "GitHub Copilot CLI calls MCP servers only through its own client, and " +
-        "this turn cannot forward them. Open this client in the signed-in hosted Playground.",
-    );
-    expect(body.details).toMatchObject({
-      harness: "copilot-cli",
-      kind: "surface-unsupported",
-    });
-    refusedBeforeAnyWork();
+    expect(response.status).toBe(200);
+    expect(body.engine).toBe("harness:copilot-cli");
   });
 
   it("runs no runtime that signs in with the customer's own account", () => {

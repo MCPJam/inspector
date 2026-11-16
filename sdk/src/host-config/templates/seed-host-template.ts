@@ -2888,10 +2888,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       }),
       // Native Copilot CLI enables search automatically above ~30 tools.
       progressiveToolDiscovery: undefined,
-      // No capability, identity or protocol pins: this client is forward-only,
-      // so the CLI's own handshake reaches the server and any pin would keep
-      // MCPJam's connection from matching it. Kept in lockstep with the
-      // backend template, which records the measured handshake.
+      // No capability, identity or protocol pins: a forwarded turn passes the
+      // CLI's own handshake to the server, and any pin would keep MCPJam's
+      // connection from matching it. Kept in lockstep with the backend
+      // template, which records the measured handshake.
       clientCapabilities: {},
       hostCapabilitiesOverride: {},
       mcpProfile: {

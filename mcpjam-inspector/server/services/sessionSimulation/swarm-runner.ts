@@ -1028,7 +1028,6 @@ async function runJourneyFanOut(
             : checkHarnessRuntimeAvailable({
                 harnessId: dispatch.harnessId!,
                 surface: "swarms",
-                agentLoop: target.agentLoop !== undefined,
                 localExecution: localHarness,
                 requireToolApproval: target.requireToolApproval,
                 // PLUGIN servers count. A target whose MCP servers come solely
