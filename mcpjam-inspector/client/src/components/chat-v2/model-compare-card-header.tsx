@@ -30,11 +30,11 @@ export interface MultiModelCardSummary {
   status: MultiModelCardStatus;
   hasMessages: boolean;
   /**
-   * Which of the thread's prompts the latest turn answered, from 0. Cards rank
-   * on cost only when every one answered the same prompt: a follow-up sent to
-   * one card is a different workload.
+   * The id of the parent's broadcast the latest turn answered. Absent after a
+   * follow-up sent to this card alone, which is a different workload: cards
+   * rank on cost only when every one answered the same broadcast.
    */
-  promptIndex?: number;
+  broadcastId?: number;
   /**
    * The latest turn's cost. Absent while `trace-cost` is off and when no call
    * on the turn carries cost evidence.

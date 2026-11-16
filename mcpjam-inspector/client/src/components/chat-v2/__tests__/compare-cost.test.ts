@@ -45,7 +45,7 @@ function card(
   modelId: string,
   cost: ModelCostRollup | undefined,
   status: MultiModelCardSummary["status"] = "ready",
-  promptIndex = 0,
+  broadcastId = 1,
 ): MultiModelCardSummary {
   return {
     modelId,
@@ -54,10 +54,16 @@ function card(
     toolCount: 0,
     status,
     hasMessages: true,
-    promptIndex,
+    broadcastId,
     ...(cost ? { cost } : {}),
   };
 }
+
+/** The same card after a follow-up sent to it alone: it answers no broadcast. */
+const followUp = (summary: MultiModelCardSummary): MultiModelCardSummary => ({
+  ...summary,
+  broadcastId: undefined,
+});
 
 const listPrice = { source: "list_price" as const };
 const yourRates = { source: "customer_rate" as const };
@@ -86,7 +92,10 @@ describe("costWinnerLabel", () => {
   });
 
   it("names every card that ties at full precision", () => {
-    const cards = [card("a", rollup(call(0.0021))), card("b", rollup(call(0.0021)))];
+    const cards = [
+      card("a", rollup(call(0.0021))),
+      card("b", rollup(call(0.0021))),
+    ];
     expect(cards.map((item) => costWinnerLabel(item, cards))).toEqual([
       "Lowest cost",
       "Lowest cost",
@@ -104,7 +113,15 @@ describe("costWinnerLabel", () => {
     ["a partial turn", card("b", rollup(call(0.004), call(undefined)))],
     [
       "a turn with a partly priced call",
-      card("b", rollup(call(0.004, { completeness: "partial", missing: ["cache_write_rate"] }))),
+      card(
+        "b",
+        rollup(
+          call(0.004, {
+            completeness: "partial",
+            missing: ["cache_write_rate"],
+          }),
+        ),
+      ),
     ],
     ["an unavailable turn", card("b", rollup(call(undefined)))],
     ["a turn with no cost evidence", card("b", undefined)],
@@ -112,10 +129,26 @@ describe("costWinnerLabel", () => {
     ["a stopped turn", card("b", dear, "cancelled")],
     ["a running turn", card("b", dear, "running")],
     ["a card that has not run", card("b", undefined, "idle")],
-    ["an estimate against a reported amount", card("b", rollup(call(0.009, listPrice)))],
-    ["a turn mixing reported and estimated calls", card("b", rollup(call(0.004), call(0.004, listPrice)))],
-    ["a runner-reported turn", card("b", rollup(call(0.009, { source: "runner_reported" })))],
-    ["a card whose latest turn answered a follow-up", card("b", dear, "ready", 1)],
+    [
+      "an estimate against a reported amount",
+      card("b", rollup(call(0.009, listPrice))),
+    ],
+    [
+      "a turn mixing reported and estimated calls",
+      card("b", rollup(call(0.004), call(0.004, listPrice))),
+    ],
+    [
+      "a runner-reported turn",
+      card("b", rollup(call(0.009, { source: "runner_reported" }))),
+    ],
+    [
+      "a card whose latest turn answered a follow-up",
+      followUp(card("b", dear)),
+    ],
+    [
+      "a card whose latest turn answered another broadcast",
+      card("b", dear, "ready", 2),
+    ],
   ])("names no winner beside %s", (_label, other) => {
     const cards = [card("a", cheap), other];
     expect(cards.map((item) => costWinnerLabel(item, cards))).toEqual([
@@ -132,11 +165,33 @@ describe("costWinnerLabel", () => {
   it("names no winner for a card whose own turn has moved on", () => {
     const cards = [card("a", cheap), card("b", dear)];
     expect(costWinnerLabel(card("a", cheap, "running"), cards)).toBeUndefined();
-    expect(costWinnerLabel(card("a", cheap, "ready", 1), cards)).toBeUndefined();
+    expect(
+      costWinnerLabel(card("a", cheap, "ready", 2), cards),
+    ).toBeUndefined();
   });
 
-  it("names a winner once every card has answered the same follow-up", () => {
-    const cards = [card("a", cheap, "ready", 1), card("b", dear, "ready", 1)];
+  it("names the cheaper card when both answered the same broadcast", () => {
+    const cards = [card("a", cheap, "ready", 7), card("b", dear, "ready", 7)];
+    expect(cards.map((item) => costWinnerLabel(item, cards))).toEqual([
+      "Lowest cost",
+      undefined,
+    ]);
+  });
+
+  it("names no winner when each card answered its own follow-up", () => {
+    // Both are the thread's second prompt, but not the same prompt.
+    const cards = [followUp(card("a", cheap)), followUp(card("b", dear))];
+    expect(cards.map((item) => costWinnerLabel(item, cards))).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("names a winner again once every card answers the next broadcast", () => {
+    const afterFollowUp = [followUp(card("a", cheap)), card("b", dear)];
+    expect(costWinnerLabel(afterFollowUp[0], afterFollowUp)).toBeUndefined();
+
+    const cards = [card("a", cheap, "ready", 2), card("b", dear, "ready", 2)];
     expect(costWinnerLabel(cards[0], cards)).toBe("Lowest cost");
   });
 });
@@ -147,10 +202,23 @@ function span(
   cost?: ModelCallCostEvidence,
 ): EvalTraceSpan[] {
   const id = `p${promptIndex}-s${stepIndex}`;
-  const base = { startMs: 0, endMs: 500, promptIndex, stepIndex, totalTokens: 120 };
+  const base = {
+    startMs: 0,
+    endMs: 500,
+    promptIndex,
+    stepIndex,
+    totalTokens: 120,
+  };
   return [
     { ...base, id, name: "Step", category: "step" },
-    { ...base, id: `${id}-llm`, parentId: id, name: "LLM", category: "llm", ...(cost ? { cost } : {}) },
+    {
+      ...base,
+      id: `${id}-llm`,
+      parentId: id,
+      name: "LLM",
+      category: "llm",
+      ...(cost ? { cost } : {}),
+    },
   ];
 }
 

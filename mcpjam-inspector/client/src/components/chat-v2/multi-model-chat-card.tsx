@@ -135,6 +135,9 @@ export function MultiModelChatCard({
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
+  // The broadcast this card's latest prompt answers. A follow-up sent to this
+  // card alone, or a reset thread, answers none, so it never ranks on cost.
+  const [broadcastId, setBroadcastId] = useState<number>();
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
@@ -191,6 +194,7 @@ export function MultiModelChatCard({
     onReset: () => {
       setWidgetStateQueue([]);
       setModelContextQueue([]);
+      setBroadcastId(undefined);
     },
   });
 
@@ -243,12 +247,19 @@ export function MultiModelChatCard({
       durationMs: latestTurn?.durationMs ?? null,
       tokens: latestTurn?.usage?.totalTokens ?? 0,
       toolCount: latestTurn?.actualToolCalls?.length ?? 0,
-      promptIndex: latestTurn?.promptIndex,
+      broadcastId,
       ...(latestTurnCost ? { cost: latestTurnCost } : {}),
       status: cardStatus,
       hasMessages: !isThreadEmpty,
     }),
-    [cardStatus, compareId, isThreadEmpty, latestTurn, latestTurnCost],
+    [
+      broadcastId,
+      cardStatus,
+      compareId,
+      isThreadEmpty,
+      latestTurn,
+      latestTurnCost,
+    ],
   );
 
   useEffect(() => {
@@ -374,6 +385,7 @@ export function MultiModelChatCard({
     }
 
     lastBroadcastRequestIdRef.current = broadcastRequest.id;
+    setBroadcastId(broadcastRequest.id);
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -410,6 +422,7 @@ export function MultiModelChatCard({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
+      setBroadcastId(undefined);
       sendMessage({
         text,
         metadata: outgoingSenderMetadata,

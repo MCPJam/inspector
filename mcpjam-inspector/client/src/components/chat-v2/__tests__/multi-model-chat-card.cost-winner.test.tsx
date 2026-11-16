@@ -2,7 +2,10 @@ import { useState } from "react";
 import { act, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveChatTraceEnvelope } from "@/shared/live-chat-trace";
-import { MultiModelChatCard } from "../multi-model-chat-card";
+import {
+  MultiModelChatCard,
+  type BroadcastChatTurnRequest,
+} from "../multi-model-chat-card";
 import type { MultiModelCardSummary } from "../model-compare-card-header";
 
 // Two real cards under the real compare header, each on its own stubbed
@@ -28,7 +31,20 @@ vi.mock("use-stick-to-bottom", () => {
   };
 });
 
-vi.mock("@/components/chat-v2/thread", () => ({ Thread: () => null }));
+// Each card's thread hands its follow-up sender to the test, as a widget's
+// `ui/message` reaches it.
+const followUps = vi.hoisted(
+  () => ({}) as Record<string, (text: string) => void>,
+);
+vi.mock("@/components/chat-v2/thread", () => ({
+  Thread: (props: {
+    model: { id: string };
+    sendFollowUpMessage: (text: string) => void;
+  }) => {
+    followUps[props.model.id] = props.sendFollowUpMessage;
+    return null;
+  },
+}));
 vi.mock("@/components/evals/trace-viewer", () => ({ TraceViewer: () => null }));
 vi.mock("@/components/chat-v2/error", () => ({ ErrorBox: () => null }));
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => ({
@@ -136,7 +152,20 @@ function pricedTrace(amounts: number[]): LiveChatTraceEnvelope {
   };
 }
 
-function Harness({ stopRequestId = 0 }: { stopRequestId?: number }) {
+const broadcast = (id: number): BroadcastChatTurnRequest => ({
+  id,
+  text: `Prompt ${id}`,
+  prependMessages: [],
+});
+const firstBroadcast = broadcast(1);
+
+function Harness({
+  broadcastRequest = firstBroadcast,
+  stopRequestId = 0,
+}: {
+  broadcastRequest?: BroadcastChatTurnRequest;
+  stopRequestId?: number;
+}) {
   const [summaries, setSummaries] = useState<
     Record<string, MultiModelCardSummary>
   >({});
@@ -154,7 +183,7 @@ function Harness({ stopRequestId = 0 }: { stopRequestId?: number }) {
             comparisonSummaries={Object.values(summaries)}
             selectedServers={[]}
             selectedServerInstructions={{}}
-            broadcastRequest={null}
+            broadcastRequest={broadcastRequest}
             stopRequestId={stopRequestId}
             placeholder="Message"
             reasoningDisplayMode="inline"
@@ -183,13 +212,23 @@ function finish(modelId: string) {
   act(() => refreshHarness.current());
 }
 
+/** One card sends a follow-up from its thread, and only that card answers. */
+function followUp(modelId: string, text: string, amounts: number[]) {
+  act(() => followUps[modelId](text));
+  expect(sessions[modelId].sendMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ text }),
+  );
+  sessions[modelId].liveTraceEnvelope = pricedTrace(amounts);
+  act(() => refreshHarness.current());
+}
+
 describe("MultiModelChatCard cost winner", () => {
   beforeEach(() => {
     sessions[cheap] = stubSession(pricedTrace([0.001]), true);
     sessions[dear] = stubSession(pricedTrace([0.004]), false);
   });
 
-  it("names the cheaper card once both finish the same prompt", () => {
+  it("names the cheaper card once both finish the same broadcast", () => {
     render(<Harness />);
     expect(winnerLabels()).toHaveLength(0);
 
@@ -217,18 +256,34 @@ describe("MultiModelChatCard cost winner", () => {
   });
 
   it("names no winner while only one card has answered a follow-up", () => {
+    const { rerender } = render(<Harness />);
+    finish(cheap);
+    expect(winnerLabels()).toHaveLength(1);
+
+    followUp(cheap, "And hotels?", [0.001, 0.0002]);
+    expect(winnerLabels()).toHaveLength(0);
+
+    // The next broadcast reaches both cards, so they rank again.
+    act(() => rerender(<Harness broadcastRequest={broadcast(2)} />));
+    sessions[cheap].liveTraceEnvelope = pricedTrace([0.001, 0.0002, 0.0005]);
+    sessions[dear].liveTraceEnvelope = pricedTrace([0.004, 0.0004]);
+    act(() => refreshHarness.current());
+    expect(
+      within(screen.getByTestId(`card-${dear}`)).getByText("Lowest cost"),
+    ).toBeInTheDocument();
+    expect(winnerLabels()).toHaveLength(1);
+  });
+
+  it("names no winner when each card answered a different follow-up", () => {
     render(<Harness />);
     finish(cheap);
     expect(winnerLabels()).toHaveLength(1);
 
-    sessions[cheap].liveTraceEnvelope = pricedTrace([0.001, 0.0002]);
-    act(() => refreshHarness.current());
-    expect(winnerLabels()).toHaveLength(0);
+    // Both are each thread's second prompt, but not the same prompt.
+    followUp(cheap, "And hotels?", [0.001, 0.0002]);
+    followUp(dear, "And trains?", [0.004, 0.003]);
 
-    sessions[dear].liveTraceEnvelope = pricedTrace([0.004, 0.003]);
-    act(() => refreshHarness.current());
-    expect(
-      within(screen.getByTestId(`card-${cheap}`)).getByText("Lowest cost"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("statuses")).toHaveTextContent("ready,ready");
+    expect(winnerLabels()).toHaveLength(0);
   });
 });

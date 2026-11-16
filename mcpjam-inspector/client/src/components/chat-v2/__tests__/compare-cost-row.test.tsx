@@ -51,7 +51,7 @@ function card(
     toolCount: 1,
     status: "ready",
     hasMessages: true,
-    promptIndex: 0,
+    broadcastId: 1,
     ...(cost ? { cost } : {}),
     ...overrides,
   };
@@ -150,7 +150,9 @@ describe("CompareCostRow in the compare header", () => {
     renderCards(cards);
 
     expect(costRow("a")).toHaveTextContent("≈$0.0031");
-    expect(within(costRow("a")).getByTitle("Estimated at list price")).toBeInTheDocument();
+    expect(
+      within(costRow("a")).getByTitle("Estimated at list price"),
+    ).toBeInTheDocument();
     expect(costRow("b")).toHaveTextContent("Lowest estimated cost");
     expect(screen.queryByText("Lowest cost")).not.toBeInTheDocument();
   });
@@ -207,8 +209,14 @@ describe("CompareCostRow in the compare header", () => {
   it("fits three narrow cards: the amount stays on one line and the notes wrap under the bar", () => {
     const cards = [
       card("anthropic/claude-sonnet-4.5", rollup(call(0.0042, listPrice))),
-      card("openai/gpt-5-mini", rollup(call(0.0012, listPrice), call(0.0002, listPrice))),
-      card("google/gemini-2.5-flash", rollup(call(0.0019, listPrice), call(undefined))),
+      card(
+        "openai/gpt-5-mini",
+        rollup(call(0.0012, listPrice), call(0.0002, listPrice)),
+      ),
+      card(
+        "google/gemini-2.5-flash",
+        rollup(call(0.0019, listPrice), call(undefined)),
+      ),
     ];
     renderCards(cards);
 

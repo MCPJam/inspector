@@ -435,6 +435,9 @@ export function MultiModelPlaygroundCard({
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
   const lastExecutionRequestIdRef = useRef<number | null>(null);
+  // The broadcast this card's latest prompt answers. A follow-up sent to this
+  // card alone, or a reset thread, answers none, so it never ranks on cost.
+  const [broadcastId, setBroadcastId] = useState<number>();
   // Read when a restore fails, after the props it closed over may have moved.
   // Set at commit, so a render React discards never counts as received.
   const broadcastRequestRef = useRef(broadcastRequest);
@@ -606,6 +609,7 @@ export function MultiModelPlaygroundCard({
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
       setInjectedToolRenderOverrides({});
+      setBroadcastId(undefined);
     },
   });
 
@@ -936,7 +940,6 @@ export function MultiModelPlaygroundCard({
   const latestTurnTokens = latestTurn?.usage?.totalTokens ?? 0;
   const latestTurnToolCount = latestTurn?.actualToolCalls?.length ?? 0;
   const latestTurnCost = useLatestTurnCost(effectiveLiveTraceEnvelope);
-  const latestTurnPromptIndex = latestTurn?.promptIndex;
   const cardStatus = useCompareCardStatus({
     failed: Boolean(error),
     isStreaming,
@@ -954,17 +957,17 @@ export function MultiModelPlaygroundCard({
       durationMs: latestTurnDurationMs,
       tokens: latestTurnTokens,
       toolCount: latestTurnToolCount,
-      promptIndex: latestTurnPromptIndex,
+      broadcastId,
       ...(latestTurnCost ? { cost: latestTurnCost } : {}),
       status: cardStatus,
       hasMessages: !isThreadEmpty,
     }),
     [
+      broadcastId,
       cardStatus,
       compareId,
       isThreadEmpty,
       latestTurnCost,
-      latestTurnPromptIndex,
       latestTurnDurationMs,
       latestTurnTokens,
       latestTurnToolCount,
@@ -1045,6 +1048,7 @@ export function MultiModelPlaygroundCard({
     if (!claimBroadcastDelivery?.(broadcastRequest)) return;
     // A column whose restore failed runs the next turn as a fresh column.
     if (recoveryStatus === "failed") setRecoveryStatus("ready");
+    setBroadcastId(broadcastRequest.id);
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -1208,6 +1212,7 @@ export function MultiModelPlaygroundCard({
   const handleSendFollowUp = useCallback(
     (text: string) => {
       if (!canInvoke()) return;
+      setBroadcastId(undefined);
       sendMessage({
         text,
         metadata: outgoingSenderMetadata,

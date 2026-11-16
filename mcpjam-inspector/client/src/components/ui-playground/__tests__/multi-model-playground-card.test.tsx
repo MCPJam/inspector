@@ -717,6 +717,7 @@ describe("MultiModelPlaygroundCard", () => {
 
     const streamingCard = (
       onSummaryChange: (summary: MultiModelCardSummary) => void,
+      broadcast: ReturnType<typeof createCompareBroadcast> | null = null,
     ) => (
       <MultiModelPlaygroundCard
         compareId={String(model.id)}
@@ -725,7 +726,10 @@ describe("MultiModelPlaygroundCard", () => {
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
-        broadcastRequest={null}
+        broadcastRequest={broadcast?.request ?? null}
+        claimBroadcastDelivery={(request) =>
+          broadcast?.claim(request, "test-lane") ?? false
+        }
         deterministicExecutionRequest={null}
         stopRequestId={0}
         executionConfig={{
@@ -831,6 +835,28 @@ describe("MultiModelPlaygroundCard", () => {
         knownSubtotalUsd: 0.003,
         totalCalls: 2,
       });
+    });
+
+    it("carries the broadcast its latest prompt answers, and none after a follow-up", () => {
+      mockUseChatSession.messages = [
+        { id: "m-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as never;
+      const onSummaryChange = vi.fn();
+      const broadcast = createCompareBroadcast(
+        { id: 3, text: "hi", prependMessages: [] },
+        ["test-lane"],
+      );
+      render(streamingCard(onSummaryChange, broadcast));
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(onSummaryChange.mock.calls.at(-1)?.[0].broadcastId).toBe(3);
+
+      act(() =>
+        lane.thread.mock.calls.at(-1)![0].sendFollowUpMessage("And hotels?"),
+      );
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(2);
+      expect(
+        onSummaryChange.mock.calls.at(-1)?.[0].broadcastId,
+      ).toBeUndefined();
     });
   });
 
