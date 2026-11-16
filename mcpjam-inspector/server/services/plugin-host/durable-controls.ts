@@ -12,6 +12,18 @@ const isCode = (error: unknown, ...codes: string[]) =>
 /** Local closes are an optimization over the store's own closed rows. */
 const CLOSED_TOMBSTONES = 4096;
 
+/** One fenced read: the admission query, then the stored row, never side
+ * by side. A close or expiry anywhere during the admission wait refuses what
+ * follows, including the dispatch that authorization leads to. */
+export async function readAfterAdmission<T>(
+  query: () => Promise<T>,
+  readControl: () => Promise<unknown>,
+) {
+  const admitted = await query();
+  await readControl();
+  return admitted;
+}
+
 /** What this process keeps for any restored control. The stored row is its
  * authority; everything here is rebuilt from it on any replica. */
 export interface CachedControl {
@@ -209,8 +221,9 @@ export class DurableControlCache<Entry extends CachedControl, Snapshot> {
     signal: AbortSignal,
   ): PluginInstanceAdmissionRead {
     return async (query) => {
-      const admitted = await query();
-      await this.restore(token, actor, signal);
+      const admitted = await readAfterAdmission(query, () =>
+        this.restore(token, actor, signal),
+      );
       signal.throwIfAborted();
       this.get(token, actor);
       return admitted;
