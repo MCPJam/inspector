@@ -147,7 +147,7 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
   {
     id: "credits-free-owner",
     label: "Free owner, can upgrade",
-    note: "An owner on Free buys Pro from the wall. BYOK and the plans comparison stay as links.",
+    note: "Free owner. Upgrade to Pro is the main button; check that BYOK and Compare plans stay as links.",
     props: {
       ...CREDITS_SHARED,
       description:
