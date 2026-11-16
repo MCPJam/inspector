@@ -1,9 +1,9 @@
-import { useLocalHarnessEnabled } from "@/hooks/useComputersEnabled";
+import { useLocalHarnessRollouts } from "@/hooks/useComputersEnabled";
+import { LOCAL_HARNESS_IDS } from "@/shared/harness-descriptors";
+import { LOCAL_RUNTIME_COPY } from "@/components/harness/local-runtime-copy";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 import { hostConfigNeedsAccount } from "@/lib/host-config-computer";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import { LOCAL_CODEX_FEATURE_FLAG } from "@/hooks/useCodexHostEnabled";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   asLocalHarnessClientId,
@@ -88,20 +88,17 @@ export function CreateHostDialog({
   // Each local harness is its own rollout and its own runtime, so setup is
   // offered per harness: only where its flag is on AND this Inspector can set
   // it up here.
-  const claudeCodeLocalFlag = useLocalHarnessEnabled();
-  const codexLocalFlag = useFeatureFlagEnabled(LOCAL_CODEX_FEATURE_FLAG) === true;
+  const localRollouts = useLocalHarnessRollouts();
+  const rolledOutLocally = LOCAL_HARNESS_IDS.filter((id) => localRollouts[id]);
+  const rolledOutKey = rolledOutLocally.join(",");
   const [localSetupAvailable, setLocalSetupAvailable] = useState<
-    Readonly<Record<LocalHarnessClientId, boolean>>
-  >({ "claude-code": false, codex: false });
+    Readonly<Partial<Record<LocalHarnessClientId, boolean>>>
+  >({});
   useEffect(() => {
     let cancelled = false;
-    setLocalSetupAvailable({ "claude-code": false, codex: false });
+    setLocalSetupAvailable({});
     if (HOSTED_MODE) return;
-    for (const [harnessId, flag] of [
-      ["claude-code", claudeCodeLocalFlag],
-      ["codex", codexLocalFlag],
-    ] as const) {
-      if (!flag) continue;
+    for (const harnessId of rolledOutLocally) {
       void fetchLocalHarnessAvailability(undefined, harnessId).then(result => {
         if (cancelled) return;
         const available = result.ok && result.availability.setupAvailable === true;
@@ -109,7 +106,9 @@ export function CreateHostDialog({
       });
     }
     return () => { cancelled = true; };
-  }, [claudeCodeLocalFlag, codexLocalFlag]);
+    // Keyed on which runtimes are rolled out, not on the array, which is new
+    // every render.
+  }, [rolledOutKey]);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const copilotCliEnabled = useCopilotCliEnabled();
@@ -289,14 +288,20 @@ export function CreateHostDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-y-auto sm:max-w-lg">
+        <DialogHeader className="shrink-0">
           <DialogTitle>New Client</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col gap-4 py-2">
-          <div className="flex flex-col gap-2">
-            <Label>Start from template</Label>
-            <div className="grid grid-cols-3 gap-2">
+        <div className="flex min-h-0 flex-col gap-4 py-2">
+          <div className="flex min-h-0 flex-col gap-2">
+            <Label id="client-template-label" className="shrink-0">
+              Start from template
+            </Label>
+            <div
+              role="group"
+              aria-labelledby="client-template-label"
+              className="-mx-1 grid min-h-0 grid-cols-2 gap-2 overflow-y-auto overscroll-contain p-1 sm:grid-cols-3"
+            >
               {visibleCatalogHosts.map((host) => {
                 const isSelected = host.id === selectedTemplateId;
                 const templateAvailable =
@@ -310,7 +315,7 @@ export function CreateHostDialog({
                     onClick={() => setSelectedTemplateId(host.id)}
                     disabled={!templateAvailable}
                     className={cn(
-                      "flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
+                      "flex min-w-0 flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
                       isSelected
                         ? "border-primary ring-2 ring-primary/30 bg-accent"
                         : "border-border hover:bg-accent/50",
@@ -323,7 +328,7 @@ export function CreateHostDialog({
                       alt=""
                       className="h-6 w-6 object-contain"
                     />
-                    <span className="text-sm font-medium leading-none">
+                    <span className="break-words text-sm font-medium leading-none">
                       {host.label}
                     </span>
                   </button>
@@ -331,16 +336,16 @@ export function CreateHostDialog({
               })}
             </div>
             {adminOnly ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="shrink-0 text-xs text-muted-foreground">
                 {PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE}
               </p>
             ) : templatesUnavailableMessage && (
-              <p className="text-xs text-muted-foreground">
+              <p className="shrink-0 text-xs text-muted-foreground">
                 {templatesUnavailableMessage}
               </p>
             )}
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="flex shrink-0 flex-col gap-2">
             <Label htmlFor="host-name">Name</Label>
             <Input
               id="host-name"
@@ -359,11 +364,9 @@ export function CreateHostDialog({
           </div>
         </div>
         {!HOSTED_MODE && selectedLocalHarness && (
-          <p className="text-sm text-muted-foreground">
-            Install {LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]} on this computer. It runs commands in its project folder with your account’s permissions.{" "}
-            {selectedLocalHarness === "codex"
-              ? "Codex evals and swarms run locally on Apple silicon Macs and in the cloud elsewhere."
-              : "Evals and swarms use this client’s approval settings."}
+          <p className="shrink-0 text-sm text-muted-foreground">
+            Install {LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]} on this computer.{" "}
+            {LOCAL_RUNTIME_COPY[selectedLocalHarness].setup}
           </p>
         )}
         {needsSignIn && (
@@ -373,8 +376,8 @@ export function CreateHostDialog({
             message={`Sign in to use ${selectedTemplateLabel || "this client"}.`}
           />
         )}
-        {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
-        <DialogFooter>
+        {setupError && <p role="alert" className="shrink-0 text-sm text-destructive">{setupError}</p>}
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={handleClose}>
             Cancel
           </Button>

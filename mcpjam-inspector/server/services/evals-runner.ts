@@ -17,6 +17,8 @@ import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
+import { providerErrorDetails } from "./evals/provider-error-details.js";
+import { redactSecretShapes } from "../../shared/secret-shape-redaction.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
 import type { TimeoutMetadata } from "../utils/run-supervisor/deadline.js";
 import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
@@ -65,9 +67,14 @@ import { classifyEvalInfraError } from "./evals/infra-error-classification";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import {
   byokEndpointOwnership,
+  httpStatusOrUndefined,
   type InfraFailureEvidence,
   type ModelEndpointOwnership,
 } from "../utils/infra-failure-evidence.js";
+import {
+  HarnessInfraSetupError,
+  harnessFailureEvidenceOf,
+} from "../utils/harness/harness-provider-error.js";
 import {
   buildLocalStepHandlers,
   buildHostedStepHandlers,
@@ -228,6 +235,7 @@ import {
 } from "@/shared/steps";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
+import { failsOnToolError } from "@/shared/tool-error-policy";
 import {
   prepareChatV2,
   type PrepareChatV2Result,
@@ -2022,6 +2030,8 @@ async function persistSetupFailedIteration(args: {
   setupSignals?: StageSetupSignals;
   setupSpans?: EvalTraceSpan[];
   setupAudit?: Record<string, unknown>;
+  /** A refused setup step's code, for the run view (`{"code": …}`). */
+  errorDetails?: string;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
 }): Promise<void> {
@@ -2038,6 +2048,7 @@ async function persistSetupFailedIteration(args: {
     status: "setup_failed" as const,
     startedAt: args.runStartedAt,
     error: args.errorMessage,
+    ...(args.errorDetails ? { errorDetails: args.errorDetails } : {}),
     resultSource: "reported" as const,
     metadata: {
       ...args.iterationMetadataBase,
@@ -5724,9 +5735,7 @@ const runLocalIteration = async ({
       stepState,
       steps,
     );
-    const failOnToolError =
-      (advancedConfig as { failOnToolError?: boolean } | undefined)
-        ?.failOnToolError !== false;
+    const failOnToolError = failsOnToolError(advancedConfig);
     const traceForGate =
       acc.capturedSpans.length > 0 || acc.conversationMessages.length > 0
         ? {
@@ -6036,7 +6045,11 @@ const runLocalIteration = async ({
       };
     }
 
-    logger.error("[evals] streaming iteration failed", error);
+    // `httpStatus` is the one provider fact the strict Sentry boundary keeps;
+    // it separates a bad key or quota (4xx) from a provider outage (5xx).
+    logger.error("[evals] streaming iteration failed", error, {
+      httpStatus: acc.stepErrorEvidence?.httpStatus,
+    });
 
     // A prep failure fires before the stamp is written; the failed rewrite
     // trial still has to say which experiment it belonged to, or the report
@@ -6060,13 +6073,16 @@ const runLocalIteration = async ({
 
       const responseBody = (error as any).responseBody;
       if (responseBody && typeof responseBody === "string") {
-        errorDetails = responseBody;
+        errorDetails = providerErrorDetails(responseBody);
       }
     } else if (typeof error === "string") {
       errorMessage = error;
     } else {
       errorMessage = String(error);
     }
+    // A provider's error message can echo the request's key, like its body;
+    // this text is streamed and stored on the iteration.
+    errorMessage = redactSecretShapes(errorMessage);
 
     const failAt = Date.now();
     if (acc.activeTraceCtx) {
@@ -6265,10 +6281,15 @@ const runLocalIteration = async ({
       finishParams: failParams,
     });
     return {
-      creditsExhausted: isCreditExhaustion({
-        message: errorMessage,
-        details: errorDetails,
-      }),
+      // This rail runs on the customer's own key, so a provider's "insufficient
+      // credits" is their provider balance, not MCPJam's: it must not stop the
+      // run as out of MCPJam credits.
+      creditsExhausted:
+        acc.stepErrorEvidence?.source !== "provider_call" &&
+        isCreditExhaustion({
+          message: errorMessage,
+          details: errorDetails,
+        }),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
@@ -6922,7 +6943,17 @@ const runHostedIterationWithBrowser = async (
       });
       if (!acquired.ok) {
         const refusal = acquired.refusal;
-        const error = new Error(describeEvalSandboxRefusal(refusal));
+        // Typed, as a harness setup step's failure is everywhere else, so the
+        // backend's code (the native harness trial's) reaches the setup row.
+        const httpStatus = httpStatusOrUndefined(refusal.status);
+        const error = new HarnessInfraSetupError(
+          describeEvalSandboxRefusal(refusal),
+          {
+            source: "sandbox_setup",
+            ...(refusal.code ? { code: refusal.code } : {}),
+            ...(httpStatus !== undefined ? { httpStatus } : {}),
+          },
+        );
         if (refusal.status === 503 && refusal.code === "at_capacity") {
           iterationMetadataBase.timeout = {
             clock: "sandboxCapacity",
@@ -7094,6 +7125,7 @@ const runHostedIterationWithBrowser = async (
       throw abortSignal?.reason ?? error;
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const setupCode = harnessFailureEvidenceOf(error)?.code;
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
     if (toolDescriptionOverride) {
       stampDescriptionExperiment(
@@ -7106,6 +7138,9 @@ const runHostedIterationWithBrowser = async (
       iterationId,
       runStartedAt,
       errorMessage,
+      // The run view reads a refusal's code here, beside a sentence that
+      // carries none (`notifyMCPJamLimitError`).
+      ...(setupCode ? { errorDetails: JSON.stringify({ code: setupCode }) } : {}),
       iterationMetadataBase,
       // Same authored-case inputs the success path builds further down; this
       // runner is never reached by a model-free case.
@@ -7559,9 +7594,7 @@ const runHostedIterationWithBrowser = async (
     mergeViewToolEvidence(toolsCalledByPrompt, browser.viewToolCalls ?? []),
     widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
   );
-  const failOnToolError =
-    (advancedConfig as { failOnToolError?: boolean } | undefined)
-      ?.failOnToolError !== false;
+  const failOnToolError = failsOnToolError(advancedConfig);
   // Which transcript the predicate gate reads. EVIDENCE grading gets the
   // trace transcript (raw results and reconstructed wire-only calls are what
   // evidence-aware predicates are for); narration grading keeps the model

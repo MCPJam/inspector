@@ -119,7 +119,7 @@ export function NewSwarmConfirmFooter({
                 Launching…
               </>
             ) : (
-              "Continue"
+              "Start swarm"
             )}
           </Button>
         </DisabledReasonTooltip>

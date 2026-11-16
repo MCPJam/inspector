@@ -942,11 +942,12 @@ export async function streamChatTurn(
     }
     throw error;
   }
-  // MCPJam's agent holds its skill tools once the turn is prepared. A harness
-  // turn reports from its box writer instead (`onBoxSkillsWritten` below).
+  // MCPJam's agent holds its skill tools once the turn is prepared, the
+  // connected servers' own skills among them. A harness turn reports from its
+  // box writer instead (`onBoxSkillsWritten` below).
   const { skills: plannedSkills, skillsSurface } = prepare;
-  if (!prepare.harness && plannedSkills && skillsSurface) {
-    reportSkillsDelivered(skillsSurface, plannedSkills);
+  if (!prepare.harness && prepared.effectiveSkills && skillsSurface) {
+    reportSkillsDelivered(skillsSurface, prepared.effectiveSkills);
   }
 
   const {

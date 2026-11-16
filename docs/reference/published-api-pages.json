@@ -63,6 +63,7 @@
   "/api-reference/directory-readiness/fetch-a-readiness-runs-full-report",
   "/api-reference/directory-readiness/list-readiness-runs",
   "/api-reference/directory-readiness/read-one-readiness-run",
+  "/api-reference/directory-readiness/resume-a-stopped-readiness-run",
   "/api-reference/directory-readiness/start-a-claude-directory-readiness-run",
   "/api-reference/directory-readiness/start-a-muse-connector-readiness-run",
   "/api-reference/directory-readiness/start-an-openai-plugin-directory-readiness-run",

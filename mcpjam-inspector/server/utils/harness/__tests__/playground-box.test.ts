@@ -244,6 +244,32 @@ describe("acquirePlaygroundHarnessBox", () => {
     await result.box.release();
   });
 
+  it("hands the harness the ceiling of a box that pauses, and none from an older backend", async () => {
+    const retainUntil = Date.now() + 4 * 60 * 60_000;
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        sandboxRowId: "row",
+        sandboxId: "sbx",
+        idleMs: 5 * 60_000,
+        retainUntil,
+      },
+    });
+    const kept = await acquirePlaygroundHarnessBox(args);
+    if (!kept.ok) throw new Error("expected a box");
+    expect(kept.box.binding).toMatchObject({ idleMs: 5 * 60_000, retainUntil });
+    await kept.box.release();
+
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 },
+    });
+    const older = await acquirePlaygroundHarnessBox(args);
+    if (!older.ok) throw new Error("expected a box");
+    expect(older.box.binding).not.toHaveProperty("retainUntil");
+    await older.box.release();
+  });
+
   it("keeps the box alive across a turn longer than its idle window, then leaves it for the next turn", async () => {
     provisionMock.mockResolvedValue({
       ok: true,
@@ -294,6 +320,26 @@ describe("acquirePlaygroundHarnessBox", () => {
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(touchMock.mock.calls.length).toBe(beats);
     expect(releaseMock).not.toHaveBeenCalled();
+  });
+
+  it("says the call took a box prepared before Send, and nothing when the backend did not say so", async () => {
+    const box = { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 };
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: { ...box, prepared: true },
+    });
+    const prepared = await acquirePlaygroundHarnessBox(args);
+    expect(prepared).toMatchObject({ ok: true, prepared: true });
+    if (!prepared.ok) throw new Error("expected a box");
+    // The box itself is the same box either way.
+    expect(prepared.box.binding).not.toHaveProperty("prepared");
+    await prepared.box.release();
+
+    provisionMock.mockResolvedValueOnce({ ok: true, value: box });
+    const plain = await acquirePlaygroundHarnessBox(args);
+    expect(plain.ok).toBe(true);
+    expect(plain).not.toHaveProperty("prepared");
+    if (plain.ok) await plain.box.release();
   });
 
   it("returns the control plane's refusal untouched", async () => {

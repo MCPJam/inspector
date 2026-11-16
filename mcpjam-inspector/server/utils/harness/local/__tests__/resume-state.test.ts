@@ -90,6 +90,20 @@ describe("diskResumeState", () => {
     });
   });
 
+  it("does the same for GitHub Copilot CLI, whose session lives in its home on the box", () => {
+    expect(
+      diskResumeState({
+        type: "resume-session",
+        harnessId: "copilot-cli",
+        data: { threadId: "t-1", bridge: { port: 39271, token: "t" } },
+      }),
+    ).toEqual({
+      type: "resume-session",
+      harnessId: "copilot-cli",
+      data: { threadId: "t-1" },
+    });
+  });
+
   it("restarts Cursor from its saved ACP session after the process exits", () => {
     const data = {
       implementationIdentity: "cursor",

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  planWithLiveServerSkills,
   resolveTurnSkills,
   toSkillsAtTurn,
   turnRuntime,
@@ -11,6 +12,12 @@ import {
   type RuntimeStandaloneSkill,
 } from "../effective-capabilities";
 import { sessionTurnSkills } from "../../sessionSimulation/session-skills";
+import { listLiveServerSkills } from "../../../utils/computers/live-server-skills";
+import {
+  makeServerSkillWire,
+  SKILL_URI,
+  type ServerSkillWireOptions,
+} from "../../../test/support/server-skill-wire";
 import {
   agentLoads,
   agentReceives,
@@ -357,5 +364,69 @@ describe("turnSkillsFromLegacySource", () => {
     });
     expect(live?.agent).toEqual({ kind: "live" });
     expect(live && refs(live)).toEqual(["deploy"]);
+  });
+});
+
+describe("planWithLiveServerSkills", () => {
+  const REFUNDS = "acme-billing/refunds";
+  const livePlan = (modelContextTokens?: number) => {
+    const plan = turnSkillsFromLegacySource(
+      {
+        kind: "resolved",
+        capabilities: LIVE_SET,
+        composeLiveServerSkills: true,
+      },
+      modelContextTokens,
+    );
+    if (!plan) throw new Error("A live source always has a plan.");
+    return plan;
+  };
+  const listed = async (options: ServerSkillWireOptions = {}) => {
+    const live = await listLiveServerSkills(
+      await makeServerSkillWire(options),
+      [{ serverId: "srv1", serverLabel: "Acme Billing" }],
+    );
+    if (!live) throw new Error("The server declares the extension.");
+    return live;
+  };
+
+  it("delivers a connected server's skills after the plan's own", async () => {
+    const plan = livePlan();
+    const joined = planWithLiveServerSkills(plan, await listed());
+    expect(joined.delivered).toEqual([
+      expect.objectContaining({ ref: "deploy" }),
+      { skillId: SKILL_URI, ref: REFUNDS, name: "refunds" },
+    ]);
+    expect(joined.set.liveServerSkills?.skills).toHaveLength(1);
+    // The plan stays as planned: `skillsAtTurn` is recorded from it.
+    expect(refs(plan)).toEqual(["deploy"]);
+    expect(plan.set.liveServerSkills).toBeUndefined();
+  });
+
+  it("marks a skill the prompt's skill list leaves out, as the plan marks its own", async () => {
+    // A model this small has room for one line, and the set's own skill has
+    // first claim on it.
+    const joined = planWithLiveServerSkills(
+      livePlan(1_000),
+      await listed(),
+      1_000,
+    );
+    expect(joined.delivered).toEqual([
+      expect.objectContaining({ ref: "deploy" }),
+      expect.objectContaining({ ref: REFUNDS, omittedFromCatalog: true }),
+    ]);
+    expect(joined.delivered[0]?.omittedFromCatalog).toBeUndefined();
+  });
+
+  it("does not deliver a skill MCPJam lists but declines to load", async () => {
+    const joined = planWithLiveServerSkills(
+      livePlan(),
+      await listed({ noResources: true }),
+    );
+    expect(refs(joined)).toEqual(["deploy"]);
+    // It stays in the set, so the prompt still lists it, marked unverifiable.
+    expect(
+      joined.set.liveServerSkills?.skills.map((skill) => skill.ref),
+    ).toEqual([REFUNDS]);
   });
 });

@@ -28,6 +28,7 @@ import {
   PLATFORM_WIDGET_RESOURCE_URIS,
 } from "../src/shared/platform-widgets.js";
 import type { PlatformToolContext } from "../src/server.js";
+import type { GuestMintFailure } from "../src/guestMint.js";
 import type { SessionToolRegistrar } from "../src/tools/sessionToolRegistrar.js";
 
 type ToolResult = {
@@ -95,6 +96,7 @@ function jsonBodyOf(result: ToolResult): Record<string, unknown> {
 function fakeToolContext(
   overrides: {
     bearerToken?: string;
+    bearerFailure?: GuestMintFailure;
     platformApiUrl?: string;
     appOrigin?: string;
     callerUserAgent?: string;
@@ -104,7 +106,13 @@ function fakeToolContext(
   return {
     // runPlatformOperation resolves the bearer via getBearerToken() (async, so
     // anonymous requests can mint lazily). The stub just returns the override.
-    getBearerToken: async () => overrides.bearerToken,
+    getBearerToken: async () =>
+      overrides.bearerToken
+        ? { ok: true, token: overrides.bearerToken }
+        : {
+            ok: false,
+            failure: overrides.bearerFailure ?? { reason: "not_configured" },
+          },
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
@@ -179,7 +187,43 @@ const PLAIN_TOOLS = [
   "get_readiness_run",
   "list_readiness_runs",
   "cancel_readiness_run",
+  "resume_readiness_run",
   "get_readiness_report",
+  // Directory submissions: a form, answers and results by step are
+  // agent-oriented payloads; the Readiness page is their visual form.
+  "list_directory_flows",
+  "get_directory_flow",
+  "create_directory_submission",
+  "list_directory_submissions",
+  "get_directory_submission",
+  "update_directory_submission",
+  "delete_directory_submission",
+  "start_directory_submission_run",
+  "get_directory_submission_results",
+  // A submission's reviewer sign-in attempts: state and stages, read by agents.
+  "create_reviewer_attempt",
+  "list_reviewer_attempts",
+  "get_reviewer_attempt",
+  "resume_reviewer_attempt",
+  "cancel_reviewer_attempt",
+  "get_directory_submission_handoff",
+  "list_directory_submission_findings",
+  "get_directory_submission_finding",
+  "export_directory_submission",
+  "list_directory_submission_events",
+  "record_directory_submission_status",
+  "record_directory_submission_snapshot",
+  "import_directory_finding",
+  // A submission's test plan and what its calls showed, read by agents.
+  "get_directory_submission_test_plan",
+  "draft_directory_submission_test_plan",
+  "save_directory_submission_test_plan",
+  "get_directory_submission_tool_tests",
+  // The eval suite holding a submission's test cases.
+  "get_directory_submission_evals",
+  "set_directory_submission_evals",
+  "import_directory_submission_test_cases",
+  "export_directory_submission_test_cases",
   "start_conformance_run",
   "get_conformance_run",
   "list_conformance_runs",
@@ -472,6 +516,44 @@ describe("platform tool registration", () => {
       "get_server_skill",
       "read_server_skill_file",
       "check_host_compatibility",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "start_muse_readiness_run",
+      "get_readiness_run",
+      "list_readiness_runs",
+      "cancel_readiness_run",
+      "resume_readiness_run",
+      "get_readiness_report",
+      "list_directory_flows",
+      "get_directory_flow",
+      "create_directory_submission",
+      "list_directory_submissions",
+      "get_directory_submission",
+      "update_directory_submission",
+      "delete_directory_submission",
+      "start_directory_submission_run",
+      "get_directory_submission_results",
+      "create_reviewer_attempt",
+      "list_reviewer_attempts",
+      "get_reviewer_attempt",
+      "resume_reviewer_attempt",
+      "cancel_reviewer_attempt",
+      "get_directory_submission_handoff",
+      "list_directory_submission_findings",
+      "get_directory_submission_finding",
+      "export_directory_submission",
+      "list_directory_submission_events",
+      "record_directory_submission_status",
+      "record_directory_submission_snapshot",
+      "import_directory_finding",
+      "get_directory_submission_test_plan",
+      "draft_directory_submission_test_plan",
+      "save_directory_submission_test_plan",
+      "get_directory_submission_tool_tests",
+      "get_directory_submission_evals",
+      "set_directory_submission_evals",
+      "import_directory_submission_test_cases",
+      "export_directory_submission_test_cases",
       "start_conformance_run",
       "get_conformance_run",
       "list_conformance_runs",
@@ -658,6 +740,11 @@ describe("platform tool registration", () => {
       "publish_study",
       "create_client",
       "duplicate_client",
+      "create_directory_submission",
+      "record_directory_submission_status",
+      "record_directory_submission_snapshot",
+      "import_directory_finding",
+      "import_directory_submission_test_cases",
       "send_feedback",
     ]);
     // Writes whose identical repeat answers success on the state the first
@@ -679,6 +766,8 @@ describe("platform tool registration", () => {
       "upsert_study_member",
       "update_project",
       "archive_goal",
+      "save_directory_submission_test_plan",
+      "import_directory_submission_test_cases",
     ]);
     const names = new Set(registrations.map((registration) => registration.name));
     for (const name of [...ADDITIVE_WRITES, ...IDEMPOTENT_WRITES]) {
@@ -927,15 +1016,28 @@ describe("plugin read tools", () => {
 });
 
 describe("runPlatformOperation", () => {
-  it("returns a tool error when the request has no bearer token", async () => {
+  it("names the guest mint failure instead of a missing bearer", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     const result = (await runPlatformOperation(
-      fakeToolContext(),
+      fakeToolContext({ bearerFailure: { reason: "rejected", status: 401 } }),
       listProjectsOperation,
       {}
     )) as ToolResult;
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("bearer token");
+    expect(result.content[0]?.text).toContain(
+      "rejected this server's guest credentials"
+    );
+    expect(result.content[0]?.text).not.toContain("bearer token");
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "GUEST_SESSION_UNAVAILABLE",
+        reason: "rejected",
+        status: 401,
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("caps the model-visible text while keeping structuredContent complete", async () => {

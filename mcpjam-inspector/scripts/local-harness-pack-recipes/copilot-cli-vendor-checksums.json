@@ -1,0 +1,137 @@
+{
+  "darwin-arm64": {
+    "spec": "@github/copilot-darwin-arm64@1.0.92",
+    "tarballBytes": 99021188,
+    "integrity": "sha512-mp5p24XOnkd77RxRm5M2cVS/pGNVbgUfBS8Pvc5H4qG99kLValQXycn8S9iDKDqU/TBbm67AR03OLbxE+nb7sQ==",
+    "files": {
+      "LICENSE.md": {
+        "sha256": "sha256:b9680937e10425bf19862908856c16ed274e6b81a1368bd62be7a757eab21628",
+        "bytes": 2955,
+        "mode": "644"
+      },
+      "README.md": {
+        "sha256": "sha256:56746543469bfbe86eb179359b947ecac42db726220c0b031f128343b780bc7a",
+        "bytes": 383,
+        "mode": "644"
+      },
+      "copilot": {
+        "sha256": "sha256:d054ca3c31802d48e88e96627af502a0d5c579ee2f940c8cadf2d4bda07e0b54",
+        "bytes": 160179472,
+        "mode": "755"
+      },
+      "package.json": {
+        "sha256": "sha256:9663b498866c28c99ed4ad31c5dfd9a8c3587deeeb6165beae19495d81dfc9ff",
+        "bytes": 663,
+        "mode": "644"
+      }
+    }
+  },
+  "darwin-x64": {
+    "spec": "@github/copilot-darwin-x64@1.0.92",
+    "tarballBytes": 111109161,
+    "integrity": "sha512-cnY1PGKI0ER/NJpmMm40YDaxwefuByYJZjNlkjYN/zuUX6vqrOd2a7cOISCnhLBXliAe4y1FM63l+ufx9xrooQ==",
+    "files": {
+      "LICENSE.md": {
+        "sha256": "sha256:b9680937e10425bf19862908856c16ed274e6b81a1368bd62be7a757eab21628",
+        "bytes": 2955,
+        "mode": "644"
+      },
+      "README.md": {
+        "sha256": "sha256:1be939b38910d63f8fe0ece01f965779bdc75030eb27317dc54c2326d81ea3b7",
+        "bytes": 379,
+        "mode": "644"
+      },
+      "copilot": {
+        "sha256": "sha256:33980346a4094f8cc17f19dd66d5e71e01a39457911af312bd407bb5d8eb7b97",
+        "bytes": 173466448,
+        "mode": "755"
+      },
+      "package.json": {
+        "sha256": "sha256:e8f8a8d05187224369859e735adddeed3bf762938e7bd62fb1e6b01ab127cbda",
+        "bytes": 655,
+        "mode": "644"
+      }
+    }
+  },
+  "linux-x64": {
+    "spec": "@github/copilot-linux-x64@1.0.92",
+    "tarballBytes": 111899204,
+    "integrity": "sha512-n/ltf/VYN0LsxZckwAd9eyVLOcV9nFqokRJzJKC6jO9QXFJvpAuba5o7Q3d1EvDGvxXntxzgNvaeINOzcnBnag==",
+    "files": {
+      "LICENSE.md": {
+        "sha256": "sha256:b9680937e10425bf19862908856c16ed274e6b81a1368bd62be7a757eab21628",
+        "bytes": 2955,
+        "mode": "644"
+      },
+      "README.md": {
+        "sha256": "sha256:7063696e79f32e8bcc2a270135e1e9278b9a1c2a7d7fc8073dfc0408181b9fb6",
+        "bytes": 377,
+        "mode": "644"
+      },
+      "copilot": {
+        "sha256": "sha256:9f1552c5eae8d523fd807bfea53ad3e72960106fe492d1bd9cfa13534c534359",
+        "bytes": 180095808,
+        "mode": "755"
+      },
+      "package.json": {
+        "sha256": "sha256:097fc19c2b52e075057605aaabc737d41fd91ca1a707c00e9c77943e6891b265",
+        "bytes": 680,
+        "mode": "644"
+      }
+    }
+  },
+  "linux-arm64": {
+    "spec": "@github/copilot-linux-arm64@1.0.92",
+    "tarballBytes": 113825264,
+    "integrity": "sha512-999A0xmvqishPnFueOAAtGifCAotYOAT+xPT+cNuCuV18v75DBoW10OIc3Pp6FGtSvRN0fk4wLnHmGFj5LDNkQ==",
+    "files": {
+      "LICENSE.md": {
+        "sha256": "sha256:b9680937e10425bf19862908856c16ed274e6b81a1368bd62be7a757eab21628",
+        "bytes": 2955,
+        "mode": "644"
+      },
+      "README.md": {
+        "sha256": "sha256:fd7d48bdb21a10fa3e002eabd8ebf0e78038a002e42a5246efffc14cc714f8c7",
+        "bytes": 381,
+        "mode": "644"
+      },
+      "copilot": {
+        "sha256": "sha256:62c67cdc85f647757ae45e75632a5ae3c4be634a36a484e180ce390152f3d135",
+        "bytes": 176622336,
+        "mode": "755"
+      },
+      "package.json": {
+        "sha256": "sha256:09bf3f74db769df6ccbbc56523d293639572517781e090453daa4d86ada9c170",
+        "bytes": 688,
+        "mode": "644"
+      }
+    }
+  },
+  "win32-x64": {
+    "spec": "@github/copilot-win32-x64@1.0.92",
+    "tarballBytes": 97475043,
+    "integrity": "sha512-+WcEEvFxLzdq/UpnYztfRuGuayazfduI+LS+XM9sE9t7dyLyjQEW8YB5X6ji7z7xgN2HzlmjmUP8PDgWBO/ytg==",
+    "files": {
+      "LICENSE.md": {
+        "sha256": "sha256:b9680937e10425bf19862908856c16ed274e6b81a1368bd62be7a757eab21628",
+        "bytes": 2955,
+        "mode": "644"
+      },
+      "README.md": {
+        "sha256": "sha256:e17c1c3ecafcf775592efcc267a3114f60b1847424a9d10c3ae6b372f4ac2c66",
+        "bytes": 377,
+        "mode": "644"
+      },
+      "copilot.exe": {
+        "sha256": "sha256:4da425b2a948029c4dbb2598d0ed1e09d822c5ccc94972eac9974e8372e00d87",
+        "bytes": 156204832,
+        "mode": "755"
+      },
+      "package.json": {
+        "sha256": "sha256:6d4fbb355a8bc588cd8498121c9fa476011b7a925773772b97aef82511c39e23",
+        "bytes": 663,
+        "mode": "644"
+      }
+    }
+  }
+}

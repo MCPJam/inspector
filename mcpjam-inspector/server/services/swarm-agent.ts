@@ -8,10 +8,11 @@ import type {
 } from "@mcpjam/sdk/host-config/internal";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
-import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
+import type { PinnedSkillArtifact, PinnedSkillArtifactFile } from "../../shared/skill-types.js";
 import type {
   RunPinnedPluginVersion,
   RunPinnedSkill,
+  RunPinnedSkillFile,
 } from "./evals/run-plugin-snapshot.js";
 import {
   localHarnessCapabilities,
@@ -456,6 +457,12 @@ export interface PinnedServerSkill {
   skillUri: string;
 }
 
+export type FetchedPinnedSkill = Omit<PinnedSkillArtifact, "files"> & {
+  aggregateHash?: string;
+  extraFrontmatter?: Record<string, unknown>;
+  files?: Array<RunPinnedSkillFile | PinnedSkillArtifactFile>;
+};
+
 /**
  * Fetch ONE pinned skill's complete runtime artifact for an env-based target:
  * `GET /journey-execution/runs/skill?runId&projectId&targetId&contentHash`,
@@ -463,9 +470,8 @@ export interface PinnedServerSkill {
  * that server's pin among pins sharing the hash. A backend that predates them
  * ignores them and serves the first pin with the hash.
  * Same bearer/authorization as the attempt/heartbeat routes (project member +
- * run launcher). The response mirrors P0.2's complete artifact envelope
- * ({@link PinnedSkillArtifact}) — the shipped backend serves the SKILL.md-only
- * subset, which is the same shape with the optional extensions absent.
+ * run launcher). Newer responses also carry the frozen file manifest and
+ * signed URLs; older body-only pins have no file list.
  *
  * Error contract (consumed by the pinned-skill cache's retry policy):
  *   - 404 → {@link SwarmAgentError} with `status: 404` (never retried — the
@@ -485,7 +491,7 @@ export async function fetchPinnedSkill(
     serverSkill?: PinnedServerSkill;
     signal?: AbortSignal;
   },
-): Promise<PinnedSkillArtifact> {
+): Promise<FetchedPinnedSkill> {
   const query = new URLSearchParams({
     runId: args.runId,
     projectId: args.projectId,
@@ -498,7 +504,7 @@ export async function fetchPinnedSkill(
   }
   const data = await getJson<{
     ok?: boolean;
-    skill?: PinnedSkillArtifact;
+    skill?: FetchedPinnedSkill;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/runs/skill?${query.toString()}`,

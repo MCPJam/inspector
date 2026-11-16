@@ -171,7 +171,14 @@ async function authorizePreparation(
     return sandboxViewOwner(c);
   }
   const owner = await sandboxViewOwner(c);
-  if (!c.mcpClientManager.getServerConfig(source.serverId))
+  // A saved App copy (eval run, saved view) has no receipt: its bytes come from
+  // the saved run, not a live read, so drawing it needs no connected server.
+  // Like hosted's already-read bytes above, it grants no server access. Live
+  // reads always carry a receipt and keep this check.
+  if (
+    input.sourceReceipt &&
+    !c.mcpClientManager.getServerConfig(source.serverId)
+  )
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,

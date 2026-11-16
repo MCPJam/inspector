@@ -18,7 +18,12 @@ const ALL_IDS: HostTemplateId[] = [
   "claude",
   "claude-desktop",
   "claude-code",
+  "claude-code-desktop",
+  "claude-code-web",
   "chatgpt",
+  "chatgpt-desktop",
+  "chatgpt-work",
+  "chatgpt-work-desktop",
   "mistral",
   "goose",
   "slack",
@@ -26,6 +31,7 @@ const ALL_IDS: HostTemplateId[] = [
   "cursor-cli",
   "copilot-cli",
   "codex",
+  "codex-cli",
   "copilot",
   "vscode",
   "agentcore",
@@ -34,6 +40,8 @@ const ALL_IDS: HostTemplateId[] = [
   "perplexity",
   "cline",
   "notion",
+  "muse",
+  "grokbot",
 ];
 
 describe("seedHostTemplate", () => {
@@ -104,6 +112,13 @@ describe("seedHostTemplate", () => {
         unauthorizedChallengeTrigger: "bearer-header",
       },
       chatgpt: { toolResultAuthChallenge: "prompt" },
+      // Claude Code's app clients connect through claude.ai's connector stack,
+      // and the ChatGPT variants through ChatGPT's, so the same docs apply.
+      "claude-code-desktop": { unauthorizedChallengeTrigger: "bearer-header" },
+      "claude-code-web": { unauthorizedChallengeTrigger: "bearer-header" },
+      "chatgpt-desktop": { toolResultAuthChallenge: "prompt" },
+      "chatgpt-work": { toolResultAuthChallenge: "prompt" },
+      "chatgpt-work-desktop": { toolResultAuthChallenge: "prompt" },
     };
     for (const id of ALL_IDS) {
       const seeded = seedHostTemplate(id);
@@ -142,6 +157,9 @@ describe("seedHostTemplate", () => {
     ]);
     const onHosts = new Set<HostTemplateId>([
       "claude-code",
+      "claude-code-desktop",
+      "claude-code-web",
+      "codex-cli",
       "cursor",
       "codex",
       "vscode",
@@ -251,8 +269,7 @@ describe("seedHostTemplate", () => {
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(true);
-    // Bumped with the 2026-10-26 re-probe, from 2.1.259.
-    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.310");
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.312");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -409,17 +426,9 @@ describe("seedHostTemplate", () => {
         media: true,
       },
     });
-    expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
-      "connect-src": [
-        "https://cdn.jsdelivr.net",
-        "https://unpkg.com",
-        "https://esm.sh",
-      ],
-      "script-src": [
-        "https://cdn.jsdelivr.net",
-        "https://unpkg.com",
-        "https://esm.sh",
-      ],
+    // Every undeclared CDN origin is blocked on connect and resource loads, so
+    // only the frame directive is in the baseline.
+    expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toEqual({
       "frame-src": ["'self'", "data:", "blob:"],
     });
   });
@@ -428,7 +437,8 @@ describe("seedHostTemplate", () => {
     const cspDirectivesOf = (id: HostTemplateId) =>
       seedHostTemplate(id, { theme: "dark" }).mcpProfile?.apps?.sandbox?.csp
         ?.cspDirectives ?? {};
-    // ChatGPT and Codex loaded esm.sh undeclared on every one of these.
+    // ChatGPT and Codex block esm.sh undeclared, with the other CDN canaries,
+    // so neither keeps any connect or resource baseline.
     for (const id of ["chatgpt", "codex"] as const) {
       const directives = cspDirectivesOf(id);
       for (const directive of [
@@ -439,9 +449,7 @@ describe("seedHostTemplate", () => {
         "font-src",
         "media-src",
       ]) {
-        expect(directives[directive], `${id} ${directive}`).toContain(
-          "https://esm.sh"
-        );
+        expect(directives[directive], `${id} ${directive}`).toBeUndefined();
       }
     }
     // Claude's CSP blocked it everywhere, so no directive may list it.
@@ -456,9 +464,8 @@ describe("seedHostTemplate", () => {
 
   it("keeps Cursor CSP subtype findings in the SDK seed", () => {
     const config = seedHostTemplate("cursor", { theme: "dark" });
-    // Bumped with the 2026-10-26 re-probe, from 3.21.16.
     expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(
-      "3.27.14"
+      "3.29.9"
     );
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },

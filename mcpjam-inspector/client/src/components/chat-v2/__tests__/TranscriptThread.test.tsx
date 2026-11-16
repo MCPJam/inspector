@@ -13,7 +13,7 @@ vi.mock("../thread/message-view", () => ({
   MessageView: (props: {
     message: UIMessage;
     model: ModelDefinition;
-    claudeFooterMode?: "none" | "animated" | "static";
+    claudeFooterActive?: boolean;
     mcpjamFooterActive?: boolean;
   }) => {
     mockMessageView(props);
@@ -412,13 +412,13 @@ describe("TranscriptThread", () => {
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "assistant-1" }),
-        claudeFooterMode: "animated",
+        claudeFooterActive: true,
       })
     );
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "user-1" }),
-        claudeFooterMode: "none",
+        claudeFooterActive: false,
       })
     );
   });
@@ -437,7 +437,7 @@ describe("TranscriptThread", () => {
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "assistant-1" }),
-        claudeFooterMode: "none",
+        claudeFooterActive: false,
         mcpjamFooterActive: true,
       })
     );
@@ -463,13 +463,13 @@ describe("TranscriptThread", () => {
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "assistant-1" }),
-        claudeFooterMode: "none",
+        claudeFooterActive: false,
         mcpjamFooterActive: false,
       })
     );
   });
 
-  it("keeps the latest Claude assistant footer static after loading completes", () => {
+  it("clears the latest Claude assistant footer after loading completes", () => {
     render(
       <ScenarioHostStyleProvider value="claude">
         <TranscriptThread
@@ -483,7 +483,7 @@ describe("TranscriptThread", () => {
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
         message: expect.objectContaining({ id: "assistant-1" }),
-        claudeFooterMode: "static",
+        claudeFooterActive: false,
       })
     );
   });

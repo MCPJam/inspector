@@ -5,10 +5,11 @@
  *
  * Token delivery methods:
  * 1. Header: X-MCP-Session-Auth: Bearer <token> (preferred for fetch API)
- * 2. Query param: ?_token=<token> (required for SSE/EventSource)
+ * 2. Query param: ?_token=<token> (SSE/EventSource routes only)
  *
- * The query parameter fallback is necessary because the EventSource API
- * does not support custom headers.
+ * The query parameter fallback exists because the EventSource API does not
+ * support custom headers. Anywhere else a token in the URL is a token in
+ * history, logs and `Referer`, so other routes refuse it.
  *
  * SECURITY NOTE: When adding new routes, consider whether they should be protected.
  * Only add routes to UNPROTECTED_* if they:
@@ -158,20 +159,23 @@ export function scrubTokenFromUrl(url: string): string {
   return scrubCredentialsInText(url);
 }
 
-// Routes that typically use query param auth (SSE endpoints)
+// Routes an EventSource opens, the only ones that may take `?_token=`. An
+// entry ending in "/" is a prefix: the bridges' SSE streams and the message
+// URLs they hand their clients.
 const SSE_ROUTES = [
   "/api/mcp/servers/rpc/stream",
   "/api/mcp/events/stream",
   "/api/mcp/elicitation/stream",
+  "/api/mcp/subscriptions/stream",
+  "/api/mcp/subscribe",
   "/api/mcp/adapter-http/",
   "/api/mcp/manager-http/",
 ];
 
-/**
- * Check if a path is an SSE route (for better error messaging)
- */
 function isSSERoute(path: string): boolean {
-  return SSE_ROUTES.some((route) => path.startsWith(route));
+  return SSE_ROUTES.some((route) =>
+    route.endsWith("/") ? path.startsWith(route) : path === route,
+  );
 }
 
 /**
@@ -248,8 +252,7 @@ export async function sessionAuthMiddleware(
     token = authHeader.substring(7);
   }
 
-  // Fall back to query parameter (required for SSE/EventSource)
-  if (!token) {
+  if (!token && isSSERoute(path)) {
     token = c.req.query("_token") ?? undefined;
   }
 

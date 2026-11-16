@@ -44,6 +44,7 @@ import type {
   EvalSuiteRunListItem,
 } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
+import { trackRunViewed } from "./run-result-pages/run-view-events";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
 import { RunAccountFacts } from "./run-account-facts";
@@ -148,6 +149,9 @@ export function EvaluateRunPage({
   useEffect(() => {
     setReviewing(false);
   }, [run._id]);
+  useEffect(() => {
+    trackRunViewed({ suiteId: run.suiteId, runId: run._id }, "grid");
+  }, [run.suiteId, run._id]);
   const targets = launchRuns<EvalSuiteRunListItem>(
     run,
     relatedRuns ?? otherRuns,
