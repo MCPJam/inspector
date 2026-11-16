@@ -146,7 +146,7 @@ export function registerProtocolCommands(program: Command): void {
         ...config,
         __suppressTelemetry: true,
       });
-      captureConformanceRunEvent();
+      captureConformanceRunEvent("protocol", "single");
       const result = await test.run();
 
       writeConformanceOutput(renderConformanceForCli(result, reporter, format));
@@ -190,7 +190,7 @@ export function registerProtocolCommands(program: Command): void {
         ...config,
         __suppressTelemetry: true,
       });
-      captureConformanceRunEvent();
+      captureConformanceRunEvent("protocol", "suite");
       const result = await suite.run();
 
       writeConformanceOutput(renderConformanceForCli(result, reporter, format));

@@ -5,6 +5,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { createMcpJamMcpServer } from "../lib/mcp-server.js";
 import { recordCommandOutcome } from "../lib/command-outcome.js";
 import { getGlobalOptions } from "../lib/server-config.js";
+import { captureMcpToolEvent } from "../lib/telemetry.js";
 
 export function registerMcpCommands(program: Command): void {
   program
@@ -17,6 +18,7 @@ export function registerMcpCommands(program: Command): void {
       const handle = createMcpJamMcpServer({
         version: packageJson.version,
         defaultTimeoutMs: globalOptions.timeout,
+        onToolCalled: captureMcpToolEvent,
       });
 
       const transport = new StdioServerTransport();

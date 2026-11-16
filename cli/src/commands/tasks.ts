@@ -900,7 +900,7 @@ export function registerTasksCommands(program: Command): void {
       ...config,
       __suppressTelemetry: true,
     });
-    captureConformanceRunEvent();
+    captureConformanceRunEvent("tasks", "single");
     const result = await test.run();
 
     const outputResult = reporter

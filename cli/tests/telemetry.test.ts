@@ -515,7 +515,12 @@ test("a conformance run sends one conformance_run_triggered and the SDK sends no
       (event) => event.event === "conformance_run_triggered",
     );
     assert.equal(conformance?.distinctId, UUID_A);
-    assert.deepEqual(conformance?.properties, { run_source: "cli" });
+    assert.deepEqual(conformance?.properties, {
+      run_source: "cli",
+      suite: "protocol",
+      mode: "single",
+      cli_version: CLI_VERSION,
+    });
     assert.equal(recorder.flushes(), 1);
     assert.deepEqual(posthogRequests, []);
   });
@@ -594,7 +599,10 @@ test("debug mode prints the conformance event instead of sending it", async () =
 
   assert.equal(clientCreated, false);
   assert.match(run.stderr, /"event":"conformance_run_triggered"/);
-  assert.match(run.stderr, /"properties":\{"run_source":"cli"\}/);
+  assert.match(
+    run.stderr,
+    /"properties":\{"run_source":"cli","suite":"protocol","mode":"single","cli_version":"[^"]+"\}/,
+  );
   assert.match(run.stderr, /"event":"cli_command"/);
 });
 

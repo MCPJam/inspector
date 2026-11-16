@@ -225,7 +225,7 @@ export function registerConformanceRunCommand(program: Command): void {
       };
     }
 
-    captureConformanceRunEvent();
+    captureConformanceRunEvent("run", "suite");
     const report = await runConformance({
       server,
       suites,

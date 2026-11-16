@@ -18,16 +18,18 @@ import {
 import { z } from "zod";
 import {
   authChallengeHint,
-  normalizeCliError,
   usageError,
 } from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
 import { summarizeServerDoctorTarget } from "./server-doctor.js";
 import { listToolsWithMetadata } from "./server-ops.js";
+import { createToolRunner, type OnToolCalled } from "./mcp-tool-runner.js";
 
 export interface McpJamMcpServerOptions {
   version: string;
   defaultTimeoutMs?: number;
+  /** Told about each finished tool call, with no arguments or results. */
+  onToolCalled?: OnToolCalled;
 }
 
 export interface McpJamMcpServerHandle {
@@ -232,54 +234,11 @@ function withToolResultAuthChallenge(result: unknown): unknown {
   };
 }
 
-function toToolResult(payload: unknown) {
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(payload, null, 2),
-      },
-    ],
-  };
-}
-
-function toToolError(error: unknown) {
-  const normalized = normalizeCliError(error);
-  return {
-    isError: true,
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(
-          {
-            error: {
-              code: normalized.code,
-              message: normalized.message,
-              ...(normalized.details === undefined
-                ? {}
-                : { details: normalized.details }),
-            },
-          },
-          null,
-          2,
-        ),
-      },
-    ],
-  };
-}
-
-async function runTool(operation: () => Promise<unknown>) {
-  try {
-    return toToolResult(await operation());
-  } catch (error) {
-    return toToolError(error);
-  }
-}
-
 export function createMcpJamMcpServer(
   options: McpJamMcpServerOptions,
 ): McpJamMcpServerHandle {
   const defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
+  const runTool = createToolRunner(options.onToolCalled);
   const manager = new MCPClientManager(
     {},
     {
@@ -392,7 +351,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: false, openWorldHint: true },
     },
     async (input) =>
-      runTool(async () => {
+      runTool("connect_server", async () => {
         const { config } = buildTargetConfig(input, defaultTimeoutMs);
         const requestedName = input.name?.trim();
         if (requestedName && manager.hasServer(requestedName)) {
@@ -439,7 +398,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: false, openWorldHint: true },
     },
     async ({ server: name }) =>
-      runTool(async () => {
+      runTool("disconnect_server", async () => {
         if (!manager.hasServer(name)) {
           throw usageError(`Unknown server "${name}".`);
         }
@@ -463,7 +422,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () =>
-      runTool(async () => ({
+      runTool("list_servers", async () => ({
         servers: manager.listServers().map(describeServer),
       })),
   );
@@ -480,7 +439,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ server: name }) =>
-      runTool(async () => {
+      runTool("server_info", async () => {
         requireConnected(name);
         return {
           server: name,
@@ -501,7 +460,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name }) =>
-      runTool(async () => {
+      runTool("ping_server", async () => {
         requireConnected(name);
         const startedAt = Date.now();
         await manager.pingServer(name);
@@ -526,7 +485,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, cursor }) =>
-      runTool(async () => {
+      runTool("list_tools", async () => {
         requireConnected(name);
         return listToolsWithMetadata(manager, { serverId: name, cursor });
       }),
@@ -549,7 +508,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: false, openWorldHint: true },
     },
     async ({ server: name, tool, arguments: args }) =>
-      runTool(async () => {
+      runTool("call_tool", async () => {
         requireConnected(name);
         return withToolResultAuthChallenge(
           await manager.executeTool(name, tool, args ?? {}),
@@ -574,7 +533,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, cursor, templates }) =>
-      runTool(async () => {
+      runTool("list_resources", async () => {
         requireConnected(name);
         // Presence, not truthiness: `""` is a valid continuation cursor.
         const params = cursor !== undefined ? { cursor } : undefined;
@@ -596,7 +555,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, uri }) =>
-      runTool(async () => {
+      runTool("read_resource", async () => {
         requireConnected(name);
         return manager.readResource(name, { uri });
       }),
@@ -620,7 +579,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name }) =>
-      runTool(async () => {
+      runTool("list_skills", async () => {
         requireConnected(name);
         return listServerSkillCatalog(manager, name);
       }),
@@ -643,7 +602,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, uri }) =>
-      runTool(async () => {
+      runTool("get_skill", async () => {
         requireConnected(name);
         try {
           return { skill: await getVerifiedServerSkill(manager, { serverId: name, uri }) };
@@ -672,7 +631,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, skillUri, resourceUri }) =>
-      runTool(async () => {
+      runTool("read_skill_file", async () => {
         requireConnected(name);
         try {
           // Re-fetch the owning skill rather than trusting the caller: the
@@ -708,7 +667,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, cursor }) =>
-      runTool(async () => {
+      runTool("list_prompts", async () => {
         requireConnected(name);
         // Presence, not truthiness: `""` is a valid continuation cursor.
         return manager.listPrompts(
@@ -735,7 +694,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, prompt, arguments: args }) =>
-      runTool(async () => {
+      runTool("get_prompt", async () => {
         requireConnected(name);
         return manager.getPrompt(name, {
           name: prompt,
@@ -767,7 +726,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: false, openWorldHint: false },
     },
     async ({ server: name, method, clear }) =>
-      runTool(async () => {
+      runTool("get_notifications", async () => {
         const matches = notifications.filter(
           (entry) =>
             (!name || entry.server === name) &&
@@ -799,7 +758,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async (input) =>
-      runTool(async () => {
+      runTool("server_doctor", async () => {
         const { config, target } = buildTargetConfig(input, defaultTimeoutMs);
         const result = await runServerDoctor({
           config,
@@ -836,7 +795,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ url, accessToken, headers, timeoutMs }) =>
-      runTool(async () => {
+      runTool("probe_server", async () => {
         assertHttpUrl(url);
         const result = await probeMcpServer({
           url,
