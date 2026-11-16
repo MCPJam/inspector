@@ -806,3 +806,14 @@ it.each([true, false])("keeps attended ask mode with Tool Approval=%s", async re
   expect(result.prepared.permissionMode).toBe("allow-reads");
   await result.prepared.teardown();
 });
+
+it("holds native commands for an unattended turn that offers server skills", async () => {
+  const result = await prepareLocalHarnessTurn({
+    ...turnArgs(),
+    scope: "unattended",
+    holdNativeCommands: true,
+  });
+  if (!result.ok) throw new Error(result.message);
+  expect(result.prepared.permissionMode).toBe("allow-reads");
+  await result.prepared.teardown();
+});

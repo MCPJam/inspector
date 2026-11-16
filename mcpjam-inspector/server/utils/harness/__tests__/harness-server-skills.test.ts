@@ -35,9 +35,8 @@ type ToolCall = (input: unknown, options: unknown) => Promise<unknown>;
 type TurnArgs = Parameters<typeof harnessServerSkills>[1];
 
 /** A hosted Codex turn's server skills. */
-async function serve(args: Omit<TurnArgs, "localUnattended">) {
+async function serve(args: TurnArgs) {
   const turn = await harnessServerSkills(getHarnessAdapter("codex"), {
-    localUnattended: false,
     ...args,
   });
   if (!turn) throw new Error("Codex serves server skills through the tools.");
@@ -51,56 +50,24 @@ function toolOf(tools: Record<string, unknown>, name: string) {
 const NO_SERVERS = { getSkillsSupport: () => ({ active: false }) } as never;
 
 describe("which turns serve server skills through the tools", () => {
-  it("is a runtime whose descriptor says so, where the gate can hold commands", () => {
-    expect(
-      servesServerSkills(getHarnessAdapter("claude-code"), {
-        localUnattended: false,
-      }),
-    ).toBe(true);
-    expect(
-      servesServerSkills(getHarnessAdapter("codex"), {
-        localUnattended: false,
-      }),
-    ).toBe(true);
-  });
-
-  it("is not a local eval or swarm, which asks before no command", () => {
-    expect(
-      servesServerSkills(getHarnessAdapter("codex"), { localUnattended: true }),
-    ).toBe(false);
-  });
-
-  it("is not a runtime that takes no skills yet", () => {
-    for (const id of ["cursor", "opencode", "copilot-cli"]) {
-      expect(
-        servesServerSkills(getHarnessAdapter(id), { localUnattended: false }),
-      ).toBe(false);
-    }
-  });
-
-  it("builds nothing for a turn that serves none", async () => {
-    const run = await preparedRunSkills();
-    const turn = {
-      mode: "pinned" as const,
-      live: false,
-      pinnedHarnessSkills: run.pinnedHarnessSkills,
-      manager: NO_SERVERS,
-      serverIds: [],
-      messages: [],
-    };
-    expect(
-      await harnessServerSkills(getHarnessAdapter("codex"), {
-        ...turn,
-        localUnattended: true,
-      }),
-    ).toBeUndefined();
-    expect(
-      await harnessServerSkills(getHarnessAdapter("cursor"), {
-        ...turn,
-        localUnattended: false,
-      }),
-    ).toBeUndefined();
-  });
+  it.each(["claude-code", "codex", "cursor", "opencode", "copilot-cli"])(
+    "serves MCP server skills through %s's tools",
+    async (id) => {
+      const run = await preparedRunSkills();
+      const adapter = getHarnessAdapter(id);
+      expect(servesServerSkills(adapter)).toBe(true);
+      const turn = await harnessServerSkills(adapter, {
+        mode: "pinned",
+        live: false,
+        pinnedHarnessSkills: run.pinnedHarnessSkills,
+        manager: NO_SERVERS,
+        serverIds: [],
+        messages: [],
+      });
+      expect(turn?.tools.loadSkill).toBeDefined();
+      expect(turn?.gated).toBe(true);
+    },
+  );
 });
 
 describe("whether the gate holds the turn", () => {

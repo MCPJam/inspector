@@ -225,6 +225,8 @@ export interface PrepareLocalHarnessTurnArgs {
   bearer: string;
   /** Attended Off requires durable consent; unattended modes keep their mapping. */
   requireToolApproval?: boolean;
+  /** A server skill needs native command requests even on unattended runs. */
+  holdNativeCommands?: boolean;
   /**
    * Set when this turn delivers decisions to an approval a LIVE runtime is
    * parked on. The parked runtime is re-adopted — authorization re-checked, a
@@ -468,7 +470,7 @@ async function prepareWithReservedRuntime(outer: {
 
   // Attended turns keep ask mode across toggle changes. Off is implemented
   // by answering native requests in MCPJam, rather than widening permissions.
-  const permissionMode = args.scope !== "unattended" || args.requireToolApproval
+  const permissionMode = args.scope !== "unattended" || args.requireToolApproval || args.holdNativeCommands
     ? ("allow-reads" as const)
     : plan.permissionMode;
 
@@ -876,7 +878,7 @@ async function adoptParkedLocalTurn(
         "the pending action will not run.",
     );
   }
-  const permissionMode = args.scope !== "unattended" || args.requireToolApproval
+  const permissionMode = args.scope !== "unattended" || args.requireToolApproval || args.holdNativeCommands
     ? ("allow-reads" as const)
     : plan.permissionMode;
   if (permissionMode !== live.prepared.permissionMode) {

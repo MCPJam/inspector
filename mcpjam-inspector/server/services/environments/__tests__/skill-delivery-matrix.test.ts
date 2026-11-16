@@ -118,13 +118,6 @@ interface Surface {
 
 const RUN_SKILLS = ["release-notes", "summarize", "search"];
 
-const noSkillsOn = (refs: string[]): Expected => ({
-  delivered: [],
-  excluded: refs.map((ref) => [ref, "unsupported-harness"]),
-  serverSkillsVia: "none",
-  recorded: [],
-});
-
 /**
  * What each engine receives of the fixture's three skills wherever they were
  * pinned: an eval run, its replay and a swarm target all deliver the same.
@@ -156,20 +149,26 @@ const PINNED: Record<Engine, Expected> = {
   },
   opencode: {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
   cursor: {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
   "copilot-cli": {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
 };
@@ -334,24 +333,9 @@ const liveRows = (
     },
     "claude-code": harness,
     codex: harness,
-    cursor: {
-      delivered: ["release-notes", "summarize", ...extra],
-      excluded: [["docs/search", "server-skill-unsupported"]],
-      serverSkillsVia: "none",
-      recorded: recorded ? ["release-notes", "summarize", ...extra] : [],
-    },
-    opencode: {
-      delivered: ["release-notes", "summarize", ...extra],
-      excluded: [["docs/search", "server-skill-unsupported"]],
-      serverSkillsVia: "none",
-      recorded: recorded ? ["release-notes", "summarize", ...extra] : [],
-    },
-    "copilot-cli": {
-      delivered: ["release-notes", "summarize", ...extra],
-      excluded: [["docs/search", "server-skill-unsupported"]],
-      serverSkillsVia: "none",
-      recorded: recorded ? ["release-notes", "summarize", ...extra] : [],
-    },
+    cursor: harness,
+    opencode: harness,
+    "copilot-cli": harness,
   };
 };
 
@@ -514,19 +498,19 @@ const OLDER_STUDY_TURN: Surface = {
     cursor: {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
     opencode: {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
-  "copilot-cli": {
+    "copilot-cli": {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
   },

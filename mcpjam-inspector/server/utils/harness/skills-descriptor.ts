@@ -123,7 +123,7 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       strictYaml: false,
     },
     headlessLoading: "native",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
   // A private home inside the installed recipe: Cursor reads only its folders
   // (and its working directory, with no walk-up), once, when its `agent acp`
@@ -150,7 +150,7 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       surface: "cli",
     },
     headlessLoading: "native",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
   // A per-session home, and the SDK's empty mode keeps skills off until the
   // bridge sets `enableSkills` and passes this folder as a skill directory,
@@ -170,7 +170,7 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       strictYaml: true,
     },
     headlessLoading: "bridge-opt-in",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
 };
 

@@ -55,6 +55,7 @@ export function commandGateAnswerer(turn: {
   return turn.approvalMode === "auto-deny" ||
     turn.sourceType === "eval" ||
     turn.sourceType === "swarm" ||
+    turn.sourceType === "event" ||
     !turn.resumable
     ? "nobody"
     : "member";
