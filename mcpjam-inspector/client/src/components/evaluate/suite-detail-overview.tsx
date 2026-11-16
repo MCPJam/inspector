@@ -446,6 +446,26 @@ export function SuiteDetailOverview({
     modelFilter,
     showAllRuns,
   ]);
+  // Memoized so the snapshot's launches do not regroup on every render.
+  const snapshotRuns = useMemo(
+    () => runs.filter((run) => filteredRunIds.has(run._id)),
+    [runs, filteredRunIds],
+  );
+  // The filters keep whole launches; health counts only the runs they match,
+  // like the dashboard's per-client chart.
+  const countsRun = useCallback(
+    (runId: string) => {
+      const row = rowMap.get(runId);
+      return Boolean(
+        row &&
+          (effectiveClient === ALL_EVAL_FILTER_VALUES ||
+            row.client === effectiveClient) &&
+          (effectiveModel === ALL_EVAL_FILTER_VALUES ||
+            row.models.includes(effectiveModel)),
+      );
+    },
+    [rowMap, effectiveClient, effectiveModel],
+  );
 
   const testCaseRows = useMemo(() => buildSuiteTestCaseRows(cases), [cases]);
 
@@ -860,9 +880,9 @@ export function SuiteDetailOverview({
           </div>
 
           <SuiteRunHistorySnapshot
-            runs={runs.filter((run) => filteredRunIds.has(run._id))}
+            runs={snapshotRuns}
             metricsByRun={metricsByRun}
-            nav={runsHealth}
+            nav={runsHealth && { ...runsHealth, countsRun }}
           />
 
           {filteredRows.length === 0 ? (

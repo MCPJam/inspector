@@ -7,7 +7,7 @@ function launch(
   runNumber: number,
   passed: number,
   total: number,
-  result: SuiteHistoryLaunch["result"] = passed === total ? "passed" : "failed",
+  verdict = passed === total ? "Passed" : "Failed",
 ): SuiteHistoryLaunch {
   return {
     point: {
@@ -27,9 +27,16 @@ function launch(
     suiteId: "suite-1",
     runNumber,
     date: Date.UTC(2026, 9, 10 + runNumber, 12),
-    result,
+    verdict,
+    health: total ? { passed, total } : null,
   };
 }
+
+/** A launch still running: on the table, not on the trend. */
+const running = (runNumber: number): SuiteHistoryLaunch => ({
+  ...launch(runNumber, 2, 10, "Running"),
+  health: null,
+});
 
 const sixRuns = [
   launch(1, 5, 12),
@@ -59,9 +66,10 @@ describe("SuiteRunsHealth", () => {
   });
 
   it.each([
-    [launch(6, 8, 12), "Failed 67%", "text-destructive"],
-    [launch(6, 12, 12), "Passed 100%", "text-success"],
-  ])("names the last run's result (%#)", (last, verdict, tone) => {
+    [launch(6, 8, 12), "Failed", "text-destructive", "Last run #6 · Failed · 67% passed · 8/12"],
+    [launch(6, 12, 12), "Passed", "text-foreground", "Last run #6 · Passed · 100% passed · 12/12"],
+    [running(6), "Running", "text-foreground", "Last run #6 · Running"],
+  ])("names the last run's verdict as the table does (%#)", (last, verdict, tone, line) => {
     renderWithProviders(
       <SuiteRunsHealth
         launches={[launch(5, 1, 2), last]}
@@ -70,9 +78,22 @@ describe("SuiteRunsHealth", () => {
       />,
     );
     expect(screen.getByText(verdict)).toHaveClass(tone);
-    expect(screen.getByTestId("nav-suite-health")).toHaveTextContent(
-      `Last run #6 · ${verdict} · ${last.point.passed}/12 passed`,
+    expect(screen.getByTestId("nav-suite-health")).toHaveTextContent(line);
+  });
+
+  it("leaves a running launch out of the average and the bars", () => {
+    renderWithProviders(
+      <SuiteRunsHealth
+        launches={[...sixRuns, running(7)]}
+        threshold={70}
+        onOpenRun={vi.fn()}
+      />,
     );
+    const health = screen.getByRole("region", { name: "Suite health" });
+    expect(health).toHaveTextContent("75%");
+    expect(health).toHaveTextContent("average across the last 6 runs");
+    expect(health).toHaveTextContent("Last run #7 · Running");
+    expect(screen.getAllByTestId("suite-health-bar")).toHaveLength(6);
   });
 
   it("draws one dated bar per scored launch and the threshold line", () => {

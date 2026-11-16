@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -298,14 +298,22 @@ export function SuiteHealthBars({
   threshold,
   onHoverRun,
   onSelectRun,
+  startAtNewest = false,
 }: {
   points: readonly SuiteHealthBarPoint[];
   /** Percent; null or out of 0–100 hides the line and its axis label. */
   threshold: number | null;
   onHoverRun?: (key: string | null) => void;
   onSelectRun?: (target: { suiteId: string; runId: string }) => void;
+  /** Open scrolled to the right, so the newest bars show when they overflow. */
+  startAtNewest?: boolean;
 }) {
   const validThreshold = isValidThreshold(threshold);
+  const scroller = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (startAtNewest && element) element.scrollLeft = element.scrollWidth;
+  }, [startAtNewest, points.length]);
   return (
     <div className="flex gap-2 pt-2">
       <div className="relative mt-2 h-20 w-9 shrink-0 text-right text-[11px] text-muted-foreground">
@@ -320,7 +328,7 @@ export function SuiteHealthBars({
           </span>
         )}
       </div>
-      <div className="min-w-0 flex-1 overflow-x-auto pt-2">
+      <div ref={scroller} className="min-w-0 flex-1 overflow-x-auto pt-2">
         <div style={{ minWidth: points.length * 80 }}>
           <div
             className="relative flex h-20 items-end gap-1.5"

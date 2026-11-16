@@ -23,7 +23,10 @@ import {
   type RunGitMetadataValue,
 } from "../evals/run-git-metadata";
 import { projectRunRollup } from "../evals/project-run-suite-groups";
-import { runEffectiveOutcome } from "../evals/project-runs-table";
+import {
+  runEffectiveOutcome,
+  type RunOutcomeFields,
+} from "../evals/project-runs-table";
 import type { ProjectRunRow } from "../evals/project-runs-table";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import {
@@ -101,7 +104,7 @@ export function EvaluateHistoryHeader({
  * so a run that recorded `cancelled`, `timed_out` or `inconclusive` in its
  * `result` is reported as decided rather than as having no result at all.
  */
-export function historyResult(rows: readonly ProjectRunRow[]): string {
+export function historyResult(rows: readonly RunOutcomeFields[]): string {
   if (rows.length === 0) return "No result";
   const outcomes = rows.map(runEffectiveOutcome);
   if (outcomes.some((it) => it === "running" || it === "pending"))

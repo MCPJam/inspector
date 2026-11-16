@@ -9,6 +9,9 @@ import type { SuiteHistoryLaunch } from "../suite-run-history-snapshot";
 /** Bars drawn; older launches still count toward nothing on screen. */
 const HEALTH_BAR_LIMIT = 30;
 
+const rateOf = (health: { passed: number; total: number }) =>
+  (100 * health.passed) / health.total;
+
 const AVERAGE_CLASS =
   "text-[40px] font-semibold leading-[44px] tracking-tight tabular-nums text-foreground";
 
@@ -24,18 +27,17 @@ export function SuiteRunsHealth({
   onOpenRun: (runId: string) => void;
 }) {
   const scored = launches
-    .filter((launch) => launch.point.total > 0)
+    .flatMap((launch) =>
+      launch.health ? [{ ...launch, rate: rateOf(launch.health) }] : [],
+    )
     .slice(-HEALTH_BAR_LIMIT);
   const average = scored.length
-    ? scored.reduce(
-        (sum, launch) => sum + (100 * launch.point.passed) / launch.point.total,
-        0,
-      ) / scored.length
+    ? scored.reduce((sum, launch) => sum + launch.rate, 0) / scored.length
     : null;
-  const latest = scored.at(-1) ?? null;
-  const passed = latest?.result === "passed";
+  // The newest launch, scored or not, so this agrees with the table's top row.
+  const latest = launches.at(-1) ?? null;
   return (
-    <div
+    <section
       className="border-b border-border/50 px-5 py-3.5"
       aria-label="Suite health"
       data-testid="nav-suite-health"
@@ -65,15 +67,22 @@ export function SuiteRunsHealth({
             <span
               className={cn(
                 "font-semibold",
-                passed ? "text-success" : "text-destructive",
+                latest.verdict === "Failed"
+                  ? "text-destructive"
+                  : "text-foreground",
               )}
             >
-              {passed ? "Passed" : "Failed"} {latest.point.passRate}%
+              {latest.verdict}
             </span>
-            {" · "}
-            <span className="tabular-nums">
-              {latest.point.passed}/{latest.point.total} passed
-            </span>
+            {latest.health ? (
+              <>
+                {" · "}
+                <span className="tabular-nums">
+                  {Math.round(rateOf(latest.health))}% passed ·{" "}
+                  {latest.health.passed}/{latest.health.total}
+                </span>
+              </>
+            ) : null}
           </span>
         ) : null}
       </div>
@@ -84,14 +93,15 @@ export function SuiteRunsHealth({
               key: launch.runId,
               runNumber: launch.runNumber,
               date: launch.date,
-              rate: (100 * launch.point.passed) / launch.point.total,
+              rate: launch.rate,
               target: { suiteId: launch.suiteId, runId: launch.runId },
             }))}
             threshold={threshold}
             onSelectRun={(target) => onOpenRun(target.runId)}
+            startAtNewest
           />
         </div>
       ) : null}
-    </div>
+    </section>
   );
 }

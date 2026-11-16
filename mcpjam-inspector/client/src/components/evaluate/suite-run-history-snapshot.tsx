@@ -13,33 +13,64 @@ import type { RunMetricsByRun } from "../evals/run-metrics";
 import type { EvalSuiteRunListItem } from "../evals/types";
 import { runTimestamp } from "./suite-detail-model";
 import { SuiteRunsHealth } from "./nav-suite/suite-runs-health";
+import { historyResult } from "./evaluate-history-row";
+import { isSubsetRerunRun } from "../evals/helpers";
+import { isActiveRun } from "../evals/run-metrics";
 import { SUITE_METRIC_HINTS } from "./nav-suite/suite-page-hints";
 
 /** One launch on the suite's history, oldest first. */
 export type SuiteHistoryLaunch = {
-  point: MetricStripPoint;
+  /** The metric strip's point; null until the launch has metrics. */
+  point: MetricStripPoint | null;
   label: string;
   /** The launch's first member run: what a click on the launch opens. */
   runId: string;
   suiteId: string;
   runNumber: number;
   date: number;
-  /** "passed" only when every member run passed. */
-  result: "passed" | "failed";
+  /** The runs table's verdict for the launch: "Running", "Passed", "Failed"… */
+  verdict: string;
+  /** Scored trials toward the suite's health; null when the launch counts for none. */
+  health: { passed: number; total: number } | null;
 };
 
-const launchOutcome = (run: EvalSuiteRunListItem) =>
-  run.result && run.result !== "pending" ? run.result : run.status;
+/**
+ * The dashboard's rule (`buildSuiteHealth`): a launch still running is not on
+ * the trend yet, a "rerun failed cases" rerun never is, and an inconclusive
+ * run was not measured. Only scored trials count.
+ */
+function launchHealth(
+  members: readonly EvalSuiteRunListItem[],
+  metricsByRun: RunMetricsByRun,
+  countsRun?: (runId: string) => boolean,
+): SuiteHistoryLaunch["health"] {
+  if (members.some(isActiveRun)) return null;
+  let passed = 0;
+  let total = 0;
+  for (const member of members) {
+    if (isSubsetRerunRun(member) || member.result === "inconclusive") continue;
+    if (countsRun && !countsRun(member._id)) continue;
+    const results = metricsByRun.get(member._id)?.results;
+    if (!results) continue;
+    passed += results.passed;
+    total += results.passed + results.failed + results.timedOut;
+  }
+  return total ? { passed, total } : null;
+}
 
-/** Per-launch history points; a launch without metrics yet is left out. */
+/**
+ * Every launch, oldest first. `countsRun` narrows health to the runs the Runs
+ * card's filters keep, so a launch's other clients do not move its bar.
+ */
 export function buildSuiteHistoryLaunches(
   runs: readonly EvalSuiteRunListItem[],
   metricsByRun: RunMetricsByRun,
+  countsRun?: (runId: string) => boolean,
 ): SuiteHistoryLaunch[] {
   const seen = new Set<string>();
   return [...runs]
     .sort((a, b) => runTimestamp(a) - runTimestamp(b))
-    .flatMap((run) => {
+    .flatMap((run): SuiteHistoryLaunch[] => {
       if (seen.has(run._id)) return [];
       const members = launchRuns(run, runs);
       members.forEach((member) => seen.add(member._id));
@@ -47,7 +78,16 @@ export function buildSuiteHistoryLaunches(
         members.length === 1
           ? buildSuiteMetricStripDataFromMetrics(members, metricsByRun)
           : buildAggregateMetricStripDataFromMetrics(members, metricsByRun);
-      if (!metrics) return [];
+      const launch = {
+        label: `#${members[0].runNumber}`,
+        runId: members[0]._id,
+        suiteId: members[0].suiteId,
+        runNumber: members[0].runNumber,
+        date: runTimestamp(members[0]),
+        verdict: historyResult(members),
+        health: launchHealth(members, metricsByRun, countsRun),
+      };
+      if (!metrics) return [{ ...launch, point: null }];
       // `resultCounts` over the launch: a timeout counts as a failure, and
       // the denominator is every trial.
       let passed = 0;
@@ -62,6 +102,7 @@ export function buildSuiteHistoryLaunches(
       }
       return [
         {
+          ...launch,
           point: total
             ? {
                 ...metrics.latest,
@@ -71,14 +112,6 @@ export function buildSuiteHistoryLaunches(
                 passRate: Math.round((passed / total) * 100),
               }
             : metrics.latest,
-          label: `#${members[0].runNumber}`,
-          runId: members[0]._id,
-          suiteId: members[0].suiteId,
-          runNumber: members[0].runNumber,
-          date: runTimestamp(members[0]),
-          result: members.every((member) => launchOutcome(member) === "passed")
-            ? "passed"
-            : "failed",
         },
       ];
     });
@@ -94,14 +127,21 @@ export function SuiteRunHistorySnapshot({
   /** One metrics object per run — see `evals/run-metrics.ts`. */
   metricsByRun: RunMetricsByRun;
   /** The new Suite page: health bars above a strip without its pass cell. */
-  nav?: { threshold: number | null; onOpenRun: (runId: string) => void };
+  nav?: {
+    threshold: number | null;
+    onOpenRun: (runId: string) => void;
+    /** The runs the Runs card's filters keep, for the health row. */
+    countsRun?: (runId: string) => boolean;
+  };
 }) {
+  const countsRun = nav?.countsRun;
   const launches = useMemo(
-    () => buildSuiteHistoryLaunches(runs, metricsByRun),
-    [runs, metricsByRun],
+    () => buildSuiteHistoryLaunches(runs, metricsByRun, countsRun),
+    [runs, metricsByRun, countsRun],
   );
   const data = useMemo(() => {
-    const series = launches.map((item) => item.point);
+    const measured = launches.filter((item) => item.point);
+    const series = measured.map((item) => item.point!);
     return series.length
       ? ({
           latest: series[series.length - 1],
@@ -112,11 +152,12 @@ export function SuiteRunHistorySnapshot({
                 series[series.length - 2].passRate
               : null,
           showTrend: series.length > 1,
-          runLabels: launches.map((item) => item.label),
+          runLabels: measured.map((item) => item.label),
         } satisfies MetricStripData)
       : null;
   }, [launches]);
-  if (!data) return null;
+  // The health row shows "No scored runs" even before any launch has metrics.
+  if (!data && !nav) return null;
   return (
     <>
       {nav ? (
@@ -126,20 +167,22 @@ export function SuiteRunHistorySnapshot({
           onOpenRun={nav.onOpenRun}
         />
       ) : null}
-      <div
-        data-testid="suite-run-history-snapshot"
-        className="@container/history-metrics border-b border-border/50"
-      >
-        <MetricStrip
-          bars
-          showCost={data.latest.costUsd != null}
-          data={data}
-          surface="embedded"
-          context="history"
-          testId="suite-run-history-metrics"
-          {...(nav ? { hidePassRate: true, hints: SUITE_METRIC_HINTS } : {})}
-        />
-      </div>
+      {data ? (
+        <div
+          data-testid="suite-run-history-snapshot"
+          className="@container/history-metrics border-b border-border/50"
+        >
+          <MetricStrip
+            bars
+            showCost={data.latest.costUsd != null}
+            data={data}
+            surface="embedded"
+            context="history"
+            testId="suite-run-history-metrics"
+            {...(nav ? { hidePassRate: true, hints: SUITE_METRIC_HINTS } : {})}
+          />
+        </div>
+      ) : null}
     </>
   );
 }
