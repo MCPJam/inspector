@@ -37,7 +37,7 @@ import {
 import { APPROVE_NATIVE_REQUEST, DENY_UNANSWERED, withAnsweredNativeRequests, withDeniedGatedHostTools } from "./auto-approve-harness.js";
 import { withHarnessElicitation } from "./with-harness-elicitation.js";
 import { isNativeElicitationProfile } from "./forwarding/native-elicitation-profile.js";
-import { qualifiedForwardingRuntime } from "./forwarding/runtime-contract.js";
+import { hostedWarmAgentEligible, qualifiedForwardingRuntime } from "./forwarding/runtime-contract.js";
 import { warmApprovalBindings, isWarmChatManager } from "./warm-approval-binding.js";
 import { assertPendingPolicy, stampNativeForwardingPolicy, nativePolicyDigest,
   forwardingToolPolicy,
@@ -381,8 +381,11 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   toolPolicySealExpiresAtMs?: number;
   /** Only this running chat lease can use the issued credential. */
   proxyTurn?: { laneId: string; leaseId: string };
-  /** The lane's session handles replace per-turn tokens (`sessionStableMcpConfig`). */
+  /** The lane's session handles replace per-turn tokens (`session-mcp-config.ts`). */
   session?: HarnessSessionTurn;
+  /** The runtime fingerprints its configuration: its session entries carry
+   *  nothing that varies between turns (`fingerprintsMcpConfig`). */
+  fingerprintedSession?: boolean;
   /**
    * The eval iteration and turn this `.mcp.json` is being built for.
    *
@@ -420,7 +423,8 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   const inputs: HarnessProxyServerInput[] = [];
   let mintedHarnessEvidence: HarnessEvidenceDecision | undefined;
   if (configured.length > 0 && strategy.plane === "web-authorized" && args.session) {
-    inputs.push(...(await sessionProxyInputs({ manager, serverIds: configured, strategy, authHeader, toolPolicy, session: args.session })));
+    inputs.push(...(await sessionProxyInputs({ manager, serverIds: configured, strategy, authHeader, toolPolicy, session: args.session,
+      ...(args.fingerprintedSession ? { fingerprinted: true } : {}) })));
   } else if (configured.length > 0 && strategy.plane === "web-authorized") {
     // HOSTED plane: servers are persisted Convex rows, and the harness-mcp route
     // rebuilds the connection per-request via acting-as. Convex mints a signed
@@ -934,14 +938,12 @@ export async function runHarnessTurn(
     harnessAdapter.id,
     Boolean(harnessExecutionTarget),
   );
-  const copilotCli = harnessAdapter.id === "copilot-cli";
   // A warm agent exits after its box's idle window (or ceiling, when kept
   // through the box's pause), so it runs only on a box whose window the backend sent.
   const warmRetention = warmRetentionFor(harnessSandboxBinding);
-  const warmAgentPilot = isWarmChatManager(mcpClientManager) && (copilotCli || !!qualifiedForwardingRuntime(harnessAdapter)) &&
+  const warmAgentPilot = isWarmChatManager(mcpClientManager) && hostedWarmAgentEligible(harnessAdapter) &&
     sourceType === "direct" && !harnessExecutionTarget && warmRetention !== undefined && !!chatSessionId &&
-    harnessMcpProxy?.plane === "web-authorized" &&
-    (copilotCli || harness === "claude-code" || harness === "codex");
+    harnessMcpProxy?.plane === "web-authorized";
   // The effort this turn asked for: the typed field, else the saved selection it
   // was forwarded with (`extraBodyFields.modelSelection`). Read once so the
   // refusal below and `createHarness` further down cannot disagree.
@@ -1705,6 +1707,7 @@ export async function runHarnessTurn(
       const buildNativeProxyConfig = (proxyTurn?: { laneId: string; leaseId: string }, session?: HarnessSessionTurn) => buildHarnessProxyMcpJsonFromManager({
         proxyTurn,
         session,
+        ...(session && harnessAdapter.fingerprintsMcpConfig ? { fingerprintedSession: true } : {}),
         manager: mcpClientManager,
         selectedServerIds: selectedServers ?? [],
         unavailableServerIds: options.unavailableServerIds,
@@ -1771,11 +1774,12 @@ export async function runHarnessTurn(
           `[harness] retaining configured bridge (${mcpPlan.gaps.join(", ")})`, { gaps: mcpPlan.gaps },
         );
       if (!useNativeForwarding) onHarnessMcpReady?.();
-      // A runtime that fingerprints its MCP config gets the lane's session
-      // handles once its lane is claimed; an eval turn has no lane to keep.
-      const deferSessionConfig = harnessAdapter.sessionStableMcpConfig === true && nativeMcpDelivery &&
-        !harnessExecutionTarget && !useNativeForwarding && !warmAgentPilot && !evalIterationId;
-      const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding && !warmAgentPilot && !deferSessionConfig
+      // A hosted chat turn gets its lane's session handles once the lane is
+      // claimed, so its configuration is the same on every turn of the lane;
+      // an eval turn has no lane to keep.
+      const deferSessionConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding && !evalIterationId &&
+        harnessMcpProxy?.plane === "web-authorized";
+      const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding && !deferSessionConfig
         ? await buildNativeProxyConfig()
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
       let { mcpJson, keyToServerId } = proxyConfig;
@@ -2281,26 +2285,33 @@ export async function runHarnessTurn(
       }
       // Bound from the server's saved continuation, and only for the paused calls the decisions name.
       const pausedCalls = decided && pausedCallsForDecisions(continuity?.state?.resumeState, decided, approvalContinuations);
-      if (warmAgentPilot && nativeMcpDelivery && !useNativeForwarding) {
+      // The tokens a turn keeps when its lane's session grant cannot reach the
+      // proxy: bound to the lane lease for a warm agent, which outlives the
+      // turn, and per turn otherwise.
+      const perTurnProxyConfig = async () => {
+        if (!warmAgentPilot) return buildNativeProxyConfig();
         if (!continuity?.laneId) throw new Error("The chat session is unavailable. Send your message again.");
-        ({ mcpJson, keyToServerId } = await buildNativeProxyConfig({
-          laneId: continuity.laneId, leaseId: continuity.leaseId,
-        }));
-        harnessKeyToServerId = keyToServerId;
-      }
-      // Session envelopes need the box grant egress injects on the public
-      // origin, which only a turn with no model lease installs (`session-grant.ts`).
+        return buildNativeProxyConfig({ laneId: continuity.laneId, leaseId: continuity.leaseId });
+      };
+      // Session envelopes need the session grant egress injects on the public
+      // origin: beside the box's model lease, or on a grant of its own for an
+      // external-account runtime (`session-grant.ts`).
       let sessionGrantOrigin: string | undefined;
       if (deferSessionConfig) {
         const publicBaseUrl = harnessMcpProxy?.plane === "web-authorized" && harnessMcpProxy.mode === "direct"
           ? harnessMcpProxy.publicBaseUrl : undefined;
-        ({ mcpJson, keyToServerId } = await buildNativeProxyConfig(undefined, continuity?.laneId && externalAccountAuth && publicBaseUrl
-          ? { owner: continuity.owner, leaseId: continuity.leaseId, turnId }
-          : undefined));
-        if (continuity?.laneId && externalAccountAuth && publicBaseUrl && Object.keys(mcpJson.mcpServers).length > 0)
-          sessionGrantOrigin = new URL(publicBaseUrl).origin;
+        if (continuity?.laneId && publicBaseUrl) {
+          ({ mcpJson, keyToServerId } = await buildNativeProxyConfig(undefined, { owner: continuity.owner, leaseId: continuity.leaseId, turnId }));
+          if (Object.keys(mcpJson.mcpServers).length > 0) sessionGrantOrigin = new URL(publicBaseUrl).origin;
+        } else ({ mcpJson, keyToServerId } = await perTurnProxyConfig());
         harnessKeyToServerId = keyToServerId;
       }
+      const sessionGrantMissed = (grantOrigin: string | undefined) => {
+        logger.warn("[harness] session grant origin differs from the MCP proxy; using per-turn tokens", {
+          proxyOrigin: sessionGrantOrigin, grantOrigin: grantOrigin ?? null,
+        });
+        sessionGrantOrigin = undefined;
+      };
       tClaim = turnEvent.claimed(continuity?.stateVersion ?? 0);
 
       // 3. Get the box this turn runs on. TWO paths, and the choice is made by
@@ -2699,8 +2710,8 @@ export async function runHarnessTurn(
           | undefined,
         expiresAt: number,
       ) => {
-        const lane = harnessAdapter.sessionStableMcpConfig === true ? continuity : undefined;
-        if (!confirmed || !harnessMcpProxy || (harnessAdapter.sessionStableMcpConfig && !lane?.laneId))
+        const lane = harnessAdapter.fingerprintsMcpConfig === true ? continuity : undefined;
+        if (!confirmed || !harnessMcpProxy || (harnessAdapter.fingerprintsMcpConfig && !lane?.laneId))
           throw new Error("Native forwarding was not confirmed.");
         nativeForwarding = await prepareNativeForwarding({ ...confirmed, expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer,
           correlationKey: forwardingRuntime?.correlationKey, tasks, attributeToolCall: harnessAdapter.attributeToolCall,
@@ -2770,10 +2781,8 @@ export async function runHarnessTurn(
           // That turn keeps per-turn tokens, as a relay does; teardown revokes
           // the grant it installed. Every other refusal above fails closed.
           if (grant.origin !== sessionGrantOrigin) {
-            logger.warn("[harness] session grant origin differs from the MCP proxy; using per-turn tokens", {
-              proxyOrigin: sessionGrantOrigin, grantOrigin: grant.origin,
-            });
-            ({ mcpJson, keyToServerId } = await buildNativeProxyConfig());
+            sessionGrantMissed(grant.origin);
+            ({ mcpJson, keyToServerId } = await perTurnProxyConfig());
             harnessKeyToServerId = keyToServerId;
           }
         }
@@ -2787,6 +2796,9 @@ export async function runHarnessTurn(
         brokerRunId = turnRunId;
         const broker = await org.start({
           ...(useNativeForwarding ? { nativeForwarding: nativeForwardingSelection({ manager: mcpClientManager, laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }) } : {}),
+          ...(sessionGrantOrigin && continuity?.laneId
+            ? { sessionGrant: { laneId: continuity.laneId, leaseId: continuity.leaseId } }
+            : {}),
           // The project and the execution scope are fields of `box`'s COMPUTER
           // arm (set where `box` is built, above), so the ephemeral path has no
           // way to send either: the backend derives project + billing org from
@@ -2826,6 +2838,13 @@ export async function runHarnessTurn(
         // The recorded lease owns the box until this turn's teardown.
         clearReservationHeartbeat();
         reservationHeld = false;
+        // As for an external-account grant: a backend that installed none, or
+        // injects it on another origin, leaves this turn on per-turn tokens.
+        if (sessionGrantOrigin && broker.sessionGrantOrigin !== sessionGrantOrigin) {
+          sessionGrantMissed(broker.sessionGrantOrigin);
+          ({ mcpJson, keyToServerId } = await perTurnProxyConfig());
+          harnessKeyToServerId = keyToServerId;
+        }
         if (useNativeForwarding) await forwardThrough(broker.forwarding, broker.expiresAt);
         connectionPreparedByBroker = true;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl, warmAgentPilot);
@@ -2930,7 +2949,8 @@ export async function runHarnessTurn(
         ? nativePolicyDigest(harnessToolPolicy, [approvalConfiguration, warmApprovalBindings(mcpClientManager), nativeForwarding?.policyDigest ?? null])
         : nativeForwarding?.policyDigest;
       if (approvalPolicyStamp && nativeMcpDelivery && !nativeForwarding && forwardingRuntime) {
-        harnessRuntime = forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, approvalPolicyStamp);
+        harnessRuntime = forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, approvalPolicyStamp,
+          { sessionStable: sessionGrantOrigin !== undefined });
       }
       if (nativeForwarding) {
         if (!forwardingRuntime) throw new Error("The runtime forwarding contract is not qualified.");

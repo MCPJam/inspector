@@ -33,6 +33,11 @@ export type ForwardingRuntimeContract = {
     runtime: T,
     servers: HarnessMcpJson["mcpServers"],
     policyDigest: string,
+    context?: {
+      /** This turn's MCP configuration is the lane's session configuration,
+       *  identical to the one a paused turn started with. */
+      sessionStable?: boolean;
+    },
   ): T;
 };
 
@@ -45,4 +50,19 @@ export function qualifiedForwardingRuntime(adapter: {
   return contract && contract.runtimeVersion === adapter.pinnedRuntimeVersion
     ? contract
     : undefined;
+}
+
+/** Whether a hosted message may run on an agent kept warm in its box. A
+ *  `refresh` runtime needs its qualified contract to apply the message's MCP
+ *  configuration to the live agent; a `restart` runtime resumes its session. */
+export function hostedWarmAgentEligible(adapter: {
+  hostedWarmAgent?: "refresh" | "restart";
+  pinnedRuntimeVersion?: string;
+  forwardingRuntime?: ForwardingRuntimeContract;
+}): boolean {
+  return (
+    adapter.hostedWarmAgent === "restart" ||
+    (adapter.hostedWarmAgent === "refresh" &&
+      qualifiedForwardingRuntime(adapter) !== undefined)
+  );
 }

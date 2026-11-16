@@ -537,6 +537,7 @@ describe("runHarnessTurn: harness_turn_completed", () => {
       harnessState.adapter = {
         pinnedRuntimeVersion: "runtime-1",
         forwardingRuntime: { runtimeVersion: "runtime-1" },
+        hostedWarmAgent: "refresh",
       };
       harnessState.claim = {
         stateVersion: 2,

@@ -6940,7 +6940,7 @@ export function useChatSession(
   // a client or an environment. A plugin chat's hidden environment is left out.
   const harnessBoxPreparation: HarnessBoxPreparationRequest | null =
     HOSTED_MODE && isAuthenticated && hostedProjectId && !hostedScenarioId &&
-    (harnessId === "claude-code" || harnessId === "codex") &&
+    isHarness(harnessId) &&
     messages.length === 0 && !options.comparePane && !hiddenEnvironmentActive &&
     (hostedExecutionTarget || hostedHostId)
       ? {
