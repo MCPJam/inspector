@@ -38,6 +38,7 @@ import {
 import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
+import { ConformanceSpotlight } from "@/components/sidebar/conformance-spotlight";
 import {
   Sidebar,
   SidebarContent,
@@ -87,7 +88,7 @@ import {
   useOrganizationBillingStatus,
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
-import type { Project } from "@/state/app-types";
+import type { Project, ServerWithName } from "@/state/app-types";
 
 interface NavItem {
   title: string;
@@ -511,6 +512,8 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   billingGateEnforcementActive?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
+  /** The servers the Conformance page offers, for its intro card's action. */
+  conformanceServers?: Record<string, ServerWithName>;
 }
 
 export function MCPSidebar({
@@ -530,6 +533,7 @@ export function MCPSidebar({
   billingGateEnforcementActive = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
+  conformanceServers,
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
@@ -854,6 +858,20 @@ export function MCPSidebar({
                       isActive: isNavItemActive(item),
                     }))}
                     onItemClick={handleNavClick}
+                    wrapItem={(url, row) =>
+                      url === "/conformance" ? (
+                        <ConformanceSpotlight
+                          enabled
+                          servers={conformanceServers}
+                          onConformancePage={activeTab === "conformance"}
+                          onNavigate={appNavigate}
+                        >
+                          {row}
+                        </ConformanceSpotlight>
+                      ) : (
+                        row
+                      )
+                    }
                     learnMore={
                       learnMoreEnabled
                         ? {

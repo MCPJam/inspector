@@ -6682,6 +6682,7 @@ export default function App() {
           billingGateEnforcementActive={billingGateEnforcementActive}
           isCreateProjectDisabled={isCreateProjectDisabled}
           createProjectDisabledReason={createProjectDisabledReason}
+          conformanceServers={displayServerConfigs}
         />
         <SettingsNavigation
           enabled={settingsShellActive}
