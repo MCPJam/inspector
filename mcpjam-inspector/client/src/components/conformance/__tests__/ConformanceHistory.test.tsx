@@ -3,11 +3,32 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 
-const { navigateMock, startRun, useQueryMock } = vi.hoisted(() => ({
-  navigateMock: vi.fn(),
-  startRun: vi.fn().mockResolvedValue({ runId: "run_new" }),
-  useQueryMock: vi.fn(),
-}));
+const { navigateMock, startRun, useQueryMock, tableRenders } = vi.hoisted(
+  () => ({
+    navigateMock: vi.fn(),
+    startRun: vi.fn().mockResolvedValue({ runId: "run_new" }),
+    useQueryMock: vi.fn(),
+    /** Every render's row ids and dimming, including ones no assertion sees. */
+    tableRenders: [] as Array<{ ids: string[]; dimmed: boolean }>,
+  }),
+);
+
+vi.mock("../ConformanceHistoryTable", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../ConformanceHistoryTable")>();
+  return {
+    ...actual,
+    ConformanceHistoryTable: (
+      props: Parameters<typeof actual.ConformanceHistoryTable>[0],
+    ) => {
+      tableRenders.push({
+        ids: props.rows.map((row) => row._id),
+        dimmed: props.dimmed,
+      });
+      return actual.ConformanceHistoryTable(props);
+    },
+  };
+});
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
@@ -770,6 +791,7 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     expect(screen.getByRole("status").textContent).toBe("Loading every run…");
     expect(screen.getByRole("status").className).toContain("sr-only");
 
+    tableRenders.length = 0;
     secondLoaded = true;
     rerender(
       <ConformanceHistory projectId="proj_1" serverNames={serverNames} />,
@@ -780,6 +802,13 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     expect(rowTexts()[2]).toContain("2025-11-25");
     expect(screen.queryByTestId("conformance-history-sort-loading")).toBeNull();
     expect(screen.getByRole("status").textContent).toBe("");
+    // The last page arrives a render before it is in the rows. No render in
+    // between may show the first two runs sorted oldest first ("b2", "a3"):
+    // the held order stays, dimmed, until the full order replaces it.
+    const orders = new Set(
+      tableRenders.map(({ ids, dimmed }) => `${ids.join(",")}:${dimmed}`),
+    );
+    expect([...orders]).toEqual(["a3,b2:true", "a1,b2,a3:false"]);
   });
 
   it("sorts Score highest first, then lowest, runs without a score last", async () => {

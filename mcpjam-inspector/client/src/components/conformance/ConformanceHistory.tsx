@@ -199,6 +199,8 @@ export function ConformanceHistory({
     setCursor(null);
   }
   if (rows.length > 0 && !hadRuns) setHadRuns(true);
+  /** The page `rows` already holds; the query's newest can be a render ahead. */
+  const [mergedPage, setMergedPage] = useState<typeof page>(undefined);
 
   useEffect(() => {
     if (!page) return;
@@ -207,6 +209,7 @@ export function ConformanceHistory({
       const seen = new Set(previous.map((row) => row._id));
       return [...previous, ...page.page.filter((row) => !seen.has(row._id))];
     });
+    setMergedPage(page);
   }, [cursor, page]);
 
   // Search and the column sorts keep loading pages until the history is
@@ -260,8 +263,10 @@ export function ConformanceHistory({
     createdAt: (run) => run.createdAt,
   });
   // Also true on the render where a sort or search has just asked for every
-  // run, before the large page is set.
-  const readingEveryRun = readsEveryRun && !page?.isDone;
+  // run, before the large page is set, and on the one where the last page has
+  // arrived but is not in `rows` yet: done then would sort without it.
+  const readingEveryRun =
+    readsEveryRun && !(page?.isDone && mergedPage === page);
   // A sort over part of the history leads with the wrong runs, then reorders
   // once the rest arrives. Keep the last complete order up, dimmed, until then.
   // A search narrows as pages arrive, so it shows them as they come.
