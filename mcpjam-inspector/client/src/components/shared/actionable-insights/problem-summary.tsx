@@ -13,7 +13,11 @@ import type { FindingPromptContext } from "./finding-prompts";
 import type { FindingEvidenceLocator } from "./finding-evidence";
 import type { AffectedIterationRow } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
-import { OPTION_KIND_LABEL, optionTargetLabel } from "./problem-prompts";
+import {
+  OPTION_KIND_LABEL,
+  optionTargetLabel,
+  plural,
+} from "./problem-prompts";
 import { coverageLine, ProblemDetailsContent } from "./problem-details";
 import { ProblemRubric } from "./problem-rubric";
 
@@ -50,8 +54,8 @@ export function ProblemSummary({
             <details>
               <summary className="cursor-pointer">
                 <strong>Evidence:</strong> {problem.affected.count} of{" "}
-                {problem.affected.total} iterations affected. View recorded
-                result
+                {plural(problem.affected.total, "iteration")} affected. View
+                recorded result
               </summary>
               <p className="mt-2">
                 <FindingText text={problem.observed} />
@@ -63,6 +67,12 @@ export function ProblemSummary({
               <li>
                 <strong>{OPTION_KIND_LABEL[option.kind]}:</strong>{" "}
                 <FindingText text={option.change} />
+              </li>
+              <li>
+                <strong>Why:</strong>{" "}
+                <FindingText
+                  text={problem.recommendationReason ?? option.rationale}
+                />
               </li>
               <li>
                 <strong>Success check:</strong>{" "}

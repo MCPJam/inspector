@@ -217,9 +217,8 @@ describe("the observation view", () => {
     expect(screen.queryByText(/Open the exemplar sessions/)).toBeNull();
     const lead = screen.getByTestId("problem-lead");
     expect(within(lead).getByText("Experiment to try:")).toBeVisible();
-    expect(
-      within(lead).getByText("Success check:"),
-    ).toBeVisible();
+    expect(within(lead).getByText("Success check:")).toBeVisible();
+    expect(within(lead).getByText("Why:")).toBeVisible();
     expect(
       within(lead).getByText(
         "Evidence reviewed for 2 of 3 iterations. 1 iteration has no checked cause or analysis option.",
@@ -356,9 +355,9 @@ describe("problem details", () => {
         /2 of 3 affected iterations · server capability · lookup_customer/,
       ),
     ).toBeVisible();
-    expect(
-      screen.getByText("Effort:").closest("li"),
-    ).toHaveTextContent("Effort: large. Compatibility risk: unknown.");
+    expect(screen.getByText("Effort:").closest("li")).toHaveTextContent(
+      "Effort: large. Compatibility risk: unknown.",
+    );
     await user.click(screen.getByTestId("problem-copy-prompt"));
     await waitFor(() =>
       expect(clipboard.text).toContain("Add a tool that resolves"),
