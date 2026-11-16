@@ -39,6 +39,7 @@ const upgradeState = {
   effectivePlan: "free" as string,
   canManageBilling: true,
   isLoadingBilling: false,
+  isStarting: false,
   creditUpgradePlans: [] as Array<{
     plan: string;
     displayName: string;
@@ -77,7 +78,7 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
       organizationName: "Acme Robotics",
       canManageBilling: upgradeState.canManageBilling,
       isLoadingBilling: upgradeState.isLoadingBilling,
-      isStarting: false,
+      isStarting: upgradeState.isStarting,
       start: upgradeState.start,
     };
   },
@@ -150,6 +151,7 @@ beforeEach(() => {
   upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
   upgradeState.isLoadingBilling = false;
+  upgradeState.isStarting = false;
   upgradeState.creditUpgradePlans = [];
   recipientsState.recipients = [{ email: "dana@acme.test", name: "Dana Ruiz" }];
   recipientsState.isLoading = false;
@@ -564,6 +566,21 @@ describe("MCPJamLimitDialog", () => {
     ).not.toBeInTheDocument();
     expect(upgradeHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
     expect(recipientHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
+  });
+
+  it("locks BYOK and Compare plans while checkout is starting", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    upgradeState.isStarting = true;
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("button", { name: "Use my own API key" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /^Compare plans$/i }),
+    ).toBeDisabled();
   });
 
   it("says how many credits are left when the request needs more than that", () => {

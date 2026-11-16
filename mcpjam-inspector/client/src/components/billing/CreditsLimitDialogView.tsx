@@ -111,11 +111,21 @@ export function CreditsLimitDialogView({
               </p>
             )}
             <LegalConsentNotice />
+            {/* A started checkout redirects to Stripe when it returns, which
+                would replace any page these links opened in the meantime. */}
             <div className="flex flex-wrap justify-center gap-x-4">
-              <Button variant="link" onClick={onUseOwnKey}>
+              <Button
+                variant="link"
+                onClick={onUseOwnKey}
+                disabled={checkout.picker.isStarting}
+              >
                 Use my own API key
               </Button>
-              <Button variant="link" onClick={onExplorePlans}>
+              <Button
+                variant="link"
+                onClick={onExplorePlans}
+                disabled={checkout.picker.isStarting}
+              >
                 Compare plans
               </Button>
             </div>
