@@ -77,7 +77,7 @@ const HOSTED_INPUT_COPY = {
   stdio: {
     title: "The web app cannot run local commands",
     detail:
-      "MCPJam on the web runs in the cloud. Copy your command and paste it into the MCPJam desktop app.",
+      "Copy your command and paste it into the MCPJam desktop app.",
   },
   localhost: {
     title: "The web app cannot reach localhost",
@@ -104,8 +104,7 @@ export function HostedInputNotice({ check }: { check: HostedInputCheck }) {
           aria-hidden
         />
         <p className="text-[11.5px] leading-[1.5] text-card-foreground">
-          This address is on a private network. MCPJam on the web can reach it
-          only through a tunnel or VPN. Connect again to try anyway.
+          This address is on a private network. Connect again to try anyway.
         </p>
       </div>
     );
@@ -173,7 +172,7 @@ function CopyCommandButton({ command }: { command: string }) {
       {state === "copied"
         ? "Copied"
         : state === "failed"
-          ? "Copy failed"
+          ? "Copy failed. Try again"
           : "Copy npx command"}
     </Button>
   );
