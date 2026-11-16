@@ -23,6 +23,7 @@ export interface UnpublishedVersion {
 
 export type ReleaseStatus =
   | { kind: "running"; label: string | null; run: WorkflowRun }
+  | { kind: "publishing"; label: string; run: WorkflowRun }
   | { kind: "stopped"; label: string; run: WorkflowRun }
   | { kind: "waiting"; label: string }
   | { kind: "ready"; label: string; from: string | null; changes: number }
@@ -43,7 +44,16 @@ export interface ReleaseStatusInput {
   plan: ReleasePlan | Error;
   /** Recent release.yml runs, newest first. */
   recentRuns: WorkflowRun[];
+  /** Current time in ms, for the npm catch-up window. */
+  now: number;
 }
+
+/**
+ * npm can take several minutes to serve a version after `npm publish`
+ * returns (seven, on 3.23.0). Inside this window after a successful release
+ * run, a missing version means npm is catching up, not that nothing ran.
+ */
+export const NPM_CATCH_UP_MS = 20 * 60 * 1000;
 
 /** release-trigger.mjs `releaseLabel`. */
 export function releaseLabel(unpublished: UnpublishedVersion[]): string {
@@ -73,6 +83,18 @@ export function deriveReleaseStatus(input: ReleaseStatusInput): ReleaseStatus {
     return { kind: "unknown", reason: input.unpublished.message };
   }
   if (input.unpublished.length > 0) {
+    // Checked before matching by label: once some packages are on npm, the
+    // label of what's left no longer matches the run's `Release <label>`.
+    const justShipped = input.recentRuns.find(
+      (r) =>
+        r.status === "completed" &&
+        r.conclusion === "success" &&
+        input.now - Date.parse(r.updatedAt) < NPM_CATCH_UP_MS
+    );
+    const shippedLabel = justShipped ? runLabel(justShipped) : null;
+    if (justShipped && shippedLabel) {
+      return { kind: "publishing", label: shippedLabel, run: justShipped };
+    }
     const label = releaseLabel(input.unpublished);
     const last = input.recentRuns.find((r) => runLabel(r) === label);
     if (last && last.status === "completed" && last.conclusion !== "success") {

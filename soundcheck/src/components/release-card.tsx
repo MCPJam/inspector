@@ -16,6 +16,7 @@ import type { ReleasePlan } from "@/lib/changesets";
 const STATE: Record<ReleaseStatus["kind"], { word: string; tone: StatusTone }> = {
   ready: { word: "Ready", tone: "success" },
   running: { word: "Running", tone: "running" },
+  publishing: { word: "Publishing", tone: "running" },
   stopped: { word: "Stopped", tone: "failure" },
   waiting: { word: "Not started", tone: "warning" },
   idle: { word: "Up to date", tone: "neutral" },
@@ -90,6 +91,7 @@ export async function ReleaseCard() {
 function headline(status: ReleaseStatus): string {
   switch (status.kind) {
     case "ready":
+    case "publishing":
     case "stopped":
     case "waiting":
       return versionText(status.label);
@@ -126,6 +128,13 @@ function sentence({ status, typicalMinutes }: ReleaseCardData) {
         <>
           The release ended &ldquo;{status.run.conclusion}&rdquo; and nothing reached npm. Fix the
           cause, then retry. <RunLink href={status.run.htmlUrl}>Open the run</RunLink>
+        </>
+      );
+    case "publishing":
+      return (
+        <>
+          Released {formatRelativeTime(status.run.updatedAt)}. npm takes a few minutes to show new
+          versions. <RunLink href={status.run.htmlUrl}>Open the run</RunLink>
         </>
       );
     case "waiting":

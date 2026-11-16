@@ -118,7 +118,8 @@ export async function readReleaseCard(): Promise<ReleaseCardData> {
           activePrepare: prepareRunning ?? prepareQueued,
           unpublished,
           plan,
-          recentRuns: runs
+          recentRuns: runs,
+          now: Date.now()
         }),
     plan: plan instanceof Error ? null : plan,
     typicalMinutes: typicalReleaseMinutes(runs),
