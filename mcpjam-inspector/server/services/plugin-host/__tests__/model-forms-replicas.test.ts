@@ -881,6 +881,57 @@ describe("an AI-triggered form across replicas", () => {
       vi.useRealTimers();
     }
   });
+
+  it("opens an App preview inside the form on one replica and serves it on another", async () => {
+    const shown = await suspendOn(await replica());
+    const target = { type: "mcp_app_tool" as const, name: "cad.preview" };
+    const options = async (who = identity) => {
+      const { createPluginRequestRuntime } =
+        await import("../request-runtime.js");
+      return {
+        actor: who,
+        bearer: "fixture-bearer",
+        sourceToken: shown.inputRequests[0]!.pluginFormSourceToken,
+        parent: {
+          kind: "mrtr" as const,
+          id: shown.continuationId,
+          round: 1,
+          inputRequestKey: "form",
+        },
+        signal: new AbortController().signal,
+        runtime: (instance: never) =>
+          createPluginRequestRuntime(
+            {} as never,
+            {} as never,
+            "fixture-bearer",
+            { hostId: "host", serverId: "server" },
+            instance,
+          ),
+      };
+    };
+    await replica();
+    const opening = await import("../form-app-preview.js");
+    const opened = await opening.openPluginFormAppPreview({
+      ...(await options()),
+      target,
+    });
+    await replica();
+    const serving = await import("../form-app-preview.js");
+    const served = await serving.getPluginFormApp({
+      ...(await options()),
+      token: opened.instanceToken,
+    });
+    expect(served.child.operationId).toBe(opened.operationId);
+    expect(served.target).toEqual(target);
+    await replica({ ...identity, subject: "second-credential" });
+    const foreign = await import("../form-app-preview.js");
+    await expect(
+      foreign.getPluginFormApp({
+        ...(await options({ ...identity, subject: "second-credential" })),
+        token: opened.instanceToken,
+      }),
+    ).rejects.toMatchObject({ code: "FORM_PREVIEW_UNAVAILABLE" });
+  });
 });
 
 /** Opens an App on a fresh replica, whose call then asks for a form there. */
