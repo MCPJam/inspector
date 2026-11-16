@@ -34,8 +34,7 @@ describe("parseSkillFile", () => {
     expect(skill).toBeNull();
     expect(mockLogger.error).not.toHaveBeenCalled();
     expect(mockLogger.warn).toHaveBeenCalledWith(
-      "Skill at my-skill/SKILL.md has unparseable frontmatter",
-      { error: expect.any(String) },
+      "[skills] SKILL.md frontmatter is not valid YAML",
     );
   });
 });

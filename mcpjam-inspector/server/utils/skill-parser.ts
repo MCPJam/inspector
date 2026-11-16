@@ -238,10 +238,10 @@ export function parseSkillFile(
     };
   } catch (error) {
     // Only the user's own frontmatter can throw here, so it is a warning like
-    // the validation failures above, not a Sentry capture.
-    logger.warn(`Skill at ${skillPath} has unparseable frontmatter`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    // the validation failures above, not a Sentry capture. A literal message,
+    // because the telemetry catalog only keeps literal `logger` messages; a
+    // templated one reaches Axiom as an anonymous `log.unknown` row.
+    logger.warn("[skills] SKILL.md frontmatter is not valid YAML");
     return null;
   }
 }
