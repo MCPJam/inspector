@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { PaneSkillsPreview } from "@/shared/pane-skills-preview";
 import { planSuiteClients } from "../suite-clients-settings";
+import { libraryChange } from "../suite-skill-channels";
 import {
   editedSkillSelection,
   MERGED_ENVIRONMENTS_REASON,
@@ -229,10 +230,7 @@ describe("planSuiteClients with a Skills edit", () => {
       group: "servers",
       lossless: true,
       skills: (row) =>
-        editedSkillSelection(row.skillSelection, {
-          kind: "add",
-          skillId: "reply",
-        }),
+        libraryChange(row, { kind: "add", skillId: "reply" }),
     });
     expect(plan).toEqual([
       {
@@ -263,10 +261,7 @@ describe("planSuiteClients with a Skills edit", () => {
       group: "servers",
       lossless: true,
       skills: (row) =>
-        editedSkillSelection(row.skillSelection, {
-          kind: "remove",
-          skillId: "triage",
-        }),
+        libraryChange(row, { kind: "remove", skillId: "triage" }),
     });
     expect(plan).toEqual([
       {
@@ -309,7 +304,7 @@ describe("planSuiteClients with a Skills edit", () => {
       planSuiteClients(pairSuite, rows, pairSelections, {
         group: "servers",
         lossless: true,
-        skills: (row) => editedSkillSelection(row.skillSelection, edit),
+        skills: (row) => libraryChange(row, edit),
       });
 
     it("refuses to unpin one version when the other already runs Latest", () => {
@@ -356,10 +351,7 @@ describe("planSuiteClients with a Skills edit", () => {
           group: "servers",
           lossless: true,
           skills: (row) =>
-            editedSkillSelection(row.skillSelection, {
-              kind: "add",
-              skillId: "triage",
-            }),
+            libraryChange(row, { kind: "add", skillId: "triage" }),
         }),
       ).toHaveLength(2);
     });
@@ -369,7 +361,7 @@ describe("planSuiteClients with a Skills edit", () => {
     expect(() =>
       planSuiteClients(suite, environments, selections, {
         group: "servers",
-        skills: () => null,
+        skills: () => ({ skillSelection: null }),
       }),
     ).toThrow(/Environments page/);
   });

@@ -6,8 +6,6 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import {
   useEnsureAdhocEnvironments,
   useProjectEnvironments,
-  type ProjectEnvironmentServerSkillSelection,
-  type ProjectEnvironmentSkillSelection,
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
@@ -42,6 +40,7 @@ import type { EvalSuite } from "./types";
 import {
   MERGED_ENVIRONMENTS_REASON,
   SKILLS_READ_ONLY_REASON,
+  type SuiteSkillsChange,
   type SuiteSkillsEdit,
 } from "./suite-skills";
 import { SuiteSkillsField, SuiteSkillsHints } from "./suite-skills-field";
@@ -58,14 +57,13 @@ type Stack = Parameters<
 export type SuiteClientsDerivation = {
   sourceEnvironmentId: string;
   expectedRevision: number;
-  overrides: {
+  /** A `skillScope` comes with `skillSelection: null`: no row holds both. */
+  overrides: SuiteSkillsChange & {
     hostId?: string;
     modelId?: string | null;
     /** The picked model's saved selection (source, connection, effort). */
     modelSelection?: SavedModelSelection;
     serverAttachmentId?: string;
-    skillSelection?: ProjectEnvironmentSkillSelection | null;
-    serverSkillSelection?: ProjectEnvironmentServerSkillSelection | null;
   };
   /** The attached environment this one takes the place of (schedule pin). */
   replaces?: string;
@@ -210,19 +208,20 @@ export function planSuiteClients(
         const settled = new Map<string, boolean>();
         for (const row of matches) {
           const regroup = group !== null && row.serverAttachmentId !== group;
-          const skillSelection = options.skills?.(row);
+          const skills = options.skills?.(row);
           if (options.skills) {
-            const edited = regroup || skillSelection !== undefined;
+            const edited = regroup || skills !== undefined;
+            const next = { ...row, ...skills };
             const after = compositionKey({
-              ...row,
-              ...(skillSelection !== undefined ? { skillSelection } : {}),
+              ...next,
+              skillScope: next.skillScope ?? undefined,
               ...(regroup ? { serverAttachmentId: group } : {}),
             });
             if (settled.has(after) && (edited || settled.get(after)))
               throw new Error(MERGED_ENVIRONMENTS_REASON);
             settled.set(after, edited);
           }
-          if (!regroup && skillSelection === undefined) {
+          if (!regroup && skills === undefined) {
             push({ environmentId: row.environmentId });
           } else if (lossless) {
             // A new group or new skills for an existing environment: the
@@ -233,7 +232,7 @@ export function planSuiteClients(
                 expectedRevision: row.revision,
                 overrides: {
                   ...(regroup ? { serverAttachmentId: group } : {}),
-                  ...(skillSelection !== undefined ? { skillSelection } : {}),
+                  ...skills,
                 },
                 replaces: row.environmentId,
               },
@@ -377,6 +376,7 @@ function describeSetup(row: ProjectEnvironmentView): string {
           c.skillSelection.skillIds.length === 1 ? "" : "s"
         }`
       : null,
+    c.skillScope ? "all shared Library skills" : null,
     c.serverSkillSelection ? "server skills" : null,
     c.secretSelection ? "secrets" : null,
     c.pluginVersionIds
@@ -617,6 +617,7 @@ export function SuiteClientsSettings({
           environments={attached}
           disabled={disabled}
           editable={lossless}
+          scopeOffered={capabilities?.allSharedLibrarySkillScope === true}
           onEdit={(skills) => void commit(selections, { skills })}
         />
       </div>

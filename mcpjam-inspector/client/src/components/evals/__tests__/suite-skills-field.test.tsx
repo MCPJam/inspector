@@ -50,6 +50,16 @@ vi.mock("@/lib/apis/mcp-skills-api", () => ({
   listSkills: mocks.listSkills,
   listSkillVersions: async () => [],
 }));
+vi.mock("@/hooks/use-server-skills", () => ({
+  useProjectServerSkills: () => [],
+  useServerSkillVersions: () => undefined,
+}));
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServerAttachments: () => ({
+    serverAttachments: [],
+    isLoading: false,
+  }),
+}));
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <button type="button">Server group</button>,
 }));
