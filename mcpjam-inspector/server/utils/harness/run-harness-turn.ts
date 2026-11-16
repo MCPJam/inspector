@@ -2693,6 +2693,38 @@ export async function runHarnessTurn(
         watchNewBoxForStaleBake(sandbox, harnessAdapter.id);
       }
 
+      // Brokered and external-account turns forward through one preparation;
+      // they differ only in which backend call confirmed the owners. A runtime
+      // that fingerprints its MCP config gets its lane's session envelopes.
+      const forwardThrough = async (
+        confirmed:
+          | Pick<Parameters<typeof prepareNativeForwarding>[0], "owners" | "origin">
+          | undefined,
+        expiresAt: number,
+      ) => {
+        const lane = harnessAdapter.sessionStableMcpConfig === true ? continuity : undefined;
+        if (!confirmed || !harnessMcpProxy || (harnessAdapter.sessionStableMcpConfig && !lane?.laneId))
+          throw new Error("Native forwarding was not confirmed.");
+        nativeForwarding = await prepareNativeForwarding({ ...confirmed, expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer,
+          correlationKey: forwardingRuntime?.correlationKey, tasks, attributeToolCall: harnessAdapter.attributeToolCall,
+          ...(lane ? { session: { owner: lane.owner, leaseId: lane.leaseId, turnId } } : {}),
+          ...(enhancedApps
+            ? {
+                delivery: "bridge" as const,
+                profiles: enhancedConnectionProfiles(
+                  mcpClientManager,
+                  selectedServers ?? [],
+                  respectToolVisibility !== false,
+                  modelVisibleMcpToolResults,
+                  tasks?.mode === "expose",
+                ),
+              }
+            : {}),
+        });
+        ({ mcpJson, keyToServerId } = nativeForwarding);
+        harnessKeyToServerId = keyToServerId;
+      };
+
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own
       // egress baseline, and install the lease into E2B's egress transform on
@@ -2730,11 +2762,7 @@ export async function runHarnessTurn(
             nativeForwarding: nativeForwardingSelection({ manager: mcpClientManager, laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }),
             bearer: await currentAuthorization(), ...(abortSignal ? { signal: abortSignal } : {}) });
           if (!grant.ok) throw new HarnessInfraSetupError(grant.error, { source: "platform_setup", code: grant.code ?? "harness_forwarding_unavailable", httpStatus: grant.status });
-          if (!harnessMcpProxy || !continuity?.laneId) throw new Error("Native forwarding was not confirmed.");
-          nativeForwarding = await prepareNativeForwarding({ ...grant.forwarding, expiresAt: grant.expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer,
-            session: { owner: continuity.owner, leaseId: continuity.leaseId, turnId }, attributeToolCall: harnessAdapter.attributeToolCall });
-          ({ mcpJson, keyToServerId } = nativeForwarding);
-          harnessKeyToServerId = keyToServerId;
+          await forwardThrough(grant.forwarding, grant.expiresAt);
         } else if (sessionGrantOrigin && continuity?.laneId) {
           brokerRunId = turnRunId;
           const grant = await startHarnessSessionGrant({ box: box!, harnessId: harnessAdapter.id, modelId, runId: turnRunId,
@@ -2801,27 +2829,7 @@ export async function runHarnessTurn(
         // The recorded lease owns the box until this turn's teardown.
         clearReservationHeartbeat();
         reservationHeld = false;
-        if (useNativeForwarding) {
-          if (!broker.forwarding || !harnessMcpProxy) throw new Error("Native forwarding was not confirmed.");
-          nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer,
-            correlationKey: forwardingRuntime?.correlationKey,
-            tasks,
-            ...(enhancedApps
-              ? {
-                  delivery: "bridge",
-                  profiles: enhancedConnectionProfiles(
-                    mcpClientManager,
-                    selectedServers ?? [],
-                    respectToolVisibility !== false,
-                    modelVisibleMcpToolResults,
-                    tasks?.mode === "expose",
-                  ),
-                }
-              : {}),
-          });
-          ({ mcpJson, keyToServerId } = nativeForwarding);
-          harnessKeyToServerId = keyToServerId;
-        }
+        if (useNativeForwarding) await forwardThrough(broker.forwarding, broker.expiresAt);
         connectionPreparedByBroker = true;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl, warmAgentPilot);
         modelEndpoint = org.brokeredEndpoint;

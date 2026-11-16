@@ -13,6 +13,7 @@ import {
   type SealedHarnessProxyPolicy,
 } from "../harness-proxy-policy-seal.js";
 import { verifyHarnessSessionHandle } from "../harness-proxy-token.js";
+import type { HarnessConnectionProfile } from "../harness-connection-profile.js";
 import {
   bindSessionTurnHandles,
   sessionPolicyDigest,
@@ -32,13 +33,17 @@ export async function sessionForwardingHeaders(args: {
   grantTurnId: string;
   policies?: Record<string, ToolPolicySnapshot>;
   bearer: string;
+  /** Each server's connection profile on a bridged turn; none on pass-through. */
+  profiles?: Record<string, HarnessConnectionProfile>;
 }): Promise<Record<string, Record<string, string>>> {
   const servers = args.owners.map((owner) => {
     const policy = forwardingToolPolicy(args.policies?.[owner.serverId]);
+    const profile = args.profiles?.[owner.serverId];
     return {
       owner,
       policy,
-      policyDigest: sessionPolicyDigest(owner.serverId, policy),
+      profile,
+      policyDigest: sessionPolicyDigest(owner.serverId, policy, profile),
     };
   });
   const handles = await bindSessionTurnHandles(
@@ -51,7 +56,7 @@ export async function sessionForwardingHeaders(args: {
     args.bearer,
   );
   const headers: Record<string, Record<string, string>> = {};
-  for (const { owner, policy, policyDigest } of servers) {
+  for (const { owner, policy, profile, policyDigest } of servers) {
     await createExecutionControl({ owner }).bindPolicy(
       args.grantTurnId,
       policyDigest,
@@ -64,17 +69,21 @@ export async function sessionForwardingHeaders(args: {
         handle: handles[owner.serverId]!,
         serverId: owner.serverId,
         policy,
+        ...(profile ? { profile, delivery: "bridge" as const } : {}),
       }),
     };
   }
   return headers;
 }
 
-/** The owner a session envelope names, and the digest its turn must have bound. */
+/** The owner a session envelope names, the digest its turn must have bound,
+ *  and whether MCPJam's client carries the server with the sealed profile. */
 export function sessionForwardingContext(
   sealed: SealedHarnessProxyPolicy,
   serverId: string,
-): { owner: ForwardingOwner; policyDigest: string } | undefined {
+):
+  | { owner: ForwardingOwner; policyDigest: string; delivery?: "bridge" }
+  | undefined {
   const handle = verifyHarnessSessionHandle(sealed.token, serverId);
   if (!handle) return undefined;
   return {
@@ -86,5 +95,6 @@ export function sessionForwardingContext(
       ...(handle.connectionId ? { connectionId: handle.connectionId } : {}),
     },
     policyDigest: sessionPolicyDigest(serverId, sealed.policy, sealed.profile),
+    ...(sealed.delivery ? { delivery: sealed.delivery } : {}),
   };
 }

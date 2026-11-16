@@ -206,7 +206,6 @@
             "version": "1.0.92"
           }
         },
-        "passThroughOnly": true,
         "runtimeVersion": "1.0.92"
       },
       "id": "copilot-cli",
@@ -291,7 +290,6 @@
           "versionNegotiation": "legacy-first"
         },
         "ownedInput": false,
-        "passThroughOnly": true,
         "runtimeVersion": "2026.11.05-86047df"
       },
       "hostToolApprovalAtRuntime": true,
