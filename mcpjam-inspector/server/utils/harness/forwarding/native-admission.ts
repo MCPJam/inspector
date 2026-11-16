@@ -86,17 +86,18 @@ export function nativeForwardingGaps(candidate: Candidate): string[] {
     const elicitationProfile =
       isNativeElicitationProfile(capabilities, candidate.elicitationRuntimeVersion) &&
       initialized?.protocolVersion === "2025-11-25";
-    // The runtime's own client declares the same set. Elicitation it declares
-    // still needs this turn's live handler, as the profile above does.
+    // The runtime's own client declares the same set. A turn hands a
+    // server's elicitation to its live handler only for the profile above, so
+    // a runtime client that declares elicitation otherwise (Cursor CLI's
+    // declines it) would answer the server itself, where MCPJam's connection
+    // asks the member.
     const native = candidate.nativeClient;
     const nativeProfile =
       elicitationProfile ||
       (!!native &&
         !!capabilities &&
-        !differsFromNative(capabilities, native.capabilities) &&
-        (!("elicitation" in native.capabilities) ||
-          (candidate.elicitationRuntimeVersion !== undefined &&
-            initialized?.protocolVersion === "2025-11-25")));
+        !("elicitation" in native.capabilities) &&
+        !differsFromNative(capabilities, native.capabilities));
     if (
       (!capabilities || Object.keys(capabilities).length > 0) && !nativeProfile
     )

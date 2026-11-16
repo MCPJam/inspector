@@ -124,9 +124,11 @@ async function gapsFor(profile: Profile, harness: HarnessId) {
  * Each harness CLI template, its runtime, and the gaps its own settings still
  * add. Whether Claude Code and Codex hide App-only tools from their models
  * has not been measured, so those templates keep the visibility filter, and
- * it keeps them off pass-through. Codex also declares elicitation, which a
- * turn routes only from a 2025-11-25 connection, and its client speaks
- * 2025-06-18, so its declaration is a gap too.
+ * it keeps them off pass-through. A turn hands a server's elicitation to its
+ * handler only for Claude Code's measured profile, so the elicitation Codex
+ * and Cursor CLI declare is a gap: on pass-through their own clients would
+ * answer the server (Cursor CLI declines), where MCPJam's connection asks
+ * the member.
  */
 const TEMPLATES: Array<[HostTemplateId, HarnessId, string[]]> = [
   ["claude-code", "claude-code", ["tool-visibility"]],
@@ -136,7 +138,7 @@ const TEMPLATES: Array<[HostTemplateId, HarnessId, string[]]> = [
     ["capability-overrides", "client-capabilities", "tool-visibility"],
   ],
   ["copilot-cli", "copilot-cli", []],
-  ["cursor-cli", "cursor", []],
+  ["cursor-cli", "cursor", ["capability-overrides", "client-capabilities"]],
 ];
 
 describe.each(TEMPLATES)("the %s template", (templateId, harness, remaining) => {
