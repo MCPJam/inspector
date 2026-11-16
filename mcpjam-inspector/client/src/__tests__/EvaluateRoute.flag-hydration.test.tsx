@@ -17,7 +17,8 @@ const { mockRouteContext } = vi.hoisted(() => ({
 }));
 
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => flagState,
+  useFeatureFlagEnabled: (key: string) =>
+    key === "evaluate-enabled" ? flagState : false,
 }));
 
 vi.mock("react-router", async (importOriginal) => {
