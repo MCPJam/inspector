@@ -1163,6 +1163,24 @@ describe("ServerDetailModal", () => {
     expect(defaultProps.onClose).not.toHaveBeenCalled();
   });
 
+  it.each(["0", "600001", "1500"])(
+    "keeps an invalid timeout inline (%s)",
+    async (value) => {
+      const onSubmit = vi.fn();
+      render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
+      fireEvent.click(screen.getByRole("button", { name: "Connection overrides" }));
+      const timeout = screen.getByRole("spinbutton", { name: /Timeout/ });
+      fireEvent.change(timeout, { target: { value } });
+      fireEvent.click(screen.getByRole("button", { name: "Save & Connect" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Enter a timeout from 1000 to 600000 ms in steps of 1000, or leave it blank to use the default.",
+      );
+      expect(timeout).toHaveValue(Number(value));
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(defaultProps.onClose).not.toHaveBeenCalled();
+    },
+  );
+
   it("stops Enter from bubbling out of the modal", () => {
     const onKeyDown = vi.fn();
 
