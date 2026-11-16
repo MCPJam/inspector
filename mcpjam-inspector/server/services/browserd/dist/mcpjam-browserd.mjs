@@ -5461,6 +5461,16 @@ async function insertSecretInNode(cdp, backendNodeId, text, limit, guard) {
         this.focus();
         if (this.getRootNode().activeElement !== this) return "not_focused";
         if (typeof this.select === "function") this.select();
+        else {
+          // A contenteditable field: select its contents, so the value replaces them.
+          const range = this.ownerDocument.createRange();
+          range.selectNodeContents(this);
+          const selection = view.getSelection();
+          if (selection) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        }
         if (this.getRootNode().activeElement !== this) return "not_focused";
         return this.ownerDocument.execCommand("insertText", false, value)
           ? "typed"
