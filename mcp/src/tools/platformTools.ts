@@ -650,6 +650,8 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     )
   ),
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
+  create_reviewer_handoff:
+    "Returns a single-use browser sign-in link that should stay with the requester. Generate it in Readiness or through a direct API or CLI call so it stays out of the MCP host transcript.",
   // Its create/update siblings moved INTO the catalog; this reason had to stop
   // being the blanket one they shared, because that rationale is no longer
   // true of project lifecycle as a category. What is true of delete

@@ -63,6 +63,8 @@ export interface ReviewerAttemptWrite {
 /** The attempt as the rehearsal reads it: secret NAMES, never a value. */
 export interface ReviewerAttemptView {
   projectId: string;
+  reviewerAccountId?: string;
+  humanSignInCompletedAt?: number;
   passwordSecretName: string;
   usernameSecretName?: string;
   username?: string;
@@ -143,7 +145,7 @@ const SETTLE_WAIT_MS = 1_500;
 const PAGE_STAGES = new Set(["sign-in", "verification", "consent"]);
 const START_AGAIN = "Start a new attempt.";
 const PERSON_SIGN_IN =
-  "Change the sign-in so it asks the reviewer only for an email and password. Then resume this attempt.";
+  "Open Finish reviewer sign-in on the submission, complete the sign-in, then resume this attempt.";
 
 type Scrub = (text: string) => string;
 
@@ -353,7 +355,7 @@ async function drivePages(drive: Drive): Promise<Ending> {
         "verification",
         "blocked",
         `The sign-in page asked for a verification step MCPJam cannot complete: "${scrub(seen.quote)}".`,
-        "Turn off the verification step or bot check for the reviewer account, or save credentials for an account without one. Then resume this attempt.",
+        "Open Finish reviewer sign-in on the submission, complete the verification, then resume this attempt.",
       );
     }
     if (seen.kind === "consent") {
@@ -362,7 +364,7 @@ async function drivePages(drive: Drive): Promise<Ending> {
           "consent",
           "blocked",
           "MCPJam could not tell which control on the consent page approves access, so it clicked none.",
-          "Give the consent page one button that approves access, such as Allow. Then resume this attempt.",
+          "Open Finish reviewer sign-in on the submission, approve access, then resume this attempt.",
         );
       }
       const detail = `MCPJam approved access on the consent page ("${scrub(seen.approve.name)}").`;

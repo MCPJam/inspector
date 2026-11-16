@@ -67,7 +67,8 @@ export function ProbeRow({
 }: ProbeRowProps) {
   const [open, setOpen] = useState(defaultOpen);
   const detailId = useId();
-  const expandable = Boolean(steps?.length || fix || reproduce);
+  const hasActions = Boolean(onRerun || (onAcceptRisk && result === "failed"));
+  const expandable = Boolean(steps?.length || fix || reproduce || hasActions);
 
   return (
     <section
@@ -183,7 +184,7 @@ export function ProbeRow({
                 toolbarLabel="Reproduce"
               />
             ) : null}
-            {onRerun || onAcceptRisk ? (
+            {hasActions ? (
               <div className="flex gap-2">
                 {onRerun ? (
                   <Button size="sm" variant="outline" onClick={onRerun}>

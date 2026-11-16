@@ -86,6 +86,25 @@ describe("ProbeRow", () => {
     expect(screen.getByRole("button", { name: "Re-run" })).toBeInTheDocument();
   });
 
+  it("keeps the actions reachable without steps, fix or reproduce", () => {
+    const onAcceptRisk = vi.fn();
+    renderWithProviders(
+      <ProbeRow
+        name="Token Audience Check"
+        attack="Token passthrough"
+        requirement={{ text: "accept tokens not issued for this server" }}
+        method="Sends a token issued for another resource."
+        result="failed"
+        defaultOpen
+        onRerun={() => {}}
+        onAcceptRisk={onAcceptRisk}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Accept risk" }));
+    expect(onAcceptRisk).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Re-run" })).toBeInTheDocument();
+  });
+
   it("has no expand control when there is nothing to expand", () => {
     renderWithProviders(
       <ProbeRow

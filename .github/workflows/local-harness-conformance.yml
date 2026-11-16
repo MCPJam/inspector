@@ -1035,10 +1035,11 @@ jobs:
           if-no-files-found: error
 
   # Every other local runtime, with the same steps for each: its pack, this
-  # checkout's layer, and `run-gateway-turn.ts`, which asserts what any local
-  # runtime owes the member (a turn through the gateway with no key in any
-  # supervised process, a host tool, detach and resume, loopback only, nothing
-  # left after Stop). The legs are the targets its definition advertises, so a
+  # checkout's layer, and `run-runtime-conformance.ts`, which asserts what any
+  # local runtime owes the member. A gateway runtime runs a turn through the
+  # gateway with no key in any supervised process, a host tool, detach and
+  # resume; a runtime on its vendor's login runs the lifecycle around a turn.
+  # Both check loopback only and nothing left after Stop. The legs are the targets its definition advertises, so a
   # target that cannot pass comes out of the definition, not this matrix.
   runtime-scenarios:
     name: ${{ matrix.harness }} ${{ matrix.platform_key }}
@@ -1187,7 +1188,7 @@ jobs:
       - name: Unpack the adapter build
         run: tar -xzf - < "$RUNNER_TEMP/adapter-build/adapter-build.tgz"
 
-      - name: Gateway turn
+      - name: Runtime conformance
         working-directory: mcpjam-inspector
         env:
           HOME: ${{ runner.temp }}/conformance/home
@@ -1195,7 +1196,7 @@ jobs:
           MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
         run: |
           mkdir -p "$HOME"
-          npx tsx server/utils/harness/local/conformance/run-gateway-turn.ts "$HARNESS"
+          npx tsx server/utils/harness/local/conformance/run-runtime-conformance.ts "$HARNESS"
 
       - name: No supervised process survived the run
         if: always() && runner.os != 'Windows'

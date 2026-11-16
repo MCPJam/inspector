@@ -157,6 +157,18 @@ describe("a run that rehearses the reviewer's sign-in", () => {
     expect(failReadinessRun).not.toHaveBeenCalled();
   });
 
+  it("resumes the account a person connected without starting another sign-in", async () => {
+    joinReviewerAttempt.mockResolvedValue({
+      joined: true,
+      attempt: { ...ATTEMPT, reviewerAccountId: "acct_1", humanSignInCompletedAt: 100 },
+    });
+    const signIn = vi.fn();
+    await run(signIn).done;
+    expect(signIn).not.toHaveBeenCalled();
+    expect(recordReviewerAttempt).toHaveBeenCalledWith(LEASE, "att_1", expect.objectContaining({ outcome: "passed" }));
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
+
   it("still grades after a failed rehearsal, and leaves the attempt as the rehearsal ended it", async () => {
     const signIn = vi.fn(async () => ({ kind: "failed", detail: "refused" }));
     const { fetchFn, done } = run(signIn);

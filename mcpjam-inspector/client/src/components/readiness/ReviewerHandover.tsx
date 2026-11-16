@@ -2,9 +2,10 @@
  * The handover when the reviewer sign-in stops for a person: what the page
  * asked for, who can change the sign-in, and how the attempt is resumed.
  */
+import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@mcpjam/design-system/button";
-import type { ReviewerAttempt } from "@/lib/apis/reviewer-attempts-api";
+import { createReviewerHandoff, type ReviewerAttempt } from "@/lib/apis/reviewer-attempts-api";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "@/lib/toast";
 import type { Handover } from "./reviewer-stages";
@@ -22,6 +23,21 @@ export function ReviewerHandover({
   /** Shows the page it stopped on; absent when the recording cannot. */
   onShow?: () => void;
 }) {
+  const [link, setLink] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const createLink = async () => {
+    setOpening(true);
+    setError(null);
+    try {
+      const result = await createReviewerHandoff(scope, attempt.id);
+      setLink(result.handoffUrl);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOpening(false);
+    }
+  };
   const command = `mcpjam readiness reviewer resume ${scope.submissionId} --attempt ${attempt.id} --project ${scope.projectId}`;
   const copy = async () => {
     if (await copyToClipboard(command)) {
@@ -35,6 +51,17 @@ export function ReviewerHandover({
   const term = "text-xs text-muted-foreground";
   return (
     <div className="space-y-2 rounded-md border border-warning/70 bg-warning/10 p-3">
+      {attempt.humanSignInCompletedAt ? (
+        <p>Reviewer sign-in completed. Resume this attempt to run the checks.</p>
+      ) : (
+        <div className="space-y-2">
+          <Button type="button" disabled={opening} onClick={() => void createLink()}>
+            {opening ? "Creating sign-in link…" : "Finish reviewer sign-in"}
+          </Button>
+          {link ? <a href={link} target="_blank" rel="noopener noreferrer">Open reviewer sign-in</a> : null}
+          {error ? <p role="alert">{error}</p> : null}
+        </div>
+      )}
       <dl className="space-y-3">
         {handover ? (
           <>

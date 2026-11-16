@@ -27,10 +27,6 @@
  * this is a cost rather than a hazard. If exactly one backend addition is ever
  * on the table for this surface, `personas:getPersona {projectId, personaRefId}`
  * is the one to ask for.
- *
- * BETA. Creates and updates are behind the `sandboxes-enabled` flag, enforced
- * server-side; reads and DELETE are not — an org that has just lost the flag
- * must still be able to see and clean up what it authored.
  */
 import { Hono } from "hono";
 import { z } from "zod";

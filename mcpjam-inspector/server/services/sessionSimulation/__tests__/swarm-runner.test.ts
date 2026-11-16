@@ -1007,6 +1007,36 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     });
   });
 
+  it("stops the whole run on a native turn refused for the used-up trial", async () => {
+    // The message the runner composes for a harness turn's lease refusal.
+    runSyntheticHostSessionMock.mockImplementation(
+      async (adapter: SyntheticHostSessionAdapter) =>
+        adapter.persist.hostId === "host-1"
+          ? {
+              outcome: "failed",
+              errorMessage:
+                "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness. (native_harness_trial_exhausted, HTTP 403)",
+            }
+          : { outcome: "succeeded" },
+    );
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 }),
+    );
+
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ errorCode: "spend_cap_exceeded" }),
+    );
+    const refused = reportAttemptMock.mock.calls
+      .map((c) => c[2] as Record<string, unknown>)
+      .find((a) => a.hostId === "host-1" && a.status !== "running");
+    expect(refused).toMatchObject({
+      errorCode: "native_harness_trial_exhausted",
+    });
+  });
+
   it("recognizes every user-owned backend denial code as an account limit", () => {
     // `isAccountLimit` keeps its own list rather than importing this one: that
     // one answers who is at fault, this one whether another host could escape

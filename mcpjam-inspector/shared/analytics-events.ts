@@ -29,6 +29,8 @@ export const ANALYTICS_EVENTS = {
   extension_launch_completed: { source: "client" },
   // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
   platform_launch_engagement: { source: "client" },
+  // One-time feature callouts (FeatureSpotlight); action is shown | closed.
+  feature_spotlight_engagement: { source: "client" },
   // --- Chat (paired: client event + server twin) ---
   send_message: { source: "client" },
   send_message_server: { source: "server" },
