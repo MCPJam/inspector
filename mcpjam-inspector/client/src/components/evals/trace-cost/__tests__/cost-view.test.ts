@@ -168,6 +168,10 @@ describe("describeRowCost for one call", () => {
       completeness: "unavailable",
       note: "No price is on record for this model.",
     });
+    const invalid = { ...unpriced, reason: "invalid_rate" as const };
+    expect(describeRowCost({ kind: "call", cost: invalid }).note).toBe(
+      "The price on record for this model was invalid. An organization admin can set a price under Model prices to price future calls.",
+    );
   });
 
   it("names customer rates and runner reports", () => {

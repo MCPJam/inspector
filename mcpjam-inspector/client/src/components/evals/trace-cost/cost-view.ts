@@ -84,7 +84,7 @@ const UNAVAILABLE_REASON: Record<UnavailableCostReason, string> = {
   no_usage: "No token usage was reported for this call.",
   no_rate: "No price is on record for this model.",
   invalid_rate:
-    "The price on record for this model was invalid. Set a price under Model prices to price future calls.",
+    "The price on record for this model was invalid. An organization admin can set a price under Model prices to price future calls.",
   unsupported_currency: "The price on record is not in US dollars.",
 };
 
