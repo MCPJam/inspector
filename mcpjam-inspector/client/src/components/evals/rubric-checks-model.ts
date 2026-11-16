@@ -72,6 +72,11 @@ export function rubricCheckQuestionError(
   );
   if (instructions) return instructions;
 
+  if (question.kind === "yesno") {
+    return question.pass.answer === "yes" || question.pass.answer === "no"
+      ? undefined
+      : "Choose whether Yes or No passes.";
+  }
   if (question.kind === "choice") {
     const options = question.options ?? [];
     if (
@@ -174,15 +179,18 @@ export function withRubricChecks(
   return { ...judgeConfig, rubricChecks: next };
 }
 
-/** A new question of either kind, with an id no other question uses. */
+/** A new question of any kind, with an id no other question uses. */
 export function blankRubricCheckQuestion(
   kind: RubricCheckQuestion["kind"],
   existing: readonly RubricCheckQuestion[],
 ): RubricCheckQuestion {
   const id = uniqueCriterionId(
-    kind === "choice" ? "choice" : "score",
+    kind,
     new Set(existing.map((question) => question.id)),
   );
+  if (kind === "yesno") {
+    return { id, kind, label: "", instructions: "", pass: { answer: "yes" } };
+  }
   if (kind === "choice") {
     return {
       id,

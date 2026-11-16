@@ -306,6 +306,16 @@ export function hasRubricChecksCapability(
   return capabilities?.judges?.rubricChecks != null;
 }
 
+/**
+ * True when this deployment asks authored yes/no rubric-check questions:
+ * template version 2 added them, so an older version would refuse the kind.
+ */
+export function hasYesNoRubricQuestionsCapability(
+  capabilities: SuiteCapabilities | null | undefined,
+): boolean {
+  return (capabilities?.judges?.rubricChecks?.template.version ?? 0) >= 2;
+}
+
 export function hasJudgeSeverityCapability(
   capabilities: SuiteCapabilities | null | undefined,
 ): boolean {

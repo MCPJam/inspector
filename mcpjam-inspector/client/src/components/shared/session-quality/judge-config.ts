@@ -70,21 +70,27 @@ export type GroundednessJudgeSlot = {
 };
 
 /**
- * One authored rubric-check question. Booleans are never authored: every
- * suite criterion already is one. Mirrors `rubricCheckQuestionValidator` in
- * the backend's `convex/lib/judgeConfig.ts`, and a pass line is required.
+ * One authored rubric-check question: choice, score, or yes/no. A yes/no
+ * question is not a grading criterion, so it never shapes the goal judge.
+ * Mirrors `rubricCheckQuestionValidator` in the backend's
+ * `convex/lib/judgeConfig.ts`, and a pass line is required.
  */
 export type RubricCheckQuestion = {
   id: string;
-  kind: "choice" | "score";
+  kind: "choice" | "score" | "yesno";
   label: string;
   instructions: string;
   /** `choice` only: 2 to 20 options. */
   options?: Array<{ id: string; label: string; description?: string }>;
   /** `score` only: 2 to 10 ordered levels, lowest first. */
   levels?: string[];
-  /** `choice`: the option ids that pass. `score`: the lowest passing level. */
-  pass: { anyOf?: string[]; minLevel?: number };
+  /**
+   * `choice`: the option ids that pass. `score`: the lowest passing level.
+   * `yesno`: the answer that passes.
+   */
+  pass: { anyOf?: string[]; minLevel?: number; answer?: "yes" | "no" };
+  /** The library evaluator this question came from. Presentation only. */
+  evaluator?: { id: string; version: number };
 };
 
 /**

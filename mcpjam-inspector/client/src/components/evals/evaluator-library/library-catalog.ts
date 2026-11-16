@@ -1,7 +1,10 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import {
   Braces,
   CircleCheck,
+  MessageCircleWarning,
+  Quote,
   FileWarning,
   Route,
   ShieldAlert,
@@ -24,6 +27,19 @@ export type LibraryEvaluator = {
   icon: LucideIcon;
   tone: EvaluatorTone;
   checks: readonly Predicate[];
+  /**
+   * Yes/no questions a model answers on the rubric-check pass, which rides
+   * the goal-completion judge. Advisory, like every rubric check.
+   */
+  questions?: readonly LibraryQuestion[];
+};
+
+/** A library question before it is given its id and tag. */
+export type LibraryQuestion = {
+  slug: string;
+  label: string;
+  instructions: string;
+  passOn: "yes" | "no";
 };
 
 export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
@@ -88,6 +104,44 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     ],
   },
   {
+    id: "reports-tool-errors",
+    version: 1,
+    name: "Reports Tool Errors",
+    question:
+      "When a tool failed, did the final answer say so instead of inventing a result?",
+    icon: MessageCircleWarning,
+    tone: "errors",
+    checks: [],
+    questions: [
+      {
+        slug: "invented",
+        label: "Answer invented a result a tool did not return",
+        instructions:
+          "Compare the final answer with the tool results. Answer yes if the answer states a result that no tool returned, including after a tool error.",
+        passOn: "no",
+      },
+    ],
+  },
+  {
+    id: "answer-grounded-in-results",
+    version: 1,
+    name: "Answer Grounded in Results",
+    question:
+      "Is every factual claim in the answer backed by a tool result from this run?",
+    icon: Quote,
+    tone: "answer",
+    checks: [],
+    questions: [
+      {
+        slug: "grounded",
+        label: "Every claim is backed by a tool result",
+        instructions:
+          "List the factual claims in the final answer and check each against the tool results in the recording. Answer yes only if every claim is supported.",
+        passOn: "yes",
+      },
+    ],
+  },
+  {
     id: "avoids-risky-tools",
     version: 1,
     name: "Avoids Risky Tools",
@@ -122,45 +176,61 @@ export function withoutEvaluator(
   return predicates.filter((p) => p.evaluator?.id !== evaluatorId);
 }
 
-/**
- * Replaces an evaluator's checks with its current library version. Checks
- * the author already removed come back, because the new version defines the
- * set; per-check edits are replaced too.
- */
-export function withEvaluatorUpdated(
-  predicates: readonly Predicate[],
-  evaluatorId: string,
-): Predicate[] {
-  const entry = findLibraryEvaluator(evaluatorId);
-  if (!entry) return [...predicates];
-  return [...withoutEvaluator(predicates, evaluatorId), ...taggedChecks(entry)];
+/** The evaluator's questions, each with a stable id and its tag. */
+export function taggedQuestions(
+  evaluator: LibraryEvaluator,
+): RubricCheckQuestion[] {
+  return (evaluator.questions ?? []).map((q) => ({
+    id: `${evaluator.id}-${q.slug}`,
+    kind: "yesno",
+    label: q.label,
+    instructions: q.instructions,
+    pass: { answer: q.passOn },
+    evaluator: { id: evaluator.id, version: evaluator.version },
+  }));
 }
 
-/** "2 assertions", for the card footer. */
+/** "2 assertions · 1 yes/no question", for the card footer. */
 export function builtFrom(evaluator: LibraryEvaluator): BuiltFromPart[] {
+  const parts: BuiltFromPart[] = [];
   const n = evaluator.checks.length;
-  return [
-    {
+  if (n) {
+    parts.push({
       kind: "assertions",
       label: `${n} ${n === 1 ? "assertion" : "assertions"}`,
-    },
-  ];
+    });
+  }
+  const q = evaluator.questions?.length ?? 0;
+  if (q) {
+    parts.push({
+      kind: "question",
+      label: `${q} yes/no ${q === 1 ? "question" : "questions"}`,
+    });
+  }
+  return parts;
 }
 
 /** True when the suite already has every check kind this evaluator adds. */
 export function isInSuite(
   evaluator: LibraryEvaluator,
   predicates: readonly Predicate[],
+  questions: readonly RubricCheckQuestion[] = [],
 ): boolean {
   const kinds = new Set(predicates.map((p) => p.type));
-  return evaluator.checks.every((check) => kinds.has(check.type));
+  const ids = new Set(questions.map((q) => q.id));
+  return (
+    evaluator.checks.every((check) => kinds.has(check.type)) &&
+    taggedQuestions(evaluator).every((q) => ids.has(q.id))
+  );
 }
 
 /** True when this deployment accepts every check kind the evaluator adds. */
 export function isAuthorable(
   evaluator: LibraryEvaluator,
   authorableKinds: readonly Predicate["type"][] | undefined,
+  canAskYesNo = false,
 ): boolean {
+  if (evaluator.questions?.length && !canAskYesNo) return false;
   if (!authorableKinds) return true;
   return evaluator.checks.every((check) =>
     authorableKinds.includes(check.type),

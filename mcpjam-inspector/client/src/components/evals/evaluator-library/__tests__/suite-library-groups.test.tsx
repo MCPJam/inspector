@@ -6,9 +6,12 @@ import { clusterByEvaluator } from "../evaluator-stage-rows";
 import {
   LIBRARY_EVALUATORS,
   taggedChecks,
-  withEvaluatorUpdated,
   withoutEvaluator,
 } from "../library-catalog";
+import {
+  evaluatorIdForQuestionKey,
+  librarySuiteEdits,
+} from "../library-suite-edits";
 
 const flag = vi.hoisted(() => ({ on: true }));
 vi.mock("posthog-js/react", () => ({
@@ -91,21 +94,63 @@ describe("library catalog edits", () => {
     expect(clusters[0].rows).toHaveLength(2);
   });
 
-  it("removes and replaces only one evaluator's checks", () => {
+  it("removes only one evaluator's checks", () => {
     expect(withoutEvaluator(tagged, "no-wasted-calls")).toEqual([
       { type: "noToolErrors" },
     ]);
-    const edited: Predicate[] = [
-      { type: "noToolErrors" },
-      { type: "toolCallCountUnder", count: 4, evaluator: wasted },
-    ];
-    const entry = LIBRARY_EVALUATORS.find((e) => e.id === "no-wasted-calls");
-    expect(entry).toBeDefined();
-    if (!entry) return;
-    expect(withEvaluatorUpdated(edited, "no-wasted-calls")).toEqual([
-      { type: "noToolErrors" },
-      ...taggedChecks(entry),
-    ]);
-    expect(withEvaluatorUpdated(edited, "unknown")).toEqual(edited);
+  });
+
+  it("adds, updates and removes an evaluator's questions with its checks", () => {
+    let predicates: Predicate[] = [{ type: "noToolErrors" }];
+    let judgeConfig: Parameters<typeof librarySuiteEdits>[1] = undefined;
+    const edits = () =>
+      librarySuiteEdits(
+        {
+          kind: "suite",
+          predicates,
+          onPredicatesChange: (next) => {
+            predicates = typeof next === "function" ? next(predicates) : next;
+          },
+        },
+        judgeConfig,
+        (next) => {
+          judgeConfig = next;
+        },
+      );
+    const grounded = LIBRARY_EVALUATORS.find(
+      (e) => e.id === "answer-grounded-in-results",
+    );
+    expect(grounded).toBeDefined();
+    if (!grounded) return;
+    edits()?.add(
+      [],
+      [
+        {
+          id: "answer-grounded-in-results-grounded",
+          kind: "yesno",
+          label: "Every claim is backed by a tool result",
+          instructions: "Check each claim.",
+          pass: { answer: "yes" },
+          evaluator: { id: "answer-grounded-in-results", version: 1 },
+        },
+      ],
+    );
+    expect(judgeConfig?.rubricChecks?.enabled).toBe(true);
+    expect(judgeConfig?.rubricChecks?.questions).toHaveLength(1);
+    edits()?.update("answer-grounded-in-results");
+    expect(judgeConfig?.rubricChecks?.questions?.[0].instructions).toBe(
+      grounded.questions?.[0].instructions,
+    );
+    edits()?.remove("answer-grounded-in-results");
+    expect(judgeConfig?.rubricChecks?.questions).toBeUndefined();
+    expect(predicates).toEqual([{ type: "noToolErrors" }]);
+  });
+
+  it("maps a rubric-check row back to its library evaluator", () => {
+    expect(
+      evaluatorIdForQuestionKey("q:answer-grounded-in-results-grounded"),
+    ).toBe("answer-grounded-in-results");
+    expect(evaluatorIdForQuestionKey("q:my-own-question")).toBeUndefined();
+    expect(evaluatorIdForQuestionKey("c:criterion")).toBeUndefined();
   });
 });
