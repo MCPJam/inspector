@@ -195,6 +195,15 @@ export class DurableControlCache<Entry extends CachedControl, Snapshot> {
     return entry;
   }
 
+  /** Keep an entry for a row this process just issued, so its own requests
+   * reuse what it built (such as an invoker holding in-process receipts). */
+  adopt(token: string, entry: Entry) {
+    if (this.entries.has(token)) return;
+    this.closed.delete(token);
+    this.entries.set(token, entry);
+    this.evictAtLeaseEnd(token, entry);
+  }
+
   /** This process's entry, checked against its last durable read only. Call
    * after `restore` or a `fence` read within the same request. */
   get(token: string, actor: PluginInstanceIdentity) {

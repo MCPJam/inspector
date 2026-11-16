@@ -6,6 +6,7 @@ import {
   type TrustedInvocationOwner,
 } from "./invocation.js";
 import { modelApps } from "./model-apps.js";
+import { pluginModelForms } from "./model-form-control.js";
 
 /**
  * Read a form's owner from the store and restore it into this process, so
@@ -39,7 +40,11 @@ async function restoreOwner(
     await pluginInstances.getPersistent(ref.token, identity, signal);
     return;
   }
-  await modelApps.restore(ref.token, identity, signal);
+  if (ref.kind === "model-app") {
+    await modelApps.restore(ref.token, identity, signal);
+    return;
+  }
+  await pluginModelForms.restore(ref.token, identity, signal);
 }
 
 /**

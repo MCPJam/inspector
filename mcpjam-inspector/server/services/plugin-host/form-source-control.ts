@@ -21,10 +21,10 @@ import {
 
 const id = z.string().min(1).max(4096);
 const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-/** The row that owns a form: an App or a model App.
+/** The row that owns a form: an App, a model App or a suspended model call.
  * Another replica restores the owner from it to serve the form's requests. */
 export const pluginFormOwnerRefSchema = z.strictObject({
-  kind: z.enum(["app", "model-app"]),
+  kind: z.enum(["app", "model-app", "model-form"]),
   token,
 });
 export type PluginFormOwnerRef = z.infer<typeof pluginFormOwnerRefSchema>;
