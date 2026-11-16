@@ -1,33 +1,22 @@
 import { traceChatAuthRecovery } from "./chat-auth-recovery";
-import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import {
+  readRecoveryRecord,
+  type ComparisonAuthRecovery,
+  type ComparisonRecoveryLayout,
+  type ComparisonRecoveryColumn,
+} from "./comparison-recovery-record";
+export type {
+  ComparisonAuthRecovery,
+  ComparisonRecoveryLayout,
+  ComparisonRecoveryColumn,
+} from "./comparison-recovery-record";
 import type { PendingWriteResult } from "./scope-step-up-pending";
 
-const PREFIX = "mcp-comparison-auth-v1:";
+const PREFIX = "mcp-comparison-auth-v2:";
+const LEGACY_PREFIX = "mcp-comparison-auth-v1:";
 const PARAM = "comparisonRecovery";
 export function hasComparisonAuthRecoveryRequest(): boolean {
   return new URLSearchParams(window.location.search).has(PARAM);
-}
-export interface ComparisonRecoveryLayout {
-  projectId: string;
-  multiModelEnabled: boolean;
-  hostIds: string[];
-  modelSelections: RequestedModelSelection[] | null;
-  selectedServers: string[];
-}
-export interface ComparisonRecoveryColumn {
-  compareId: string;
-  kind: "model" | "host";
-  order: number;
-  chatSessionId: string;
-  hasMessages: boolean;
-}
-export interface ComparisonAuthRecovery extends ComparisonRecoveryLayout {
-  version: 1;
-  id: string;
-  createdAt: number;
-  columns: ComparisonRecoveryColumn[];
-  continuationId: string;
-  clickedColumn: string;
 }
 const layouts = new Map<string, ComparisonRecoveryLayout>();
 const columns = new Map<string, Map<string, ComparisonRecoveryColumn>>();
@@ -73,7 +62,8 @@ export function prepareComparisonAuthRecovery(
     return { ok: false, reason: "missing" };
   const record: ComparisonAuthRecovery = {
     ...layout,
-    version: 1,
+    version: 2,
+    panes: layout.panes ?? [],
     id,
     columns: lanes,
     clickedColumn,
@@ -82,6 +72,10 @@ export function prepareComparisonAuthRecovery(
   };
   try {
     const raw = JSON.stringify(record);
+    // Layout and cards register in separate effects. Do not leave the page
+    // with a mix of old children and a newly changed lineup.
+    if (!readRecoveryRecord(raw, { id, projectId: layout.projectId }))
+      return { ok: false, reason: "loading" };
     sessionStorage.setItem(PREFIX + id, raw);
     if (sessionStorage.getItem(PREFIX + id) !== raw)
       return { ok: false, reason: "storage" };
@@ -111,46 +105,15 @@ export function readComparisonAuthRecovery(
   const id = new URLSearchParams(window.location.search).get(PARAM);
   if (!id) return null;
   try {
-    const record = JSON.parse(
-      sessionStorage.getItem(PREFIX + id) ?? "null",
-    ) as ComparisonAuthRecovery | null;
-    if (
-      !record ||
-      record.version !== 1 ||
-      record.id !== id ||
-      record.projectId !==
-        (projectId === "local"
-          ? (window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ?? projectId)
-          : projectId) ||
-      !Array.isArray(record.columns) ||
-      !Array.isArray(record.hostIds) ||
-      !Array.isArray(record.selectedServers)
-    )
-      return null;
-    if (
-      !record.columns.every(
-        (lane) =>
-          typeof lane.chatSessionId === "string" &&
-          typeof lane.compareId === "string" &&
-          (lane.kind === "model" || lane.kind === "host") &&
-          Number.isInteger(lane.order) &&
-          typeof lane.hasMessages === "boolean",
-      )
-    )
-      return null;
-    if (
-      !record.columns.length ||
-      new Set(record.columns.map((lane) => `${lane.kind}:${lane.compareId}`))
-        .size !== record.columns.length ||
-      typeof record.multiModelEnabled !== "boolean" ||
-      !record.columns.some((lane) => lane.compareId === record.clickedColumn) ||
-      !record.hostIds.every((value) => typeof value === "string") ||
-      !record.selectedServers.every((value) => typeof value === "string") ||
-      (record.modelSelections !== null &&
-        !Array.isArray(record.modelSelections))
-    )
-      return null;
-    return record;
+    const raw =
+      sessionStorage.getItem(PREFIX + id) ??
+      sessionStorage.getItem(LEGACY_PREFIX + id);
+    if (raw === null) return null;
+    const scope =
+      projectId === "local"
+        ? (window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ?? projectId)
+        : projectId;
+    return readRecoveryRecord(raw, { id, projectId: scope });
   } catch {
     return null;
   }
@@ -183,6 +146,7 @@ export function clearComparisonAuthRecovery() {
   if (id) {
     try {
       sessionStorage.removeItem(PREFIX + id);
+      sessionStorage.removeItem(LEGACY_PREFIX + id);
     } catch {
       /* URL removal prevents reuse. */
     }

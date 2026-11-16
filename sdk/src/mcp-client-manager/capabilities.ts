@@ -48,10 +48,10 @@ function mergeExtensionsMaps(
  * the thing that actually loads, verifies, and renders a server-served skill
  * is the inspector app. A default declaration would advertise behavior the
  * bare SDK cannot complete — the advertise=enforce rule read backwards.
- * Callers that DO implement it opt in with
- * {@link withSkillsExtensionCapability}, which is what the inspector's connect
- * seams do (local) and what the MCPJam host persona's stored
- * `clientCapabilities` does (hosted).
+ * Callers that DO implement it opt in: the inspector's local connect seam with
+ * {@link withSkillsExtensionCapability} for MCPJam's own client, and a host's
+ * stored `clientCapabilities` when its "Skills over MCP" switch is on, which
+ * the MCPJam host persona's template turns on.
  *
  * The backend's `DEFAULT_CLIENT_CAPABILITIES_V2` is the hand-mirror of this
  * function and stays in lockstep with it.

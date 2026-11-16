@@ -9,7 +9,12 @@ import {
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
-import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import {
+  connectionPolicyEligibility,
+  orgRequiresOwnKeys,
+} from "@/shared/org-ai-key-policy";
+import { INSPECTOR_RUN_POLICY_REASON } from "@/lib/org-keys-refusal";
+import { gatewayModelFor } from "@/shared/harness-gateway-model";
 import {
   isUsableOrgConnection,
   type OrgAiKeyPolicyView,
@@ -208,8 +213,22 @@ export function buildAvailableModelsFromOrgConfig(
   for (const p of orgConfig.providers) {
     if (p.id) eligibleByConnectionId.set(p.id, backendCallsEligible(p));
   }
+  // A connection whose calls come from each user's Inspector and that the
+  // policy's verdict on it refuses: its rows stay listed, disabled, so the
+  // admin sees why. One missing its key is left out like any other keyless
+  // connection; the policy's fix would not make it runnable.
+  const policyBlocked = (p: OrgModelProvider): boolean =>
+    requireOrgKeys &&
+    p.runtimeLocation === "local" &&
+    isUsableOrgConnection(p, false) &&
+    !connectionPolicyEligibility(p, requireOrgKeys).eligible;
+  const blockedConnections = new Set(
+    orgConfig.providers.filter(policyBlocked).map((p) => p.id ?? p.providerKey)
+  );
   const providers = requireOrgKeys
-    ? orgConfig.providers.filter(backendCallsEligible)
+    ? orgConfig.providers.filter(
+        (p) => backendCallsEligible(p) || policyBlocked(p)
+      )
     : orgConfig.providers;
 
   // Determine which provider keys are available. Ollama is skipped — it never
@@ -361,6 +380,8 @@ export function buildAvailableModelsFromOrgConfig(
         provider: "custom" as const,
         customProviderName: customSlug,
         orgProvider: orgStamp(p),
+        // What a harness picker judges the row on (`gatewayHarnessModel`).
+        gateway: gatewayModelFor(p, modelId),
       });
     }
   }
@@ -370,6 +391,11 @@ export function buildAvailableModelsFromOrgConfig(
     ...models.map((model) => ({
       ...model,
       hosted: false,
+      ...(blockedConnections.has(
+        model.orgProvider?.id ?? model.orgProvider?.providerKey ?? ""
+      )
+        ? { disabled: true, disabledReason: INSPECTOR_RUN_POLICY_REASON }
+        : {}),
       // An org row can grade as a judge (the BYOK judge) only when its
       // connection is one the backend runs AI requests on directly.
       ...(judgeEligibleStamp(model.orgProvider)

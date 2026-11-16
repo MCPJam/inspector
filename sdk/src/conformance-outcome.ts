@@ -11,7 +11,10 @@
  * built-ins, so it is safe from the browser entry.
  */
 
-import { isMissingInputCheck } from "./conformance-input.js";
+import {
+  isMissingInputCheck,
+  missingInputForCheck,
+} from "./conformance-input.js";
 
 /**
  * Why a skipped check produced no verdict. The two are NOT interchangeable:
@@ -79,8 +82,12 @@ export function decideConformanceOutcome(checks: OutcomeCheckLike[]): {
   // A check that only lacks a tool from setup is the caller's gap, not the
   // server's: it shows as "Not run", costs no points, and does not hold the
   // verdict back. The score and the UI still report it as needing input.
+  // A login is different: without it the server was never reached, so it
+  // costs no points but still keeps the run from passing.
   const unrun = checks.filter(
-    (check) => isUnrunCheck(check) && !isMissingInputCheck(check),
+    (check) =>
+      isUnrunCheck(check) &&
+      (!isMissingInputCheck(check) || missingInputForCheck(check) === "login"),
   );
   if (unrun.length === 0) {
     if (checks.length === 0) {

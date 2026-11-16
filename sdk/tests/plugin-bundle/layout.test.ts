@@ -253,8 +253,11 @@ describe("openai-compatible profile: legacy manifests", () => {
   });
 
   it("validates a legacy manifest's portable fields by the root rules", async () => {
+    // "Bad Name": the ChatGPT portal accepts uppercase, but not a space.
     await expectParseError(
-      bundle({ ".codex-plugin/plugin.json": JSON.stringify({ name: "Bad" }) }),
+      bundle({
+        ".codex-plugin/plugin.json": JSON.stringify({ name: "Bad Name" }),
+      }),
       "MANIFEST_INVALID_NAME",
       compat
     );

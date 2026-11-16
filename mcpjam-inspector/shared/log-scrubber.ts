@@ -35,9 +35,11 @@
  * `server/utils/` for that reason.
  */
 import { scrubCredentialsInText } from "./credential-urls";
+import { scrubDeliveredSecrets } from "./delivered-secret-registry";
 import {
   authHeaderLike,
   jwtLike,
+  localSessionProtocolLike,
   providerTokenLike,
   secretParamLike,
   skKeyLike,
@@ -64,6 +66,7 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
   "stripesubscription",
   "stripeprice",
   "xmcpsessionauth",
+  "secwebsocketprotocol",
   // Header-broker model lease (E2B network-transform delivery). A signed model
   // lease — never log it, even though the inspector never handles it directly
   // (defense in depth).
@@ -256,11 +259,13 @@ function scrubString(s: string): string {
   // Then URLs: reducing one to its origin also removes any credential in
   // its userinfo or query, so the narrower patterns below never see half of
   // one. Then the same patterns as the model path, with log-specific
-  // replacement strings.
-  return scrubCredentialsInText(s)
+  // replacement strings. Exact values the backend delivered go first of all:
+  // a bare token has no shape for any pattern to find.
+  return scrubCredentialsInText(scrubDeliveredSecrets(s))
     .replace(URL_LIKE(), reduceUrlMatch)
     .replace(authHeaderLike(), "$1[redacted]")
     .replace(tokenLike(), "Bearer [redacted-token]")
+    .replace(localSessionProtocolLike(), "[redacted-token]")
     .replace(jwtLike(), "[redacted-jwt]")
     .replace(urlBasicAuthLike(), "$1[redacted]@")
     .replace(EMAIL_LIKE, "[redacted-email]")

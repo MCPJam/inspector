@@ -94,6 +94,9 @@ export function isHarnessSessionDataPart(
  *  - `runtime-changed`    — the chat's saved session was built for a different
  *                           runtime (model, servers, skills, permission mode or
  *                           transport), so it can't be resumed.
+ *  - `sandbox-restored`   — the computer was replaced, but the CLI's saved
+ *                           session files were put back and the session resumed;
+ *                           files from earlier turns are still gone.
  *
  * NEVER carries raw E2B sandbox ids — only the categorical reason.
  */
@@ -101,7 +104,8 @@ export type HarnessResetReason =
   | "sandbox-replaced"
   | "legacy-cold-resume"
   | "resume-failed"
-  | "runtime-changed";
+  | "runtime-changed"
+  | "sandbox-restored";
 
 export interface HarnessResetInfo {
   reason: HarnessResetReason;
@@ -117,6 +121,7 @@ const HARNESS_RESET_REASONS: ReadonlySet<HarnessResetReason> = new Set([
   "legacy-cold-resume",
   "resume-failed",
   "runtime-changed",
+  "sandbox-restored",
 ]);
 
 export function isHarnessResetDataPart(

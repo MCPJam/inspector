@@ -349,6 +349,7 @@ export type EvalTraceWidgetToolCall = {
  * plus the transient base64 screenshot until finalize uploads it.
  */
 export type RunnerWidgetRenderObservation = {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   toolName: string;
   serverId: string; // friendly MCP server name; backend resolves to Id<'servers'>
@@ -381,6 +382,7 @@ export type EvalTraceScriptedAssertion = {
 };
 
 export type RunnerBrowserInteractionStep = {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   stepIndex: number; // monotonic per (toolCallId), stamped by the runner
   promptIndex: number; // stamped by the runner

@@ -50,6 +50,7 @@ export type {
   WidgetDebugDirection,
   HostBridgeMatrix,
   HostBridgeCallbacks,
+  AppToolRequestContext,
   RegisterHostBridgeHandlersOptions,
 } from "./host-app-bridge.js";
 
@@ -79,4 +80,22 @@ export {
   openAIDisplayModes,
   pickOpenAIDisplayMode,
 } from "./resource-display.js";
-export type { ResourceDisplayHints } from "./resource-display.js";
+export type {
+  DisplayBehavior,
+  ResourceDisplayHints,
+} from "./resource-display.js";
+export {
+  inlineThenMoveModes,
+  inlineThenMoveStart,
+  shouldMoveToPanel,
+} from "./inline-then-move.js";
+export type { InlineThenMoveMode } from "./inline-then-move.js";
+
+export type {
+  SandboxViewSource,
+  SandboxViewCsp,
+  SandboxViewPolicy,
+  PrepareSandboxViewRequest,
+  PreparedSandboxView,
+  ReleaseSandboxViewRequest,
+} from "./sandbox-view-admission.js";

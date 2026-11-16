@@ -49,6 +49,9 @@ type Schema = {
   required?: string[];
   properties?: Record<string, Schema>;
   items?: Schema;
+  minItems?: number;
+  maxItems?: number;
+  prefixItems?: Schema[];
   enum?: unknown[];
   $ref?: string;
   description?: string;
@@ -69,6 +72,16 @@ const spec = JSON.parse(readFileSync(SPEC_PATH, "utf8")) as {
  * everything.
  */
 const PAIRS: Readonly<Record<string, string>> = {
+  WidgetViewport: "PlatformWidgetViewport",
+  WidgetSessionCreateRequest: "PlatformWidgetSessionCreateBody",
+  WidgetSessionCreated: "PlatformWidgetSessionCreated",
+  WidgetAction: "PlatformWidgetAction",
+  WidgetToolCall: "PlatformWidgetToolCall",
+  WidgetSessionActionResult: "PlatformWidgetSessionActionResult",
+  WidgetSessionSnapshot: "PlatformWidgetSessionSnapshot",
+  WidgetSessionStepRequest: "PlatformWidgetSessionStepBody",
+  WidgetSessionStepResult: "PlatformWidgetSessionStepResult",
+  WidgetSessionClosed: "PlatformWidgetSessionClosed",
   Me: "PlatformMe",
   Organization: "PlatformOrganization",
   Project: "PlatformProject",
@@ -84,7 +97,6 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
   EvalSuite: "PlatformEvalSuite",
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
-  EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
   // The grading configuration, extracted out of `EvalSuiteDetail.settings`
   // into a named schema so this ratchet can reach it at all. It could not
@@ -125,14 +137,9 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteEnvironmentAttached: "PlatformEvalSuiteEnvironmentAttached",
   ProjectEnvironmentCapabilities: "PlatformEnvironmentCapabilities",
   ProjectEnvironmentResolved: "PlatformEnvironmentResolved",
-  Plugin: "PlatformPlugin",
-  PluginVersion: "PlatformPluginVersion",
-  SandboxImage: "PlatformImage",
-  SandboxImageBuild: "PlatformImageBuild",
-  SandboxImageDeleted: "PlatformImageDeleted",
-  SandboxImageBuildStarted: "PlatformImageBuildStarted",
-  ComputerAttached: "PlatformComputerAttached",
-  ComputerReset: "PlatformComputerReset",
+  // Plugin and sandbox-image schemas are out of the spec until those features
+  // are on for everyone (see KNOWN_UNDOCUMENTED in openapi-drift.test.ts).
+  // Add their pairs back when their routes are documented again.
   StudyLink: "PlatformStudyLink",
   StudyServer: "PlatformStudyServer",
   StudySummary: "PlatformStudySummary",
@@ -236,11 +243,17 @@ const PAIRS: Readonly<Record<string, string>> = {
  * cost of an exemption is that the one axis it silences is the one nothing
  * will ever check again.
  *
- * EMPTY, and worth keeping that way. It held `EvalRun.insights` and
- * `JourneyRun.insights` while the envelope was undocumented; both came off in
- * the same change that documented it, which is what the note there promised.
+ * Entries are for fields of features that are not yet on for everyone, and
+ * come off in the change that documents the feature.
  */
-const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {};
+const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {
+  // Plugin pins and sandbox images are not on for everyone, so the public spec
+  // leaves these fields out while the SDK still types them for flagged-in
+  // organizations. Drop each entry when its feature is documented.
+  ProjectEnvironment: ["pluginVersionIds", "sandboxImageId"],
+  AdhocEnvironment: ["pluginVersionIds", "sandboxImageId"],
+  ProjectEnvironmentResolved: ["pluginVersions", "sandboxImageId"],
+};
 // ── SDK type extraction ─────────────────────────────────────────────────────
 
 type SdkField = {
@@ -252,6 +265,7 @@ type SdkField = {
   /** `PlatformFoo` when the type (or its array element) is an interface ref. */
   refName: string | null;
   isArray: boolean;
+  tuple?: { length: number; itemTypes: Array<string | undefined> };
 };
 
 type SdkInterface = {
@@ -298,7 +312,8 @@ const unresolvedHeritage: string[] = [];
 function parseSdkInterfaces(): Map<string, SdkInterface> {
   const source = ts.createSourceFile(
     TYPES_PATH,
-    [TYPES_PATH, resolve(dirname(TYPES_PATH), "readiness-start-types.ts")]
+    [TYPES_PATH, resolve(dirname(TYPES_PATH), "readiness-start-types.ts"),
+      resolve(dirname(TYPES_PATH), "widget-session-types.ts")]
       .map(path => readFileSync(path, "utf8"))
       .join("\n"),
     ts.ScriptTarget.Latest,
@@ -358,11 +373,25 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
 
     let isArray = false;
     let refName: string | null = null;
+    let tuple: SdkField["tuple"];
     for (const member of members) {
       let target = unwrapTypeNode(member);
       if (ts.isArrayTypeNode(target)) {
         isArray = true;
         target = unwrapTypeNode(target.elementType);
+      }
+      if (ts.isTupleTypeNode(target)) {
+        isArray = true;
+        if (target.elements.every(element => !ts.isOptionalTypeNode(element)
+          && !ts.isRestTypeNode(element)
+          && (!ts.isNamedTupleMember(element) || (!element.questionToken && !element.dotDotDotToken)))) {
+          tuple = { length: target.elements.length, itemTypes: target.elements.map(element => {
+            const item = unwrapTypeNode(ts.isNamedTupleMember(element) ? element.type : element);
+            return item.kind === ts.SyntaxKind.NumberKeyword ? "number"
+              : item.kind === ts.SyntaxKind.StringKeyword ? "string"
+                : item.kind === ts.SyntaxKind.BooleanKeyword ? "boolean" : undefined;
+          }) };
+        }
       }
       if (ts.isTypeReferenceNode(target)) {
         const name = target.typeName.getText();
@@ -379,7 +408,7 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
       }
     }
 
-    return { nullable, enumValues, refName, isArray };
+    return { nullable, enumValues, refName, isArray, tuple };
   };
 
   const visit = (node: ts.Node): void => {
@@ -753,6 +782,16 @@ describe("openapi.json ↔ sdk/src/platform/types.ts parity", () => {
               schemaIsArray(prop) ? "is" : "is not"
             } an array, SDK ${sdkField.isArray ? "is" : "is not"}`
           );
+        }
+        if (sdkField.tuple) {
+          const { length, itemTypes } = sdkField.tuple;
+          if (prop.minItems !== length || prop.maxItems !== length)
+            problems.push(`${schemaName}.${field}: tuple length must be ${length}`);
+          itemTypes.forEach((type, index) => {
+            const item = prop.prefixItems?.[index] ?? prop.items;
+            if (type && item?.type !== type)
+              problems.push(`${schemaName}.${field}[${index}]: tuple item must be ${type}`);
+          });
         }
 
         const specRef = schemaRefName(prop);

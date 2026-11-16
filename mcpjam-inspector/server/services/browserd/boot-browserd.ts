@@ -105,7 +105,15 @@ export interface BrowserdHandle {
   stop: () => Promise<void>;
 }
 
-const DEFAULT_READY_TIMEOUT_MS = 30_000;
+/**
+ * How long a boot waits for the ready line, X display included.
+ *
+ * The daemon prints it only after Chromium has launched, and a fresh box's
+ * first launch measured 12–38s on the desktop template (a second boot on the
+ * same box: about 1s). The old 30s cut off the slow first launches, which
+ * is the "did not report listening" failure people saw when opening a browser.
+ */
+export const BROWSERD_READY_TIMEOUT_MS = 60_000;
 
 /**
  * The X display a desktop box draws on — `:0`, the same one `@e2b/desktop`
@@ -376,7 +384,7 @@ export function bootBrowserd(
 ): Promise<BrowserdHandle> {
   const bearer = randomBytes(32).toString("hex");
   const env = buildEnv(bearer, options);
-  const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+  const readyTimeoutMs = options.readyTimeoutMs ?? BROWSERD_READY_TIMEOUT_MS;
 
   return new Promise<BrowserdHandle>((resolve, reject) => {
     let settled = false;

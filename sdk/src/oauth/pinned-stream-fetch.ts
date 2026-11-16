@@ -51,7 +51,10 @@ import {
   resolveEgressPolicy,
   resolvePinnedAddresses,
 } from "./pinned-dns.js";
-import type { EgressPolicy } from "./pinned-dns.js";
+import type {
+  EgressPolicy,
+  PrivateDestinationAdmission,
+} from "./pinned-dns.js";
 
 export interface PinnedStreamingFetchOptions {
   /**
@@ -72,6 +75,15 @@ export interface PinnedStreamingFetchOptions {
    * way onto the caller's LAN.
    */
   allowPrivateNetwork?: boolean;
+  /**
+   * Private destinations admitted one by one, for a caller that otherwise
+   * refuses them (see `EgressPolicy.admitPrivateDestination`). Unlike the
+   * opt-ins above it belongs to each HOP, not the chain: every hop asks it
+   * about the name and about each private address, so a redirect from an
+   * admitted host onto one it does not admit is refused. A plaintext hop is
+   * allowed only onto private addresses it admits.
+   */
+  admitPrivateDestination?: PrivateDestinationAdmission;
   /**
    * Budget for DNS + connect + response headers, summed across every hop of
    * the redirect chain. An established body stream is outside it — see the
@@ -509,9 +521,13 @@ export function createPinnedStreamingFetch(
     // `302 Location: http://127.0.0.1:11434/…` and have that hop dialled:
     // attacker-chosen path, plaintext, on the user's own machine.
     const allowPrivateNetwork = options.allowPrivateNetwork === true;
+    const admitPrivateDestination = options.admitPrivateDestination;
     if (
       !allowPrivateNetwork &&
       options.allowLoopback !== true &&
+      // An admitting caller's loopback target is judged at resolution, like
+      // every other private destination it may or may not admit.
+      !admitPrivateDestination &&
       isLoopbackOAuthUrl(startUrl)
     ) {
       throw new OAuthProxyError(
@@ -619,7 +635,11 @@ export function createPinnedStreamingFetch(
         // hop on a loopback chain may. A public host still must serve https.
         const hopMayBePlaintext =
           (chainAllowsLoopback && hopIsLoopback) ||
-          (chainAllowsPrivate && hopIsPrivate);
+          (chainAllowsPrivate && hopIsPrivate) ||
+          // Decided after resolution instead, where the answer is known:
+          // `resolvePinnedAddresses` refuses an admitting caller's plaintext
+          // hop unless it lands only on private addresses the caller admits.
+          admitPrivateDestination !== undefined;
         if (parsed.protocol !== "https:" && !hopMayBePlaintext) {
           throw new OAuthProxyError(
             400,
@@ -637,6 +657,7 @@ export function createPinnedStreamingFetch(
           currentBody,
           resolveEgressPolicy({
             allowPrivateNetwork: chainAllowsPrivate,
+            admitPrivateDestination,
             startUrl,
           }),
           socketController.signal,

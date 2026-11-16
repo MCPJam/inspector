@@ -1773,3 +1773,56 @@ describe("TraceTimeline interaction rows", () => {
     expect(detail.textContent).toContain("Failed");
   });
 });
+
+
+describe("combined chat transcript projection", () => {
+  it("uses prompt ordinals and exact tool IDs without inventing LLM segment details", async () => {
+    const user = userEvent.setup();
+    const onReveal = vi.fn();
+    render(<TraceTimeline projectedMessages expandedPromptIds={new Set(["prompt-0", "prompt-5"])} onRevealInTranscript={onReveal} recordedSpans={[
+      { id: "llm", category: "llm", name: "copilot-model", promptIndex: 0, startMs: 0, endMs: 100, messageStartIndex: 3, messageEndIndex: 3 },
+      { id: "allowed", category: "tool", name: "record_write", toolCallId: "allowed", promptIndex: 0, startMs: 10, endMs: 11, messageStartIndex: 4 },
+      { id: "legacy", category: "tool", name: "record_write", promptIndex: 0, startMs: 100, endMs: 110, messageStartIndex: 4 },
+      { id: "missing", category: "llm", name: "missing prompt", promptIndex: 5, startMs: 110, endMs: 220, messageStartIndex: 0 },
+    ]} transcriptMessages={[
+      { role: "user", content: "Write approved marker" },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "record_write", toolCallId: "allowed", input: {} }] },
+      { role: "tool", content: [{ type: "tool-result", toolName: "record_write", toolCallId: "allowed", output: { type: "json", value: { result: "approved-output" } } }] },
+      { role: "user", content: "Write denied marker" },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "record_write", toolCallId: "denied", input: { marker: "denied-marker" } }, { type: "text", text: "wrong-next-turn-answer" }] },
+      { role: "tool", content: [{ type: "tool-result", toolName: "record_write", toolCallId: "denied", output: { type: "json", value: { result: "denied-output" } } }] },
+      { role: "user", content: "A fresh runtime reuses a call ID" },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "record_write", toolCallId: "allowed", input: { marker: "reused-marker" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolName: "record_write", toolCallId: "allowed", output: { type: "json", value: { result: "reused-output" } } }] },
+    ]} />);
+    expect(screen.getByRole("button", { name: 'User: "Write approved marker"' })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /wrong-next-turn-answer/ })).not.toBeInTheDocument();
+    const toolRows = screen.getAllByTestId("trace-row").filter((row) => row.textContent?.includes("Tool · record_write"));
+    for (const row of toolRows) {
+      expect(row.textContent).not.toContain("denied-output");
+      expect(row.textContent).not.toContain("reused-output");
+    }
+    await user.click(getTraceRowLabelButtonContaining("model"));
+    let pane = screen.getByTestId("trace-detail-pane");
+    expect(within(pane).getByText(/Message details are unavailable/)).toBeInTheDocument();
+    expect(within(pane).queryByRole("button", { name: "Reveal in Chat" })).not.toBeInTheDocument();
+    expect(within(pane).queryByText("Input")).not.toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Tool · record_write" })[0]);
+    pane = screen.getByTestId("trace-detail-pane");
+    expect(pane.textContent).toContain("{}");
+    expect(pane.textContent).toContain("approved-output");
+    expect(pane.textContent).not.toContain("denied-marker");
+    expect(pane.textContent).not.toContain("denied-output");
+    expect(pane.textContent).not.toContain("reused-output");
+    await user.click(within(pane).getByRole("button", { name: "Reveal in Chat" }));
+    expect(onReveal).toHaveBeenLastCalledWith({ focusSourceIndex: 1, highlightSourceIndices: [1, 2] });
+    await user.click(screen.getAllByRole("button", { name: "Tool · record_write" })[1]);
+    pane = screen.getByTestId("trace-detail-pane");
+    expect(within(pane).getByText(/Message details are unavailable/)).toBeInTheDocument();
+    expect(pane.textContent).not.toContain("denied-output");
+    await user.click(getTraceRowLabelButtonContaining("Prompt 6"));
+    pane = screen.getByTestId("trace-detail-pane");
+    expect(pane.textContent).not.toContain("Write approved marker");
+    expect(within(pane).queryByRole("button", { name: "Reveal in Chat" })).not.toBeInTheDocument();
+  });
+});

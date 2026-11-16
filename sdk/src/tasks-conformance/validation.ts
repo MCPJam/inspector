@@ -68,6 +68,8 @@ export function normalizeMCPTasksConformanceConfig(
     toolArguments,
     pollTimeoutMs,
     inputResponses,
+    // The runner's usage-ping flag, kept out of the server config.
+    __suppressTelemetry: _suppressTelemetry,
     ...rest
   } = config;
   const serverConfig = rest as MCPServerConfig;

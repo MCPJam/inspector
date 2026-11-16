@@ -1,5 +1,6 @@
 import { pluginFormFileGrants } from "./form-file-grants.js";
 import { pluginFormSources } from "./form-sources.js";
+import { readAfterAdmission } from "./durable-controls.js";
 import { pluginContextMemory } from "./context-memory.js";
 import {
   PluginContextWorkspace,
@@ -238,7 +239,7 @@ export class PluginInstanceRegistry {
     { instance: PluginFormOwner; expiresAt: number; signal: AbortSignal }
   >();
 
-  /** The normal gated model executor owns this lifetime; no UI entrypoint is invented. */
+  /** A gated model call or retained model App owns this lifetime. */
   retainModelOwner(instance: PluginFormOwner, signal: AbortSignal) {
     signal.throwIfAborted();
     this.sweep();
@@ -261,10 +262,19 @@ export class PluginInstanceRegistry {
       pluginFormSources.closeOwner(instance.owner);
       pluginFormFileGrants.closeOwner(instance.owner);
     };
-    const expiry = setTimeout(release, this.ttlMs);
+    let expiry = setTimeout(release, this.ttlMs);
     expiry.unref();
     signal.addEventListener("abort", release, { once: true });
-    return release;
+    const renew = () => {
+      signal.throwIfAborted();
+      if (this.modelOwners.get(key) !== record)
+        throw new PluginInvocationError("FORM_SOURCE_UNAVAILABLE");
+      clearTimeout(expiry);
+      record.expiresAt = this.now() + this.ttlMs;
+      expiry = setTimeout(release, this.ttlMs);
+      expiry.unref();
+    };
+    return Object.assign(release, { renew });
   }
   private readonly closed = new Map<string, number>();
   constructor(
@@ -345,6 +355,8 @@ export class PluginInstanceRegistry {
           ),
           expiresAt: control.expiresAt,
           ...(control.instance.contextEnabled ? { contextToken: token } : {}),
+          // Any replica that restores a Settings App reads its document here.
+          ...(activation.selector.kind === "settings" ? { settings: true } : {}),
         },
         signal,
       );
@@ -353,7 +365,9 @@ export class PluginInstanceRegistry {
     const control = this.parseControl(saved.control);
     if (activationBindingHash(bindingFromControl(control)) !== bindingHash)
       throw new PluginInvocationError("ACTIVATION_BINDING_CHANGED");
-    const instance = this.restore(saved.token, identity, saved.control);
+    const instance = await this.restoreRead(
+      saved.token, identity, saved.control, undefined, port, signal,
+    );
     return {
       token: saved.token,
       instance,
@@ -382,6 +396,26 @@ export class PluginInstanceRegistry {
     return this.restoreRead(token, identity, saved, known, port, signal);
   }
 
+  /** Whether this process holds `token`'s control or its close. */
+  holds(token: string) {
+    return this.records.has(token) || this.closed.has(token);
+  }
+
+  /** `getPersistent` for a control the caller already read with `port`. */
+  async getPersistentFrom(
+    token: string,
+    identity: PluginInstanceIdentity,
+    saved: DurablePluginInstanceControl | null,
+    signal: AbortSignal,
+    port: PluginInstanceControlPort,
+  ) {
+    signal.throwIfAborted();
+    if (this.closed.has(token))
+      throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
+    this.sweep();
+    return this.restoreRead(token, identity, saved, undefined, port, signal);
+  }
+
   /** `restore` a reply that left out the context at `known`. If this
    * process released its copy while the reply was in flight, the context is
    * read once more, in full. */
@@ -396,12 +430,19 @@ export class PluginInstanceRegistry {
     try {
       return this.restore(token, identity, saved);
     } catch (error) {
-      if (
-        known === undefined ||
-        !(error instanceof PluginInvocationError) ||
-        error.code !== "INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE"
-      )
-        throw error;
+      const current = this.records.get(token);
+      const overtakenLease =
+        error instanceof PluginInvocationError &&
+        error.code === "INSTANCE_CONTROL_CHANGED" &&
+        saved && current && saved.expiresAt < current.expiresAt &&
+        current.snapshotHash === pluginBindingDigest(saved.snapshotJson);
+      const missingContext = known !== undefined &&
+        error instanceof PluginInvocationError &&
+        error.code === "INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE";
+      if (!overtakenLease && !missingContext) throw error;
+      // A concurrent renewal may overtake this read. Only an identical
+      // immutable control may be read again; the fresh reply still passes
+      // every owner, expiry and context fence in restore.
       const full = await port.read(token, signal);
       signal.throwIfAborted();
       return this.restore(token, identity, full);
@@ -761,10 +802,11 @@ export class PluginInstanceRegistry {
     return record.instance;
   }
 
-  /** One authorization's reads (one or two), each the instance's durable
-   * control and the caller's admission query side by side. Both legs are
-   * observed, including late failure of either; neither permits the next
-   * step alone. */
+  /** One authorization's reads (one or two), each the caller's admission
+   * query and then the instance's durable control, so a close anywhere
+   * during the admission wait refuses what follows. Only the first read may
+   * stand on the request's own control read: the receipt claim checks the
+   * App is live and the invoker authorizes again before any dispatch. */
   private fencedReads(
     token: string,
     identity: PluginInstanceIdentity,
@@ -782,18 +824,14 @@ export class PluginInstanceRegistry {
       const standOnControlRead = state.controlRead;
       state.controlRead = false;
       try {
-        const [durable, admission] = await Promise.allSettled([
-          standOnControlRead
-            ? Promise.resolve()
-            : this.getPersistent(token, identity, requestSignal),
-          Promise.resolve().then(query),
-        ]);
+        const admitted = await readAfterAdmission(query, async () => {
+          if (!standOnControlRead)
+            await this.getPersistent(token, identity, requestSignal);
+        });
         requestSignal.throwIfAborted();
-        if (durable.status === "rejected") throw durable.reason;
-        if (admission.status === "rejected") throw admission.reason;
         this.get(token, identity);
         state.reads++;
-        return admission.value;
+        return admitted;
       } finally {
         state.reading = false;
       }

@@ -16,6 +16,7 @@ import {
   type AuthChallengeConnectResult,
   type AuthChallengeSurface,
 } from "@/lib/auth-challenge-lifecycle";
+import { AUTH_CHALLENGE_EXPIRED_MESSAGE } from "@/lib/chat-auth-recovery";
 import type { ServerWithName } from "@/state/app-types";
 
 function operationPhrase(card: AuthChallengeCardModel): string {
@@ -91,7 +92,7 @@ export function AuthChallengeCard({
   };
 
   const followUp = expired
-    ? "This call expired. Sign in and run it again."
+    ? AUTH_CHALLENGE_EXPIRED_MESSAGE
     : card.action === "notify"
       ? "After you sign in, run it again."
       : `It runs again after you sign in. Expires in ${formatRemaining(remaining)}.`;

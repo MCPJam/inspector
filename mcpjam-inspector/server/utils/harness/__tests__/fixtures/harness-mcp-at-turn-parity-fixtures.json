@@ -1,0 +1,1083 @@
+{
+  "__readme": [
+    "Shared ground truth for the two hand-mirrored readers of the harness MCP",
+    "receipt (turnTrace.harnessMcpAtTurn): the SDK reader the inspector writes with",
+    "(sdk/src/host-config/harness-mcp-at-turn.ts) and the backend reader that",
+    "decides what is stored (convex/lib/harnessMcpAtTurn.ts). Neither can import",
+    "the other, so each side runs its own reader against THESE BYTES.",
+    "",
+    "The two copies are byte-identical by design: the backend pins this file whole",
+    "in convex/lib/mirrors.json. Copies live at tests/convex/fixtures/ (backend)",
+    "and server/utils/harness/__tests__/fixtures/ (inspector).",
+    "",
+    "Every `accept` value must parse to exactly its `expect`. Every `reject`",
+    "value must be dropped whole by both readers."
+  ],
+  "accept": [
+    {
+      "label": "host-tools-client-with-digest",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "profileDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "qualification": {
+          "status": "not-required"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "profileDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "qualification": {
+          "status": "not-required"
+        }
+      }
+    },
+    {
+      "label": "host-tools-profile-unproven",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [
+          "no servers selected"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [
+          "no servers selected"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "native-proxy-client",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [
+          "unqualified-protocol"
+        ],
+        "reasons": [
+          "forwarding not admitted; configured route retained"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "profileDigest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "adapterVersion": "tool-search-auto-v1"
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [
+          "unqualified-protocol"
+        ],
+        "reasons": [
+          "forwarding not admitted; configured route retained"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "profileDigest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "adapterVersion": "tool-search-auto-v1"
+      }
+    },
+    {
+      "label": "native-proxy-generic",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [
+          "forwarding flag off"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "generic"
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [
+          "forwarding flag off"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "generic"
+      }
+    },
+    {
+      "label": "native-proxy-local-mcp-plane",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [
+          "plane is not web-authorized",
+          "local-mcp plane: handshake owned by the persistent manager"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [
+          "plane is not web-authorized",
+          "local-mcp plane: handshake owned by the persistent manager"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "forwarded-native",
+      "value": {
+        "version": 1,
+        "upstream": "harness",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "pass-through"
+        },
+        "adapterVersion": "tool-search-auto-v1",
+        "observedRuntimeVersion": "2.1.245",
+        "qualification": {
+          "status": "unknown",
+          "evidence": "no evidence row at this pin"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "harness",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "pass-through"
+        },
+        "adapterVersion": "tool-search-auto-v1",
+        "observedRuntimeVersion": "2.1.245",
+        "qualification": {
+          "status": "unknown",
+          "evidence": "no evidence row at this pin"
+        }
+      }
+    },
+    {
+      "label": "forwarded-bridge-client",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [
+          "app-host-capabilities",
+          "unqualified-protocol"
+        ],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "profileDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "forwarding": {
+          "kind": "profiled"
+        },
+        "qualification": {
+          "status": "supported"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [
+          "app-host-capabilities",
+          "unqualified-protocol"
+        ],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "profileDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "forwarding": {
+          "kind": "profiled"
+        },
+        "qualification": {
+          "status": "supported"
+        }
+      }
+    },
+    {
+      "label": "forwarded-bridge-profile-unproven",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [
+          "tasks"
+        ],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "profiled"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [
+          "tasks"
+        ],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "profiled"
+        }
+      }
+    },
+    {
+      "label": "empty-version-strings-mean-unknown",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "",
+        "plannerVersion": "",
+        "observedRuntimeVersion": "",
+        "adapterVersion": ""
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "",
+        "plannerVersion": "",
+        "observedRuntimeVersion": "",
+        "adapterVersion": ""
+      }
+    },
+    {
+      "label": "duplicates-are-kept",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [
+          "tasks",
+          "tasks"
+        ],
+        "reasons": [
+          "account routing",
+          "account routing"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [
+          "tasks",
+          "tasks"
+        ],
+        "reasons": [
+          "account routing",
+          "account routing"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "exactly-at-the-caps",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+        ],
+        "reasons": [
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        ],
+        "pinnedRuntimeVersion": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "plannerVersion": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+        "observedRuntimeVersion": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+        "adapterVersion": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "qualification": {
+          "status": "unsupported",
+          "evidence": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+          "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+        ],
+        "reasons": [
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        ],
+        "pinnedRuntimeVersion": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "plannerVersion": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+        "observedRuntimeVersion": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+        "adapterVersion": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "qualification": {
+          "status": "unsupported",
+          "evidence": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      }
+    },
+    {
+      "label": "unknown-keys-are-dropped",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "apiKey": "sk-never-stored",
+        "qualification": {
+          "status": "supported",
+          "note": "dropped"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "qualification": {
+          "status": "supported"
+        }
+      }
+    },
+    {
+      "label": "unknown-forwarding-key-is-dropped",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "profiled",
+          "extra": 1
+        },
+        "profile": "client"
+      },
+      "expect": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "profiled"
+        },
+        "profile": "client"
+      }
+    }
+  ],
+  "reject": [
+    {
+      "label": "not-an-object",
+      "value": "host-tools"
+    },
+    {
+      "label": "null",
+      "value": null
+    },
+    {
+      "label": "array",
+      "value": [
+        {
+          "version": 1,
+          "upstream": "mcpjam",
+          "delivery": "host-tools",
+          "gaps": [],
+          "reasons": [],
+          "pinnedRuntimeVersion": "2.1.245",
+          "plannerVersion": "harness-mcp-plan-v1"
+        }
+      ]
+    },
+    {
+      "label": "version-2",
+      "value": {
+        "version": 2,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "missing-version",
+      "value": {
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "bad-upstream",
+      "value": {
+        "version": 1,
+        "upstream": "sandbox",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "bad-delivery",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "stdio",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "bad-profile",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "claude"
+      }
+    },
+    {
+      "label": "profile-on-harness-upstream",
+      "value": {
+        "version": 1,
+        "upstream": "harness",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "pass-through"
+        },
+        "profile": "client"
+      }
+    },
+    {
+      "label": "digest-on-harness-upstream",
+      "value": {
+        "version": 1,
+        "upstream": "harness",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "pass-through"
+        },
+        "profileDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "label": "harness-upstream-without-forwarding",
+      "value": {
+        "version": 1,
+        "upstream": "harness",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "harness-upstream-on-host-tools",
+      "value": {
+        "version": 1,
+        "upstream": "harness",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "pass-through"
+        }
+      }
+    },
+    {
+      "label": "pass-through-on-mcpjam-upstream",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "pass-through"
+        }
+      }
+    },
+    {
+      "label": "profiled-on-host-tools",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "profiled"
+        }
+      }
+    },
+    {
+      "label": "profiled-with-generic-profile",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "generic",
+        "forwarding": {
+          "kind": "profiled"
+        }
+      }
+    },
+    {
+      "label": "bad-forwarding-kind",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": {
+          "kind": "tunnel"
+        }
+      }
+    },
+    {
+      "label": "forwarding-not-an-object",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "forwarding": "profiled"
+      }
+    },
+    {
+      "label": "digest-without-client-profile",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profileDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "label": "digest-on-generic-profile",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "mcp-endpoint",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "generic",
+        "profileDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "label": "digest-of-63-hex",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "profileDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "label": "digest-uppercase",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": "client",
+        "profileDigest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    },
+    {
+      "label": "missing-gaps",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "reasons-not-strings",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [
+          1
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "empty-gap-entry",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [
+          ""
+        ],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "thirty-three-gaps",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g",
+          "g"
+        ],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "thirty-three-reasons",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r",
+          "r"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "reason-of-129-chars",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [
+          "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        ],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "pinned-version-of-129-chars",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "missing-pinned-version",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "plannerVersion": "harness-mcp-plan-v1"
+      }
+    },
+    {
+      "label": "observed-version-not-string",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "observedRuntimeVersion": 245
+      }
+    },
+    {
+      "label": "null-optional-field",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "adapterVersion": null
+      }
+    },
+    {
+      "label": "null-profile",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "profile": null
+      }
+    },
+    {
+      "label": "qualification-bad-status",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "qualification": {
+          "status": "maybe"
+        }
+      }
+    },
+    {
+      "label": "qualification-not-an-object",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "qualification": "supported"
+      }
+    },
+    {
+      "label": "evidence-of-513-chars",
+      "value": {
+        "version": 1,
+        "upstream": "mcpjam",
+        "delivery": "host-tools",
+        "gaps": [],
+        "reasons": [],
+        "pinnedRuntimeVersion": "2.1.245",
+        "plannerVersion": "harness-mcp-plan-v1",
+        "qualification": {
+          "status": "supported",
+          "evidence": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      }
+    }
+  ]
+}

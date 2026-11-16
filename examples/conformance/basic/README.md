@@ -55,3 +55,16 @@ npx -y @mcpjam/cli@latest apps conformance-suite \
 ```
 
 The XML emitted by the CLI comes from the same shared report helpers the SDK uses.
+
+## Give a run one known failure
+
+Start the server with `FAIL_PING=1` and it answers `ping` with an error, so the
+Ping check fails wherever the server is reached from:
+
+```bash
+FAIL_PING=1 PORT=3101 npm run start:server
+```
+
+Reached on `127.0.0.1`, a run also fails `localhost-host-rebinding-rejected`,
+because the server accepts any `Host` header; that check applies only to
+loopback targets.

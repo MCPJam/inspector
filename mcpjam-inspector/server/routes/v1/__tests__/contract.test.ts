@@ -97,6 +97,9 @@ describe("internal-code -> public-code mapping", () => {
     // Produced only by `mapTargetServerError` on the hosted `/api/web/*`
     // routes. The v1 surface maps through `mapRuntimeError` and never sees it.
     "UPSTREAM_HTTP_ERROR",
+    // Returned only by the hosted `/api/web/guest-session` route when the
+    // deployment issues no guests; no `/api/v1` route mints guest sessions.
+    "GUEST_ACCESS_DISABLED",
   ];
 
   it("has no UNDECIDED internal code silently collapsing to INTERNAL_ERROR", () => {

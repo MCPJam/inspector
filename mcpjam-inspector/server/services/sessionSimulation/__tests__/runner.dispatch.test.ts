@@ -70,6 +70,9 @@ vi.mock("../../../utils/org-model-config.js", async () => {
 });
 
 import { drainAssistantTurn } from "../runner.js";
+import { applyActingServerSkillGate } from "../../../utils/server-skill-acting-gate.js";
+import { buildServerSkillBanner } from "../../../../shared/server-skill-banner.js";
+import type { RunAssistantTurnOptions } from "../../../utils/assistant-turn.js";
 import {
   harnessReasoningEffortRefusalReason,
   turnReasoningEffortOf,
@@ -699,7 +702,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     ).rejects.toThrow(/partial continuity identity/i);
   });
 
-  it("refuses local-runtime BYOK + requireToolApproval=true with non-empty tools before building the model", async () => {
+  it("refuses local-runtime BYOK + requireToolApproval=true with a tool that asks before building the model", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "local_byok",
       orgRuntime: {
@@ -718,7 +721,13 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
             provider: "ollama",
           } as ModelDefinition,
           requireToolApproval: true,
-          tools: { search: { description: "noop" } } as any,
+          tools: {
+            search: {
+              description: "noop",
+              needsApproval: true,
+              execute: async () => ({}),
+            },
+          } as any,
         }) as Parameters<typeof drainAssistantTurn>[0],
       ),
     ).rejects.toThrow(/approval-required tool calls.*Disable tool approval/i);
@@ -727,6 +736,113 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
     expect(runDirectChatTurnMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("dispatches local-runtime BYOK + requireToolApproval=true when no tool asks", async () => {
+    // A swarm with approval on keeps its skills, and skill tools never ask,
+    // so this runtime has no approval to fail on.
+    const calls: unknown[] = [];
+    stubDirectEngine(calls);
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
+    });
+
+    await drainAssistantTurn(
+      baseArgs({
+        modelId: "llama3",
+        modelDefinition: {
+          id: "llama3",
+          name: "Llama3 local",
+          provider: "ollama",
+        } as ModelDefinition,
+        requireToolApproval: true,
+        tools: {
+          loadSkill: {
+            description: "load",
+            needsApproval: false,
+            execute: async () => "",
+          },
+        } as any,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect(runDirectChatTurnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a command on local-runtime BYOK while a server skill is loaded", async () => {
+    // This engine has no approval loop, so where the acting-skill gate would
+    // ask, the command answers with the auto-deny result instead of leaving
+    // an approval nobody can give.
+    const calls: unknown[] = [];
+    stubDirectEngine(calls);
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as any,
+      },
+    });
+    const runCommand = vi.fn(async () => "ran");
+
+    await drainAssistantTurn(
+      baseArgs({
+        modelId: "llama3",
+        modelDefinition: {
+          id: "llama3",
+          name: "Llama3 local",
+          provider: "ollama",
+        } as ModelDefinition,
+        requireToolApproval: false,
+        tools: applyActingServerSkillGate({
+          bash: {
+            description: "shell",
+            needsApproval: false,
+            execute: runCommand,
+          },
+        }) as any,
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    const bash = (calls[0] as any).tools.bash;
+    expect(bash.needsApproval).toBe(false);
+    const skillLoaded = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-load",
+            toolName: "loadSkill",
+            output: {
+              type: "text",
+              value: `${buildServerSkillBanner({
+                ref: "acme/refunds",
+                serverLabel: "Acme",
+                skillUri: "skill://acme/refunds/SKILL.md",
+              })}body`,
+            },
+          },
+        ],
+      },
+    ];
+    expect(
+      await bash.execute(
+        { command: "ls" },
+        { toolCallId: "call-bash", messages: skillLoaded },
+      ),
+    ).toEqual({ error: "approval-denied (synthetic session)" });
+    expect(runCommand).not.toHaveBeenCalled();
+    // Without the skill in the conversation the command runs as before.
+    expect(
+      await bash.execute(
+        { command: "ls" },
+        { toolCallId: "call-bash", messages: [] },
+      ),
+    ).toBe("ran");
   });
 
   it("still dispatches local-runtime BYOK when requireToolApproval is false", async () => {
@@ -802,6 +918,43 @@ describe("drainAssistantTurn — engine error surfacing", () => {
         baseArgs() as Parameters<typeof drainAssistantTurn>[0],
       ),
     ).rejects.toThrow(/spend cap.*spend_cap_exceeded.*HTTP 429/i);
+  });
+
+  it("names a harness turn's code, which it reports as infra evidence", async () => {
+    // `runHarnessTurn` reports the lease's refusal under `infra`, not as a
+    // top-level code; the "(code, HTTP status)" suffix is what the swarm
+    // runner stops the whole run on.
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+    runAssistantTurnMock.mockImplementation(
+      async (opts: RunAssistantTurnOptions) => {
+        opts.onEngineError?.({
+          message:
+            "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+          rawText: "{}",
+          promptIndex: 0,
+          phase: "setup",
+          infra: {
+            source: "platform_setup",
+            code: "native_harness_trial_exhausted",
+            httpStatus: 403,
+          },
+        });
+        return {
+          messages: opts.messages,
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+        };
+      },
+    );
+
+    await expect(
+      drainAssistantTurn(
+        baseArgs() as Parameters<typeof drainAssistantTurn>[0],
+      ),
+    ).rejects.toThrow(
+      "free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness. (native_harness_trial_exhausted, HTTP 403)",
+    );
   });
 
   it("throws when the hosted engine returns no turnTrace even WITHOUT a captured engine error", async () => {

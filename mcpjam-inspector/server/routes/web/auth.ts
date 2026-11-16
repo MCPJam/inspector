@@ -1,3 +1,4 @@
+import type { chatPreparationRequest } from "../../services/chat-turn/resolve-chat-turn.js";
 import { bindWarmApprovalConnection } from "../../utils/harness/warm-approval-binding";
 import { hostedWarmAgentEnabled } from "../../utils/harness/harness-flags";
 import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
@@ -20,13 +21,22 @@ import {
   connectionLabels,
   type AuthorizedOAuthConnection,
 } from "../../../shared/oauth-connections.js";
-import { setManagerConnections } from "../../utils/mcp-connections.js";
+import {
+  setManagerAuthorizedCredentials,
+  setManagerConnections,
+} from "../../utils/mcp-connections.js";
+import {
+  accountSetGroup,
+  SAVED_ACCOUNT_UNAVAILABLE,
+  type ConnectionIdSets,
+} from "../../utils/oauth-account-sets.js";
 import {
   recordConnectionEffectiveAuth,
   stampAuthChallenge,
   withStampedAuthChallenge,
 } from "../../utils/connection-effective-auth.js";
 import { z } from "zod";
+import type { WebConversationState } from "./web-conversation-state.js";
 import type { Context } from "hono";
 import {
   MCPClientManager,
@@ -51,6 +61,11 @@ import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
+import {
+  deliveredConnection,
+  registerStoredHeaders,
+  withoutAuthorization,
+} from "../../utils/delivered-oauth-credential.js";
 import { BlockedEgressTargetError } from "../../utils/hosted-egress-guard.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
@@ -81,7 +96,15 @@ import {
 } from "../../services/host-connection-pins.js";
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
-import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
+import {
+  authorizeBatchLocal,
+  resolveLocalStdioServerConfig,
+} from "../../utils/local-server-resolver.js";
+import {
+  uploadedAccountRecoveries,
+  type UploadedAccountFlag,
+} from "../../utils/uploaded-account-recovery.js";
+import { canColocatePluginStdio } from "../../services/plugins/computer-stdio.js";
 import {
   resolvePluginStdioHttpTarget,
   type PluginStdioHttpTarget,
@@ -113,6 +136,7 @@ import {
 import {
   bindCredentialHeaders,
   bindingForAuthorizedHeaders,
+  credentialOrigin,
   type CredentialHeaderBinding,
 } from "../../utils/credential-header-binding.js";
 import {
@@ -131,7 +155,10 @@ import {
 } from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
 import {
+  deliveryContractHeaders,
+  hostedCredentialDeliveryHeaders,
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
 } from "../../services/service-credential.js";
@@ -508,6 +535,7 @@ export type ConvexAuthorizeResponse = {
     // own `serverNames` still win (see `displayNameForServer`).
     name?: string;
     transportType: "stdio" | "http";
+    pluginComponent?: true;
     url?: string;
     // Declared wire transport from a plugin manifest (parser `httpVariant`),
     // once the backend persists + serves it. Absent on every ordinary row
@@ -604,13 +632,30 @@ export type ConvexBatchAuthorizeSuccess = {
   oauthCredentialId?: string;
   oauthCredentialAuthorizedAt?: number;
   oauthConnections?: AuthorizedOAuthConnection[];
+  /** How the backend answered `connectionIdSets`; see `oauth-account-sets.ts`. */
+  oauthAccountSet?: "applied";
   oauthUnavailableReason?: ConvexOAuthUnavailableReason;
+  /**
+   * Which rule withheld the token, sent with `credential_export_denied`.
+   * `hostedOnlyAccount` is the account's own rule, which no organization
+   * admin can change.
+   */
+  oauthUnavailablePolicy?: "credentialExportPolicy" | "hostedOnlyAccount";
+  /** With `hostedOnlyAccount`: which part of the account's rule, and its sentence. */
+  oauthUnavailableCause?: string;
+  oauthUnavailableMessage?: string;
   /**
    * How long to wait before retrying, when the reason is transient. Sent with
    * `refresh_in_progress` — the lease the other refresh holds expires after
    * roughly this long.
    */
   oauthRetryAfterMs?: number | null;
+  /** Origins `oauthAccessToken` may be sent to; absent from older backends. */
+  oauthBoundOrigins?: string[];
+  /** Set when `oauthAccessToken` is a shared or uploaded account's. */
+  oauthAccountKind?: "shared" | "uploaded";
+  /** Set for an uploaded account, including one on a shared server. */
+  oauthAccountUploaded?: boolean;
   permissions: {
     chatOnly: boolean;
   };
@@ -659,7 +704,8 @@ function stripStdioFieldsFromHostedConfig<
  *
  * - For session/guest JWTs (the default): forward the caller's bearer
  *   verbatim. Convex sees the same identity it always has.
- * - For WorkOS API keys (`authMethod === "workos_api_key"`): exchange
+ * - For org-bound credentials (`isOrgBoundCredential`: WorkOS API keys and
+ *   auth.md agents): exchange
  *   the bearer for `INSPECTOR_SERVICE_TOKEN` and add
  *   `x-mcpjam-acting-as: <workosUserId>` (the user's Convex `externalId`)
  *   plus `x-mcpjam-acting-in-org: <mcpjamOrganizationId>` (the org the key
@@ -686,7 +732,7 @@ function stripStdioFieldsFromHostedConfig<
  * `caller-context.test.ts`).
  */
 export interface ManagerCallerContext {
-  /** "workos_api_key" switches to the service-token + acting-as exchange. */
+  /** An org-bound credential switches to the service-token + acting-as exchange. */
   authMethod?: string;
   /** WorkOS user id (Convex `externalId`) for the delegated exchange. */
   workosUserId?: string;
@@ -709,14 +755,22 @@ export function callerContextFromHono(c: Context): ManagerCallerContext {
   };
 }
 
+/**
+ * Headers for a call from this server to the backend. In hosted mode they
+ * also carry the service token that marks a credential request as managed
+ * delivery (see {@link hostedCredentialDeliveryHeaders}). No caller passes
+ * the backend's tokens on to its own client, so every call carries it.
+ */
 export function buildConvexAuthHeaders(
   caller: ManagerCallerContext,
   originalBearer: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
+    ...deliveryContractHeaders(HOSTED_MODE),
   };
-  if (caller.authMethod === "workos_api_key") {
+  if (isOrgBoundCredential(caller.authMethod)) {
     const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
     // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
     // NOT the Convex user `_id`: the backend resolves the delegated user by
@@ -746,19 +800,50 @@ export function buildConvexAuthHeaders(
   return headers;
 }
 
+type AuthorizeServerOptions = {
+  connectionId?: string;
+  connectionIds?: Record<string, string>;
+  includeConnections?: boolean;
+  accessScope?: "project_member" | "chat_v2";
+  scenarioId?: string;
+  accessVersion?: number;
+  /** Ends the request, for a caller that stops waiting for the answer. */
+  signal?: AbortSignal;
+};
+
 export async function authorizeServer(
   c: Context,
   bearerToken: string,
   projectId: string,
   serverId: string,
-  options?: {
-    connectionId?: string;
-    connectionIds?: Record<string, string>;
-    includeConnections?: boolean;
-    accessScope?: "project_member" | "chat_v2";
-    scenarioId?: string;
-    accessVersion?: number;
+  options?: AuthorizeServerOptions,
+): Promise<ClientSafeAuthorizeResponse> {
+  return authorizeServerAs(
+    {
+      caller: callerContextFromHono(c),
+      onLogContext: (log) => setRequestLogContext(c, log),
+    },
+    bearerToken,
+    projectId,
+    serverId,
+    options,
+  );
+}
+
+/**
+ * `authorizeServer` for work that outlives its request, such as a readiness
+ * run authorizing the reviewer account it connected: the caller as the
+ * request named it, captured while the request existed.
+ */
+export async function authorizeServerAs(
+  who: {
+    caller: ManagerCallerContext;
+    onLogContext?: (log: ReturnType<typeof mapInternalToRequestContext>) => void;
   },
+  bearerToken: string,
+  projectId: string,
+  serverId: string,
+  options?: AuthorizeServerOptions,
 ): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -773,7 +858,7 @@ export async function authorizeServer(
   try {
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
-      headers: buildConvexAuthHeaders(callerContextFromHono(c), bearerToken),
+      headers: buildConvexAuthHeaders(who.caller, bearerToken),
       body: JSON.stringify({
         projectId,
         ...(options?.connectionId
@@ -790,6 +875,7 @@ export async function authorizeServer(
           ? { accessVersion: options.accessVersion }
           : {}),
       }),
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
   } catch (error) {
     throw new WebRouteError(
@@ -831,7 +917,7 @@ export async function authorizeServer(
 
   const { internalLogContext, ...clientSafe } = body as ConvexAuthorizeResponse;
   if (internalLogContext) {
-    setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
+    who.onLogContext?.(mapInternalToRequestContext(internalLogContext));
   }
   return stripStdioFieldsFromHostedConfig(
     clientSafe,
@@ -844,8 +930,10 @@ export async function authorizeBatch(
   projectId: string,
   serverIds: string[],
   options?: {
+    pluginComputerRuntime?: boolean;
     connectionId?: string;
     connectionIds?: Record<string, string>;
+    connectionIdSets?: ConnectionIdSets;
     includeConnections?: boolean;
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
@@ -875,6 +963,9 @@ export async function authorizeBatch(
           ? { connectionIds: options.connectionIds }
           : {}),
         ...(options?.includeConnections ? { includeConnections: true } : {}),
+        ...(options?.connectionIdSets
+          ? { connectionIdSets: options.connectionIdSets }
+          : {}),
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
@@ -893,6 +984,9 @@ export async function authorizeBatch(
         // the docstring on `normalizeAuthorizeResult` in
         // mcpjam-backend/convex/http.ts for the full rationale.
         ...(!HOSTED_MODE ? { localRuntime: true } : {}),
+        ...(options?.pluginComputerRuntime === true && canColocatePluginStdio()
+          ? { pluginComputerRuntime: true }
+          : {}),
       }),
     });
   } catch (error) {
@@ -978,6 +1072,16 @@ export async function authorizeBatch(
   };
 }
 
+const conversationAuthorization = z.object({
+  ok: z.literal(true),
+  conversationState: z.object({
+    conversationId: z.string(),
+    writable: z.boolean(),
+    requireNativeToolDiscovery: z.boolean().optional(),
+    executionBound: z.boolean().optional(),
+  }),
+});
+
 /**
  * Project membership with no servers to authorize: the same backend
  * `resolveProjectAccess` verdict {@link authorizeBatch} applies, for a turn
@@ -989,7 +1093,16 @@ export async function authorizeProject(
   caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
+  conversationId?: string,
+  chatPreparation?: ReturnType<typeof chatPreparationRequest>,
+  signal?: AbortSignal,
 ): Promise<{
+  preparedChatTurn?: unknown;
+  /**
+   * Only this combined answer can say the row `bind` would check for this
+   * conversation is already bound.
+   */
+  conversationState?: WebConversationState & { executionBound?: boolean };
   chatEnvironments: boolean;
   chatPreparation: boolean;
   organizationId?: string;
@@ -1004,13 +1117,24 @@ export async function authorizeProject(
     );
   }
 
+  const checkConversation =
+    Boolean(conversationId) && convexUrl.startsWith("https://");
+  const prepareChat =
+    Boolean(chatPreparation) && convexUrl.startsWith("https://");
   let response: Response;
   try {
     response = await fetch(`${convexUrl}/web/authorize-project`, {
       method: "POST",
       headers: buildConvexAuthHeaders(caller, bearerToken),
-      body: JSON.stringify({ projectId }),
-      signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
+      body: JSON.stringify({
+        projectId,
+        ...(checkConversation ? { conversationId } : {}),
+        ...(prepareChat ? { chatPreparation } : {}),
+      }),
+      ...(checkConversation || prepareChat ? { redirect: "error" as const } : {}),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(WEB_CALL_TIMEOUT_MS)])
+        : AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
     });
   } catch (error) {
     throw new WebRouteError(
@@ -1031,7 +1155,16 @@ export async function authorizeProject(
       payload && typeof payload === "object" && "projectRole" in payload
         ? payload.projectRole
         : undefined;
+    const policy = checkConversation
+      ? conversationAuthorization.safeParse(payload)
+      : undefined;
     return {
+      ...(prepareChat && payload && typeof payload === "object" && "preparedChatTurn" in payload
+        ? { preparedChatTurn: payload.preparedChatTurn }
+        : {}),
+      ...(policy?.success && policy.data.conversationState.conversationId === conversationId
+        ? { conversationState: policy.data.conversationState }
+        : {}),
       ...(payload && typeof payload === "object" && "organizationId" in payload &&
         typeof payload.organizationId === "string" ? { organizationId: payload.organizationId } : {}),
       chatPreparation:
@@ -1098,6 +1231,8 @@ export function toHttpConfig(
      * regardless of the client-level toggle.
      */
     mcpProtocolVersion?: McpProtocolVersion;
+    /** `mcpProfile.versionNegotiation`, onto the same-named config field. */
+    versionNegotiation?: "legacy-first";
     /**
      * SEP-2243 `Mcp-Param-*` mirroring. `false` simulates a client that never
      * mirrors, so a server can be tested against one; absent is the
@@ -1160,6 +1295,9 @@ export function toHttpConfig(
           : {}),
         ...(initializePins?.mcpProtocolVersion
           ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
+          : {}),
+        ...(initializePins?.versionNegotiation
+          ? { versionNegotiation: initializePins.versionNegotiation }
           : {}),
         ...(initializePins?.mirrorToolParamHeaders === false
           ? { mirrorToolParamHeaders: false }
@@ -1251,6 +1389,9 @@ export function toHttpConfig(
     ...(initializePins?.mcpProtocolVersion
       ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
       : {}),
+    ...(initializePins?.versionNegotiation
+      ? { versionNegotiation: initializePins.versionNegotiation }
+      : {}),
     // Only `false` is meaningful — `true` and absent both mean mirror.
     ...(initializePins?.mirrorToolParamHeaders === false
       ? { mirrorToolParamHeaders: false }
@@ -1297,6 +1438,7 @@ function resolveEffectiveInitializePinsForServer(
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
+    versionNegotiation?: "legacy-first";
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
@@ -1314,6 +1456,7 @@ function resolveEffectiveInitializePinsForServer(
       >;
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
+      versionNegotiation?: "legacy-first";
       mirrorToolParamHeaders?: boolean;
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
@@ -1351,6 +1494,10 @@ function resolveEffectiveInitializePinsForServer(
       ? { supportedProtocolVersions }
       : {}),
     ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+    // Inert under a pin; the SDK lets the pin win.
+    ...(initializePins?.versionNegotiation
+      ? { versionNegotiation: initializePins.versionNegotiation }
+      : {}),
     // Host-level and per-server-invariant: mirroring conformance is a property
     // of the simulated CLIENT, so unlike the version pin there is nothing to
     // resolve against a per-server map.
@@ -1443,10 +1590,14 @@ export async function createAuthorizedManager(
   options?: {
     /** Authorize fully, but let a request owner decide when to connect. */
     lazyConnect?: boolean;
+    /** Set only from the server-resolved host Computer setting. */
+    pluginComputerRuntime?: boolean;
     multiConnection?: boolean;
-    /** Build transports only for the explicitly pinned accounts. */
-    onlySelectedConnections?: boolean;
     connectionIds?: Record<string, string>;
+    /** Run each listed server with exactly these accounts, refusing otherwise. */
+    connectionIdSets?: ConnectionIdSets;
+    /** One message for every account-set refusal, for callers with their own copy. */
+    accountSetRefusal?: string;
     accessScope?: "project_member" | "chat_v2";
     /**
      * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
@@ -1456,8 +1607,8 @@ export async function createAuthorizedManager(
      * that host would send — advertising skills on an emulated Cursor persona
      * would be a lie about Cursor. Surfaces that emulate no persona (MCPJam's
      * own agent turn) pass this, because they ship the fulfiller: the verified
-     * read path in `server-skills.ts`, merged into the toolset by
-     * `withServerSkills`.
+     * read path in `server-skills.ts`, which the agent's skill tools load
+     * through (`computers/effective-skill-tools.ts`).
      *
      * Set on DEFAULTS rather than per-server `clientCapabilities` on purpose.
      * The latter is advertised VERBATIM (see `MCPClientManager`'s exact-set
@@ -1496,6 +1647,7 @@ export async function createAuthorizedManager(
       >;
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
+      versionNegotiation?: "legacy-first";
       /** SEP-2243 `Mcp-Param-*` mirroring; host-level, so batch-uniform. */
       mirrorToolParamHeaders?: boolean;
       /** Client-conformance knobs; host-level, so batch-uniform. */
@@ -1528,10 +1680,12 @@ export async function createAuthorizedManager(
      */
     requestTimeoutByServerId?: Record<string, number>;
     /**
-     * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
-     * for Cross-App Access servers. Supplied by callers that have the request
-     * `Context`. Required whenever the batch contains a `useXaa` server — the
-     * builder throws a 500 rather than connecting tokenless if it's missing.
+     * Pre-resolved MCPJam test-IdP issuer for Cross-App Access servers.
+     * Callers holding the request `Context` pass
+     * `resolveXaaIssuer(c, HOSTED_MODE)`; the claim loops, which have none,
+     * pass `resolveConfiguredXaaIssuer()`. Required whenever the batch
+     * contains a `useXaa` server — the builder throws a 500 rather than
+     * connecting tokenless if it's missing.
      */
     xaaIssuer?: string;
     /**
@@ -1597,6 +1751,10 @@ export async function createAuthorizedManager(
       serverId: string,
       organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
+    /** Claims and schema selection owned by the collector installed above. */
+    mrtrInputOptionsForServer?: (
+      serverId: string,
+    ) => Parameters<MCPClientManager["setMrtrInputCollector"]>[2];
     /**
      * The turn's execution scope, forwarded to the computer reservation that
      * hosts a plugin's stdio component (`resolvePluginStdioHttpTarget`). Only
@@ -1668,14 +1826,30 @@ export async function createAuthorizedManager(
     projectId,
     uniqueServerIds,
     {
-      includeConnections:
-        options?.multiConnection || options?.onlySelectedConnections,
+      pluginComputerRuntime: options?.pluginComputerRuntime,
+      includeConnections: options?.multiConnection,
       connectionIds: options?.connectionIds,
+      connectionIdSets: options?.connectionIdSets,
       accessScope: options?.accessScope,
       scenarioId: options?.scenarioId,
       accessVersion: options?.accessVersion,
     },
   );
+  // An uploaded account's token is read again when a refresh can't renew it
+  // (`uploaded-account-recovery.ts`).
+  const uploadedRecoveries = uploadedAccountRecoveries((id, connectionId) => {
+    const connectionIds = { [id]: connectionId };
+    return HOSTED_MODE
+      ? authorizeBatch(caller, bearerToken, projectId, [id], {
+          connectionIds,
+          accessScope: options?.accessScope,
+          scenarioId: options?.scenarioId,
+          accessVersion: options?.accessVersion,
+        })
+      : authorizeBatchLocal(null, bearerToken, projectId, [id], undefined, {
+          connectionIds,
+        });
+  });
   const connectionsByServerId: Record<string, McpToolConnection[]> = {};
   for (const [serverId, auth] of Object.entries(batch.results)) {
     const storedName = auth.ok ? auth.serverConfig.name : auth.serverName;
@@ -1683,16 +1857,9 @@ export async function createAuthorizedManager(
       serverNamesById[serverId] = storedName.trim();
     }
   }
-  if (options?.multiConnection || options?.onlySelectedConnections) {
+  if (options?.multiConnection) {
     for (const [id, auth] of Object.entries(batch.results)) {
       if (auth.ok) {
-        const selectedId = options.onlySelectedConnections
-          ? options.connectionIds?.[id]
-          : undefined;
-        // Selected-account authorization returns one credential, not the account list.
-        if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
-          auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
-        }
         // A member's only login on a server arrives as the default credential,
         // not as an account list (the backend lists two or more). Without a
         // group its calls carry no connection, so a sign-in continuation binds
@@ -1700,8 +1867,6 @@ export async function createAuthorizedManager(
         // Same rails as the stored-token path below: OAuth or discover only,
         // never XAA or a bearer header, whose tokens the group would override.
         if (
-          !selectedId &&
-          options.multiConnection &&
           !auth.oauthConnections &&
           auth.oauthCredentialId &&
           auth.oauthAccessToken &&
@@ -1710,21 +1875,21 @@ export async function createAuthorizedManager(
             resolveEffectiveAuthMethod(auth.serverConfig, options?.xaaPolicy),
           )
         ) {
-          auth.oauthConnections = [{connectionId: auth.oauthCredentialId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: true, implicit: true}];
+          const implicit: AuthorizedOAuthConnection & UploadedAccountFlag = {
+            connectionId: auth.oauthCredentialId,
+            accessToken: auth.oauthAccessToken,
+            credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt,
+            isDefault: true,
+            implicit: true,
+            boundOrigins: auth.oauthBoundOrigins,
+            accountKind: auth.oauthAccountKind,
+            accountUploaded: auth.oauthAccountUploaded,
+          };
+          auth.oauthConnections = [implicit];
         }
         const live = (auth.oauthConnections ?? []).filter(
-          (c) =>
-            c.accessToken &&
-            !c.needsReauth &&
-            (selectedId === undefined || c.connectionId === selectedId),
+          (c) => c.accessToken && !c.needsReauth,
         );
-        if (options.onlySelectedConnections && (!selectedId || !live.length)) {
-          throw new WebRouteError(
-            403,
-            ErrorCode.FORBIDDEN,
-            "The account saved with this task is unavailable. Reconnect that account to continue.",
-          );
-        }
         // A disconnected default must not hide another usable account.
         auth.oauthAccessToken ||= live[0]?.accessToken;
         // Every row dead (no token, or all needing reauthorization) is NOT a
@@ -1754,6 +1919,19 @@ export async function createAuthorizedManager(
     }
   }
 
+  for (const [id, set] of Object.entries(options?.connectionIdSets ?? {})) {
+    const auth = batch.results[id];
+    if (!auth?.ok) continue;
+    const group = accountSetGroup({
+      serverId: id,
+      serverName: displayNameForServer(id, serverNamesById, auth.serverConfig),
+      auth,
+      set,
+      refusal: options?.accountSetRefusal,
+    });
+    if (group) connectionsByServerId[id] = group;
+  }
+
   // PASS 1 — validate the WHOLE batch before any server does side-effecting
   // work. The mint pass below runs concurrently (Promise.all), so a check
   // living inside it only fails *its own* server: a sibling's XAA mint (a
@@ -1771,8 +1949,12 @@ export async function createAuthorizedManager(
     serverId: string;
     displayServerName: string;
     required: boolean;
+    /** Where the connection will send the token; a token bound elsewhere is refused. */
+    targetOrigin: string | null;
   }> = [];
   const recoveredOAuthTokens: Record<string, string> = {};
+  /** The account each recovered token came from, so its refreshes are pinned. */
+  const recoveredCredentialIds: Record<string, string> = {};
   let confidentialCimdProviderForOrg: ReturnType<
     typeof getConfidentialCimdProviderForOrg
   > = undefined;
@@ -1842,10 +2024,11 @@ export async function createAuthorizedManager(
 
       // Backend-resolved identity failure (legacy partial per-server override):
       // a distinct configuration error, surfaced before any mint AND before the
-      // issuer guard — eval routes omit `xaaIssuer`, so checking that first
-      // would mask this actionable 400 behind the caller-contract 500. Gated on
-      // the same XAA selection the mint pass uses. No silent fallback to the
-      // demo identity, no silent XAA→OAuth fallback.
+      // issuer guard, so a surface that has no issuer to pass (a claim loop on
+      // a deployment with no public URL) still gets this actionable 400 rather
+      // than the caller-contract 500. Gated on the same XAA selection the mint
+      // pass uses. No silent fallback to the demo identity, no silent XAA→OAuth
+      // fallback.
       //
       // Framed like every other connect-time XAA failure: the backend's sentence
       // is written for the server's auth form, and on its own ("Complete or
@@ -1926,6 +2109,9 @@ export async function createAuthorizedManager(
           serverId,
           displayServerName,
           required: effectiveAuth === "oauth",
+          targetOrigin: HOSTED_MODE
+            ? null
+            : credentialOrigin(auth.serverConfig.url),
         });
         continue;
       }
@@ -1939,13 +2125,22 @@ export async function createAuthorizedManager(
         !(auth.oauthAccessToken ?? callerToken) &&
         (effectiveAuth === "oauth" || effectiveAuth === "discover")
       ) {
+        // A hosted-only account is refused by its own rule, which no admin
+        // can change, so the copy names that rule instead of the policy.
+        const hostedOnly = auth.oauthUnavailablePolicy === "hostedOnlyAccount";
         throw new WebRouteError(
           403,
           ErrorCode.FORBIDDEN,
-          `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+          hostedOnly
+            ? (auth.oauthUnavailableMessage ??
+                `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`)
+            : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
           {
             exportDenied: true,
-            policy: "credentialExportPolicy",
+            policy: hostedOnly ? "hostedOnlyAccount" : "credentialExportPolicy",
+            ...(hostedOnly && auth.oauthUnavailableCause
+              ? { cause: auth.oauthUnavailableCause }
+              : {}),
             serverId,
             serverName: serverNamesById?.[serverId] ?? null,
             serverUrl: auth.serverConfig.url,
@@ -2065,6 +2260,12 @@ export async function createAuthorizedManager(
             scenarioId: options?.scenarioId,
             accessVersion: options?.accessVersion,
             serverName: recovery.displayServerName,
+            targetOrigin: recovery.targetOrigin,
+            onDelivered: ({ credentialId }) => {
+              if (credentialId) {
+                recoveredCredentialIds[recovery.serverId] = credentialId;
+              }
+            },
           },
         );
     } catch (error) {
@@ -2109,6 +2310,9 @@ export async function createAuthorizedManager(
   // the origins the backend bound them to (filled in PASS 2, applied to the
   // per-server transport below).
   const credentialBindings = new Map<string, CredentialHeaderBinding>();
+  // Tokens the backend delivered, by connection key. In local mode they stay
+  // in this process: held to their bound origins and never replayed.
+  const deliveredTokens = new Map<string, { token: string; bound: unknown }>();
 
   // PASS 2 — connect/mint concurrently. Every server reaching this point has
   // already cleared the batch-wide validation above.
@@ -2215,7 +2419,7 @@ export async function createAuthorizedManager(
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
               workosApiKeyActingAs:
-                caller.authMethod === "workos_api_key" &&
+                isOrgBoundCredential(caller.authMethod) &&
                 caller.workosUserId &&
                 caller.mcpjamOrganizationId
                   ? {
@@ -2237,7 +2441,12 @@ export async function createAuthorizedManager(
         // that will not verify, a session record that did not land) and leaves
         // the `toHttpConfig` refusal below exactly as it was.
         let pluginRuntime: PluginStdioHttpTarget | undefined;
-        if (auth.serverConfig.transportType !== "http") {
+        if (
+          options?.pluginComputerRuntime === true &&
+          canColocatePluginStdio() &&
+          auth.serverConfig.transportType !== "http" &&
+          auth.serverConfig.pluginComponent === true
+        ) {
           pluginRuntime =
             (await resolvePluginStdioHttpTarget({
               bearerToken,
@@ -2257,15 +2466,6 @@ export async function createAuthorizedManager(
               // wake a second, unrelated machine purely because a plugin was
               // pinned.
               executionScope: options?.executionScope,
-              workosApiKeyActingAs:
-                caller.authMethod === "workos_api_key" &&
-                caller.workosUserId &&
-                caller.mcpjamOrganizationId
-                  ? {
-                      workosUserId: caller.workosUserId,
-                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                    }
-                  : undefined,
             })) ?? undefined;
         }
 
@@ -2277,19 +2477,39 @@ export async function createAuthorizedManager(
         // validate route tags it oauthRequired for client escalation).
         const usesStoredTokenFlow =
           usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
+        // Locally, pinned to the account that answered: a refresh after the
+        // server moved must not come back with another's token, so a token
+        // whose account is unknown gets no refresh at all.
+        const refreshConnectionId =
+          options?.connectionIds?.[serverId] ??
+          (HOSTED_MODE
+            ? undefined
+            : (auth.oauthCredentialId ?? recoveredCredentialIds[serverId]));
         const onUnauthorized =
           usesStoredTokenFlow &&
-          (auth.oauthAccessToken || recoveredOAuthTokens[serverId])
+          (auth.oauthAccessToken || recoveredOAuthTokens[serverId]) &&
+          (HOSTED_MODE || refreshConnectionId)
             ? buildHostedOAuthUnauthorizedHandler({
                 bearerToken,
                 projectId,
                 serverId,
-                connectionId: options?.connectionIds?.[serverId],
+                connectionId: refreshConnectionId,
+                ...(HOSTED_MODE
+                  ? {}
+                  : { targetOrigin: credentialOrigin(auth.serverConfig.url) }),
                 serverName: displayServerName,
                 accessScope: options?.accessScope,
                 shareToken: (options as { shareToken?: string })?.shareToken,
                 scenarioId: options?.scenarioId,
                 accessVersion: options?.accessVersion,
+                uploaded: uploadedRecoveries.for({
+                  account: auth,
+                  token: storedOAuthToken,
+                  connectionId:
+                    options?.connectionIds?.[serverId] ?? auth.oauthCredentialId,
+                  serverId,
+                  serverName: displayServerName,
+                }),
                 // Same reasoning as the local resolver's own handler: in local
                 // mode THIS process is the one that can reach a private
                 // authorization server. Without it every surface routed through
@@ -2327,9 +2547,11 @@ export async function createAuthorizedManager(
           // sibling server can mint.)
           if (!options?.xaaIssuer) {
             // Caller-contract violation: a `useXaa` server reached a manager
-            // builder that didn't thread the issuer (only callers holding the
-            // request `Context` can resolve it). Fail loud here rather than
-            // connecting tokenless and surfacing a confusing downstream 401.
+            // builder that didn't thread the issuer. A claim loop lands here
+            // when the deployment configures no public URL
+            // (`MCPJAM_INSPECTOR_PUBLIC_URL`, see `resolveConfiguredXaaIssuer`).
+            // Fail loud here rather than connecting tokenless and surfacing a
+            // confusing downstream 401.
             //
             // Always MCPJam's own bug, so it is declared ours: the origin it
             // carries reaches `http.request.failed`, where the MCPJam-fault
@@ -2498,7 +2720,7 @@ export async function createAuthorizedManager(
                 // as `authorizeBatch` — otherwise Convex would see the
                 // service token without an acting-as user.
                 workosApiKeyActingAs:
-                  caller.authMethod === "workos_api_key" &&
+                  isOrgBoundCredential(caller.authMethod) &&
                   caller.workosUserId &&
                   caller.mcpjamOrganizationId
                     ? {
@@ -2519,6 +2741,12 @@ export async function createAuthorizedManager(
           // ran, but they are held to an origin on the wire all the same.
           const binding = bindingForAuthorizedHeaders(auth.serverConfig);
           if (binding) credentialBindings.set(serverId, binding);
+        }
+        if (!HOSTED_MODE && auth.serverConfig.transportType === "http") {
+          registerStoredHeaders(
+            revealed?.headers ?? auth.serverConfig.headers,
+            credentialBindings.get(serverId)?.headerNames,
+          );
         }
         const authForConfig = revealed
           ? {
@@ -2544,6 +2772,12 @@ export async function createAuthorizedManager(
           useXaa || options?.xaaPolicy != null
             ? withXaaExtensionCapability(clientCapabilities)
             : clientCapabilities;
+        if (connectToken && connectToken === storedOAuthToken) {
+          deliveredTokens.set(serverId, {
+            token: connectToken,
+            bound: auth.oauthBoundOrigins,
+          });
+        }
 
         return [
           serverId,
@@ -2594,6 +2828,12 @@ export async function createAuthorizedManager(
           (config as HttpServerConfig).requestInit?.headers,
         );
         requestHeaders.set("Authorization", `Bearer ${credential.accessToken}`);
+        if (credential.accessToken) {
+          deliveredTokens.set(connection.key, {
+            token: credential.accessToken,
+            bound: credential.boundOrigins,
+          });
+        }
         return [
           connection.key,
           {
@@ -2612,6 +2852,21 @@ export async function createAuthorizedManager(
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
               allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
+              ...(HOSTED_MODE
+                ? {}
+                : {
+                    targetOrigin: credentialOrigin(
+                      (config as HttpServerConfig).url,
+                    ),
+                  }),
+              uploaded: uploadedRecoveries.for({
+                account: credential,
+                token: credential.accessToken,
+                connectionId: connection.connectionId,
+                serverId,
+                serverName: serverNamesById[serverId] ?? serverId,
+                accountName: connection.label,
+              }),
             }),
           },
         ] as const;
@@ -2626,7 +2881,7 @@ export async function createAuthorizedManager(
       .map((connection) => [connection.key, connection]),
   );
   const observedConfigs = Object.fromEntries(
-    connectionEntries.map(([id, config]) => {
+    connectionEntries.flatMap(([id, config]) => {
       const connection = connectionsByKey.get(id);
       const serverId = connection?.serverId ?? id;
       const authorization = batch.results[serverId];
@@ -2655,19 +2910,58 @@ export async function createAuthorizedManager(
       // The observer goes OUTSIDE it: the challenge capture is keyed to the
       // fetch the transport is actually given, and records the final response.
       const binding = credentialBindings.get(serverId);
+      const delivered = HOSTED_MODE ? undefined : deliveredTokens.get(id);
+      let fetchFn = binding
+        ? bindCredentialHeaders(
+            baseFetch,
+            delivered ? withoutAuthorization(binding) : binding,
+          )
+        : baseFetch;
+      let connectionConfig: MCPServerConfig = config;
+      if (delivered && config.url !== undefined) {
+        try {
+          ({ config: connectionConfig, fetchFn } = deliveredConnection({
+            config,
+            fetchFn,
+            delivered,
+            target: { serverId, serverName: serverNamesById[serverId] },
+          }));
+        } catch (error) {
+          if (isServerRefusal(error, serverId, tolerate)) {
+            refusedServers[serverId] = error;
+            return [];
+          }
+          releasePluginLeases();
+          throw error;
+        }
+      }
+      // A local exchange log reaches the page as captured, so it redacts
+      // stored headers by name. Hosted capture already drops their values.
+      if (binding && !HOSTED_MODE && connectionConfig.url !== undefined) {
+        connectionConfig = {
+          ...connectionConfig,
+          credentialHeaderNames: binding.headerNames,
+        };
+      }
       return [
-        id,
-        {
-          ...config,
-          baseFetch: observeConnectionFetch(
-            withServerCheckSignal(
-              binding ? bindCredentialHeaders(baseFetch, binding) : baseFetch,
-            ),
-          ),
-        },
+        [
+          id,
+          {
+            ...connectionConfig,
+            baseFetch: observeConnectionFetch(withServerCheckSignal(fetchFn)),
+          },
+        ],
       ];
     }),
   );
+  // A server refused just above keeps none of its accounts.
+  for (const [id] of connectionEntries) {
+    const serverId = connectionsByKey.get(id)?.serverId ?? id;
+    if (Object.hasOwn(refusedServers, serverId)) delete observedConfigs[id];
+  }
+  for (const serverId of Object.keys(refusedServers)) {
+    delete connectionsByServerId[serverId];
+  }
   const authorizedServerIdentities = Object.fromEntries(
     Object.entries(batch.results).flatMap(([serverId, auth]) => {
       if (!auth.ok || Object.hasOwn(refusedServers, serverId)) return [];
@@ -2707,6 +3001,7 @@ export async function createAuthorizedManager(
       ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
       : {}),
   });
+  uploadedRecoveries.bind(manager);
   if (pluginLeaseReleases.length > 0) {
     // Every ephemeral-manager teardown path (withManager, web-chat-turn
     // cleanup, manual-connection callers) funnels through
@@ -2743,7 +3038,11 @@ export async function createAuthorizedManager(
         batch.organizationId,
       );
       if (collector) {
-        manager.setMrtrInputCollector(serverId, collector);
+        manager.setMrtrInputCollector(
+          serverId,
+          collector,
+          options.mrtrInputOptionsForServer?.(baseServerId),
+        );
       }
     }
   }
@@ -2757,13 +3056,14 @@ export async function createAuthorizedManager(
   }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
+  setManagerAuthorizedCredentials(manager, Object.fromEntries(Object.entries(batch.results).flatMap(([serverId, auth]) => auth.ok && auth.oauthCredentialId ? [[serverId, auth.oauthCredentialId]] : [])));
   const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
   const bindWarmAccounts = hostedWarmAgentEnabled(batch.organizationId ?? undefined);
   for (const [key, config] of connectionEntries) {
     const connection = connectionsByKey.get(key);
     const serverId = connection?.serverId ?? key;
     const auth = batch.results[serverId];
-    if (!auth?.ok) continue;
+    if (!auth?.ok || Object.hasOwn(refusedServers, serverId)) continue;
     const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
     const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
     if (bindWarmAccounts) bindWarmApprovalConnection(manager, key, {
@@ -3021,6 +3321,8 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   ) => Promise<T>,
   options?: {
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     guestUnsupportedMessage?: string;
     tolerateServerRefusals?: boolean;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
@@ -3029,6 +3331,10 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /** See `createManualHostedConnection`'s option of the same name. */
+    connectionIdSetsForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<ConnectionIdSets | undefined>;
   },
 ): Promise<T> {
   const { manager, body, refusedServers } = await createManualHostedConnection(
@@ -3068,6 +3374,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     /** See `createAuthorizedManager`; no MCP initialization before authorization. */
     lazyConnect?: boolean;
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
     httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
@@ -3112,6 +3420,10 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /** The accounts each server runs with, for a launcher that has a saved choice. */
+    connectionIdSetsForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<ConnectionIdSets | undefined>;
     /** See `createAuthorizedManager`'s option of the same name. */
     tolerateServerRefusals?: boolean;
   },
@@ -3152,6 +3464,17 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   // The strongly-typed `body` is passed through to `fn` unchanged.
   const raw = body as Record<string, unknown>;
   const { serverIds, oauthTokens, serverNames } = resolveConnectionParams(raw);
+  // A request pinned to one saved account (a task) connects only that server.
+  const pinnedSets =
+    typeof raw.connectionId === "string" && typeof raw.serverId === "string"
+      ? { [raw.serverId]: [raw.connectionId] }
+      : undefined;
+  if (pinnedSets && serverIds.some((id) => !pinnedSets[id])) {
+    throw new WebRouteError(403, ErrorCode.FORBIDDEN, SAVED_ACCOUNT_UNAVAILABLE);
+  }
+  const chosenSets = pinnedSets
+    ? undefined
+    : await options?.connectionIdSetsForBody?.(rawBody);
   const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
   const accessScope =
     raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
@@ -3269,14 +3592,14 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
       (raw.clientCapabilities as Record<string, unknown> | undefined),
     {
+      pluginComputerRuntime:
+        options?.pluginComputerRuntime !== false && !!runHostConfig?.computer,
       ...(options?.lazyConnect ? { lazyConnect: true } : {}),
-      ...(typeof raw.connectionId === "string" &&
-      typeof raw.serverId === "string"
-        ? {
-            connectionIds: { [raw.serverId]: raw.connectionId },
-            onlySelectedConnections: true,
-          }
-        : {}),
+      ...(pinnedSets
+        ? { connectionIdSets: pinnedSets, accountSetRefusal: SAVED_ACCOUNT_UNAVAILABLE }
+        : chosenSets
+          ? { connectionIdSets: chosenSets }
+          : {}),
       accessScope,
       scenarioId,
       accessVersion,
@@ -3435,6 +3758,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   options?: {
     beforeOperation?: (body: z.infer<S>) => Promise<void>;
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
     /** See `createAuthorizedManager`'s option of the same name. */
@@ -3443,6 +3768,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /** See `createManualHostedConnection`'s option of the same name. */
+    connectionIdSetsForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<ConnectionIdSets | undefined>;
     /**
      * Runs on the raw body after it is read and BEFORE it is parsed or any
      * server is connected. The hook an environment launch uses to resolve its
@@ -3498,11 +3827,13 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
       {
         timeoutMs: options?.timeoutMs,
+        pluginComputerRuntime: options?.pluginComputerRuntime,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
         tolerateServerRefusals: options?.tolerateServerRefusals,
         rpcLogger: rpcCollector?.rpcLogger,
         httpLogger: rpcCollector?.httpLogger,
         hostConfigForBody: options?.hostConfigForBody,
+        connectionIdSetsForBody: options?.connectionIdSetsForBody,
       },
     );
 

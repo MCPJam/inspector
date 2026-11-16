@@ -7,12 +7,16 @@ import {
   shouldStartPersistedRun,
 } from "../PersistConformanceRun";
 
-const { startRun, heartbeat, finalizeRun, upsertReport } = vi.hoisted(() => ({
-  startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
-  heartbeat: vi.fn().mockResolvedValue(undefined),
-  finalizeRun: vi.fn().mockResolvedValue(undefined),
-  upsertReport: vi.fn().mockResolvedValue(undefined),
-}));
+const { startRun, heartbeat, finalizeRun, upsertReport, toastError } =
+  vi.hoisted(() => ({
+    startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
+    heartbeat: vi.fn().mockResolvedValue(undefined),
+    finalizeRun: vi.fn().mockResolvedValue(undefined),
+    upsertReport: vi.fn().mockResolvedValue(undefined),
+    toastError: vi.fn(),
+  }));
+
+vi.mock("@/lib/toast", () => ({ toast: { error: toastError } }));
 
 vi.mock("convex/react", () => ({
   useMutation: (name: string) => {
@@ -44,7 +48,6 @@ function snapshot(overrides: Partial<RunSnapshot> = {}): RunSnapshot {
     runVersion: 0,
     runAll: vi.fn(),
     authorizeOAuth: vi.fn(),
-    oauthNotScored: false,
     isRunning: false,
     ...overrides,
   };
@@ -169,6 +172,35 @@ describe("PersistConformanceRun", () => {
         runTimeoutSeconds: 300,
         actorLabel: "Inspector UI",
       }),
+    );
+  });
+
+  it("says the run won't be saved when the backend refuses it", async () => {
+    startRun.mockRejectedValueOnce(
+      Object.assign(new Error("Server Error"), {
+        data: { code: "FORBIDDEN", message: "Conformance is not enabled for this account." },
+      }),
+    );
+    const { rerender } = renderPersist(
+      snapshot({ runVersion: 1, isRunning: false }),
+    );
+    rerender(
+      <PersistConformanceRun
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+        server={httpServer()}
+        snapshot={snapshot({
+          runVersion: 2,
+          isRunning: true,
+          protocol: { status: "running" },
+        })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "This run won't be saved to History",
+        { description: "Conformance is not enabled for this account." },
+      ),
     );
   });
 

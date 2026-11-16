@@ -60,6 +60,7 @@ export const harnessConnectionProfileSchema = z
     mcpProtocolVersion: z
       .enum(["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"])
       .optional(),
+    versionNegotiation: z.literal("legacy-first").optional(),
     timeout: z.number().positive().finite().optional(),
     mirrorToolParamHeaders: z.boolean().optional(),
     firstPageOnly: z.boolean().optional(),
@@ -217,5 +218,7 @@ export function harnessConnectionProfile(
     toolCallCancellation,
     mcpProtocolVersion:
       "mcpProtocolVersion" in config ? config.mcpProtocolVersion : undefined,
+    versionNegotiation:
+      "versionNegotiation" in config ? config.versionNegotiation : undefined,
   });
 }

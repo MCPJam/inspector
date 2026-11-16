@@ -40,7 +40,6 @@ import type {
   CodexSandboxPolicy,
   JsonRpcNotification,
   ThreadStartParams,
-  ThreadStartResult,
   TurnStartResult,
 } from "./app-server-protocol.js";
 import {
@@ -52,10 +51,12 @@ import { needsNativeMcpReload } from "../shared/native-mcp.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
+import { openConfiguredThread } from "./thread-configuration.js";
 import { buildHostToolCatalog } from "./host-tool-catalog.js";
 import { prepareCodexHome, untrustedProjectPathsFor, type CodexHomeInput } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
 import { createStreamTranslator } from "./stream-translator.js";
+import { toCodexTurnStartInput } from "./turn-start-input.js";
 
 type Args = {
   workdir: string;
@@ -457,6 +458,7 @@ async function main(): Promise<void> {
       catalog = buildHostToolCatalog(start.tools ?? []);
       await nativeRefresh.settled();
       const previousRuntime = client;
+      const previousThreadId = threadId ?? start.resumeThreadId;
       await ensureRuntime(start);
       const runtime = client;
       if (!runtime) throw new Error("codex app-server failed to start");
@@ -521,24 +523,11 @@ async function main(): Promise<void> {
         serviceName: "mcpjam-inspector",
       };
 
-      // `mustRestart` means the turn configuration changed under a live
-      // thread, so the thread must be rebuilt. `threadId` is already cleared
-      // above, but the host's `resumeThreadId` (sent on every rerun start)
-      // would otherwise resume the very thread we just decided to abandon,
-      // carrying the stale tools, instructions and permissions with it.
-      const resumeId = mustRestart
-        ? undefined
-        : (threadId ?? start.resumeThreadId);
-      const thread = resumeId
-        ? await runtime.request<ThreadStartResult>("thread/resume", {
-            ...threadParams,
-            threadId: resumeId,
-          })
-        : await runtime.request<ThreadStartResult>(
-            "thread/start",
-            threadParams,
-          );
-      threadId = thread.thread?.id ?? resumeId;
+      // A fresh thread must read the new catalog, while its fork retains the
+      // previous transcript. Never silently replace a conversation with empty history.
+      const resumeId = previousThreadId;
+      const thread = await openConfiguredThread(runtime, threadParams, resumeId, mustRestart);
+      threadId = thread.thread?.id ?? (mustRestart ? undefined : resumeId);
       const nativeNames = Object.keys(start.nativeMcpServers ?? {});
       if (!threadId) throw new Error("MCP startup requires a thread");
       try {
@@ -562,7 +551,7 @@ async function main(): Promise<void> {
 
       const started = await runtime.request<TurnStartResult>("turn/start", {
         threadId,
-        input: [{ type: "text", text: start.prompt }],
+        input: toCodexTurnStartInput(start.prompt),
         ...(start.warmWorkDir ? { cwd: start.warmWorkDir, approvalPolicy } : {}),
         ...(start.model ? { model: start.model } : {}),
         ...(start.reasoningEffort ? { effort: start.reasoningEffort } : {}),

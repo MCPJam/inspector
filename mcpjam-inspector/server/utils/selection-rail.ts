@@ -1,3 +1,4 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { inheritedSelectionOrigin } from "./runtime-model-choice.js";
 /**
  * Which rail a turn runs on — and so who pays for it — decided from the turn's
@@ -129,6 +130,7 @@ export function resolveChatSelection(args: {
   model: RailModel;
   hostWins: boolean;
   allowLocal: boolean;
+  harnessId?: string;
 }):
   | { ok: true; selection?: RequestedModelSelection; requestSelection?: RequestedModelSelection; origin?: "backfill" }
   | { ok: false; error: string } {
@@ -141,7 +143,9 @@ export function resolveChatSelection(args: {
   }
   const selection = readRoutingSelection(args.raw);
   if (!selection) return { ok: false, error: "Invalid modelSelection" };
-  if (!args.allowLocal && (selection.source === "local" || selection.source === "legacy")) {
+  const runtimeAccountSelection = args.harnessId === "cursor" &&
+    selection.source === "legacy" && isRuntimeAccountModel(selection.modelId);
+  if (!args.allowLocal && !runtimeAccountSelection && (selection.source === "local" || selection.source === "legacy")) {
     return { ok: false, error: "This modelSelection requires local credentials; choose a model available in this workspace." };
   }
   if (!routingSelectionForModel(selection, args.model)) {

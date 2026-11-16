@@ -35,8 +35,8 @@ const {
 }));
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
-// The local Codex flag, read through posthog directly (Claude Code's comes from
-// `useLocalHarnessEnabled` above).
+// The local Codex flag (Claude Code's is `flagMock`), as the rollout hook below
+// hands them out.
 const codexFlag = vi.hoisted(() => ({ value: false as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) =>
@@ -44,6 +44,11 @@ vi.mock("posthog-js/react", () => ({
 }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useLocalHarnessEnabled: flagMock,
+  useLocalHarnessRollouts: () => ({
+    "claude-code": flagMock() === true,
+    codex: codexFlag.value === true,
+    "copilot-cli": false,
+  }),
 }));
 vi.mock("@/lib/local-harness-consent", async () => {
   const actual = await vi.importActual<

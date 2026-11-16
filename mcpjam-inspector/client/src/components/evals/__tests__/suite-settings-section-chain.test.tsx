@@ -19,7 +19,10 @@ describe("SuiteSettingsSectionChain", () => {
         </section>
       </SuiteSettingsSectionChain>,
     );
-    expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(3);
+    // The spine and two nodes; icons such as the row's info icon do not count.
+    expect(
+      container.querySelectorAll('[aria-hidden="true"]:not(svg)'),
+    ).toHaveLength(3);
     expect(container.querySelector(".absolute.bottom-6.left-\\[0\\.9375rem\\]")).toBeTruthy();
   });
 });

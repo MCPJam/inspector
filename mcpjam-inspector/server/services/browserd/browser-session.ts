@@ -35,6 +35,7 @@ import type {
   BrowserdHandle,
   BrowserdSandbox,
 } from "./boot-browserd";
+import { BROWSERD_READY_TIMEOUT_MS } from "./boot-browserd";
 import type {
   BrowserdRecordArgs,
   BrowserdRecordResult,
@@ -48,6 +49,7 @@ import {
   formatBrowserdError,
   HOSTED_DISPLAY,
   type BrowserCommand,
+  type BrowserCommandSecret,
 } from "./protocol";
 import type {
   BrowserContextMode,
@@ -68,6 +70,7 @@ import {
   shouldTouchSessionCommand,
 } from "../../utils/computers/activity-touch.js";
 import type { BrowserSessionService } from "./session-service.js";
+import type { PreviewGrantClient } from "../workspace-preview/workspace-tunnel.js";
 
 /** Where the daemon lives inside the sandbox — the probe's proven recipe. */
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -108,8 +111,9 @@ export interface SessionCommandOptions {
   /**
    * Values for the command's `{{secret:NAME}}` placeholders. Never a command
    * field: the command is echoed into the ledger, trace and durable mirror.
+   * Send one with `origins` only to a daemon announcing `secret-origins`.
    */
-  secrets?: ReadonlyArray<{ name: string; value: string }>;
+  secrets?: ReadonlyArray<BrowserCommandSecret>;
 }
 
 export interface SessionClient {
@@ -142,6 +146,8 @@ export interface SessionClient {
   recordStatus?(): Promise<BrowserdRecordState>;
   /** Export the persistent profile after the daemon queue has drained. */
   exportProfile?(): Promise<Uint8Array>;
+  /** Serve a workspace port on the browser box's loopback (hosted only). */
+  previewGrant?: PreviewGrantClient["previewGrant"];
 }
 
 /** The sandbox pieces the ensure path needs, once connected. */
@@ -767,6 +773,13 @@ async function trySandboxReuse(
 const RELAUNCH_HOLDER_PREFIX = "relaunch:";
 const RELAUNCH_FENCE_TTL_MS = 30_000;
 
+/**
+ * How long a relaunch claim lasts: the whole boot deadline, plus a minute for
+ * the wake, kill, upload, stream and record around it. Shorter than a slow
+ * boot, an expired claim lets another replica pkill the daemon mid-launch.
+ */
+export const RELAUNCH_CLAIM_TTL_MS = BROWSERD_READY_TIMEOUT_MS + 60_000;
+
 /** A lease this relaunch is holding, to be given back if the kill fails. */
 interface RelaunchFence {
   release(): Promise<void>;
@@ -1168,6 +1181,10 @@ function withActivityTouches(
     // exported fine.
     ...(client.exportProfile
       ? { exportProfile: () => client.exportProfile!() }
+      : {}),
+    // Same rule: without it a hosted session cannot open the workspace's apps.
+    ...(client.previewGrant
+      ? { previewGrant: (grant) => client.previewGrant!(grant) }
       : {}),
   };
 }
@@ -1706,6 +1723,7 @@ async function ensureOnSandbox(
         sandboxRowId: target.sandboxRowId,
         watched: true,
         claimId,
+        ttlMs: RELAUNCH_CLAIM_TTL_MS,
         ...(args.signal ? { signal: args.signal } : {}),
       });
       // Only a REFUSAL stops us, exactly as on the computer arm. `undefined`
@@ -1953,6 +1971,7 @@ async function ensureOnComputer(
     const claimed = await deps.store.claimRelaunch?.({
       computerId,
       claimId,
+      ttlMs: RELAUNCH_CLAIM_TTL_MS,
       ...(args.signal ? { signal: args.signal } : {}),
     });
     if (claimed?.ok === false && claimed.reason === "claimed") {

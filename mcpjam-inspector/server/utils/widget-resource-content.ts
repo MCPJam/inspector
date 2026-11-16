@@ -1,6 +1,9 @@
 import { readResourceDisplayHints } from "@mcpjam/sdk/widget-runtime";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { resolveUiResourceMeta } from "./ui-resource-meta.js";
+import {
+  resolveUiResourceMeta,
+  uiDisplayHintFields,
+} from "./ui-resource-meta.js";
 
 /** Shared representation handling; the caller owns resource admission. */
 export function widgetResourceContent(
@@ -30,6 +33,7 @@ export function widgetResourceContent(
       record._meta as Record<string, unknown> | undefined,
       listingMeta,
     ),
+    ...uiDisplayHintFields(meta),
     csp: meta.csp,
     permissions: meta.permissions,
     prefersBorder: meta.prefersBorder,

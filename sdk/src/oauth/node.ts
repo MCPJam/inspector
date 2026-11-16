@@ -58,3 +58,4 @@ export type { OAuthProxyRequest, OAuthProxyResponse } from "../oauth-proxy.js";
 // `globalThis.fetch`.
 export { createPinnedStreamingFetch } from "./pinned-stream-fetch.js";
 export type { PinnedStreamingFetchOptions } from "./pinned-stream-fetch.js";
+export type { PrivateDestinationAdmission } from "./pinned-dns.js";

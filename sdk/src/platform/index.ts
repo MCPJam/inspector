@@ -82,6 +82,92 @@ export {
 } from "./permalinks.js";
 
 export { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
+export type {
+  PlatformWidgetSessionTarget,
+  PlatformWidgetViewport,
+  PlatformWidgetSessionCreateBody,
+  PlatformWidgetSessionCreated,
+  PlatformWidgetAction,
+  PlatformWidgetToolCall,
+  PlatformWidgetSessionActionResult,
+  PlatformWidgetSessionSnapshot,
+  PlatformWidgetSessionAssertion,
+  PlatformWidgetSessionStep,
+  PlatformWidgetSessionStepBody,
+  PlatformWidgetSessionStepResult,
+  PlatformWidgetSessionClosed,
+  PlatformWidgetRenderBody,
+} from "./widget-session-types.js";
+export type {
+  PlatformServerAccount,
+  PlatformServerAccountDeleted,
+  PlatformServerAccountTokens,
+  PlatformServerAccountUpload,
+} from "./server-account-types.js";
+export type {
+  PlatformDirectoryFlowSummary,
+  PlatformDirectorySubmission,
+  PlatformDirectorySubmissionConflict,
+  PlatformDirectorySubmissionCounts,
+  PlatformDirectorySubmissionCreateBody,
+  PlatformDirectorySubmissionDeleted,
+  PlatformDirectorySubmissionPlugin,
+  PlatformDirectorySubmissionResults,
+  PlatformDirectorySubmissionRunBody,
+  PlatformDirectorySubmissionSummary,
+  PlatformDirectorySubmissionUpdateBody,
+  PlatformDirectorySubmissionView,
+} from "./directory-submission-types.js";
+export type {
+  PlatformDirectorySubmissionEvent,
+  PlatformDirectorySubmissionEventBody,
+  PlatformDirectorySubmissionExportFile,
+  PlatformDirectorySubmissionFinding,
+  PlatformDirectorySubmissionFindingsQuery,
+  PlatformDirectorySubmissionHandoff,
+  PlatformDirectorySubmissionSnapshotsView,
+} from "./directory-submission-handoff-types.js";
+export type {
+  PlatformDirectoryTestArgumentDraft,
+  PlatformDirectoryTestArgumentDrafting,
+  PlatformDirectoryTestArgumentUndecided,
+  PlatformDirectoryTestCaseCounts,
+  PlatformDirectoryTestPlanCatalog,
+  PlatformDirectoryTestPlanDraft,
+  PlatformDirectoryTestPlanRevision,
+  PlatformDirectoryTestPlanSaveBody,
+  PlatformDirectoryTestPlanSaved,
+  PlatformDirectoryTestPlanView,
+  PlatformDirectoryToolTestSweep,
+  PlatformDirectoryToolTests,
+} from "./directory-test-plan-types.js";
+export type {
+  PlatformDirectoryEvalCaseList,
+  PlatformDirectoryEvalCaseSource,
+  PlatformDirectoryPortalTestCase,
+  PlatformDirectorySubmissionEvalExport,
+  PlatformDirectorySubmissionEvalImport,
+  PlatformDirectorySubmissionEvalLink,
+  PlatformDirectorySubmissionEvalLinkBody,
+  PlatformDirectorySubmissionEvalResult,
+  PlatformDirectorySubmissionEvalRun,
+  PlatformDirectorySubmissionEvals,
+} from "./directory-submission-eval-types.js";
+export { directoryTestPlanSchema } from "./directory-test-plan-schema.js";
+export { directorySubmissionConflict } from "./directory-submission-client.js";
+export type {
+  PlatformReviewerAttempt,
+  PlatformReviewerAttemptCreateBody,
+  PlatformReviewerAttemptStart,
+  PlatformReviewerAttemptState,
+  PlatformReviewerStage,
+} from "./directory-reviewer-attempt-types.js";
+// The directory submission operations and their input and result types.
+export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
+export * from "./directory-submission-handoff-operations.js";
+export * from "./directory-test-plan-operations.js";
+export * from "./directory-submission-eval-operations.js";
 
 export {
   computeRunTargets,
@@ -159,13 +245,20 @@ export type {
   PlatformReadinessObservationState,
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
+  PlatformConformanceCheck,
   PlatformConformanceReport,
   PlatformConformanceReportCheck,
   PlatformConformanceReportProfile,
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceRunReportSummary,
+  PlatformConformanceSettingsSource,
   PlatformConformanceSuiteKind,
+  PlatformServerRevision,
+  PlatformServerRevisionDiff,
+  PlatformServerRevisionSource,
+  PlatformServerRevisionSummary,
+  PlatformServerRevisionTool,
   PlatformReadinessStageResult,
   PlatformReadinessLazyAuthProbe,
   PlatformReadinessStartBody,
@@ -321,6 +414,13 @@ export type {
   PlatformEvalIterationReportUnavailableReason,
   PlatformEvalFindingsAnalysis,
   PlatformUnifiedFindings,
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingProblem,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
   PlatformInsightsStatus,
   PlatformSwarmRunInsights,
   PlatformSwarmRunInsightsCanceled,
@@ -518,11 +618,21 @@ export {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  uploadServerAccountTokensOperation,
+  updateServerAccountOperation,
+  deleteServerAccountOperation,
+  getConformanceCheckOperation,
   listClientsOperation,
   listHostsOperation,
   listEnvironmentsOperation,
@@ -686,7 +796,23 @@ export {
   type GetConformanceRunResult,
   type ListConformanceRunsInput,
   type ListConformanceRunsResult,
+  type ListServerRevisionsInput,
+  type ListServerRevisionsResult,
+  type GetServerRevisionInput,
+  type GetServerRevisionResult,
+  type DiffServerRevisionsInput,
+  type DiffServerRevisionsResult,
+  type ServerAccountInput,
+  type ServerAccountResult,
+  type ListServerAccountsResult,
+  type UploadServerAccountTokensInput,
+  type UploadServerAccountTokensResult,
+  type UpdateServerAccountInput,
+  type DeleteServerAccountResult,
+  type GetConformanceReportInput,
   type GetConformanceReportResult,
+  type GetConformanceCheckInput,
+  type GetConformanceCheckResult,
   type HostCompatibilityVerdict,
   type CloseTunnelInput,
   type CloseTunnelResult,
@@ -1058,3 +1184,4 @@ export type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
 } from "../contract/judge-backtest.js";
+export { PLATFORM_EVAL_FINDINGS_VIEW_VERSION } from "./findings-view-types.js";

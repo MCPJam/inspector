@@ -1,4 +1,4 @@
-import { FileOpenWith } from "./host-workspace/file-actions";
+import { ResourceOpenInChat, type ResourceChatScope } from "./host-workspace/resource-chat-handoff";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -47,6 +47,10 @@ import {
   authorizationRequiredCommandError,
   presentAuthChallenge,
 } from "@/lib/auth-challenge-lifecycle";
+import {
+  isSignInChallengeError,
+  passthroughChallengeErrorText,
+} from "@/lib/auth-challenge-error";
 import type { AuthChallengeSignal } from "@/lib/apis/insufficient-scope";
 import type { DirectScopeStepUpReplayDescriptor } from "@/lib/scope-step-up-replay";
 import {
@@ -105,6 +109,7 @@ function capResourceContentForTranscript(content: unknown): {
 }
 
 interface ResourcesTabProps {
+  openInChatScope?: ResourceChatScope | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
   /**
@@ -195,6 +200,7 @@ function renderResourceTextContent(
 }
 
 export function ResourcesTab({
+  openInChatScope,
   serverConfig,
   serverName,
   server,
@@ -473,6 +479,7 @@ export function ResourcesTab({
     uri: string,
     replay: DirectScopeStepUpReplayDescriptor,
     isCurrentRead: () => boolean,
+    showError: (message: string) => void,
   ) => {
     void presentAuthChallenge({
       server,
@@ -485,6 +492,8 @@ export function ResourcesTab({
       // A later read owns the notice area by now.
       if (!isCurrentRead()) return;
       if (presentation.kind === "notice") setAuthNotice(presentation.message);
+      const refusal = passthroughChallengeErrorText(presentation, signal);
+      if (refusal) showError(refusal);
     });
   };
 
@@ -544,6 +553,7 @@ export function ResourcesTab({
                 target: "resource",
               },
               () => readVersion === resourceReadVersionRef.current,
+              setError,
             ),
         },
       );
@@ -551,6 +561,12 @@ export function ResourcesTab({
       setResourceContent(data?.content ?? null);
     } catch (err) {
       if (readVersion !== resourceReadVersionRef.current) return;
+      // The Connect card or its notice replaces the raw 401, and the previous
+      // resource's content must not show under this one's card.
+      if (server && isSignInChallengeError(err)) {
+        setResourceContent(null);
+        return;
+      }
       setError(`Error reading resource: ${err}`);
     } finally {
       if (readVersion === resourceReadVersionRef.current) {
@@ -629,6 +645,7 @@ export function ResourcesTab({
                 selection: selectedTemplate,
               },
               () => readVersion === templateReadVersionRef.current,
+              setTemplateError,
             ),
         },
       );
@@ -636,6 +653,12 @@ export function ResourcesTab({
       setTemplateContent(data?.content ?? null);
     } catch (err) {
       if (readVersion !== templateReadVersionRef.current) return;
+      // The Connect card or its notice replaces the raw 401, and the previous
+      // template result must not show under this read's card.
+      if (server && isSignInChallengeError(err)) {
+        setTemplateContent(null);
+        return;
+      }
       setTemplateError(`Error reading resource: ${err}`);
     } finally {
       if (readVersion === templateReadVersionRef.current) {
@@ -1226,7 +1249,7 @@ export function ResourcesTab({
                             <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:truncate">
                               {resource.name}
                             </code>
-                            <FileOpenWith reference={serverName ? { serverId: serverName, resourceUri: resource.uri } : null} />
+                            <ResourceOpenInChat scope={openInChatScope} resourceUri={resource.uri} />
                           </div>
                           {resource.description && (
                             <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">

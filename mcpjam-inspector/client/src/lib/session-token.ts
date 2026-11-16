@@ -451,10 +451,24 @@ function isHostedAuthAllowedOrigin(parsed: URL): boolean {
  * with an extra path component can slip through.
  */
 const HOSTED_AUTH_PATH_PATTERNS = [
-  // The /conformance page starting, polling, cancelling and reading a
-  // directory-readiness run.
-  /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
+  /^\/api\/mcp\/(chat-persistence|turn-authorization)\/?$/,
+  // Reading command terms re-authorizes the server under the signed-in member.
+  /^\/api\/mcp\/servers\/command-approval\/?$/,
+  // The /conformance page starting, polling, cancelling, resuming and reading
+  // a directory-readiness run.
+  /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report|resume))?)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
+  // The /readiness page's reviewer sign-in: a submission's attempts, one
+  // attempt, and resuming or cancelling it.
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel))?)?$/,
+  // The /readiness page: the flows it copies, and a project's directory
+  // submissions with their runs, results, handoff summary, findings (one
+  // check's under its id), export, events and snapshots.
+  /^\/api\/v1\/directory-flows(\/[^/]+)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results|handoff|export|events|snapshots|findings(\/[^/]+)?))?)?$/,
+  // The /readiness page's test plan: the saved plan, a draft, and what a
+  // run's calls showed.
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/(test-plan(\/draft)?|tool-tests)$/,
   // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
   // change: without this entry the UI's hint would silently 401, since
   // `/api/v1/projects/` is not a prefix this list grants wholesale — see the
@@ -528,7 +542,7 @@ function isSignInRenewablePath(input: RequestInfo | URL): boolean {
     : typeof input === "string"
       ? input.split("?")[0]
       : "";
-  return SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
+  return /^\/api\/(web|mcp)\/(chat-persistence|turn-authorization)\/?$/.test(pathname) || SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
     pathname.startsWith(prefix),
   );
 }

@@ -85,7 +85,7 @@ export function sandboxProxyHostOriginPatterns(): string[] {
  * `http` on a loopback host. Plaintext anywhere else is left out, since any
  * network hop could then answer as the host. Loopback `http` is kept so a
  * hosted build run on a developer machine (`npm run dev:hosted`, which lists
- * `http://localhost:5173`) can still render views.
+ * its own loopback origins) can still render views.
  */
 function isConfiguredHostOrigin(origin: string): boolean {
   if (origin.startsWith("https://")) return true;
@@ -159,8 +159,8 @@ let rendered: string | null = null;
  * the bundled module with `"<html></html>"`, and a serving helper that threw
  * on that would turn an unrelated test's fixture into a failure here.
  */
-export function renderSandboxProxyHtml(): string {
-  if (rendered !== null) return rendered;
+export function renderSandboxProxyHtml(context?: { htmlSha256: string; hostOrigin: string; admissionId: string }): string {
+  if (rendered !== null) return rendered.replace('"__MCPJAM_VIEW_CONTEXT__"', () => JSON.stringify(context ?? null));
   const html = MCP_APPS_SANDBOX_PROXY_HTML.replace(
     '"__MCPJAM_RECORDER_SHIM__"',
     () => JSON.stringify(RECORDER_SHIM_JS),
@@ -171,7 +171,7 @@ export function renderSandboxProxyHtml(): string {
   ).replace('/*__MCPJAM_WEBMCP_RELAY__*/', () => WEBMCP_RELAY_SOURCE);
   const result = HOSTED_MODE ? withoutLocalFrameSources(html) : html;
   rendered = result;
-  return result;
+  return result.replace('"__MCPJAM_VIEW_CONTEXT__"', () => JSON.stringify(context ?? null));
 }
 
 /** Test-only: drop the memo so a `vi.mock` of the config is observable. */

@@ -17,6 +17,7 @@ import {
   reserveLoopbackPort,
 } from "../bridge-endpoint.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
+import { availableListenerPort } from "../conformance/listener-port.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import {
   readProcessBirthIdentity,
@@ -35,6 +36,16 @@ import { LocalHarnessSupervisor } from "../supervisor.js";
 import { localHarnessStateRoot } from "../grants.js";
 
 const canOwnProcesses = supportsOwnershipProof();
+
+function claudeBootstrapDir(sessionStateDir: string): string {
+  return join(
+    sessionStateDir,
+    "home",
+    ".ai-sdk-harness",
+    ".harness-bootstrap",
+    "claude-code",
+  );
+}
 
 let base: string;
 let workspace: string;
@@ -83,6 +94,23 @@ const LAN_BRIDGE = [
   "server.listen(port, '0.0.0.0', function(){ console.log('up'); });",
   "setInterval(function(){}, 1000);",
 ].join("\n");
+
+/**
+ * A bridge spawn that failed only because another process took its port: the
+ * bridge's own bind hit EADDRINUSE, or the provider found the port already
+ * answering before the spawn. Reserving a port means binding it and letting
+ * go, so a busy runner can take it before the bridge binds; neither outcome is
+ * the binding the exposure probe judges.
+ */
+function lostBridgePort(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /EADDRINUSE|already accepting connections/.test(error.message)
+  );
+}
+
+/** Enough fresh ports that losing every one of them is not a plausible flake. */
+const LAN_BRIDGE_ATTEMPTS = 3;
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-provider-")));
@@ -142,9 +170,10 @@ async function buildSession(
   /**
    * The session's default working directory: session-owned state, NOT the
    * user's checkout. The framework resolves `.harness-bootstrap` and its own
-   * `.agent-runs` against this, and requires the agent's working directory to
-   * be a proper subdirectory of it — which is why the workspace is reached
-   * through the `project` symlink inside it rather than being it.
+   * `.agent-runs` against `$HOME/.ai-sdk-harness`, and requires the agent's
+   * working directory to be a proper subdirectory of the default working
+   * directory — which is why the workspace is reached through the `project`
+   * symlink inside it rather than being it.
    */
   workRoot: string;
   bridgePort: number;
@@ -191,10 +220,10 @@ async function buildSession(
     sessionId,
   );
   await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
-  // The OS picks the port. A fixed counter lands in the ephemeral range,
-  // where a stray socket on a CI runner takes the port first and the bridge
-  // fails to bind with EADDRINUSE.
-  const bridgePort = await reserveLoopbackPort();
+  // The OS picks a port that is free on every interface, not only loopback:
+  // LAN_BRIDGE binds 0.0.0.0, and a port held on any other local address
+  // refuses that bind with EADDRINUSE while 127.0.0.1 still looks free.
+  const bridgePort = await availableListenerPort("0.0.0.0");
 
   const provider = createSupervisedLocalHarnessProvider({
     harnessId: "claude-code",
@@ -431,8 +460,8 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("satisfies the bootstrap sequence without running a package manager", async () => {
     const sup = supervisor();
-    const { session, workRoot } = await buildSession("bootstrap", sup);
-    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
+    const { session, workRoot, sessionStateDir } = await buildSession("bootstrap", sup);
+    const bootstrapDir = claudeBootstrapDir(sessionStateDir);
     const invocations = [
       {
         command: 'mkdir -p "$BOOTSTRAP_DIR"',
@@ -468,8 +497,8 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // where they would sit in their VCS status and never be read, because
     // every reference to them is remapped onto the bundle.
     const sup = supervisor();
-    const { session, workRoot } = await buildSession("bootfiles", sup);
-    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
+    const { session, workRoot, sessionStateDir } = await buildSession("bootfiles", sup);
+    const bootstrapDir = claudeBootstrapDir(sessionStateDir);
 
     await session.writeTextFile({
       path: join(bootstrapDir, "package.json"),
@@ -498,12 +527,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       "bootlink",
       sup,
     );
-    const marker = join(
-      workRoot,
-      ".harness-bootstrap",
-      "claude-code",
-      ".bootstrap-linked.ok",
-    );
+    const marker = join(claudeBootstrapDir(sessionStateDir), ".bootstrap-linked.ok");
     await mkdir(join(sessionStateDir, "bootstrap"), {
       recursive: true,
       mode: 0o700,
@@ -524,12 +548,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
     // ...and an ordinary marker under the overlay still works, so the
     // confinement is not simply refusing the whole overlay.
-    const plain = join(
-      workRoot,
-      ".harness-bootstrap",
-      "claude-code",
-      ".bootstrap-plain.ok",
-    );
+    const plain = join(claudeBootstrapDir(sessionStateDir), ".bootstrap-plain.ok");
     await session.writeTextFile({ path: plain, content: "" });
     await expect(session.readTextFile({ path: plain })).resolves.toBe("");
     await session.stop();
@@ -537,8 +556,8 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("fails closed when the adapter's recipe and the bundle disagree", async () => {
     const sup = supervisor();
-    const { session, workRoot } = await buildSession("bootmismatch", sup);
-    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
+    const { session, workRoot, sessionStateDir } = await buildSession("bootmismatch", sup);
+    const bootstrapDir = claudeBootstrapDir(sessionStateDir);
 
     // Same file, different bytes: the bundle was built for another adapter
     // version, so this session would not run what the adapter bootstrapped.
@@ -574,7 +593,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       "bootmarker",
       sup,
     );
-    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
+    const bootstrapDir = claudeBootstrapDir(sessionStateDir);
     const marker = join(bootstrapDir, ".bootstrap-claude-code-1.ok");
 
     await expect(session.readTextFile({ path: marker })).resolves.toBeNull();
@@ -598,16 +617,12 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // if the translator did not: a `--workdir` pointed through a symlink out
     // of the workspace would start the agent outside its grant.
     const sup = supervisor();
-    const { session, workRoot } = await buildSession("bridge-args", sup);
+    const { session, workRoot, sessionStateDir } = await buildSession("bridge-args", sup);
     await symlink(outside, join(workspace, "escape-args")).catch(() => {});
     await expect(
       session.spawn({
         command:
-          `node '${join(
-            workRoot,
-            ".harness-bootstrap",
-            "claude-code",
-          )}/bridge.mjs' ` +
+          `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
           `--workdir '${join(workspace, "escape-args", "work")}' ` +
           `--bridge-state-dir '${join(workspace, "state")}'`,
       }),
@@ -615,11 +630,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(
       session.spawn({
         command:
-          `node '${join(
-            workRoot,
-            ".harness-bootstrap",
-            "claude-code",
-          )}/bridge.mjs' ` +
+          `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
           `--workdir '/etc' --bridge-state-dir '${join(workspace, "state")}'`,
       }),
     ).rejects.toThrow(/outside every directory/);
@@ -703,11 +714,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
     const proc = await session.spawn({
       command:
-        `node '${join(
-          workRoot,
-          ".harness-bootstrap",
-          "claude-code",
-        )}/bridge.mjs' ` +
+        `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
         `--workdir '${workDir}' --bridge-state-dir '${bridgeStateDir}'`,
       // What the adapter actually passes: the bridge's own channel token and
       // port, plus — here — a name outside the allowlist that must not reach
@@ -765,39 +772,42 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     // agent control channel to whatever network the machine is on, so the
     // session must stop rather than proceed — and the process must not be left
     // running behind the refusal.
-    const sup = supervisor();
-    const { session, workRoot, bridgePort } = await buildSession(
-      "lan-bridge",
-      sup,
-      undefined,
-      LAN_BRIDGE,
-      undefined,
-      // A pack whose loopback wrapper does nothing. The probe, not the
-      // launcher, is what makes the loopback guarantee enforceable.
-      'await import("./bridge.mjs");',
-    );
     const hasLan = nonLoopbackLocalAddresses().some((a) => !a.includes(":"));
-    if (!hasLan) {
-      await session.stop();
-      return; // nothing to be exposed to on this machine
-    }
-    await expect(
-      session.spawn({
+    if (!hasLan) return; // nothing to be exposed to on this machine
+    // A lost port costs the 10s readiness wait, hence the longer timeout.
+    for (let attempt = 1; ; attempt += 1) {
+      const sessionId = `lan-bridge-${attempt}`;
+      const sup = supervisor();
+      const { session, sessionStateDir, bridgePort } = await buildSession(
+        sessionId,
+        sup,
+        undefined,
+        LAN_BRIDGE,
+        undefined,
+        // A pack whose loopback wrapper does nothing. The probe, not the
+        // launcher, is what makes the loopback guarantee enforceable.
+        'await import("./bridge.mjs");',
+      );
+      const spawned = session.spawn({
         command:
-          `node '${join(
-            workRoot,
-            ".harness-bootstrap",
-            "claude-code",
-          )}/bridge.mjs' ` +
+          `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
           `--workdir '${workspace}' --bridge-state-dir '${join(
             workspace,
             "state",
           )}'`,
         env: { BRIDGE_WS_PORT: String(bridgePort) },
-      }),
-    ).rejects.toThrow(/reachable from the local network/);
-    expect(sup.liveProcessCount("lan-bridge")).toBe(0);
-  }, 30_000);
+      });
+      const failure = await spawned.then(() => undefined, (error: unknown) => error);
+      if (attempt < LAN_BRIDGE_ATTEMPTS && lostBridgePort(failure)) {
+        // Throws if the lost attempt left a process running.
+        await session.stop();
+        continue;
+      }
+      await expect(spawned).rejects.toThrow(/reachable from the local network/);
+      expect(sup.liveProcessCount(sessionId)).toBe(0);
+      return;
+    }
+  }, 60_000);
 
   it("destroy takes the tree down and removes the session state", async () => {
     const sup = supervisor();
@@ -805,11 +815,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
       await buildSession("destroy", sup);
     const proc = await session.spawn({
       command:
-        `node '${join(
-          workRoot,
-          ".harness-bootstrap",
-          "claude-code",
-        )}/bridge.mjs' ` +
+        `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
         `--workdir '${workspace}' --bridge-state-dir '${join(
           workspace,
           "state",
@@ -823,7 +829,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
   it("refuses to launch when the verified bundle changed after consent", async () => {
     const sup = supervisor();
-    const { session, workRoot, bridgePort } = await buildSession(
+    const { session, workRoot, sessionStateDir, bridgePort } = await buildSession(
       "swapped",
       sup,
     );
@@ -832,11 +838,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     await expect(
       session.spawn({
         command:
-          `node '${join(
-            workRoot,
-            ".harness-bootstrap",
-            "claude-code",
-          )}/bridge.mjs' ` +
+          `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
           `--workdir '${workspace}' --bridge-state-dir '${join(
             workspace,
             "state",

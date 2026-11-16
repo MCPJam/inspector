@@ -454,7 +454,7 @@ describe("EvaluateTab", () => {
     mocks.getEffectiveSuiteServers.mockReturnValue(["server-a"]);
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await userEvent.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
     expect(screen.getByRole("dialog", { name: "Run Suite suite-a" })).toBeInTheDocument();
     expect(screen.getByTestId("evals-suites-overview")).toBeInTheDocument();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
@@ -543,7 +543,7 @@ describe("EvaluateTab", () => {
     });
   });
 
-  describe("Add case and Setup Run with no suite yet", () => {
+  describe("Add case and Run with no suite yet", () => {
     function withSuites(sortedSuites: unknown[], isOverviewLoading = false) {
       mocks.useEvalQueries.mockImplementation(
         ({ selectedSuiteId }: { selectedSuiteId: string | null }) => ({
@@ -561,11 +561,11 @@ describe("EvaluateTab", () => {
       mocks.route.current = { type: "list" };
     });
 
-    it("Setup Run goes straight to creating a suite instead of an empty picker", async () => {
+    it("Run goes straight to creating a suite instead of an empty picker", async () => {
       withSuites([]);
       render(<EvaluateTab projectId="ws-1" />);
 
-      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^run$/i }));
 
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
         type: "create",
@@ -611,7 +611,7 @@ describe("EvaluateTab", () => {
     it("waits for suites to load before deciding there are none", async () => {
       withSuites([], true);
       const view = render(<EvaluateTab projectId="ws-1" />);
-      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^run$/i }));
       expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
       expect(screen.getByText("Loading suites…")).toBeInTheDocument();
 
@@ -627,7 +627,7 @@ describe("EvaluateTab", () => {
     it("opens the picker once suites arrive, without sending anyone to create one", async () => {
       withSuites([], true);
       const view = render(<EvaluateTab projectId="ws-1" />);
-      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^run$/i }));
 
       mocks.useEvalQueries.mockImplementation(
         ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
@@ -645,7 +645,7 @@ describe("EvaluateTab", () => {
     it("drops a pending action when the route leaves the list", async () => {
       withSuites([], true);
       const view = render(<EvaluateTab projectId="ws-1" />);
-      await userEvent.click(screen.getByRole("button", { name: /setup run/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^run$/i }));
 
       // Back to another page while suites load, then the overview answers.
       mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
@@ -776,7 +776,7 @@ describe("EvaluateTab", () => {
     const user = userEvent.setup();
     render(<EvaluateTab projectId="ws-1" />);
     await userEvent.click(screen.getByRole("button", { name: /^suites$/i }));
-    await user.click(screen.getByRole("button", { name: "Setup Run Suite suite-a" }));
+    await user.click(screen.getByRole("button", { name: "Run Suite suite-a" }));
     expect(mocks.handleRerun).not.toHaveBeenCalled();
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Start reviewed run" }));

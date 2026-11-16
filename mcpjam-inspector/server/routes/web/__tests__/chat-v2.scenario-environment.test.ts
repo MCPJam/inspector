@@ -310,7 +310,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(persistArgs.turnTrace.environmentAtTurn).toBeDefined();
     // Delivery is unaffected — the skill still reaches the engine.
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(args.skillsSource.capabilities.standaloneSkills).toHaveLength(1);
+    expect(args.skills.set.standaloneSkills).toHaveLength(1);
   });
 
   it("a HOST-backed scenario records nothing — there is no environment", async () => {
@@ -318,6 +318,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
       ok: true,
       config: SCENARIO_CONFIG,
     });
+    convexQueryMock.mockResolvedValue([]);
 
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
@@ -363,9 +364,9 @@ describe("web chat-v2 — environment-backed scenario", () => {
     // Captured, not live — the same single-channel rule as an environment
     // target: the payload already froze this turn's skills, so composing the
     // connected servers' live catalogs would add ones it excluded.
-    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
-    expect(args.skillsSource.kind).toBe("resolved");
-    expect(args.skillsSource.capabilities.standaloneSkills).toEqual([
+    expect(args.skills.agent).toEqual({ kind: "environment" });
+    expect(args.skills.runtime).toEqual({ kind: "agent" });
+    expect(args.skills.set.standaloneSkills).toEqual([
       {
         ref: "release-notes",
         skillId: "sk_env",
@@ -379,7 +380,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     ]);
     // The plugin-sourced server keeps its classification even with no
     // attribution probe on this path.
-    expect(args.skillsSource.capabilities.pluginServerIds).toEqual([
+    expect(args.skills.set.pluginServerIds).toEqual([
       "env-server-2",
     ]);
 
@@ -411,8 +412,8 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(response.status).toBe(200);
 
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
-    expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
+    expect(args.skills.agent).toEqual({ kind: "environment" });
+    expect(args.skills.set.standaloneSkills).toEqual([]);
     // Deploy-skew fallback: no `connectable` projection ⇒ raw ids connect and
     // the manager shows the id as the name.
     expect(args.selectedServers).toEqual(["env-server-1"]);
@@ -420,16 +421,30 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(handlerArgs.runtimeSkillsOverride).toEqual([]);
   });
 
-  it("keeps a host-backed scenario (no payload) byte-identical to today", async () => {
+  it("runs a host-backed study on the study's shared Library, live on its servers", async () => {
     fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: SCENARIO_CONFIG,
     });
+    convexQueryMock.mockImplementation(async (ref: string) =>
+      ref === "projectSkills:listSkillsForRuntime"
+        ? [
+            {
+              skillId: "sk_shared",
+              name: "onboarding",
+              description: "Project onboarding",
+              content: "onboarding body",
+              aggregateHash: "agg_shared",
+            },
+          ]
+        : [],
+    );
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
     expect(response.status).toBe(200);
 
-    // Legacy path: the body's server list still drives the turn.
+    // The body's server list still drives the turn: the study has no
+    // environment.
     const authorizeCall = (global.fetch as any).mock.calls.find(
       ([url]: [string]) => String(url).endsWith("/web/authorize-batch")
     );
@@ -437,9 +452,90 @@ describe("web chat-v2 — environment-backed scenario", () => {
       "body-server-9",
     ]);
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(args.skillsSource).toBeUndefined();
+    // Live, so the study's servers' own skills join beside the Library's.
+    expect(args.skills.agent).toEqual({ kind: "live" });
+    expect(
+      args.skills.delivered.map((ref: { ref: string }) => ref.ref),
+    ).toEqual(["onboarding"]);
+    const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+    expect(
+      handlerArgs.runtimeSkillsOverride.map(
+        (skill: { name: string }) => skill.name,
+      ),
+    ).toEqual(["onboarding"]);
+    expect(handlerArgs.liveTurn).toBe(true);
+  });
+
+  it("keeps a host-backed study's turn when its Library can't be read", async () => {
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: SCENARIO_CONFIG,
+    });
+    convexQueryMock.mockRejectedValue(new Error("convex down"));
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+
+    const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+    // Still live: only the Library's skills are lost.
+    expect(args.skills).toMatchObject({ agent: { kind: "live" }, delivered: [] });
+    // A harness would leave its box as it is, and still offer the servers'
+    // own skills.
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
     expect(handlerArgs.runtimeSkillsOverride).toBeUndefined();
+    expect(handlerArgs.liveTurn).toBe(true);
+  });
+
+  it("delivers a study's captured server skills to MCPJam's agent and records them", async () => {
+    const SERVER_PROVENANCE = {
+      serverSkillId: "ss_search",
+      name: "search",
+      sharing: "project",
+      channels: ["mcp-server"],
+    };
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        ...SCENARIO_CONFIG,
+        environment: {
+          ...ENVIRONMENT_PAYLOAD,
+          serverSkills: [
+            {
+              serverSkillId: "ss_search",
+              versionId: "ssv_search_1",
+              serverId: "env-server-1",
+              serverSlug: "linear",
+              serverLabel: "linear",
+              ref: "linear/search",
+              skillUri: "skill://linear/search",
+              name: "search",
+              description: "Search issues",
+              content: "# Search",
+              contentSha256: "sha_search",
+              versionHash: "vh_search",
+              versionNumber: 1,
+              capturedAt: 1_700_000_000_000,
+              provenance: SERVER_PROVENANCE,
+              files: [],
+            },
+          ],
+        },
+      },
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", BASE_BODY, token);
+    expect(response.status).toBe(200);
+
+    const args = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(args.skills.agent).toEqual({ kind: "environment" });
+    expect(
+      args.skills.delivered.map((ref: { ref: string }) => ref.ref),
+    ).toEqual(["release-notes", "linear/search"]);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([SERVER_PROVENANCE]);
+    // Captured with the study: a harness lists no connected server's own.
+    const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
+    expect(handlerArgs).not.toHaveProperty("liveTurn");
   });
 
   it("stops the turn on a present-but-malformed payload instead of falling back", async () => {
@@ -525,7 +621,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     );
 
     const capabilities =
-      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+      prepareChatV2Mock.mock.calls.at(-1)![0].skills.set;
     expect(capabilities.problems).toEqual([]);
     expect(
       capabilities.servers.find(
@@ -553,7 +649,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(response.status).toBe(200);
 
     const capabilities =
-      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+      prepareChatV2Mock.mock.calls.at(-1)![0].skills.set;
     expect(
       capabilities.problems.map((problem: { code: string }) => problem.code)
     ).toEqual(["plugin_origin_unavailable"]);

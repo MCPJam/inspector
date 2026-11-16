@@ -1,4 +1,5 @@
 import type { ComputerFileSystem } from "../computer-file-target.js";
+import { createHash } from "node:crypto";
 
 /** In-memory stand-in for the E2B sandbox filesystem used by Computer file
  * targets. `symlinks` and `dirs` mark paths the adapter must refuse. */
@@ -20,11 +21,22 @@ export function fakeComputerFiles(initial: Record<string, string> = {}) {
     dirs: typeof dirs;
     calls: typeof calls;
     beforeRename?: () => void;
+    beforeCompare?: () => void;
   } = {
     files,
     symlinks,
     dirs,
     calls,
+    async compareAndReplace(input) {
+      calls.push(`compareAndReplace ${input.path}`);
+      fs.beforeCompare?.();
+      const previous = files.get(input.path);
+      if (!previous || symlinks.has(input.path)) throw notFound();
+      const etag = createHash("sha256").update(previous).digest("hex");
+      if (etag !== input.expectedEtag) return { outcome: "conflict", etag };
+      files.set(input.path, input.bytes.slice());
+      return { outcome: "saved", etag: createHash("sha256").update(input.bytes).digest("hex") };
+    },
     async getInfo(path) {
       calls.push(`getInfo ${path}`);
       if (dirs.has(path)) return { type: "dir", size: 0 };

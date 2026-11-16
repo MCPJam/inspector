@@ -32,6 +32,7 @@ import {
   BROWSERD_PROTOCOL_VERSION,
 } from "../protocol";
 import { exportBrowserProfileArchive } from "../profile-archive";
+import { WorkspacePreviewRelay } from "./workspace-preview";
 
 function log(message: string): void {
   process.stderr.write(`[mcpjam-browserd] ${message}\n`);
@@ -241,8 +242,10 @@ async function main(): Promise<void> {
     return { width, height };
   };
 
+  const preview = new WorkspacePreviewRelay();
   const stack = buildBrowserdStack(driver, {
     token: config.token,
+    preview,
     lease,
     // Read ONCE, at boot: the file cannot change under a running process in
     // any way that would make a later read more truthful, and hashing a
@@ -302,6 +305,7 @@ async function main(): Promise<void> {
     // means the process never leaves and the box is never released.
     await recorder?.finalize({ graceMs: 2_000 }).catch(() => {});
     video?.dispose();
+    await preview.close();
     stack.server.close();
     await driver.close().catch(() => {});
     log(`shut down on ${signal}`);

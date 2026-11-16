@@ -3,6 +3,7 @@ import {
   render as rtlRender,
   screen,
   fireEvent,
+  act,
   waitFor,
   within,
   type RenderOptions,
@@ -22,6 +23,29 @@ import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { DbUserReadyProvider } from "@/contexts/db-user-ready-context";
+import { describeError } from "@mcpjam/sdk/browser";
+import { toast } from "@/lib/toast";
+
+const { captureException, posthogCaptureException } = vi.hoisted(() => ({
+  captureException: vi.fn(),
+  posthogCaptureException: vi.fn(),
+}));
+vi.mock("@sentry/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@sentry/react")>()),
+  captureException,
+}));
+vi.mock("posthog-js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("posthog-js")>();
+  return {
+    ...actual,
+    default: { ...actual.default, captureException: posthogCaptureException },
+  };
+});
+vi.mock("@/lib/PosthogUtils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/PosthogUtils")>()),
+  isErrorCaptureSurface: () => true,
+  isCredentialBearingPath: () => false,
+}));
 
 // The header Auto-connect switch reads the real preferences store, which
 // throws without a provider — wrap every render in one.
@@ -399,7 +423,12 @@ vi.mock("../connection/AddServerModal", () => ({
 }));
 
 vi.mock("../connection/JsonImportModal", () => ({
-  JsonImportModal: () => null,
+  JsonImportModal: ({ onImport }: { onImport: (servers: ServerFormData[]) => void }) => (
+    <button onClick={() => onImport([
+      { name: "Imported-X", type: "http", url: "https://example.com/mcp" },
+      { name: "Imported-Y", type: "http", url: "https://example.com/mcp" },
+    ])}>Import Fixtures</button>
+  ),
 }));
 
 vi.mock("../project/ProjectShareButton", () => ({
@@ -1078,7 +1107,7 @@ describe("ServersTab shared detail modal", () => {
       serverName: "renamed-server",
     });
 
-    render(<ServersTab {...defaultProps} onUpdate={onUpdate} />);
+    const view = render(<ServersTab {...defaultProps} onUpdate={onUpdate} />);
 
     fireEvent.click(screen.getByText("Open test-server"));
     fireEvent.click(screen.getByText("Save Rename"));
@@ -1093,6 +1122,43 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
       "renamed-server"
     );
+    const renamed = { "renamed-server": createServer({ name: "renamed-server" }) };
+    view.rerender(<ServersTab {...defaultProps} onUpdate={onUpdate} projectServers={renamed} projects={{ "project-1": createProject(renamed) }} />);
+  });
+
+  it("retains the original modal name and card order on a refused rename", async () => {
+    const onUpdate = vi.fn().mockResolvedValue({ ok: false, serverName: "test-server" });
+    render(<ServersTab {...defaultProps} onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByText("Open test-server"));
+    fireEvent.click(screen.getByText("Save Rename"));
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledOnce());
+    expect(screen.getByTestId("modal-server-name")).toHaveTextContent("test-server");
+    expect(JSON.parse(localStorage.getItem("mcp-server-order")!)["project-1"]).toEqual(["test-server"]);
+  });
+
+  it("wires JSON import intent before independent saves and retains catalog group order", async () => {
+    const callbacks = new Map<string, (() => void) | undefined>();
+    const onConnect = vi.fn((_form: ServerFormData, options?: { onConfigSaved?: () => void }) => {
+      return new Promise<void>((resolve) => callbacks.set(_form.name, () => {
+        options?.onConfigSaved?.();
+        resolve();
+      }));
+    });
+    const view = render(<ServersTab {...defaultProps} onConnect={onConnect} />);
+    fireEvent.click(screen.getByText("Import Fixtures"));
+    expect(onConnect).toHaveBeenCalledTimes(2);
+    // Catalog delivery can lag the confirmed save and can arrive out of order.
+    await waitFor(() => expect(callbacks.get("Imported-Y")).toBeTypeOf("function"));
+    await act(async () => {
+      callbacks.get("Imported-Y")!();
+      callbacks.get("Imported-X")!();
+    });
+    const withY = { ...projectServers, "Imported-Y": createServer({ name: "Imported-Y" }) };
+    view.rerender(<ServersTab {...defaultProps} onConnect={onConnect} projectServers={withY} projects={{ "project-1": createProject(withY) }} />);
+    expect(screen.getAllByTestId(/^server-card-/).map((card) => card.dataset.testid)).toEqual(["server-card-Imported-Y", "server-card-test-server"]);
+    const complete = { ...projectServers, "Imported-X": createServer({ name: "Imported-X" }), "Imported-Y": withY["Imported-Y"] };
+    view.rerender(<ServersTab {...defaultProps} onConnect={onConnect} projectServers={complete} projects={{ "project-1": createProject(complete) }} />);
+    expect(screen.getAllByTestId(/^server-card-/).map((card) => card.dataset.testid)).toEqual(["server-card-Imported-X", "server-card-Imported-Y", "server-card-test-server"]);
   });
 
   it("reopens the shared modal on configuration after returning from OAuth", async () => {
@@ -1165,6 +1231,46 @@ describe("ServersTab shared detail modal", () => {
       screen.getByRole("button", { name: "Connect Linear" })
     ).toBeDisabled();
   });
+
+  it.each([
+    ["user_server", false],
+    ["mcpjam", true],
+  ] as const)(
+    "handles %s quick-connect errors without losing the toast",
+    async (origin, reported) => {
+      mockIsAuthenticated = true;
+      mockCatalogCards = [createLinearCatalogCard()];
+      const error = Object.assign(new Error("Registry connection failed"), {
+        normalized: {
+          ...describeError(new Error("Registry connection failed")),
+          origin,
+        },
+      });
+      mockConnectRegistry.mockRejectedValueOnce(error);
+      const showError = vi.spyOn(toast, "error").mockReturnValue("error-toast");
+      try {
+        render(<ServersTab {...defaultProps} projectServers={{}} />);
+        fireEvent.click(screen.getByRole("button", { name: "Connect Linear" }));
+        await waitFor(() => expect(showError).toHaveBeenCalledWith(error.message));
+        expect(captureException).toHaveBeenCalledTimes(reported ? 1 : 0);
+        expect(posthogCaptureException).toHaveBeenCalledTimes(reported ? 1 : 0);
+        if (reported) {
+          expect(captureException).toHaveBeenCalledWith(
+            error,
+            expect.objectContaining({
+              tags: expect.objectContaining({ source: "registry_quick_connect" }),
+            })
+          );
+        }
+        expect(localStorage.getItem("mcp-quick-connect-pending")).toBeNull();
+        expect(
+          screen.getByRole("button", { name: "Connect Linear" })
+        ).toBeEnabled();
+      } finally {
+        showError.mockRestore();
+      }
+    }
+  );
 
   it("keeps quick connect visible during oauth-flow after return", () => {
     mockIsAuthenticated = true;

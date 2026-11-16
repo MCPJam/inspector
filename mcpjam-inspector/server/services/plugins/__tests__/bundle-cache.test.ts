@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import JSZip from "jszip";
+import { parsePluginBundle } from "@mcpjam/sdk/plugin-bundle";
 import { createZipPluginFileSource } from "../bundle-file-sources.js";
 import {
   PluginBundleCache,
@@ -21,6 +22,7 @@ import {
   fixtureBundleHash,
   fixtureBundleSource,
   makeCacheRoot,
+  legacyFixtureBundleFiles,
 } from "./fixture-bundle.js";
 
 // The cache's `chmod`, so a test can stand in for a filesystem without modes.
@@ -69,6 +71,43 @@ describe("PluginBundleCache", () => {
     // bundle could declare appears in the entry beyond its own content.
     const entries = await readdir(result.root);
     expect(entries.sort()).toEqual(["data.txt", "mcp.json", "plugin.json", "server"]);
+  });
+
+  it("uses the wrapped plugin root on materialization and cache hits", async () => {
+    const wrapped = Object.fromEntries(
+      Object.entries(fixtureBundleFiles()).map(([path, content]) => [`wrapper/${path}`, content]),
+    );
+    const source = await fixtureBundleSource(wrapped);
+    const parsed = await parsePluginBundle(source, { profile: "openai-compatible" });
+    // The backend pin computes the stored hash from plugin-relative paths.
+    const original = await parsePluginBundle(await fixtureBundleSource(), {
+      profile: "openai-compatible",
+    });
+    expect(parsed.bundleHash).toBe(original.bundleHash);
+    const wrappedIdentity = { ...identity(), bundleHash: original.bundleHash };
+    const seeded = await cache.materialize(wrappedIdentity, { source, profile: "openai-compatible" });
+    expect(seeded.root).toBe(join(cache.entryPath(wrappedIdentity), "wrapper"));
+    await expect(readFile(join(seeded.root, "server/index.js"), "utf8")).resolves.toContain("tools/call");
+    const hit = await cache.materialize(wrappedIdentity, { profile: "openai-compatible" });
+    expect(hit.root).toBe(seeded.root);
+    expect(hit.parsed.executionDigest).toBe(parsed.executionDigest);
+  });
+
+  it("verifies a legacy OpenAI archive on seed and cache hit while preserving strict defaults", async () => {
+    const source = await fixtureBundleSource(legacyFixtureBundleFiles());
+    const parsed = await parsePluginBundle(source, { profile: "openai-compatible" });
+    const legacyIdentity = { ...identity(), bundleHash: parsed.bundleHash };
+    await expect(cache.materialize(legacyIdentity, { source })).rejects.toMatchObject({ code: "invalid_bundle" });
+    const seeded = await cache.materialize(legacyIdentity, { source, profile: "openai-compatible" });
+    expect(seeded.parsed.interpretation).toEqual(parsed.interpretation);
+    expect(seeded.parsed.executionDigest).toBe(parsed.executionDigest);
+    expect(seeded.parsed.skills).toHaveLength(1);
+    await expect(readFile(join(seeded.root, "skills/inspect/SKILL.md"), "utf8")).resolves.toContain("Read the current part.");
+    const hit = await cache.materialize(legacyIdentity, { profile: "openai-compatible" });
+    expect(hit.parsed.executionDigest).toBe(parsed.executionDigest);
+    await expect(cache.materialize(legacyIdentity)).rejects.toMatchObject({ code: "invalid_bundle" });
+    await appendFile(join(hit.root, "skills/inspect/SKILL.md"), "Tampered");
+    await expect(cache.materialize(legacyIdentity, { profile: "openai-compatible" })).rejects.toMatchObject({ code: "hash_mismatch" });
   });
 
   it.skipIf(process.platform === "win32")(

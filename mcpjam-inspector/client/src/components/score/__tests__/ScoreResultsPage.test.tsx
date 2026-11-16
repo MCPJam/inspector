@@ -257,7 +257,7 @@ describe("ScoreResultsPage pending profile stamp", () => {
       const label = await screen.findByText("Not run");
       expect(label).toHaveAttribute(
         "title",
-        "This check needs an input before it can run.",
+        "This check needs a setup change before it can run.",
       );
       expect(screen.queryByTitle(/Not scored/)).not.toBeInTheDocument();
       expect(screen.getAllByText(expected)).toHaveLength(2);

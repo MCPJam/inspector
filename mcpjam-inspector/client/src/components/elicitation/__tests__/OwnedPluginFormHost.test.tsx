@@ -8,8 +8,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
-  owner: "owned-user",
-  rows: [] as unknown[],
+  owner: "owned-user" as string | null | undefined,
+  rows: [] as unknown[] | undefined,
   mutate: vi.fn(),
   action: vi.fn(),
   post: vi.fn(),
@@ -18,13 +18,24 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
   useConvex: () => ({ mutation: state.mutate, action: state.action }),
   useQuery: (name: string) =>
-    name === "users:getCurrentUser" ? { _id: state.owner } : state.rows,
+    name === "users:getCurrentUser"
+      ? state.owner === undefined
+        ? undefined
+        : state.owner === null
+          ? null
+          : { _id: state.owner }
+      : state.rows,
 }));
 vi.mock("@/lib/apis/web/base", () => ({ webPost: state.post }));
 import {
   OwnedPluginFormHost,
   PLUGIN_FORM_SUBMIT_TIMEOUT_MS,
 } from "../OwnedPluginFormHost";
+
+import {
+  registerComposerSlot,
+  __resetComposerFormStore,
+} from "../composer-form-store";
 
 function request(id = "owned-request") {
   return {
@@ -47,9 +58,13 @@ function request(id = "owned-request") {
     pluginWorkspaceId: "workspace",
   };
 }
-const ui = () => (
+const ui = (retainWhileLoading = false) => (
   <StrictMode>
-    <OwnedPluginFormHost projectId="project" workspaceId="workspace" />
+    <OwnedPluginFormHost
+      projectId="project"
+      workspaceId="workspace"
+      retainWhileLoading={retainWhileLoading}
+    />
   </StrictMode>
 );
 describe("owned plugin form delivery surface", () => {
@@ -64,6 +79,108 @@ describe("owned plugin form delivery surface", () => {
       .mockReset()
       .mockResolvedValue({ ok: true, storageId: "owned-receipt" });
   });
+  it("does not resend when a submitting initial dialog gains its first composer", async () => {
+    state.rows = [
+      {
+        ...request(),
+        requestedSchema: {
+          type: "object",
+          required: ["note"],
+          properties: {
+            note: { type: "string", minLength: 2 },
+          },
+        },
+      },
+    ];
+    let finish!: (value: { ok: boolean }) => void;
+    state.mutate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = render(ui());
+    fireEvent.change(screen.getByLabelText(/note/i), {
+      target: { value: "kept answer" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Accept", exact: true }),
+    );
+    await waitFor(() => expect(state.mutate).toHaveBeenCalledTimes(1));
+    const slot = document.createElement("div");
+    document.body.append(slot);
+    let release!: () => void;
+    act(() => {
+      release = registerComposerSlot("workspace", slot);
+    });
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    expect(state.mutate).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ ok: true }));
+    view.unmount();
+    release();
+    slot.remove();
+  });
+
+  it("keeps an in-flight submission mounted when its composer slot changes", async () => {
+    state.rows = [
+      {
+        ...request(),
+        requestedSchema: {
+          type: "object",
+          required: ["note"],
+          properties: {
+            note: { type: "string", minLength: 2 },
+          },
+        },
+      },
+    ];
+    const background = document.createElement("div");
+    const takeover = document.createElement("div");
+    document.body.append(background, takeover);
+    let releaseBackground = registerComposerSlot("workspace", background);
+    let finish!: (value: { ok: boolean }) => void;
+    state.mutate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = render(ui());
+    const field = await screen.findByRole("textbox");
+    fireEvent.change(field, { target: { value: "kept answer" } });
+    fireEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    await waitFor(() => expect(state.mutate).toHaveBeenCalledTimes(1));
+    let releaseTakeover!: () => void;
+    act(() => {
+      releaseTakeover = registerComposerSlot("workspace", takeover);
+    });
+    expect(takeover.querySelector("input")).toBe(field);
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    act(releaseTakeover);
+    expect(background.querySelector("input")).toBe(field);
+    act(releaseBackground);
+    expect(field.isConnected).toBe(true);
+    expect(screen.getByRole("dialog")).toContainElement(field);
+    act(() => {
+      releaseBackground = registerComposerSlot("workspace", background);
+    });
+    expect(background.querySelector("input")).toBe(field);
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    expect(state.mutate).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finish({ ok: true });
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox")).not.toBeInTheDocument(),
+    );
+    view.unmount();
+    releaseBackground();
+    background.remove();
+    takeover.remove();
+  });
+
   it("survives StrictMode and explicitly retries the same private receipt after an uncertain acknowledgement", async () => {
     state.mutate.mockRejectedValueOnce(new Error("lost acknowledgement"));
     render(ui());
@@ -241,4 +358,46 @@ describe("owned plugin form delivery surface", () => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  __resetComposerFormStore();
+});
+
+it("retains an opted-in owner through undefined reads but clears confirmed empty or signed-out reads", async () => {
+  state.owner = "owned-user";
+  const original = [request()];
+  state.rows = original;
+  const view = render(ui(true));
+  const field = await screen.findByLabelText(/note/i);
+  fireEvent.change(field, { target: { value: "kept through auth refresh" } });
+  state.owner = undefined;
+  state.rows = undefined;
+  view.rerender(ui(true));
+  expect(screen.getByLabelText(/note/i)).toBe(field);
+  expect(field).toHaveValue("kept through auth refresh");
+  state.owner = "owned-user";
+  state.rows = original;
+  view.rerender(ui(true));
+  expect(screen.getByLabelText(/note/i)).toBe(field);
+  state.rows = [];
+  view.rerender(ui(true));
+  expect(screen.queryByLabelText(/note/i)).toBeNull();
+  state.rows = original;
+  state.owner = null;
+  view.rerender(ui(true));
+  expect(screen.queryByLabelText(/note/i)).toBeNull();
+});
+
+
+it("does not resurrect the previous actor's form after a replacement actor starts loading", async () => {
+  state.owner = "original-user";
+  state.rows = [request()];
+  const view = render(ui(true));
+  await screen.findByLabelText(/note/i);
+  state.owner = "replacement-user";
+  state.rows = undefined;
+  view.rerender(ui(true));
+  expect(screen.queryByLabelText(/note/i)).toBeNull();
+  state.owner = undefined;
+  view.rerender(ui(true));
+  expect(screen.queryByLabelText(/note/i)).toBeNull();
+  expect(state.mutate).not.toHaveBeenCalled();
 });

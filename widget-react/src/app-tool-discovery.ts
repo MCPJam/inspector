@@ -1,4 +1,5 @@
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { appToolPresentation } from "./app-tool-presentation";
 import {
   appToolSourceFor,
   discoverViewAppTools,
@@ -31,7 +32,7 @@ export function createAppToolDiscovery(config: {
   registry: { getState: () => AppToolsRegistryState };
   context: () => Pick<
     AppInstance,
-    "chatSessionId" | "parentToolCallId" | "serverId"
+    "chatSessionId" | "getModelChatSessionId" | "parentToolCallId" | "serverId" | "presentation"
   >;
   onError: (error: unknown) => void;
 }) {
@@ -41,6 +42,13 @@ export function createAppToolDiscovery(config: {
     bridgeId: string,
     options: AppToolDiscoveryOptions,
   ): Promise<void> {
+    const readContext = () => {
+      const context = config.context();
+      return options.getIframeElement ? {
+        ...context,
+        presentation: appToolPresentation(context.presentation?.label, options.getIframeElement()),
+      } : context;
+    };
     let state = states.get(bridge);
     if (!state) {
       state = {
@@ -103,7 +111,7 @@ export function createAppToolDiscovery(config: {
           if (result.source === "webmcp" && result.tools.length === 0) {
             config.registry.getState().unregisterInstance(bridgeId);
           } else {
-            const context = config.context();
+            const context = readContext();
             const version = bridge.getAppVersion();
             await config.registry.getState().registerInstance({
               ...context,
@@ -119,6 +127,7 @@ export function createAppToolDiscovery(config: {
             });
             if (!options.isLive())
               config.registry.getState().unregisterInstance(bridgeId);
+            else config.registry.getState().updatePresentation(bridgeId, readContext().presentation ?? {});
           }
         } while (current.dirty && options.isLive());
       } catch (error) {

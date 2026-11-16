@@ -214,15 +214,24 @@ export function isAuthChallengeNoticeDataPart(
 }
 
 /**
+ * The server named in the sign-in copy. A call settled on a later turn can
+ * belong to a server that is no longer connected, so its name is not always
+ * known; the copy then names no server rather than one called "unknown".
+ */
+function mcpServerPhrase(serverName: string | undefined): string {
+  return serverName ? `MCP server "${serverName}"` : "an MCP server";
+}
+
+/**
  * The tool result the model sees when the user did not sign in (the call was
  * cancelled, or its continuation expired). Reason-aware: a sign-in, not a
  * scope upgrade.
  */
 export function authChallengeCancelledText(
-  serverName: string,
+  serverName: string | undefined,
   toolName: string,
 ): string {
-  return `Not run: MCP server "${serverName}" asked the user to sign in before "${toolName}" could run, and the user did not sign in. Do not retry this call unless the user asks.`;
+  return `Not run: ${mcpServerPhrase(serverName)} asked the user to sign in before "${toolName}" could run, and the user did not sign in. Do not retry this call unless the user asks.`;
 }
 
 /**
@@ -231,10 +240,10 @@ export function authChallengeCancelledText(
  * it had not.
  */
 export function authChallengeMayHaveRunText(
-  serverName: string,
+  serverName: string | undefined,
   toolName: string,
 ): string {
-  return `"${toolName}" on MCP server "${serverName}" was retried after the user signed in, but its result never came back, so it may have run. Do not retry this call unless the user asks.`;
+  return `"${toolName}" on ${mcpServerPhrase(serverName)} was retried after the user signed in, but its result never came back, so it may have run. Do not retry this call unless the user asks.`;
 }
 
 /** The tool result after sign-in when the server still refuses the call. */

@@ -1,5 +1,5 @@
 import { renderHook } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   CHOOSE_ORG_JUDGE_MODEL,
   hasBlockingPreflight,
@@ -8,9 +8,16 @@ import {
 } from "../suite-run-preflight";
 import type { EvalSuite } from "../../evals/types";
 
+// The org's Cursor key, as the run sheet reads it; the environment
+// resolutions stay empty.
+const cursorKey = vi.hoisted(() => ({ readiness: "missing" }));
+afterEach(() => {
+  cursorKey.readiness = "missing";
+});
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
-  useQueries: () => ({}),
+  useQueries: (queries: Record<string, unknown>) =>
+    "cursor" in queries ? { cursor: { readiness: cursorKey.readiness } } : {},
 }));
 vi.mock("@/state/app-state-context", () => ({
   useOptionalSharedAppState: () => undefined,
@@ -100,7 +107,26 @@ it("blocks Cursor only when its environment is selected", () => {
   ).toBe(false);
   const blocked = scopePreflightToEnvironments(result.current, ["unsupported"]);
   expect(hasBlockingPreflight(blocked)).toBe(true);
-  expect(blocked.orgKeyProblems?.[0]).toContain("Cursor");
+  expect(blocked.orgKeyProblems).toEqual([
+    "Ask an org admin to add a Cursor key in Organization → AI providers.",
+  ]);
+});
+
+it("lets Cursor through once the org's Cursor key is ready", () => {
+  cursorKey.readiness = "ready";
+  const { result } = renderHook(() =>
+    useSuiteRunPreflight({
+      projectId: "project",
+      suite,
+      cases: [],
+      environments,
+    }),
+  );
+  expect(hasBlockingPreflight(result.current)).toBe(false);
+  expect(
+    scopePreflightToEnvironments(result.current, ["unsupported"])
+      .orgKeyProblems,
+  ).toEqual([]);
 });
 
 it("retains the required judge problem after deselecting Cursor", () => {

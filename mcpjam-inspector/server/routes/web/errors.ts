@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { scrubDeliveredSecretsDeep } from "../../../shared/delivered-secret-registry.js";
 import { readAuthChallenge } from "../../utils/connection-effective-auth.js";
 import {
   describeError,
@@ -17,6 +18,7 @@ import {
 } from "../../utils/error-origin-capture.js";
 import type { RouteFailureHop } from "../../utils/route-error-report.js";
 import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
+import { GUEST_ACCESS_DISABLED_CODE } from "../../../shared/guest-session-failure.js";
 import { internalErrorResponseView } from "./hosted-internal-error.js";
 import {
   onlyFallbackAnswered,
@@ -43,6 +45,8 @@ export const ErrorCode = {
   CONFLICT: "CONFLICT",
   VALIDATION_ERROR: "VALIDATION_ERROR",
   RATE_LIMITED: "RATE_LIMITED",
+  // The deployment issues no guest sessions; sign-in is the only way in.
+  GUEST_ACCESS_DISABLED: GUEST_ACCESS_DISABLED_CODE,
   FEATURE_NOT_SUPPORTED: "FEATURE_NOT_SUPPORTED",
   SERVER_UNREACHABLE: "SERVER_UNREACHABLE",
   TIMEOUT: "TIMEOUT",
@@ -320,14 +324,16 @@ export function webError(
     normalized,
   });
   return c.json(
-    {
+    // A credential the backend delivered to this process can be quoted back in
+    // an upstream error; it is replaced by exact value before the browser.
+    scrubDeliveredSecretsDeep({
       ...restExtras,
       code,
       message: view.message,
       ...(view.details ? { details: view.details } : {}),
       ...(view.normalized ? { normalized: view.normalized } : {}),
       ...(reportedOrigin ? { origin: reportedOrigin } : {}),
-    },
+    }),
     status,
     // Also a HEADER, because the body does not always survive to the reader
     // that needs it. The chat client's reporter runs after the AI SDK has

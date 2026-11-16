@@ -1,8 +1,8 @@
 // Automated, resumable publication of a local-harness runtime pack.
 //
 // Driven by `.github/workflows/local-harness-pack-pipeline.yml`, which
-// `prepare-release.yml` calls once per harness before it opens the version PR
-// (one release preparation at a time). Every step is safe to
+// `local-harness-pack-prebuild.yml` calls once per harness before it opens the
+// pin PR (one pipeline per harness at a time). Every step is safe to
 // re-run, because every decision is re-derived from what already exists —
 // published releases, drafts, the committed pin, committed equivalence
 // records — keyed by (harness, inputs fingerprint):
@@ -173,8 +173,14 @@ export function attestationVerifyArgs(path, { repo, workflow }) {
 
 const execFileAsync = promisify(execFile);
 
-/** Runs `gh attestation verify`; resolves to null when verified, else why not. */
-export async function verifyAttestation(path, options) {
+/**
+ * `gh attestation verify` failing to start Sigstore's verifier, as opposed to
+ * a verdict on the bytes. Concurrent runs share one trust-root cache and
+ * collide while initializing it.
+ */
+const SIGSTORE_INIT_FAILURE = /verifier is not available|no valid Sigstore verifiers|initialization may have failed/i;
+
+async function verifyAttestationOnce(path, options) {
   try {
     await execFileAsync("gh", attestationVerifyArgs(path, options), { maxBuffer: 16 * 1024 * 1024 });
     return null;
@@ -182,6 +188,28 @@ export async function verifyAttestation(path, options) {
     const stderr = typeof error?.stderr === "string" ? error.stderr.trim().split("\n").slice(-2).join(" ") : "";
     return stderr || (error instanceof Error ? error.message : String(error));
   }
+}
+
+let verifyQueue = Promise.resolve(null);
+
+/**
+ * Runs `gh attestation verify`; resolves to null when verified, else why not.
+ * One at a time, so no two runs initialize the shared trust-root cache at
+ * once, and an initialization failure is retried: it says nothing about the
+ * bytes. Any other failure is the answer.
+ */
+export function verifyAttestation(path, options, { attempts = 3, backoffMs = 2000 } = {}) {
+  const run = verifyQueue.then(async () => {
+    let failure = null;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      failure = await verifyAttestationOnce(path, options);
+      if (failure === null || !SIGSTORE_INIT_FAILURE.test(failure) || attempt === attempts) return failure;
+      await new Promise((resolve) => setTimeout(resolve, backoffMs * attempt));
+    }
+    return failure;
+  });
+  verifyQueue = run;
+  return run;
 }
 
 // ── Conformance evidence ─────────────────────────────────────────────────────
@@ -240,11 +268,10 @@ export const failureIssueTitle = (harnessId) => `Local harness pack pipeline fai
 
 /**
  * The command that resumes a harness's pipeline from wherever it stopped:
- * preparing the release again (Soundcheck's "Start release" dispatches the
- * same workflow). Every harness's pipeline re-plans, and finished ones are
- * up to date in a minute.
+ * running the prebuild again. Every harness's pipeline re-plans, finished
+ * ones are up to date in a minute, and the pin PR opens once all succeed.
  */
-export const resumeCommand = (_harnessId) => "gh workflow run prepare-release.yml --ref main";
+export const resumeCommand = (_harnessId) => "gh workflow run local-harness-pack-prebuild.yml --ref main";
 
 /** The failure issue's body (or the comment added to an open one). */
 export function failureIssueBody({ harnessId, stage, meaning, runUrl, commit }) {
@@ -255,17 +282,17 @@ export function failureIssueBody({ harnessId, stage, meaning, runUrl, commit }) 
     `- Run: ${runUrl}`,
     `- Resume (safe to repeat; it adopts or finishes whatever already exists): \`${resumeCommand(harnessId)}\``,
     "",
-    "Users are unaffected: shipped Inspectors keep selecting the pinned pack, and no version PR opens until every harness's pack is pinned.",
+    "Users are unaffected: shipped Inspectors keep selecting the pinned pack, and no pin PR opens until every harness's pipeline succeeds.",
   ].join("\n");
 }
 
-// ── Handing pins to the release ─────────────────────────────────────────────
+// ── Handing pins to the pin PR ──────────────────────────────────────────────
 
 /**
- * What one harness's pipeline hands the release that called it. The pipeline
- * itself writes nothing to `main`: `prepare-release.yml` applies every
- * harness's intent to the version branch, so the version PR carries the new
- * versions AND the packs Inspectors will select, under one review.
+ * What one harness's pipeline hands the prebuild that called it. The pipeline
+ * itself writes nothing to `main`: the prebuild's `pin-pr` job applies every
+ * harness's intent and opens one pin PR, whose review decides which packs
+ * Inspectors select.
  *
  *   pin          a published pack that passed conformance: write its digests.
  *   equivalence  a rebuild reproduced the pinned pack: commit the attested
@@ -323,7 +350,7 @@ export function checkPinIntents(intents, harnessIds) {
   return harnessIds.map((id) => seen.get(id));
 }
 
-/** The version PR's section on runtime packs, one line per harness. */
+/** The pin PR's section on runtime packs, one line per harness. */
 export function pinSummary(intents) {
   const lines = ["### Local runtime packs", ""];
   for (const intent of intents) {
@@ -709,7 +736,7 @@ function intentCommand(harnessId, args) {
 }
 
 /**
- * Apply every harness's intent to this checkout (the version branch), then
+ * Apply every harness's intent to this checkout (the pin branch), then
  * re-record the reviewed fingerprints, and write the PR section. `--dir` is
  * where `download-artifact` put the `local-harness-pin-*` artifacts, one
  * directory each.

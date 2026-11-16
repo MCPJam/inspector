@@ -48,6 +48,36 @@ describe("execution control client", () => {
       operation: { kind: "prepare", ...intent },
     });
   });
+  it("cancels a client request under the turn's grant, and reads a bound approval from prepare", async () => {
+    const transport = vi.fn<typeof fetch>(async (_url, init) =>
+      Response.json(
+        JSON.parse(String(init?.body)).operation.kind === "cancel"
+          ? { cancelled: 1 }
+          : {
+              executionId: "id",
+              state: "prepared",
+              replayed: false,
+              requireToolApproval: true,
+              approved: true,
+            },
+      ),
+    );
+    const control = createExecutionControl({
+      owner,
+      token: "grant",
+      baseUrl: "https://backend.example",
+      fetch: transport,
+    });
+    await expect(control.cancel("turn", 7)).resolves.toEqual({ cancelled: 1 });
+    expect(JSON.parse(String(transport.mock.calls[0][1].body))).toEqual({
+      owner,
+      token: "grant",
+      operation: { kind: "cancel", turnId: "turn", rpcId: 7 },
+    });
+    await expect(control.prepare(intent)).resolves.toMatchObject({
+      approved: true,
+    });
+  });
   it("settles without an expired model credential and does not retry errors", async () => {
     const transport = vi.fn<typeof fetch>(
       async () => new Response("private-provider-secret", { status: 503 }),

@@ -1,13 +1,28 @@
-/** Resolve a harness bridge without assuming the E2B hosted domain. */
+/** Guest listeners can read ingress headers; a sandbox-wide token must never reach them. */
+export function hasPrivateAppPorts(sandbox: { privateAppPorts?: boolean; trafficAccessToken?: string }): boolean {
+  return sandbox.privateAppPorts === true || Boolean(sandbox.trafficAccessToken);
+}
+
 export function resolveE2BPortEndpoint(
-  sandbox: { sandboxId: string; getHost(port: number): string },
+  sandbox: {
+    sandboxId: string;
+    getHost(port: number): string;
+    privateAppPorts?: boolean;
+    trafficAccessToken?: string;
+  },
   port: number,
   protocol?: string,
 ): { url: string; headers?: Record<string, string> } {
+  if (hasPrivateAppPorts(sandbox))
+    throw new Error(
+      "This harness cannot connect to ports on a private workspace. Use a terminal-based client.",
+    );
   const proxy = process.env.E2B_SANDBOX_URL?.trim();
   if (!proxy) {
     const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
-    return { url: `${scheme}://${sandbox.getHost(port)}` };
+    return {
+      url: `${scheme}://${sandbox.getHost(port)}`,
+    };
   }
   let url: URL;
   try {

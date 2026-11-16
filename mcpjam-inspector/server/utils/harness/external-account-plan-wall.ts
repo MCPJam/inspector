@@ -86,11 +86,8 @@ export function isExternalAccountPlanWallTurn(args: {
  */
 export function externalAccountPlanWallError(displayName: string): Error {
   return new Error(
-    `The ${displayName} harness answered with an account entitlement notice ` +
-      "instead of running the model — the Cursor account behind this " +
-      "environment's CURSOR_API_KEY does not cover the requested model. " +
-      "Upgrade or change the plan on that Cursor account, then retry. " +
-      "(Recorded as a failed turn on purpose: the model never ran, so there " +
-      "is no answer here to persist or score.)",
+    `${displayName} didn't run the model because the Cursor account behind ` +
+      "your organization's key doesn't cover it. Upgrade that account's plan " +
+      "or choose another model, then retry.",
   );
 }

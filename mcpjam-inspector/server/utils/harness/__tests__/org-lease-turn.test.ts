@@ -3,14 +3,18 @@ import type { ModelSelection } from "@mcpjam/sdk/browser";
 
 const broker = vi.hoisted(() => ({
   reserveHarnessBox: vi.fn(),
+  releaseHarnessBoxReservation: vi.fn(),
   startHarnessModelBroker: vi.fn(),
   failedTurnEvidence: vi.fn(),
   prepareLocalHarnessTurn: vi.fn(),
 }));
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: broker.reserveHarnessBox,
   startHarnessModelBroker: broker.startHarnessModelBroker,
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: broker.reserveHarnessBox,
+  releaseHarnessBoxReservation: broker.releaseHarnessBoxReservation,
 }));
 vi.mock("../harness-org-lease.js", () => ({
   failedTurnEvidence: broker.failedTurnEvidence,
@@ -67,6 +71,7 @@ async function leaseBox(org: OrgLeaseTurn) {
 
 beforeEach(() => {
   broker.reserveHarnessBox.mockReset();
+  broker.releaseHarnessBoxReservation.mockReset();
   broker.startHarnessModelBroker.mockReset();
   broker.failedTurnEvidence.mockReset();
   broker.prepareLocalHarnessTurn.mockReset();
@@ -126,6 +131,82 @@ describe("OrgLeaseTurn on MCPJam's key", () => {
     expect(error).toBeInstanceOf(HarnessInfraSetupError);
     expect(error).toMatchObject({
       evidence: { code: "harness_box_reservation_failed" },
+    });
+  });
+});
+
+describe("OrgLeaseTurn on a box a preparation left uncertain", () => {
+  const RETIRED = {
+    ok: false as const,
+    status: 409,
+    error: "The box was retired.",
+    code: "box_retired",
+  };
+  const ARGS = {
+    box: BOX,
+    harnessId: "claude-code" as const,
+    modelId: "m",
+    runId: "r",
+    bearer: "b",
+  };
+  const RETRY = {
+    message:
+      "This conversation's computer was replaced. Send your message again.",
+    evidence: { source: "sandbox_setup", code: "box_retired", httpStatus: 409 },
+  };
+
+  it.each([undefined, ORG_SELECTION])(
+    "ends the claim typed and retryable, on either key: %j",
+    async (selection) => {
+      broker.reserveHarnessBox.mockResolvedValue(RETIRED);
+      const error = await turn(selection)
+        .reserve(ARGS)
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(HarnessInfraSetupError);
+      expect(error).toMatchObject(RETRY);
+      // Refused, so the backend made no claim to hand back.
+      expect(broker.releaseHarnessBoxReservation).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ends the lease start typed and retryable", async () => {
+    broker.startHarnessModelBroker.mockResolvedValue(RETIRED);
+    const error = await turn()
+      .start(ARGS)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(HarnessInfraSetupError);
+    expect(error).toMatchObject(RETRY);
+    expect(broker.startHarnessModelBroker).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a reservation refused for the native harness trial", () => {
+  it("keeps the trial's code on MCPJam's key too, so every surface can say what to do", async () => {
+    // Cursor's `/reserve` charges the trial and refuses with 403 once it is
+    // used up; the code is what the Playground, evals and swarms read.
+    broker.reserveHarnessBox.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error:
+        "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+      code: "native_harness_trial_exhausted",
+    });
+    const error = await turn()
+      .reserve({
+        box: BOX,
+        harnessId: "cursor",
+        modelId: "cursor/auto",
+        runId: "r",
+        bearer: "b",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(HarnessInfraSetupError);
+    expect(error).toMatchObject({
+      evidence: {
+        source: "sandbox_setup",
+        code: "native_harness_trial_exhausted",
+        httpStatus: 403,
+      },
     });
   });
 });
@@ -220,6 +301,82 @@ describe("OrgLeaseTurn on the organization's key", () => {
       leaseRunId: "run_1",
       bearer: "Bearer t",
       turnStartedAt: expect.any(Number),
+    });
+  });
+});
+
+describe("OrgLeaseTurn on the organization's gateway", () => {
+  // A picker row's selection: the row id rides as its native id.
+  const GATEWAY_SELECTION: ModelSelection = {
+    source: "org",
+    modelId: "custom:litellm/anthropic/claude-haiku-4-5",
+    nativeModelId: "custom:litellm:anthropic/claude-haiku-4-5",
+    connectionRef: { kind: "orgProvider", id: "conn_gw" },
+    fallback: { provider: "none", model: "none" },
+  };
+  const LEASE_SELECTION = {
+    ...GATEWAY_SELECTION,
+    nativeModelId: "anthropic/claude-haiku-4-5",
+  };
+  const GATEWAY_UPSTREAM = {
+    credentialSource: "org" as const,
+    profile: "org-gateway" as const,
+    nativeModelId: "anthropic/claude-haiku-4-5",
+    credentialRevision: "0123456789abcdef",
+  };
+
+  function gatewayTurn() {
+    return new OrgLeaseTurn({
+      harness: "opencode",
+      modelSelection: GATEWAY_SELECTION,
+      authHeader: "Bearer t",
+    });
+  }
+
+  it("owns failures as the customer's and fingerprints the org-gateway profile", () => {
+    const org = gatewayTurn();
+    expect(org.modelId("custom:litellm:anthropic/claude-haiku-4-5", "custom")).toBe(
+      "custom:litellm/anthropic/claude-haiku-4-5",
+    );
+    expect(org.brokeredEndpoint).toBe("customer_hosted");
+    expect(org.upstreamProfile).toBe("org-gateway");
+    expect(org.fingerprint()).toEqual({
+      credential: "org:conn_gw:org-gateway",
+    });
+  });
+
+  it("sends lease start the gateway's own model name, and runs the leased name", async () => {
+    broker.startHarnessModelBroker.mockResolvedValue({
+      ok: true,
+      runId: "run_1",
+      proxyBaseUrl: "https://broker.example",
+      orgUpstream: GATEWAY_UPSTREAM,
+    });
+    const org = gatewayTurn();
+    await leaseBox(org);
+    expect(broker.reserveHarnessBox.mock.calls[0]![0]).toMatchObject({
+      modelSelection: LEASE_SELECTION,
+    });
+    expect(broker.startHarnessModelBroker.mock.calls[0]![0]).toMatchObject({
+      modelSelection: LEASE_SELECTION,
+    });
+    expect(org.runtimeField()).toEqual({
+      upstream: {
+        profile: "org-gateway",
+        nativeModelId: "anthropic/claude-haiku-4-5",
+      },
+    });
+  });
+
+  it("keeps the vendor-native profile and first-party ownership for OpenCode on Anthropic", () => {
+    const org = new OrgLeaseTurn({
+      harness: "opencode",
+      modelSelection: { ...ORG_SELECTION, modelId: "anthropic/claude-haiku-4.5" },
+      authHeader: "Bearer t",
+    });
+    expect(org.brokeredEndpoint).toBe("byok_hosted");
+    expect(org.fingerprint()).toEqual({
+      credential: "org:conn_1:anthropic-native",
     });
   });
 });

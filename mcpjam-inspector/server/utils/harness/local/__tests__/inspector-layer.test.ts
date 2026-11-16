@@ -149,7 +149,7 @@ describe("ensureInspectorLayer", () => {
   });
 
   it("refuses a harness this build has no layer for", async () => {
-    const result = await ensureInspectorLayer("cursor" as never, { runtimeRoot: root });
+    const result = await ensureInspectorLayer("opencode" as never, { runtimeRoot: root });
     expect(result).toEqual({ ok: false, message: expect.stringMatching(/no Inspector layer/) });
   });
 

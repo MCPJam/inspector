@@ -1,3 +1,4 @@
+import { hiddenPluginContext } from "@/lib/compare-pane-target";
 import { useMemo } from "react";
 import { usePlaygroundHiddenEnvironment } from "./use-playground-hidden-environment";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
@@ -7,10 +8,12 @@ export function useCompareChatEnvironment({
   hostedContext,
   harnessId,
   hostResolved,
+  computerAttached,
 }: {
   hostedContext?: HostedRuntimeContext;
   harnessId?: string | null;
   hostResolved: boolean;
+  computerAttached?: boolean;
 }) {
   const hiddenEnvironment = usePlaygroundHiddenEnvironment({
     projectId: hostedContext?.projectId ?? null,
@@ -20,20 +23,13 @@ export function useCompareChatEnvironment({
       !hostedContext?.scenarioId,
     harnessId: harnessId,
     hostResolved: hostResolved,
+    computerAttached,
   });
   const columnHostedContext = useMemo(
     () => ({
       ...hostedContext,
-      ...(hiddenEnvironment.wanted || hiddenEnvironment.blockingError
-        ? {
-            hiddenEnvironment: {
-              environmentId: hiddenEnvironment.environmentId,
-              pluginServerIds: hiddenEnvironment.pluginServerIds,
-              venue: hiddenEnvironment.venue,
-              recover: hiddenEnvironment.recover,
-              blockingError: hiddenEnvironment.blockingError,
-            },
-          }
+      ...(!hostedContext?.executionTarget && !hostedContext?.scenarioId
+        ? hiddenPluginContext(hiddenEnvironment)
         : {}),
     }),
     [

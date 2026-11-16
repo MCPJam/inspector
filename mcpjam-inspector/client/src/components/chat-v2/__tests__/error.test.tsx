@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ErrorBox } from "../error";
+import { formatErrorMessage } from "../shared/chat-helpers";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import {
   AUTO_TOPUP_DECLINED_CODE,
@@ -215,20 +216,63 @@ describe("ErrorBox organization AI-key refusals", () => {
     expect(screen.queryByRole("button", { name: /credits|retry/i })).toBeNull();
   });
 
-  it("tells a member to ask an organization admin", () => {
+  it("uses the private install's explicit repair and leaves ordinary platform errors alone", () => {
+    const failure = { code: "mcpjam_config_error", error: "Shared models unavailable." };
+    const hosted = formatErrorMessage(failure)!;
+    expect(hosted.code).toBe("mcpjam_config_error");
+    const repair = formatErrorMessage({ ...failure, remediation: "choose_org_model" })!;
+    const manage = vi.fn();
+    const { rerender } = render(<ErrorBox {...repair} onManageOrgProviders={manage} />);
+    fireEvent.click(screen.getByRole("button", { name: "Manage AI providers" }));
+    expect(manage).toHaveBeenCalledOnce();
+    rerender(<ErrorBox {...repair} onRetry={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/ask an organization admin/i);
+    expect(screen.queryByRole("button", { name: /Manage AI providers|retry/i })).toBeNull();
+  });
+
+  it("opens organization provider settings when the streaming provider rejects its key", () => {
+    const manageProviders = vi.fn();
     render(
       <ErrorBox
-        message="refused"
-        code="provider_auth_failed"
-        onResetChat={vi.fn()}
+        message="The organization's provider API key was rejected."
+        code="provider_auth_error"
+        statusCode={401}
+        onManageOrgProviders={manageProviders}
+        onRetry={vi.fn()}
       />,
     );
 
-    expect(screen.getByText(/ask an organization admin/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage AI providers" }));
+    expect(manageProviders).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+  });
+
+  it.each(["provider_auth_failed", "provider_auth_error"])(
+    "tells a member to ask an organization admin for %s",
+    (code) => {
+      render(<ErrorBox message="refused" code={code} onResetChat={vi.fn()} />);
+
+      expect(screen.getByText(/ask an organization admin/i)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Manage AI providers" }),
+      ).toBeNull();
+      expect(screen.getByRole("button", { name: "Reset chat" })).toBeInTheDocument();
+    },
+  );
+
+  it("keeps an unrelated authentication error out of organization settings", () => {
+    render(
+      <ErrorBox
+        message="Sign in again."
+        code="auth_error"
+        statusCode={401}
+        onManageOrgProviders={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Sign in again/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Manage AI providers" }),
     ).toBeNull();
-    expect(screen.getByRole("button", { name: "Reset chat" })).toBeInTheDocument();
   });
 
   it("reads the code from the details envelope (credential_missing from /stream/org)", () => {

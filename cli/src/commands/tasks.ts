@@ -1,4 +1,5 @@
 import { conformanceExitCode } from "../lib/conformance-exit-code.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { Command } from "commander";
 import { reportReadiness, reportScore } from "../lib/conformance-exit-code.js";
 import {
@@ -46,6 +47,7 @@ import {
   usageError,
   writeResult,
 } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
 import {
   buildMrtrBeforeConnect,
   sanitizeTerminalText,
@@ -662,7 +664,10 @@ export async function withWatchSignals<T>(
   fn: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
-  const onSignal = () => controller.abort();
+  const onSignal = () => {
+    recordCommandOutcome("interrupted");
+    controller.abort();
+  };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
@@ -890,7 +895,13 @@ export function registerTasksCommands(program: Command): void {
       }),
       ...(collector ? { rpcLogger: collector.rpcLogger } : {}),
     };
-    const result = await new MCPTasksConformanceTest(config).run();
+    // The CLI counts the run itself, under its own opt-outs.
+    const test = new MCPTasksConformanceTest({
+      ...config,
+      __suppressTelemetry: true,
+    });
+    captureConformanceRunEvent("tasks", "single");
+    const result = await test.run();
 
     const outputResult = reporter
       ? result

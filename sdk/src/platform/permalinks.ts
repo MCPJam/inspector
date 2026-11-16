@@ -226,6 +226,11 @@ export const PLATFORM_PERMALINK_ROUTES = {
     segments: ["servers"],
   },
   /** One saved MCP server, with its detail expanded. */
+  directory_submission: {
+    label: "Open submission",
+    segments: ["readiness"],
+    idParam: "submission",
+  },
   project_server: {
     label: "Open server",
     segments: ["servers", ":id"],

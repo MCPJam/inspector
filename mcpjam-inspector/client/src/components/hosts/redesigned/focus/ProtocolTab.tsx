@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
@@ -20,6 +20,7 @@ import {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
+  MCP_SKILLS_EXTENSION_ID,
   protocolVersionLabel,
   readEventsHostSetting,
   readTasksPolicy,
@@ -293,6 +294,13 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function profileExtensionsError(parsed: unknown): string | null {
+  return isPlainObject(parsed) && parsed.extensions !== undefined &&
+    !isPlainObject(parsed.extensions)
+    ? "MCP profile extensions must be a JSON object. Replace this value with { } or remove the extensions field."
+    : null;
+}
+
 function findAuthorizationKey(
   headers: Record<string, string>,
 ): string | undefined {
@@ -394,51 +402,32 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
 }
 
 /**
- * Whether the draft's stored clientCapabilities advertise the MCP
- * Enterprise-Managed Authorization extension. `extensions` is freeform
- * JSON, so guard for a plain object before the key check — presence of
- * the key is the signal, whatever its value.
+ * Whether the draft's stored clientCapabilities advertise the extension
+ * `extensionId`. `extensions` is freeform JSON, so guard for a plain object
+ * before the key check — presence of the key is the signal, whatever its
+ * value.
  */
-export function hasEmaExtension(
+export function hasClientExtension(
   capabilities: Record<string, unknown> | undefined,
+  extensionId: string,
 ): boolean {
   const exts = capabilities?.extensions;
   return (
     isPlainObject(exts) &&
-    Object.prototype.hasOwnProperty.call(exts, XAA_MCP_EXTENSION)
+    Object.prototype.hasOwnProperty.call(exts, extensionId)
   );
 }
 
 /**
- * Advertise the EMA extension in the stored clientCapabilities. Unlike the
- * Apps tab's `withMcpUiExtension` (which resets to the default payload),
- * a pre-existing value object is preserved — same `?? {}` semantics as the
- * server's connect-time `withXaaExtensionCapability` merge, so toggling
- * never clobbers a hand-edited payload.
+ * Advertise the extension `extensionId` in the stored clientCapabilities.
+ * Unlike the Apps tab's `withMcpUiExtension` (which resets to the default
+ * payload), a pre-existing value object is preserved — same `?? {}` semantics
+ * as the server's connect-time extension merges, so toggling never clobbers
+ * a hand-edited payload.
  */
-export function withEmaExtension(prev: HostConfigInputV2): HostConfigInputV2 {
-  const nextCaps: Record<string, unknown> = {
-    ...(prev.clientCapabilities ?? {}),
-  };
-  const exts: Record<string, unknown> = isPlainObject(nextCaps.extensions)
-    ? { ...nextCaps.extensions }
-    : {};
-  exts[XAA_MCP_EXTENSION] = exts[XAA_MCP_EXTENSION] ?? {};
-  nextCaps.extensions = exts;
-  return { ...prev, clientCapabilities: nextCaps };
-}
-
-/**
- * Stop advertising the EMA extension. Touches ONLY the extensions map:
- * sibling extensions are preserved, a now-empty `extensions` container is
- * dropped (an empty `extensions: {}` on a config that never had the key
- * reads as a diff to the deep-equal dirty check), and `clientCapabilities`
- * itself always stays an object — the canonicalizer requires it. Mistral's
- * inert `extensions: {}` marker is restored the same way
- * `withoutMcpUiExtension` restores it.
- */
-export function withoutEmaExtension(
+export function withClientExtension(
   prev: HostConfigInputV2,
+  extensionId: string,
 ): HostConfigInputV2 {
   const nextCaps: Record<string, unknown> = {
     ...(prev.clientCapabilities ?? {}),
@@ -446,7 +435,31 @@ export function withoutEmaExtension(
   const exts: Record<string, unknown> = isPlainObject(nextCaps.extensions)
     ? { ...nextCaps.extensions }
     : {};
-  delete exts[XAA_MCP_EXTENSION];
+  exts[extensionId] = exts[extensionId] ?? {};
+  nextCaps.extensions = exts;
+  return { ...prev, clientCapabilities: nextCaps };
+}
+
+/**
+ * Stop advertising the extension `extensionId`. Touches ONLY the extensions
+ * map: sibling extensions are preserved, a now-empty `extensions` container is
+ * dropped (an empty `extensions: {}` on a config that never had the key reads
+ * as a diff to the deep-equal dirty check), and `clientCapabilities` itself
+ * always stays an object — the canonicalizer requires it. Mistral's inert
+ * `extensions: {}` marker is restored the same way `withoutMcpUiExtension`
+ * restores it.
+ */
+export function withoutClientExtension(
+  prev: HostConfigInputV2,
+  extensionId: string,
+): HostConfigInputV2 {
+  const nextCaps: Record<string, unknown> = {
+    ...(prev.clientCapabilities ?? {}),
+  };
+  const exts: Record<string, unknown> = isPlainObject(nextCaps.extensions)
+    ? { ...nextCaps.extensions }
+    : {};
+  delete exts[extensionId];
   if (Object.keys(exts).length > 0) {
     nextCaps.extensions = exts;
   } else {
@@ -456,6 +469,23 @@ export function withoutEmaExtension(
     nextCaps.extensions = {};
   }
   return { ...prev, clientCapabilities: nextCaps };
+}
+
+/** The MCP Enterprise-Managed Authorization extension, via the helpers above. */
+export function hasEmaExtension(
+  capabilities: Record<string, unknown> | undefined,
+): boolean {
+  return hasClientExtension(capabilities, XAA_MCP_EXTENSION);
+}
+
+export function withEmaExtension(prev: HostConfigInputV2): HostConfigInputV2 {
+  return withClientExtension(prev, XAA_MCP_EXTENSION);
+}
+
+export function withoutEmaExtension(
+  prev: HostConfigInputV2,
+): HostConfigInputV2 {
+  return withoutClientExtension(prev, XAA_MCP_EXTENSION);
 }
 
 /**
@@ -551,7 +581,7 @@ export function applyJsonToDraft(
   parsed: unknown,
   prev: HostConfigInputV2,
 ): HostConfigInputV2 | null {
-  if (!isPlainObject(parsed)) return null;
+  if (!isPlainObject(parsed) || profileExtensionsError(parsed)) return null;
 
   // clientInfo — require both name and version, like the form did. A bare
   // `{}` or partial object collapses to "not set", matching the persisted
@@ -768,6 +798,14 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
+  const extensionsError = useMemo(() => {
+    try {
+      return profileExtensionsError(JSON.parse(content));
+    } catch {
+      // The JSON editor already reports syntax errors in its status bar.
+      return null;
+    }
+  }, [content]);
   // Every known version has its own entry, so a stored pin shows itself
   // rather than collapsing onto a neighbour. Only genuinely unknown values
   // (hand-edited junk, a version retired from the SDK) fall back to
@@ -986,16 +1024,6 @@ export function ProtocolTab({
   const policyState = readXaaEnterprisePolicy(draft.mcpProfile);
   const policyOn = policyState.kind === "on";
   const policyInvalid = policyState.kind === "invalid";
-  // Gated on the same `xaa` flag as the per-server XAA auth option
-  // (AuthenticationSection's `showXaaOption`) — without it a flag-off user
-  // could turn the policy on, make every Auto server fail closed, and have
-  // no UI left to add the XAA registration that fixes them. Same escape
-  // hatch as that gate: an already-on (or malformed) stored policy always
-  // renders, so a host is never stranded with an invisible active policy
-  // it can't turn off.
-  const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
-  const showPolicyToggle =
-    xaaFlagEnabled === true || policyState.kind !== "off";
   const setPolicyOn = (next: boolean) => {
     onDraftChange((prev) => {
       const profile = prev.mcpProfile as Record<string, unknown> | undefined;
@@ -1050,8 +1078,23 @@ export function ProtocolTab({
     onDraftChange((prev) => withElicitation(prev, { url: next }));
   };
 
+  // Skills over MCP (SEP-2640) is a wire extension like elicitation, so it is
+  // derived per render from the stored capabilities for the same reason.
+  const fSkillsExtension = hostConfigField("capabilities.skillsExtension");
+  const skillsExtensionOn = hasClientExtension(
+    draft.clientCapabilities,
+    MCP_SKILLS_EXTENSION_ID,
+  );
+  const setSkillsExtensionOn = (next: boolean) => {
+    onDraftChange((prev) =>
+      next
+        ? withClientExtension(prev, MCP_SKILLS_EXTENSION_ID)
+        : withoutClientExtension(prev, MCP_SKILLS_EXTENSION_ID),
+    );
+  };
+
   return (
-    <div className="flex h-full min-h-[480px] flex-col gap-3">
+    <div className="flex flex-col gap-3">
       <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
         <div className="flex items-center gap-3">
           <span
@@ -1342,34 +1385,32 @@ export function ProtocolTab({
           onChange={setConformanceKnob}
           readOnly={readOnly}
         />
-        {showPolicyToggle && (
-          <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
-            <div className="min-w-0">
-              <span className="text-[12px] font-medium">
-                Default all project servers to enterprise managed auth
-              </span>
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                Route every HTTP server connection through your IdP (XAA) by
-                default. A server&apos;s explicit auth method overrides. Servers
-                without an XAA client registration fail to connect. Applies on
-                the next connect.
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Default all project servers to enterprise managed auth
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Route every HTTP server connection through your IdP (XAA) by
+              default. A server&apos;s explicit auth method overrides. Servers
+              without an XAA client registration fail to connect. Applies on the
+              next connect.
+            </p>
+            {policyInvalid ? (
+              <p className="text-[11px] leading-snug text-destructive">
+                This host&apos;s stored policy value is unsupported —
+                connections will fail until it is fixed. Toggling on repairs it;
+                toggling off removes it.
               </p>
-              {policyInvalid ? (
-                <p className="text-[11px] leading-snug text-destructive">
-                  This host&apos;s stored policy value is unsupported —
-                  connections will fail until it is fixed. Toggling on repairs
-                  it; toggling off removes it.
-                </p>
-              ) : null}
-            </div>
-            <Switch
-              checked={policyOn}
-              onCheckedChange={setPolicyOn}
-              disabled={readOnly}
-              aria-label="Default all project servers to enterprise managed auth"
-            />
+            ) : null}
           </div>
-        )}
+          <Switch
+            checked={policyOn}
+            onCheckedChange={setPolicyOn}
+            disabled={readOnly}
+            aria-label="Default all project servers to enterprise managed auth"
+          />
+        </div>
         {showTasksPolicy && (
           <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
             <div className="min-w-0">
@@ -1460,10 +1501,29 @@ export function ProtocolTab({
             </div>
           ) : null}
         </div>
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              {fSkillsExtension.label}
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Advertises the Skills over MCP extension. When enabled, chat can
+              load the skills a server serves, after checking each file against
+              the server&apos;s manifest. Applies on the next connect.
+            </p>
+          </div>
+          <Switch
+            checked={skillsExtensionOn}
+            onCheckedChange={setSkillsExtensionOn}
+            disabled={readOnly}
+            aria-label={fSkillsExtension.label}
+          />
+        </div>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-80 shrink-0 flex-col">
         <JsonEditor
           rawContent={content}
+          error={extensionsError}
           onRawChange={onRawChange}
           mode={effectiveJsonMode}
           onModeChange={readOnly ? undefined : setJsonMode}

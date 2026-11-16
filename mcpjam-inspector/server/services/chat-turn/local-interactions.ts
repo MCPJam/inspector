@@ -381,7 +381,9 @@ export function buildLocalSuspendedCallSettlement(input: {
         (input.tools as Record<string, { _serverId?: unknown }>)[toolName]
           ?._serverId;
       const serverName =
-        typeof serverId === "string" ? input.serverNameFor(serverId) : "unknown";
+        typeof serverId === "string"
+          ? input.serverNameFor(serverId)
+          : undefined;
       if (
         !cancelled.cancelled &&
         cancelled.status !== "expired" &&

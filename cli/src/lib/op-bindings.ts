@@ -48,6 +48,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     command: "cloud projects servers connect-cancel",
   },
   get_project_server: { command: "cloud projects servers get" },
+  list_server_revisions: { command: "cloud projects servers revisions" },
+  get_server_revision: { command: "cloud projects servers revision" },
+  diff_server_revisions: { command: "cloud projects servers revision-diff" },
+  // `default` runs the same operation as `rename`, with `isDefault` in place
+  // of a name.
+  list_server_accounts: { command: "cloud server-accounts list" },
+  get_server_account: { command: "cloud server-accounts show" },
+  upload_server_account_tokens: { command: "cloud server-accounts set" },
+  update_server_account: { command: "cloud server-accounts rename" },
+  delete_server_account: { command: "cloud server-accounts delete" },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },
   show_servers: { command: "cloud projects status" },
@@ -393,23 +403,62 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_readiness_run: { command: "readiness status" },
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
+  resume_readiness_run: { command: "readiness resume" },
   get_readiness_report: { command: "readiness report" },
-  start_conformance_run: {
-    excluded:
-      "Hosted conformance runs dial the platform's view of a saved server and persist results for the app; the local `mcpjam conformance` commands grade what this machine reaches without a project row. Different surfaces, and only the hosted run leaves a durable record agents can poll.",
+  // `readiness flows` lists the flows, or shows the one it is given.
+  list_directory_flows: { command: "readiness flows" },
+  get_directory_flow: { command: "readiness flows" },
+  create_directory_submission: { command: "readiness submission create" },
+  list_directory_submissions: { command: "readiness submission list" },
+  get_directory_submission: { command: "readiness submission get" },
+  // `readiness submission gate` runs it too, with only `checkGate`.
+  update_directory_submission: { command: "readiness submission set" },
+  delete_directory_submission: { command: "readiness submission delete" },
+  start_directory_submission_run: { command: "readiness submission run" },
+  get_directory_submission_results: {
+    command: "readiness submission results",
   },
-  get_conformance_run: {
-    excluded:
-      "No `conformance runs` poll command yet — run history and status live in the hosted app and agent surfaces until a CLI subcommand mirrors list/status against saved servers.",
+  // A submission's test plan; `readiness submission run --test-plan-revision`
+  // starts a run that makes its calls.
+  get_directory_submission_test_plan: { command: "readiness submission plan show" },
+  draft_directory_submission_test_plan: { command: "readiness submission plan draft" },
+  save_directory_submission_test_plan: { command: "readiness submission plan save" },
+  get_directory_submission_tool_tests: { command: "readiness submission plan results" },
+  // The eval suite holding a submission's test cases; `evals unlink` runs the
+  // link too, with `null` for what it clears.
+  get_directory_submission_evals: { command: "readiness submission evals show" },
+  set_directory_submission_evals: { command: "readiness submission evals link" },
+  import_directory_submission_test_cases: { command: "readiness submission evals import" },
+  export_directory_submission_test_cases: { command: "readiness submission evals export" },
+  // `readiness reviewer status` lists the attempts, or shows the one it is given.
+  create_reviewer_attempt: { command: "readiness reviewer start" },
+  list_reviewer_attempts: { command: "readiness reviewer status" },
+  get_reviewer_attempt: { command: "readiness reviewer status" },
+  create_reviewer_handoff: { command: "readiness reviewer handoff" },
+  resume_reviewer_attempt: { command: "readiness reviewer resume" },
+  cancel_reviewer_attempt: { command: "readiness reviewer cancel" },
+  // Resuming a submission from its id, and recording what happened in the
+  // directory itself.
+  get_directory_submission_handoff: { command: "readiness submission handoff" },
+  list_directory_submission_findings: {
+    command: "readiness submission findings",
   },
-  list_conformance_runs: {
-    excluded:
-      "Listing persisted conformance runs is an app/agent concern today; the CLI's conformance commands are one-shot local runs, not a hosted run ledger.",
+  get_directory_submission_finding: { command: "readiness submission finding" },
+  export_directory_submission: { command: "readiness submission export" },
+  list_directory_submission_events: { command: "readiness submission events" },
+  record_directory_submission_status: { command: "readiness submission status" },
+  record_directory_submission_snapshot: {
+    command: "readiness submission snapshot",
   },
-  get_conformance_report: {
-    excluded:
-      "Report projection for agents is sized for model context on the platform API; the CLI already emits full suite output locally via `mcpjam conformance` and does not need a second report fetch path.",
-  },
+  import_directory_finding: { command: "readiness submission import-finding" },
+  // Hosted conformance, beside the local `mcpjam conformance` commands: those
+  // grade what this machine reaches and record nothing in a project, these
+  // run on the platform against a saved server and leave a run to poll.
+  start_conformance_run: { command: "cloud conformance run" },
+  get_conformance_run: { command: "cloud conformance status" },
+  list_conformance_runs: { command: "cloud conformance runs" },
+  get_conformance_report: { command: "cloud conformance report" },
+  get_conformance_check: { command: "cloud conformance check" },
 
   // ── Covered by the surrounding session, not a command ────────────────────
   get_me: {

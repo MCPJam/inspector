@@ -5,11 +5,10 @@
 import "./ws-native-fallback.js";
 import { writeInspectorRuntime } from "../server/services/inspector-runtime";
 import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
-// Must stay below that guard: `security-policy.js` reaches into `server/`,
-// which pulls in `ws`. Hoisted above it, `ws` evaluates before
-// WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
+// Must stay below that guard: it reaches into `server/`, which can pull in
+// `ws`. Hoisted above it, `ws` evaluates before WS_NO_BUFFER_UTIL is set --
+// the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
-import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import {
   initDesktopSentry,
   reportDesktopStartupFailure,
@@ -192,6 +191,8 @@ let activating: Promise<void> | null = null;
 let shutdownLocalBrowserFrames: (() => void) | null = null;
 let killLocalBrowserFrames: (() => void) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
+let shutdownMrtrStreams: (() => void) | null = null;
+let killMrtrStreams: (() => void) | null = null;
 let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
@@ -548,6 +549,8 @@ async function startHonoServer(): Promise<number> {
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
+    const { registerBrowserController } =
+      await import("../server/services/browserd/local/security-policy.js");
 
     // Seal the local-harness instance key with the OS keychain. Injected
     // rather than imported by the server, which has to stay loadable under
@@ -566,6 +569,8 @@ async function startHonoServer(): Promise<number> {
     const {
       app: honoApp,
       injectWebSocket,
+      shutdownLocalMrtrStreams,
+      killLocalMrtrStreams,
       shutdownLocalComputerTerminals,
       killLocalComputerTerminals,
       shutdownWebMcpFrameSockets,
@@ -596,6 +601,8 @@ async function startHonoServer(): Promise<number> {
     // The WebMCP frame sockets are the same story: established WebSockets that
     // `server.close()` leaves attached, with a latching variant for a real quit
     // and a non-latching one for `window-all-closed`.
+    shutdownMrtrStreams = shutdownLocalMrtrStreams;
+    killMrtrStreams = killLocalMrtrStreams;
     shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
     killWebMcpFrames = killWebMcpFrameSockets;
     // The agent's browser is a real Chromium this process started. Quitting the
@@ -1238,6 +1245,7 @@ app.on("window-all-closed", () => {
   // Same non-latching kill: latching here would 4503 every frame handshake
   // after the user reopened the window from the dock.
   killWebMcpFrames?.();
+  killMrtrStreams?.();
   if (server) {
     server.close?.();
     serverPort = 0;
@@ -1378,6 +1386,7 @@ app.on("before-quit", (event) => {
   recordUpdateShutdown("local_cleanup_started");
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
+  shutdownMrtrStreams?.();
   shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();

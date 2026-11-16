@@ -10,7 +10,7 @@ import {
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { HostChipLogo } from "@/components/hosts/host-chip";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
@@ -53,7 +53,7 @@ import { clientDisplayName } from "@/lib/client-display-name";
 
 type TargetMatrixHost = Pick<
   HostListItem,
-  "hostId" | "name" | "displayName" | "modelId"
+  "hostId" | "name" | "displayName" | "modelId" | "hostStyle"
 > & {
   /**
    * The harness this client runs (`null` = emulated), with its runtime version
@@ -387,7 +387,7 @@ function ClientPicker({
             <Plus className="size-3.5 shrink-0" />
           ) : (
             <HostChipLogo
-              logoSrc={resolveHostLogoByName(host?.name ?? label)}
+              logoSrc={resolveHostLogo(host ?? { name: label })}
               name={label}
               size="sm"
             />
@@ -426,7 +426,7 @@ function EvalModelPicker({
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
-  } = useAvailableModels({ projectId });
+  } = useAvailableModels({ projectId, harnessTargets: [harness] });
   return (
     <EvalModelChoices
       {...{

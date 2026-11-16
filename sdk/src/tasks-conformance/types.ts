@@ -174,6 +174,12 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
   /** Cancel active requests and polling, then close the owned connection. */
   signal?: AbortSignal;
   /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by `runConformance` for its inner run. See
+   * `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
+  /**
    * Run only these checks. A renamed id
    * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name.
    */

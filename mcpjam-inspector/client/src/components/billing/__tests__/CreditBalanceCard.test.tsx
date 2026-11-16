@@ -46,6 +46,17 @@ vi.mock("@/hooks/use-swarm-sponsorship-allowance", () => ({
   useSwarmSponsorshipAllowance: () => allowanceState,
 }));
 
+let nativeTrialState: { remaining: number; granted: number } | null = null;
+let nativeHarnessEnabled = true;
+vi.mock("@/hooks/use-native-harness-trial", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/use-native-harness-trial")>()),
+  useNativeHarnessTrial: (organizationId: string | null | undefined) =>
+    organizationId ? nativeTrialState : null,
+}));
+vi.mock("@/hooks/useNativeHarnessEnabled", () => ({
+  useNativeHarnessEnabled: () => nativeHarnessEnabled,
+}));
+
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
     balance: balanceState,
@@ -123,7 +134,37 @@ describe("CreditBalanceCard", () => {
     evalQuotaState = undefined;
     evalQuotaLoadingState = false;
     allowanceState = null;
+    nativeTrialState = null;
+    nativeHarnessEnabled = true;
     window.location.hash = "";
+  });
+
+  it("shows the native harness turns left while the trial applies", () => {
+    nativeTrialState = { remaining: 12, granted: 20 };
+    render(<CreditBalanceCard organizationId="org-1" />);
+
+    const row = screen.getByTestId("usage-native-harness-turns");
+    expect(row).toHaveTextContent("Native harness turns");
+    expect(row).toHaveTextContent("12 / 20 remaining");
+    expect(
+      within(row).getByRole("progressbar", {
+        name: "Native harness turns remaining",
+      }),
+    ).toHaveAttribute(
+      "aria-valuetext",
+      "12 of 20 native harness turns remaining",
+    );
+  });
+
+  it("omits the native harness row for a paid plan or someone who can run no native harness", () => {
+    const { unmount } = render(<CreditBalanceCard organizationId="org-1" />);
+    expect(screen.queryByTestId("usage-native-harness-turns")).toBeNull();
+    unmount();
+
+    nativeTrialState = { remaining: 12, granted: 20 };
+    nativeHarnessEnabled = false;
+    render(<CreditBalanceCard organizationId="org-1" />);
+    expect(screen.queryByTestId("usage-native-harness-turns")).toBeNull();
   });
 
   it("shows the remaining sponsored swarm conversations beside the credit meters", () => {

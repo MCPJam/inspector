@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { writeSkills } from "@ai-sdk/harness/utils";
 import {
+  clearAdapterSkills,
   handOffLegacySkillDirs,
   preseedAdapterSkills,
   type PreseedSession,
@@ -272,5 +273,43 @@ describe("handOffLegacySkillDirs", () => {
       trailingNewline: true,
     });
     expect(result.changed).toBe(false);
+  });
+});
+
+describe("clearAdapterSkills", () => {
+  it("takes every folder the adapter manifest lists off the box, so the next write puts them back", async () => {
+    const { session, files } = makeSession({
+      files: { [`${ROOT}/hand-placed/SKILL.md`]: "user data" },
+    });
+    await preseedAdapterSkills({
+      session,
+      skillsBase: ROOT,
+      payload: PAYLOAD,
+      trailingNewline: true,
+    });
+    await clearAdapterSkills({ session, skillsBase: ROOT });
+    expect(files.has(`${ROOT}/find-skills/SKILL.md`)).toBe(false);
+    expect(files.has(`${ROOT}/frontend-design/SKILL.md`)).toBe(false);
+    expect(files.get(`${ROOT}/hand-placed/SKILL.md`)).toBe("user data");
+    // The manifest says the folders are gone, so the adapter's own write
+    // re-creates them rather than calling them unchanged.
+    const result = await writeSkills({
+      sandbox: asLibSandbox(session),
+      homePath: "/home/user",
+      skillsDir: ".claude/skills",
+      skills: PAYLOAD,
+      trailingNewline: true,
+    });
+    expect(result.written.sort()).toEqual(["find-skills", "frontend-design"]);
+    expect(files.get(`${ROOT}/find-skills/SKILL.md`)).toContain("body A");
+  });
+
+  it("leaves a folder with no adapter manifest exactly as it is", async () => {
+    const { session, files, commands } = makeSession({
+      files: { [`${ROOT}/hand-placed/SKILL.md`]: "user data" },
+    });
+    await clearAdapterSkills({ session, skillsBase: ROOT });
+    expect(commands).toEqual([]);
+    expect([...files.keys()]).toEqual([`${ROOT}/hand-placed/SKILL.md`]);
   });
 });

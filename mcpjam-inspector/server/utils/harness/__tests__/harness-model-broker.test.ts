@@ -3,9 +3,12 @@ import {
   startHarnessModelBroker,
   startLoopbackModelBroker,
   revokeHarnessModelBroker,
-  reserveHarnessBox,
-  renewHarnessBoxReservation,
 } from "../harness-model-broker";
+import {
+  releaseHarnessBoxReservation,
+  renewHarnessBoxReservation,
+  reserveHarnessBox,
+} from "../harness-box-reservation";
 import {
   ORG_BINDING_UNCONFIRMED,
   orgLeaseUpstreamFrom,
@@ -70,6 +73,19 @@ describe("buildBrokerDummyAuth", () => {
       OPENAI_BASE_URL:
         "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
     });
+  });
+
+  it("opencode → dummy auth-token env with /v1 on the Anthropic lease origin", () => {
+    const auth = buildBrokerDummyAuth(
+      "opencode",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
+    );
+    expect(auth).toEqual({
+      ANTHROPIC_AUTH_TOKEN: "mcpjam-broker-dummy",
+      ANTHROPIC_BASE_URL:
+        "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic/v1",
+    });
+    expect("ANTHROPIC_API_KEY" in auth).toBe(false);
   });
 });
 
@@ -353,6 +369,19 @@ describe("harness box reservation", () => {
     });
   });
 
+  it("reads a 2xx whose body can't be read as unanswered: the claim may exist", async () => {
+    mockFetch(() => new Response("{", { status: 200 }));
+    await expect(
+      reserveHarnessBox({
+        box,
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        runId: "run_1",
+        bearer: "t",
+      })
+    ).resolves.toMatchObject({ ok: false, status: 502 });
+  });
+
   it("reserve names the pinned runtime version for every baked harness", async () => {
     const bodies: any[] = [];
     mockFetch((_url, init) => {
@@ -405,6 +434,44 @@ describe("harness box reservation", () => {
       modelId: "anthropic/claude-haiku-4.5",
       runId: "run_1",
     });
+  });
+
+  it("releases with a preparation's outcome; a turn's release sends none", async () => {
+    const urls: string[] = [];
+    const bodies: unknown[] = [];
+    mockFetch((url, init) => {
+      urls.push(url);
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ ok: true });
+    });
+    const claim = {
+      box,
+      harnessId: "claude-code" as const,
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_1",
+      bearer: "t",
+    };
+    await expect(
+      releaseHarnessBoxReservation({ ...claim, outcome: "uncertain" }),
+    ).resolves.toEqual({ ok: true });
+    await releaseHarnessBoxReservation({ ...claim, outcome: "clean" });
+    await releaseHarnessBoxReservation(claim);
+    expect(new Set(urls)).toEqual(
+      new Set([
+        "https://convex.example.com/web/harness/model-broker/reserve/release",
+      ]),
+    );
+    const sent = {
+      sandboxRowId: "sbxrow_1",
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_1",
+    };
+    expect(bodies).toEqual([
+      { ...sent, outcome: "uncertain" },
+      { ...sent, outcome: "clean" },
+      sent,
+    ]);
   });
 });
 
@@ -611,6 +678,30 @@ describe("orgLeaseUpstreamFrom", () => {
       { ...complete, upstreamModelId: "anthropic/claude-sonnet-4.5" },
     ]) {
       expect(orgLeaseUpstreamFrom(partial)).toBeNull();
+    }
+  });
+
+  it("accepts a gateway lease's own model name, slash included, on org-gateway only", () => {
+    // The backend's echo for a gateway lease: the protocol as the provider
+    // key, the gateway's model name, a 16-hex revision.
+    const gateway = {
+      credentialSource: "org",
+      upstreamProfile: "org-gateway",
+      upstreamProviderKey: "anthropic",
+      upstreamModelId: "anthropic/claude-haiku-4-5",
+      credentialRevision: "0123456789abcdef",
+    };
+    expect(orgLeaseUpstreamFrom(gateway)).toEqual({
+      credentialSource: "org",
+      profile: "org-gateway",
+      nativeModelId: "anthropic/claude-haiku-4-5",
+      credentialRevision: "0123456789abcdef",
+    });
+    expect(
+      orgLeaseUpstreamFrom({ ...gateway, upstreamModelId: "house-model" }),
+    ).toMatchObject({ profile: "org-gateway", nativeModelId: "house-model" });
+    for (const upstreamProfile of ["anthropic-native", "openai-native"]) {
+      expect(orgLeaseUpstreamFrom({ ...gateway, upstreamProfile })).toBeNull();
     }
   });
 });
