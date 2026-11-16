@@ -74,6 +74,12 @@ export const COST_SOURCE_LABEL: Record<CostSource, string> = {
   runner_reported: "Runner-reported",
 };
 
+/** What an amount is missing, beside it; a complete amount needs no word. */
+export const COMPLETENESS_LABEL = {
+  partial: "Partial",
+  unavailable: "Cost unavailable",
+} as const;
+
 const isEstimate = (source: CostSource) =>
   source === "list_price" || source === "customer_rate";
 

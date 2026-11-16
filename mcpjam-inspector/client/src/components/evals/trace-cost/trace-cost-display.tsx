@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
+  COMPLETENESS_LABEL,
   describeRowCost,
   formatModelCost,
   rollupLlmSpanCosts,
@@ -28,7 +29,7 @@ function useCostView(cost: RowCost | undefined): CostView | undefined {
  * in a fixed one-character slot even when absent, so dollar signs line up in
  * a column.
  */
-function CostAmount({
+export function CostAmount({
   amountUsd,
   estimated,
   slot = false,
@@ -71,7 +72,7 @@ function CostFacts({ view }: { view: CostView }) {
               : "text-muted-foreground",
           )}
         >
-          {view.completeness === "partial" ? "Partial" : "Cost unavailable"}
+          {COMPLETENESS_LABEL[view.completeness]}
         </Badge>
       ) : null}
       {view.coverage ? <span>{view.coverage}</span> : null}
@@ -154,7 +155,7 @@ export function TraceCostHoverBlock({ cost }: { cost: RowCost | undefined }) {
           <HoverRow label="Source">{view.sourceLabel}</HoverRow>
         ) : null}
         {view.completeness === "partial" ? (
-          <HoverRow label="Status">Partial</HoverRow>
+          <HoverRow label="Status">{COMPLETENESS_LABEL.partial}</HoverRow>
         ) : null}
         {view.coverage ? (
           <HoverRow label="Coverage">{view.coverage}</HoverRow>

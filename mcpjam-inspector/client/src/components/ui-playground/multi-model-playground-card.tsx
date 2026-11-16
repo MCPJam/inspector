@@ -61,6 +61,7 @@ import {
   type MultiModelCardSummary,
   ModelCompareCardHeader,
 } from "@/components/chat-v2/model-compare-card-header";
+import { useLatestTurnCost } from "@/components/chat-v2/compare-cost";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
@@ -932,6 +933,7 @@ export function MultiModelPlaygroundCard({
   const latestTurnDurationMs = latestTurn?.durationMs ?? null;
   const latestTurnTokens = latestTurn?.usage?.totalTokens ?? 0;
   const latestTurnToolCount = latestTurn?.actualToolCalls?.length ?? 0;
+  const latestTurnCost = useLatestTurnCost(effectiveLiveTraceEnvelope);
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       // `MultiModelCardSummary.modelId` is the legacy field name; in
@@ -942,6 +944,7 @@ export function MultiModelPlaygroundCard({
       durationMs: latestTurnDurationMs,
       tokens: latestTurnTokens,
       toolCount: latestTurnToolCount,
+      ...(latestTurnCost ? { cost: latestTurnCost } : {}),
       status: error
         ? "error"
         : isStreaming || isExecuting
@@ -957,6 +960,7 @@ export function MultiModelPlaygroundCard({
       isExecuting,
       isStreaming,
       isThreadEmpty,
+      latestTurnCost,
       latestTurnDurationMs,
       latestTurnTokens,
       latestTurnToolCount,
