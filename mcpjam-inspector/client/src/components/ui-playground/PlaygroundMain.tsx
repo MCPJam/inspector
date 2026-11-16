@@ -5843,6 +5843,9 @@ export function PlaygroundMain({
   }, [messages]);
   useNativeHarnessHandoff({
     error,
+    projectId: convexProjectId,
+    hostId: previewedHostId,
+    chatSessionId,
     refusedText: lastUserMessageText,
     startNewChat: handleNewChat,
     setComposerInput: composer.setInput,
