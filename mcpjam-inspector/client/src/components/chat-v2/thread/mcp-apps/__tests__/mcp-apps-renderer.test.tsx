@@ -3004,6 +3004,67 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockPreferencesState.themeMode).toBe("light");
   });
 
+  it.each(["light", "dark"] as const)(
+    "updates the single-client palette after a %s theme toggle",
+    async (initialTheme) => {
+      const { useHostContextStore } = await vi.importActual<
+        typeof import("@/stores/client-context-store")
+      >("@/stores/client-context-store");
+      useHostContextStore.getState().applyHostTemplate({
+        theme: initialTheme,
+        styles: {
+          variables: {
+            ...CHATGPT_HOST_STYLE.mcp.resolveStyleVariables(initialTheme),
+            "--font-sans": "Custom Sans",
+          },
+        },
+      });
+      mockPlaygroundStoreState.isPlaygroundActive = true;
+      mockPreferencesState.hostStyle = "chatgpt";
+      mockHostContextStoreState.draftHostContext =
+        useHostContextStore.getState().draftHostContext;
+      const { rerender } = render(<HostedRenderer {...baseProps} />);
+      await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+      expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe(
+        initialTheme,
+      );
+      act(() => triggerReady());
+      const bridgeCount = mockAppBridgeCtor.mock.calls.length;
+
+      for (const theme of [
+        initialTheme === "light" ? "dark" : "light",
+        initialTheme,
+      ] as const) {
+        useHostContextStore.getState().patchHostContext({ theme });
+        mockHostContextStoreState.draftHostContext =
+          useHostContextStore.getState().draftHostContext;
+        rerender(<HostedRenderer {...baseProps} />);
+        await vi.waitFor(() =>
+          expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              theme,
+              styles: expect.objectContaining({
+                variables: expect.objectContaining({
+                  "--color-background-primary":
+                    CHATGPT_HOST_STYLE.mcp.resolveStyleVariables(theme)[
+                      "--color-background-primary"
+                    ],
+                  "--color-text-primary":
+                    CHATGPT_HOST_STYLE.mcp.resolveStyleVariables(theme)[
+                      "--color-text-primary"
+                    ],
+                  "--font-sans": "Custom Sans",
+                }),
+              }),
+            }),
+          ),
+        );
+      }
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(bridgeCount);
+      expect(mockBridge.close).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps explicit host context theme inside the playground", async () => {
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: true,

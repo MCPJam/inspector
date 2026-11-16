@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { ClientCspToastGroup } from "@/lib/client-csp-toast";
+import { withoutThemeBoundColors } from "@/lib/host-context-colors";
 import {
   HOSTED_MODE,
   SANDBOX_ORIGIN,
@@ -266,28 +267,7 @@ export function useWidgetHost(): WidgetHostImpl {
     };
     const configuredTheme = extractHostTheme(effectiveHostContext);
     if (configuredTheme && configuredTheme !== paneTheme) {
-      // A saved client's concrete --color-* values are bound to its own
-      // theme. When the pane overrides that theme they must fall back to
-      // the host preset's per-theme palette; `light-dark()` values already
-      // follow the new theme via color-scheme and stay.
-      const styles = next.styles;
-      if (styles && typeof styles === "object" && !Array.isArray(styles)) {
-        const variables = (styles as { variables?: unknown }).variables;
-        if (
-          variables &&
-          typeof variables === "object" &&
-          !Array.isArray(variables)
-        ) {
-          const filtered = Object.fromEntries(
-            Object.entries(variables).filter(
-              ([key, value]) =>
-                !key.startsWith("--color-") ||
-                (typeof value === "string" && value.includes("light-dark(")),
-            ),
-          );
-          next.styles = { ...styles, variables: filtered };
-        }
-      }
+      return withoutThemeBoundColors(next);
     }
     return next;
   }, [effectiveHostContext, paneTheme]);
