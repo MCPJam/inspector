@@ -111,6 +111,38 @@ describe("toolResultMatchesSchema with the declared schema", () => {
     expect(verdict.reason).toContain("nothing to validate");
   });
 
+  test("does not apply when no tool declares an output schema", () => {
+    const verdict = run(
+      transcript([result("search", { structuredContent: {} })], [search])
+    );
+    expect(verdict.status).toBe("not_applicable");
+    expect(verdict.passed).toBe(true);
+    expect(verdict.reason).toContain("no tool declares an output schema");
+  });
+
+  test("cannot pass on a partial or missing result capture", () => {
+    const matching = result("get_order", {
+      structuredContent: { status: "confirmed", total: 42 },
+    });
+    const partial = transcript([matching]);
+    partial.capture = { ...partial.capture!, toolResults: "partial" };
+    expect(run(partial).status).toBe("error");
+    const absent = transcript([]);
+    absent.capture = { ...absent.capture!, toolResults: "absent" };
+    absent.toolCalls = [{ toolName: "get_order", arguments: {} }];
+    expect(run(absent).status).toBe("error");
+  });
+
+  test("still fails on a partial capture when a seen result breaks the schema", () => {
+    const partial = transcript([
+      result("get_order", { structuredContent: { status: "confirmed" } }),
+    ]);
+    partial.capture = { ...partial.capture!, toolResults: "partial" };
+    const verdict = run(partial);
+    expect(verdict.passed).toBe(false);
+    expect(verdict.status).toBeUndefined();
+  });
+
   test("is an evidence error when the declarations were not captured", () => {
     const verdict = run(
       transcript([result("get_order", { structuredContent: {} })], null)

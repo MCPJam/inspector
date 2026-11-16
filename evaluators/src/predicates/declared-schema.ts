@@ -13,7 +13,8 @@ export const DECLARED_OUTPUT_SCHEMA = "declared";
 export type DeclaredSchemaVerdict =
   | { kind: "pass"; reason: string }
   | { kind: "fail"; reason: string }
-  | { kind: "error"; reason: string };
+  | { kind: "error"; reason: string }
+  | { kind: "not_applicable"; reason: string };
 
 /**
  * Checks each result against the output schema its tool declared.
@@ -33,6 +34,12 @@ export function checkDeclaredSchemas(
     if (tool.outputSchema !== undefined && !schemaFor.has(tool.name)) {
       schemaFor.set(tool.name, tool.outputSchema);
     }
+  }
+  if (schemaFor.size === 0) {
+    return {
+      kind: "not_applicable",
+      reason: "no tool declares an output schema",
+    };
   }
   const failures: string[] = [];
   let checked = 0;

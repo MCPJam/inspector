@@ -46,10 +46,7 @@ import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
-import {
-  withEvaluatorUpdated,
-  withoutEvaluator,
-} from "./evaluator-library/library-catalog";
+import { librarySuiteEdits } from "./evaluator-library/library-suite-edits";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
 import {
@@ -255,14 +252,7 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
-  /** A whole-evaluator edit, only where the suite's own list is shown. */
-  const suiteEdit = (
-    edit: (previous: Predicate[], evaluatorId: string) => Predicate[],
-  ) =>
-    scope.kind === "suite"
-      ? (evaluatorId: string) =>
-          scope.onPredicatesChange((previous) => edit(previous, evaluatorId))
-      : undefined;
+  const library = librarySuiteEdits(scope);
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -421,16 +411,11 @@ export function SuiteScorerTable({
             ))}
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {headerActions}
-            {scope.kind === "suite" ? (
+            {library ? (
               <EvaluatorLibraryButton
-                predicates={scope.predicates}
+                predicates={library.predicates}
                 authorableKinds={authorableKinds}
-                onAdd={(checks) =>
-                  scope.onPredicatesChange((previous) => [
-                    ...previous,
-                    ...checks,
-                  ])
-                }
+                onAdd={library.add}
               />
             ) : null}
             <SuiteScorerLibraryMenu
@@ -501,8 +486,8 @@ export function SuiteScorerTable({
                         ? rules[row.predicateIndex]?.predicate
                         : undefined
                     }
-                    onRemoveEvaluator={suiteEdit(withoutEvaluator)}
-                    onUpdateEvaluator={suiteEdit(withEvaluatorUpdated)}
+                    onRemoveEvaluator={library?.remove}
+                    onUpdateEvaluator={library?.update}
                     renderRow={(row) => (
                       <ScorerRow
                         key={row.id}

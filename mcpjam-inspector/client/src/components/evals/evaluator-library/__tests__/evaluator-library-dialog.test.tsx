@@ -3,9 +3,12 @@ import { fireEvent, renderWithProviders, screen } from "@/test";
 import { EvaluatorLibraryButton } from "../evaluator-library-dialog";
 import { predicateSchema } from "@mcpjam/sdk/predicates";
 import {
+  findLibraryEvaluator,
   isInSuite,
   LIBRARY_EVALUATORS,
+  missingChecks,
   taggedChecks,
+  withEvaluatorUpdated,
 } from "../library-catalog";
 
 const flag = vi.hoisted(() => ({ on: true as boolean | undefined }));
@@ -120,6 +123,51 @@ describe("library catalog", () => {
     if (!wasted) return;
     expect(isInSuite(wasted, [...wasted.checks])).toBe(true);
     expect(isInSuite(wasted, [{ type: "noToolErrors" }])).toBe(false);
+  });
+});
+
+describe("library dedupe by criterion", () => {
+  const wasted = findLibraryEvaluator("no-wasted-calls")!;
+  const schema = findLibraryEvaluator("results-match-output-schema")!;
+
+  it("adds a check whose arguments differ from the suite's", () => {
+    const scoped = [
+      { type: "toolCallCountUnder", count: 3, toolName: "search" },
+    ] as const;
+    expect(missingChecks(wasted, [...scoped]).map((c) => c.type)).toEqual([
+      "toolCallCountUnder",
+      "noRepeatedIdenticalCall",
+    ]);
+  });
+
+  it("is not in the suite because of an authored schema for one tool", () => {
+    const authored = {
+      type: "toolResultMatchesSchema",
+      toolName: "get_order",
+      schema: { type: "object" },
+    } as const;
+    expect(isInSuite(schema, [authored])).toBe(false);
+  });
+
+  it("ignores role and origin when matching", () => {
+    expect(
+      isInSuite(wasted, [
+        { type: "toolCallCountUnder", count: 10, role: "advisory" },
+        { type: "noRepeatedIdenticalCall" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("does not duplicate a hand-written copy on update", () => {
+    const handWritten = { type: "toolCallCountUnder", count: 10 } as const;
+    const next = withEvaluatorUpdated(
+      [handWritten, ...taggedChecks(wasted).slice(1)],
+      "no-wasted-calls",
+    );
+    expect(next.filter((p) => p.type === "toolCallCountUnder")).toEqual([
+      handWritten,
+    ]);
+    expect(next.filter((p) => p.type === "noRepeatedIdenticalCall")).toHaveLength(1);
   });
 });
 

@@ -129,6 +129,13 @@ export function scoreResultFromPredicateResult(
       ...(result.scope ? { scope: result.scope } : {}),
     });
   }
+  if (result.status === "not_applicable") {
+    return finalizeScoreResult(definition, {
+      kind: "not_applicable",
+      rationale: result.reason,
+      ...(result.scope ? { scope: result.scope } : {}),
+    });
+  }
   return finalizeScoreResult(definition, {
     kind: "scored",
     value: result.passed ? 1 : 0,

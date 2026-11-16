@@ -50,14 +50,15 @@ export type HostedPredicateResultLike = {
   reason?: string;
   scope?: PredicateScope;
   /**
-   * `"error"` ⇒ the check could not be scored. Absent ⇒ `"scored"`.
+   * `"error"` ⇒ the check could not be scored. `"not_applicable"` ⇒ nothing
+   * to judge; it carries `passed: true`. Absent ⇒ `"scored"`.
    *
    * The row still carries `passed: false` (the field is required on the wire),
    * so a reader that ignores this projects an unmeasured check as a 0 — a
    * defect on the dashboard nobody observed, and a failed trial if the check
    * gates.
    */
-  status?: "scored" | "error";
+  status?: "scored" | "error" | "not_applicable";
 };
 
 /** One turn of the tool-call matcher's verdict. */
@@ -406,6 +407,14 @@ export function buildHostedScoreRows(
     if (result.status === "error") {
       rows.push(
         errorScoreResult(definition, result.reason ?? "no evidence captured", {
+          ...(result.scope ? { scope: result.scope } : {}),
+        })
+      );
+      continue;
+    }
+    if (result.status === "not_applicable") {
+      rows.push(
+        notApplicableScoreResult(definition, result.reason, {
           ...(result.scope ? { scope: result.scope } : {}),
         })
       );

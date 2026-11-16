@@ -29,16 +29,21 @@ const STATUS: Record<TrialRowResult["state"], VerdictStatus> = {
 
 /**
  * One evaluator's verdict from its checks: an error outranks a failure,
- * because a crashed check says nothing about the agent; only a failed
- * Required check fails the evaluator; Not applicable is never a pass.
+ * because a crashed check says nothing about the agent; a failed Required
+ * check fails the evaluator, and an Advisory miss fails it only when it has
+ * no Required check; Not applicable is never a pass.
  */
 export function evaluatorStatus(
   checks: readonly { role: ScorerUiRole; status: VerdictStatus }[],
 ): VerdictStatus {
   const statuses = checks.map((c) => c.status);
   if (statuses.includes("error")) return "error";
-  if (checks.some((c) => c.status === "failed" && c.role === "required"))
-    return "failed";
+  // An evaluator with no Required check, such as one whose Required check
+  // the suite already had, is judged by what it has.
+  const deciding = checks.some((c) => c.role === "required")
+    ? checks.filter((c) => c.role === "required")
+    : checks;
+  if (deciding.some((c) => c.status === "failed")) return "failed";
   if (statuses.includes("running")) return "running";
   if (statuses.some((s) => s === "passed" || s === "partial" || s === "failed"))
     return "passed";
