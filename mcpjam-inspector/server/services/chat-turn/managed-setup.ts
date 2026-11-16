@@ -9,9 +9,10 @@ import {
 } from "../../utils/harness/local/run-resources.js";
 import {
   ensureLocalHarnessTarget,
-  LOCAL_HARNESS_DISPLAY_NAMES,
   LocalAutoApproveConsentRequiredError,
 } from "../../utils/harness/local/readiness.js";
+import { DEFAULT_LOCAL_HARNESS_ID } from "../../utils/harness/local/runtimes/index.js";
+import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import { readWebConversationState } from "../../routes/web/web-conversation-state.js";
 import { enforceNativeDiscoverySessionPin } from "../../utils/harness/native-discovery.js";
@@ -90,6 +91,8 @@ export async function resolveManagedTurnSetup(args: {
   bearerToken: string;
   localIngress: boolean;
   rpcCollector: ReturnType<typeof createHostedRpcLogCollector>;
+  /** A box preparation (`/web/chat/prepare`): the first message is not sent yet. */
+  preparation?: boolean;
 }) {
   const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
@@ -140,7 +143,10 @@ export async function resolveManagedTurnSetup(args: {
   }
   const executionTarget = normalizedTarget.target;
   const isScenarioRequest = executionTarget.kind === "scenario";
-  if (!Array.isArray(messages) || messages.length === 0) {
+  if (
+    !args.preparation &&
+    (!Array.isArray(messages) || messages.length === 0)
+  ) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -518,8 +524,8 @@ export async function resolveManagedTurnSetup(args: {
     turnMode === "interactive"
   ) {
     const localHarnessId =
-      localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
-    const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
+      localHarnessIdOf(resolvedExecution.harness) ?? DEFAULT_LOCAL_HARNESS_ID;
+    const localHarnessName = harnessDisplayName(localHarnessId);
     if (!hostedBody.projectId)
       return {
         response: c.json(
@@ -535,6 +541,7 @@ export async function resolveManagedTurnSetup(args: {
           scope: "attended",
           harnessId: localHarnessId,
           requireToolApproval,
+          reuseCredentials: true,
         })
       ).target;
     } catch (error) {
@@ -571,6 +578,8 @@ export async function resolveManagedTurnSetup(args: {
     const availability = checkHarnessRuntimeAvailable({
       mcpClient: resolveAgentLoop(hostRuntimeConfig ?? { harness: resolvedExecution.harness }).mcpClient,
       harnessId: resolvedExecution.harness,
+      surface: turnMode === "recorded" ? "user-testing" : "playground",
+      agentLoop: hostRuntimeConfig?.agentLoop !== undefined,
       localExecution: Boolean(harnessExecutionTarget),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       requireToolApproval,

@@ -8,7 +8,7 @@
  * `<server>/<skill>` for a captured server skill, which loads with its origin
  * banner. An older target pinned nothing and reads the project's skills live.
  */
-import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
+import type { PinnedSkillArtifactFile } from "../../../shared/skill-types.js";
 import type { RuntimeStandaloneSkill } from "../environments/effective-capabilities.js";
 import type { LiveSkillSource } from "../environments/turn-skill-sources.js";
 import {
@@ -19,36 +19,54 @@ import {
   type TurnSkills,
 } from "../environments/turn-skills.js";
 import { buildPinnedSkillSource } from "../evals/pinned-skill-source.js";
+import { runPinnedSkillsToHarnessArtifacts } from "../evals/run-pinned-harness-skills.js";
 import type { RunPinnedPluginVersion } from "../evals/run-plugin-snapshot.js";
-import type { PinnedSkillMeta } from "../swarm-agent.js";
+import type { FetchedPinnedSkill, PinnedSkillMeta } from "../swarm-agent.js";
 
 /** One pinned row of a target and the body the swarm runner fetched for it. */
 export interface FetchedTargetSkill {
   row: PinnedSkillMeta;
-  /** As fetched: also the copy a harness writes to its box. */
-  copy: PinnedSkillArtifact;
+  copy: FetchedPinnedSkill;
 }
 
 /**
  * A swarm target's frozen skills, from its pinned rows and their fetched
  * bodies, in pin order. Its sessions plan every turn from it.
  *
- * Supporting files are not in it: the rows list none, and the fetch serves
- * them as short-lived links this runner does not download, so MCPJam's agent
- * and the box both get each skill's SKILL.md alone.
+ * Resolve supporting files before sessions start so their signed links can
+ * expire without affecting the turn.
  */
 export async function buildTargetSkillSource(args: {
   skills: readonly FetchedTargetSkill[];
   pluginVersions: readonly RunPinnedPluginVersion[];
   /** The target's servers, for the set's server list. */
   serverIds: readonly string[];
+  signal?: AbortSignal;
 }): Promise<PinnedSkillSource> {
-  const built = await buildPinnedSkillSource({
-    pins: args.skills.map(({ row, copy }) => ({
+  const pins = args.skills.map(({ row, copy }) => {
+    const files = copy.files?.filter((file) => "url" in file);
+    return {
       ...row,
       content: copy.content,
-    })),
-    harnessSkills: args.skills.map(({ copy }) => copy),
+      ...(files?.length ? { files } : {}),
+    };
+  });
+  const downloaded = await runPinnedSkillsToHarnessArtifacts(pins, {
+    signal: args.signal,
+  });
+  const built = await buildPinnedSkillSource({
+    pins,
+    harnessSkills: args.skills.map(({ copy }, index) => {
+      const { files, extraFrontmatter, ...artifact } = copy;
+      const inline = files?.filter((file): file is PinnedSkillArtifactFile => !("url" in file)) ?? [];
+      const supportingFiles = [...inline, ...(downloaded[index]?.files ?? [])];
+      return {
+        ...artifact,
+        contentHash: pins[index]?.aggregateHash ?? artifact.contentHash,
+        ...(extraFrontmatter ? { frontmatter: extraFrontmatter } : {}),
+        ...(supportingFiles.length ? { files: supportingFiles } : {}),
+      };
+    }),
     pluginVersions: args.pluginVersions,
     // A plugin skill's ref comes from the versions alone; its servers are
     // re-gated when the session connects them.
@@ -70,14 +88,13 @@ export function sessionTurnSkills(args: {
   liveSkills?: readonly RuntimeStandaloneSkill[];
   /** The harness the session runs on; absent for MCPJam's agent. */
   harness?: string;
+  /** Whether the scenario requires tool approval. A session keeps its skills
+   *  either way: no skill tool asks, so a headless visitor has nothing to
+   *  answer (`effective-skill-tools.ts`). */
   requireToolApproval: boolean;
   modelContextTokens?: number;
 }): { skills: TurnSkills; skillsAtTurn?: Array<Record<string, unknown>> } {
   const runtime = turnRuntime({ harness: args.harness });
-  // With approval on, MCPJam's agent gets none of the session's skills: a
-  // headless visitor can't approve, and the local-runtime path refuses any
-  // tool at all while approval is on. A harness's box is not gated by it.
-  const withheld = args.requireToolApproval && runtime.kind === "agent";
   // An older target's live skills are for MCPJam's agent alone: a harness's
   // box fetches the project's skills itself, which this plan does not see.
   const live: LiveSkillSource | undefined =
@@ -85,9 +102,7 @@ export function sessionTurnSkills(args: {
       ? { kind: "live", projectSkills: args.liveSkills }
       : undefined;
   const skills = resolveTurnSkills({
-    source: withheld
-      ? { kind: "none" }
-      : (args.pinnedSkillSource ?? live ?? { kind: "none" }),
+    source: args.pinnedSkillSource ?? live ?? { kind: "none" },
     runtime,
     ...(args.modelContextTokens !== undefined
       ? { modelContextTokens: args.modelContextTokens }

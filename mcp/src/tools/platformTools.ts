@@ -21,7 +21,38 @@ import {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -208,6 +239,10 @@ import {
 import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 import { isClosedWorldOperation } from "./closedWorldOperations.js";
+import {
+  describeGuestMintFailure,
+  guestMintErrorContent,
+} from "../guestMint.js";
 
 /**
  * Catalog tools HELD off this surface while their feature is in beta.
@@ -227,18 +262,6 @@ const HELD_WHILE_IN_BETA: ReadonlyArray<{
   feature: string;
   operations: ReadonlyArray<PlatformOperation<any, any>>;
 }> = [
-  {
-    feature: "readiness",
-    operations: [
-      startClaudeReadinessRunOperation,
-      startOpenAIReadinessRunOperation,
-      startMuseReadinessRunOperation,
-      getReadinessRunOperation,
-      listReadinessRunsOperation,
-      cancelReadinessRunOperation,
-      getReadinessReportOperation,
-    ],
-  },
   { feature: "unified sessions", operations: [searchSessionsOperation] },
   {
     feature: "the registry directory",
@@ -352,13 +375,49 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   getServerSkillOperation,
   readServerSkillFileOperation,
   checkHostCompatibilityOperation,
+  // Directory readiness: in beta, yet listed for every caller. The backend refuses
+  // an organization outside the beta with the reason, and each description says so.
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  // Resuming a submission from its id, so an agent with only these tools
+  // can pick one up, read every finding, export the pack and record what
+  // happened in the directory.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  getDirectorySubmissionEvalsOperation,
+  setDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  exportDirectorySubmissionTestCasesOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -591,6 +650,8 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     )
   ),
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
+  create_reviewer_handoff:
+    "Returns a single-use browser sign-in link that should stay with the requester. Generate it in Readiness or through a direct API or CLI call so it stays out of the MCP host transcript.",
   // Its create/update siblings moved INTO the catalog; this reason had to stop
   // being the blanket one they shared, because that rationale is no longer
   // true of project lifecycle as a category. What is true of delete
@@ -863,6 +924,15 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "publish_study",
   "create_client",
   "duplicate_client",
+  // A new rehearsal; a replayed key returns the one it made.
+  "create_directory_submission",
+  // Append-only events about a submission: a newer record supersedes an
+  // older one in the summary, and the older one stays as it was.
+  "record_directory_submission_status",
+  "record_directory_submission_snapshot",
+  "import_directory_finding",
+  // New eval cases from a package; a case an earlier import made is left alone.
+  "import_directory_submission_test_cases",
   "send_feedback",
 ]);
 
@@ -892,6 +962,12 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
  * runs a third party's tool cannot promise a repeat is harmless.
  */
 const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
+  // Saving the plan that is already current changes nothing and answers the
+  // saved revision with `replayed: true`, whatever revision it names.
+  "save_directory_submission_test_plan",
+  // Importing the same plugin version again writes nothing and answers the
+  // cases the first import made.
+  "import_directory_submission_test_cases",
   "delete_project_server",
   "cancel_eval_run",
   "cancel_goal_run",
@@ -1140,10 +1216,14 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
   // first tool execution), never at connect/list_tools.
-  const token = await context.getBearerToken();
-  if (!token) {
-    return toolError("No bearer token on the request.");
+  const bearer = await context.getBearerToken();
+  if (!bearer.ok) {
+    return toolError(
+      describeGuestMintFailure(bearer.failure),
+      guestMintErrorContent(bearer.failure)
+    );
   }
+  const token = bearer.token;
 
   const client = new PlatformApiClient({
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,

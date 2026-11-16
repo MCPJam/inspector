@@ -38,14 +38,18 @@ import {
   type SyntheticModelSource,
 } from "./org-model-config.js";
 import { admitEachLocalOrgAttempt } from "./local-org-attempt-admission.js";
-import { postLocalUsage } from "./org-model-stream-handler.js";
+import {
+  hasUnsupportedLocalApprovalGate,
+  postLocalUsage,
+} from "./org-model-stream-handler.js";
 import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
 import { harnessOrgProviderUnsupportedReason } from "@/shared/harness-model-support";
+import { runsOnOrgVendorKey } from "./harness/org-key-surfaces.js";
 import {
-  orgKeyHarnessSurfaceRefusal,
-  runsOnOrgVendorKey,
-} from "./harness/org-key-surfaces.js";
+  harnessSurfaceOfSource,
+  harnessSurfaceRefusal,
+} from "@/shared/harness-descriptors";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import {
   backendModelSelection,
@@ -91,9 +95,9 @@ export interface ResolveTurnRuntimeArgs {
   sourceType: TurnSourceType;
   chatSessionId?: string;
   /**
-   * Local-runtime approval guard inputs: a non-empty `tools` set with
-   * `requireToolApproval === true` is refused up-front (the local turn driver
-   * has no approval loop yet).
+   * Local-runtime approval guard inputs: with `requireToolApproval === true`,
+   * a `tools` set holding a tool that would ask is refused up-front (the local
+   * turn driver has no approval loop yet).
    */
   requireToolApproval?: boolean;
   tools?: ToolSet;
@@ -178,15 +182,6 @@ export interface ResolvedTurnRuntime {
 // need not load the model factories behind this one.
 export { classifyTurnFailure } from "./turn-failure-classification.js";
 
-/**
- * The callers here whose harness turns may run on the organization's vendor
- * key. This resolver's `direct` callers are the v1 APIs, never the Playground.
- */
-const ORG_KEY_HARNESS_SOURCES: ReadonlySet<TurnSourceType> = new Set([
-  "swarm",
-  "eval",
-]);
-
 const HOSTED_NOOP_FINALIZE = async (): Promise<void> => {
   // Hosted engines (MCPJam `/stream`, cloud BYOK `/stream/org`) record usage
   // server-side; the inspector never posts local-usage for them. This mirrors
@@ -198,22 +193,18 @@ export async function resolveTurnRuntime(
 ): Promise<ResolvedTurnRuntime> {
   const modelId = String(args.modelDefinition.id);
 
-  // A harness on the organization's vendor key (Cursor) runs only on swarm and
-  // eval runs here, whose boxes receive the key. The v1 APIs, MCP Events and
-  // User Testing session simulation are refused whatever the model, before
-  // anything is resolved and before the caller marks the turn possibly-spent.
-  if (
-    args.harness &&
-    runsOnOrgVendorKey(args.harness) &&
-    !ORG_KEY_HARNESS_SOURCES.has(args.sourceType)
-  ) {
-    throw new Error(
-      orgKeyHarnessSurfaceRefusal(
+  // A runtime that declares it does not run on this surface (Cursor, on the
+  // organization's vendor key, outside evals and swarms) is refused whatever
+  // the model, before anything is resolved and before the caller marks the
+  // turn possibly-spent. This resolver's `direct` callers are the v1 APIs,
+  // never the Playground.
+  const surfaceRefusal = args.harness
+    ? harnessSurfaceRefusal(
         args.harness,
-        args.sourceType === "scenario" ? "study" : "elsewhere",
-      ),
-    );
-  }
+        harnessSurfaceOfSource(args.sourceType) ?? "api",
+      )
+    : undefined;
+  if (surfaceRefusal) throw new Error(surfaceRefusal);
 
   // Classify once — the SAME resolver the empty-session fallback persist uses,
   // so the two attribution paths can't drift.
@@ -257,10 +248,12 @@ export async function resolveTurnRuntime(
     // driver can't pause for a human, and a synthetic visitor can't approve.
     // Refuse up-front with the SAME message the synthetic dispatch used before
     // this extraction (this guard fired first, before the model was built).
+    // Only a tool that would ask counts, by the interactive local runtime's
+    // rule: skill tools never ask, so a scenario with approval on keeps them.
     if (
       args.requireToolApproval === true &&
       args.tools &&
-      Object.keys(args.tools as Record<string, unknown>).length > 0
+      hasUnsupportedLocalApprovalGate(args.tools)
     ) {
       throw new Error(
         "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this scenario or switch the provider to cloud runtime.",

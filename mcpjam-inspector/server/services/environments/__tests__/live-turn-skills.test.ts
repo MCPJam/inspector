@@ -110,16 +110,19 @@ describe("environmentTurnSkills", () => {
     expect(JSON.stringify(turn.turnProvenance)).not.toContain("SECRET");
   });
 
-  it("records only what a harness's box gets: a live turn leaves captures off it", () => {
+  it("records what a harness gets on its box and through MCPJam's skill tools", () => {
     const turn = environmentTurnSkills({
       spec: environment(),
       attribution: null,
       runtime: harness("claude-code"),
     });
-    expect(turn.turnProvenance?.skillsAtTurn).toEqual([AUTHORED_ROW]);
-    expect(turn.skills.excluded).toEqual([
-      expect.objectContaining({ reason: "server-skill-unsupported" }),
+    // Claude Code takes a captured server skill through the tools, so the plan
+    // hands it over and the record names it beside the authored skill.
+    expect(turn.turnProvenance?.skillsAtTurn).toEqual([
+      AUTHORED_ROW,
+      SERVER_ROW,
     ]);
+    expect(turn.skills.excluded).toEqual([]);
   });
 
   it("records nothing delivered on a harness with no skill channel", () => {

@@ -221,6 +221,15 @@ describe("the pnpm guard", () => {
     });
   });
 
+  it("leaves the guard to a caller that runs it fenced (a box preparation)", async () => {
+    await createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      skipPnpmGuard: true,
+    }).createSession();
+    expect(sandboxState.connect).toHaveBeenCalledTimes(1);
+    expect(sandboxState.run).not.toHaveBeenCalled();
+  });
+
   it("installs the template's pinned pnpm, never whatever is current", async () => {
     // A custom image or an old template has no pnpm, and the fallback used to
     // be a bare `npm install -g pnpm` — which is how pnpm 11 reached hosted

@@ -13,6 +13,7 @@ import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MCPClientManager } from "@mcpjam/sdk";
+import { parsePluginBundle } from "@mcpjam/sdk/plugin-bundle";
 import { PluginBundleCache } from "../bundle-cache.js";
 import { resolvePluginStdioLaunch } from "../plugin-root.js";
 import JSZip from "jszip";
@@ -46,11 +47,16 @@ describe("plugin stdio component (desktop)", () => {
     await cleanup();
   });
 
-  it("spawns the materialized component and injects the plugin root", async () => {
-    const bundleHash = await fixtureBundleHash();
+  it.each(["", "wrapper/"])("spawns the component with archive prefix %s", async (prefix) => {
+    const files = Object.fromEntries(
+      Object.entries(fixtureBundleFiles()).map(([path, content]) => [`${prefix}${path}`, content]),
+    );
+    const source = await fixtureBundleSource(files);
+    const { bundleHash } = await parsePluginBundle(source, { profile: "openai-compatible" });
     const identity = { ...IDENTITY_BASE, bundleHash };
     const materialized = await cache.materialize(identity, {
-      source: await fixtureBundleSource(),
+      source,
+      profile: "openai-compatible",
     });
 
     const [component] = materialized.parsed.mcpServers;

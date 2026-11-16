@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   modelGet: vi.fn(),
   modelHas: vi.fn(() => false),
+  modelFence: vi.fn(),
+  modelRestore: vi.fn(async () => undefined),
   get: vi.fn(),
   persistent: vi.fn(),
   snapshot: vi.fn(),
@@ -11,7 +13,21 @@ const mocks = vi.hoisted(() => ({
   revalidate: vi.fn(),
 }));
 vi.mock("../model-apps.js", () => ({
-  modelApps: { has: mocks.modelHas, get: mocks.modelGet },
+  modelApps: {
+    holds: mocks.modelHas,
+    get: mocks.modelGet,
+    restore: mocks.modelRestore,
+    // The durable control read beside the admission query it fences.
+    fence: () => async (query: () => Promise<unknown>) => {
+      mocks.modelFence();
+      return query();
+    },
+  },
+  // The durable control decides the registry; here, `modelHas` stands in.
+  readOwnedApp: async (...args: unknown[]) =>
+    mocks.modelHas()
+      ? { kind: "model", app: mocks.modelGet() }
+      : { kind: "instance", instance: await mocks.persistent(...args) },
 }));
 vi.mock("../instances.js", () => ({
   pluginInstances: {
@@ -170,4 +186,9 @@ it("reads original model context through the same fresh source fence", async () 
   expect(JSON.stringify(result)).toContain("server state");
   expect(mocks.persistent).not.toHaveBeenCalled();
   expect(mocks.modelGet).toHaveBeenCalledTimes(3);
+  // Its final admission read stood beside a durable control read, and the
+  // control was read again after every other wait.
+  expect(mocks.modelFence).toHaveBeenCalledOnce();
+  expect(mocks.modelRestore).toHaveBeenCalledOnce();
+  expect(mocks.revalidate).toHaveBeenCalledOnce();
 });

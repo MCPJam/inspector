@@ -23,7 +23,12 @@ export type TelemetryExplanation = {
   dropped: Record<string, string>;
 };
 
-type Rule = { values?: readonly string[]; kind?: string; max?: number };
+type Rule = {
+  values?: readonly string[];
+  kind?: string;
+  max?: number;
+  integer?: true;
+};
 
 /** Any sample value, including ones JSON cannot encode (BigInt, cycles). */
 function show(value: unknown): string {
@@ -46,6 +51,8 @@ function ruleReason(rule: Rule | undefined, value: unknown, declareIn: string) {
   if (rule.kind === "boolean") return `expects a boolean, got ${typeof value}`;
   if (rule.kind === "convexId")
     return "kept only as a 32-character Convex ID in the server's request context (a LogConvexId), never from an event payload";
+  if (rule.integer)
+    return `expects a whole number from 0 to ${rule.max}, got ${show(value)}`;
   return `expects a finite number from 0 to ${rule.max}, got ${show(value)}`;
 }
 

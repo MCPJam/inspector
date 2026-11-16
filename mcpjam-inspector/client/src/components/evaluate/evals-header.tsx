@@ -193,7 +193,7 @@ export function EvalsHeader({
               ) : (
                 <Plus className="h-4 w-4" aria-hidden />
               )}
-              {landingView === "runs" ? "Setup Run" : "Create suite"}
+              {landingView === "runs" ? "Run" : "Create suite"}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

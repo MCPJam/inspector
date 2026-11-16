@@ -227,7 +227,7 @@ describe("the generated digest table", () => {
 
   it("covers every supported harness in all three tables", () => {
     for (const table of [PACK_RECORDS, PACK_TREE_DIGESTS, EXPECTED_PACK_VERSIONS]) {
-      expect(Object.keys(table).sort()).toEqual(["claude-code", "codex"]);
+      expect(Object.keys(table).sort()).toEqual(Object.keys(LOCAL_HARNESS_MANIFEST).sort());
     }
   });
 });

@@ -5,7 +5,7 @@ import {
   usesClaudeInlineStreamingFooter,
   usesMcpjamInlineStreamingFooter,
 } from "../shared/loading-indicator-content";
-import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
+import { ClaudeMarkIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 
 const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
@@ -45,7 +45,7 @@ describe("LoadingIndicatorContent", () => {
   });
 
   it("renders animated Claude strips with explicit aspect ratios", () => {
-    render(<ClaudeLoadingIndicator />);
+    render(<ClaudeMarkIndicator />);
 
     const strip900 = screen.getByTestId("loading-indicator-claude-strip-900");
     const strip800 = screen.getByTestId("loading-indicator-claude-strip-800");
@@ -57,25 +57,6 @@ describe("LoadingIndicatorContent", () => {
     expect(strip800).not.toHaveAttribute("hidden");
     expect(strip800).toHaveAttribute("preserveAspectRatio", "xMidYMin meet");
     expect(strip800.getAttribute("style")).toContain("aspect-ratio: 1 / 8;");
-  });
-
-  it("renders the direct static Claude mode without animated strips", () => {
-    render(<ClaudeLoadingIndicator mode="static" />);
-
-    expect(screen.getByTestId("loading-indicator-claude")).toHaveAttribute(
-      "data-claude-mode",
-      "static"
-    );
-    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
-    expect(
-      screen.getByTestId("loading-indicator-claude-static")
-    ).not.toHaveAttribute("hidden");
-    expect(
-      screen.getByTestId("loading-indicator-claude-strip-900")
-    ).toHaveAttribute("hidden");
-    expect(
-      screen.getByTestId("loading-indicator-claude-strip-800")
-    ).toHaveAttribute("hidden");
   });
 
   it("renders the Claude mascot for Claude-style scenario hosts", () => {

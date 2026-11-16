@@ -36,7 +36,10 @@
  * template was actually rolled out. At runtime every hosted turn reports its
  * bootstrap (`[harness][timing]` on success, `[harness][bootstrap]` on
  * failure), and the bake-miss monitor (mcpjam-backend `ops/axiom-monitors`)
- * watches both, grouped by whether the box carries a bake at all.
+ * watches both, grouped by whether the box carries a bake at all. A miss on a
+ * new conversation's box from a baked template, the stale template a release
+ * can leave behind, also logs `harness_bake_stale` once per identity per
+ * process (`harness-bake-observer.ts`).
  *
  * Everything here is a constant on purpose: the template, the generator and
  * the observer must agree on these values, so none of them is configurable.
@@ -111,7 +114,7 @@ export const HARNESS_BAKED_MARKER_AUTHOR = "mcpjam-harness-bake";
  * the unpinned templates already ran. Local packs build on machines without
  * that limit and keep the toolchain file's pnpm.
  */
-export const HARNESS_TEMPLATE_NODE_VERSION = "24.20.0";
+export const HARNESS_TEMPLATE_NODE_VERSION = "24.22.1";
 export const HARNESS_TEMPLATE_PNPM_VERSION = "12.8.1";
 
 /**

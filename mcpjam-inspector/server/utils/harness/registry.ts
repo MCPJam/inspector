@@ -1,4 +1,3 @@
-import { withCursorHostToolApproval } from "./cursor-host-tool-approval";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 /**
@@ -21,9 +20,7 @@ import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
 import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
-import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
-import { withAcpPermissionCallInput } from "./acp-permission-input.js";
-import { withCursorLoginAuthentication } from "./cursor-login-auth.js";
+import { createCursorHarness } from "./cursor-harness.js";
 import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
 export {
   CURSOR_CLI_CHECKSUMS,
@@ -507,6 +504,12 @@ export type HarnessCreateArgs = {
   /** Only set after exact-route discovery admission. */
   requireNativeToolDiscovery?: boolean;
   /**
+   * Start the runtime without its non-essential network traffic. Set only for
+   * a hosted box, where the CLI holds a placeholder credential; a local run
+   * keeps the person's own settings. Adapters without such traffic ignore it.
+   */
+  quietStartup?: boolean;
+  /**
    * The reasoning effort this turn asked for. An adapter that lists efforts in
    * `supportedReasoningEfforts` MUST apply it through its own runtime option;
    * one that lists none never receives it (the refusal helper stops the turn
@@ -912,8 +915,12 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     elicitationHandler,
     forwardingMcpJson,
     requireNativeToolDiscovery,
+    quietStartup,
   }) {
     const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
+    // Telemetry, error reports, auto-update, feature flags and availability
+    // checks (https://code.claude.com/docs/en/network-config).
+    if (quietStartup) env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
     // This pin disables discovery behind a gateway unless explicitly enabled.
     // Preserve the existing eager route; small forwarded catalogs stay eager.
     if (
@@ -1221,21 +1228,10 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     // host-configured workdir here used to be an injection surface.
     '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
   createHarness({ auth, mcpJson }) {
-    // Dual-`ai` boundary cast, same as the other two adapters.
-    return withAcpPermissionCallInput(withCursorHostToolApproval(withCursorLoginAuthentication(pinCursorHarnessBootstrap(
-      createCursor({
-        // An explicit empty key prevents ambient credential lookup. The backend
-        // installs the temporary login before the runtime process starts.
-        auth,
-        // The framework replaces even empty keys with placeholders by default.
-        // Keep the CLI on its installed login instead of trying a fake API key.
-        credentialForwarding: () => "",
-        // REQUIRED by this arm's signature: `session-config` delivery has no
-        // other channel, so a construction that forgot the servers would be a
-        // silently tool-less turn. The type makes that unwritable.
-        mcpServers: toAcpMcpServers(mcpJson),
-      }) as unknown as HarnessAgentAdapter,
-    ))));
+    // REQUIRED by this arm's signature: `session-config` delivery has no
+    // other channel, so a construction that forgot the servers would be a
+    // silently tool-less turn. The type makes that unwritable.
+    return createCursorHarness({ auth, mcpServers: toAcpMcpServers(mcpJson) });
   },
 };
 
@@ -1302,7 +1298,7 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   supportsMcpToolApproval: false,
   supportsHostExecutedToolApproval: true,
   mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
-  supportsSkills: false,
+  supportsSkills: true,
   skills: HARNESS_SKILLS.opencode,
   supportsPluginBundles: false,
   fileChangeToolName: undefined,

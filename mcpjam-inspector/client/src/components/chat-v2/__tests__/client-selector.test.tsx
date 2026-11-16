@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ClientSelector } from "../chat-input/client-selector";
 import type { HostListItem } from "@/hooks/useClients";
+import type { ClientSelectorData } from "../chat-input/client-selector";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/app-navigation", () => ({
@@ -606,4 +608,57 @@ describe("ClientSelector with environment panes", () => {
     expect(calls.onSelectedHostIdsChange).not.toHaveBeenCalled();
     expect(calls.onMultiHostEnabledChange).toHaveBeenLastCalledWith(false);
   });
+});
+
+// The Playground mounts its composer in one subtree for a single chat and in
+// another for Compare, so the first ticked client remounts the selector.
+function RemountingPlayground() {
+  const [selectedHostIds, setSelectedHostIds] = useState(["host-0"]);
+  const comparing = selectedHostIds.length > 1;
+  const selector: ClientSelectorData = {
+    hosts,
+    projectId: "project-1",
+    cloudProjectId: null,
+    currentHostId: "host-0",
+    selectedHostIds,
+    onHostChange: vi.fn(),
+    onSelectedHostIdsChange: setSelectedHostIds,
+    onMultiHostEnabledChange: vi.fn(),
+    onPromoteLead: vi.fn(),
+    enableMultiHost: true,
+  };
+  return comparing ? (
+    <section data-testid="compare-layout">
+      <ClientSelector {...selector} />
+    </section>
+  ) : (
+    <main data-testid="single-layout">
+      <ClientSelector {...selector} />
+    </main>
+  );
+}
+
+it("stays open when the first ticked client remounts it into Compare", async () => {
+  render(<RemountingPlayground />);
+  const user = userEvent.setup();
+  await user.click(screen.getByTestId("client-selector-trigger"));
+  await user.click(screen.getByTestId("client-row-compare-host-1"));
+
+  expect(screen.getByTestId("compare-layout")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("Search clients")).toBeInTheDocument();
+
+  await user.click(screen.getByTestId("client-row-compare-host-2"));
+  expect(screen.getByTestId("client-row-compare-host-2")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
+
+it("opens closed after unmounting closed", async () => {
+  const { unmount } = renderClientSelector();
+  unmount();
+  renderClientSelector();
+  expect(
+    screen.queryByPlaceholderText("Search clients"),
+  ).not.toBeInTheDocument();
 });
