@@ -761,6 +761,7 @@ export function createMcpJamMcpServer(
       runTool("server_doctor", async () => {
         const { config, target } = buildTargetConfig(input, defaultTimeoutMs);
         const result = await runServerDoctor({
+          __suppressTelemetry: true,
           config,
           target: summarizeServerDoctorTarget(target, config),
           timeout: input.timeoutMs ?? defaultTimeoutMs,
