@@ -74,13 +74,14 @@ jobs:
 
       # The release App's token: it is the only actor that may push to `main`
       # without a pull request, and unlike GITHUB_TOKEN its push starts
-      # Deploy Staging and the rest of `main`'s workflows.
+      # Deploy Staging and the rest of `main`'s workflows. A dedicated App with
+      # Contents: write on this repo only, used by nothing else.
       - name: Release App token
         id: app
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.MCPJAM_BOT_CLIENT_ID }}
-          private-key: ${{ secrets.MCPJAM_BOT_PRIVATE_KEY }}
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Checkout code
         uses: actions/checkout@v7
