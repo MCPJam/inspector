@@ -160,6 +160,20 @@ describe("hosted input check", () => {
     expect(onConnectOwnServer).not.toHaveBeenCalled();
   });
 
+  it("says when copying the command fails, and copies again on retry", async () => {
+    hostedState.hosted = true;
+    clipboard.copy.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const { submit } = renderOverlay();
+    submit("http://localhost:3000/mcp");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy npx command" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Copy failed. Try again" }),
+    );
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
+    expect(clipboard.copy).toHaveBeenCalledTimes(2);
+  });
+
   it("warns once about a private address, then connects", () => {
     hostedState.hosted = true;
     const { submit, onConnectOwnServer } = renderOverlay();

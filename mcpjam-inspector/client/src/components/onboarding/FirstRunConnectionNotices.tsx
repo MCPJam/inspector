@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AlertCircle, Check, Copy, Download } from "lucide-react";
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
@@ -140,27 +140,23 @@ export function HostedInputNotice({ check }: { check: HostedInputCheck }) {
             Download desktop app
           </a>
         </Button>
-        <CopyCommandButton command={check.copyCommand} />
+        <CopyCommandButton
+          key={check.copyCommand}
+          command={check.copyCommand}
+        />
       </div>
     </div>
   );
 }
 
 function CopyCommandButton({ command }: { command: string }) {
+  // The result label stays until the next click, so there is no reset timer
+  // to clean up. Clicking "Copied" copies again; "failed" invites a retry.
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (resetTimer.current) clearTimeout(resetTimer.current);
-    },
-    [],
-  );
   const copy = async () => {
     // `copyToClipboard` reports failure by returning false, not by throwing.
     const copied = await copyToClipboard(command);
     setState(copied ? "copied" : "failed");
-    if (resetTimer.current) clearTimeout(resetTimer.current);
-    resetTimer.current = setTimeout(() => setState("idle"), 2000);
   };
   return (
     <Button type="button" size="sm" variant="outline" onClick={copy}>
