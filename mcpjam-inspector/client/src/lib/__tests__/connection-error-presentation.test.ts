@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { describeAsSlug } from "@mcpjam/sdk/browser";
 import { WebApiError } from "../apis/web/base";
+import { credentialRefusalMessage } from "../credential-refusal";
 import {
   presentConnectionError,
   readConnectionFailureFacts,
@@ -82,7 +83,9 @@ describe("connection error presentation", () => {
     const facts = readConnectionFailureFacts(input);
     expect(facts.credentialRefusal).toEqual({ kind: "hosted_only" });
     const result = presentConnectionError(input, context);
-    expect(result.explanation).toContain("Use it in hosted runs");
+    expect(result.explanation).toBe(
+      credentialRefusalMessage({ kind: "hosted_only" }, context.serverName),
+    );
     expect(result.explanation).not.toMatch(/admin|re-enter/i);
     expect(result.recovery).not.toBe("sign-in");
   });
