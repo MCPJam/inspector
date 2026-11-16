@@ -86,7 +86,11 @@ describe("TraceCostSummary for an eval iteration", () => {
     render(
       <TraceCostSummary
         spans={spans}
-        iteration={{ iterationId: "it-1", harness: false, rollup: storedRollup }}
+        iteration={{
+          iterationId: "it-1",
+          harness: false,
+          rollup: storedRollup,
+        }}
       />,
     );
     const summary = screen.getByTestId("trace-cost-summary");
@@ -109,11 +113,24 @@ describe("TraceCostSummary for an eval iteration", () => {
     expect(summary).toHaveTextContent("2 of 3 calls priced");
     const list = within(screen.getByTestId("trace-cost-unmatched-calls"));
     expect(list.getByText("Model calls not matched to a step")).toBeTruthy();
-    expect(list.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+    expect(
+      list.getAllByRole("listitem").map((item) => item.textContent),
+    ).toEqual([
       "anthropic/claude-haiku-4.5$0.0123Provider-reported",
       "openai/gpt-5-miniCost unavailable",
     ]);
     expect(list.queryByText("anthropic/claude-sonnet-4.5")).toBeNull();
+  });
+
+  it("counts a matched call's cost once when its span carries none", () => {
+    // Harness llm spans carry no cost of their own; the matched call does.
+    const bareSpans = spans.map(({ cost: _cost, ...span }) => span);
+    query.useQuery.mockReturnValue(calls);
+    render(<TraceCostSummary spans={bareSpans} iteration={harness} />);
+
+    const summary = screen.getByTestId("trace-cost-summary");
+    expect(summary).toHaveTextContent("≈$0.0163");
+    expect(summary).toHaveTextContent("2 of 3 calls priced");
   });
 
   it("keeps the stored total when a harness iteration has one", () => {
@@ -124,7 +141,9 @@ describe("TraceCostSummary for an eval iteration", () => {
         iteration={{ ...harness, rollup: storedRollup }}
       />,
     );
-    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent("≈$1.50");
+    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent(
+      "≈$1.50",
+    );
     expect(screen.getByTestId("trace-cost-unmatched-calls")).toBeTruthy();
   });
 

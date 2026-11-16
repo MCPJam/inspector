@@ -14,11 +14,13 @@ import {
 } from "./cost-view";
 import {
   isIterationModelCallsUnavailable,
+  joinModelCalls,
   listIterationModelCalls,
-  unmatchedModelCalls,
   type IterationCostContext,
   type UnmatchedModelCall,
 } from "./iteration-model-calls";
+
+const NO_UNMATCHED_CALLS: UnmatchedModelCall[] = [];
 
 /**
  * Every component here renders nothing while the `trace-cost` flag is off,
@@ -209,12 +211,15 @@ function HarnessCostSummary({
   const calls = useQuery(listIterationModelCalls, {
     iterationId: iteration.iterationId,
   });
-  const unmatched = useMemo(() => unmatchedModelCalls(calls), [calls]);
+  const joined = useMemo(
+    () => joinModelCalls(spans ?? [], calls),
+    [spans, calls],
+  );
   return (
     <CostSummaryCard
-      spans={spans}
+      spans={joined.spans}
       iteration={iteration}
-      unmatched={unmatched}
+      unmatched={joined.unmatched}
     />
   );
 }
@@ -222,10 +227,11 @@ function HarnessCostSummary({
 function CostSummaryCard({
   spans,
   iteration,
-  unmatched = [],
+  unmatched = NO_UNMATCHED_CALLS,
 }: SummaryProps & { unmatched?: UnmatchedModelCall[] }) {
   // The iteration's stored total already counts every call it recorded,
-  // unmatched ones included; without it, unmatched calls join the spans' sum.
+  // unmatched ones included; without it, unmatched calls join the spans' sum
+  // (a harness span carries its matched call's cost; see `joinModelCalls`).
   const cost = useMemo<RowCost | undefined>(() => {
     const rollup =
       iteration?.rollup ??
