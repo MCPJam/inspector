@@ -3,6 +3,7 @@ import { createCompareBroadcast } from "../compare-broadcast";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
+import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
@@ -257,7 +258,9 @@ function Harness({
   hostCapsResolver,
   pluginComputerAttached,
   renderPaneHeader,
+  theme = "light",
 }: {
+  theme?: "light" | "dark";
   renderPaneHeader?: Parameters<
     typeof MultiModelPlaygroundCard
   >[0]["renderPaneHeader"];
@@ -331,7 +334,7 @@ function Harness({
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
-        effectiveThreadTheme="light"
+        effectiveThreadTheme={theme}
         deviceType="mobile"
         onSummaryChange={(summary) =>
           setSummaries((previous) => ({
@@ -351,6 +354,51 @@ function Harness({
 }
 
 describe("MultiModelPlaygroundCard", () => {
+  it("scopes opposite themes over entire sibling panes without changing the workspace", () => {
+    const { container, rerender } = render(
+      <div className="app-theme-scope dark" data-testid="workspace">
+        <Harness theme="light" />
+        <Harness theme="dark" />
+      </div>,
+    );
+    const [light, dark] = screen.getAllByTestId(
+      "multi-model-playground-card-root",
+    );
+    const expectedStyle = getScenarioShellStyle("chatgpt", "light");
+
+    expect(light).toHaveClass(
+      "app-theme-scope",
+      "bg-background",
+      "text-foreground",
+    );
+    expect(light).not.toHaveClass("dark");
+    expect(light).toHaveAttribute("data-thread-theme", "light");
+    expect(light.style.colorScheme).toBe("light");
+    for (const [property, value] of Object.entries(expectedStyle)) {
+      expect(light.style.getPropertyValue(property)).toBe(value);
+    }
+    expect(light).toContainElement(
+      screen.getAllByTestId("compare-card-header")[0],
+    );
+    expect(dark).toHaveClass("app-theme-scope", "dark");
+    expect(dark.style.colorScheme).toBe("dark");
+    expect(
+      container.querySelectorAll(".scenario-host-shell.app-theme-scope"),
+    ).toHaveLength(0);
+
+    rerender(
+      <div className="app-theme-scope" data-testid="workspace">
+        <Harness theme="dark" />
+        <Harness theme="light" />
+      </div>,
+    );
+    expect(screen.getByTestId("workspace")).not.toHaveClass("dark");
+    expect(light).toHaveClass("dark");
+    expect(light.style.colorScheme).toBe("dark");
+    expect(dark).not.toHaveClass("dark");
+    expect(dark.style.colorScheme).toBe("light");
+  });
+
   it("does not borrow the parent Computer when a resolved compare client has none", () => {
     const saved = {
       id: "without_computer", schemaVersion: 2, hostStyle: "chatgpt", modelId: String(model.id),
