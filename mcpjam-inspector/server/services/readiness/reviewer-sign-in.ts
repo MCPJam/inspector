@@ -68,6 +68,10 @@ export interface ReviewerAttemptView {
   passwordSecretName: string;
   usernameSecretName?: string;
   username?: string;
+  /** Where the reviewer signs in, when the submitter saved it. */
+  loginUrl?: string;
+  /** The organization or tenant the reviewer must end up signed in to. */
+  tenant?: string;
 }
 
 export interface SignInBrowser {
@@ -131,7 +135,12 @@ export interface ReviewerSignInDeps {
 }
 
 export type ReviewerSignInOutcome =
-  | { kind: "connected"; reviewerAccountId: string }
+  | {
+      kind: "connected";
+      reviewerAccountId: string;
+      /** A person finished it through the handoff link; MCPJam did not sign in. */
+      signedInBy?: "person";
+    }
   | { kind: "failed"; detail: string }
   | { kind: "waiting-for-person"; reason: string; action: string };
 

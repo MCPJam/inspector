@@ -33,7 +33,7 @@ vi.mock("../backend-client.js", () => ({
 }));
 
 // Dynamic, after the mock: see the same note in `worker.test.ts`.
-const { executeHostedReadinessRun } = await import("../worker.js");
+const { attemptEnding, executeHostedReadinessRun } = await import("../worker.js");
 
 const LEASE = { runId: "run_1", jobId: "job_1" };
 const ATTEMPT = {
@@ -78,6 +78,7 @@ function serverFetch() {
 function run(
   reviewerSignIn: ReturnType<typeof vi.fn>,
   fetchFn = serverFetch(),
+  extra: Record<string, unknown> = {},
 ) {
   return {
     fetchFn,
@@ -89,6 +90,7 @@ function run(
       includeLlmObservations: false,
       reviewerAttemptId: "att_1",
       reviewerSignIn: reviewerSignIn as never,
+      ...extra,
     }),
   };
 }
@@ -205,5 +207,68 @@ describe("a run that rehearses the reviewer's sign-in", () => {
     await run(signIn).done;
     expect(signIn).not.toHaveBeenCalled();
     expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the account the sign-in connected", () => {
+  it("is authorized mid-run and graded with, since the start could not know it", async () => {
+    const signIn = vi.fn(async () => ({ kind: "connected", reviewerAccountId: "acct_new" }));
+    const authorizeReviewer = vi.fn(async () => ({
+      accountId: "acct_new",
+      mcpHeaders: { Authorization: "Bearer reviewer-token" },
+    }));
+    await run(signIn, serverFetch(), {
+      reviewer: { missing: "No reviewer account is connected for this submission." },
+      authorizeReviewer,
+    }).done;
+    expect(authorizeReviewer).toHaveBeenCalledWith("acct_new");
+  });
+
+  it("is not authorized again when the start already had it", async () => {
+    joinReviewerAttempt.mockResolvedValue({
+      joined: true,
+      attempt: { ...ATTEMPT, reviewerAccountId: "acct_1", humanSignInCompletedAt: 100 },
+    });
+    const authorizeReviewer = vi.fn();
+    await run(vi.fn(), serverFetch(), {
+      reviewer: { accountId: "acct_1", mcpHeaders: {} },
+      authorizeReviewer,
+    }).done;
+    expect(authorizeReviewer).not.toHaveBeenCalled();
+    expect(recordReviewerAttempt).toHaveBeenCalledWith(LEASE, "att_1", {
+      outcome: "passed",
+      detail: expect.stringContaining("A person signed in"),
+    });
+  });
+});
+
+describe("how a connected attempt ends", () => {
+  const automated = { kind: "connected", reviewerAccountId: "acct_1" } as const;
+
+  it("passes with a confirmed identity, and says so", () => {
+    expect(attemptEnding(automated, { outcome: "verified" })).toEqual({
+      outcome: "passed",
+      detail: expect.stringMatching(/^MCPJam signed in .*identity check confirmed the reviewer\.$/),
+    });
+  });
+
+  it("passes without an identity tool, saying the identity was not checked", () => {
+    const ending = attemptEnding(automated, {
+      outcome: "unverified",
+      reason: "the submission names no identity tool",
+    });
+    expect(ending.outcome).toBe("passed");
+    expect(ending.detail).toContain("identity was not checked (the submission names no identity tool)");
+  });
+
+  it("fails on another account or tenant, whoever signed in", () => {
+    for (const outcome of ["wrong-account", "wrong-tenant"] as const) {
+      const ending = attemptEnding(
+        { ...automated, signedInBy: "person" },
+        { outcome, reason: "the server named Other Org." },
+      );
+      expect(ending.outcome).toBe("failed");
+      expect(ending.detail).toMatch(/^A person signed in .*: the server named Other Org\. Check/);
+    }
   });
 });

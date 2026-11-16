@@ -800,21 +800,50 @@ export function buildConvexAuthHeaders(
   return headers;
 }
 
+type AuthorizeServerOptions = {
+  connectionId?: string;
+  connectionIds?: Record<string, string>;
+  includeConnections?: boolean;
+  accessScope?: "project_member" | "chat_v2";
+  scenarioId?: string;
+  accessVersion?: number;
+  /** Ends the request, for a caller that stops waiting for the answer. */
+  signal?: AbortSignal;
+};
+
 export async function authorizeServer(
   c: Context,
   bearerToken: string,
   projectId: string,
   serverId: string,
-  options?: {
-    connectionId?: string;
-    connectionIds?: Record<string, string>;
-    includeConnections?: boolean;
-    accessScope?: "project_member" | "chat_v2";
-    scenarioId?: string;
-    accessVersion?: number;
-    /** Ends the request, for a caller that stops waiting for the answer. */
-    signal?: AbortSignal;
+  options?: AuthorizeServerOptions,
+): Promise<ClientSafeAuthorizeResponse> {
+  return authorizeServerAs(
+    {
+      caller: callerContextFromHono(c),
+      onLogContext: (log) => setRequestLogContext(c, log),
+    },
+    bearerToken,
+    projectId,
+    serverId,
+    options,
+  );
+}
+
+/**
+ * `authorizeServer` for work that outlives its request, such as a readiness
+ * run authorizing the reviewer account it connected: the caller as the
+ * request named it, captured while the request existed.
+ */
+export async function authorizeServerAs(
+  who: {
+    caller: ManagerCallerContext;
+    onLogContext?: (log: ReturnType<typeof mapInternalToRequestContext>) => void;
   },
+  bearerToken: string,
+  projectId: string,
+  serverId: string,
+  options?: AuthorizeServerOptions,
 ): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -829,7 +858,7 @@ export async function authorizeServer(
   try {
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
-      headers: buildConvexAuthHeaders(callerContextFromHono(c), bearerToken),
+      headers: buildConvexAuthHeaders(who.caller, bearerToken),
       body: JSON.stringify({
         projectId,
         ...(options?.connectionId
@@ -888,7 +917,7 @@ export async function authorizeServer(
 
   const { internalLogContext, ...clientSafe } = body as ConvexAuthorizeResponse;
   if (internalLogContext) {
-    setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
+    who.onLogContext?.(mapInternalToRequestContext(internalLogContext));
   }
   return stripStdioFieldsFromHostedConfig(
     clientSafe,
