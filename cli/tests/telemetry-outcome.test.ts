@@ -106,6 +106,8 @@ test("an invalid option value thrown before the action runs is usage_error", asy
   for (const argv of [
     ["--timeout", "0", "server", "probe", "--url", DEAD_URL],
     ["server", "probe", "--timeout", "0", "--url", DEAD_URL],
+    // An option's value that happens to name a command is not the command.
+    ["--format", "telemetry", "--timeout", "0", "server", "probe", "--url", DEAD_URL],
   ]) {
     const { exitCode, events } = await runMain(argv);
     const label = argv.join(" ");

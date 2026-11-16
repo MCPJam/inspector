@@ -92,9 +92,11 @@ export function resolveCommandOutcome(
 /**
  * The registered command path that argv names, for errors commander raises
  * before any action runs. Walks argv from the root, descending into a
- * subcommand whenever a token matches its name or an alias, and skips every
- * other token. The result holds registered names only, so no argv text
- * leaves the machine. An empty result means nothing matched.
+ * subcommand whenever a token matches its name or an alias. Options are
+ * skipped with the value they take, so `--format telemetry` is not read as
+ * the `telemetry` command; other tokens are skipped too. The result holds
+ * registered names only, so no argv text leaves the machine. An empty result
+ * means nothing matched.
  */
 export function resolveRegisteredCommandPath(
   program: Command,
@@ -102,12 +104,22 @@ export function resolveRegisteredCommandPath(
 ): string[] {
   const path: string[] = [];
   let current = program;
+  const tokens = argv.slice(2);
 
-  for (const token of argv.slice(2)) {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
     if (token === "--") {
       break;
     }
     if (token.startsWith("-")) {
+      const next = tokens[index + 1];
+      if (
+        next !== undefined &&
+        !next.startsWith("-") &&
+        optionTakesSeparateValue(current, token)
+      ) {
+        index += 1;
+      }
       continue;
     }
     const next = current.commands.find(
@@ -120,6 +132,22 @@ export function resolveRegisteredCommandPath(
   }
 
   return path;
+}
+
+/** Whether `token` is an option of `command` or a parent that reads the next token. */
+function optionTakesSeparateValue(command: Command, token: string): boolean {
+  if (token.includes("=") || /^-[^-]./.test(token)) {
+    return false;
+  }
+  for (let cursor: Command | null = command; cursor; cursor = cursor.parent) {
+    const option = cursor.options.find(
+      (candidate) => candidate.long === token || candidate.short === token,
+    );
+    if (option) {
+      return option.required || option.optional;
+    }
+  }
+  return false;
 }
 
 /** `--no-telemetry` anywhere before `--`, for runs that never parsed. */
