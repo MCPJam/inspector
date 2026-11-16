@@ -9,8 +9,10 @@
  *     attempt names and nothing else;
  *   - the desktop: `runs/browser-session` (blank profile), then its `desktop`,
  *     `bind` and `boot`, with browserd started on the box by the per-run path
- *     the eval boxes use; on release, the recording is read off the box
- *     before `close`, then kept with the reservation;
+ *     the eval boxes use, and the browser agent on it. It is NOT recorded:
+ *     credentials are typed on it and a recording cannot be paused, so each
+ *     stage keeps its own screenshot (`browser-session/screenshot`) instead;
+ *   - the one password try: `runs/reviewer-attempt` `passwordSubmission`;
  *   - the connection: `reviewer-connections` create, claim, start, complete
  *     and status, the authorization prepared behind this node's SSRF guard
  *     exactly as for a person's browser.
@@ -18,35 +20,26 @@
  * VALIDATE-ON-STAGING, like `browserd/live-session-deps.ts`: only a staging
  * run proves these routes and the hosted browser meet.
  */
-import { randomUUID } from "node:crypto";
 import { setTimeout as pause } from "node:timers/promises";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import { logger } from "../../utils/logger.js";
-import type { SandboxHostedBrowserSessionHandle } from "../browserd/browser-session.js";
-import {
-  collectHostedRecordingThenRelease,
-  type HostedRecording,
-} from "../browserd/hosted-recording.js";
 import { ensureLiveBrowserSession } from "../browserd/live-session-deps.js";
-import type {
-  BrowserAction,
-  BrowserCommandSecret,
-} from "../browserd/protocol.js";
+import { getInternalBackendConfig } from "../internal-backend.js";
 import { prepareAuthorization } from "../server-connection-authorize.js";
 import {
   parseJsonObject,
   postInternal,
   recordReviewerAttempt,
+  ReviewerAttemptRefusedError,
   type ReadinessLease,
 } from "./backend-client.js";
-import type { SignInControl } from "./reviewer-sign-in-pages.js";
+import { createSignInAgent, type SignInAgentDeps } from "./reviewer-sign-in-agent.js";
 import {
   rehearseReviewerSignIn,
   type ReviewerAttemptView,
   type ReviewerSignInDeps,
   type ReviewerSignInOutcome,
-  type SignInBrowser,
 } from "./reviewer-sign-in.js";
 import { ReadinessLeaseLostError } from "./runner.js";
 
@@ -61,7 +54,7 @@ const POLL_MS = 2_000;
 /** Discovery runs on the backend's worker before the request can be claimed. */
 const CLAIM_WAIT_MS = 45_000;
 const CONNECT_WAIT_MS = 60_000;
-const RECORDING_UPLOAD_TIMEOUT_MS = 60_000;
+const SCREENSHOT_UPLOAD_TIMEOUT_MS = 30_000;
 
 const NO_SECRETS =
   "MCPJam could not read the reviewer's saved credentials for this run, so it did not sign in. Start a new attempt after MCPJam updates.";
@@ -133,141 +126,66 @@ async function retrying<T>(
   }
 }
 
-function controlsOf(refs: unknown): SignInControl[] {
-  type Ref = { role?: unknown; name?: unknown } | null;
-  return Object.entries((refs ?? {}) as Record<string, Ref>).flatMap(
-    ([ref, entry]) => {
-      const name = typeof entry?.name === "string" ? entry.name : "";
-      return typeof entry?.role === "string"
-        ? [{ ref, role: entry.role, name }]
-        : [];
-    },
-  );
-}
-
-/**
- * The page, driven over the daemon's own command route. Every command that can
- * navigate stops at MCPJam's callback (`stopAt`), so its app never loads; the
- * URL the redirect carried is then read back as the page, and only the
- * driver's `complete` call takes its `code` and `state` from there.
- */
-function browserOn(
-  handle: SandboxHostedBrowserSessionHandle,
-  features: readonly string[],
-  frame: (atMs: number) => string,
-  options: { callbackUrl: string; signal: AbortSignal },
-): SignInBrowser {
-  let stoppedAt: string | undefined;
-  const send = async (
-    action: BrowserAction,
-    secrets: BrowserCommandSecret[] = [],
-  ) => {
-    const answer = await handle.client.sendCommand(
-      {
-        commandId: randomUUID(),
-        source: "inspector",
-        action,
-        stopAt: options.callbackUrl,
-        stopAtPersistent: true,
-      },
-      handle.bootId,
-      { signal: options.signal, secrets },
-    );
-    if (answer.status !== "ok") {
-      throw new Error(
-        `The hosted browser did not run the command (${answer.status}).`,
-      );
-    }
-    // Checked before `ok`: a stopped navigation can end the command unloaded.
-    if (answer.result.stoppedAt) {
-      stoppedAt = answer.result.stoppedAt;
-      return {};
-    }
-    if (!answer.result.ok) {
-      throw new Error(
-        `The hosted browser refused the command: ${answer.result.error ?? "no reason given"}`,
-      );
-    }
-    const output = answer.result.output;
-    return (
-      typeof output === "object" && output !== null ? output : {}
-    ) as Record<string, unknown>;
-  };
-  return {
-    features,
-    open: async (url) => {
-      await send({ kind: "navigate", url });
-    },
-    read: async () => {
-      if (stoppedAt) return { url: stoppedAt, text: "", controls: [] };
-      // The tree first: its refs stay valid through the text read after it.
-      const tree = await send({
-        kind: "observe",
-        mode: "a11y",
-        filter: "interactive",
-      });
-      if (stoppedAt) return { url: stoppedAt, text: "", controls: [] };
-      const page = await send({ kind: "observe", mode: "text" });
-      return {
-        url: String(page.url ?? tree.url ?? ""),
-        text: String(page.text ?? ""),
-        controls: controlsOf(tree.refs),
-      };
-    },
-    type: async (ref, text, { secrets, submit }) => {
-      await send(
-        {
-          kind: "act",
-          verb: "type",
-          target: { a11yRef: ref },
-          value: text,
-          submit,
-          observe: "none",
-        },
-        secrets,
-      );
-    },
-    click: async (ref) => {
-      await send({
-        kind: "act",
-        verb: "click",
-        target: { a11yRef: ref },
-        observe: "none",
-      });
-    },
-    screenshot: async () => frame(Date.now()),
-  };
-}
-
-/** Keep the recording with its reservation. A run without it keeps its stages. */
-async function keepRecording(
+/** Keep one stage screenshot with this lease's reservation; its id, or nothing. */
+async function storeScreenshot(
   lease: ReadinessLease,
-  recording: HostedRecording,
-) {
+  image: { base64: string; mediaType: string },
+): Promise<string | undefined> {
+  const { convexUrl, serviceToken } = getInternalBackendConfig();
+  const query = new URLSearchParams({ runId: lease.runId, jobId: lease.jobId });
   try {
-    const grant = await leasePost(lease, `${SESSION}/recording/upload-url`);
-    const uploaded = await fetch(String(grant.uploadUrl), {
+    const response = await fetch(`${convexUrl}${SESSION}/screenshot?${query}`, {
       method: "POST",
-      headers: { "content-type": recording.mime },
-      body: new Uint8Array(recording.bytes),
-      signal: AbortSignal.timeout(RECORDING_UPLOAD_TIMEOUT_MS),
+      headers: {
+        "content-type": image.mediaType,
+        "x-inspector-service-token": serviceToken,
+      },
+      body: new Uint8Array(Buffer.from(image.base64, "base64")),
+      signal: AbortSignal.timeout(SCREENSHOT_UPLOAD_TIMEOUT_MS),
     });
-    const stored = parseJsonObject(await uploaded.text());
-    if (!uploaded.ok || typeof stored?.storageId !== "string") {
-      throw new Error(`the recording upload answered ${uploaded.status}`);
-    }
-    const { fps, durationMs, distinctFrames, truncated } = recording;
-    await leasePost(lease, `${SESSION}/recording`, {
-      uploadGrantId: grant.uploadGrantId,
-      storageId: stored.storageId,
-      meta: { source: "hosted", fps, durationMs, distinctFrames, truncated },
-    });
+    const answer = parseJsonObject(await response.text());
+    return response.ok && typeof answer?.screenshotId === "string"
+      ? answer.screenshotId
+      : undefined;
   } catch (error) {
-    logger.warn("[readiness] the sign-in recording was not kept", {
+    logger.warn("[readiness] a sign-in screenshot was not kept", {
       runId: lease.runId,
       error: redactForLog(error),
     });
+    return undefined;
   }
+}
+
+/** The one password try, on the attempt, before the value leaves this node. */
+function passwordTry(lease: ReadinessLease, attemptId: string): SignInAgentDeps["password"] {
+  const write = (commandId: string, outcome: "intent" | "not_typed") =>
+    recordReviewerAttempt(lease, attemptId, { passwordSubmission: { commandId, outcome } });
+  return {
+    mark: async (commandId) => {
+      try {
+        await write(commandId, "intent");
+        return undefined;
+      } catch (error) {
+        if (error instanceof ReadinessLeaseLostError) throw error;
+        return error instanceof ReviewerAttemptRefusedError &&
+          error.code === "password_already_submitted"
+          ? `password_already_submitted: ${error.message} Call stop_sign_in with what the page said.`
+          : "password_not_recorded: MCPJam could not record the password try, so nothing was typed. Call stop_sign_in.";
+      }
+    },
+    giveBack: async (commandId) => {
+      try {
+        await write(commandId, "not_typed");
+      } catch (error) {
+        if (error instanceof ReadinessLeaseLostError) throw error;
+        // The try stays spent: the safe side of an unknown answer.
+        logger.warn("[readiness] a password try that typed nothing was not given back", {
+          runId: lease.runId,
+          error: redactForLog(error),
+        });
+      }
+    },
+  };
 }
 
 export function liveReviewerSignInDeps(input: {
@@ -340,52 +258,37 @@ export function liveReviewerSignInDeps(input: {
         });
         // No member's bearer: without a logical session id the per-run path
         // reads none, and the lease binds and boots the identity instead.
+        // Not recorded: credentials are typed on this desktop.
+        const sandboxId = String(box.sandboxId);
         const handle = await ensureLiveBrowserSession({
           bearer: "",
           projectId: input.attempt.projectId,
           contextMode: "ephemeral",
-          target: {
-            kind: "sandbox",
-            sandboxRowId,
-            sandboxId: String(box.sandboxId),
-            record: true,
-          },
+          target: { kind: "sandbox", sandboxRowId, sandboxId, record: false },
           signal,
         });
-        const recordingFrom = Date.now();
         await leasePost(lease, `${SESSION}/boot`, {
           reservationId,
           bootId: handle.bootId,
         });
         const status = await handle.client.status({ signal });
-        const id = reservationId;
         return {
-          browser: browserOn(
+          agent: createSignInAgent({
             handle,
-            status.kind === "ok" ? (status.features ?? []) : [],
-            // A frame of the run's recording: no lease route keeps a screenshot.
-            (atMs) =>
-              `${id}#t=${Math.max(0, (atMs - recordingFrom) / 1000).toFixed(1)}`,
-            { callbackUrl: redirectUri, signal },
-          ),
-          recordingArtifactId: id,
+            features: status.kind === "ok" ? (status.features ?? []) : [],
+            lease,
+            attemptId,
+            projectId: input.attempt.projectId,
+            sandbox: { sandboxRowId, sandboxId },
+            password: passwordTry(lease, attemptId),
+            storeScreenshot: (image) => storeScreenshot(lease, image),
+          }),
         };
       },
       release: async () => {
         if (!reservationId) return;
         reservationId = undefined;
-        const close = () => leasePost(lease, `${SESSION}/close`);
-        if (!sandboxRowId) {
-          await close();
-          return;
-        }
-        // The file is on the box, so it is read before `close` retires it.
-        const recording = await collectHostedRecordingThenRelease({
-          sandboxRowId,
-          release: close,
-        });
-        if (recording) await keepRecording(lease, recording);
-        else logger.warn("[readiness] no sign-in recording was collected", { sandboxRowId });
+        await leasePost(lease, `${SESSION}/close`);
       },
     },
     connect: {

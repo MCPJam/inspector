@@ -3,11 +3,13 @@
  * from a clean hosted browser, records each stage on the reviewer attempt,
  * and connects the reviewer account the reviewer-path checks then use.
  *
- * Model-free and scripted, in the injected-seam form of
- * `browserd/hosted-browser-synthetic.ts`: the credentials, the desktop, the
- * page, the connection request and the attempt arrive as seams, so every
- * stage, and the release after it, is testable without E2B or the backend.
- * The live seams are built in `reviewer-sign-in-live.ts`.
+ * The pages are driven by the playground's browser agent
+ * (`reviewer-sign-in-agent.ts`), so a sign-in or consent page nobody wrote a
+ * rule for, such as an organization choice, is handled like any other. The
+ * credentials, the desktop with its agent, the connection request and the
+ * attempt arrive as seams, so every stage, and the release after it, is
+ * testable without E2B, a model or the backend. The live seams are built in
+ * `reviewer-sign-in-live.ts`.
  *
  * THE DESKTOP IS RELEASED ON EVERY OUTCOME, in a `finally`, including a
  * thrown error and a lost lease: MCPJam pays for it by the minute.
@@ -15,24 +17,20 @@
  * NO CREDENTIAL IS WRITTEN DOWN. A value reaches the browser daemon only
  * beside a command whose text is its `{{secret:NAME}}` placeholder, limited to
  * the authorization server's origin, and only on a daemon that enforces that
- * limit (`secret-origins`). Text from the page or an error is scrubbed of the
- * values before it is recorded or logged, and keeps only the origin of a URL.
+ * limit (`secret-origins`). Text from the page, the agent or an error is
+ * scrubbed of the values before it is recorded or logged, and keeps only the
+ * origin of a URL.
  *
- * SCOPE. AuthKit-hosted sign-in is the supported path; on any other provider
- * the pages are read by a conservative heuristic and each stage says it was
- * approximated. The signed-in identity is never read from the consent page:
- * the identity check asks the server itself.
+ * MCPJAM DECIDES SUCCESS. Only the redirect to MCPJam's callback, caught by
+ * the browser, leads to a connection; the agent's own report never does. The
+ * signed-in identity is never read from a page: the identity check asks the
+ * server itself.
  */
 import { createSecretScrubber } from "../../../shared/secret-scrubber.js";
 import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import { logger } from "../../utils/logger.js";
-import type { BrowserCommandSecret } from "../browserd/protocol.js";
 import { abortable } from "../sessionSimulation/target-discovery.js";
-import {
-  isAuthKitOrigin,
-  readSignInPage,
-  type SignInPage,
-} from "./reviewer-sign-in-pages.js";
+import type { SignInAgent, SignInAgentOutcome } from "./reviewer-sign-in-agent.js";
 import { ReadinessLeaseLostError } from "./runner.js";
 
 export type ReviewerStageName =
@@ -48,7 +46,13 @@ export interface ReviewerStage {
   stage: ReviewerStageName;
   status: "passed" | "failed" | "blocked" | "skipped";
   detail?: string;
-  evidence?: { screenshotArtifactId?: string; recordingArtifactId?: string };
+  evidence?: {
+    screenshotArtifactId?: string;
+    /** Whether the stage's own picture was taken, and if not, why. */
+    screenshotStatus?: "captured" | "suppressed" | "unavailable";
+    screenshotNote?: string;
+    recordingArtifactId?: string;
+  };
 }
 
 /** One write to the attempt. A stop for a person and an outcome are exclusive. */
@@ -58,6 +62,8 @@ export interface ReviewerAttemptWrite {
   waitingFor?: { reason: string; action: string };
   outcome?: "passed" | "failed";
   detail?: string;
+  /** The one password try: marked before the value leaves this node. */
+  passwordSubmission?: { commandId: string; outcome: "intent" | "not_typed" };
 }
 
 /** The attempt as the rehearsal reads it: secret NAMES, never a value. */
@@ -72,22 +78,6 @@ export interface ReviewerAttemptView {
   loginUrl?: string;
   /** The organization or tenant the reviewer must end up signed in to. */
   tenant?: string;
-}
-
-export interface SignInBrowser {
-  /** What the daemon announced; a sign-in needs `secret-origins` and `navigation-stop`. */
-  readonly features: readonly string[];
-  open(url: string): Promise<void>;
-  read(): Promise<SignInPage>;
-  /** Type into a control; placeholders in `text` resolve in the daemon. */
-  type(
-    ref: string,
-    text: string,
-    options: { secrets: BrowserCommandSecret[]; submit: boolean },
-  ): Promise<void>;
-  click(ref: string): Promise<void>;
-  /** Where this moment can be seen again, or nothing without a recording. */
-  screenshot(): Promise<string | undefined>;
 }
 
 export interface ReviewerConnectLink {
@@ -116,12 +106,9 @@ export interface ReviewerSignInDeps {
     { values: { name: string; value: string }[] } | { unavailable: string }
   >;
   desktop: {
-    reserve(signal: AbortSignal): Promise<{
-      browser: SignInBrowser;
-      /** Where the run's recording will be read, kept on every stage. */
-      recordingArtifactId?: string;
-    }>;
-    /** Collect the recording and release the desktop. Safe to call again. */
+    /** A clean desktop and the agent that drives it. */
+    reserve(signal: AbortSignal): Promise<{ agent: SignInAgent }>;
+    /** Release the desktop. Safe to call again. */
     release(): Promise<void>;
   };
   connect: {
@@ -131,7 +118,6 @@ export interface ReviewerSignInDeps {
       signal: AbortSignal,
     ): Promise<{ accountId: string } | { failed: string }>;
   };
-  sleep?: (ms: number) => Promise<void>;
 }
 
 export type ReviewerSignInOutcome =
@@ -146,13 +132,6 @@ export type ReviewerSignInOutcome =
 
 /** Desktop boot, discovery, a two-step sign-in and consent fit well inside. */
 export const REVIEWER_SIGN_IN_TIMEOUT_MS = 6 * 60_000;
-/** R5's label for a stage read off another provider's page. */
-export const APPROXIMATED_PREFIX = "Approximated: ";
-const MAX_PAGE_READS = 20;
-const UNRECOGNIZED_RETRIES = 3;
-const CONSENT_SETTLE_RETRIES = 10;
-const SETTLE_WAIT_MS = 1_500;
-const PAGE_STAGES = new Set(["sign-in", "verification", "consent"]);
 const START_AGAIN = "Start a new attempt.";
 const PERSON_SIGN_IN =
   "Open Finish reviewer sign-in on the submission, complete the sign-in, then resume this attempt.";
@@ -207,64 +186,24 @@ const said = (error: unknown, scrub: Scrub) =>
 
 interface Drive {
   deps: ReviewerSignInDeps;
-  browser: SignInBrowser;
-  link: ReviewerConnectLink;
-  attempt: ReviewerAttemptView;
-  values: { name: string; value: string }[];
-  recordingArtifactId?: string;
   signal: AbortSignal;
   scrub: Scrub;
 }
 
-/** A stage with its evidence, labelled when the page was read by heuristic. */
-async function stageOf(
-  drive: Drive,
+/** A stage the run writes itself; the agent's stages carry their pictures. */
+const stageOf = (
   stage: ReviewerStageName,
   status: ReviewerStage["status"],
   detail: string,
-  frame = true,
-): Promise<ReviewerStage> {
-  let shot: string | undefined;
-  try {
-    shot = frame ? await drive.browser.screenshot() : undefined;
-  } catch {
-    // A frame that cannot be pointed at costs the stage its picture, not its record.
-  }
-  const evidence = {
-    ...(shot ? { screenshotArtifactId: shot } : {}),
-    ...(drive.recordingArtifactId
-      ? { recordingArtifactId: drive.recordingArtifactId }
-      : {}),
-  };
-  const approximated =
-    PAGE_STAGES.has(stage) &&
-    !isAuthKitOrigin(drive.link.authorizationServerOrigin);
-  return {
-    stage,
-    status,
-    detail: `${approximated ? APPROXIMATED_PREFIX : ""}${detail}`,
-    ...(Object.keys(evidence).length > 0 ? { evidence } : {}),
-  };
-}
+): ReviewerStage => ({ stage, status, detail });
 
 const record = (drive: Drive, stage: ReviewerStage) =>
-  abortable(drive.deps.record({ stage }), drive.signal);
-
-/** The text to type, and the one value the daemon may put in its place. */
-function credential(drive: Drive, which: "username" | "password") {
-  const name =
-    which === "password"
-      ? drive.attempt.passwordSecretName
-      : drive.attempt.usernameSecretName;
-  if (!name) {
-    const plain = drive.attempt.username;
-    return plain === undefined ? undefined : { text: plain, secrets: [] };
-  }
-  const value = drive.values.find((entry) => entry.name === name)?.value;
-  if (value === undefined) return undefined;
-  const origins = [drive.link.authorizationServerOrigin];
-  return { text: `{{secret:${name}}}`, secrets: [{ name, value, origins }] };
-}
+  abortable(
+    drive.deps.record({
+      stage: { ...stage, ...(stage.detail ? { detail: drive.scrub(stage.detail) } : {}) },
+    }),
+    drive.signal,
+  );
 
 /** Hand what the redirect carried to the connection; the URL goes nowhere. */
 async function finishConnect(
@@ -275,12 +214,10 @@ async function finishConnect(
   const state = param("state");
   if (!state) {
     return ending(
-      await stageOf(
-        drive,
+      stageOf(
         "connected",
         "failed",
         `The reviewer account was not connected because MCPJam's callback page did not receive the authorization result. ${START_AGAIN}`,
-        false,
       ),
     );
   }
@@ -298,12 +235,10 @@ async function finishConnect(
   if ("failed" in answer) {
     const why = drive.scrub(answer.failed).replace(/[.\s]*$/, ".");
     return ending(
-      await stageOf(
-        drive,
+      stageOf(
         "connected",
         "failed",
         `The reviewer account was not connected. ${why} ${START_AGAIN}`,
-        false,
       ),
     );
   }
@@ -311,156 +246,54 @@ async function finishConnect(
     "MCPJam signed in as the reviewer and connected the reviewer account.";
   return {
     write: {
-      stage: await stageOf(drive, "connected", "passed", detail, false),
+      stage: stageOf("connected", "passed", detail),
       reviewerAccountId: answer.accountId,
     },
     outcome: { kind: "connected", reviewerAccountId: answer.accountId },
   };
 }
 
-async function drivePages(drive: Drive): Promise<Ending> {
-  const { browser, link, signal, scrub } = drive;
-  const stop = async (
-    stage: ReviewerStageName,
-    status: ReviewerStage["status"],
-    detail: string,
-    action?: string,
-  ) => ending(await stageOf(drive, stage, status, detail), action);
-  const typed = new Set<"username" | "password">();
-  let signedIn = false;
-  let unrecognized = 0;
-  let repeated = 0;
-  let consentClicked = false;
-  let pendingConsent: ReviewerStage | undefined;
-  for (let read = 0; read < MAX_PAGE_READS; read += 1) {
-    const seen = readSignInPage(await abortable(browser.read(), signal), {
-      callbackUrl: link.callbackUrl,
-      authKit: isAuthKitOrigin(link.authorizationServerOrigin),
-      submitted: typed.size > 0,
+/** What a person does next, by where the agent stopped. */
+const PERSON_ACTION: Record<string, string> = {
+  verification:
+    "Open Finish reviewer sign-in on the submission, complete the verification, then resume this attempt.",
+  consent:
+    "Open Finish reviewer sign-in on the submission, approve access, then resume this attempt.",
+};
+
+/** The agent's ending, as the attempt records it: never a pass. */
+function agentEnding(
+  drive: Drive,
+  outcome: Exclude<SignInAgentOutcome, { kind: "callback" }>,
+): Ending {
+  const reason = drive.scrub(outcome.reason).replace(/[.\s]*$/, ".");
+  const evidence = outcome.evidence ? { evidence: outcome.evidence } : {};
+  if (outcome.kind === "stopped" && !outcome.needsPerson) {
+    return ending({
+      stage: outcome.stage,
+      status: "failed",
+      detail: `MCPJam's browser agent stopped: ${reason} Check the saved credentials and tenant, then ${START_AGAIN.toLowerCase()}`,
+      ...evidence,
     });
-    // The password went in and the page moved past the form: it was accepted.
-    const movedOn = ["callback", "verification", "consent"].includes(seen.kind);
-    if (seen.kind === "callback" && pendingConsent) {
-      await record(drive, pendingConsent);
-      pendingConsent = undefined;
-    }
-    if (movedOn && typed.has("password") && !signedIn) {
-      signedIn = true;
-      const detail = "MCPJam signed in with the reviewer's saved credentials.";
-      await record(drive, await stageOf(drive, "sign-in", "passed", detail));
-    }
-    if (seen.kind === "callback") return finishConnect(drive, seen.params);
-    // A submitted form can remain visible while its next page loads.
-    const again =
-      seen.kind === "credentials" &&
-      (seen.password
-        ? typed.has("password")
-        : Boolean(seen.username) && typed.has("username"));
-    if (seen.kind === "refused") {
-      const quote = `"${scrub(seen.quote)}"`;
-      return stop(
-        "sign-in",
-        "failed",
-        `The sign-in page refused the reviewer's credentials: ${quote}. Check the saved username and password, then ${START_AGAIN.toLowerCase()}`,
-      );
-    }
-    if (again) {
-      repeated += 1;
-      if (repeated > UNRECOGNIZED_RETRIES) {
-        return stop(
-          "sign-in",
-          "blocked",
-          "The sign-in page did not advance after the credentials were submitted, so MCPJam could not tell whether they were accepted.",
-          PERSON_SIGN_IN,
-        );
-      }
-      await abortable((drive.deps.sleep ?? pause)(SETTLE_WAIT_MS), signal);
-      continue;
-    }
-    if (seen.kind !== "consent" || !consentClicked) repeated = 0;
-    if (seen.kind === "verification") {
-      return stop(
-        "verification",
-        "blocked",
-        `The sign-in page asked for a verification step MCPJam cannot complete: "${scrub(seen.quote)}".`,
-        "Open Finish reviewer sign-in on the submission, complete the verification, then resume this attempt.",
-      );
-    }
-    if (seen.kind === "consent") {
-      if (consentClicked) {
-        repeated += 1;
-        if (repeated > CONSENT_SETTLE_RETRIES) {
-          return stop(
-            "consent",
-            "blocked",
-            "The consent page did not advance after MCPJam clicked the approval button.",
-            "Check the consent page, then resume this attempt.",
-          );
-        }
-        await abortable((drive.deps.sleep ?? pause)(SETTLE_WAIT_MS), signal);
-        continue;
-      }
-      if (!seen.approve) {
-        return stop(
-          "consent",
-          "blocked",
-          "MCPJam could not tell which control on the consent page approves access, so it clicked none.",
-          "Open Finish reviewer sign-in on the submission, approve access, then resume this attempt.",
-        );
-      }
-      const detail = `MCPJam approved access on the consent page ("${scrub(seen.approve.name)}").`;
-      pendingConsent = await stageOf(drive, "consent", "passed", detail);
-      await abortable(browser.click(seen.approve.ref), signal);
-      consentClicked = true;
-      continue;
-    }
-    if (seen.kind === "credentials") {
-      // One field per read: typing can re-render the form, and the next read
-      // hands out fresh refs.
-      const which =
-        seen.username && !typed.has("username") ? "username" : "password";
-      const control = seen[which];
-      const typing = credential(drive, which);
-      if (!control || !typing) {
-        return stop(
-          "sign-in",
-          "blocked",
-          `The sign-in page asked for a ${which}, and this attempt has none saved.`,
-          PERSON_SIGN_IN,
-        );
-      }
-      typed.add(which);
-      // A username alone is its own step: AuthKit asks for the email first.
-      const submit = which === "password" || !seen.password;
-      await abortable(
-        browser.type(control.ref, typing.text, {
-          secrets: typing.secrets,
-          submit,
-        }),
-        signal,
-      );
-      continue;
-    }
-    unrecognized += 1;
-    if (unrecognized > UNRECOGNIZED_RETRIES) break;
-    // A redirect in flight reads as no page at all; give it a moment.
-    await abortable((drive.deps.sleep ?? pause)(SETTLE_WAIT_MS), signal);
   }
-  return stop(
-    "sign-in",
-    "blocked",
-    "MCPJam did not recognize a page in the sign-in, so it stopped.",
-    PERSON_SIGN_IN,
+  const stopped = outcome.kind === "stopped"
+    ? `The sign-in reached a step MCPJam's browser agent cannot finish: ${reason}`
+    : `MCPJam's browser agent stopped before MCPJam's callback: ${reason}`;
+  return ending(
+    { stage: outcome.stage, status: "blocked", detail: stopped, ...evidence },
+    PERSON_ACTION[outcome.stage] ?? PERSON_SIGN_IN,
   );
 }
-
-const pause = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Reserve, check, connect and drive; the caller releases. */
 async function rehearse(
   deps: ReviewerSignInDeps,
-  base: Pick<Drive, "attempt" | "values" | "signal" | "scrub">,
+  base: {
+    attempt: ReviewerAttemptView;
+    values: { name: string; value: string }[];
+    signal: AbortSignal;
+    scrub: Scrub;
+  },
 ): Promise<Ending> {
   const { signal, scrub } = base;
   const blocked = (detail: string) =>
@@ -474,15 +307,15 @@ async function rehearse(
       `MCPJam could not get a hosted browser for the sign-in: ${said(error, scrub)} ${START_AGAIN}`,
     );
   }
-  const { browser, recordingArtifactId } = reserved;
-  if (!browser.features.includes("secret-origins")) {
+  const { agent } = reserved;
+  if (!agent.features.includes("secret-origins")) {
     return blocked(
       "This hosted browser cannot limit the reviewer's credentials to the sign-in page, so MCPJam did not type them. Start a new attempt after MCPJam updates its hosted browser.",
     );
   }
   // Without a stop at MCPJam's callback, its app would take the code before
   // this run could read it, so nothing is started.
-  if (!browser.features.includes("navigation-stop-persistent")) {
+  if (!agent.features.includes("navigation-stop-persistent")) {
     return ending({
       stage: "connected",
       status: "failed",
@@ -501,13 +334,17 @@ async function rehearse(
       detail: `MCPJam could not prepare the reviewer's connection: ${said(error, scrub)} ${START_AGAIN}`,
     });
   }
-  const drive: Drive = { ...base, deps, browser, link, recordingArtifactId };
-  // Only the authorization server's own page is ever opened.
-  await abortable(browser.open(link.authorizationUrl), signal);
-  const detail =
-    "MCPJam opened the authorization server's sign-in page in a clean browser.";
-  await record(drive, await stageOf(drive, "connect-link", "passed", detail));
-  return drivePages(drive);
+  const drive: Drive = { deps, signal, scrub };
+  const outcome = await agent.run({
+    link,
+    attempt: base.attempt,
+    values: base.values,
+    signal,
+    record: (stage) => record(drive, stage),
+  });
+  return outcome.kind === "callback"
+    ? finishConnect(drive, new URL(outcome.url).searchParams)
+    : agentEnding(drive, outcome);
 }
 
 /** Write the last stage with the outcome; a lost lease still throws. */
