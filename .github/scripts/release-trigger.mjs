@@ -1,17 +1,15 @@
 /**
  * Whether a commit on `main` should start Release now (release-trigger.yml).
  *
- * Release ships a commit only once Tests, Build and Test and Deploy Staging
- * have all passed on it. Every later commit on `main` carries the versions the
- * version PR committed, so when one commit cannot be released (its staging run
- * was cancelled by the next push, or a check failed) the next green one is.
+ * The trigger waits for one thing: Deploy Staging passing on the commit.
+ * Release itself then runs the full test suite and build before it publishes
+ * anything. Every later commit on `main` carries the versions the version PR
+ * committed, so when one commit cannot be released (its staging run was
+ * cancelled by the next push, or failed) the next green one is.
  *
- * Unless the version PR ticked skip_verify: then the checks are not waited
- * for, and the version commit itself is released as soon as it lands.
+ * Unless the version PR ticked skip_verify: then staging is not waited for,
+ * and the version commit itself is released as soon as it lands.
  */
-
-/** Workflow files that must each have a successful run on the commit. */
-export const REQUIRED_CHECKS = ["test.yml", "lint.yml", "deploy-staging.yml"];
 
 /** `unpublished` is unpublished-versions.mjs output: `{ name, newVersion }`. */
 export function releaseLabel(unpublished) {
@@ -28,9 +26,9 @@ export function releaseRunName(label) {
 
 /**
  * @param {object} state
- * @param {string} state.headSha      the commit whose check just passed
+ * @param {string} state.headSha      the commit staging just passed on, or that was pushed
  * @param {string} state.mainSha      the tip of `main` now
- * @param {string[]} state.greenChecks REQUIRED_CHECKS entries with a successful run on headSha
+ * @param {boolean} state.stagingGreen Deploy Staging passed on headSha
  * @param {{name: string, newVersion: string}[]} state.unpublished
  * @param {{status: string, conclusion: string | null, displayTitle: string}[]} state.releaseRuns
  *   recent release.yml runs, newest first
@@ -39,7 +37,7 @@ export function releaseRunName(label) {
 export function decideRelease({
   headSha,
   mainSha,
-  greenChecks,
+  stagingGreen,
   unpublished,
   releaseRuns,
   skipVerify = false,
@@ -54,9 +52,8 @@ export function decideRelease({
   if (unpublished.length === 0)
     return skip("Every public package version on main is already on npm.");
 
-  const waiting = REQUIRED_CHECKS.filter((w) => !greenChecks.includes(w));
-  if (!skipVerify && waiting.length > 0)
-    return skip(`Waiting on ${waiting.join(", ")} for ${headSha}.`);
+  if (!skipVerify && !stagingGreen)
+    return skip(`Waiting on Deploy Staging for ${headSha}.`);
 
   if (releaseRuns.some((r) => r.status !== "completed"))
     return skip("A Release run is already queued or running.");
@@ -76,6 +73,6 @@ export function decideRelease({
   return {
     dispatch: true,
     label,
-    reason: `Releasing ${label} at ${headSha}${skipVerify ? " without waiting for checks (skip_verify)" : ""}.`,
+    reason: `Releasing ${label} at ${headSha}${skipVerify ? " without waiting for staging (skip_verify)" : ""}.`,
   };
 }

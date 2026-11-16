@@ -4,18 +4,18 @@
  * Every agent surface MCPJam ships is static. The MCP tool catalog is one list
  * built with no organization in hand; the CLI's command tree is fixed at
  * install; the headless agent's registry is compiled in. None of them can
- * advertise "Swarms, but only for orgs in the beta" or "publishing, but only
- * if you are a project admin". So an agent planning a task has exactly two
- * options: attempt the write and read the failure, or ask.
+ * advertise "publishing, but only if you are a project admin". So an agent
+ * planning a task has exactly two options: attempt the write and read the
+ * failure, or ask.
  *
  * Attempting is the expensive one, and not because of the wasted call — it is
  * because by the time the 403 arrives the agent has usually already told a
  * human what it was about to do. This endpoint is the other option.
  *
  * PLANNING AID, NOT A GATE. Every enforcement point stays exactly where it
- * was: `requireProjectRole` and `requireSandboxesEnabled` run inside Convex on
- * the write path regardless of what this returned a second earlier. A caller
- * that reads `enforced: false` and races a flag flip gets the same clean
+ * was: `requireProjectRole` and the feature gates run inside Convex on the
+ * write path regardless of what this returned a second earlier. A caller that
+ * reads a feature as on and races a flag flip gets the same clean
  * FEATURE_UNAVAILABLE it would have got without asking. Nothing downstream may
  * ever consult this instead of its own check — that would move the boundary
  * into a read that exists to be convenient.
@@ -49,12 +49,6 @@ type CapabilitiesRow = {
    * opaque 500 at the one endpoint someone calls to avoid surprises.
    */
   features?: {
-    sandboxes?: {
-      flagEnabled: boolean;
-      reason?: string;
-      mode: "off" | "dark" | "enforce";
-      enforced: boolean;
-    };
     /** Absent from backends that do not report it yet. */
     conformance?: { enabled: boolean };
   };
@@ -74,41 +68,23 @@ const ROLE_RANK: Record<string, number> = {
 
 /**
  * The capability names an agent actually branches on, derived here rather than
- * left for each caller to re-derive from `role` + flag state.
+ * left for each caller to re-derive from `role`.
  *
  * Derived centrally because the mapping is not obvious and getting it wrong is
  * silent: publishing a scenario needs project ADMIN while authoring a journey
- * needs member, and the beta gate covers exposure-CREATING writes but
- * deliberately not the ones that reduce exposure — so `cancelRun` and
- * `unpublishScenario` stay true for an org that has just lost the flag. An
- * agent that inferred "no flag ⇒ nothing works" would refuse to stop a run
- * precisely when stopping it matters most.
+ * needs member.
  *
  * User testing splits FINER than "admin publishes, members read". The scenario
  * mutations behind the day-to-day controls — `setScenarioMode`,
  * `updateScenario`, `rotateScenarioLink`, `upsertScenarioMember`,
  * `removeScenarioMember` — gate at `requireWorkspaceRole(..., 'guest')`
- * upstream: an ordinary member CAN do all of them, and none sit behind the
- * beta flag. Only `publishEnvironmentScenario`, `rebindEnvironmentScenario` and
- * `setScenarioGuestExecution` require project admin, and of those only
- * publish/rebind are flag-gated. Reporting the member-level controls as
- * admin-gated would DENY capabilities callers actually hold — this endpoint's
- * own failure mode, delivered by the endpoint itself.
+ * upstream: an ordinary member CAN do all of them. Only
+ * `publishEnvironmentScenario`, `rebindEnvironmentScenario` and
+ * `setScenarioGuestExecution` require project admin. Reporting the
+ * member-level controls as admin-gated would DENY capabilities callers
+ * actually hold — this endpoint's own failure mode, delivered by the endpoint
+ * itself.
  */
-/** The gate state, or the permissive default when the projection lacks it. */
-function sandboxesOf(row: CapabilitiesRow) {
-  return (
-    row.features?.sandboxes ?? {
-      flagEnabled: false,
-      mode: "off" as const,
-      // Not `true`. An absent projection means we do not know, and claiming a
-      // caller is gated would make an agent refuse work the platform allows —
-      // the write still enforces for real either way.
-      enforced: false,
-    }
-  );
-}
-
 function deriveCapabilities(row: CapabilitiesRow) {
   /**
    * MIRRORS `requireProjectRole`, which ranks the ORGANIZATION role and
@@ -152,42 +128,37 @@ function deriveCapabilities(row: CapabilitiesRow) {
    * and callers already branching on it keep working.
    */
   const evalsEditTier = true;
-  // `enforced` already folds in the gate MODE: in `dark` the flag is evaluated
-  // and logged but not applied, so a would-be denial is not a denial and an
-  // agent must not plan around one.
-  const gated = sandboxesOf(row).enforced;
 
   return {
-    /** Reads across swarms and user testing. Never flag-gated. */
+    /** Reads across swarms and user testing. */
     readSwarms: isMember,
     readUserTesting: isMember,
     /** Authoring personas / goals / swarms. */
-    writeSwarms: isMember && !gated,
+    writeSwarms: isMember,
     /** Launching a run. Spends hosted model credits. */
-    launchGoalRun: isMember && !gated,
-    /** Stopping a run. Ungated by design — see above. */
+    launchGoalRun: isMember,
+    /** Stopping a run. */
     cancelGoalRun: isMember,
     /** The pre-rename spellings of the two above. Deleted at GA. */
-    launchJourneyRun: isMember && !gated,
+    launchJourneyRun: isMember,
     cancelJourneyRun: isMember,
     /** Publishing an environment for outsiders to talk to. Admin-only. */
-    publishStudy: isAdmin && !gated,
-    /** Taking a live study down. Ungated by design. */
+    publishStudy: isAdmin,
+    /** Taking a live study down. */
     unpublishStudy: isAdmin,
     /**
      * The pre-rename spellings, emitted ALONGSIDE the two above rather than
      * instead of them, so a client branching on either keeps working. Deleted
      * at GA with the rest of the deprecated surface.
      */
-    publishUserTestingScenario: isAdmin && !gated,
+    publishUserTestingScenario: isAdmin,
     unpublishUserTestingScenario: isAdmin,
     /**
      * Mode changes, member invites/removals, link rotation, renames. These
      * gate at WORKSPACE membership upstream (`requireWorkspaceRole(...,
      * 'guest')` on every one of the scenario mutations) — an ordinary member
-     * can do all of them — and none of them check the beta flag. Guest
-     * execution is NOT here: it is the one exposure control that genuinely
-     * needs admin, split out below.
+     * can do all of them. Guest execution is NOT here: it is the one exposure
+     * control that genuinely needs admin, split out below.
      *
      * KNOWN IMPRECISION, deliberate: workspace access resolves per WORKSPACE
      * (`resolveWorkspaceAccess`), and a non-admin org member is refused on a
@@ -204,7 +175,6 @@ function deriveCapabilities(row: CapabilitiesRow) {
      * genuinely project-ADMIN upstream (`canManageProjectMembers`, same bar
      * as publishing). Kept separate from `changeUserTestingExposure` so the
      * membership-level controls above are not misreported as admin-only.
-     * Ungated: the beta flag covers publish/rebind, not this.
      */
     manageUserTestingGuestExecution: isAdmin,
     /** Requesting an LLM insight pass over a wave or window. */
@@ -287,19 +257,10 @@ capabilities.get("/projects/:projectId/capabilities", async (c) => {
      */
     surface: resolveAgentSurface(c),
     features: {
-      sandboxes: {
-        enabled: sandboxesOf(row).flagEnabled,
-        /**
-         * `off` | `dark` | `enforce`. Only `enforce` turns a disabled flag
-         * into a refusal; in `dark` the platform logs what it would have
-         * blocked and lets the write through.
-         */
-        mode: sandboxesOf(row).mode,
-        enforced: sandboxesOf(row).enforced,
-        ...(sandboxesOf(row).reason !== undefined
-          ? { reason: sandboxesOf(row).reason }
-          : {}),
-      },
+      // Swarms has no rollout gate. The block stays for callers that read it
+      // (the SDK's `PlatformCapabilities`): `enabled: true` and
+      // `enforced: false` say nothing will be refused.
+      sandboxes: { enabled: true, mode: "off", enforced: false },
       /**
        * Whether this caller can start conformance runs. Reported only when
        * the backend says; absent means unknown, not off. Reads of existing

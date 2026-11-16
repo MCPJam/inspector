@@ -321,6 +321,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockPosthogCapture,
+    register: vi.fn(),
     featureFlags: mockPosthogState.featureFlags,
     onFeatureFlags: mockPosthogState.onFeatureFlags,
   }),
@@ -391,6 +392,7 @@ vi.mock("../lib/config", () => ({
 
 vi.mock("../lib/theme-utils", () => ({
   getInitialThemeMode: () => "light",
+  hasStoredThemePreference: () => true,
   updateThemeMode: vi.fn(),
   getInitialThemePreset: () => "default",
   updateThemePreset: vi.fn(),
@@ -2065,9 +2067,6 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/servers");
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-3",
@@ -2181,9 +2180,6 @@ describe("App hosted OAuth callback handling", () => {
       user: null,
       isLoading: false,
     });
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseConvexAuth.mockReturnValue({
       // Hosted guests have a real Convex identity. WorkOS user presence, not
       // this flag, must decide whether paid checkout needs sign-in.
@@ -2219,9 +2215,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -2259,9 +2252,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/callback?code=oauth-code");
     mockConvexAuthState.isAuthenticated = true;
     mockWorkOsAuthState.user = null;
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -2867,9 +2857,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -2978,9 +2965,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -3037,9 +3021,6 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     let organizationsLoaded = false;
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") return existingConvexUser;
@@ -3078,9 +3059,6 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -3128,9 +3106,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [
@@ -3181,9 +3156,6 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
     mockWorkOsAuthState.user = { id: "workos-user-1" };
 
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
         return [];
@@ -3203,24 +3175,6 @@ describe("App hosted OAuth callback handling", () => {
       ).not.toBeInTheDocument();
     });
     expect(mockOrganizationsTab).not.toHaveBeenCalled();
-  });
-
-  it("clears billing handoff state when billing is unavailable", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
-    mockWorkOsAuthState.user = { id: "workos-user-1" };
-    mockUseFeatureFlagEnabled.mockReturnValue(false);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId("billing-handoff-loading"),
-      ).not.toBeInTheDocument();
-      expect(readPersistedCheckoutIntent()).toBeNull();
-    });
-    expect(sonnerToast.error).toHaveBeenCalledTimes(1);
   });
 
   it("leaves billing usable when checkout parameters are invalid", async () => {
@@ -3682,11 +3636,6 @@ describe("App hosted OAuth callback handling", () => {
       serverUrl: "https://mcp.asana.com/sse",
       returnPath: "#scenarios",
     });
-    // User Testing is flag-gated at the route, not just in the sidebar — the
-    // callback can only land back on it for a user who has the flag.
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "sandboxes-enabled",
-    );
     mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,
       serverName: "asana",
@@ -6055,73 +6004,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
-  it.each([
-    { path: "/conformance", enabled: true },
-    { path: "/conformance/runs/saved-run", enabled: true },
-    { path: "/conformance", enabled: false },
-    { path: "/conformance/runs/saved-run", enabled: false },
-  ])(
-    "waits for the conformance flag on $path before resolving to $enabled",
-    async ({ path, enabled }) => {
-      clearHostedOAuthPendingState();
-      clearScenarioSession();
-      window.history.replaceState({}, "", `${path}?view=history#saved`);
-      mockPosthogState.featureFlags.hasLoadedFlags = false;
-      let conformanceFlag: boolean | undefined;
-      mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-        flag === "mcpjam-conformance" ? conformanceFlag : false,
-      );
-
-      const { rerender } = render(<App />);
-      await act(async () => {
-        await Promise.resolve();
-      });
-      expect(window.location.pathname).toBe(path);
-      expect(window.location.search).toBe("?view=history");
-      expect(window.location.hash).toBe("#saved");
-      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
-      expect(screen.queryByRole("tab", { name: "Overview" })).toBeNull();
-      expect(
-        screen.queryByRole("button", { name: "Run conformance checks" }),
-      ).toBeNull();
-
-      conformanceFlag = enabled;
-      mockPosthogState.featureFlags.hasLoadedFlags = true;
-      rerender(<App />);
-      await waitFor(() => {
-        expect(window.location.pathname).toBe(enabled ? path : "/home");
-      });
-      if (enabled) {
-        expect(window.location.search).toBe("?view=history");
-        expect(window.location.hash).toBe("#saved");
-      }
-    },
-  );
-
-  it("redirects conformance to home when the feature flag is disabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/conformance");
-    mockHandleOAuthCallback.mockReset();
-
-    mockUseFeatureFlagEnabled.mockImplementation(() => false);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/home");
-    });
-  });
-
-  it.each([false, undefined])("keeps a conformance share link open when its flag is %s", async (conformanceFlag) => {
+  it("keeps a conformance share link open", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/conformance/shared/share-token");
     mockHandleOAuthCallback.mockReset();
 
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "mcpjam-conformance" ? conformanceFlag : false,
-    );
+    mockUseFeatureFlagEnabled.mockImplementation(() => false);
 
     render(<App />);
 
@@ -6140,9 +6029,6 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/conformance");
     localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "mcpjam-conformance",
-    );
     const connected = (name: string) => ({
       name,
       config: { transportType: "http", url: `https://${name}.example/mcp` },
@@ -6245,30 +6131,11 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
   });
 
-  it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
+  it("renders xaa-flow", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/home");
-    expect(screen.queryByTestId("xaa-flow-tab")).not.toBeInTheDocument();
-  });
-
-  it("renders xaa-flow when the xaa flag is enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/xaa-flow");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false,
-    );
 
     render(<App />);
 
@@ -6285,9 +6152,6 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false,
-    );
     const appStateMock = createAppStateMock();
     const currentProjectServers = {
       "current-project-xaa-oauth": {
@@ -6436,9 +6300,6 @@ describe("App hosted OAuth callback handling", () => {
         },
       },
     }));
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
-    );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
         return existingConvexUser;

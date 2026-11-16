@@ -273,9 +273,18 @@ test("--json prints JSON on one line in a terminal, where the default is the ind
     await run(["events", "sub-1"]),
     await run(["events", "sub-1", "--json"]),
   ]);
-  assert.match(indented!.stdout.trim(), /\n/);
+  const viewLine = /\nView: ([^\n]+)\n$/.exec(indented!.stdout);
+  assert.ok(viewLine, "terminal output ends with the submission link");
+  const terminalJson = indented!.stdout.slice(0, viewLine.index);
+  assert.match(terminalJson, /\n/);
   assert.doesNotMatch(json!.stdout.trim(), /\n/);
-  assert.deepEqual(JSON.parse(json!.stdout), JSON.parse(indented!.stdout));
+  const { permalinks, ...payload } = JSON.parse(json!.stdout);
+  assert.deepEqual(payload, JSON.parse(terminalJson));
+  assert.equal(permalinks.length, 1);
+  assert.equal(permalinks[0].url, viewLine[1]);
+  const link = new URL(permalinks[0].url);
+  assert.match(link.pathname, /\/readiness$/);
+  assert.equal(link.searchParams.get("submission"), "sub-1");
 });
 
 test("findings sends its filters and, when more pages follow, says how to read them", async () => {

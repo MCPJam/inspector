@@ -78,6 +78,7 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
+import { localHostAllowlistMiddleware } from "./middleware/local-host-allowlist.js";
 import { mountLocalSandboxViewHost } from "./middleware/local-sandbox-view-host.js";
 import {
   documentScriptNonce,
@@ -302,6 +303,9 @@ export async function createHonoApp() {
   // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
   // than another line in the security headers — see indexing-headers.ts.
   app.use("*", indexingHeadersMiddleware);
+
+  // 1c. Host allowlist (blocks DNS rebinding), local mode only.
+  if (!HOSTED_MODE) app.use("*", localHostAllowlistMiddleware);
 
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);

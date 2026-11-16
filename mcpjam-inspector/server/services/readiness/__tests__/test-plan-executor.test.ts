@@ -462,3 +462,39 @@ describe("a lost lease", () => {
     ]);
   });
 });
+
+it("withholds a destructive call outside its permitted fixtures", async () => {
+  const plan = samplePlan();
+  const deletion = plan.cases.find(
+    (testCase) => testCase.tool === "delete_project",
+  );
+  if (!deletion) throw new Error("The fixture needs a delete case");
+  deletion.arguments = { projectId: { $fixture: "demoProject", value: "id" } };
+  const { input, server } = setup(plan);
+
+  const result = await executeDirectoryTestPlan(input);
+
+  expect(server.sent).toEqual([]);
+  expect(result.stopped?.by).toBe("setup");
+});
+
+it.each(["valid", "negative", "cleanup"])(
+  "withholds calls when a destructive %s target is literal",
+  async (kind) => {
+    const plan = samplePlan();
+    if (kind === "cleanup") {
+      plan.cleanup[0].arguments = { projectId: "proj_demo" };
+    } else {
+      const deletion = plan.cases.find(
+        (testCase) => testCase.tool === "delete_project",
+      );
+      if (!deletion) throw new Error("The fixture needs a delete case");
+      deletion.kind = kind === "negative" ? "negative" : "valid";
+      deletion.arguments = { projectId: "proj_demo" };
+    }
+    const { input, server } = setup(plan);
+    const result = await executeDirectoryTestPlan(input);
+    expect(server.sent).toEqual([]);
+    expect(result.stopped?.by).toBe("setup");
+  },
+);

@@ -1,21 +1,21 @@
 name: Release trigger
 
-# Starts Release once a merged version PR's versions reach a green `main`.
+# Starts Release once a merged version PR's versions reach `main` and staging
+# is green with them.
 #
 # Merging the version PR (prepare-release.yml) commits versions npm does not
-# have yet. Release ships a commit only once Tests, Build and Test and Deploy
-# Staging have all passed on it. The first two pass in the merge queue before
-# the commit lands; Deploy Staging runs after, on the push to `main`, and each
-# push cancels the previous commit's staging run, so the version commit itself
-# is often NOT the one released. Every later commit carries the same versions,
-# though, so this runs each time Deploy Staging finishes on `main` (always the
-# last of the three) and dispatches Release at the first commit that is still
-# the tip, green on all three, and carrying unpublished versions. A version
-# commit whose staging run gets cancelled only moves the release to the next
-# green commit.
+# have yet. Each push to `main` deploys staging, and this runs when that
+# deploy finishes. It dispatches Release at the first commit that is still the
+# tip, passed staging, and carries unpublished versions. Release then runs the
+# full test suite and build on that commit before it publishes anything.
 #
-# A version PR that ticked skip_verify is released without waiting for any of
-# that: the merge's own push runs this too, and releases the version commit
+# Each push cancels the previous commit's staging run, so the version commit
+# itself is often NOT the one released. Every later commit carries the same
+# versions, though, so a cancelled staging run only moves the release to the
+# next green commit.
+#
+# A version PR that ticked skip_verify is released without waiting for
+# staging: the merge's own push runs this too, and releases the version commit
 # straight away.
 #
 # Nearly every run here ends in a skip. That is expected: the run that sees
@@ -74,7 +74,7 @@ jobs:
           script: |
             const { readFileSync } = require("node:fs");
             const workspace = process.env.GITHUB_WORKSPACE;
-            const { decideRelease, REQUIRED_CHECKS, releaseLabel, releaseRunName } =
+            const { decideRelease, releaseLabel, releaseRunName } =
               await import(`${workspace}/.github/scripts/release-trigger.mjs`);
             const { parseReleaseOptions, VERSION_PR_BRANCH } =
               await import(`${workspace}/.github/scripts/release-pr.mjs`);
@@ -134,29 +134,9 @@ jobs:
               }
             }
 
-            // Unfiltered, then matched here: GitHub's run search index can lag
-            // minutes behind, and a filtered query that misses the run that
-            // just finished would skip the one decision that should dispatch.
-            // Same reasoning as release.yml's CI gate.
-            const greenChecks = [];
-            if (label && !options.skip_verify) {
-              for (const workflow_id of REQUIRED_CHECKS) {
-                // Paged with an early exit, as in release.yml's CI gate. The
-                // queue ran Tests and Build and Test before this commit landed,
-                // so PR runs started since can push that run off page one.
-                let pages = 0;
-                for await (const { data: runs } of github.paginate.iterator(
-                  github.rest.actions.listWorkflowRuns,
-                  { owner, repo, workflow_id, per_page: 100 },
-                )) {
-                  if (runs.some((r) => r.head_sha === headSha && r.conclusion === "success")) {
-                    greenChecks.push(workflow_id);
-                    break;
-                  }
-                  if (++pages >= 5) break;
-                }
-              }
-            }
+            // The job's `if` only lets through a successful Deploy Staging run
+            // (or a push, for skip_verify), so this event IS the staging result.
+            const stagingGreen = context.eventName === "workflow_run";
 
             const { data: releases } = await github.rest.actions.listWorkflowRuns({
               owner, repo, workflow_id: "release.yml", per_page: 20,
@@ -170,7 +150,7 @@ jobs:
             const decision = decideRelease({
               headSha,
               mainSha: main.commit.sha,
-              greenChecks,
+              stagingGreen,
               unpublished,
               releaseRuns,
               skipVerify: options.skip_verify,

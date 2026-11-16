@@ -10,7 +10,7 @@ export const UNIFIED_SESSIONS_FEATURE_FLAG = "unified-sessions-enabled";
  *
  * The sidebar filters the nav item on this flag, but a nav filter is not a
  * gate: `/sessions` is a plain route, so the route guard resolves the same
- * flag (mirrors `useSandboxesEnabled` / `useProjectEnvironmentsEnabled`).
+ * flag (mirrors `useProjectEnvironmentsEnabled`).
  *
  * `useFeatureFlagEnabled` returns `undefined` while flags load — treated as
  * off (fail-closed) here. Route guards that need to tell "loading" from "off"

@@ -74,11 +74,12 @@ branch and run naming in `.github/scripts/release-pr.mjs` and
    `changeset version` on `main` and opens the version PR
    (`release/version-packages`), with the deploy flags as checkboxes.
 2. Someone approves and merges the version PR. That is the release.
-3. `release-trigger.yml` watches Tests, Build and Test and Deploy Staging
-   finish on `main` and dispatches `release.yml` at the first commit that is
-   green on all three and still carries versions npm does not have.
-4. `release.yml` publishes those versions, deploys what the PR ticked, tags
-   the commit and publishes the GitHub release. It never writes to `main`.
+3. `release-trigger.yml` watches Deploy Staging finish on `main` and
+   dispatches `release.yml` at the first commit that passed staging and still
+   carries versions npm does not have.
+4. `release.yml` runs the full test suite and build on that commit, then
+   publishes those versions, deploys what the PR ticked, tags the commit and
+   publishes the GitHub release. It never writes to `main`.
 
 **Run release now** (action `publish`) dispatches `release.yml` by hand. It is
 the retry path: the trigger does not retry an automatic run that failed or was

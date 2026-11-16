@@ -8,6 +8,7 @@ import type { Command } from "commander";
 import {
   cancelReviewerAttemptOperation,
   createReviewerAttemptOperation,
+  createReviewerHandoffOperation,
   getReviewerAttemptOperation,
   listReviewerAttemptsOperation,
   resumeReviewerAttemptOperation,
@@ -84,6 +85,12 @@ export function registerReviewerAttemptCommands(readiness: Command): void {
   bindOperation(resume, resumeReviewerAttemptOperation, (options: Options, submission) => ({
     ...scoped(options, submission),
     attempt: options.attempt ?? "",
+  }));
+
+  const handoff = verb("handoff", "Create a single-use link to finish a paused reviewer sign-in")
+    .requiredOption("--attempt <id>", "The attempt's id");
+  bindOperation(handoff, createReviewerHandoffOperation, (options: Options, submission) => ({
+    ...scoped(options, submission), attempt: options.attempt ?? "",
   }));
 
   const cancel = verb("cancel", "Stop an attempt that is running or waiting for a person").requiredOption(

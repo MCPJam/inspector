@@ -25,6 +25,7 @@ import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
 import { ScenarioOwnerLimitDialogView } from "@/components/billing/ScenarioOwnerLimitDialogView";
+import { NativeHarnessLimitDialog } from "@/components/billing/NativeHarnessLimitDialog";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
@@ -484,6 +485,7 @@ export function MCPJamLimitDialog() {
         />
       )}
       {showScenarioWall && <ScenarioOwnerLimitDialogView onDismiss={dismiss} />}
+      <NativeHarnessLimitDialog />
       {showGuestDialog && !frontierOpen && <GuestCreditWall />}
       {showCreditWall && (
         <CreditsLimitDialogView

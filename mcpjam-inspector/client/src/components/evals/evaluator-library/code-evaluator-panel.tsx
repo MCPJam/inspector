@@ -87,7 +87,7 @@ export function CodeEvaluatorPanel({
         <div
           role="log"
           aria-label="Console"
-          className="border-t border-border bg-destructive/5 px-3 py-2 font-mono text-xs text-destructive"
+          className="whitespace-pre-wrap border-t border-border bg-destructive/5 px-3 py-2 font-mono text-xs text-destructive"
         >
           {consoleOutput}
         </div>

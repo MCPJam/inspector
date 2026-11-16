@@ -223,6 +223,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listDirectoryReviewerAttempts",
   "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}":
     "getDirectoryReviewerAttempt",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/handoff": "createDirectoryReviewerHandoff",
   "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/resume":
     "resumeDirectoryReviewerAttempt",
   "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/cancel":
