@@ -2,6 +2,7 @@ import { enhancedTaskCall } from "./enhanced-tasks.js";
 import type { ToolTaskSeamOptions } from "@mcpjam/sdk";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { isVisibleToAppOnly } from "@mcpjam/sdk/widget-runtime";
+import { downstreamProtocolVersionOf } from "../../../services/bridge-protocol-version.js";
 import { handleJsonRpc } from "../../../services/mcp-http-bridge.js";
 import { isRecord } from "../../byok/list-request.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
@@ -79,12 +80,7 @@ export async function enhancedMcpResponse(args: {
           "adapter",
           {
             signal: args.signal,
-            downstreamProtocolVersion:
-              args.message.method === "initialize" &&
-              isRecord(params) &&
-              typeof params.protocolVersion === "string"
-                ? params.protocolVersion
-                : undefined,
+            downstreamProtocolVersion: downstreamProtocolVersionOf(args.message),
           },
         );
   if (response === null) return new Response(null, { status: 202 });

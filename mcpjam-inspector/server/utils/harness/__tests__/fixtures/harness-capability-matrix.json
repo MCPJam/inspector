@@ -163,11 +163,11 @@
       },
       "id": "copilot-cli",
       "liveApprovalRuntime": true,
-      "mcpDelivery": "mcpjam",
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "1.0.92",
       "promptImageInput": false,
-      "requiredForwarding": "pass-through",
       "requiresComputer": true,
       "skills": {
         "frontmatter": {
@@ -208,7 +208,7 @@
       },
       "credential": null,
       "displayName": "GitHub Copilot CLI",
-      "mcpClient": "mcpjam",
+      "mcpClient": "harness",
       "modelAccess": "broker",
       "orgKeys": true,
       "protocol": "openai-responses",
