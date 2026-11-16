@@ -6656,6 +6656,23 @@ export default function App() {
     "project-settings",
     "billing",
   ].includes(activeTab);
+  const announcementsEnabled =
+    !isWorkOsLoading &&
+    !isAuthLoading &&
+    effectiveHostedShellGateState === "ready" &&
+    !(isAuthenticated && currentUser === undefined) &&
+    (!HOSTED_MODE ||
+      (isAuthenticated &&
+        !isLoadingRemoteProjects &&
+        areServersHydrated &&
+        !!activeProjectId &&
+        activeProjectId !== "none")) &&
+    !shouldShowBillingHandoffOverlay &&
+    !(shouldRouteToFirstRunOnboarding && !firstRunOverlayDismissed) &&
+    !shouldSuspendFirstRunBackgroundConnections &&
+    !isOpeningFirstRunPlayground &&
+    firstRunPlaygroundPrompt === null &&
+    !playgroundOnboarding;
   const appContent = (
     <SettingsDraftProvider enabled={settingsShellActive}>
       <SidebarProvider defaultOpen={true}>
@@ -6683,6 +6700,7 @@ export default function App() {
           isCreateProjectDisabled={isCreateProjectDisabled}
           createProjectDisabledReason={createProjectDisabledReason}
           conformanceServers={displayServerConfigs}
+          announcementsEnabled={announcementsEnabled}
         />
         <SettingsNavigation
           enabled={settingsShellActive}
@@ -6726,7 +6744,7 @@ export default function App() {
               headerHidden={appChromeHeaderHidden || settingsShellActive}
             >
               <PendingOrganizationDeletions />
-              {showTrialDecisionNotice ? (
+              {announcementsEnabled && showTrialDecisionNotice ? (
                 <div className="border-b border-border/60 px-4 py-3">
                   <Alert>
                     <AlertTriangle className="h-4 w-4" />
@@ -6757,7 +6775,7 @@ export default function App() {
           </div>
         </div>
         <Dialog
-          open={showTrialDecisionModal}
+          open={announcementsEnabled && showTrialDecisionModal}
           onOpenChange={(open) => {
             if (!open)
               setTrialModalDismissedForOrg(billingOrganizationId ?? null);
@@ -6906,7 +6924,7 @@ export default function App() {
             isLoadingRemoteProjects={isLoadingRemoteProjects}
           >
             <Toaster />
-            <DarkDefaultNudge />
+            <DarkDefaultNudge enabled={announcementsEnabled} />
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <StdioCommandApprovalDialog />

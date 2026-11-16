@@ -33,10 +33,14 @@ function markNudgeSeen(): boolean {
  * Tells people who never picked a theme that dark is now the default, once
  * per device. Renders nothing; mount it after `<Toaster />`.
  */
-export function DarkDefaultNudge() {
+export function DarkDefaultNudge({ enabled = true }: { enabled?: boolean }) {
   const navigate = useAppNavigate();
 
   useEffect(() => {
+    if (!enabled) {
+      toast.dismiss(TOAST_ID);
+      return;
+    }
     if (!shouldShowNudge() || !markNudgeSeen()) return;
     toast.custom(
       (id) => (
@@ -50,7 +54,7 @@ export function DarkDefaultNudge() {
       ),
       { id: TOAST_ID, duration: 20_000 },
     );
-  }, [navigate]);
+  }, [enabled, navigate]);
 
   return null;
 }
