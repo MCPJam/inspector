@@ -402,6 +402,8 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  create_reviewer_handoff:
+    "The requester opens the sign-in link from the Readiness page. A chat tool would put that single-use link in the conversation.",
   // A person in the app reports through the Send feedback form, which shows
   // them where the text goes. A model-authored post to the MCPJam team from
   // inside someone's chat is a different act, and this surface declines it.

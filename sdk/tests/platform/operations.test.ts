@@ -2439,6 +2439,7 @@ describe("operation catalog consistency", () => {
     list_reviewer_attempts: { submission: "sub" },
     get_reviewer_attempt: { submission: "sub", attempt: "att" },
     resume_reviewer_attempt: { submission: "sub", attempt: "att" },
+    create_reviewer_handoff: { submission: "sub", attempt: "att" },
     cancel_reviewer_attempt: { submission: "sub", attempt: "att" },
     get_directory_submission_handoff: { submission: "sub" },
     list_directory_submission_findings: { submission: "sub" },
@@ -2834,6 +2835,7 @@ describe("operation catalog consistency", () => {
       // A reviewer sign-in starts a run that signs in to the submission's
       // server; a cancel stops one.
       "create_reviewer_attempt",
+      "create_reviewer_handoff",
       "resume_reviewer_attempt",
       "cancel_reviewer_attempt",
       // Records of what happened in the directory: append-only events.
