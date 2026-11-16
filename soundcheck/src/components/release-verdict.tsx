@@ -148,7 +148,7 @@ export async function ReleaseVerdict() {
         <Verdict
           tone="failure"
           headline={`The release of ${label} ended "${last.conclusion}".`}
-          detail="It will not be retried by itself. Re-run its failed jobs in GitHub, or use Run release now below once the cause is fixed."
+          detail="It will not be retried by itself. Fix the cause, then use Publish below. Re-running failed jobs in GitHub does not publish."
         />
       );
     }

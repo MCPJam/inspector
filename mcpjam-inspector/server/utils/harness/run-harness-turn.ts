@@ -254,6 +254,18 @@ import {
 } from "./harness-prompt-images.js";
 import { harnessTurnSkills } from "./skill-delivery.js";
 import {
+  harnessServerSkills,
+  withServedSkills,
+  withServerSkillTools,
+} from "./harness-server-skills.js";
+import {
+  COMMAND_GATE_PERMISSION_MODE,
+  commandGateTurn,
+  hostToolApproval,
+  withServerSkillCommandGate,
+} from "./server-skill-command-gate.js";
+import { takesServerSkillsAsTools } from "./skills-descriptor.js";
+import {
   boxSkillsFolder,
   failedBoxSkills,
   planBoxSkills,
@@ -676,10 +688,11 @@ export function harnessRuntimeFingerprint(parts: {
     // Older Claude sessions have workspace .mcp.json files. Start a new lane
     // when moving to SDK config so stale servers cannot be loaded from disk.
     ...(parts.harnessId === "claude-code" ? ["session-mcp-v1"] : []),
-    // A resumed OpenCode lane reattaches to the bridge that started it, and
-    // no `@ai-sdk/harness-opencode` 1.0.160 adapter has driven a 1.0.119
-    // bridge. Only OpenCode lanes fork; every other harness hashes as before.
-    ...(parts.harnessId === "opencode" ? ["opencode-bridge-1.0.160"] : []),
+    // A resumed OpenCode lane reattaches to the bridge that started it, so this
+    // names the bridge an OpenCode turn needs: the 1.0.160 adapter's, started
+    // reading only its own skills (`opencode-adapter.ts`). A lane on an older
+    // bridge forks; every other harness hashes as before.
+    ...(parts.harnessId === "opencode" ? ["opencode-bridge-own-skills"] : []),
     (parts.selectedServers ?? []).slice().sort().join(","),
     // Resumed native sessions keep the MCP config they started with.
     ...(unavailable.length ? [`unavailable:${unavailable.join(",")}`] : []),
@@ -1869,6 +1882,7 @@ export async function runHarnessTurn(
       // no empty-hash commit), and the box is left exactly as it is.
       const turnSkills = await harnessTurnSkills({
         pinnedHarnessSkills,
+        serverSkillsAsTools: takesServerSkillsAsTools(harnessAdapter),
         runtimeSkillsOverride,
         ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
         liveTurn,
@@ -2007,6 +2021,23 @@ export async function runHarnessTurn(
             `transport, so it cannot run unattended on this machine.`,
         );
       }
+      // MCP-server skills through MCPJam's skill tools, and the gate that holds
+      // the runtime's commands while one is in use.
+      const serverSkills = await harnessServerSkills(harnessAdapter, {
+        localUnattended:
+          !!harnessExecutionTarget && localScope === "unattended",
+        mode: turnSkills.mode,
+        live: turnSkills.live,
+        pinnedHarnessSkills,
+        effectiveCapabilities,
+        manager: mcpClientManager,
+        serverIds: selectedServers ?? [],
+        messages,
+        signal: abortSignal,
+      });
+      const instructions =
+        `${systemPrompt ?? ""}${serverSkills?.promptSection ?? ""}` ||
+        undefined;
       const permissionMode: HarnessV1PermissionMode =
         harnessExecutionTarget != null
           ? // A host asking for approval narrows further: `allow-reads` is the
@@ -2019,7 +2050,9 @@ export async function runHarnessTurn(
             : localPermissionMode
           : requireToolApproval && harnessAdapter.supportsNativeToolApproval
             ? harnessAdapter.approvalPermissionMode
-            : harnessAdapter.defaultPermissionMode;
+            : serverSkills?.gated
+              ? COMMAND_GATE_PERMISSION_MODE
+              : harnessAdapter.defaultPermissionMode;
       // The command sandbox the runtime applies: the local unattended policy,
       // or, for a hosted turn that pauses for approval, one as wide as the box
       // (see `HOSTED_APPROVAL_SANDBOX_POLICY`) so an approved command can do
@@ -2867,10 +2900,18 @@ export async function runHarnessTurn(
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
-      let harnessRuntime = warmAgentPilot && warmRetention !== undefined
-        ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home), warmBridgeWindowMs(warmRetention)),
-            JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]), warmRetention.idleMs,
-            { retainUntil: warmRetention.retainUntil, onAttach: turnEvent.warmAttach })
+      let harnessRuntime =
+        warmAgentPilot && warmRetention !== undefined
+          ? withWarmBridgeRuntime(
+              (ms, home) =>
+                withWarmBridgeBootstrap(
+                  buildRuntime(ms, home),
+                  warmBridgeWindowMs(warmRetention),
+                ),
+              JSON.stringify([runtimeFingerprint, skillsHash, instructions, auth]),
+              warmRetention.idleMs,
+              { retainUntil: warmRetention.retainUntil, onAttach: turnEvent.warmAttach },
+            )
         : buildRuntime();
       if (elicitationServerIds.size > 0 && onHarnessElicitation) {
         harnessRuntime = withHarnessElicitation(harnessRuntime, {
@@ -2897,11 +2938,25 @@ export async function runHarnessTurn(
       if (nativeForwarding) onHarnessMcpReady?.(nativeForwarding.logScopeIds);
       if (localPrepared) {
         harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
-        if (sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
+        if (!serverSkills?.gated && sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
           harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, approvalId => {
             logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision: "auto-off" });
           }, new Set(approvalContinuations.map(continuation => continuation.approvalId)));
         }
+      }
+      const commandGate = serverSkills?.gated
+        ? commandGateTurn(options, {
+            local: !!localPrepared,
+            resumable: !!continuity,
+            inUse: serverSkills.transcript.inUse,
+          })
+        : undefined;
+      if (commandGate) {
+        harnessRuntime = withServerSkillCommandGate(harnessRuntime, {
+          ...commandGate,
+          pendingApprovals: approvalContinuations,
+          log: { harness: harnessAdapter.id, turnId },
+        });
       }
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
       // to the runtime; when the runtime calls one it pauses, the agent runs the
@@ -2948,11 +3003,13 @@ export async function runHarnessTurn(
       const appTools = harness === "codex" && options.harnessAppTools?.length && chatSessionId
         ? harnessAppTools({ entries: options.harnessAppTools, projectId, chatSessionId, turnId, authHeader, getAuthorization: currentAuthorization, getCleanupAuthorization: cleanupAuthorization, signal: effectiveAbortSignal, writer })
         : {};
-      const hostExecutedTools = hostToolCancellation.wrap({
-        ...appTools,
-        ...hostExecutedMcp.tools,
-        ...offeredBuiltInTools,
-      });
+      const hostExecutedTools = hostToolCancellation.wrap(
+        withServerSkillTools(
+          { ...appTools, ...hostExecutedMcp.tools, ...offeredBuiltInTools },
+          serverSkills,
+          commandGate,
+        ),
+      );
       // The tools that actually ask, read off the same `needsApproval` the
       // other two engines read.
       //
@@ -2964,7 +3021,7 @@ export async function runHarnessTurn(
       // `hostExecutedMcp.tools` are built through `mcpToolOptionsFor`, whose
       // declaration is a boolean, and `builtInTools` is `resolveHostTools`'
       // output, every member of which declares a boolean too. The
-      // function-form skill tools (`effective-skill-tools`) reach the
+      // skill tools (`effective-skill-tools`) reach the
       // emulated engine through `allTools`, which this path does not consume.
       //
       // The adapter capability still gates the whole map — advertise =
@@ -2983,6 +3040,11 @@ export async function runHarnessTurn(
               })
               .map(([name]) => name)
           : [];
+      const hostApproval = hostToolApproval(
+        gatedHostExecutedToolNames,
+        hostExecutedTools,
+        commandGate,
+      );
       const skillsHome = localPrepared?.homeDir ?? HOME_ROOT;
       const agent = new HarnessAgent({
         harness: harnessRuntime,
@@ -3001,7 +3063,7 @@ export async function runHarnessTurn(
               >,
             }
           : {}),
-        ...(systemPrompt ? { instructions: systemPrompt } : {}),
+        ...(instructions ? { instructions } : {}),
         ...(Object.keys(hostExecutedTools).length
           ? {
               tools: hostExecutedTools as NonNullable<
@@ -3019,11 +3081,9 @@ export async function runHarnessTurn(
         // that made a host tool ask; they do not now, and asking about a tool
         // that declares `never` — an exa search, a workspace read — is a pill
         // for something the other two engines run without one.
-        ...(gatedHostExecutedToolNames.length
+        ...(hostApproval
           ? {
-              toolApproval: Object.fromEntries(
-                gatedHostExecutedToolNames.map((n) => [n, "user-approval"]),
-              ) as NonNullable<
+              toolApproval: hostApproval as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["toolApproval"]
               >,
             }
@@ -3114,7 +3174,7 @@ export async function runHarnessTurn(
               boxSkillsWritten = failedBoxSkills(boxSkills, error);
               throw error;
             });
-            boxSkillsWritten = written;
+            boxSkillsWritten = withServedSkills(written, serverSkills);
             if (effectiveCapabilities) {
               logPluginSkillDelivery({
                 set: effectiveCapabilities,
