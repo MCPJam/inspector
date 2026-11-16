@@ -41,6 +41,7 @@ import {
   ConformanceHistoryTable,
   HISTORY_SOURCE_LABEL,
 } from "./ConformanceHistoryTable";
+import { ConformanceHistoryNoResults } from "./ConformanceHistoryNoResults";
 import {
   ConformanceHistoryFilters,
   DEFAULT_HISTORY_SORT,
@@ -308,23 +309,24 @@ export function ConformanceHistory({
       {page === undefined && rows.length === 0 ? (
         <HistoryLoader />
       ) : rows.length === 0 ? (
-        notice(
-          filteredServerName
-            ? `No runs for ${filteredServerName} yet.`
-            : "No conformance runs yet.",
-          true,
+        filteredServerName ? (
+          <ConformanceHistoryNoResults
+            match={filteredServerName}
+            clearLabel="Clear server filter"
+            onClear={() => changeServerFilter(null)}
+          />
+        ) : (
+          notice("No conformance runs yet.", true)
         )
       ) : visibleRows.length === 0 ? (
         readingEveryRun ? (
           <HistoryLoader />
         ) : (
-          <p
-            className="px-1 text-sm text-muted-foreground"
-            role="status"
-            data-testid="conformance-history-no-match"
-          >
-            No runs match &ldquo;{search.trim()}&rdquo;.
-          </p>
+          <ConformanceHistoryNoResults
+            match={search.trim()}
+            clearLabel="Clear search filter"
+            onClear={() => setSearch("")}
+          />
         )
       ) : (
         <ConformanceHistoryTable

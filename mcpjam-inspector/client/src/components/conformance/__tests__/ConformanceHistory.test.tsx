@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 
@@ -31,6 +31,7 @@ vi.mock("posthog-js/react", () => ({
 }));
 
 import { ConformanceHistory } from "../ConformanceHistory";
+import { ConformanceRunRequestContext } from "../conformance-run-request";
 
 function makeRun(
   overrides: Partial<ConformanceRunListItem> = {},
@@ -201,7 +202,6 @@ describe("ConformanceHistory", () => {
     const loadMore = screen.getByRole("button", { name: "Load more" });
     expect(loadMore).toBeDisabled();
     expect(loadMore.getAttribute("aria-busy")).toBe("true");
-
   });
 });
 
@@ -304,7 +304,12 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
 
     await choose("conformance-history-server-filter", "Alpha");
 
-    expect(await screen.findByText("No runs for Alpha yet.")).toBeDefined();
+    expect(
+      (await screen.findByTestId("conformance-history-no-match")).textContent,
+    ).toContain("No conformance runs found");
+    expect(
+      screen.getByTestId("conformance-history-no-match").textContent,
+    ).toContain("“Alpha”");
     expect(screen.queryByText("No conformance runs yet")).toBeNull();
 
     await choose("conformance-history-server-filter", "All servers");
@@ -381,10 +386,71 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     const user = userEvent.setup();
     await user.type(screen.getByTestId("conformance-history-search"), "zzz");
 
+    const empty = await screen.findByTestId("conformance-history-no-match");
     expect(
-      (await screen.findByTestId("conformance-history-no-match")).textContent,
-    ).toBe("No runs match “zzz”.");
+      within(empty).getByRole("heading", { name: "No conformance runs found" }),
+    ).toBeDefined();
+    expect(empty.textContent).toContain(
+      "We couldn’t find any test runs matching “zzz”. Try adjusting your query or resetting your filters.",
+    );
+    expect(empty.textContent).toContain("Looking for another server?");
     expect(screen.queryByTestId("conformance-history-row")).toBeNull();
+    // Outside the Conformance page there is no run to start.
+    expect(screen.queryByRole("button", { name: "Run new check" })).toBeNull();
+
+    await user.click(
+      within(empty).getByRole("button", { name: "Clear search filter" }),
+    );
+    expect(
+      (screen.getByTestId("conformance-history-search") as HTMLInputElement)
+        .value,
+    ).toBe("");
+    await waitFor(() => expect(rowTexts()).toHaveLength(1));
+  });
+
+  it("starts a run from the empty search, like the page's run button", async () => {
+    const page: Page = {
+      page: [run("a1", "srv_alpha", "2025-11-25", 1)],
+      isDone: true,
+      continueCursor: "",
+    };
+    servePages(() => page);
+    const runRequest = vi.fn();
+    render(
+      <ConformanceRunRequestContext.Provider
+        value={{ run: runRequest, disabled: false }}
+      >
+        <ConformanceHistory projectId="proj_1" serverNames={serverNames} />
+      </ConformanceRunRequestContext.Provider>,
+    );
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("conformance-history-search"), "zzz");
+
+    await user.click(
+      await screen.findByRole("button", { name: "Run new check" }),
+    );
+    expect(runRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the server filter from its empty state", async () => {
+    const all: Page = {
+      page: [run("b1", "srv_beta", "2025-11-25", 2)],
+      isDone: true,
+      continueCursor: "",
+    };
+    const none: Page = { page: [], isDone: true, continueCursor: "" };
+    servePages((args) => (args.targetKey ? none : all));
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+
+    await choose("conformance-history-server-filter", "Alpha");
+    await userEvent
+      .setup()
+      .click(
+        await screen.findByRole("button", { name: "Clear server filter" }),
+      );
+
+    await waitFor(() => expect(rowTexts()).toHaveLength(1));
+    expect(rowTexts()[0]).toContain("Beta");
   });
 
   it("sorts by server name from its header, each server's runs newest first", async () => {
@@ -504,7 +570,6 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     expect(loader.textContent).toBe("Loading...");
   });
 
-
   it("does not read every run to sort one server's runs by name", async () => {
     const all: Page = {
       page: [run("b1", "srv_beta", "2025-11-25", 2)],
@@ -569,17 +634,19 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     const user = userEvent.setup();
 
     await user.type(screen.getByTestId("conformance-history-search"), "zzz");
-    expect(
-      (await screen.findByTestId("conformance-history-no-match")).getAttribute(
-        "role",
-      ),
-    ).toBe("status");
+    const announced = () =>
+      screen
+        .getAllByRole("status")
+        .map((status) => status.textContent)
+        .join(" ");
+    await screen.findByTestId("conformance-history-no-match");
+    expect(announced()).toContain("No conformance runs found");
+    expect(announced()).toContain("“zzz”");
 
     await user.clear(screen.getByTestId("conformance-history-search"));
     await choose("conformance-history-server-filter", "Alpha");
-    expect(
-      (await screen.findByText("No runs for Alpha yet.")).getAttribute("role"),
-    ).toBe("status");
+    await waitFor(() => expect(announced()).toContain("“Alpha”"));
+    expect(announced()).toContain("No conformance runs found");
   });
 
   it("sorts from the column headers, not a sort dropdown", () => {
