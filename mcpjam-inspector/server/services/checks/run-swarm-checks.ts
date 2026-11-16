@@ -216,8 +216,12 @@ export async function runSwarmChecks(
       criterionId: entry.id,
       passed: results[index]?.passed ?? false,
       // Older evaluators omit status on scored rows; only a missing result
-      // or an explicit evaluator error is unmeasured.
-      status: results[index] ? (results[index].status ?? "scored") : "error",
+      // or an explicit evaluator error is unmeasured. Session criteria have
+      // no not-applicable state, so such a row goes as the pass it carries.
+      status:
+        !results[index] || results[index].status === "error"
+          ? "error"
+          : "scored",
       reason: results[index]?.reason ?? "evaluator returned no verdict",
     }));
   } catch (error) {

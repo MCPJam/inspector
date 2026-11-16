@@ -54,6 +54,12 @@ describe("evaluatorStatus", () => {
     expect(
       evaluatorStatus([{ role: "required", status: "not_applicable" }]),
     ).toBe("not_applicable");
+    expect(
+      evaluatorStatus([
+        { role: "advisory", status: "failed" },
+        { role: "advisory", status: "passed" },
+      ]),
+    ).toBe("failed");
   });
 });
 

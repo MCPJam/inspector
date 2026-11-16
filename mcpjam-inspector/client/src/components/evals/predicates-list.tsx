@@ -71,9 +71,14 @@ export function parseIterationPredicates(
     // Preserve a per-turn scope when present so the UI can group a turn's
     // checks under that turn (and the case-level list can exclude them).
     const scope = parseTurnScope(row.scope);
+    const status =
+      row.status === "error" || row.status === "not_applicable"
+        ? row.status
+        : undefined;
     out.push({
       predicate: predicate as unknown as Predicate,
       passed: row.passed,
+      ...(status ? { status } : {}),
       reason: row.reason,
       ...(scope ? { scope } : {}),
     });

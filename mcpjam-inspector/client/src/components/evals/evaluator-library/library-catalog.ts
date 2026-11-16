@@ -11,12 +11,12 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
+import { hostedCriterionId } from "@/shared/hosted-criterion-id";
 import type { BuiltFromPart, EvaluatorTone } from "./evaluator-library-types";
 
 /**
  * One library evaluator: a named bundle of assertions that already exist.
- * Adding it writes `checks` to the suite. Until the backend records which
- * evaluator a check came from, the checks show as ordinary assertion rows.
+ * Adding it writes `checks` to the suite.
  */
 export type LibraryEvaluator = {
   id: string;
@@ -190,6 +190,37 @@ export function taggedQuestions(
   }));
 }
 
+/**
+ * The evaluator's tagged checks the suite does not already have. Compared by
+ * criterion identity (the check without its role, severity or origin), so an
+ * authored check with different arguments does not count as a copy.
+ */
+export function missingChecks(
+  evaluator: LibraryEvaluator,
+  predicates: readonly Predicate[],
+): Predicate[] {
+  const present = new Set(predicates.map((p) => hostedCriterionId(p)));
+  return taggedChecks(evaluator).filter(
+    (check) => !present.has(hostedCriterionId(check)),
+  );
+}
+
+/**
+ * Replaces an evaluator's checks with its current library version. Checks
+ * the author already removed come back, because the new version defines the
+ * set; per-check edits are replaced too. A check the suite already has from
+ * elsewhere is not added again.
+ */
+export function withEvaluatorUpdated(
+  predicates: readonly Predicate[],
+  evaluatorId: string,
+): Predicate[] {
+  const entry = findLibraryEvaluator(evaluatorId);
+  if (!entry) return [...predicates];
+  const rest = withoutEvaluator(predicates, evaluatorId);
+  return [...rest, ...missingChecks(entry, rest)];
+}
+
 /** "2 assertions · 1 yes/no question", for the card footer. */
 export function builtFrom(evaluator: LibraryEvaluator): BuiltFromPart[] {
   const parts: BuiltFromPart[] = [];
@@ -210,16 +241,15 @@ export function builtFrom(evaluator: LibraryEvaluator): BuiltFromPart[] {
   return parts;
 }
 
-/** True when the suite already has every check kind this evaluator adds. */
+/** True when the suite already has every check this evaluator adds. */
 export function isInSuite(
   evaluator: LibraryEvaluator,
   predicates: readonly Predicate[],
   questions: readonly RubricCheckQuestion[] = [],
 ): boolean {
-  const kinds = new Set(predicates.map((p) => p.type));
   const ids = new Set(questions.map((q) => q.id));
   return (
-    evaluator.checks.every((check) => kinds.has(check.type)) &&
+    missingChecks(evaluator, predicates).length === 0 &&
     taggedQuestions(evaluator).every((q) => ids.has(q.id))
   );
 }

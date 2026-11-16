@@ -9,8 +9,8 @@ import type { EvalJudgeConfig } from "../types";
 import {
   findLibraryEvaluator,
   LIBRARY_EVALUATORS,
-  taggedChecks,
   taggedQuestions,
+  withEvaluatorUpdated,
   withoutEvaluator,
 } from "./library-catalog";
 
@@ -81,10 +81,9 @@ export function librarySuiteEdits(
     update(evaluatorId: string) {
       const entry = findLibraryEvaluator(evaluatorId);
       if (!entry) return;
-      scope.onPredicatesChange((previous) => [
-        ...withoutEvaluator(previous, evaluatorId),
-        ...taggedChecks(entry),
-      ]);
+      scope.onPredicatesChange((previous) =>
+        withEvaluatorUpdated(previous, evaluatorId),
+      );
       const questions = taggedQuestions(entry);
       if (questions.length) {
         setQuestions((current) => [

@@ -1137,13 +1137,21 @@ export const predicateScopeSchema = z.object({
  * failure, because a measurement we could not take must not manufacture
  * attribution.
  *
+ * A `not_applicable` row means the check has nothing to judge on this run
+ * (no tool declares an output schema, say). It carries `passed: true`, so a
+ * reader that predates the status does not fail a case over it, and becomes
+ * a not-applicable score result.
+ *
  * Absent ⇒ `scored`. Legacy rows predate the field and were all real verdicts.
  */
 export type PredicateResult = {
   predicate: Predicate;
   passed: boolean;
-  /** Absent ⇒ `"scored"`. `"error"` ⇒ no evidence; never a verdict. */
-  status?: "scored" | "error";
+  /**
+   * Absent ⇒ `"scored"`. `"error"` ⇒ no evidence; never a verdict.
+   * `"not_applicable"` ⇒ nothing to judge on this run.
+   */
+  status?: "scored" | "error" | "not_applicable";
   /** Structured, deterministic explanation — names the expected vs actual on failure. */
   reason: string;
   /** Absent ⇒ case-level; `{ kind: "turn", promptIndex }` ⇒ per-turn. */

@@ -19,7 +19,7 @@ import {
   isAuthorable,
   isInSuite,
   LIBRARY_EVALUATORS,
-  taggedChecks,
+  missingChecks,
   taggedQuestions,
   type LibraryEvaluator,
 } from "./library-catalog";
@@ -89,10 +89,9 @@ export function EvaluatorLibraryDialog({
   );
   const selected = available.find((e) => e.id === selectedId);
   const add = (evaluator: LibraryEvaluator) => {
-    const kinds = new Set(predicates.map((p) => p.type));
     const ids = new Set(questions.map((q) => q.id));
     onAdd(
-      taggedChecks(evaluator).filter((check) => !kinds.has(check.type)),
+      missingChecks(evaluator, predicates),
       taggedQuestions(evaluator).filter((q) => !ids.has(q.id)),
     );
   };
