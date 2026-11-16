@@ -448,6 +448,11 @@ export function formatCriterion(
         ? `${predicate.toolName} result contains "${predicate.needle ?? ""}"`
         : `A tool result contains "${predicate.needle ?? ""}"`;
     case "toolResultMatchesSchema":
+      if (predicate.schema === "declared") {
+        return predicate.toolName
+          ? `${predicate.toolName} result matches its declared output schema`
+          : "Every tool result matches its declared output schema";
+      }
       return predicate.toolName
         ? `${predicate.toolName} result matches the authored schema`
         : `Every tool result matches the authored schema`;

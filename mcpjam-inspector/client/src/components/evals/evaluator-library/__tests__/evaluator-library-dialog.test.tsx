@@ -122,3 +122,29 @@ describe("library catalog", () => {
     expect(isInSuite(wasted, [{ type: "noToolErrors" }])).toBe(false);
   });
 });
+
+describe("Results Match Output Schema", () => {
+  it("reads each tool's declared schema and labels it that way", () => {
+    const entry = LIBRARY_EVALUATORS.find(
+      (e) => e.id === "results-match-output-schema",
+    );
+    expect(entry?.checks).toEqual([
+      { type: "toolResultMatchesSchema", schema: "declared" },
+    ]);
+    const onAdd = open();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Results Match Output Schema" }),
+    );
+    expect(
+      screen.getByRole("list", { name: "Assertions this evaluator adds" }),
+    ).toHaveTextContent("Every tool result matches its declared output schema");
+    fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
+    expect(onAdd).toHaveBeenCalledWith([
+      {
+        type: "toolResultMatchesSchema",
+        schema: "declared",
+        evaluator: { id: "results-match-output-schema", version: 1 },
+      },
+    ]);
+  });
+});

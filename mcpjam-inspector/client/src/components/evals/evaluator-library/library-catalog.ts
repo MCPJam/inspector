@@ -1,5 +1,6 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
+  Braces,
   CircleCheck,
   FileWarning,
   Route,
@@ -49,6 +50,16 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     icon: Wrench,
     tone: "tools",
     checks: [{ type: "argumentsMatchToolSchema" }],
+  },
+  {
+    id: "results-match-output-schema",
+    version: 1,
+    name: "Results Match Output Schema",
+    question:
+      "Did every tool result in this run match the tool's declared output schema?",
+    icon: Braces,
+    tone: "tools",
+    checks: [{ type: "toolResultMatchesSchema", schema: "declared" }],
   },
   {
     id: "delivers-final-answer",

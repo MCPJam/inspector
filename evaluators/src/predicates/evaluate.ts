@@ -29,6 +29,10 @@ import { argMatch } from "./argMatcher.js";
 import { checkRole } from "./policy.js";
 import { isTurnScopablePredicateKind } from "./types.js";
 import { validateAgainstSchema } from "./schema-validation.js";
+import {
+  checkDeclaredSchemas,
+  DECLARED_OUTPUT_SCHEMA,
+} from "./declared-schema.js";
 import { canonicalJson } from "../contract/canonical.js";
 import type {
   IterationTranscript,
@@ -1460,6 +1464,22 @@ export function evaluatePredicate(
 
     case "toolResultMatchesSchema": {
       const scope = resultScope(transcript, predicate.toolName);
+      if (predicate.schema === DECLARED_OUTPUT_SCHEMA) {
+        if (
+          transcript.capture?.toolDeclarations !== "complete" ||
+          !transcript.toolDeclarations
+        ) {
+          return evidenceError(
+            predicate,
+            "complete raw tool declarations were not captured, so the declared output schemas are unknown"
+          );
+        }
+        const verdict = checkDeclaredSchemas(scope, transcript.toolDeclarations);
+        if (verdict.kind === "error") return evidenceError(predicate, verdict.reason);
+        return verdict.kind === "pass"
+          ? pass(predicate, verdict.reason)
+          : fail(predicate, verdict.reason);
+      }
       if (scope.length === 0) {
         const empty = emptyScopeIsScored(
           transcript,

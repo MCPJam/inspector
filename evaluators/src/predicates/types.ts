@@ -185,6 +185,9 @@ export type Predicate = (
    * Any JSON root: protocol 2026-07-28 dropped 2025-11-25's object-only
    * restriction on `structuredContent`, so requiring an object here would fail
    * servers that are correct under the current spec.
+   *
+   * `schema: "declared"` validates each result's `structuredContent` against
+   * the output schema its own tool declared instead of one authored schema.
    */
   | { type: "toolResultMatchesSchema"; schema: unknown; toolName?: string }
   /**
@@ -733,6 +736,12 @@ export const predicateUnion = z.discriminatedUnion("type", [
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
         `schema must canonicalize to at most ${MAX_SCHEMA_BYTES} bytes`
+      )
+      // The one string a schema may be: "declared", meaning each tool's own
+      // output schema. Any other string is not a JSON Schema document.
+      .refine(
+        (value) => typeof value !== "string" || value === "declared",
+        'a string schema must be "declared"'
       ),
     toolName: z.string().min(1).optional(),
     ...checkPolicyShape,

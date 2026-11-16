@@ -987,6 +987,13 @@
       }
     },
     {
+      "label": "toolResultMatchesSchema — each tool's declared output schema",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": "declared"
+      }
+    },
+    {
       "label": "noToolErrors — added from a library evaluator",
       "value": {
         "type": "noToolErrors",
@@ -2186,6 +2193,14 @@
         "path": "/a~2"
       },
       "why": "every \"~\" in path must be followed by 0 or 1"
+    },
+    {
+      "label": "toolResultMatchesSchema — a string schema other than declared",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": "object"
+      },
+      "why": "the only string a schema may be is \"declared\""
     },
     {
       "label": "noToolErrors — evaluator tag with an empty id",

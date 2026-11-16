@@ -101,5 +101,6 @@ export {
   type CheckRole,
   type CheckSeverity,
 } from "./policy.js";
+export { DECLARED_OUTPUT_SCHEMA } from "./declared-schema.js";
 
 export type { TranscriptToolDeclaration } from "./types.js";
