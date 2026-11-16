@@ -82,7 +82,7 @@ describe("connection error presentation", () => {
     const facts = readConnectionFailureFacts(input);
     expect(facts.credentialRefusal).toEqual({ kind: "hosted_only" });
     const result = presentConnectionError(input, context);
-    expect(result.explanation).toContain("Use it in hosted runs");
+    expect(result.explanation).toContain("Run it from MCPJam instead");
     expect(result.explanation).not.toMatch(/admin|re-enter/i);
     expect(result.recovery).not.toBe("sign-in");
   });
