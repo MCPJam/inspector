@@ -43,7 +43,8 @@ const base = {
   activePrepare: null,
   unpublished: [],
   plan: plan(),
-  recentRuns: []
+  recentRuns: [],
+  now: Date.parse("2026-11-17T00:00:00Z")
 };
 
 test("pending changesets: ready, and the button starts a release", () => {
@@ -89,6 +90,31 @@ test("versions on main with no run: waiting, still retryable", () => {
     recentRuns: [run({ conclusion: "failure", displayTitle: "Release 3.22.0" })]
   });
   assert.deepEqual(status, { kind: "waiting", label: "3.23.0" });
+  assert.equal(releaseAction(status), "publish");
+});
+
+test("npm still catching up after a successful run: publishing, no button", () => {
+  const status = deriveReleaseStatus({
+    ...base,
+    now: Date.parse("2026-11-16T09:35:00Z"),
+    // Inspector already shows on npm; only the SDK is still missing, so the
+    // leftover label would not match the run's.
+    unpublished: [{ name: "@mcpjam/sdk", newVersion: "10.9.0" }],
+    recentRuns: [run({ displayTitle: "Release 3.23.0", updatedAt: "2026-11-16T09:30:49Z" })]
+  });
+  assert.equal(status.kind, "publishing");
+  assert.equal(status.label, "3.23.0");
+  assert.equal(releaseAction(status), null);
+});
+
+test("still missing long after the run succeeded: retryable again", () => {
+  const status = deriveReleaseStatus({
+    ...base,
+    now: Date.parse("2026-11-16T10:30:00Z"),
+    unpublished: [{ name: "@mcpjam/sdk", newVersion: "10.9.0" }],
+    recentRuns: [run({ displayTitle: "Release 3.23.0", updatedAt: "2026-11-16T09:30:49Z" })]
+  });
+  assert.equal(status.kind, "waiting");
   assert.equal(releaseAction(status), "publish");
 });
 
