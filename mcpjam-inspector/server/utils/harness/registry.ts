@@ -397,9 +397,10 @@ type HarnessRuntimeAdapterBase = {
   mcpDelivery: HarnessMcpDelivery;
   /** Qualified vendor continuation hook for the shared forwarding route. */
   forwardingRuntime?: ForwardingRuntimeContract;
-  /** The runtime refuses to resume when its MCP config changes, so each lane
-   *  gets session handles in place of per-turn tokens. */
-  sessionStableMcpConfig?: boolean;
+  /** The runtime refuses to resume a session whose MCP configuration changed,
+   *  header values included, so its lane's configuration carries nothing that
+   *  varies between turns: no tool-catalog version, no added headers. */
+  fingerprintsMcpConfig?: true;
   /** Booting and bootstrapping this runtime's hosted box may start before
    *  Send (`prepare-conversation-box.ts`). */
   preparesBeforeSend?: true;
@@ -1087,7 +1088,8 @@ const codexAdapter: HarnessRuntimeAdapter = {
     correlationKey: "callId",
     ownedInput: true,
     nativeClient: CODEX_NATIVE_CLIENT,
-    refresh: withForwardingResume,
+    refresh: (runtime, servers, policyDigest) =>
+      withForwardingResume(runtime, servers, policyDigest),
   },
   // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
   // `$HOME/.agents/skills/<name>/SKILL.md` before it starts Codex, the same
@@ -1195,8 +1197,8 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // mechanism — which is exactly the distinction this field carries.
   mcpNativeDelivery: "session-config",
   // The ACP adapter fingerprints its MCP servers, headers included, on every
-  // resume, so a per-turn token there would end the session each turn.
-  sessionStableMcpConfig: true,
+  // resume, so any value that varies between turns would end the session.
+  fingerprintsMcpConfig: true,
   // Approval bindings correlate calls (no tool-call id reaches the server),
   // Cursor declines elicitation itself, and the session-stable config never
   // changes between turns, so there is nothing to refresh.
@@ -1289,7 +1291,10 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     // Stamped by the bridge's pre-call hook with the stream's tool call id.
     correlationKey: COPILOT_CORRELATION_KEY,
     nativeClient: COPILOT_CLI_NATIVE_CLIENT,
-    refresh: (runtime) => refuseForwardedContinuation(runtime),
+    // The lane's session configuration is the one the paused turn started
+    // with, so only a turn on per-turn credentials has anything to refuse.
+    refresh: (runtime, _servers, _policyDigest, context) =>
+      context?.sessionStable ? runtime : refuseForwardedContinuation(runtime),
   },
   supportsSkills: true,
   skills: HARNESS_SKILLS["copilot-cli"],
