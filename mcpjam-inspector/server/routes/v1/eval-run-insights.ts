@@ -39,12 +39,12 @@ async function preflightRun(c: Context) {
   const convex = createConvexClient(await getConvexBearerForRequest(c));
   let run: { projectId?: unknown } | null;
   try {
-    run = await convex.query(
+    run = (await convex.query(
       "testSuites:getTestSuiteRun" as never,
       {
         runId,
       } as never,
-    );
+    )) as { projectId?: unknown } | null;
   } catch (error) {
     throw translateConvexReadError(error, {
       scope: "v1.evals",
