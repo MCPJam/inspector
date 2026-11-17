@@ -1707,6 +1707,55 @@ describe("the second pass declares the tool-call scorers the first pass stored",
     expect(result.orphans).toEqual([]);
     expect(result.rowless).toEqual([]);
   });
+
+  test("keeps the first pass's platform rows joinable", async () => {
+    const first = buildHostedScoreContract({
+      evaluation: {
+        passed: true,
+        expectedToolCalls: [{ toolName: "list_files", arguments: {} }],
+        missing: [],
+        unexpected: [],
+        argumentMismatches: [],
+      },
+      matchOptions,
+      platformGates: {
+        failOnToolError: true,
+        trace: {
+          messages: [],
+          spans: [
+            {
+              category: "tool",
+              status: "error",
+              name: "list_files",
+              startMs: 0,
+              endMs: 1,
+            },
+          ],
+        },
+        pinnedToolErrors: [],
+        iterationError: undefined,
+        scriptedCheckFailures: [],
+      },
+    });
+
+    const result = await judge({
+      evaluationConfig: first.evaluationConfig,
+      scores: first.scores,
+    });
+
+    expect(
+      result.config.definitions
+        .filter((d) => d.scorerId.startsWith("platform:"))
+        .map((d) => d.scorerId)
+        .sort(),
+    ).toEqual([
+      "platform:iterationError",
+      "platform:toolExecution",
+      "platform:widgetCheck",
+    ]);
+    expect(result.orphans).toEqual([]);
+    expect(result.rowless).toEqual([]);
+  });
 });
 
 describe("the marker carries what the chain cannot", () => {
