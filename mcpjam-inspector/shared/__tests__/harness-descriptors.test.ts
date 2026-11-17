@@ -31,7 +31,7 @@ describe("harness descriptors", () => {
     });
     expect(HARNESS_DESCRIPTORS.cursor.orgKeys).toBe(false);
     expect(HARNESS_DESCRIPTORS.opencode.orgKeys).toBe(true);
-    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "cursor", "copilot-cli"]);
+    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "cursor", "copilot-cli", "opencode"]);
   });
   it("grants MCPJam extensions by client ownership", () => {
     expect(usesMcpjamClient({})).toBe(true);
@@ -64,11 +64,7 @@ describe("harness surface support", () => {
         (surface) => `${id} ${surface}`,
       ),
     ).sort();
-    expect(declared).toEqual([
-      "cursor guests",
-      "cursor user-testing",
-      "opencode local",
-    ]);
+    expect(declared).toEqual(["cursor guests", "cursor user-testing"]);
   });
   it("lets signed-in guests run every runtime but Cursor CLI", () => {
     // The backend derives its guest list from these same exceptions

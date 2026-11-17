@@ -455,9 +455,7 @@
       "reasoningEfforts": [],
       "runtimeName": "OpenCode",
       "runtimeVersion": "1.18.34",
-      "unavailableOn": {
-        "local": "OpenCode can't run on your computer yet. Run it in the cloud instead."
-      }
+      "unavailableOn": {}
     },
     "qualifiedDiscovery": []
   }

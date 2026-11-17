@@ -161,9 +161,7 @@ export const HARNESS_DESCRIPTORS = {
     displayName: "OpenCode", runtimeName: "OpenCode", runtimeVersion: "1.18.34", mcpClient: "mcpjam",
     modelAccess: "broker", orgKeys: true,
     protocol: "anthropic-messages", credential: null,
-    unavailableOn: {
-      local: "OpenCode can't run on your computer yet. Run it in the cloud instead.",
-    },
+    unavailableOn: {},
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },
 } as const satisfies Record<
