@@ -128,6 +128,7 @@ import {
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
+import { indexProjectServersByName } from "@/lib/project-servers-by-name";
 import { writeCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
@@ -2751,14 +2752,11 @@ export function useServerState({
   );
 
   /**
-   * The Convex row a rename should update in place, found the way
-   * `removeServerFromConvex` finds the row it deletes. A rename used to delete
-   * that row and create a new one, losing everything stored under the old id:
-   * the client secret (the edit form never holds it), hosted OAuth tokens, app
-   * views. Undefined where the old path had no row to delete, so those renames
-   * keep their current behavior.
+   * Resolve the active project's Convex row for an in-place edit. The server
+   * snapshot includes sibling projects, which can have servers with the same
+   * name. Updating by id preserves stored secrets, OAuth tokens and app views.
    */
-  const resolveRenameWriteTarget = useCallback(
+  const resolveProjectServerWriteTarget = useCallback(
     (originalServerName: string): HostedServerWriteTarget | undefined => {
       if (
         useLocalFallback ||
@@ -2768,17 +2766,16 @@ export function useServerState({
       ) {
         return undefined;
       }
-      const row = (
-        activeProjectServersFlatRef.current ?? activeProjectServersFlat
-      )?.find((s) => s.name === originalServerName);
-      if (!row) return undefined;
-      return {
-        projectId:
-          row.projectId ||
-          effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ||
-          effectiveActiveProjectId,
-        serverId: row._id,
-      };
+      const projectId =
+        effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
+        effectiveActiveProjectId;
+      const rows =
+        activeProjectServersFlatRef.current ?? activeProjectServersFlat;
+      const row = indexProjectServersByName(rows ?? [], projectId).get(
+        originalServerName,
+      );
+      if (!row || !remoteServerBelongsToProject(row, projectId)) return undefined;
+      return { projectId, serverId: row._id };
     },
     [
       useLocalFallback,
@@ -4644,7 +4641,7 @@ export function useServerState({
       const hostedWriteTarget =
         options?.hostedWriteTarget ??
         (isRename && originalServerName
-          ? resolveRenameWriteTarget(originalServerName)
+          ? resolveProjectServerWriteTarget(originalServerName)
           : undefined);
 
       const existingServer = appState.servers[originalServerName ?? serverName];
@@ -4813,11 +4810,11 @@ export function useServerState({
       if (shouldUpdateActiveProjectState) {
         // Drop the old local row only once the new one is stored. An exact-ID
         // hosted rename already renamed the same Convex row, so its cleanup
-        // must not issue a second name-based cloud delete against a stale
-        // snapshot.
+        // must only remove local state. If no project row was resolved, a
+        // cloud delete by name could remove a sibling project's row.
         if (isRename && originalServerName) {
           await handleRemoveServerRef.current?.(originalServerName, {
-            removeFromCloud: !hostedWriteTarget,
+            removeFromCloud: false,
           });
         }
 
@@ -4850,7 +4847,7 @@ export function useServerState({
       effectiveProjects,
       syncServerToConvex,
       persistServerToLocalProject,
-      resolveRenameWriteTarget,
+      resolveProjectServerWriteTarget,
     ],
   );
 
@@ -6839,12 +6836,12 @@ export function useServerState({
       // stored client secret, hosted OAuth tokens and app views stay on it.
       // Without a row to target, the old name is removed as before.
       const renameTarget = isRename
-        ? resolveRenameWriteTarget(originalServerName)
+        ? resolveProjectServerWriteTarget(originalServerName)
         : undefined;
       let editTarget = renameTarget;
       if (formData.publishedPluginId !== undefined) {
         const savedTarget =
-          renameTarget ?? resolveRenameWriteTarget(originalServerName);
+          renameTarget ?? resolveProjectServerWriteTarget(originalServerName);
         if (!savedTarget) {
           toast.error(
             "Save this server in a project before setting a published plugin ID.",
@@ -6859,11 +6856,12 @@ export function useServerState({
 
       if (skipAutoConnect) {
         const mcpConfig = toMCPConfig(formData);
-        if (isRename) {
+        if (isRename && !renameTarget) {
+          await handleRemoveServer(originalServerName, {
+            removeFromCloud: false,
+          });
+        } else if (isRename) {
           await handleDisconnect(originalServerName);
-          if (!renameTarget) {
-            await removeServerFromStateAndCloud(originalServerName);
-          }
         }
 
         const updatedServer: ServerWithName = {
@@ -7028,9 +7026,10 @@ export function useServerState({
 
       saveOAuthConfigToLocalStorage(formData);
 
-      await handleDisconnect(originalServerName);
       if (isRename && !renameTarget) {
-        await removeServerFromStateAndCloud(originalServerName);
+        await handleRemoveServer(originalServerName, { removeFromCloud: false });
+      } else {
+        await handleDisconnect(originalServerName);
       }
       let configSaved = false;
       await handleConnect(formData, {
@@ -7068,9 +7067,9 @@ export function useServerState({
       handleDisconnect,
       handleConnect,
       isAuthenticated,
-      removeServerFromStateAndCloud,
+      handleRemoveServer,
       cleanupServerLocalArtifacts,
-      resolveRenameWriteTarget,
+      resolveProjectServerWriteTarget,
       setSelectedServer,
       syncServerToConvex,
       useLocalFallback,
