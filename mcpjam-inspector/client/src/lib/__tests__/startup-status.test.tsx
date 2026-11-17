@@ -1,0 +1,94 @@
+import { act, render, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isLoading: false, isAuthenticated: false }),
+}));
+vi.mock("@/hooks/use-inspector-auth", () => ({
+  useInspectorAuth: () => ({ user: null }),
+}));
+vi.mock("../error-reporting", () => ({ reportCaught: vi.fn() }));
+vi.mock("../guest-session", () => ({
+  getGuestSessionRefusal: () => null,
+  subscribeGuestSessionChanges: () => () => {},
+}));
+
+import {
+  reportUserReadiness,
+  resetStartupStatusForTests,
+  retryStartup,
+  StartupStatusTracker,
+  useStartupStatus,
+  useStartupStore,
+} from "../startup-status";
+import { STARTUP_RECOVERY_DEADLINE_MS } from "@/shared/app-load-stall";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
+
+const escalated = () => useStartupStore.getState().escalated;
+
+describe("StartupStatusTracker", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    resetStartupStatusForTests();
+    useSessionRefreshStore.setState({ status: "idle", kind: null });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("escalates as soon as a session refresh fails, without waiting for the deadline", () => {
+    render(<StartupStatusTracker />);
+    expect(escalated()).toBe(false);
+    act(() => useSessionRefreshStore.getState().notifyFailure("transient"));
+    expect(escalated()).toBe(true);
+  });
+
+  it("escalates a silent stall once the deadline passes", () => {
+    render(<StartupStatusTracker />);
+    act(() => vi.advanceTimersByTime(STARTUP_RECOVERY_DEADLINE_MS - 1));
+    expect(escalated()).toBe(false);
+    act(() => vi.advanceTimersByTime(1));
+    expect(escalated()).toBe(true);
+  });
+
+  it("stays escalated while a Retry is in flight and after it clears the failure", () => {
+    render(<StartupStatusTracker />);
+    act(() => useSessionRefreshStore.getState().notifyFailure("transient"));
+    act(() => useSessionRefreshStore.getState().retry());
+    expect(escalated()).toBe(true);
+    act(() => useSessionRefreshStore.getState().clear());
+    expect(escalated()).toBe(true);
+  });
+
+  it("drops the recovery state once the user record is ready", () => {
+    render(<StartupStatusTracker />);
+    act(() => useSessionRefreshStore.getState().notifyFailure("transient"));
+    act(() => reportUserReadiness(true, true));
+    expect(escalated()).toBe(false);
+  });
+
+  it("does not treat a later reconnect as a stalled startup once the app was usable", () => {
+    render(<StartupStatusTracker />);
+    act(() => reportUserReadiness(true, true));
+    act(() => reportUserReadiness(false, false));
+    act(() => vi.advanceTimersByTime(STARTUP_RECOVERY_DEADLINE_MS));
+    expect(escalated()).toBe(false);
+  });
+
+  it("remembers what failed, and shows Retry as busy, while a retry clears the refresh store", () => {
+    const { result } = renderHook(() => useStartupStatus());
+    render(<StartupStatusTracker />);
+    act(() => useSessionRefreshStore.getState().notifyFailure("manual"));
+    act(() => retryStartup());
+    // A guest retry clears the refresh store while it runs.
+    act(() => useSessionRefreshStore.getState().clear());
+    expect(result.current.failureKind).toBe("manual");
+    expect(result.current.retrying).toBe(true);
+    expect(result.current.stage).toBe("app_load/guest_session_failed");
+    act(() => useSessionRefreshStore.getState().notifyFailure("manual"));
+    expect(result.current.retrying).toBe(false);
+  });
+});
