@@ -268,6 +268,7 @@ export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   const id = String(modelId);
   // Bare GPT-6 ids reach OpenAI through the AI SDK, which drops temperature at
   // the default effort; hosted `openai/gpt-6-*` rows answer from their catalog.
+  // A legacy host pin of bare `gpt-6-luna` bills to MCPJam and answers false too.
   if (id.includes("gpt-5") || id.startsWith("gpt-6")) {
     return false;
   }

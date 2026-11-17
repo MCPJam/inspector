@@ -123,6 +123,11 @@ describe("MCPJam-provided model classification", () => {
     }
   });
 
+  it("lists each SUPPORTED_MODELS id once", () => {
+    const ids = SUPPORTED_MODELS.map((model) => String(model.id));
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
+  });
+
   it("offers the current Anthropic models to BYOK keys, and no retired ones", () => {
     // The BYOK Anthropic rows are hand-maintained, so they drift behind
     // Anthropic's releases: a user with a valid key could not select Sonnet 5

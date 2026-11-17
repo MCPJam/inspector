@@ -99,9 +99,11 @@ export const ANTHROPIC_NATIVE_MODEL_IDS: readonly NativeModelIdMapping[] =
   ]);
 
 // Every row here is a `SUPPORTED_MODELS` OpenAI row: `createLlmModel`
-// (server/utils/chat-helpers.ts) sends that id verbatim to api.openai.com, and
-// OpenAI's `GET /v1/models` lists models under the same ids. The canonical id
-// is the hosted catalog's spelling (shared/hosted-model-ids.generated.ts).
+// (server/utils/chat-helpers.ts) sends that id verbatim to api.openai.com.
+// OpenAI's `GET /v1/models` lists models under the same ids, except the GPT-6
+// rows, whose ids come from OpenAI's model pages (`OPENAI_MODEL_PAGE`). The
+// canonical id is the hosted catalog's spelling
+// (shared/hosted-model-ids.generated.ts).
 const OPENAI_VERBATIM =
   "SUPPORTED_MODELS row sent verbatim to api.openai.com by createLlmModel; listed under this id by GET /v1/models";
 const OPENAI_HOSTED = `${OPENAI_VERBATIM}; canonical spelling from hosted-model-ids.generated.ts`;
