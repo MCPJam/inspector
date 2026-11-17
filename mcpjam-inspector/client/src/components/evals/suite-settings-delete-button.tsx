@@ -19,9 +19,7 @@ export function SuiteSettingsDeleteButton({
       type="button"
       variant="destructive"
       size="icon"
-      // Solid in both themes. The variant's dark `/60` fill, like the evals
-      // pastel `/50` one, reads as a disabled button next to a solid Save.
-      className="size-8 dark:bg-destructive dark:hover:bg-destructive/90"
+      className="size-8"
       aria-label="Delete suite"
       title="Delete suite"
       disabled={disabled}
