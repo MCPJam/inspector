@@ -144,6 +144,11 @@ export function formatEnsureServersReadyError(
 
   if (result.failedServerNames.length > 0) {
     const names = result.failedServerNames;
+    const errors = names.flatMap((name) => result.failedServerErrors?.[name] ? [result.failedServerErrors[name]] : []);
+    if (errors.length > 0) {
+      const remaining = names.length - errors.length;
+      return errors.join("\n") + (remaining > 0 ? `\nWe couldn't connect to all required servers. Try again to ${actionLabel}.` : "");
+    }
     const opts = { remoteServers: projectServers };
     if (
       names.length > 0 &&

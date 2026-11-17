@@ -22,8 +22,8 @@
  *     and `finalizeUsage` posts `/stream/org/local-usage` with the identical
  *     body `runLocalOrgChatTurnHeadless`'s `postLocalUsage` emitted.
  *   - external account → a hosted harness turn on the organization's own
- *     vendor key, for swarm and eval runs only; refused for every other
- *     caller. A runtime-chosen sentinel (`cursor/auto`) never asks the
+ *     vendor key, refused where its runtime declares it does not run (User
+ *     Testing). A runtime-chosen sentinel (`cursor/auto`) never asks the
  *     org-provider config a question.
  */
 
@@ -42,6 +42,7 @@ import {
   hasUnsupportedLocalApprovalGate,
   postLocalUsage,
 } from "./org-model-stream-handler.js";
+import { withLocalUsageCost } from "./call-cost/local-usage-cost.js";
 import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
 import { harnessOrgProviderUnsupportedReason } from "@/shared/harness-model-support";
@@ -167,7 +168,8 @@ export interface ResolvedTurnRuntime {
    * engine-error included, so consumed tokens are still billed — mirroring the
    * old `buildLocalOrgOnPersist`, which billed unconditionally on non-abort.
    * Self-guards on `result.aborted`, and the writeback itself is best-effort
-   * (a telemetry outage is swallowed + logged, never thrown).
+   * (a telemetry outage is swallowed + logged, never thrown). Puts the
+   * backend's per-call prices on `result.turnTrace`'s llm spans.
    */
   finalizeUsage(
     result: UnifiedTurnResult,
@@ -194,10 +196,10 @@ export async function resolveTurnRuntime(
   const modelId = String(args.modelDefinition.id);
 
   // A runtime that declares it does not run on this surface (Cursor, on the
-  // organization's vendor key, outside evals and swarms) is refused whatever
-  // the model, before anything is resolved and before the caller marks the
-  // turn possibly-spent. This resolver's `direct` callers are the v1 APIs,
-  // never the Playground.
+  // organization's vendor key, in User Testing) is refused whatever the model,
+  // before anything is resolved and before the caller marks the turn
+  // possibly-spent. This resolver's `direct` callers are the v1 APIs, never
+  // the Playground.
   const surfaceRefusal = args.harness
     ? harnessSurfaceRefusal(
         args.harness,
@@ -346,19 +348,20 @@ export async function resolveTurnRuntime(
           : { kind: "ok" },
         at: Date.now(),
       });
-      // FIRE-AND-FORGET — exact parity with the OLD call site
-      // (`postLocalUsage({...}).catch((err) => logger.warn(...))`, never
-      // awaited). Awaiting the writeback would block the turn for up to the 5s
-      // fetch timeout during a `/stream/org/local-usage` outage and, on reject,
-      // fail an otherwise-successful synthetic turn. The `.catch` swallows +
-      // logs so there's no unhandled rejection; billing telemetry must neither
-      // gate nor slow the turn. The request is still ISSUED, so consumed tokens
-      // (incl. on a mid-stream engine error) are billed.
-      void postLocalUsage({
+      // Best-effort, as at the OLD call site
+      // (`postLocalUsage({...}).catch((err) => logger.warn(...))`): a
+      // `/stream/org/local-usage` outage must not fail an otherwise-successful
+      // synthetic turn, so the `.catch` swallows + logs. The request is always
+      // ISSUED, so consumed tokens (incl. on a mid-stream engine error) are
+      // billed. Only its per-call prices are awaited, for the turn's llm
+      // spans, and for at most `withLocalUsageCost`'s bound, not the 5s fetch
+      // timeout.
+      const costs = postLocalUsage({
         projectId: args.projectId,
         providerKey,
         model: modelId,
         usage: result.usage,
+        calls: result.modelCalls,
         finishReason: result.finishReason,
         chatSessionId: args.chatSessionId,
         sourceType: args.sourceType,
@@ -380,7 +383,15 @@ export async function resolveTurnRuntime(
         logger.warn("[org/local] Failed to post local usage", {
           error: err instanceof Error ? err.message : String(err),
         });
+        return undefined;
       });
+      if (result.turnTrace && result.modelCalls) {
+        result.turnTrace = await withLocalUsageCost(
+          result.turnTrace,
+          result.modelCalls,
+          costs,
+        );
+      }
     };
 
     return {
