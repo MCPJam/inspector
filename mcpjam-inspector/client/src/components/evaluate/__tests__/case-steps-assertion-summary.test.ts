@@ -146,3 +146,16 @@ describe("assertionSummary outside a step", () => {
     );
   });
 });
+
+describe("assertionSummary edge cases", () => {
+  it("shows an unknown kind's name instead of throwing", () => {
+    const future = { type: "futureKind" } as unknown as Predicate;
+    expect(summary(future).label).toBe("futureKind");
+  });
+
+  it("reads an empty onlyToolsCalled list as no tool", () => {
+    expect(summary({ type: "onlyToolsCalled", toolNames: [] })).toEqual({
+      label: "No tool should be called",
+    });
+  });
+});

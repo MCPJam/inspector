@@ -106,4 +106,25 @@ describe("isCaseStepsDirty", () => {
     };
     expect(isCaseStepsDirty(draft, testCase)).toBe(false);
   });
+
+  it("treats a field set to undefined like the saved case without it", () => {
+    const callStep = {
+      id: "c1",
+      kind: "toolCall",
+      serverName: "workspaces",
+      toolName: "list_workspaces",
+      arguments: {},
+    } as unknown as TestStep;
+    const testCase = makeCase({ steps: [...steps, callStep] });
+    const edited = {
+      ...callStep,
+      serverId: undefined,
+      renderTimeoutMs: undefined,
+    };
+    const draft = {
+      ...seedCaseStepsDraft(testCase),
+      steps: [...steps, edited] as TestStep[],
+    };
+    expect(isCaseStepsDirty(draft, testCase)).toBe(false);
+  });
 });

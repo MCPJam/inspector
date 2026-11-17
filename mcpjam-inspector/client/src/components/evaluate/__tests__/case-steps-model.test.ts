@@ -325,6 +325,11 @@ describe("interactText", () => {
       'click button "Pay"',
     ],
     [
+      "right-click",
+      { kind: "click", target: { testId: "x" }, clickType: "right" },
+      'right-click testId "x"',
+    ],
+    [
       "type",
       { kind: "type", target: { testId: "q" }, text: " shoes " },
       'type “shoes” into testId "q"',

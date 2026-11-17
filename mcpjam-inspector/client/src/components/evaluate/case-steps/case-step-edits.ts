@@ -12,7 +12,7 @@ import {
   blankStepOfKind,
   defaultWidgetAssertion,
 } from "@/components/evals/step-fields";
-import { resolveMatchOptions, type Predicate } from "@/shared/eval-matching";
+import type { Predicate } from "@/shared/eval-matching";
 import { blankPredicate } from "@/shared/predicate-kinds";
 import {
   actionRows,
@@ -21,13 +21,16 @@ import {
   type AssertStep,
   type TestStep,
 } from "@/shared/steps";
+import { safeResolveMatchOptions } from "../case-scorecard/case-scorecard-model";
 import {
-  isToolCalledWithAssert,
   matchOptionsForKind,
   readSimpleCase,
+  restoreToolChecks,
+  stashToolChecks,
   writeSimpleCase,
   type CaseKind,
   type SimpleCaseTool,
+  type StashedToolCheck,
   type ToolsChoice,
 } from "../simple-case/simple-case-model";
 
@@ -39,47 +42,16 @@ export type CaseStepsDraft = CaseSaveForm & {
   stashedTools: ParkedTool[];
 };
 
-/**
- * A tool assert parked by No tools: the assert itself and the step it
- * followed, so turning tools back on returns it to the same turn.
- */
-export type ParkedTool = SimpleCaseTool & {
-  afterStepId?: string;
-  step?: TestStep;
-};
+/** Parked by No tools; Describe's plain tools return via writeSimpleCase. */
+export type ParkedTool = SimpleCaseTool & Partial<StashedToolCheck>;
 
-function parkTools(steps: TestStep[], tools: SimpleCaseTool[]): ParkedTool[] {
-  const byId = new Map(steps.map((step) => [step.id, step]));
-  const after = new Map<string, string | undefined>();
-  let last: string | undefined;
-  for (const step of steps) {
-    if (isToolCalledWithAssert(step)) after.set(step.id, last);
-    else last = step.id;
-  }
-  return tools.map((tool) => ({
-    ...tool,
-    afterStepId: after.get(tool.id),
-    step: byId.get(tool.id),
+function parkTools(steps: TestStep[]): ParkedTool[] {
+  return stashToolChecks(steps).map((check) => ({
+    id: check.step.id,
+    toolName: check.step.assertion.toolName,
+    arguments: check.step.assertion.args.args ?? {},
+    ...check,
   }));
-}
-
-/** Each parked assert back after the step it followed, or null if one is gone. */
-function unparkTools(
-  steps: TestStep[],
-  parked: ParkedTool[],
-): TestStep[] | null {
-  const ids = new Set(steps.map((step) => step.id));
-  const after = new Map<string, TestStep[]>();
-  for (const tool of parked) {
-    if (!tool.step || !tool.afterStepId || !ids.has(tool.afterStepId)) {
-      return null;
-    }
-    after.set(tool.afterStepId, [
-      ...(after.get(tool.afterStepId) ?? []),
-      tool.step,
-    ]);
-  }
-  return steps.flatMap((step) => [step, ...(after.get(step.id) ?? [])]);
 }
 
 export type DraftEdit = (draft: CaseStepsDraft) => CaseStepsDraft;
@@ -95,7 +67,7 @@ export const chooseNoTool: DraftEdit = (draft) => {
     stashedTools:
       draft.toolsChoice === "noTool"
         ? draft.stashedTools
-        : parkTools(draft.steps, view.tools),
+        : parkTools(draft.steps),
     steps: writeSimpleCase(draft.steps, {
       prompt: view.prompt,
       tools: view.tools,
@@ -110,16 +82,20 @@ export const chooseTools: DraftEdit = (draft) => {
   if (view.tools.length > 0 || draft.stashedTools.length === 0) {
     return { ...draft, toolsChoice: "tools" };
   }
+  const checks = draft.stashedTools.flatMap(({ step, preceding }) =>
+    step && preceding ? [{ step, preceding }] : [],
+  );
   return {
     ...draft,
     toolsChoice: "tools",
     steps:
-      unparkTools(draft.steps, draft.stashedTools) ??
-      writeSimpleCase(draft.steps, {
-        prompt: view.prompt,
-        tools: draft.stashedTools,
-        noTool: false,
-      }),
+      checks.length === draft.stashedTools.length
+        ? restoreToolChecks(draft.steps, checks)
+        : writeSimpleCase(draft.steps, {
+            prompt: view.prompt,
+            tools: draft.stashedTools,
+            noTool: false,
+          }),
   };
 };
 
@@ -128,7 +104,7 @@ export function setCaseKind(
   kind: CaseKind,
   suiteDefaultMatchOptions: CaseSaveForm["matchOptions"],
 ): CaseStepsDraft {
-  const resolved = resolveMatchOptions(
+  const resolved = safeResolveMatchOptions(
     suiteDefaultMatchOptions,
     draft.matchOptions,
   );

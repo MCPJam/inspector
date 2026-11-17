@@ -6,7 +6,6 @@
  * module only splits a label from the operand it names.
  */
 import { ShieldCheck, type LucideIcon } from "lucide-react";
-import { describeLocator } from "@/components/evals/assert-pick-chooser";
 import { EVAL_ADD_CATALOG } from "@/components/evals/eval-add-catalog";
 import type { Predicate } from "@/shared/eval-matching";
 import {
@@ -14,12 +13,12 @@ import {
   INLINE_ASSERT_LABELS,
   PREDICATE_KIND_LABELS,
 } from "@/shared/predicate-kinds";
-import { isLocatorComplete } from "@/shared/scripted-steps";
 import {
   isWidgetAssertion,
   WIDGET_ASSERTION_LABELS,
   type WidgetAssertion,
 } from "@/shared/steps";
+import { quoted, trimmed, where } from "./case-steps-model";
 
 export type AssertionSummary = {
   label: string;
@@ -43,13 +42,6 @@ const ICON_BY_KEY = new Map(
 
 function iconFor(key: string): LucideIcon {
   return ICON_BY_KEY.get(key) ?? ShieldCheck;
-}
-
-const trimmed = (value: string | undefined) => (value ?? "").trim();
-const quoted = (text: string) => `“${text}”`;
-
-function where(target: Parameters<typeof isLocatorComplete>[0]): string {
-  return target && isLocatorComplete(target) ? describeLocator(target) : "";
 }
 
 function argsExtra(
@@ -106,6 +98,10 @@ function predicateSummary(
   inline: boolean,
 ): AssertionSummary {
   const Icon = iconFor(`check:${predicate.type}`);
+  // A kind from a newer build has no label here; show its name, not a crash.
+  if (!(predicate.type in PREDICATE_KIND_LABELS)) {
+    return { label: String(predicate.type), Icon };
+  }
   const base = PREDICATE_KIND_LABELS[predicate.type];
   const extra =
     predicate.type === "toolCalledWith" ? argsExtra(predicate) : undefined;
@@ -123,8 +119,13 @@ function predicateSummary(
   if (/ N\b/.test(base)) {
     return { label: formatCriterion({ predicate }), Icon };
   }
-  // These name their tool and patterns in the label itself.
-  if (!inline && NAMED_IN_LABEL.has(predicate.type)) {
+  // These name their tool and patterns in the label itself. An empty
+  // onlyToolsCalled list is a whole claim: "No tool should be called".
+  const noTool =
+    predicate.type === "onlyToolsCalled" &&
+    Array.isArray(predicate.toolNames) &&
+    predicate.toolNames.length === 0;
+  if (noTool || (!inline && NAMED_IN_LABEL.has(predicate.type))) {
     return { label: formatCriterion({ predicate }), Icon };
   }
   const label =

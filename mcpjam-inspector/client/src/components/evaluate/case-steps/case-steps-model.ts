@@ -9,6 +9,7 @@
  * rows, so the editor never resolves the route or predicates a second way.
  */
 import { describeLocator } from "@/components/evals/assert-pick-chooser";
+import { browserStepActionVerb } from "@/components/evals/browser-step-replay";
 import { isLocatorComplete } from "@/shared/scripted-steps";
 import {
   actionRows,
@@ -155,11 +156,11 @@ export function afterRunSection(card: CaseScorecard): AfterRunSection {
 
 // ── step text ────────────────────────────────────────────────────
 
-const quoted = (text: string) => `“${text}”`;
-const trimmed = (value: string | undefined) => (value ?? "").trim();
+export const quoted = (text: string) => `“${text}”`;
+export const trimmed = (value: string | undefined) => (value ?? "").trim();
 
 /** `describeLocator` for a usable locator, else nothing to print. */
-function where(target: Parameters<typeof isLocatorComplete>[0]): string {
+export function where(target: Parameters<typeof isLocatorComplete>[0]): string {
   return target && isLocatorComplete(target) ? describeLocator(target) : "";
 }
 
@@ -168,7 +169,8 @@ export function interactText(action: InteractStep["action"]): string {
   switch (action.kind) {
     case "click": {
       const at = where(action.target);
-      return at ? `click ${at}` : "";
+      const verb = browserStepActionVerb(`${action.clickType ?? "left"}_click`);
+      return at ? `${verb.toLowerCase()} ${at}` : "";
     }
     case "type": {
       const at = where(action.target);

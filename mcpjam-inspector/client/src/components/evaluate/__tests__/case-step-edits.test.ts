@@ -7,6 +7,7 @@ import {
   addCasePredicate,
   chooseNoTool,
   chooseTools,
+  setCaseKind,
   type CaseStepsDraft,
 } from "../case-steps/case-step-edits";
 
@@ -66,6 +67,55 @@ describe("route rule edits", () => {
     expect(ids(negative.steps)).toEqual(["p1", "p2"]);
     const restored = chooseTools(negative);
     expect(restored.steps).toEqual(twoTurns);
+  });
+
+  it("No tools then tools keeps an advisory tool assert", () => {
+    const withAdvisory: TestStep[] = [
+      ...sketch,
+      {
+        id: "a2",
+        kind: "assert",
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "audit_log",
+          args: { args: {} },
+          role: "advisory",
+        },
+      } as TestStep,
+    ];
+    const negative = chooseNoTool(draft({ steps: withAdvisory }));
+    expect(ids(negative.steps)).toEqual(["p1"]);
+    expect(chooseTools(negative).steps).toEqual(withAdvisory);
+  });
+
+  it("puts a parked assert after the nearest step still there", () => {
+    const negative = chooseNoTool(
+      draft({
+        steps: [
+          ...sketch,
+          { id: "p2", kind: "prompt", prompt: "Now share it" },
+          { ...sketch[1], id: "a2" },
+        ],
+      }),
+    );
+    const withoutP2 = { ...negative, steps: negative.steps.slice(0, 1) };
+    expect(ids(chooseTools(withoutP2).steps)).toEqual(["p1", "a1", "a2"]);
+  });
+
+  it("a plain stashed tool still comes back through the first turn", () => {
+    const negative = draft({
+      steps: [sketch[0]],
+      toolsChoice: "noTool",
+      stashedTools: [{ id: "t1", toolName: "read_me", arguments: {} }],
+    });
+    expect(ids(chooseTools(negative).steps)).toEqual(["p1", "t1"]);
+  });
+
+  it("setCaseKind reads stored match options it does not know", () => {
+    const stored = { toolCallOrder: "sideways" } as never;
+    expect(() =>
+      setCaseKind(draft({ matchOptions: stored }), "regression", undefined),
+    ).not.toThrow();
   });
 
   it("exact order sets the regression kind and strict match options", () => {
