@@ -1,6 +1,7 @@
 import { Play } from "lucide-react";
 import { RunIterationControl } from "../run-iteration-control";
-import { EvalTargetMatrix, EvalModelChoices } from "../eval-target-matrix";
+import { EvalTargetMatrix } from "../eval-target-matrix";
+import { EvalModelChoices } from "../eval-model-choices";
 import {
   parseModelValue,
   quickRunModelValue,

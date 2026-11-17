@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { EvalModelChoices } from "../eval-target-matrix";
+import { EvalModelChoices } from "../eval-model-choices";
 import type { ModelDefinition } from "@/shared/types";
 import { withSavedSelectionLocks } from "@/components/chat-v2/shared/available-models";
 

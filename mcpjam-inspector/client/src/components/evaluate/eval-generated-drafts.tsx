@@ -1,6 +1,6 @@
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { RunIterationControl } from "./run-iteration-control";
-import { EvalModelChoices } from "./eval-target-matrix";
+import { EvalModelChoices } from "./eval-model-choices";
 import { useSuiteHarnessTargets } from "@/hooks/use-suite-harness-targets";
 import { explicitModelIds } from "@/components/environment-composer/environment-stack";
 import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
@@ -526,17 +526,18 @@ function AuthoringDraftSettings({
   draft: GeneratedDraft;
   disabled: boolean;
 }) {
+  // A draft's models run on every client the suite runs on, so the catalog
+  // loads what they need (a Cursor client's account models) and locks for them.
+  const harnessTargets = useSuiteHarnessTargets(
+    scope.projectId,
+    scope.suiteId,
+  );
   const {
     availableModels,
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
-  } = useAvailableModels({ projectId: scope.projectId });
-  // A draft's models run on every client the suite runs on.
-  const harnessTargets = useSuiteHarnessTargets(
-    scope.projectId,
-    scope.suiteId,
-  );
+  } = useAvailableModels({ projectId: scope.projectId, harnessTargets });
   return (
     <div className="space-y-4">
       <RunIterationControl
