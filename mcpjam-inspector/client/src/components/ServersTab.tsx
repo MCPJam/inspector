@@ -2116,7 +2116,11 @@ export function ServersTab({
           </ResizablePanel>
         </>
       ) : (
-        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        <CollapsedPanelStrip
+          onOpen={toggleJsonRpcPanel}
+          tooltipText="Show logs"
+          label="Logs"
+        />
       )}
     </ResizablePanelGroup>
   );
@@ -2195,7 +2199,11 @@ export function ServersTab({
           </ResizablePanel>
         </>
       ) : (
-        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        <CollapsedPanelStrip
+          onOpen={toggleJsonRpcPanel}
+          tooltipText="Show logs"
+          label="Logs"
+        />
       )}
     </ResizablePanelGroup>
   );
