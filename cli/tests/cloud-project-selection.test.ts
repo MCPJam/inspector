@@ -484,3 +484,36 @@ test("sessions list --help shows --all-projects", async () => {
   assert.match(run.stdout, /--all-projects/);
   assert.match(run.stdout, /--project <id-or-name>/);
 });
+
+test("eval insights commands trim --run and refuse a blank one", async () => {
+  const fixture = await startFixture();
+  try {
+    const padded = await withEnv(isolatedEnv(), () =>
+      runCli(
+        cloudArgv(
+          fixture.baseUrl,
+          "eval",
+          "request-insights",
+          "--run",
+          " run-1 "
+        )
+      )
+    );
+    assert.notEqual(padded.exitCode, 2, padded.stderr);
+    assert.ok(
+      fixture.requestUrls.some((url) =>
+        url.includes("/eval-runs/run-1/insights")
+      ),
+      fixture.requestUrls.join(", ")
+    );
+    const blank = await withEnv(isolatedEnv(), () =>
+      runCli(
+        cloudArgv(fixture.baseUrl, "eval", "cancel-insights", "--run", "  ")
+      )
+    );
+    assert.equal(blank.exitCode, 2);
+    assert.match(blank.stderr + blank.stdout, /Pass an eval run ID with --run/);
+  } finally {
+    await fixture.close();
+  }
+});

@@ -137,6 +137,19 @@ describe("compactInsightsForModel", () => {
     expect(out.insights.currentFindingsSameAsFindings).toBeUndefined();
   });
 
+  it("keeps currentFindings when a row shares its id but not its content", () => {
+    const out = compactInsightsForModel({
+      insights: envelope({
+        findings: [finding(0)],
+        currentFindings: [finding(0, { actionability: "investigate" })],
+      }),
+    }) as { insights: Record<string, unknown> };
+    expect(out.insights.currentFindings).toEqual([
+      finding(0, { actionability: "investigate" }),
+    ]);
+    expect(out.insights.currentFindingsSameAsFindings).toBeUndefined();
+  });
+
   it("keeps currentFindings when it differs from findings", () => {
     const out = compactInsightsForModel({
       insights: envelope({

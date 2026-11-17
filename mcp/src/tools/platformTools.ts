@@ -1514,13 +1514,11 @@ function dropRepeatedCurrentFindings(envelope: EnvelopeLike): EnvelopeLike {
   ) {
     return envelope;
   }
-  const idOf = (row: unknown) =>
-    typeof row === "object" && row !== null
-      ? (row as { id?: unknown }).id
-      : undefined;
+  // Whole rows, not ids: a legacy result and the findings snapshot can name
+  // the same finding id with different prose. Both lists come from one JSON
+  // response, so equal rows serialize identically.
   const repeated = current.every(
-    (row, i) =>
-      idOf(row) !== undefined && idOf(row) === idOf(envelope.findings[i]),
+    (row, i) => JSON.stringify(row) === JSON.stringify(envelope.findings[i]),
   );
   if (!repeated) return envelope;
   const next: Record<string, unknown> = {

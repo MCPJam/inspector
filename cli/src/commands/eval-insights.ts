@@ -9,6 +9,7 @@ import {
   cancelEvalRunInsightsOperation,
   requestEvalRunInsightsOperation,
 } from "@mcpjam/sdk/platform";
+import { usageError } from "../lib/output.js";
 import {
   addProjectOption,
   bindOperation,
@@ -23,8 +24,14 @@ type RunOptions = PlatformOptions & {
 
 /** `project` is required by the operation; the SDK resolves an absent one. */
 function runInput(options: RunOptions) {
+  // Trimmed here because `bindOperation` does not parse the operation's
+  // schema, and a padded id would be encoded into a different path segment.
+  const runId = options.run.trim();
+  if (runId.length === 0) {
+    throw usageError("Pass an eval run ID with --run.");
+  }
   return {
-    runId: options.run,
+    runId,
     ...(options.project === undefined ? {} : { project: options.project }),
     ...(options.force ? { force: true } : {}),
   } as { project: string; runId: string; force?: boolean };

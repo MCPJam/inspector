@@ -213,9 +213,6 @@ describe("agent op registry", () => {
         "undismiss_study_finding",
         "cancel_study_insights",
         "cancel_eval_run_insights",
-        // Deterministic and free: no model call, no quota. A rebuild replaces
-        // findings derived from records it does not change.
-        "build_eval_run_findings",
       ].sort(),
     );
   });
@@ -279,6 +276,11 @@ describe("agent op registry", () => {
         force: true,
       }),
     ).toBe("Analyze eval run run_1 again with a model");
+    expect(
+      proposalMetaFor("build_eval_run_findings").description({
+        runId: "run_1",
+      }),
+    ).toBe("Build findings for eval run run_1");
   });
 
   it("names insights targets by the canonical selector, or the deprecated one", () => {
@@ -2144,6 +2146,13 @@ describe("tier derives from operation.risk", () => {
         "Platform-paid, so risk is none. Gated on the insightsPerDay " +
         "ledger, which is SHARED with user-testing and eval-run insights — " +
         "a request here takes one from there, across the whole organization.",
+    },
+    build_eval_run_findings: {
+      tier: "gated",
+      reason:
+        "No model call, so risk is none, but a finished build on a run never " +
+        "analyzed starts the automatic analysis, which takes a unit of the " +
+        "shared insightsPerDay ledger.",
     },
     request_eval_run_insights: {
       tier: "gated",

@@ -2154,10 +2154,23 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: cancelEvalRunInsightsOperation, tier: "direct" },
-  // Deterministic and free: no model call and no quota. A finished build on a
-  // never-analyzed run starts the analysis through the backend's own automatic
-  // trigger, the same one every finished run gets.
-  { operation: buildEvalRunFindingsOperation, tier: "direct" },
+  {
+    operation: buildEvalRunFindingsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Build findings for eval run ${named(input, "runId") ?? "(unnamed)"}${
+          input.force === true ? " again" : ""
+        }`,
+      buttonLabel: "Build them",
+      kind: "generate",
+      // The build makes no model call, but on a run never analyzed a
+      // finished build starts the automatic analysis, which takes a unit of
+      // the shared daily insight quota. Gated on that quota, like the
+      // request below; there is no money to warn about.
+      confirmSeverity: "none",
+    },
+  },
   {
     operation: requestEvalRunInsightsOperation,
     tier: "gated",
