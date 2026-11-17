@@ -144,6 +144,11 @@ describe("TraceCostSummary for an eval iteration", () => {
       "openai/gpt-5-miniCost unavailable",
     ]);
     expect(list.queryByText("anthropic/claude-sonnet-4.5")).toBeNull();
+    // A long list scrolls inside the summary instead of squeezing the trace.
+    expect(screen.getByTestId("trace-cost-unmatched-list")).toHaveClass(
+      "max-h-40",
+      "overflow-y-auto",
+    );
   });
 
   it("counts a matched call's cost once when its span carries none", () => {

@@ -309,7 +309,12 @@ function UnmatchedCalls({ calls }: { calls: UnmatchedModelCall[] }) {
       <div className="text-[10px] font-semibold uppercase tracking-wide">
         Model calls not matched to a step
       </div>
-      <ul className="space-y-0.5">
+      {/* Capped: the summary sits outside the timeline's scroll area, so a
+          long list would squeeze the waterfall. */}
+      <ul
+        data-testid="trace-cost-unmatched-list"
+        className="max-h-40 space-y-0.5 overflow-y-auto"
+      >
         {calls.map((call) => {
           const view =
             call.cost && describeRowCost({ kind: "call", cost: call.cost });
