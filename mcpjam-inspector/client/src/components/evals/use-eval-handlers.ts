@@ -6,12 +6,7 @@ import { convexErrMessage } from "@/lib/convex-error";
 import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
-import {
-  buildEvalsRunsPath,
-  buildEvalsPath,
-  buildEvaluatePath,
-  navigateApp,
-} from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import type {
   EvalCase,
@@ -83,14 +78,8 @@ export type EvalRerunLaunch = {
 
 type EvalsNavigationContext = "evals" | "ci-evals" | "evaluate";
 
-function navigateEvalRoute(route: EvalRoute, context: EvalsNavigationContext) {
-  navigateApp(
-    context === "ci-evals"
-      ? buildEvalsRunsPath(route)
-      : context === "evaluate"
-      ? buildEvaluatePath(route)
-      : buildEvalsPath(route),
-  );
+function navigateEvalRoute(route: EvalRoute) {
+  navigateApp(buildEvaluatePath(route));
 }
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
@@ -263,9 +252,9 @@ interface UseEvalHandlersProps {
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
-   * Prefix for handler-driven navigation (create case, duplicate, post-run
-   * landing). `ci-evals` stays on Runs (`/evals/runs/...`); `evaluate` stays
-   * on Evaluate (New) (`/evaluate/...`). Defaults to Suites (`/evals/...`).
+   * Selects the landing view after deleting a test case: `ci-evals` opens
+   * the suite's test-cases view; other values open its overview. All handler
+   * navigation uses `/evaluate`. Defaults to `evaluate`.
    */
   evalsNavigationContext?: EvalsNavigationContext;
   /** For user-facing server labels (names instead of raw Convex ids). */
@@ -306,7 +295,7 @@ export function useEvalHandlers({
   connectedServerNames,
   ensureServersReady,
   latestRunBySuiteId,
-  evalsNavigationContext = "evals",
+  evalsNavigationContext = "evaluate",
   projectServers,
   isDirectGuest = false,
   availableModels,
@@ -410,9 +399,9 @@ export function useEvalHandlers({
             view?: SuiteOverviewView;
           },
     ) => {
-      navigateEvalRoute(route as EvalRoute, evalsNavigationContext);
+      navigateEvalRoute(route as EvalRoute);
     },
-    [evalsNavigationContext],
+    [],
   );
 
   // Query to get test cases for a suite
@@ -687,15 +676,12 @@ export function useEvalHandlers({
         });
 
         if (result?.suiteId && result?.runId) {
-          navigateEvalRoute(
-            {
-              type: "run-detail",
-              suiteId: result.suiteId,
-              runId: result.runId,
-              insightsFocus: true,
-            },
-            "ci-evals",
-          );
+          navigateEvalRoute({
+            type: "run-detail",
+            suiteId: result.suiteId,
+            runId: result.runId,
+            insightsFocus: true,
+          });
         }
 
         toast.success("Replay started!", {
@@ -1103,10 +1089,11 @@ export function useEvalHandlers({
                 runId.length > 0
               ) {
                 openedRun = true;
-                navigateEvalRoute(
-                  { type: "run-detail", suiteId: suite._id, runId },
-                  evalsNavigationContext,
-                );
+                navigateEvalRoute({
+                  type: "run-detail",
+                  suiteId: suite._id,
+                  runId,
+                });
               }
               return response;
             }),
@@ -1302,7 +1289,6 @@ export function useEvalHandlers({
       labeledProjectEnvironments,
       getSuiteExecutionContext,
       handleReplayRun,
-      evalsNavigationContext,
       openEvalIterationWall,
       convex,
     ],
@@ -1736,7 +1722,7 @@ export function useEvalHandlers({
 
       // If we're viewing this suite, go back to the list
       if (selectedSuiteId === suiteToDelete._id) {
-        navigateEvalRoute({ type: "list" }, "evals");
+        navigateEvalRoute({ type: "list" });
       }
 
       setSuiteToDelete(null);
@@ -1779,13 +1765,10 @@ export function useEvalHandlers({
 
         // Navigate to the new duplicated suite
         if (newSuite && newSuite._id) {
-          navigateEvalRoute(
-            {
-              type: "suite-overview",
-              suiteId: newSuite._id,
-            },
-            "evals",
-          );
+          navigateEvalRoute({
+            type: "suite-overview",
+            suiteId: newSuite._id,
+          });
         }
       } catch (error) {
         console.error("Failed to duplicate suite:", error);
