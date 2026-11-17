@@ -2436,17 +2436,34 @@ export function TraceTimeline({
     ],
   );
 
+  // Shown in every timing mode: an iteration with no recorded spans still has
+  // its stored total, and a harness's calls are listed as unmatched.
+  const costSummary = (
+    <>
+      {traceCost.loader}
+      <TraceCostSummary
+        spans={costSpans}
+        iteration={iterationCost}
+        unmatched={traceCost.unmatched}
+      />
+    </>
+  );
+
   if (mode === "none") {
     return (
-      <div className="text-xs text-muted-foreground">
-        No timing data recorded for this iteration.
-      </div>
+      <>
+        {costSummary}
+        <div className="text-xs text-muted-foreground">
+          No timing data recorded for this iteration.
+        </div>
+      </>
     );
   }
 
   if (mode === "estimated") {
     return (
       <div className="space-y-3">
+        {costSummary}
         <div className="flex items-center gap-2">
           <Badge className="border-warning/50 bg-warning/50 text-foreground">
             Estimated total only
@@ -2555,12 +2572,7 @@ export function TraceTimeline({
           </div>
         </div>
       ) : null}
-      {traceCost.loader}
-      <TraceCostSummary
-        spans={costSpans}
-        iteration={iterationCost}
-        unmatched={traceCost.unmatched}
-      />
+      {costSummary}
 
       <div
         ref={containerRef}

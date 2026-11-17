@@ -132,7 +132,9 @@ const harnessCalls: IterationModelCall[] = [
 
 describe("trace cost, flag on", () => {
   it("shows the trace total with its basis and coverage", () => {
-    render(<TraceTimeline recordedSpans={spans(true)} transcriptMessages={[]} />);
+    render(
+      <TraceTimeline recordedSpans={spans(true)} transcriptMessages={[]} />,
+    );
     const summary = screen.getByTestId("trace-cost-summary");
     expect(summary).toHaveTextContent("≈$0.0066");
     expect(summary).toHaveTextContent("Reported and estimated");
@@ -141,7 +143,9 @@ describe("trace cost, flag on", () => {
   });
 
   it("shows one call's cost in the detail line, its source and what it excludes", async () => {
-    render(<TraceTimeline recordedSpans={spans(true)} transcriptMessages={[]} />);
+    render(
+      <TraceTimeline recordedSpans={spans(true)} transcriptMessages={[]} />,
+    );
     await openSecondCall();
     const pane = screen.getByTestId("trace-detail-pane");
     expect(within(pane).getByTestId("trace-cost-inline")).toHaveTextContent(
@@ -154,7 +158,9 @@ describe("trace cost, flag on", () => {
   });
 
   it("breaks the call down in the hover card", async () => {
-    render(<TraceTimeline recordedSpans={spans(true)} transcriptMessages={[]} />);
+    render(
+      <TraceTimeline recordedSpans={spans(true)} transcriptMessages={[]} />,
+    );
     const card = await hoverSecondCall();
     const block = within(card).getByTestId("trace-row-hover-cost");
     expect(block).toHaveTextContent("Amount≈$0.0045");
@@ -193,8 +199,86 @@ describe("trace cost, flag on", () => {
   });
 
   it("shows nothing for a trace recorded without costs", () => {
-    render(<TraceTimeline recordedSpans={spans(false)} transcriptMessages={[]} />);
+    render(
+      <TraceTimeline recordedSpans={spans(false)} transcriptMessages={[]} />,
+    );
     expect(screen.queryByTestId("trace-cost-summary")).toBeNull();
+  });
+});
+
+describe("trace cost without recorded spans", () => {
+  const rollup = {
+    currency: "USD" as const,
+    knownSubtotalUsd: 1.5,
+    completeness: "complete" as const,
+    totalCalls: 4,
+    completeCalls: 4,
+    partialCalls: 0,
+    unavailableCalls: 0,
+    sources: ["customer_rate" as const],
+  };
+  const unmatchedCall: IterationModelCall = {
+    generationId: "g-9",
+    modelId: "anthropic/claude-haiku-4.5",
+    createdAt: 9,
+    cost: reported,
+  };
+
+  it("shows the stored total beside the no-timing message", () => {
+    render(
+      <TraceTimeline
+        recordedSpans={[]}
+        transcriptMessages={[]}
+        iterationCost={{ iterationId: "it-1", harness: false, rollup }}
+      />,
+    );
+    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent(
+      "≈$1.50",
+    );
+    expect(
+      screen.getByText("No timing data recorded for this iteration."),
+    ).toBeTruthy();
+  });
+
+  it("lists a harness's calls as unmatched when only the total time is known", () => {
+    query.useQuery.mockReturnValue([unmatchedCall]);
+    render(
+      <TraceTimeline
+        recordedSpans={[]}
+        transcriptMessages={[]}
+        estimatedDurationMs={1200}
+        iterationCost={harness}
+      />,
+    );
+    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent(
+      "$0.0021",
+    );
+    expect(screen.getByTestId("trace-cost-unmatched-calls")).toHaveTextContent(
+      "anthropic/claude-haiku-4.5",
+    );
+    expect(screen.getByText("Estimated total only")).toBeTruthy();
+  });
+
+  it("renders the same DOM with the flag off", () => {
+    flag.on = false;
+    query.useQuery.mockReturnValue([unmatchedCall]);
+    for (const estimatedDurationMs of [undefined, 1200]) {
+      const html = (iterationCost?: typeof harness) => {
+        render(
+          <TraceTimeline
+            recordedSpans={[]}
+            transcriptMessages={[]}
+            estimatedDurationMs={estimatedDurationMs}
+            iterationCost={iterationCost}
+          />,
+        );
+        const out = document.body.innerHTML;
+        cleanup();
+        return out;
+      };
+      expect(html(harness)).toBe(html());
+    }
+    expect(query.useQuery).not.toHaveBeenCalled();
   });
 });
 
