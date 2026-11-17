@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createTourDriver } from "../tour-driver";
-import type { GhostCursorHandle } from "../tour-ghost-cursor";
+import { createTourDriver } from "../driver";
+import type { GhostCursorHandle } from "../ghost-cursor";
 
 function fakeCursor(): GhostCursorHandle {
   return {

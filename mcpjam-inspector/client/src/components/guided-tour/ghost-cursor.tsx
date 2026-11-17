@@ -1,5 +1,5 @@
 import { useImperativeHandle, useRef, type Ref } from "react";
-import type { TourPoint } from "./tour-geometry";
+import type { TourPoint } from "./geometry";
 
 export type GhostCursorHandle = {
   show: (at: TourPoint) => void;
@@ -99,7 +99,7 @@ export function TourGhostCursor({ ref }: { ref: Ref<GhostCursorHandle> }) {
     <div
       ref={rootRef}
       aria-hidden
-      data-testid="evaluate-tour-cursor"
+      data-testid="guided-tour-cursor"
       className="pointer-events-none absolute left-0 top-0 z-20 opacity-0 transition-opacity duration-200"
     >
       <span

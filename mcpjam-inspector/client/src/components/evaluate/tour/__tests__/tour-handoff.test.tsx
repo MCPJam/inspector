@@ -37,7 +37,7 @@ describe("TourHandoff", () => {
         screen.queryByTestId("evaluate-tour-handoff-cover"),
       ).not.toBeInTheDocument(),
     );
-    expect(screen.getByTestId("evaluate-tour-popover")).toBeInTheDocument();
+    expect(screen.getByTestId("guided-tour-coachmark")).toBeInTheDocument();
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
@@ -48,7 +48,7 @@ describe("TourHandoff", () => {
   ])("reports %s as how the note closed", async (reason, close) => {
     const onDismiss = vi.fn();
     render(<Pane form onDismiss={onDismiss} />);
-    await screen.findByTestId("evaluate-tour-popover");
+    await screen.findByTestId("guided-tour-coachmark");
 
     close();
 
