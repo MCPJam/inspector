@@ -234,6 +234,7 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import LoadingScreen from "./components/LoadingScreen";
+import { StartupScreen } from "./components/startup/StartupScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
@@ -6335,7 +6336,7 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   const shouldShowBillingHandoffOverlay =
@@ -6363,7 +6364,7 @@ export default function App() {
           isSignOutInProgress() ||
           shouldReloadForMissingGuest)))
   ) {
-    return <LoadingScreen />;
+    return <StartupScreen />;
   }
 
   if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
