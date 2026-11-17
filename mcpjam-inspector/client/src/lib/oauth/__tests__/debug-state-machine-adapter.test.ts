@@ -267,12 +267,86 @@ describe("Inspector OAuth debug proxy failures", () => {
     );
   });
 
-  it("falls back to the raw body when the response is not JSON", async () => {
-    authFetchMock.mockResolvedValue(proxyFailure("<html>502 upstream</html>"));
+  it("falls back to the raw body when it is plain text", async () => {
+    authFetchMock.mockResolvedValue(
+      proxyFailure("upstream connect error or disconnect/reset before headers"),
+    );
 
     await expect(createDebugRequestExecutor()(request)).rejects.toThrow(
-      "Backend debug proxy error: 400 Bad Request: <html>502 upstream</html>",
+      "Backend debug proxy error: 400 Bad Request: upstream connect error or disconnect/reset before headers",
     );
+  });
+
+  // PLB-522: a hop in front of the route answered with an HTML page. The
+  // route itself only ever answers JSON, so its markup is never the reason.
+  describe("an HTML page in place of the proxy's answer", () => {
+    const NEXT_STEP =
+      "Retry, and if it keeps happening, check for a firewall or sign-in page on your network.";
+    const page = (head: string) =>
+      `<!DOCTYPE html>\n\n<html lang="en">\n<head>\n    <base href="/login/">\n    <meta charset="utf-8">\n    ${head}\n</head>\n<body><form>Sign in</form></body>\n</html>`;
+    const failWith = (body: string, status = 503, statusText = "") =>
+      authFetchMock.mockResolvedValue(
+        new Response(body, { status, statusText }),
+      );
+    const message = () =>
+      createDebugRequestExecutor()(request).catch((e: Error) => e.message);
+
+    // The INSPECTOR-CLIENT-2W5 head; its title is reconstructed (prod kept `<title>Web`).
+    it("names a sign-in page by its title instead of quoting it", async () => {
+      failWith(page("<title>Web Login</title>"));
+
+      const text = await message();
+      expect(text).toBe(
+        `Backend debug proxy error: 503 : An HTML page ("Web Login") answered instead of MCPJam's server. ${NEXT_STEP}`,
+      );
+      expect(text).not.toContain("<");
+    });
+
+    // INSPECTOR-CLIENT-2T9: Cloudflare's own 524 page, comments before <html>.
+    it("names a CDN error page the same way", async () => {
+      failWith(
+        `<!DOCTYPE html>\n<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->\n<!--[if gt IE 8]><!--> <html class="no-js" lang="en-US"> <!--<![endif]-->\n<head>\n<title>app.mcpjam.com | 524: A timeout occurred</title>\n</head><body>Cloudflare Ray ID: 8f1a2b3c4d5e6f70</body></html>`,
+        524,
+      );
+
+      expect(await message()).toBe(
+        `Backend debug proxy error: 524 : An HTML page ("app.mcpjam.com | 524: A timeout occurred") answered instead of MCPJam's server. ${NEXT_STEP}`,
+      );
+    });
+
+    it.each([
+      ["no title", "<html>502 upstream</html>"],
+      ["an empty title", page("<title>  \n </title>")],
+      ["markup in the title", page("<title>Login <b>Portal</b></title>")],
+    ])("leaves the title out when the page has %s", async (_label, body) => {
+      failWith(body);
+
+      expect(await message()).toBe(
+        `Backend debug proxy error: 503 : An HTML page answered instead of MCPJam's server. ${NEXT_STEP}`,
+      );
+    });
+
+    it("puts a long title on one line and cuts it at 80 characters", async () => {
+      failWith(page(`<title>Sign in to\n      ${"x".repeat(100)}</title>`));
+
+      expect(await message()).toContain(
+        `("Sign in to ${"x".repeat(69)}") answered`,
+      );
+    });
+
+    it("shows entities in the title as written", async () => {
+      failWith(page("<title>AT&amp;T Login</title>"));
+
+      expect(await message()).toContain('("AT&amp;T Login")');
+    });
+
+    it("keeps a JSON reason even when it quotes markup", async () => {
+      failWith(JSON.stringify({ error: "<!DOCTYPE html> upstream page" }), 502);
+
+      expect(await message()).toBe(
+        "Backend debug proxy error: 502 : <!DOCTYPE html> upstream page",
+      );
+    });
   });
 
   // The cap applies to whichever branch produced the reason, not just the
