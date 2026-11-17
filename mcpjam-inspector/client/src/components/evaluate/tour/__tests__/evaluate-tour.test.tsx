@@ -98,7 +98,7 @@ describe("EvaluateTour", () => {
     expect(screen.getByTestId("phase")).toHaveTextContent("handoff");
     expect(track).toHaveBeenCalledWith(
       "evaluate_tour_completed",
-      expect.anything(),
+      expect.objectContaining({ duration_ms: expect.any(Number) }),
     );
     expect(
       vi

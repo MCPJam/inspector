@@ -109,6 +109,7 @@ import {
 import { agentRunIterations } from "./evaluate/suite-run-iterations";
 import { EvaluateTour } from "./evaluate/tour/evaluate-tour";
 import { useEvaluateTour } from "./evaluate/tour/use-evaluate-tour";
+import { markSuiteCreatedFromTour } from "./evaluate/tour/tour-attribution";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -492,11 +493,18 @@ function EvaluateTabContent({
     [projectServers],
   );
 
+  // Set when the tour's handoff opened the create form, for `after_tour`.
+  const createFromTourRef = useRef(false);
   const handleOpenCreateSuite = useCallback(() => {
+    createFromTourRef.current = false;
     setCreateSuitePrefillName(null);
     setCreateSuitePrefillServerId(null);
     navigatePlaygroundEvalsRoute({ type: "create" });
   }, []);
+  const handleTourComplete = useCallback(() => {
+    handleOpenCreateSuite();
+    createFromTourRef.current = true;
+  }, [handleOpenCreateSuite]);
 
   const handleEvalServer = useCallback(
     (server: { id: string; name: string }) => {
@@ -563,6 +571,7 @@ function EvaluateTabContent({
   const showQuickstart = Boolean(handleConnect);
 
   const handleCancelCreateSuite = useCallback(() => {
+    createFromTourRef.current = false;
     setCreateSuitePrefillName(null);
     setCreateSuitePrefillServerId(null);
     navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
@@ -584,6 +593,13 @@ function EvaluateTabContent({
             environmentCapabilities?.createSuiteWithEnvironments === true,
         });
 
+        track("eval_suite_created", {
+          location: "evaluate_tab",
+          after_tour: createFromTourRef.current,
+        });
+        if (createFromTourRef.current)
+          markSuiteCreatedFromTour(createdSuite._id);
+        createFromTourRef.current = false;
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
           type: "suite-overview",
@@ -608,6 +624,9 @@ function EvaluateTabContent({
   // opening the picker on an empty list. A tap while suites load waits.
   const hasNoSuites =
     !overviewQueries.isOverviewLoading && visibleSuites.length === 0;
+  const hasNoRuns =
+    !overviewQueries.isOverviewLoading &&
+    !visibleSuites.some((entry) => entry.latestRun);
   // Auto-opens once on an empty landing, and only past the sign-in and
   // project gates, where the overlay can actually render.
   const evaluateTour = useEvaluateTour({
@@ -616,7 +635,7 @@ function EvaluateTabContent({
       (isDirectGuest || (isAuthenticated && Boolean(projectId))) &&
       route.type === "list" &&
       hasNoSuites,
-    onComplete: handleOpenCreateSuite,
+    onComplete: handleTourComplete,
   });
   useEffect(() => {
     // The picker lives on the list. Leaving it (Back while suites load)
@@ -1725,7 +1744,7 @@ function EvaluateTabContent({
             onLandingViewChange={setLandingView}
             onEvaluateClick={handleNavigateToEvalList}
             onStartTour={
-              route.type === "list"
+              route.type === "list" && hasNoRuns
                 ? () => evaluateTour.open("replay")
                 : undefined
             }

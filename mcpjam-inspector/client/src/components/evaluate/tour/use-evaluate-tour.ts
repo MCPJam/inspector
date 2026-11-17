@@ -34,6 +34,9 @@ export function markEvaluateTourSeen(): void {
  */
 export type EvaluateTourPhase = "closed" | "intro" | "stage" | "handoff";
 export type EvaluateTourTrigger = "auto" | "replay";
+/** How the "Your turn" note went away. */
+export type EvaluateTourHandoffEnd =
+  "got_it" | "clicked_away" | "escape" | "form_closed";
 
 export type EvaluateTourController = {
   phase: EvaluateTourPhase;
@@ -42,7 +45,7 @@ export type EvaluateTourController = {
   viewStop: (stop: TourStopId, index: number) => void;
   skip: (at: TourStopId | "intro") => void;
   complete: () => void;
-  dismissHandoff: () => void;
+  dismissHandoff: (reason: EvaluateTourHandoffEnd) => void;
 };
 
 export function useEvaluateTour({
@@ -56,9 +59,11 @@ export function useEvaluateTour({
 }): EvaluateTourController {
   const [phase, setPhase] = useState<EvaluateTourPhase>("closed");
   const autoOpenedRef = useRef(false);
+  const openedAtRef = useRef(0);
 
   const open = useCallback((trigger: EvaluateTourTrigger) => {
     markEvaluateTourSeen();
+    openedAtRef.current = Date.now();
     track("evaluate_tour_opened", { location: LOCATION, trigger });
     setPhase("intro");
   }, []);
@@ -80,17 +85,27 @@ export function useEvaluateTour({
   }, []);
 
   const skip = useCallback((at: TourStopId | "intro") => {
-    track("evaluate_tour_skipped", { location: LOCATION, step: at });
+    track("evaluate_tour_skipped", {
+      location: LOCATION,
+      step: at,
+      duration_ms: Date.now() - openedAtRef.current,
+    });
     setPhase("closed");
   }, []);
 
   const complete = useCallback(() => {
-    track("evaluate_tour_completed", { location: LOCATION });
+    track("evaluate_tour_completed", {
+      location: LOCATION,
+      duration_ms: Date.now() - openedAtRef.current,
+    });
     setPhase("handoff");
     onComplete();
   }, [onComplete]);
 
-  const dismissHandoff = useCallback(() => setPhase("closed"), []);
+  const dismissHandoff = useCallback((reason: EvaluateTourHandoffEnd) => {
+    track("evaluate_tour_handoff_ended", { location: LOCATION, reason });
+    setPhase("closed");
+  }, []);
 
   return { phase, open, begin, viewStop, skip, complete, dismissHandoff };
 }

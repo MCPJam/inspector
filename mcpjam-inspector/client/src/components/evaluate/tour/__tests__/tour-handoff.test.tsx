@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CREATE_SUITE_FORM_ANCHOR, TourHandoff } from "../tour-handoff";
 
@@ -7,7 +7,13 @@ vi.mock("framer-motion", async (importOriginal) => {
   return { ...actual, useReducedMotion: () => true };
 });
 
-function Pane({ form, onDismiss }: { form: boolean; onDismiss: () => void }) {
+function Pane({
+  form,
+  onDismiss,
+}: {
+  form: boolean;
+  onDismiss: (reason: string) => void;
+}) {
   return (
     <div>
       {form ? <form data-tour-anchor={CREATE_SUITE_FORM_ANCHOR} /> : null}
@@ -33,5 +39,19 @@ describe("TourHandoff", () => {
     );
     expect(screen.getByTestId("evaluate-tour-popover")).toBeInTheDocument();
     expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["got_it", () => fireEvent.click(screen.getByRole("button"))],
+    ["escape", () => fireEvent.keyDown(document, { key: "Escape" })],
+    ["clicked_away", () => fireEvent.pointerDown(document.body)],
+  ])("reports %s as how the note closed", async (reason, close) => {
+    const onDismiss = vi.fn();
+    render(<Pane form onDismiss={onDismiss} />);
+    await screen.findByTestId("evaluate-tour-popover");
+
+    close();
+
+    expect(onDismiss).toHaveBeenCalledWith(reason);
   });
 });
