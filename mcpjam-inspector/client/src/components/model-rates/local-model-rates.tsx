@@ -7,8 +7,12 @@ import {
   parseModelRateRevision,
   revisionInForce,
 } from "@/shared/model-rate-revision";
-import type { ModelRateRow } from "./model-rate-format";
-import { ModelRatesPanel, type InForceRates } from "./model-rates-panel";
+import { nextRateChange, type ModelRateRow } from "./model-rate-format";
+import {
+  ModelRatesPanel,
+  useWakeAt,
+  type InForceRates,
+} from "./model-rates-panel";
 
 const BASE = "/api/mcp/model-rate-overrides";
 
@@ -70,6 +74,8 @@ function LocalModelRatesPanel() {
   const [rates, setRates] = useState<ModelRateRow[]>();
   const [inForce, setInForce] = useState<InForceRates>();
   const [loadError, setLoadError] = useState<string>();
+  // Every revision this load read, to reload when the price in force changes.
+  const [revisionsRead, setRevisionsRead] = useState<ModelRateRow[]>([]);
   // Only the newest reload may show its result: the first load can finish
   // after a save's reload and would put back the list from before the save.
   const generation = useRef(0);
@@ -91,17 +97,21 @@ function LocalModelRatesPanel() {
               modelId: rate.modelId,
             });
             try {
-              const { revisions } = await request(`?${series}`);
-              const row = revisionInForce(rowsOf(revisions), now) ?? null;
-              return [[rate.rateId, row] as const];
+              const history = rowsOf((await request(`?${series}`)).revisions);
+              const row = revisionInForce(history, now) ?? null;
+              return { inForce: [[rate.rateId, row] as const], history };
             } catch {
-              return [];
+              return { inForce: [], history: [] };
             }
           }),
       );
       if (mine !== generation.current) return;
       setRates(loaded);
-      setInForce(new Map(current.flat()));
+      setInForce(new Map(current.flatMap((series) => series.inForce)));
+      setRevisionsRead([
+        ...loaded,
+        ...current.flatMap((series) => series.history),
+      ]);
       setLoadError(undefined);
     } catch (error) {
       if (mine !== generation.current) return;
@@ -117,6 +127,10 @@ function LocalModelRatesPanel() {
   useEffect(() => {
     void reload();
   }, [reload]);
+  // A series can hold more than one scheduled revision, and the list shows
+  // only its newest, so the in-force row is read again when any one starts.
+  const reloadNow = useCallback(() => void reload(), [reload]);
+  useWakeAt(nextRateChange(revisionsRead, Date.now()), reloadNow);
 
   return (
     <ModelRatesPanel

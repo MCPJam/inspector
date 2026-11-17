@@ -12,6 +12,7 @@ const panel = vi.hoisted(() => ({
   onSave: undefined as undefined | ((rate: unknown) => Promise<void>),
 }));
 vi.mock("../model-rates-panel", () => ({
+  useWakeAt: () => undefined,
   ModelRatesPanel: (props: {
     rates?: { modelId: string }[];
     onSave: (rate: unknown) => Promise<void>;

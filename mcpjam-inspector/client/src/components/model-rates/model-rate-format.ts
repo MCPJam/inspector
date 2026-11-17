@@ -16,6 +16,21 @@ export type ModelRateRow = {
   retiredAt?: number;
 };
 
+/**
+ * When the price in force for these revisions next changes after `now`: the
+ * earliest start or retirement still ahead, or Infinity when none is.
+ */
+export function nextRateChange(
+  revisions: readonly Pick<ModelRateRow, "effectiveAt" | "retiredAt">[],
+  now: number,
+): number {
+  return Math.min(
+    ...revisions
+      .flatMap((row) => [row.effectiveAt, row.retiredAt ?? 0])
+      .filter((at) => at > now),
+  );
+}
+
 /** A price per million tokens, as entered: `$3`, `$0.3`, `$3.75`. */
 export function formatRate(usdPerMillion: number | undefined): string {
   if (usdPerMillion === undefined) return "Not set";

@@ -33,6 +33,7 @@ import {
   formatDay,
   formatRate,
   listPriceLine,
+  nextRateChange,
   type ModelRateRow,
 } from "./model-rate-format";
 import { useListPrices } from "./use-list-prices";
@@ -66,19 +67,8 @@ export function ModelRatesTable({
 }) {
   const listPrices = useListPrices(rates.length > 0);
   const now = Date.now();
-  // Re-render when the next scheduled price starts, so an idle page drops its
-  // "In force until" row and "Scheduled" badge on time.
-  const [tick, setTick] = useState(0);
-  const nextStart = Math.min(
-    ...rates.map((rate) => rate.effectiveAt).filter((at) => at > now),
-  );
-  useEffect(() => {
-    if (!Number.isFinite(nextStart)) return;
-    // setTimeout holds at most about 24 days; a later start re-arms on wake.
-    const delay = Math.min(nextStart - Date.now() + 1, 2 ** 31 - 1);
-    const timer = setTimeout(() => setTick((value) => value + 1), delay);
-    return () => clearTimeout(timer);
-  }, [nextStart, tick]);
+  // An idle page drops its "In force until" row and "Scheduled" badge on time.
+  useWakeAt(nextRateChange(rates, now));
   /** The price, date, author and revision cells of one revision. */
   const revisionCells = (rate: ModelRateRow) => {
     const status =
@@ -185,6 +175,24 @@ export function ModelRatesTable({
       </Table>
     </div>
   );
+}
+
+/**
+ * Re-render at `at`, and call `onWake` once it has passed, so a page left open
+ * moves to the next price on time. setTimeout holds about 24 days at most; a
+ * later time re-arms when the shorter wait ends.
+ */
+export function useWakeAt(at: number, onWake?: () => void) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!Number.isFinite(at)) return;
+    const delay = Math.min(Math.max(at - Date.now() + 1, 0), 2 ** 31 - 1);
+    const timer = setTimeout(() => {
+      if (Date.now() >= at) onWake?.();
+      setTick((value) => value + 1);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [at, tick, onWake]);
 }
 
 /**

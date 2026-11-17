@@ -7,8 +7,12 @@ import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { convexErrMessage, isConvexQueryNotServed } from "@/lib/convex-error";
 import type { SavedModelRate } from "./model-rate-dialog";
 import { revisionInForce } from "@/shared/model-rate-revision";
-import type { ModelRateRow } from "./model-rate-format";
-import { ModelRatesPanel, ModelRatesTable } from "./model-rates-panel";
+import { nextRateChange, type ModelRateRow } from "./model-rate-format";
+import {
+  ModelRatesPanel,
+  ModelRatesTable,
+  useWakeAt,
+} from "./model-rates-panel";
 
 export const ORG_MODEL_RATES_QUERY = "organizationModelRates:list";
 
@@ -100,6 +104,16 @@ function OrganizationModelRatesPanel({
   );
   const histories = useQueries(scheduled);
   const now = Date.now();
+  // The in-force row is read from the history at render time, so render again
+  // when any scheduled revision starts, not only the newest one.
+  useWakeAt(
+    nextRateChange(
+      Object.values(histories).flatMap((revisions) =>
+        Array.isArray(revisions) ? (revisions as ModelRateRow[]) : [],
+      ),
+      now,
+    ),
+  );
   const inForce = new Map(
     Object.entries(histories).flatMap(([rateId, revisions]) =>
       Array.isArray(revisions)

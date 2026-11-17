@@ -1,5 +1,6 @@
 import { getFunctionName } from "convex/server";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -209,6 +210,46 @@ describe("OrganizationModelRates", () => {
     expect(
       screen.getByText("anthropic/claude-sonnet-4.5").closest("tr"),
     ).toHaveTextContent("Scheduled");
+  });
+
+  it("moves the in-force row to the next scheduled revision when it starts", async () => {
+    const MINUTE = 60_000;
+    const start = Date.UTC(2026, 10, 17, 12);
+    vi.useFakeTimers({ now: start });
+    try {
+      const next: ModelRateRow = {
+        ...sonnet,
+        rateId: "r4",
+        rates: { currency: "USD", input: 5, output: 15 },
+        effectiveAt: start + MINUTE,
+        revision: 2,
+      };
+      const newest: ModelRateRow = {
+        ...sonnet,
+        rateId: "r5",
+        rates: { currency: "USD", input: 9, output: 20 },
+        effectiveAt: start + 2 * MINUTE,
+        revision: 3,
+      };
+      convex.queries.set("organizationModelRates:list", [newest]);
+      convex.queries.set("organizationModelRates:history", [
+        newest,
+        next,
+        sonnet,
+      ]);
+      mount(false);
+      const inForceRow = () =>
+        screen.getByText(/^In force until/).closest("tr")!;
+      expect(inForceRow()).toHaveTextContent("$2.4");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MINUTE + 1);
+      });
+      expect(inForceRow()).toHaveTextContent("$5");
+      expect(inForceRow()).not.toHaveTextContent("$2.4");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says no price is in force before a first scheduled price", () => {
