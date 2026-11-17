@@ -796,9 +796,7 @@ function writeRunDisclosure(
  * are a contract scripts parse. A trailing prose line would break every one
  * of them, so the gate lives here at the call site.
  *
- * The route is the unflagged `/evals/suite/:suiteId/runs/:runId` — the
- * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
- * the run path.
+ * Uses the current `/evaluate` run URL from the shared permalink builder.
  */
 function writeRunLink(
   format: string,

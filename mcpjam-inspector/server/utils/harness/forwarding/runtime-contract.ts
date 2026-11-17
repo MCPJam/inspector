@@ -46,3 +46,18 @@ export function qualifiedForwardingRuntime(adapter: {
     ? contract
     : undefined;
 }
+
+/** Whether a hosted message may run on an agent kept warm in its box. A
+ *  `refresh` runtime needs its qualified contract to apply the message's MCP
+ *  configuration to the live agent; a `restart` runtime resumes its session. */
+export function hostedWarmAgentEligible(adapter: {
+  hostedWarmAgent?: "refresh" | "restart";
+  pinnedRuntimeVersion?: string;
+  forwardingRuntime?: ForwardingRuntimeContract;
+}): boolean {
+  return (
+    adapter.hostedWarmAgent === "restart" ||
+    (adapter.hostedWarmAgent === "refresh" &&
+      qualifiedForwardingRuntime(adapter) !== undefined)
+  );
+}

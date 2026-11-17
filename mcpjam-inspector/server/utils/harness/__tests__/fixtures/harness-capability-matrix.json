@@ -31,12 +31,14 @@
         "ownedInput": true,
         "runtimeVersion": "2.1.290"
       },
+      "hostedWarmAgent": "refresh",
       "id": "claude-code",
       "liveApprovalRuntime": true,
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "2.1.290",
+      "preparesBeforeSend": true,
       "promptImageInput": true,
       "requiresComputer": true,
       "skills": {
@@ -118,11 +120,13 @@
         "ownedInput": true,
         "runtimeVersion": "0.163.0"
       },
+      "hostedWarmAgent": "refresh",
       "id": "codex",
       "liveApprovalRuntime": true,
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "0.163.0",
+      "preparesBeforeSend": true,
       "promptImageInput": true,
       "requiresComputer": true,
       "skills": {
@@ -208,6 +212,7 @@
         },
         "runtimeVersion": "1.0.92"
       },
+      "hostedWarmAgent": "restart",
       "id": "copilot-cli",
       "liveApprovalRuntime": true,
       "mcpDelivery": "harness",

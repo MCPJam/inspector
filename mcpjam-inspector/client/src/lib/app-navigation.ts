@@ -151,11 +151,11 @@ export const routePaths = {
   callback: "/callback",
   billing: "/billing",
   evals: "/evals",
-  /** Legacy Runs mode, available behind evaluate-enabled. */
+  /** Saved Runs bookmarks redirect to Evaluate. */
   evalsRuns: "/evals/runs",
   /** Redeem-based read-only share of an eval run. */
   evalsShared: "/evals/shared",
-  /** Public Evaluate; legacy Evaluate lives at /evals. */
+  /** Public Evaluate; /evals is retained for saved bookmarks. */
   evaluate: "/evaluate",
   organizations: "/organizations",
 } as const;
@@ -570,7 +570,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
     case "create":
       return `${prefix}/create`;
     case "eval-server":
-      // The first-run preview is Evaluate (New) only. /evals has no home
+      // The first-run preview is only available at /evaluate. /evals has no home
       // for it, so degrade to that prefix's list the same way commit-detail
       // degrades on /evaluate.
       if (prefix !== routePaths.evaluate) return prefix;
