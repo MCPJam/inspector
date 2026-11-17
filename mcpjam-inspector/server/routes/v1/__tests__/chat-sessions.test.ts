@@ -595,7 +595,22 @@ describe("computeExcludedToolNames", () => {
       ["live", "dead"],
       { toolMode: "read_only", onUnavailable },
     );
-    expect(result).toEqual({ excluded: ["write"], advertised: 1 });
+    expect(result).toEqual({
+      excluded: ["write"],
+      advertised: 1,
+      // Each server's own listing, which a harness turn's read_only policy is
+      // built from; the unreachable server lists nothing.
+      listed: [
+        {
+          serverId: "live",
+          tools: [
+            { name: "read", annotations: { readOnlyHint: true } },
+            { name: "write" },
+          ],
+        },
+        { serverId: "dead", tools: [] },
+      ],
+    });
     expect(onUnavailable).toHaveBeenCalledWith("dead", failure);
   });
 

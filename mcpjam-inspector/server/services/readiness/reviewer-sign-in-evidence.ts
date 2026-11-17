@@ -3,9 +3,11 @@
  * read off the browser tools' results while the agent works.
  *
  * STAGES COME FROM WHAT MCPJAM OBSERVES, never from the model's account of
- * them: the sign-in ends at the first look at a new page after the password
- * was typed (or at the callback), consent at the callback, and a stop where
- * the agent stops.
+ * them. A page that moves on after the password is PROGRESS, not a sign-in:
+ * it may be an error page, a verification step or the consent screen. The
+ * first look at it is kept as the sign-in's picture, and what follows belongs
+ * to the next stage. The sign-in passes only once MCPJam's callback carries a
+ * code (see `reviewer-sign-in-agent.ts`), and a stop is where the agent stops.
  *
  * A STAGE'S PICTURE IS ITS OWN. The newest frame since the stage began, or,
  * once a credential was typed and nothing safe has been pictured since, none:
@@ -36,20 +38,27 @@ function urlOf(result: unknown): string | undefined {
   return typeof url === "string" ? url : undefined;
 }
 
+/** The frames of one stage: its newest picture, and whether a credential went in since. */
+interface Segment {
+  newest: Image | "suppressed" | undefined;
+  typedSinceFrame: boolean;
+}
+
+const fresh = (): Segment => ({ newest: undefined, typedSinceFrame: false });
+
 export class SignInEvidence {
-  private newest: Image | "suppressed" | undefined;
-  private typedSinceFrame = false;
+  private segment: Segment = fresh();
+  /** The sign-in's own frames, held once the page moved on after the password. */
+  private signInSegment: Segment | undefined;
   private lastUrl: string | undefined;
-  /** The page the password went in on, until the sign-in stage closes. */
+  /** The page the password went in on, until the page moves on. */
   private passwordOn: string | undefined;
-  private signInClosed = false;
-  /** The page moved on after the password; closes at the next picture. */
+  /** The page moved on after the password: progress, before any picture of it. */
   private movedOn = false;
-  private actsSinceSignIn = 0;
+  private actsAfterProgress = 0;
 
   constructor(
     private readonly store: (image: Image) => Promise<string | undefined>,
-    private readonly onSignedIn: () => Promise<void>,
   ) {}
 
   /** The tools, each result read here before it goes back to the model. */
@@ -67,7 +76,7 @@ export class SignInEvidence {
               options: Parameters<NonNullable<typeof execute>>[1],
             ) => {
               const result = await execute(input as never, options);
-              await this.saw(name, result);
+              this.saw(name, result);
               return result;
             },
           },
@@ -78,37 +87,45 @@ export class SignInEvidence {
 
   /** A credential reached a field: what was pictured before it is stale. */
   typed(password: boolean) {
-    this.newest = undefined;
-    this.typedSinceFrame = true;
-    if (password && !this.signInClosed) this.passwordOn = this.lastUrl ?? "";
+    this.segment = { newest: undefined, typedSinceFrame: true };
+    if (password && !this.progressed) this.passwordOn = this.lastUrl ?? "";
   }
 
-  /** Whether the agent acted after the sign-in, which makes consent a stage. */
-  get actedAfterSignIn() {
-    return this.signInClosed && this.actsSinceSignIn > 0;
+  /** Whether the page moved on after the password: progress, not a sign-in. */
+  get progressed() {
+    return this.movedOn;
   }
 
-  get signedIn() {
-    return this.signInClosed;
+  /** Whether the agent acted after that, which makes consent a stage. */
+  get actedAfterProgress() {
+    return this.progressed && this.actsAfterProgress > 0;
   }
 
-  /** Close the stage now, with its own picture, and start the next one. */
+  /**
+   * Close the stage now, with its own picture, and start the next one. The
+   * sign-in keeps the picture held when the page moved on, if it did.
+   */
   async close(
     stage: ReviewerStage["stage"],
     status: ReviewerStage["status"],
     detail: string,
   ): Promise<ReviewerStage> {
-    const evidence = await this.evidence();
-    this.newest = undefined;
-    this.typedSinceFrame = false;
-    if (stage === "sign-in") this.signInClosed = true;
+    const held = stage === "sign-in" ? this.signInSegment : undefined;
+    const evidence = await this.evidence(held ?? this.segment);
+    if (held) this.signInSegment = fresh();
+    else this.segment = fresh();
     return { stage, status, detail, evidence };
   }
 
-  private async evidence(): Promise<Evidence> {
-    const newest = this.newest;
-    if (newest === "suppressed" || (!newest && this.typedSinceFrame)) {
-      return { screenshotStatus: "suppressed", screenshotNote: SUPPRESSED_NOTE };
+  private async evidence({
+    newest,
+    typedSinceFrame,
+  }: Segment): Promise<Evidence> {
+    if (newest === "suppressed" || (!newest && typedSinceFrame)) {
+      return {
+        screenshotStatus: "suppressed",
+        screenshotNote: SUPPRESSED_NOTE,
+      };
     }
     if (!newest) {
       return { screenshotStatus: "unavailable", screenshotNote: NO_FRAME_NOTE };
@@ -125,26 +142,32 @@ export class SignInEvidence {
       : { screenshotStatus: "unavailable", screenshotNote: NOT_STORED_NOTE };
   }
 
-  private async saw(tool: string, result: unknown) {
+  private saw(tool: string, result: unknown) {
     const output = record(result);
     const raw = screenshotOf(result);
     const image = raw ? capture(raw) : undefined;
-    if (image) {
-      this.newest = image;
-      this.typedSinceFrame = false;
-    } else if (output?.screenshotSuppressed === true) {
-      this.newest = "suppressed";
+    // An act after the page moved on begins the next stage: the sign-in keeps
+    // what it had, and this act's picture is the next stage's.
+    if (this.movedOn && tool === "browser_act") {
+      if (!this.signInSegment) this.holdSignIn();
+      this.actsAfterProgress += 1;
     }
+    if (image) this.segment = { newest: image, typedSinceFrame: false };
+    else if (output?.screenshotSuppressed === true)
+      this.segment.newest = "suppressed";
     const url = urlOf(result);
     if (url) this.lastUrl = url;
-    if (this.signInClosed && tool === "browser_act") this.actsSinceSignIn += 1;
     if (this.passwordOn !== undefined && url && url !== this.passwordOn) {
       this.movedOn = true;
     }
-    // The page moved on after the password went in: the sign-in is done, and
-    // the first look at the new page is its picture.
-    if (this.movedOn && !this.signInClosed && this.newest) {
-      await this.onSignedIn();
-    }
+    // The first safe look at the page after the password is the sign-in's
+    // picture, held until the sign-in closes. A suppressed one is not: a
+    // later look before the next act still can be. Nothing passes here.
+    if (this.movedOn && !this.signInSegment && image) this.holdSignIn();
+  }
+
+  private holdSignIn() {
+    this.signInSegment = this.segment;
+    this.segment = fresh();
   }
 }

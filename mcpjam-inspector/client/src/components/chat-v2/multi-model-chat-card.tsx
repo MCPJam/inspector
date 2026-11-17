@@ -19,7 +19,10 @@ import {
   formatErrorMessage,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { useChatSession } from "@/hooks/use-chat-session";
-import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
+import {
+  getChatComposerInteractivity,
+  useCompareStopRequest,
+} from "@/hooks/use-chat-stop-controls";
 import type { ModelDefinition } from "@/shared/types";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
@@ -394,13 +397,7 @@ export function MultiModelChatCard({
     outgoingSenderMetadata,
   ]);
 
-  useEffect(() => {
-    if (stopRequestId <= 0) {
-      return;
-    }
-
-    stop();
-  }, [stop, stopRequestId]);
+  useCompareStopRequest(stopRequestId, stop);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {

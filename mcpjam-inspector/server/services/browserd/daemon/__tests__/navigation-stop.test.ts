@@ -99,6 +99,101 @@ describe("armNavigationStop", () => {
     expect(sent(cdp, "Fetch.failRequest")).toEqual([]);
   });
 
+  describe("behind the egress proxy", () => {
+    const PROXY = { username: "browser", password: "proxy-secret-sample" };
+    const challenge = (source: "Proxy" | "Server", requestId = "a1") => ({
+      requestId,
+      request: { url: `${CONSENT}?x=1` },
+      authChallenge: { source, origin: "http://127.0.0.1:9", scheme: "basic" },
+    });
+
+    it("pauses every request and handles auth, so the proxy's challenge reaches this session", async () => {
+      const cdp = session();
+      await armNavigationStop(cdp, CALLBACK, PROXY);
+      expect(sent(cdp, "Fetch.enable")[0]!.params).toEqual({
+        handleAuthRequests: true,
+        patterns: [{ urlPattern: "*", requestStage: "Request" }],
+      });
+    });
+
+    it("answers the proxy once with its credentials, and cancels a second ask", async () => {
+      const cdp = session();
+      await armNavigationStop(cdp, CALLBACK, PROXY);
+      cdp.emit("Fetch.authRequired", challenge("Proxy"));
+      cdp.emit("Fetch.authRequired", challenge("Proxy"));
+      await flush();
+      expect(sent(cdp, "Fetch.continueWithAuth")).toEqual([
+        {
+          method: "Fetch.continueWithAuth",
+          params: {
+            requestId: "a1",
+            authChallengeResponse: {
+              response: "ProvideCredentials",
+              username: PROXY.username,
+              password: PROXY.password,
+            },
+          },
+        },
+        {
+          method: "Fetch.continueWithAuth",
+          params: {
+            requestId: "a1",
+            authChallengeResponse: { response: "CancelAuth" },
+          },
+        },
+      ]);
+    });
+
+    it("never offers the proxy's credentials to a site", async () => {
+      const cdp = session();
+      await armNavigationStop(cdp, CALLBACK, PROXY);
+      cdp.emit("Fetch.authRequired", challenge("Server"));
+      await flush();
+      expect(sent(cdp, "Fetch.continueWithAuth")).toEqual([
+        {
+          method: "Fetch.continueWithAuth",
+          params: {
+            requestId: "a1",
+            authChallengeResponse: { response: "CancelAuth" },
+          },
+        },
+      ]);
+    });
+
+    it("stops only the main frame's document, now that it sees every request", async () => {
+      const cdp = session();
+      const stop = await armNavigationStop(cdp, CALLBACK, PROXY);
+      cdp.emit("Fetch.requestPaused", {
+        ...paused(ANSWER),
+        resourceType: "XHR",
+      });
+      await flush();
+      expect(sent(cdp, "Fetch.failRequest")).toEqual([]);
+      expect(stop.stopped()).toBeUndefined();
+      cdp.emit("Fetch.requestPaused", paused(ANSWER));
+      await flush();
+      expect(stop.stopped()).toBe(ANSWER);
+    });
+
+    it("cancels challenges once the browser has no proxy", async () => {
+      const cdp = session();
+      const first = await armNavigationStop(cdp, CALLBACK, PROXY);
+      await first.disarm();
+      await armNavigationStop(cdp, CALLBACK);
+      cdp.emit("Fetch.authRequired", challenge("Proxy", "a2"));
+      await flush();
+      expect(sent(cdp, "Fetch.continueWithAuth")).toEqual([
+        {
+          method: "Fetch.continueWithAuth",
+          params: {
+            requestId: "a2",
+            authChallengeResponse: { response: "CancelAuth" },
+          },
+        },
+      ]);
+    });
+  });
+
   it.each([
     [CALLBACK, true],
     [`${CALLBACK}?step=1`, false],
@@ -156,6 +251,35 @@ describe("a command that stops at a page", () => {
     expect(result.stoppedAt).toBeUndefined();
     expect(sent(cdp, "Fetch.enable")).toHaveLength(1);
     expect(sent(cdp, "Fetch.disable")).toHaveLength(1);
+  });
+
+  it("arms the stop with the browser's egress proxy credentials", async () => {
+    const page = fakePage({ url: CONSENT });
+    const cdp = session();
+    page.cdpSession = cdp;
+    const { context } = fakeContext({ pages: [page] });
+    const proxyAuth = { username: "browser", password: "proxy-secret-sample" };
+    const driver = new ChromiumDriver({ ...context, proxyAuth });
+    await driver.execute({
+      commandId: "nav",
+      source: "inspector",
+      action: { kind: "navigate", url: CONSENT },
+    });
+
+    await driver.execute({ ...click(CALLBACK), stopAtPersistent: true });
+    cdp.emit("Fetch.authRequired", {
+      requestId: "a1",
+      authChallenge: { source: "Proxy" },
+    });
+    await flush();
+
+    expect(sent(cdp, "Fetch.enable")[0]!.params).toMatchObject({
+      handleAuthRequests: true,
+    });
+    expect(sent(cdp, "Fetch.continueWithAuth")[0]!.params).toEqual({
+      requestId: "a1",
+      authChallengeResponse: { response: "ProvideCredentials", ...proxyAuth },
+    });
   });
 
   it("intercepts nothing for a command that does not ask", async () => {

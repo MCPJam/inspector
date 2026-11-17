@@ -21,7 +21,7 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { track } from "@/lib/analytics";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
@@ -179,7 +179,7 @@ export function HostCanvasSelector({
     }
   };
 
-  const logoFor = (name: string) => resolveHostLogoByName(name, themeMode);
+  const logoFor = (host: HostListItem) => resolveHostLogo(host, themeMode);
 
   if (isLoading) {
     return (
@@ -282,7 +282,7 @@ export function HostCanvasSelector({
               )}
             >
               <img
-                src={logoFor(active.name)}
+                src={logoFor(active)}
                 alt=""
                 className="size-4 shrink-0 object-contain"
               />
@@ -317,7 +317,7 @@ export function HostCanvasSelector({
                   className="group gap-2.5 py-2 pr-1.5"
                 >
                   <img
-                    src={logoFor(host.name)}
+                    src={logoFor(host)}
                     alt=""
                     className="size-4 shrink-0 object-contain"
                   />
