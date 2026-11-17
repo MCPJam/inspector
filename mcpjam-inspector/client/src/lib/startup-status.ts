@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useAppLoadStallReport } from "./app-load-stall";
 import { useStartupTracking } from "./startup-tracking";
+import { recordDesktopActivity } from "./desktop-diagnostics";
 import { useConvexAuth } from "convex/react";
 import { create } from "zustand";
 import {
@@ -94,6 +95,16 @@ export function StartupStatusTracker(): null {
   const publicPage = !isAuthenticated && shouldSkipGuestSession();
   useAppLoadStallReport(userReady || publicPage, status.stage);
   useStartupTracking(status, userReady);
+
+  // The desktop Help menu copies this stage from the main process, which still
+  // works when this window is stuck. A no-op outside the desktop app.
+  useEffect(() => {
+    recordDesktopActivity({
+      kind: "startup",
+      phase: "state",
+      stage: userReady ? "ready" : status.stage,
+    });
+  }, [userReady, status.stage]);
 
   useEffect(() => {
     if (startupSettled) return;

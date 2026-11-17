@@ -19,6 +19,10 @@ const reportCaught = vi.hoisted(() => vi.fn());
 vi.mock("../error-reporting", () => ({ reportCaught }));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 vi.mock("../analytics", () => ({ track: analytics.track }));
+const desktop = vi.hoisted(() => ({ record: vi.fn() }));
+vi.mock("../desktop-diagnostics", () => ({
+  recordDesktopActivity: desktop.record,
+}));
 vi.mock("../guest-session", () => ({
   getGuestSessionRefusal: () => null,
   subscribeGuestSessionChanges: () => () => {},
@@ -156,5 +160,21 @@ describe("StartupStatusTracker", () => {
       ([name]) => name === "app_startup_blocked",
     );
     expect(blocked).toHaveLength(0);
+  });
+
+  it("tells the desktop app which stage startup is on, then that it is ready", () => {
+    desktop.record.mockClear();
+    render(<StartupStatusTracker />);
+    expect(desktop.record).toHaveBeenLastCalledWith({
+      kind: "startup",
+      phase: "state",
+      stage: "app_load/auth_pending",
+    });
+    act(() => reportUserReadiness(true, true));
+    expect(desktop.record).toHaveBeenLastCalledWith({
+      kind: "startup",
+      phase: "state",
+      stage: "ready",
+    });
   });
 });
