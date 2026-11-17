@@ -159,6 +159,7 @@ export async function prepareNativeForwarding(args: {
         grantTurnId: args.turnId,
         policies: args.policies,
         bearer: args.authHeader,
+        ...(args.delivery === "bridge" ? { profiles: args.profiles } : {}),
       })
     : undefined;
   for (const [key, serverId] of Object.entries(keyToServerId)) {

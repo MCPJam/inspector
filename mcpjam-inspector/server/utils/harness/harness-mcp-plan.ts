@@ -114,13 +114,12 @@ export function resolveHarnessMcpPlan(
   refuse(facts.selectedServerCount === 0, "no servers selected");
   refuse(!configuredHarnessClient && facts.accountRouting, "account routing");
   const candidate = reasons.length === 0;
+  // Decided once, before anything is dispatched: a turn never moves to
+  // another route after a call has gone out.
   const admission: HarnessForwardingAdmission = candidate
     ? facts.admit()
     : { gaps: [] };
-  const delivery =
-    admission.delivery === "bridge" && facts.forwardingRuntime?.passThroughOnly
-      ? undefined
-      : admission.delivery;
+  const delivery = admission.delivery;
   refuse(
     candidate && delivery === undefined,
     "forwarding not admitted; configured route retained",
