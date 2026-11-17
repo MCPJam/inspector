@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "../routes/web/errors.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
@@ -28,6 +29,7 @@ import {
 } from "./browserd/page-tools-peek.js";
 import { webmcpPageToolsMode } from "../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import { type ModelMessage } from "ai";
 import {
   extractToolCallsExcludingPolicyBlocks,
@@ -161,7 +163,11 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import type {
+  LegacyModelSelection,
+  ModelCallCostEvidence,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import {
   decideTurnRail,
   routingSelectionForModel,
@@ -1303,6 +1309,8 @@ function throwSetupPhaseError(args: {
   /** The observer's explanation, when it recorded one for this failure. */
   detail?: SetupFailureDetail;
 }): never {
+  const credentialFailure = credentialFailureMessage(args.error);
+  const failureLine = credentialFailure ?? args.detail?.line;
   const serverLabel = getServerLabelForEvalError(
     args.serverId,
     args.environment,
@@ -1314,15 +1322,15 @@ function throwSetupPhaseError(args: {
     const setupError = new EvalSetupPhaseError({
       status: 409,
       code: ErrorCode.SERVER_UNREACHABLE,
-      message: args.detail
-        ? `Could not start eval because "${serverLabel}" is not connected: ${args.detail.line}`
+      message: failureLine
+        ? `Could not start eval because "${serverLabel}" is not connected: ${failureLine}`
         : `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
       serverId: args.serverId,
       phase: args.phase,
       details: {
         serverId: args.serverId,
         serverName: serverLabel,
-        ...(args.detail ? { cause: args.detail.line } : {}),
+        ...(failureLine ? { cause: failureLine } : {}),
       },
     });
     setupError.cause = args.error;
@@ -2727,9 +2735,10 @@ export function resolveEvalCaseSettings(args: {
  * `/stream/org/local-usage` for one model turn of an eval iteration on a
  * local-runtime org connection: the backend never saw the call, so this is
  * its usage row, and, under a saved `org` selection, the execution record it
- * merges onto the iteration (`evalIterationId`). Fire-and-forget, like the
- * chat and swarm writebacks; an aborted call is not written back (the same
- * rule those follow: an aborted turn is not billed as completed usage).
+ * merges onto the iteration (`evalIterationId`). Resolves with the backend's
+ * price for each call, or undefined; it never rejects. An aborted call is not
+ * written back (the same rule the chat and swarm writebacks follow: an
+ * aborted turn is not billed as completed usage).
  */
 function postEvalOrgLocalUsage(args: {
   context: EvalOrgLocalUsageContext;
@@ -2740,9 +2749,9 @@ function postEvalOrgLocalUsage(args: {
   runId: string | null;
   convexAuthToken: string | undefined;
   selectedServers: string[];
-}): void {
+}): Promise<Record<string, ModelCallCostEvidence> | undefined> | undefined {
   const { context, event } = args;
-  if (event.outcome === "aborted") return;
+  if (event.outcome === "aborted") return undefined;
   const execution = buildLocalExecutionRecord({
     selection: context.modelSelection,
     providerKey: context.providerKey,
@@ -2755,11 +2764,12 @@ function postEvalOrgLocalUsage(args: {
     at: event.at,
     ...(event.upstreamModel ? { upstreamModel: event.upstreamModel } : {}),
   });
-  void postLocalUsage({
+  return postLocalUsage({
     projectId: context.projectId,
     providerKey: context.providerKey,
     model: args.modelId,
     ...(event.usage ? { usage: event.usage } : {}),
+    ...(event.calls ? { calls: event.calls } : {}),
     ...(event.finishReason ? { finishReason: event.finishReason } : {}),
     sourceType: "eval",
     ...(args.convexAuthToken
@@ -2775,6 +2785,7 @@ function postEvalOrgLocalUsage(args: {
     logger.warn("[evals] Failed to post local usage", {
       error: error instanceof Error ? error.message : String(error),
     });
+    return undefined;
   });
 }
 
@@ -5273,6 +5284,10 @@ const runLocalIteration = async ({
         modelDefinition,
         systemPrompt: system,
         temperature,
+        requireToolApproval: appliedToolApproval(
+          "eval",
+          resolvedExecution.requireToolApproval,
+        ),
         respectToolVisibility: hostPolicy?.respectToolVisibility,
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
@@ -6687,6 +6702,10 @@ const runHostedIterationWithBrowser = async (
         ? {
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
+            requireToolApproval: appliedToolApproval(
+              "eval",
+              resolvedExecution.requireToolApproval,
+            ),
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
             ...(browserSecrets.length > 0
               ? {
@@ -7028,6 +7047,10 @@ const runHostedIterationWithBrowser = async (
       modelDefinition,
       systemPrompt,
       temperature,
+      requireToolApproval: appliedToolApproval(
+        "eval",
+        resolvedExecution.requireToolApproval,
+      ),
       respectToolVisibility: hostPolicy?.respectToolVisibility,
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness

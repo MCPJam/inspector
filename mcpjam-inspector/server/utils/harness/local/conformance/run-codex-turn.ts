@@ -33,7 +33,7 @@ import { z } from "zod";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { getHarnessAdapter } from "../../registry.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
-import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
+import { APPROVE_NATIVE_REQUEST, withAnsweredNativeRequests } from "../../auto-approve-harness.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import {
   createSupervisedLocalHarnessProvider,
@@ -410,7 +410,7 @@ async function main() {
   });
   const localHarness = await withLocalRuntimeBootstrap(harness, plan.runtime);
   const agent: any = new HarnessAgent({
-    harness: (AUTO_APPROVE ? withAutoApprovedNativeRequests(localHarness) : localHarness) as any,
+    harness: (AUTO_APPROVE ? withAnsweredNativeRequests(localHarness, APPROVE_NATIVE_REQUEST) : localHarness) as any,
     sandbox: provider,
     permissionMode: UNATTENDED ? plan.permissionMode : "allow-reads",
     instructions: "You are running a conformance check.",

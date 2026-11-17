@@ -1,5 +1,5 @@
 /** Runtimes whose conversation survives on the box, so a fresh bridge resumes it. */
-const RESUMES_FROM_DISK = new Set(["claude-code", "codex", "copilot-cli", "cursor"]);
+const RESUMES_FROM_DISK = new Set(["claude-code", "codex", "copilot-cli", "cursor", "opencode"]);
 
 /**
  * Resume a completed conversation from disk on a fresh bridge. Pending
@@ -21,7 +21,9 @@ export function diskResumeState<T>(state: T): T {
   // Codex session resumes from disk the same way: the bridge is respawned and
   // `thread/resume` reads the rollout, rather than retrying a dead socket.
   // GitHub Copilot CLI keeps its session in its own home in that dir, and a
-  // respawned bridge resumes it by thread id. An approval continuation
+  // respawned bridge resumes it by thread id. OpenCode keeps its sessions in
+  // its data directory in that home too, and a respawned bridge resumes one
+  // by session id. An approval continuation
   // (`continue-turn`) is never stripped: the paused call lives in the bridge
   // and cannot be rebuilt by a respawn.
   if (!RESUMES_FROM_DISK.has(String(record.harnessId)) || record.type !== "resume-session" || !record.data || typeof record.data !== "object") return state;

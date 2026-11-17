@@ -1,4 +1,4 @@
-import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
+import { APPROVE_NATIVE_REQUEST, withAnsweredNativeRequests } from "../../auto-approve-harness.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
 import { diskResumeState } from "../resume-state.js";
 /**
@@ -534,7 +534,7 @@ async function main() {
   });
   const bootstrapped = await withLocalRuntimeBootstrap(harness, plan.runtime);
   const agent: any = new HarnessAgent({
-    harness: (MODE === "attended-off" ? withAutoApprovedNativeRequests(bootstrapped) : bootstrapped) as any, sandbox: provider, permissionMode: "allow-reads", instructions: "You are running a conformance check.",
+    harness: (MODE === "attended-off" ? withAnsweredNativeRequests(bootstrapped, APPROVE_NATIVE_REQUEST) : bootstrapped) as any, sandbox: provider, permissionMode: "allow-reads", instructions: "You are running a conformance check.",
     // The model rides on the agent: the adapter no longer reads one at
     // construction. Both branches above are the haiku family.
     model: "haiku",

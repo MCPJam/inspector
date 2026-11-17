@@ -2,10 +2,43 @@
   "claude-code": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": ".claude/projects",
+        "idKey": "claudeSessionId",
+        "named": {
+          "depth": 2,
+          "names": [
+            "{id}.jsonl",
+            "{id}"
+          ]
+        }
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "Claude Code",
       "forwardingRuntime": {
         "configurationVersion": "tool-search-auto-v1",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {}
+            },
+            "roots": {
+              "listChanged": true
+            }
+          },
+          "clientInfo": {
+            "description": "Anthropic's agentic coding tool",
+            "name": "claude-code",
+            "title": "Claude Code",
+            "version": "2.1.290",
+            "websiteUrl": "https://claude.com/claude-code"
+          },
+          "supportedProtocolVersions": [
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25"
+          ]
+        },
         "ownedInput": true,
         "runtimeVersion": "2.1.290"
       },
@@ -73,11 +106,31 @@
     "adapter": {
       "acceptsSandboxPolicy": true,
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": "{sessionData}/codex-home/sessions"
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "Codex",
       "forwardingRuntime": {
         "configurationVersion": "native-mcp-v1",
         "correlationKey": "callId",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {},
+              "url": {}
+            }
+          },
+          "clientInfo": {
+            "name": "codex-mcp-client",
+            "title": "Codex",
+            "version": "0.163.0"
+          },
+          "mcpProtocolVersion": "2025-06-18",
+          "supportedProtocolVersions": [
+            "2025-06-18"
+          ]
+        },
         "ownedInput": true,
         "runtimeVersion": "0.163.0"
       },
@@ -157,12 +210,24 @@
   "copilot-cli": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": "{sessionData}/copilot-home/session-state/{id}",
+        "idKey": "threadId"
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "GitHub Copilot CLI",
       "forwardingRuntime": {
         "configurationVersion": "copilot-native-mcp-v1",
         "correlationKey": "mcpjam/toolCallId",
-        "passThroughOnly": true,
+        "nativeClient": {
+          "capabilities": {
+            "sampling": {}
+          },
+          "clientInfo": {
+            "name": "copilot-cli",
+            "version": "1.0.92"
+          }
+        },
         "runtimeVersion": "1.0.92"
       },
       "hostedWarmAgent": "restart",
@@ -227,6 +292,7 @@
   "cursor": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": null,
       "defaultPermissionMode": "allow-all",
       "displayName": "Cursor CLI",
       "externalAccountCredentialEnv": [
@@ -236,9 +302,19 @@
       "forwardingRuntime": {
         "boundApprovals": true,
         "configurationVersion": "acp-forward-v1",
-        "nativeVersionNegotiation": "legacy-first",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {}
+            }
+          },
+          "clientInfo": {
+            "name": "Cursor",
+            "version": "1.0.0"
+          },
+          "versionNegotiation": "legacy-first"
+        },
         "ownedInput": false,
-        "passThroughOnly": true,
         "runtimeVersion": "2026.11.05-86047df"
       },
       "hostToolApprovalAtRuntime": true,
@@ -323,6 +399,7 @@
   "opencode": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": null,
       "defaultPermissionMode": "allow-all",
       "displayName": "OpenCode",
       "id": "opencode",
@@ -381,8 +458,7 @@
       "runtimeName": "OpenCode",
       "runtimeVersion": "1.18.34",
       "unavailableOn": {
-        "guests": "OpenCode isn't available to guests until it's tested with them.",
-        "local": "OpenCode can't run on your computer yet. Run it in the cloud instead."
+        "guests": "OpenCode isn't available to guests until it's tested with them."
       }
     },
     "qualifiedDiscovery": []
