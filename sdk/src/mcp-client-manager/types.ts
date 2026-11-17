@@ -131,7 +131,10 @@ export type CacheEventLogger = (event: CacheHitEvent) => void;
  *    (`HttpServerConfig.versionNegotiation`).
  */
 export type ConfiguredNegotiationMode =
-  "auto" | "modern-pin" | "legacy" | "legacy-first";
+  | "auto"
+  | "modern-pin"
+  | "legacy"
+  | "legacy-first";
 
 /**
  * One connection-attempt outcome, emitted by the manager for Phase 5
@@ -486,6 +489,8 @@ export type StdioServerConfig = BaseServerConfig & {
 };
 
 export type UnauthorizedRefreshResult = {
+  /** Explain a rejected replacement without requesting another credential. */
+  onRetryRejected?: (error: unknown) => never;
   accessToken: string;
 };
 

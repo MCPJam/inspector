@@ -103,7 +103,10 @@ describe("createAuthorizedManager in hosted mode with an uploaded account", () =
 
     await expect(
       handler({ serverId: "srv_1", error: rejected() }),
-    ).resolves.toEqual({ accessToken: "new-token" });
+    ).resolves.toEqual({
+      accessToken: "new-token",
+      onRetryRejected: expect.any(Function),
+    });
     expect(requests.map((r) => r.route)).toEqual([
       "/web/authorize-batch",
       "/web/oauth/force-refresh",

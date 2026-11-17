@@ -210,3 +210,12 @@ export function withCredentialRefusal<T>(result: T, serverName?: string): T {
     credentialRefusal: refusal,
   } as T;
 }
+
+/** Only messages tagged by credential handling may replace a run setup error. */
+export function credentialFailureMessage(source: unknown): string | undefined {
+  const record = asRecord(source);
+  if (!record || typeof record.error !== "string") return undefined;
+  return readCredentialRefusal(record) || record.uploadedAccount === true ||
+    record.credentialRefusal === "insecure_transport"
+    ? record.error : undefined;
+}
