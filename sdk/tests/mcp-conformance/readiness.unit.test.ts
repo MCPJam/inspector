@@ -157,7 +157,7 @@ describe("client readiness advice", () => {
 
     expect(deprecated?.specStrength).toBe("Deprecation Notice");
     expect(deprecated?.message).toContain(
-      "Logging is deprecated as of protocol version 2026-07-28."
+      "Server advertises superseded functionality: logging is deprecated as of protocol version 2026-07-28; resources.subscribe"
     );
     expect(deprecated?.message).not.toContain("logging/setLevel");
     expect(deprecated?.message).toMatch(/subscriptions\/listen/);

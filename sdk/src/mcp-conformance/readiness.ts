@@ -45,7 +45,7 @@ const DEPRECATED_MODERN_CAPABILITIES: Array<{
 }> = [
   {
     key: "logging",
-    advice: "Logging is deprecated as of protocol version 2026-07-28.",
+    advice: "logging is deprecated as of protocol version 2026-07-28",
   },
 ];
 
