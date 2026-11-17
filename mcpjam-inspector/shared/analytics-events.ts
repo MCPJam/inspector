@@ -184,6 +184,9 @@ export const ANALYTICS_EVENTS = {
   app_builder_tab_viewed: { source: "client" },
   app_builder_tool_executed: { source: "client" },
   app_launched: { source: "client" },
+  // Sent before any actor is known; see the strict catalog entries.
+  app_startup_started: { source: "client" },
+  app_startup_blocked: { source: "client" },
   cancel_button_clicked: { source: "client" },
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },

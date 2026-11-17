@@ -1,5 +1,6 @@
 import { version } from "../package.json";
 import { POSTHOG_PROJECT_KEY } from "./posthog-project";
+import { APP_LOAD_STALL_CODES } from "./app-load-stall";
 import {
   EXTENSION_OPERATION_ERROR_CODES,
   EXTENSION_OPERATION_PROPERTIES,
@@ -33,6 +34,22 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     // Measures how long the content grant takes, to tune the launch timeout.
     launch_trigger: ["immediate", "grant", "timeout", "hidden"],
     policy_wait_ms: "count",
+  },
+  // `app_launched` fires only once an actor is known, so a launch that never
+  // finishes starting is invisible to it. These two are sent before any actor
+  // exists: one per page load, and one when the recovery card appears.
+  app_startup_started: {
+    location: ["app"],
+    platform: ["web", "npm", "docker", "mac", "win", "electron"],
+    deployment: ["hosted", "self_hosted"],
+  },
+  app_startup_blocked: {
+    location: ["app"],
+    platform: ["web", "npm", "docker", "mac", "win", "electron"],
+    deployment: ["hosted", "self_hosted"],
+    stage: APP_LOAD_STALL_CODES,
+    trigger: ["failure", "deadline"],
+    elapsed_ms: "count",
   },
   send_message: {
     location: ["chat_tab", "ui_playground"],

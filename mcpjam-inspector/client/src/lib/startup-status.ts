@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useAppLoadStallReport } from "./app-load-stall";
+import { useStartupTracking } from "./startup-tracking";
 import { useConvexAuth } from "convex/react";
 import { create } from "zustand";
 import {
@@ -85,8 +86,9 @@ export function StartupStatusTracker(): null {
   const failed = useSessionRefreshStore((s) => s.status !== "idle");
   const failedNow = useSessionRefreshStore((s) => s.status === "failed");
   const kind = useSessionRefreshStore((s) => s.kind);
-  const { stage } = useStartupStatus();
-  useAppLoadStallReport(userReady, stage);
+  const status = useStartupStatus();
+  useAppLoadStallReport(userReady, status.stage);
+  useStartupTracking(status);
 
   useEffect(() => {
     if (startupSettled) return;

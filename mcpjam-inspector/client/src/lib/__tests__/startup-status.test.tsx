@@ -8,6 +8,7 @@ vi.mock("@/hooks/use-inspector-auth", () => ({
   useInspectorAuth: () => ({ user: null }),
 }));
 vi.mock("../error-reporting", () => ({ reportCaught: vi.fn() }));
+vi.mock("../analytics", () => ({ track: vi.fn() }));
 vi.mock("../guest-session", () => ({
   getGuestSessionRefusal: () => null,
   subscribeGuestSessionChanges: () => () => {},
