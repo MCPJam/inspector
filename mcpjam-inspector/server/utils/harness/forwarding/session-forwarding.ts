@@ -1,11 +1,12 @@
 /**
- * Native forwarding for a runtime that fingerprints its MCP configuration.
+ * Native forwarding on the lane's session envelopes.
  *
  * The per-turn forwarding context names the turn and expires with its grant,
- * so it changes the configuration every turn. A session-stable runtime gets the
- * lane's session envelope instead, the same value on every turn. The turn's
- * authority lives elsewhere: the grant the egress proxy injects, and the policy
- * each owner binds on that grant for this turn.
+ * so it changes the configuration every turn, and a runtime that outlives the
+ * turn keeps the old one. A chat lane's turns get the lane's session envelope
+ * instead, the same value on every turn. The turn's authority lives elsewhere:
+ * the grant the egress proxy injects, and the policy each owner binds on that
+ * grant for this turn.
  */
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import {
@@ -35,6 +36,8 @@ export async function sessionForwardingHeaders(args: {
   bearer: string;
   /** Each server's connection profile on a bridged turn; none on pass-through. */
   profiles?: Record<string, HarnessConnectionProfile>;
+  /** Where the runtime stamps a call's id, for a runtime that stamps one. */
+  correlationKey?: string;
 }): Promise<Record<string, Record<string, string>>> {
   const servers = args.owners.map((owner) => {
     const policy = forwardingToolPolicy(args.policies?.[owner.serverId]);
@@ -70,6 +73,7 @@ export async function sessionForwardingHeaders(args: {
         serverId: owner.serverId,
         policy,
         ...(profile ? { profile, delivery: "bridge" as const } : {}),
+        ...(args.correlationKey ? { correlationKey: args.correlationKey } : {}),
       }),
     };
   }
@@ -82,7 +86,12 @@ export function sessionForwardingContext(
   sealed: SealedHarnessProxyPolicy,
   serverId: string,
 ):
-  | { owner: ForwardingOwner; policyDigest: string; delivery?: "bridge" }
+  | {
+      owner: ForwardingOwner;
+      policyDigest: string;
+      delivery?: "bridge";
+      correlationKey?: string;
+    }
   | undefined {
   const handle = verifyHarnessSessionHandle(sealed.token, serverId);
   if (!handle) return undefined;
@@ -101,5 +110,6 @@ export function sessionForwardingContext(
     },
     policyDigest: sessionPolicyDigest(serverId, sealed.policy, sealed.profile),
     ...(sealed.delivery ? { delivery: sealed.delivery } : {}),
+    ...(sealed.correlationKey ? { correlationKey: sealed.correlationKey } : {}),
   };
 }

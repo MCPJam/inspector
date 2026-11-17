@@ -322,8 +322,10 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             control,
             operation: {
               invocationKey: randomUUID(),
-              // A session-stable runtime's requests name no tool call.
-              ...(message.method === "tools/call" && !context.session
+              // A session envelope's requests name their call only where the
+              // runtime stamps one (Cursor CLI's name none).
+              ...(message.method === "tools/call" &&
+              (!context.session || context.correlationKey)
                 ? { nativeToolCallId: nativeToolCallId(message.params, context.correlationKey) }
                 : {}),
               turnId: caller.turnId,
