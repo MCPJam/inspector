@@ -96,19 +96,37 @@ describe("StartupStatusTracker", () => {
     expect(result.current.retrying).toBe(false);
   });
 
-  it("tells the desktop app which stage startup is on, then that it is ready", () => {
+  it("tells the desktop app its stage and sign-in state, and keeps reporting while stuck", () => {
+    desktop.record.mockClear();
+    Object.defineProperty(window, "electronAPI", {
+      value: { diagnostics: { record: vi.fn() } },
+      configurable: true,
+    });
+    try {
+      render(<StartupStatusTracker />);
+      expect(desktop.record).toHaveBeenLastCalledWith({
+        kind: "startup",
+        phase: "state",
+        stage: "app_load/auth_pending",
+        auth: "guest",
+        version: __APP_VERSION__,
+      });
+      // No stage change for a while: the heartbeat still marks the window alive.
+      const before = desktop.record.mock.calls.length;
+      act(() => vi.advanceTimersByTime(15_000));
+      expect(desktop.record.mock.calls.length).toBe(before + 1);
+      act(() => reportUserReadiness(true, true));
+      expect(desktop.record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ stage: "ready" }),
+      );
+    } finally {
+      Reflect.deleteProperty(window, "electronAPI");
+    }
+  });
+
+  it("does not report anything outside the desktop app", () => {
     desktop.record.mockClear();
     render(<StartupStatusTracker />);
-    expect(desktop.record).toHaveBeenLastCalledWith({
-      kind: "startup",
-      phase: "state",
-      stage: "app_load/auth_pending",
-    });
-    act(() => reportUserReadiness(true, true));
-    expect(desktop.record).toHaveBeenLastCalledWith({
-      kind: "startup",
-      phase: "state",
-      stage: "ready",
-    });
+    expect(desktop.record).not.toHaveBeenCalled();
   });
 });
