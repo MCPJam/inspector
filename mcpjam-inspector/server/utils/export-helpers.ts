@@ -351,7 +351,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // `sanitizeConvexReservedKeys` in convex/lib/serverToolSnapshot.ts. `_`-prefixed
 // nested keys stay (Convex only reserves `_` for top-level document fields, so
 // MCP's `_meta` survives).
-function stripConvexReservedKeys<T>(value: T): T {
+export function stripConvexReservedKeys<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((entry) => stripConvexReservedKeys(entry)) as unknown as T;
   }

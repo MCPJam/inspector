@@ -454,9 +454,13 @@ function toSummary(
  */
 export async function listServerSkillCatalog(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  options: { signal?: AbortSignal } = {}
 ): Promise<ServerSkillListing> {
-  const drained = await listAllServerSkills(manager, { serverId });
+  const drained = await listAllServerSkills(manager, {
+    serverId,
+    signal: options.signal,
+  });
   const skills: ServerSkillSummary[] = [];
   const rejected: ServerSkillListing["rejected"] = [];
   const duplicates = new Set(drained.duplicateUris);
