@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -14,11 +14,14 @@ import {
 } from "./cost-view";
 import {
   isIterationModelCallsUnavailable,
+  joinModelCalls,
   listIterationModelCalls,
-  unmatchedModelCalls,
   type IterationCostContext,
+  type IterationModelCall,
   type UnmatchedModelCall,
 } from "./iteration-model-calls";
+
+const NO_UNMATCHED_CALLS: UnmatchedModelCall[] = [];
 
 /**
  * Every component here renders nothing while the `trace-cost` flag is off,
@@ -176,56 +179,86 @@ export function TraceCostHoverBlock({ cost }: { cost: RowCost | undefined }) {
   );
 }
 
+/** A trace's spans as cost reads them, and the calls no span stands for. */
+export type TraceCostSpans = {
+  /** An llm span without its own cost carries its matched call's. */
+  spans: EvalTraceSpan[] | null | undefined;
+  unmatched: UnmatchedModelCall[];
+  /** Mount it beside the trace: it fetches a harness iteration's calls. */
+  loader: ReactNode;
+};
+
+type LoadedCalls = { iterationId: string; calls: IterationModelCall[] };
+
+/**
+ * Joins a harness iteration's calls to its spans once, so the summary, the
+ * detail pane and the hover card count the same evidence. The original spans
+ * pass through untouched until calls arrive, and nothing is fetched with the
+ * flag off or for an iteration no harness ran.
+ */
+export function useTraceCostSpans(
+  spans: EvalTraceSpan[] | null | undefined,
+  iteration: IterationCostContext | undefined,
+): TraceCostSpans {
+  const enabled = useTraceCostEnabled();
+  const iterationId =
+    enabled && iteration?.harness ? iteration.iterationId : undefined;
+  const [loaded, setLoaded] = useState<LoadedCalls>();
+  const calls = loaded?.iterationId === iterationId ? loaded?.calls : undefined;
+  const joined = useMemo(
+    () => (calls ? joinModelCalls(spans ?? [], calls) : undefined),
+    [spans, calls],
+  );
+  // Until every deployment serves the query, a failed fetch leaves the
+  // spans as they are and lists no unmatched calls.
+  const loader = iterationId ? (
+    <ErrorBoundary
+      key={iterationId}
+      name="trace-cost-model-calls"
+      isExpectedError={isIterationModelCallsUnavailable}
+      fallback={null}
+    >
+      <ModelCallsLoader iterationId={iterationId} onLoad={setLoaded} />
+    </ErrorBoundary>
+  ) : null;
+  return {
+    spans: joined?.spans ?? spans,
+    unmatched: joined?.unmatched ?? NO_UNMATCHED_CALLS,
+    loader,
+  };
+}
+
+function ModelCallsLoader({
+  iterationId,
+  onLoad,
+}: {
+  iterationId: string;
+  onLoad: (loaded: LoadedCalls) => void;
+}) {
+  const calls = useQuery(listIterationModelCalls, { iterationId });
+  useEffect(() => {
+    if (calls) onLoad({ iterationId, calls });
+  }, [calls, iterationId, onLoad]);
+  return null;
+}
+
 type SummaryProps = {
+  /** From `useTraceCostSpans`, so harness spans carry their calls' cost. */
   spans: readonly EvalTraceSpan[] | null | undefined;
   /** Set for an eval iteration: its stored total and whether a harness ran it. */
   iteration?: IterationCostContext;
+  unmatched?: UnmatchedModelCall[];
 };
 
 /** The whole trace's total, above the timeline. */
-export function TraceCostSummary({ spans, iteration }: SummaryProps) {
-  const enabled = useTraceCostEnabled();
-  if (!enabled || !iteration?.harness) {
-    return <CostSummaryCard spans={spans} iteration={iteration} />;
-  }
-  // Until every deployment serves the query, the summary shows what it
-  // knows without the unmatched calls.
-  return (
-    <ErrorBoundary
-      key={iteration.iterationId}
-      name="trace-cost-model-calls"
-      isExpectedError={isIterationModelCallsUnavailable}
-      fallback={<CostSummaryCard spans={spans} iteration={iteration} />}
-    >
-      <HarnessCostSummary spans={spans} iteration={iteration} />
-    </ErrorBoundary>
-  );
-}
-
-function HarnessCostSummary({
+export function TraceCostSummary({
   spans,
   iteration,
-}: SummaryProps & { iteration: IterationCostContext }) {
-  const calls = useQuery(listIterationModelCalls, {
-    iterationId: iteration.iterationId,
-  });
-  const unmatched = useMemo(() => unmatchedModelCalls(calls), [calls]);
-  return (
-    <CostSummaryCard
-      spans={spans}
-      iteration={iteration}
-      unmatched={unmatched}
-    />
-  );
-}
-
-function CostSummaryCard({
-  spans,
-  iteration,
-  unmatched = [],
-}: SummaryProps & { unmatched?: UnmatchedModelCall[] }) {
+  unmatched = NO_UNMATCHED_CALLS,
+}: SummaryProps) {
   // The iteration's stored total already counts every call it recorded,
-  // unmatched ones included; without it, unmatched calls join the spans' sum.
+  // unmatched ones included; without it, unmatched calls join the spans' sum
+  // (a harness span carries its matched call's cost; see `joinModelCalls`).
   const cost = useMemo<RowCost | undefined>(() => {
     const rollup =
       iteration?.rollup ??

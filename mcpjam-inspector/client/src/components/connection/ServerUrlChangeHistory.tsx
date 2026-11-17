@@ -14,7 +14,7 @@
 
 import { useQuery } from "convex/react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { isConvexQueryUnavailable } from "@/lib/convex-error";
+import { isConvexQueryNotServed } from "@/lib/convex-error";
 
 /**
  * Exported so the test can build the exact message the client sees, and so a
@@ -23,7 +23,8 @@ import { isConvexQueryUnavailable } from "@/lib/convex-error";
 export const SERVER_URL_CHANGES_QUERY = "auditEvents:listServerUrlChanges";
 
 const URL_CHANGED_ACTION = "server.url.changed";
-const CREDENTIALS_CLEARED_ACTION = "server.credentials.cleared_on_origin_change";
+const CREDENTIALS_CLEARED_ACTION =
+  "server.credentials.cleared_on_origin_change";
 
 interface ServerUrlChangeEvent {
   // `id`, not Convex's `_id`: the query projects the row rather than returning
@@ -87,18 +88,12 @@ function formatWhen(timestamp: number): string {
  * still worth having now that the query is deployed, for a browser left open
  * across a rollback.
  *
- * `isConvexQueryUnavailable` alone is not enough here: it names the DEV
- * shapes ("Could not find public function"), and production redacts every
- * non-`ConvexError` to `[CONVEX Q(<name>)] [Request ID: …] Server Error`. The
- * function name in that prefix is the only thing left to match on, so a
- * redacted failure of THIS query is treated as the dark-ship state. A
- * `ConvexError` from it (`NOT_FOUND` for a non-member) carries its own
- * message, matches neither branch, and still reports.
+ * `isConvexQueryNotServed` matches both the dev shape and the production
+ * redaction of THIS query. A `ConvexError` from it (`NOT_FOUND` for a
+ * non-member) carries its own message and still reports.
  */
 export function isServerUrlHistoryUnavailable(error: Error): boolean {
-  const message = typeof error?.message === "string" ? error.message : "";
-  if (!message.includes(`Q(${SERVER_URL_CHANGES_QUERY})`)) return false;
-  return isConvexQueryUnavailable(error) || message.includes("Server Error");
+  return isConvexQueryNotServed(error, SERVER_URL_CHANGES_QUERY);
 }
 
 export function ServerUrlChangeHistory({
@@ -185,7 +180,7 @@ function ServerUrlChangeHistoryPanel({
 }: ServerUrlChangeHistoryProps) {
   const events = useQuery(
     SERVER_URL_CHANGES_QUERY as never,
-    serverId ? ({ serverId } as never) : "skip"
+    serverId ? ({ serverId } as never) : "skip",
   ) as ServerUrlChangeEvent[] | undefined;
 
   // `Array.isArray`, not a truthiness-and-length check. `undefined` is still

@@ -4,9 +4,12 @@
  * bearer, and none reads or returns a secret's value.
  */
 import type { ConvexHttpClient } from "convex/browser";
+import type { Context } from "hono";
 import { makeFunctionReference } from "convex/server";
 import type { PlatformReviewerAttempt } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { authorizeServerAs, callerContextFromHono } from "../web/auth.js";
+import { getBackgroundRunBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import type { ReadinessReviewerAccount } from "../../services/readiness/reviewer-path.js";
 import {
@@ -130,6 +133,16 @@ export async function reviewerAccountForRun(
     };
   }
   if (!accountId) return { missing: NO_REVIEWER_ACCOUNT };
+  return authorizedReviewerAccount(accountId, authorize);
+}
+
+/** The account, authorized as itself, or why it cannot be used. */
+export async function authorizedReviewerAccount(
+  accountId: string,
+  authorize: (connectionId: string) => Promise<AuthorizedReadinessServer>,
+): Promise<ReadinessReviewerAccount> {
+  const reason = (error: unknown) =>
+    error instanceof Error ? error.message : String(error);
   try {
     const authorized = await authorize(accountId);
     return authorized.oauthAccessToken
@@ -143,4 +156,34 @@ export async function reviewerAccountForRun(
       missing: `MCPJam could not use the reviewer account (${reason(error)}). Rehearse the reviewer sign-in again, then run again.`,
     };
   }
+}
+
+/**
+ * How a run authorizes the reviewer account its sign-in connects, minutes
+ * after the request that started it ended: a background credential that is
+ * re-minted near expiry, and the caller as the request named it. Without one
+ * (a self-hosted node), the request's own bearer, for as long as it lasts.
+ */
+export async function reviewerAuthorizerFor(
+  c: Context,
+  token: string,
+  projectId: string,
+  serverId: string,
+): Promise<(accountId: string) => Promise<ReadinessReviewerAccount>> {
+  const caller = callerContextFromHono(c);
+  let bearer: () => Promise<string>;
+  try {
+    bearer = await getBackgroundRunBearerForRequest(c, projectId);
+  } catch (error) {
+    logger.warn("[readiness] no background credential for the reviewer account", {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    bearer = async () => token;
+  }
+  return (accountId) =>
+    authorizedReviewerAccount(accountId, async (connectionId) =>
+      authorizeServerAs({ caller }, await bearer(), projectId, serverId, {
+        connectionId,
+      }),
+    );
 }

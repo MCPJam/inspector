@@ -41,17 +41,20 @@ type StepMeta = {
 
 /**
  * What a step's call cost, as far as the runner can tell: dollars the
- * provider reported, or unavailable. The runner holds no rates; the backend
- * prices runner usage itself and labels these amounts as the runner's.
+ * provider reported to the runner, or unavailable. The server cannot verify
+ * an amount the runner sends, so it is recorded as `runner_reported`, never
+ * as provider-reported. The runner holds no rates; the backend prices runner
+ * usage itself.
  */
 export function runnerCallCost(
   usage: unknown,
-  providerMetadata: unknown,
+  providerMetadata: unknown
 ): ModelCallCostEvidence {
   const normalized = normalizeModelUsage(usage);
+  const reported = extractReportedProviderCost(providerMetadata);
   const cost = priceModelCall({
     usage: normalized,
-    reported: extractReportedProviderCost(providerMetadata),
+    reported: reported && { ...reported, source: "runner_reported" },
   });
   return toModelCallCostEvidence(cost, {
     usage: normalized,

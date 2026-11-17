@@ -64,7 +64,10 @@ import {
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
-import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
+import {
+  getChatComposerInteractivity,
+  useCompareStopRequest,
+} from "@/hooks/use-chat-stop-controls";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
@@ -96,6 +99,7 @@ import {
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
   getScenarioChatBackground,
+  getScenarioShellStyle,
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
@@ -979,7 +983,11 @@ export function MultiModelPlaygroundCard({
     [injectedToolRenderOverrides, toolRenderOverrides],
   );
   const hostBackgroundColor =
-    getScenarioChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
+    getScenarioChatBackground(
+      hostStyle,
+      effectiveThreadTheme,
+      effectiveChatUiOverride,
+    ) ?? "transparent";
   const isMobileFullTakeover =
     deviceType === "mobile" &&
     (displayMode === "fullscreen" || displayMode === "pip");
@@ -1189,13 +1197,7 @@ export function MultiModelPlaygroundCard({
     }
   }, [hasTraceSnapshot]);
 
-  useEffect(() => {
-    if (stopRequestId <= 0) {
-      return;
-    }
-
-    stop();
-  }, [stop, stopRequestId]);
+  useCompareStopRequest(stopRequestId, stop);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
@@ -1225,10 +1227,21 @@ export function MultiModelPlaygroundCard({
   const cardBody = (
     <div
       data-testid="multi-model-playground-card-root"
+      data-host-style={hostStyle}
+      data-thread-theme={effectiveThreadTheme}
       className={cn(
-        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40",
+        "app-theme-scope flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-background text-foreground",
+        effectiveThreadTheme === "dark" && "dark",
         className,
       )}
+      style={{
+        ...getScenarioShellStyle(
+          hostStyle,
+          effectiveThreadTheme,
+          effectiveChatUiOverride,
+        ),
+        colorScheme: effectiveThreadTheme,
+      }}
     >
       {readinessNotice ? <p role="status" className="px-3 py-2 text-sm text-muted-foreground">{readinessNotice}</p> : null}
       <ModelCompareCardHeader
@@ -1360,9 +1373,8 @@ export function MultiModelPlaygroundCard({
         >
           <div
             className={cn(
-              "scenario-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
+              "scenario-host-shell relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
               shellHeightClass,
-              effectiveThreadTheme === "dark" && "dark",
               shellMaxWidth && "mx-auto w-[calc(100%-1.5rem)]",
             )}
             data-host-style={hostStyle}

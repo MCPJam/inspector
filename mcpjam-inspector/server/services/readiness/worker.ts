@@ -83,6 +83,7 @@ import {
   isMuseReadinessResult,
   redactConformanceReportForSharing,
   type DirectoryFeatureClaim,
+  type DirectoryReviewerIdentityEvidence,
   type DirectoryFlow,
   type DirectoryLazyAuthProbeConfig,
   type OpenAISubmissionMode,
@@ -147,6 +148,11 @@ export interface ExecuteHostedReadinessOptions {
    * blocks them with why.
    */
   reviewer?: ReadinessReviewerAccount;
+  /**
+   * Authorizes the account this run's sign-in connects, which the start could
+   * not know. Without it, the run grades without that account.
+   */
+  authorizeReviewer?: (accountId: string) => Promise<ReadinessReviewerAccount>;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -297,8 +303,11 @@ async function joinAndRehearse(
   }
   if (!join.attempt) return undefined;
   const { humanSignInCompletedAt, reviewerAccountId } = join.attempt;
+  // A person finished the sign-in through the handoff link: resume with that
+  // account, never a second sign-in or code exchange. Its identity is
+  // checked like any other before the attempt passes.
   if (humanSignInCompletedAt && reviewerAccountId) {
-    return { kind: "connected", reviewerAccountId };
+    return { kind: "connected", reviewerAccountId, signedInBy: "person" };
   }
   if (!options.reviewerSignIn) return undefined;
   return options.reviewerSignIn({
@@ -313,17 +322,86 @@ async function joinAndRehearse(
 const WAITING_FOR_PERSON =
   "The reviewer sign-in reached a step only a person can finish, so this run stopped. Finish that step, then resume the reviewer attempt.";
 
+/** The account this run grades with: the one its sign-in connected, if any. */
+async function reviewerFor(
+  options: ExecuteHostedReadinessOptions,
+  signIn: ReviewerSignInOutcome | undefined,
+): Promise<ReadinessReviewerAccount> {
+  if (signIn?.kind !== "connected")
+    return options.reviewer ?? NO_REVIEWER_ACCOUNT;
+  const known = options.reviewer;
+  if (
+    known &&
+    "accountId" in known &&
+    known.accountId === signIn.reviewerAccountId
+  ) {
+    return known;
+  }
+  return options.authorizeReviewer
+    ? options.authorizeReviewer(signIn.reviewerAccountId)
+    : {
+        missing:
+          "MCPJam could not use the reviewer account this run connected. Run again.",
+      };
+}
+
 /**
- * End a connected attempt as passed once the run has graded with it, and
- * before the finalize releases the lease the write needs.
+ * How a connected attempt ends once the run graded with it, saying who signed
+ * in and what the identity check found.
+ *
+ * FAILS CLOSED. It passes when the check confirmed the reviewer, or when the
+ * submission named no identity tool to check with. A check that was asked
+ * for and could not be made (the tool erred, its result lacked the field, the
+ * reviewer's session failed, or its settings are unusable) fails, like one
+ * that named another account or tenant: neither shows who MCPJam signed in as.
  */
-async function passAttempt(lease: ReadinessLease, attemptId: string) {
+export function attemptEnding(
+  signIn: Extract<ReviewerSignInOutcome, { kind: "connected" }>,
+  identity: DirectoryReviewerIdentityEvidence | undefined,
+): { outcome: "passed" | "failed"; detail: string } {
+  const who =
+    signIn.signedInBy === "person"
+      ? "A person signed in as the reviewer through the handoff link"
+      : "MCPJam signed in as the reviewer from a clean browser";
+  const why = (identity?.reason ?? "").replace(/[.\s]*$/, "");
+  if (
+    identity?.outcome === "wrong-account" ||
+    identity?.outcome === "wrong-tenant"
+  ) {
+    const what =
+      identity.outcome === "wrong-account" ? "account" : "organization";
+    return {
+      outcome: "failed",
+      detail: `${who}, but the identity check found a different ${what} than the submission names${why ? `: ${why}` : ""}. Check the reviewer credentials and tenant, then start a new attempt.`,
+    };
+  }
+  if (identity?.outcome !== "verified" && !identity?.notAsked) {
+    return {
+      outcome: "failed",
+      detail: `${who}, but MCPJam could not confirm who it signed in as${why ? `: ${why}` : ""}. Fix the identity tool settings under Reviewer check, then start a new attempt.`,
+    };
+  }
+  const checked =
+    identity?.outcome === "verified"
+      ? "the identity check confirmed the reviewer"
+      : "the submission names no identity tool, so the identity was not checked";
+  return {
+    outcome: "passed",
+    detail: `${who}, connected the reviewer account and graded the submission; ${checked}.`,
+  };
+}
+
+/**
+ * End a connected attempt once the run has graded with it, and before the
+ * finalize releases the lease the write needs.
+ */
+async function endAttempt(
+  lease: ReadinessLease,
+  attemptId: string,
+  ending: { outcome: "passed" | "failed"; detail: string },
+) {
   try {
-    await recordReviewerAttempt(lease, attemptId, {
-      outcome: "passed",
-      detail:
-        "MCPJam signed in as the reviewer, connected the reviewer account and graded the submission.",
-    });
+    await recordReviewerAttempt(lease, attemptId, ending);
   } catch (error) {
     if (error instanceof ReadinessLeaseLostError) throw error;
     // The attempt was cancelled or taken over meanwhile; the grade stands.
@@ -433,7 +511,7 @@ export async function executeHostedReadinessRun(
     const runPackage = gradesPackage(options)
       ? await readRunPackage(lease)
       : undefined;
-    const reviewer = options.reviewer ?? NO_REVIEWER_ACCOUNT;
+    const reviewer = await reviewerFor(options, signIn);
     const { result, reviewerPath } = await runDirectoryReadiness({
       publisher: options.publisher,
       target: options.target,
@@ -495,7 +573,11 @@ export async function executeHostedReadinessRun(
       : undefined;
 
     if (signIn?.kind === "connected" && options.reviewerAttemptId) {
-      await passAttempt(lease, options.reviewerAttemptId);
+      await endAttempt(
+        lease,
+        options.reviewerAttemptId,
+        attemptEnding(signIn, reviewerPath?.identity),
+      );
     }
     await finalizeReadinessRun(
       lease,

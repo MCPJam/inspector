@@ -5,8 +5,32 @@ import type {
   ModelCostRollup,
 } from "@mcpjam/sdk/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import { TraceCostSummary } from "../trace-cost-display";
-import type { IterationModelCall } from "../iteration-model-calls";
+import { TraceCostSummary, useTraceCostSpans } from "../trace-cost-display";
+import type {
+  IterationCostContext,
+  IterationModelCall,
+} from "../iteration-model-calls";
+
+/** The summary as the timeline mounts it, with the joined spans. */
+function Summary({
+  spans,
+  iteration,
+}: {
+  spans: EvalTraceSpan[];
+  iteration: IterationCostContext;
+}) {
+  const cost = useTraceCostSpans(spans, iteration);
+  return (
+    <>
+      {cost.loader}
+      <TraceCostSummary
+        spans={cost.spans}
+        iteration={iteration}
+        unmatched={cost.unmatched}
+      />
+    </>
+  );
+}
 
 const flag = vi.hoisted(() => ({ on: true }));
 vi.mock("@/hooks/useTraceCostEnabled", () => ({
@@ -84,9 +108,13 @@ describe("TraceCostSummary for an eval iteration", () => {
 
   it("shows the iteration's stored total instead of summing spans", () => {
     render(
-      <TraceCostSummary
+      <Summary
         spans={spans}
-        iteration={{ iterationId: "it-1", harness: false, rollup: storedRollup }}
+        iteration={{
+          iterationId: "it-1",
+          harness: false,
+          rollup: storedRollup,
+        }}
       />,
     );
     const summary = screen.getByTestId("trace-cost-summary");
@@ -98,7 +126,7 @@ describe("TraceCostSummary for an eval iteration", () => {
 
   it("lists a harness iteration's unmatched calls and counts them in the total", () => {
     query.useQuery.mockReturnValue(calls);
-    render(<TraceCostSummary spans={spans} iteration={harness} />);
+    render(<Summary spans={spans} iteration={harness} />);
 
     expect(query.useQuery).toHaveBeenCalledWith(expect.anything(), {
       iterationId: "it-1",
@@ -109,22 +137,37 @@ describe("TraceCostSummary for an eval iteration", () => {
     expect(summary).toHaveTextContent("2 of 3 calls priced");
     const list = within(screen.getByTestId("trace-cost-unmatched-calls"));
     expect(list.getByText("Model calls not matched to a step")).toBeTruthy();
-    expect(list.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+    expect(
+      list.getAllByRole("listitem").map((item) => item.textContent),
+    ).toEqual([
       "anthropic/claude-haiku-4.5$0.0123Provider-reported",
       "openai/gpt-5-miniCost unavailable",
     ]);
     expect(list.queryByText("anthropic/claude-sonnet-4.5")).toBeNull();
   });
 
+  it("counts a matched call's cost once when its span carries none", () => {
+    // Harness llm spans carry no cost of their own; the matched call does.
+    const bareSpans = spans.map(({ cost: _cost, ...span }) => span);
+    query.useQuery.mockReturnValue(calls);
+    render(<Summary spans={bareSpans} iteration={harness} />);
+
+    const summary = screen.getByTestId("trace-cost-summary");
+    expect(summary).toHaveTextContent("≈$0.0163");
+    expect(summary).toHaveTextContent("2 of 3 calls priced");
+  });
+
   it("keeps the stored total when a harness iteration has one", () => {
     query.useQuery.mockReturnValue(calls);
     render(
-      <TraceCostSummary
+      <Summary
         spans={spans}
         iteration={{ ...harness, rollup: storedRollup }}
       />,
     );
-    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent("≈$1.50");
+    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent(
+      "≈$1.50",
+    );
     expect(screen.getByTestId("trace-cost-unmatched-calls")).toBeTruthy();
   });
 
@@ -135,7 +178,7 @@ describe("TraceCostSummary for an eval iteration", () => {
       );
     });
     vi.spyOn(console, "debug").mockImplementation(() => undefined);
-    render(<TraceCostSummary spans={spans} iteration={harness} />);
+    render(<Summary spans={spans} iteration={harness} />);
 
     expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent(
       "$0.0040",
@@ -147,7 +190,7 @@ describe("TraceCostSummary for an eval iteration", () => {
     flag.on = false;
     query.useQuery.mockReturnValue(calls);
     const { container } = render(
-      <TraceCostSummary
+      <Summary
         spans={spans}
         iteration={{ ...harness, rollup: storedRollup }}
       />,

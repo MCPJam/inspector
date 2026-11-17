@@ -97,7 +97,7 @@ describe("runner call cost on eval spans", () => {
     return integration.getSpans();
   }
 
-  it("keeps reported dollars on the llm span only, as the customer's runner-supplied usage", () => {
+  it("keeps reported dollars on the llm span only, as runner-reported and customer-funded", () => {
     const spans = recordOneStep({ openrouter: { usage: { cost: 0.004 } } });
 
     expect(spans.filter((span) => span.cost)).toEqual([
@@ -106,7 +106,8 @@ describe("runner call cost on eval spans", () => {
         cost: expect.objectContaining({
           completeness: "complete",
           amountUsd: 0.004,
-          source: "provider_reported",
+          source: "runner_reported",
+          reporter: "openrouter",
           funding: "customer",
           usageSource: "runner",
           usage: {
@@ -128,6 +129,17 @@ describe("runner call cost on eval spans", () => {
       usageSource: "runner",
     });
     expect(llm?.cost?.amountUsd).toBeUndefined();
+  });
+
+  it("never records the runner's dollars as provider-reported", () => {
+    expect(
+      runnerCallCost(undefined, { gateway: { cost: 0.02 } })
+    ).toMatchObject({
+      completeness: "complete",
+      amountUsd: 0.02,
+      source: "runner_reported",
+      reporter: "gateway",
+    });
   });
 
   it("says no usage when the step reported none", () => {

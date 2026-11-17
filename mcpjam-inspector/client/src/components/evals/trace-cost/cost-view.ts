@@ -48,9 +48,10 @@ export function selectRowCost(
   if (!row || row.kind === "interaction") return undefined;
   if (row.kind === "span") {
     const { span } = row;
-    return span.category === "llm" && span.cost
-      ? { kind: "call", cost: span.cost }
-      : undefined;
+    if (span.category !== "llm") return undefined;
+    // `spans` may carry a matched harness call's cost the row's span lacks.
+    const cost = span.cost ?? spans?.find(({ id }) => id === span.id)?.cost;
+    return cost ? { kind: "call", cost } : undefined;
   }
   // Same grouping as the timeline: a span without a prompt index is prompt 0.
   const rollup = rollupLlmSpanCosts(
@@ -67,7 +68,10 @@ export function selectRowCost(
 export function formatModelCost(amountUsd: number): string {
   if (amountUsd === 0) return "$0.00";
   if (amountUsd < 0.0001) return "<$0.0001";
-  if (amountUsd < 1) return `$${amountUsd.toFixed(4)}`;
+  // Choose the form on the rounded value: 0.99996 rounds to a dollar and must
+  // read "$1.00", not "$1.0000".
+  const fourPlaces = amountUsd.toFixed(4);
+  if (Number(fourPlaces) < 1) return `$${fourPlaces}`;
   return `$${amountUsd.toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -87,7 +91,8 @@ const isEstimate = (source: CostSource) =>
 const UNAVAILABLE_REASON: Record<UnavailableCostReason, string> = {
   no_usage: "No token usage was reported for this call.",
   no_rate: "No price is on record for this model.",
-  invalid_rate: "The price on record for this model is invalid.",
+  invalid_rate:
+    "The price on record for this model was invalid. An organization admin can set a price under Model prices to price future calls.",
   unsupported_currency: "The price on record is not in US dollars.",
 };
 
@@ -161,7 +166,8 @@ function describeCall(cost: ModelCallCostEvidence): CostView {
 function describeRollup(rollup: ModelCostRollup): CostView {
   const priced = rollup.totalCalls - rollup.unavailableCalls;
   const noun = rollup.totalCalls === 1 ? "call" : "calls";
-  const partly = rollup.partialCalls > 0 ? `, ${rollup.partialCalls} partly` : "";
+  const partly =
+    rollup.partialCalls > 0 ? `, ${rollup.partialCalls} partly` : "";
   return {
     amountUsd:
       rollup.completeness === "unavailable"
@@ -176,5 +182,7 @@ function describeRollup(rollup: ModelCostRollup): CostView {
 }
 
 export function describeRowCost(cost: RowCost): CostView {
-  return cost.kind === "call" ? describeCall(cost.cost) : describeRollup(cost.rollup);
+  return cost.kind === "call"
+    ? describeCall(cost.cost)
+    : describeRollup(cost.rollup);
 }

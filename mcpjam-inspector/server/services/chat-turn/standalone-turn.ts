@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import { HOSTED_MODE, WEBMCP_INSPECTOR_ENABLED } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
@@ -131,6 +132,10 @@ export async function runStandaloneTurn(
       hostStyle: body.hostStyle ?? "claude",
     },
   });
+  const requireToolApproval = appliedToolApproval(
+    "chat",
+    execution.requireToolApproval,
+  );
   const localSkills = await listLocalRuntimeSkills().catch((error) => {
     logger.warn("[chat-v2] local skill scan failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -169,7 +174,7 @@ export async function runStandaloneTurn(
         temperature: body.temperature ?? execution.temperature,
         reasoningEffort,
         explicitTemperature: effort.effort ? body.temperature : undefined,
-        requireToolApproval: execution.requireToolApproval,
+        requireToolApproval,
         requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         respectToolVisibility: execution.respectToolVisibility,
         modelVisibleMcpToolResults: execution.modelVisibleMcpToolResults,
@@ -223,7 +228,7 @@ export async function runStandaloneTurn(
         selectedServerNames: serverNames,
         systemPrompt: execution.systemPrompt,
         temperature: body.temperature ?? execution.temperature,
-        requireToolApproval: execution.requireToolApproval,
+        requireToolApproval,
         respectToolVisibility: execution.respectToolVisibility,
         mcpToolResultImageRendering: execution.mcpToolResultImageRendering,
         directVisibility: body.directVisibility,

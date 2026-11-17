@@ -299,5 +299,9 @@ export function isConvexQueryNotServed(
 ): boolean {
   const message = typeof error?.message === "string" ? error.message : "";
   if (!message.includes(`Q(${queryName})`)) return false;
+  // The redacted branch hides every non-`ConvexError` failure of the query.
+  // `evalIterationModelCalls:list` needs it only until B4
+  // (MCPJam/mcpjam-backend#2712) is live in production; then that caller
+  // drops it (KES-905 follow-up).
   return isConvexQueryUnavailable(error) || message.includes(REDACTED_BODY);
 }

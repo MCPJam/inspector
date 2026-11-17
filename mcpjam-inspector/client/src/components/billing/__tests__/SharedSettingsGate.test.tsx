@@ -8,9 +8,12 @@ const state = vi.hoisted(() => ({
   fail: false,
   projectsMissing: false,
   canManageBilling: true as boolean | undefined,
+  authLoading: false,
+  billingMissing: false,
+  organizationId: "org",
 }));
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: state.authLoading }),
   useQuery: (name: string) => {
     if (state.fail) throw new Error("Raw internal error");
     return name === "users:getCurrentUser"
@@ -18,7 +21,9 @@ vi.mock("convex/react", () => ({
       : name === "projects:getMyProjects"
       ? state.projectsMissing
         ? []
-        : [{ _id: "project", organizationId: "org" }]
+        : [{ _id: "project", organizationId: state.organizationId }]
+      : state.billingMissing
+      ? undefined
       : {
           effectivePlan: state.plan,
           pricingVersion: state.pricingVersion,
@@ -40,6 +45,9 @@ beforeEach(() => {
   state.pricingVersion = "v2";
   state.user = "viewer";
   state.canManageBilling = true;
+  state.authLoading = false;
+  state.billingMissing = false;
+  state.organizationId = "org";
 });
 vi.mock("@/lib/error-reporting", () => ({ reportBoundaryError: vi.fn() }));
 describe("shared settings access", () => {
@@ -105,7 +113,7 @@ describe("shared settings access", () => {
         screen.getByRole("button", { name: "Role-restricted save" }),
       ).toBeDisabled();
       expect(
-        screen.queryByRole("link", { name: "View Team plans" }),
+        screen.queryByRole("link", { name: "Review Team upgrade" }),
       ).not.toBeInTheDocument();
     },
   );
@@ -122,10 +130,21 @@ describe("shared settings access", () => {
       </SharedSettingsGate>,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "requires Team or Enterprise",
+      "These settings are read-only on your plan",
     );
     expect(
-      screen.getByRole("link", { name: "View Team plans" }),
+      screen.getByText("Upgrade to Team to edit a teammate’s eval suite."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Next: review plans and pricing"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Project edit permissions still apply. Also included in Enterprise.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Review Team upgrade" }),
     ).toHaveAttribute("href", "/organizations/org/plans");
     expect(
       screen.getByRole("button", { name: "Save settings" }),
@@ -149,6 +168,9 @@ describe("shared settings access", () => {
         screen.getByText("Ask your organization owner to upgrade to Team."),
       ).toBeInTheDocument();
       expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Next: review plans and pricing"),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Save settings" }),
       ).toBeDisabled();
@@ -192,6 +214,59 @@ describe("shared settings access", () => {
     expect(
       sharedSettingsAccess("owner", "owner", { effectivePlan: "free" }),
     ).toBe("allowed");
+  });
+  it.each(["eval suite", "study", "swarm settings"])(
+    "names the blocked resource: %s",
+    (resource) => {
+      render(
+        <SharedSettingsGate
+          projectId="project"
+          creatorId="creator"
+          resource={resource}
+        >
+          <button>Save</button>
+        </SharedSettingsGate>,
+      );
+      expect(
+        screen.getByText(`Upgrade to Team to edit a teammate’s ${resource}.`),
+      ).toBeInTheDocument();
+    },
+  );
+  it.each(["authLoading", "billingMissing"] as const)(
+    "does not show upgrade copy or editable settings while %s",
+    (key) => {
+      state[key] = true;
+      render(
+        <SharedSettingsGate
+          projectId="project"
+          creatorId="creator"
+          resource="eval suite"
+        >
+          <button>Save</button>
+        </SharedSettingsGate>,
+      );
+      expect(screen.getByRole("status")).toHaveTextContent("Checking access…");
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Upgrade to Team/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Save" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+  it("encodes the organization in the existing plans destination", () => {
+    state.organizationId = "org/with spaces";
+    render(
+      <SharedSettingsGate
+        projectId="project"
+        creatorId="creator"
+        resource="eval suite"
+      >
+        <button>Save</button>
+      </SharedSettingsGate>,
+    );
+    expect(
+      screen.getByRole("link", { name: "Review Team upgrade" }),
+    ).toHaveAttribute("href", "/organizations/org%2Fwith%20spaces/plans");
   });
   it("does not show an upsell while access is unresolved", () => {
     expect(sharedSettingsAccess(undefined, "owner", undefined)).toBe("loading");

@@ -5,12 +5,20 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import type { ModelCallCostEvidence } from "@mcpjam/sdk/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { TraceTimeline } from "../trace-timeline";
+import type { IterationModelCall } from "../trace-cost/iteration-model-calls";
 
 const flag = vi.hoisted(() => ({ on: true }));
 vi.mock("@/hooks/useTraceCostEnabled", () => ({
   useTraceCostEnabled: () => flag.on,
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+const query = vi.hoisted(() => ({
+  useQuery: vi.fn<(...args: unknown[]) => IterationModelCall[] | undefined>(),
+}));
+vi.mock("convex/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("convex/react")>()),
+  useQuery: query.useQuery,
+}));
 // Entry animations would leave each render's rows at a different frame.
 vi.mock("framer-motion", async (importOriginal) => ({
   ...(await importOriginal<typeof import("framer-motion")>()),
@@ -106,7 +114,21 @@ async function hoverSecondCall() {
 afterEach(() => {
   cleanup();
   flag.on = true;
+  query.useQuery.mockReset();
 });
+
+const harness = { iterationId: "it-1", harness: true };
+// A harness records its calls apart from its spans; the backend matches
+// the second call to its step's llm span.
+const harnessCalls: IterationModelCall[] = [
+  {
+    generationId: "g-2",
+    modelId: "anthropic/claude-sonnet-4.5",
+    createdAt: 2,
+    cost: estimate,
+    matchedSpanId: "p0-s1-llm",
+  },
+];
 
 describe("trace cost, flag on", () => {
   it("shows the trace total with its basis and coverage", () => {
@@ -141,6 +163,35 @@ describe("trace cost, flag on", () => {
     expect(block).toHaveTextContent("SourceEstimated at list price");
   });
 
+  it("shows a matched harness call's cost on its span, as the total counts it", async () => {
+    query.useQuery.mockReturnValue(harnessCalls);
+    const bare = spans(false);
+    render(
+      <TraceTimeline
+        recordedSpans={bare}
+        transcriptMessages={[]}
+        iterationCost={harness}
+      />,
+    );
+    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent(
+      "≈$0.0045",
+    );
+
+    await openSecondCall();
+    const pane = screen.getByTestId("trace-detail-pane");
+    expect(within(pane).getByTestId("trace-cost-inline")).toHaveTextContent(
+      "≈$0.0045",
+    );
+    expect(within(pane).getByTestId("trace-cost-chips")).toHaveTextContent(
+      "Estimated at list price",
+    );
+    const card = await hoverSecondCall();
+    expect(within(card).getByTestId("trace-row-hover-cost")).toHaveTextContent(
+      "Amount≈$0.0045",
+    );
+    expect(bare.some((span) => span.cost)).toBe(false);
+  });
+
   it("shows nothing for a trace recorded without costs", () => {
     render(<TraceTimeline recordedSpans={spans(false)} transcriptMessages={[]} />);
     expect(screen.queryByTestId("trace-cost-summary")).toBeNull();
@@ -149,8 +200,13 @@ describe("trace cost, flag on", () => {
 
 describe("trace cost, flag off", () => {
   async function renderSelectedAndHovered(withCost: boolean) {
+    query.useQuery.mockReturnValue(harnessCalls);
     render(
-      <TraceTimeline recordedSpans={spans(withCost)} transcriptMessages={[]} />,
+      <TraceTimeline
+        recordedSpans={spans(withCost)}
+        transcriptMessages={[]}
+        iterationCost={withCost ? harness : undefined}
+      />,
     );
     await openSecondCall();
     await hoverSecondCall();
@@ -167,5 +223,6 @@ describe("trace cost, flag off", () => {
     expect(withCost).toBe(withoutCost);
     expect(withCost).not.toContain("$0.");
     expect(withCost).not.toContain("trace-cost");
+    expect(query.useQuery).not.toHaveBeenCalled();
   });
 });

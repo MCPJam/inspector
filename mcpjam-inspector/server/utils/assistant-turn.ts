@@ -105,7 +105,7 @@ export interface RunAssistantTurnOptions
    * narrowed to the public values to avoid silent string churn.
    * `event` is an MCP Events trigger run (unattended, like eval/swarm).
    */
-  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event";
+  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event" | "readiness";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly

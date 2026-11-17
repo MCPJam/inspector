@@ -4,8 +4,11 @@ import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-e
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import type { ModelCallCostEvidence } from "@mcpjam/sdk";
 import {
-  readLocalUsageCost,
+  MAX_WRITEBACK_CALLS,
+  localUsageCallsBody,
+  readLocalUsageCosts,
   withLocalUsageCost,
+  type TurnModelCall,
 } from "./call-cost/local-usage-cost.js";
 /**
  * Org BYOK Stream Handler
@@ -397,7 +400,8 @@ export interface OrgLocalModelHandlerOptions {
 
 /**
  * Whether this local-runtime turn hits the approval gap the handler cannot
- * serve, and must fail loudly instead.
+ * serve, and must fail loudly instead. A synthetic run on this runtime has no
+ * approval loop either, and is held to the same rule (`resolve-turn-runtime.ts`).
  *
  * The gap is SERVER-EXECUTED tools THAT WOULD ASK: approving one resumes the
  * turn by running it here, and that resume path has never been supported (or
@@ -411,14 +415,13 @@ export interface OrgLocalModelHandlerOptions {
  * is nothing for the refusal to protect.
  *
  * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
- * here — this runs before the model has produced an input — and the skill
- * tools that use the form (`effective-skill-tools`) declare it
- * UNCONDITIONALLY and answer `false` on the common path. Reading
- * "unevaluable" as "asks" refused every local-runtime turn that carried a
- * skill tool, switch or no switch, where before it ran. `streamText` evaluates
- * the function per call, exactly as it did before the declaration was unified;
- * a call that does answer `true` still reaches the unsupported resume, which is
- * the pre-existing gap this guard never covered.
+ * here — this runs before the model has produced an input. Skill tools
+ * declare `never`; the form's one user is the acting-skill gate below.
+ * Reading "unevaluable" as "asks" refused every local-runtime turn that
+ * carried a skill tool, switch or no switch, where before it ran.
+ * `streamText` evaluates the function per call, exactly as it did before the
+ * declaration was unified; a call that does answer `true` still reaches the
+ * unsupported resume, which is the pre-existing gap this guard never covered.
  *
  * The acting-skill gate (`server-skill-acting-gate.ts`) wraps `bash` and
  * `read_server_resource` in a function on every turn. The guard reads the
@@ -438,7 +441,7 @@ export interface OrgLocalModelHandlerOptions {
  * here would break the UI-only agent surface for local-runtime orgs while
  * protecting nothing.
  */
-function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
+export function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
   return Object.entries(tools).some(([name, tool]) => {
     const declared = unwrapActingServerSkillGate(
       (tool as { needsApproval?: unknown } | undefined)?.needsApproval,
@@ -785,6 +788,7 @@ function buildLocalOrgOnPersist(params: {
         outcome: isStreamErrored() ? { kind: "error", code: "provider_error" } : { kind: "ok" }, at: Date.now(),
       }),
       usage: event.usage,
+      calls: event.calls,
       finishReason: event.finishReason,
       chatSessionId: options.chatSessionId,
       sourceType: options.sourceType,
@@ -809,7 +813,7 @@ function buildLocalOrgOnPersist(params: {
     appendDedupedModelMessages(fullHistory, event.responseMessages);
     const outcome = await onConversationComplete(
       fullHistory,
-      await withLocalUsageCost(event.turnTrace, usageCost),
+      await withLocalUsageCost(event.turnTrace, event.calls, usageCost),
     );
     if (outcome) {
       onOutcome?.(outcome, event.turnTrace.turnId);
@@ -830,6 +834,13 @@ export async function postLocalUsage(params: {
   providerKey: string;
   model: string;
   usage?: LiveChatTraceUsage;
+  /**
+   * Each provider request of the turn. The backend stores and prices each on
+   * its own usage (a context tier is per request) and returns each cost by
+   * call id. `usage` stays the turn's sum, which a backend without per-call
+   * writeback records instead.
+   */
+  calls?: TurnModelCall[];
   finishReason?: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -870,7 +881,7 @@ export async function postLocalUsage(params: {
    * of that selection and rebuilds the stored record from its plan.
    */
   execution?: LocalExecutionRecord;
-}): Promise<ModelCallCostEvidence | undefined> {
+}): Promise<Record<string, ModelCallCostEvidence> | undefined> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) return undefined;
 
@@ -890,6 +901,10 @@ export async function postLocalUsage(params: {
         providerKey: params.providerKey,
         model: params.model,
         ...(params.usage ? { usage: params.usage } : {}),
+        // A turn over the cap is written back as its sum alone, as before.
+        ...(params.calls?.length && params.calls.length <= MAX_WRITEBACK_CALLS
+          ? { calls: localUsageCallsBody(params.calls) }
+          : {}),
         ...(params.finishReason ? { finishReason: params.finishReason } : {}),
         ...(params.chatSessionId
           ? { chatSessionId: params.chatSessionId }
@@ -929,8 +944,8 @@ export async function postLocalUsage(params: {
       });
       return undefined;
     }
-    // The backend prices the record it stored, with the org's rates.
-    return readLocalUsageCost(await response.json());
+    // The backend prices each call it stored, with the org's rates.
+    return readLocalUsageCosts(await response.json());
   } finally {
     clearTimeout(timeout);
   }

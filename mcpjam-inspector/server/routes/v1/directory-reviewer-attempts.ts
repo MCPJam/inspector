@@ -32,6 +32,7 @@ import {
   ATTEMPT_NOT_FOUND,
   readReviewerAttempt,
   reviewerAccountForRun,
+  reviewerAuthorizerFor,
   reviewerAttemptFunctions as fn,
 } from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
@@ -185,6 +186,7 @@ async function startAttemptRun(
       reviewerAttemptId: attempt.id,
       authorized,
       reviewer,
+      authorizeReviewer: await reviewerAuthorizerFor(c, token, row.projectId, savedServerOf(row)),
       analyticsActor: readinessAnalyticsActor(c, row.projectId),
       translateError: (error) => translateConvexWriteError(error, { resource: "Readiness run" }),
     });

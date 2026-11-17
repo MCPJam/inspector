@@ -1,4 +1,5 @@
 import { runOpenAIProfileChecks } from "./checks/profile.js";
+import { gradeOpenAISubmissionAnswers } from "./checks/submission-answers.js";
 /**
  * The composite readiness run, split into two halves that do not resemble each
  * other.
@@ -185,6 +186,8 @@ export interface OpenAIReadinessEvidence extends DirectoryReviewerRunInput {
   package?: OpenAIPluginPackageEvidence;
   /** Raw submission profile, validated during grading so issues become findings. */
   submissionProfile?: unknown;
+  /** Saved portal answers, including partial submissions. */
+  submissionAnswers?: readonly import("../directory-readiness/flows/types.js").DirectoryAnswer[];
   /** Tools observed carrying a destructive or open-world annotation. */
   annotatedTools?: string[];
   /** UI frame domains observed on the wire. */
@@ -468,6 +471,10 @@ export function gradeOpenAIReadiness(
     evidence.hasPublishedVersion ??
     false;
 
+  const answerToken = evidence.submissionAnswers?.find(
+    (answer) => answer.key === "mcp.verificationToken"
+  )?.value;
+
   const shape = OPENAI_SUBMISSION_MODE_SHAPES[evidence.mode];
 
   // Server-side checks run only in a shape that HAS a server. In a shape that
@@ -490,7 +497,11 @@ export function gradeOpenAIReadiness(
         ...runOpenAIDomainVerificationChecks(
           {
             evidence: evidence.domainVerification,
-            declaredToken: parsedProfile.profile?.domainVerificationToken,
+            declaredToken: evidence.submissionAnswers
+              ? typeof answerToken === "string"
+                ? answerToken
+                : undefined
+              : parsedProfile.profile?.domainVerificationToken,
           },
           stamp
         ),
@@ -585,16 +596,30 @@ export function gradeOpenAIReadiness(
             }
           : undefined
       ),
-      ...runOpenAISubmissionChecks(
-        {
-          profile: parsedProfile.profile,
-          profileIssues: parsedProfile.issues,
-          annotatedTools,
-          frameDomains: evidence.frameDomains,
-          hasPublishedVersion,
-        },
-        stamp
-      ),
+      ...(evidence.submissionAnswers
+        ? gradeOpenAISubmissionAnswers(
+            runOpenAISubmissionChecks(
+              {
+                profileIssues: [],
+                annotatedTools,
+                frameDomains: evidence.frameDomains,
+                hasPublishedVersion,
+              },
+              stamp
+            ),
+            evidence.submissionAnswers,
+            stamp
+          )
+        : runOpenAISubmissionChecks(
+            {
+              profile: parsedProfile.profile,
+              profileIssues: parsedProfile.issues,
+              annotatedTools,
+              frameDomains: evidence.frameDomains,
+              hasPublishedVersion,
+            },
+            stamp
+          )),
       // LAST, and inside the capability gate like everything else. The mapper
       // can only emit `heuristic`/`manual-review` findings in
       // `experience-insights`, which `decideLaneStatus` does not consult — so

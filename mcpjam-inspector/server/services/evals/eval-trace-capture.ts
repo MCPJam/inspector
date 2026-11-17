@@ -708,6 +708,25 @@ export function pushBackendStepLlmFailureSpans(
   };
   applyStepMeta(stepSpan, { ...meta, status: "error" });
   spans.push(stepSpan);
+  // Reported usage or cost means the provider answered, even with no content.
+  // Model-call counts, llm token totals and cost rollups read llm spans only,
+  // so that call keeps one, as on the success path. Totals never read the
+  // step span, so its tokens are not counted twice, and it never carries cost.
+  if (meta?.cost || typeof meta?.inputTokens === "number") {
+    const llmSpan: EvalTraceSpan = {
+      id: `${stepParentId}-llm`,
+      parentId: stepParentId,
+      name: formatRecordedLlmSpanName(meta.modelId),
+      category: "llm",
+      promptIndex,
+      stepIndex,
+      status: "error",
+      ...createOffsetInterval(runStartedAt, llmPhaseStartAbs, failAbs),
+      ...(meta.cost ? { cost: meta.cost } : {}),
+    };
+    applyStepMeta(llmSpan, { ...meta, status: "error" });
+    spans.push(llmSpan);
+  }
   spans.push({
     id: `${stepParentId}-err`,
     parentId: stepParentId,

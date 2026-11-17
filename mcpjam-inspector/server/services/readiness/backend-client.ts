@@ -213,7 +213,11 @@ async function postReviewerAttempt(
   }
 }
 
-/** The fields a sign-in needs, read off the attempt the join answers with. */
+/**
+ * The fields a sign-in needs, read off the attempt the join answers with:
+ * the secret names (never values), where and as whom to sign in, and whether
+ * a person already finished it.
+ */
 function attemptView(value: unknown): ReviewerAttemptView | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const row = value as Record<string, unknown>;
@@ -226,6 +230,12 @@ function attemptView(value: unknown): ReviewerAttemptView | undefined {
     passwordSecretName: row.passwordSecretName,
     ...text("usernameSecretName"),
     ...text("username"),
+    ...text("reviewerAccountId"),
+    ...text("loginUrl"),
+    ...text("tenant"),
+    ...(typeof row.humanSignInCompletedAt === "number"
+      ? { humanSignInCompletedAt: row.humanSignInCompletedAt }
+      : {}),
   };
 }
 
