@@ -38,9 +38,10 @@ export function seedCaseStepsDraft(testCase: EvalCase): CaseStepsDraft {
 }
 
 /**
- * JSON with sorted keys; null, undefined and a missing key compare equal.
- * Convex drops undefined fields on save, so `{ serverId: undefined }` must
- * match the `{}` that comes back.
+ * JSON with sorted keys; null and undefined compare equal, and a key set to
+ * undefined matches a missing one: Convex drops undefined fields on save, so
+ * `{ serverId: undefined }` must match the `{}` that comes back. An explicit
+ * null inside an object is kept, since it can be a real edit.
  */
 function stable(value: unknown): string {
   const normalize = (item: unknown): unknown => {
@@ -50,7 +51,7 @@ function stable(value: unknown): string {
       const record = item as Record<string, unknown>;
       return Object.fromEntries(
         Object.keys(record)
-          .filter((key) => record[key] !== undefined && record[key] !== null)
+          .filter((key) => record[key] !== undefined)
           .sort()
           .map((key) => [key, normalize(record[key])]),
       );

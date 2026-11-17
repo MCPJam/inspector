@@ -127,4 +127,22 @@ describe("isCaseStepsDirty", () => {
     };
     expect(isCaseStepsDirty(draft, testCase)).toBe(false);
   });
+
+  it("is dirty when a tool argument is set to null", () => {
+    const testCase = makeCase();
+    const withNull = steps.map((step) =>
+      step.id === "a1" && step.kind === "assert"
+        ? ({
+            ...step,
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "list_workspaces",
+              args: { args: { filter: null } },
+            },
+          } as TestStep)
+        : step,
+    );
+    const draft = { ...seedCaseStepsDraft(testCase), steps: withNull };
+    expect(isCaseStepsDirty(draft, testCase)).toBe(true);
+  });
 });

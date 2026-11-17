@@ -99,7 +99,7 @@ function predicateSummary(
 ): AssertionSummary {
   const Icon = iconFor(`check:${predicate.type}`);
   // A kind from a newer build has no label here; show its name, not a crash.
-  if (!(predicate.type in PREDICATE_KIND_LABELS)) {
+  if (!Object.hasOwn(PREDICATE_KIND_LABELS, predicate.type)) {
     return { label: String(predicate.type), Icon };
   }
   const base = PREDICATE_KIND_LABELS[predicate.type];
