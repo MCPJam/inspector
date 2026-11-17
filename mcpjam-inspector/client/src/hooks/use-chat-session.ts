@@ -854,7 +854,10 @@ export interface UseChatSessionReturn {
       Pick<
         Parameters<UseChatSessionReturn["sendMessage"]>[0],
         "pluginMentions" | "extraParts" | "widgetModelContext"
-      >,
+      > & {
+        /** Attached prompt and skill messages, copied in after the transcript. */
+        prependMessages?: UIMessage[];
+      },
   ) => Promise<{ previousChatSessionId: string } | null>;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
@@ -6270,7 +6273,12 @@ export function useChatSession(
       const transcript = messagesRef.current;
       const last = transcript[transcript.length - 1];
       if (!last) return null;
-      return forkAndSend(transcript, last.id, "multi_model_column", options);
+      return forkAndSend(
+        [...transcript, ...(options.prependMessages ?? [])],
+        last.id,
+        "multi_model_column",
+        options,
+      );
     },
     [forkAndSend],
   );

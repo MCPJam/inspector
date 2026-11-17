@@ -92,6 +92,7 @@ export function useMultiModelSessions(deps: {
   // Bumped by every selection, reset and branch, so an "Open multi-model
   // session" still loading when one happens is dropped instead of applied.
   const openRequest = useRef(0);
+  const startedGroups = useRef(new Set<string>());
   const [openedColumn, setOpenedColumn] = useState<ChatHistorySession | null>(
     null,
   );
@@ -135,6 +136,7 @@ export function useMultiModelSessions(deps: {
     (restoredSession: MultiModelRestore) => {
       const { record, positions: saved, highestPosition } = restoredSession;
       seed(record.id, saved, highestPosition);
+      startedGroups.current.add(record.id);
       setOpenedColumn(null);
       setRestored(restoredSession);
       applyRestore(record);
@@ -302,7 +304,13 @@ export function useMultiModelSessions(deps: {
   const liveColumnKeysRef = useRef(deps.liveColumnKeys);
   liveColumnKeysRef.current = deps.liveColumnKeys;
   // Not behind the flag: the product metric needs a baseline before launch.
+  const groupIdRef = useRef(groupId);
+  groupIdRef.current = groupId;
   const trackStarted = useCallback((prompt: string) => {
+    // Once per session: every broadcast reports here, and a reopened session
+    // was already started.
+    if (startedGroups.current.has(groupIdRef.current)) return;
+    startedGroups.current.add(groupIdRef.current);
     const keys = liveColumnKeysRef.current;
     track("playground_multi_model_started", {
       location: "playground",
@@ -338,7 +346,7 @@ export function useMultiModelSessions(deps: {
       setOpenedColumn(null);
       setRestored(null);
     }, []),
-    /** Call on a multi-model session's first send. */
+    /** Call on every broadcast; reports a session's first one. */
     trackStarted,
   };
 }

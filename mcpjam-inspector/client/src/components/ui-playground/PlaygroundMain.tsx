@@ -4101,7 +4101,9 @@ export function PlaygroundMain({
     },
     showSingleChat: (column) => {
       setMultiModelEnabled(false);
-      if (column.hostId) setSelectedHostIds([column.hostId]);
+      // A model column has no client of its own: keep one, so no client grid
+      // covers the branch.
+      setSelectedHostIds(column.hostId ? [column.hostId] : selectedHostIds.slice(0, 1));
     },
     unavailableHostIds: unavailableClients.map((client) => client.compareId),
     modelsReady: availableModels.length > 0,
@@ -4111,6 +4113,8 @@ export function PlaygroundMain({
   // While a column is open alone, every send starts a new chat from it, so
   // the saved column keeps the turns its session ran.
   const sendOrBranch = useCallback(
+    // A branch copies `prependMessages` in after the transcript; an ordinary
+    // send writes them itself after its admission check.
     (message: Parameters<typeof sendMessage>[0]) =>
       multiModelSessions.sendInColumn
         ? multiModelSessions.sendInColumn(message)
@@ -4196,6 +4200,7 @@ export function PlaygroundMain({
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setActiveHistorySessionId(null);
           setViewingHistoryReplay(false);
+          multiModelSessions.clearOpenedColumn();
         }
         console.error("[PlaygroundMain] Failed to load chat session", err);
         toast.error("Failed to load chat history.");
@@ -4261,6 +4266,8 @@ export function PlaygroundMain({
         restoreHistoryServerSelection(
           detail.session.resumeConfig?.selectedServers,
         );
+        // A saved column reopened by its link branches on send, as from Sessions.
+        void multiModelSessions.openFromHistory(detail.session, undefined, () => true);
         adoptRestoredConversationTarget(detail.session);
         // `loadHistorySession` skips the model when the catalog hasn't loaded
         // yet; remember it so the effect below can apply it on arrival.
@@ -5566,6 +5573,7 @@ export function PlaygroundMain({
   ) => {
     if (!isCompareMode || !ensureCompareReady()) return false;
     trackSendMessage(captureProps);
+    multiModelSessions.trackStarted(request.text ?? "");
     const kind = isMultiHostMode ? "host" : "model";
     const recipients = compareLanes.map(({ id }) =>
       broadcastRecipient(kind, id.slice(kind.length + 1)),
@@ -5829,8 +5837,6 @@ export function PlaygroundMain({
 
     if (isCompareMode) {
       // Each card prepends the same messages to its own thread.
-      if (compareSentPrompts.length === 0)
-        multiModelSessions.trackStarted(composerText);
       if (!queueBroadcastRequest({
         text: composerText,
         files,

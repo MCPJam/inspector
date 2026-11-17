@@ -1067,6 +1067,41 @@ describe("useChatSession fork preservation", () => {
     expect(mockState.sendsBySession.has(columnChatSessionId)).toBe(false);
   });
 
+  it("copies attached prompt messages into a column branch after the transcript", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    const transcript = [
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "compare" }] },
+      { id: "assistant-1", role: "assistant", parts: [{ type: "text", text: "answer" }] },
+    ] as UIMessage[];
+    const attached = [
+      { id: "prompt-1", role: "user", parts: [{ type: "text", text: "a prompt" }] },
+    ] as UIMessage[];
+    act(() => {
+      result.current.setMessages(transcript);
+    });
+    let bodyAtSend: Record<string, unknown> | undefined;
+    mockState.sendMessage.mockImplementation(() => {
+      bodyAtSend = mockState.lastTransportOptions.body();
+    });
+
+    await result.current.branchFromThread({
+      text: "follow up",
+      prependMessages: attached,
+    });
+
+    expect(result.current.messages).toEqual([...transcript, ...attached]);
+    await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalled());
+    // The lineage still names the last message the column had.
+    expect(bodyAtSend).toMatchObject({
+      rewind: { rewoundFromMessageId: "assistant-1" },
+    });
+  });
+
   it("refuses a previous thread's late cursor and sends only the current version", async () => {
     const { result } = renderHook(() =>
       useChatSession({

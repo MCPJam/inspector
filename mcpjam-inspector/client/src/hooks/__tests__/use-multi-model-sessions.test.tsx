@@ -24,7 +24,8 @@ vi.mock("@/lib/multi-model-session-restore", () => ({
 vi.mock("../use-hosted-model-catalog", () => ({
   useHostedModelCatalog: () => ({ hostedCatalog: [] }),
 }));
-vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+const trackMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 vi.mock("sonner", () => ({
   toast: { error: toastError, success: vi.fn() },
 }));
@@ -324,5 +325,21 @@ describe("useMultiModelSessions", () => {
       expect.objectContaining({ toServerIds: expect.any(Function) }),
     );
     expect(applyRestore).not.toHaveBeenCalled();
+  });
+
+  it("reports a session's start once, and never for a reopened one", async () => {
+    flag.enabled = true;
+    trackMock.mockClear();
+    fetchRestore.mockResolvedValue(restored);
+    const { hook } = setup();
+    act(() => hook.result.current.trackStarted("first"));
+    act(() => hook.result.current.trackStarted("second"));
+    expect(trackMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await hook.result.current.openFromHistory(session, [session], () => true);
+    });
+    act(() => hook.result.current.trackStarted("after reopening"));
+    expect(trackMock).toHaveBeenCalledTimes(1);
   });
 });
