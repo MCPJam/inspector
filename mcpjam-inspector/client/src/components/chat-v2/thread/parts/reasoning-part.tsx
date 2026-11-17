@@ -29,10 +29,11 @@ export function ReasoningPart({
   const isHidden = displayMode === "hidden";
   const isCollapsible =
     displayMode === "collapsed" || displayMode === "collapsible";
-  // "collapsed" opens while the block streams, so a long reasoning turn shows
-  // its thinking instead of reading as a stall, and closes once it is done,
-  // so a turn's several blocks don't push the answer down. A reader who
-  // toggled it keeps their choice.
+  // "collapsed" opens a block once it starts streaming, so a long reasoning
+  // turn shows its thinking instead of reading as a stall, and leaves it open
+  // after: only the reader closes it. A reader who toggled it keeps their
+  // choice. Reasoning that was already done when it arrived (a reloaded chat)
+  // starts closed.
   const followsStream = displayMode === "collapsed";
   const [isExpanded, setIsExpanded] = useState(
     displayMode !== "collapsed" || state === "streaming",
@@ -48,8 +49,10 @@ export function ReasoningPart({
   }, [displayMode]);
 
   useEffect(() => {
-    if (!followsStream || readerToggled.current) return;
-    setIsExpanded(state === "streaming");
+    if (!followsStream || readerToggled.current || state !== "streaming") {
+      return;
+    }
+    setIsExpanded(true);
   }, [followsStream, state]);
 
   // While reasoning streams, a collapsible block shows its "Thinking…" header

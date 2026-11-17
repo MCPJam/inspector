@@ -114,10 +114,9 @@ describe("ReasoningPart", () => {
     );
   });
 
-  it("opens while reasoning streams and closes once it is done", () => {
+  it("opens while reasoning streams and stays open once it is done", () => {
     // A closed block that only shimmers read as a stall: the thinking itself
-    // shows while it streams. Several finished blocks left open would push
-    // the answer down, so each one closes when it is done.
+    // shows while it streams, and stays for the reader once it is done.
     const { rerender } = render(
       <ReasoningPart
         text="First thought"
@@ -154,11 +153,11 @@ describe("ReasoningPart", () => {
 
     expect(screen.getByRole("button", { name: /reasoning/i })).toHaveAttribute(
       "aria-expanded",
-      "false",
+      "true",
     );
     expect(
-      screen.queryByText("First thought and then a second one"),
-    ).not.toBeInTheDocument();
+      screen.getByText("First thought and then a second one"),
+    ).toBeInTheDocument();
   });
 
   it("starts closed for reasoning that is already done", () => {
@@ -200,9 +199,22 @@ describe("ReasoningPart", () => {
       "aria-expanded",
       "false",
     );
+
+    // Nor finishing.
+    rerender(
+      <ReasoningPart
+        text="First thought and then a second one"
+        state="done"
+        displayMode="collapsed"
+      />,
+    );
+    expect(screen.getByRole("button", { name: /reasoning/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
-  it("keeps a block the reader reopened open once it is done", () => {
+  it("closes a finished block only when the reader closes it", () => {
     const { rerender } = render(
       <ReasoningPart
         text="First thought"
@@ -210,11 +222,6 @@ describe("ReasoningPart", () => {
         displayMode="collapsed"
       />,
     );
-    const toggle = screen.getByRole("button", { name: /thinking/i });
-    // Closed, then opened again: the reader wants to keep reading it.
-    fireEvent.click(toggle);
-    fireEvent.click(toggle);
-
     rerender(
       <ReasoningPart
         text="First thought, finished"
@@ -222,12 +229,15 @@ describe("ReasoningPart", () => {
         displayMode="collapsed"
       />,
     );
+    const toggle = screen.getByRole("button", { name: /reasoning/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
 
-    expect(screen.getByRole("button", { name: /reasoning/i })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    expect(screen.getByText("First thought, finished")).toBeInTheDocument();
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByText("First thought, finished"),
+    ).not.toBeInTheDocument();
   });
 
   it("still resets when the display mode itself changes", () => {
