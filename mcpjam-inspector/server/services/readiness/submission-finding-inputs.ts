@@ -64,12 +64,19 @@ export function changedFindingInputs(
   context: SubmissionFindingContext,
 ): string[] {
   if (!finding.inputs) return [];
+  // Compact rows retain inputs even when the full finding details expire.
+  const packageInput = finding.inputs.find(
+    (input) => input.kind === "package" && input.key === "pluginVersionId",
+  );
   const current = new Map(
     submissionFindingInputs(finding, context).map((input) => [
       `${input.kind}:${input.key}`,
       input.fingerprint,
     ]),
   );
+  if (packageInput) {
+    current.set("package:pluginVersionId", canonicalDigest(context.pluginVersionId ?? null));
+  }
   return finding.inputs
     .filter(
       (input) =>
