@@ -56,7 +56,10 @@ import {
   selectionReasoningEffort,
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
-import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import {
+  getHarnessAdapter,
+  harnessUsesExternalAccount,
+} from "../../utils/harness/registry.js";
 import { appliedToolApproval } from "@/shared/tool-approval";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import {
@@ -110,6 +113,17 @@ export function harnessOfRuntimeConfig(
 ): Harness | undefined {
   if (!runtimeConfig) return undefined;
   return isHarness(runtimeConfig.harness) ? runtimeConfig.harness : undefined;
+}
+
+/**
+ * The host's harness picks the model on the customer's own account (Cursor
+ * CLI), so the host's own runtime-chosen model (`cursor/auto`) runs on it.
+ */
+export function hostChoosesModel(
+  hostTarget: ChatSessionHostTarget | undefined,
+): boolean {
+  const harness = harnessOfRuntimeConfig(hostTarget?.runtimeConfig);
+  return harness !== undefined && harnessUsesExternalAccount(harness);
 }
 
 /**

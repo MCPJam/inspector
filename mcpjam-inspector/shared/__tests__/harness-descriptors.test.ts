@@ -64,13 +64,15 @@ describe("harness surface support", () => {
         (surface) => `${id} ${surface}`,
       ),
     ).sort();
-    expect(declared).toEqual([
-      "cursor api",
-      "cursor events",
-      "cursor guests",
-      "cursor user-testing",
-      "opencode guests",
-    ]);
+    expect(declared).toEqual(["cursor guests", "cursor user-testing"]);
+  });
+  it("lets signed-in guests run every runtime but Cursor CLI", () => {
+    // The backend derives its guest list from these same exceptions
+    // (`GUEST_ALLOWED_HARNESSES`, pinned by the mirror check); Cursor stays
+    // off because its tokens would sit in a box the guest controls.
+    expect(
+      HARNESS_IDS.filter((id) => !harnessSurfaceRefusal(id, "guests")).sort(),
+    ).toEqual(["claude-code", "codex", "copilot-cli", "opencode"]);
   });
   it("names the surface each turn source runs on", () => {
     expect(
