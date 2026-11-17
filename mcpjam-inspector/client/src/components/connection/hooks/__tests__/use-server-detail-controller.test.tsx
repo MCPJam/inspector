@@ -13,6 +13,7 @@ import {
   createHttpServerConfig,
   createServer,
 } from "@/test/factories";
+import { track } from "@/lib/analytics";
 import {
   useServerDetailController,
   type ServerDetailController,
@@ -139,6 +140,35 @@ describe("useServerDetailController", () => {
   it("opens on the deep-linked tab", () => {
     const { controller } = renderController({ defaultTab: "compatibility" });
     expect(controller().tabs.active).toBe("compatibility");
+  });
+
+  it("lets a caller that owns the tab drive it", () => {
+    settingsFixture.available = true;
+    const onTabChange = vi.fn();
+    const { controller } = renderController({
+      activeTab: "settings",
+      onTabChange,
+      hostedServerId: "server_1",
+      extensionSettingsScope: SETTINGS_SCOPE,
+    });
+    expect(controller().tabs.active).toBe("settings");
+    expect(controller().settings.showBody).toBe(true);
+
+    act(() => controller().tabs.select("history"));
+    expect(onTabChange).toHaveBeenCalledWith("history");
+    // The caller has not moved the tab yet, so it stays put.
+    expect(controller().tabs.active).toBe("settings");
+  });
+
+  it("records where the details were shown", async () => {
+    const { controller } = renderController({
+      analyticsLocation: "server_canvas",
+    });
+    await act(() => controller().connection.connect());
+    expect(track).toHaveBeenCalledWith(
+      "server_detail_modal_connect_clicked",
+      expect.objectContaining({ location: "server_canvas" }),
+    );
   });
 
   it("lists Auth only for HTTP servers and History only for a saved project server", () => {

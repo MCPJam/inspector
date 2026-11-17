@@ -196,7 +196,13 @@ export function ServerSettingsTabBody({ controller }: ControllerProps) {
   );
 }
 
-export function ServerOverviewTabBody({ controller }: ControllerProps) {
+export function ServerOverviewTabBody({
+  controller,
+  evaluatedCapabilities,
+}: ControllerProps & {
+  /** The server canvas's capability names; the modal leaves this unset. */
+  evaluatedCapabilities?: readonly string[];
+}) {
   const { server, connection, projectId, hostedServerId } = controller;
   return !connection.isConnected &&
     !server.lastError &&
@@ -210,6 +216,7 @@ export function ServerOverviewTabBody({ controller }: ControllerProps) {
       server={server}
       projectId={projectId}
       hostedServerId={hostedServerId}
+      evaluatedCapabilities={evaluatedCapabilities}
     />
   );
 }
