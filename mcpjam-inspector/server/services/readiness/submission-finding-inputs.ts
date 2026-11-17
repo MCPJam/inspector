@@ -49,7 +49,7 @@ export function submissionFindingInputs(
     key: context.flow.id,
     fingerprint: canonicalDigest(context.flowVersion ?? context.flow.version),
   });
-  if (placement?.needs?.includes("package")) {
+  if (placement?.needs?.includes("package") || finding.details?.packageDerived === true) {
     inputs.push({
       kind: "package",
       key: "pluginVersionId",
