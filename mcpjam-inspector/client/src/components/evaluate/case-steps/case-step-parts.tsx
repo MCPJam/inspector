@@ -1,8 +1,4 @@
-/**
- * The small pieces the steps editor is built from: the numbered rail, a
- * section card, a one-line assertion row that opens into its fields, chips,
- * the role control and the ⋯ menu.
- */
+/** The steps editor's pieces: rail, section, assertion row, chips, role, ⋯ menu. */
 import type { ReactNode } from "react";
 import { Lock, MoreHorizontal, type LucideIcon } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -55,7 +51,8 @@ export function StepChip({
   );
 }
 
-export const ProvenanceChip = ({ suite }: { suite?: boolean }) =>
+/** Where a row is set: suite settings or this case. */
+export const ScopeChip = ({ suite }: { suite?: boolean }) =>
   suite ? (
     <StepChip tone="suite" title="Shared default, set in suite settings">
       Suite
@@ -194,7 +191,7 @@ export function StepRail({
   return (
     <div className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-3 sm:grid-cols-[2.5rem_minmax(0,1fr)] sm:gap-x-4">
       <div className="relative flex justify-center">
-        {marker !== undefined ? (
+        {marker != null ? (
           <span
             className={cn(
               "relative z-10 flex size-9 items-center justify-center rounded-full border border-border bg-background text-sm font-semibold text-foreground sm:size-10",
@@ -209,7 +206,7 @@ export function StepRail({
             aria-hidden="true"
             className={cn(
               "absolute -bottom-5 left-1/2 w-px -translate-x-1/2 bg-border",
-              marker !== undefined ? "top-9 sm:top-10" : "top-0",
+              marker != null ? "top-9 sm:top-10" : "top-0",
             )}
           />
         )}
@@ -335,11 +332,10 @@ export function StepRow({
           {menu}
         </div>
       </div>
-      {open ? (
-        <div className="border-t border-border px-3 py-3 sm:px-4">
-          {children}
-        </div>
-      ) : null}
+      {/* Mounted while closed, so an invalid draft inside still blocks Save. */}
+      <div hidden={!open} className="border-t border-border px-3 py-3 sm:px-4">
+        {children}
+      </div>
     </li>
   );
 }

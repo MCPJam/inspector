@@ -1,8 +1,6 @@
-/**
- * What sits inside a step's card: the prompt box or the action card, and the
- * fields an open assertion row shows. Every field editor is the product's own.
- */
+/** Inside a step's card: the prompt box, the action card, an assertion's fields. */
 import { ChevronDown, MousePointerClick, Wrench } from "lucide-react";
+import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
@@ -33,16 +31,22 @@ import {
 import { interactText, STEP_COPY } from "./case-steps-model";
 import { RoleControl } from "./case-step-parts";
 
+type PromptStep = Extract<TestStep, { kind: "prompt" }>;
+
+/** A step's title; an assert is never an action, and a new kind fails to compile. */
+export const actionTitle = (step: TestStep) =>
+  step.kind === "assert" ? "Assertion" : STEP_COPY[step.kind].title;
+
 export function PromptBox({
   step,
   first,
   readOnly,
   onChange,
 }: {
-  step: Extract<TestStep, { kind: "prompt" }>;
+  step: PromptStep;
   first: boolean;
   readOnly: boolean;
-  onChange: (next: TestStep) => void;
+  onChange: (next: PromptStep) => void;
 }) {
   return (
     <Textarea
@@ -81,36 +85,52 @@ function ViewToolSelect({
   step: InteractStep;
   availableTools: AvailableTool[];
   readOnly: boolean;
-  onChange: (next: TestStep) => void;
+  onChange: (next: InteractStep) => void;
 }) {
   const names = [
     ...new Set(invokableTools(availableTools).map((tool) => tool.name)),
   ];
+  const typed = names.length === 0;
   if (step.toolName && !names.includes(step.toolName))
     names.unshift(step.toolName);
+  const invalid = !readOnly && !step.toolName.trim();
   return (
     <div className="space-y-1.5">
       <Label className="text-sm font-medium">View (tool)</Label>
-      <Select
-        value={step.toolName || undefined}
-        disabled={readOnly}
-        onValueChange={(toolName) => onChange({ ...step, toolName })}
-      >
-        <SelectTrigger
+      {typed ? (
+        <Input
           aria-label="View tool"
-          aria-invalid={!readOnly && !step.toolName.trim()}
-          className="h-9 w-full text-sm font-normal"
+          value={step.toolName}
+          placeholder="View tool name…"
+          readOnly={readOnly}
+          aria-invalid={invalid}
+          className="h-9 text-sm md:text-sm"
+          onChange={(event) =>
+            onChange({ ...step, toolName: event.target.value })
+          }
+        />
+      ) : (
+        <Select
+          value={step.toolName || undefined}
+          disabled={readOnly}
+          onValueChange={(toolName) => onChange({ ...step, toolName })}
         >
-          <SelectValue placeholder="Pick a view tool…" />
-        </SelectTrigger>
-        <SelectContent>
-          {names.map((name) => (
-            <SelectItem key={name} value={name}>
-              {name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+          <SelectTrigger
+            aria-label="View tool"
+            aria-invalid={invalid}
+            className="h-9 w-full text-sm font-normal"
+          >
+            <SelectValue placeholder="Pick a view tool…" />
+          </SelectTrigger>
+          <SelectContent>
+            {names.map((name) => (
+              <SelectItem key={name} value={name}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
     </div>
   );
 }
@@ -132,7 +152,7 @@ export function ActionCard({
   availableTools: AvailableTool[];
   suiteServers: string[];
   projectServers?: RemoteServer[];
-  onChange: (next: TestStep) => void;
+  onChange: (next: InteractStep | ToolCallStep) => void;
 }) {
   const line = actionLine(step);
   const Icon = step.kind === "interact" ? MousePointerClick : Wrench;
@@ -172,61 +192,64 @@ export function ActionCard({
           />
         </span>
       </button>
-      {open ? (
-        <fieldset
-          disabled={readOnly}
-          className="min-w-0 space-y-2 border-t border-border px-3 py-3 sm:px-4"
-        >
-          {step.kind === "interact" ? (
-            <>
-              <ViewToolSelect
-                step={step}
-                availableTools={availableTools}
-                readOnly={readOnly}
-                onChange={onChange}
-              />
-              <InteractActionFields
-                paper
-                value={step.action}
-                readOnly={readOnly}
-                onChange={(action) => onChange({ ...step, action })}
-              />
-            </>
-          ) : (
-            <PinnedToolCallFields
-              paper
-              seedKey={step.id}
-              value={{
-                ...(step.serverId ? { serverId: step.serverId } : {}),
-                serverName: step.serverName,
-                toolName: step.toolName,
-                arguments: step.arguments,
-                ...(step.renderTimeoutMs
-                  ? { renderTimeoutMs: step.renderTimeoutMs }
-                  : {}),
-              }}
-              suiteServers={suiteServers}
-              projectServers={projectServers}
-              availableTools={invokableTools(availableTools)}
+      {/* Mounted while closed, so an invalid draft inside still blocks Save. */}
+      <fieldset
+        hidden={!open}
+        disabled={readOnly}
+        className="min-w-0 space-y-2 border-t border-border px-3 py-3 sm:px-4"
+      >
+        {step.kind === "interact" ? (
+          <>
+            <ViewToolSelect
+              step={step}
+              availableTools={availableTools}
               readOnly={readOnly}
-              onChange={(cfg) =>
-                onChange({
-                  ...step,
-                  serverId:
-                    cfg.serverId ??
-                    (cfg.serverName === step.serverName
-                      ? step.serverId
-                      : undefined),
-                  serverName: cfg.serverName,
-                  toolName: cfg.toolName,
-                  arguments: cfg.arguments,
-                  renderTimeoutMs: cfg.renderTimeoutMs,
-                })
-              }
+              onChange={onChange}
             />
-          )}
-        </fieldset>
-      ) : null}
+            <InteractActionFields
+              paper
+              value={step.action}
+              readOnly={readOnly}
+              onChange={(action) => onChange({ ...step, action })}
+            />
+          </>
+        ) : (
+          <PinnedToolCallFields
+            paper
+            seedKey={step.id}
+            value={{
+              ...(step.serverId ? { serverId: step.serverId } : {}),
+              serverName: step.serverName,
+              toolName: step.toolName,
+              arguments: step.arguments,
+              ...(step.renderTimeoutMs
+                ? { renderTimeoutMs: step.renderTimeoutMs }
+                : {}),
+            }}
+            suiteServers={suiteServers}
+            projectServers={projectServers}
+            availableTools={invokableTools(availableTools)}
+            readOnly={readOnly}
+            onChange={(cfg) => {
+              // The fields normalize on mount: write only a real edit.
+              if (readOnly) return;
+              const next = {
+                ...step,
+                serverId:
+                  cfg.serverId ??
+                  (cfg.serverName === step.serverName
+                    ? step.serverId
+                    : undefined),
+                serverName: cfg.serverName,
+                toolName: cfg.toolName,
+                arguments: cfg.arguments,
+                renderTimeoutMs: cfg.renderTimeoutMs,
+              };
+              if (JSON.stringify(next) !== JSON.stringify(step)) onChange(next);
+            }}
+          />
+        )}
+      </fieldset>
     </div>
   );
 }
@@ -238,6 +261,7 @@ export function AssertionEditor({
   actions,
   availableTools,
   readOnly,
+  checkPolicy,
   onChange,
   onMove,
 }: {
@@ -247,6 +271,8 @@ export function AssertionEditor({
   actions: SpineAction[];
   availableTools: AvailableTool[];
   readOnly: boolean;
+  /** The deployment grades a check's own role; without it, no role control. */
+  checkPolicy: boolean;
   onChange: (next: AssertStep) => void;
   /** The step it should be graded after. */
   onMove: (actionId: string) => void;
@@ -279,13 +305,13 @@ export function AssertionEditor({
                   value={action.step.id}
                   className="text-sm"
                 >
-                  {`Step ${action.ordinal} · ${STEP_COPY[action.step.kind as keyof typeof STEP_COPY].title}`}
+                  {`Step ${action.ordinal} · ${actionTitle(action.step)}`}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        {widget ? null : (
+        {widget || !checkPolicy ? null : (
           <RoleControl
             predicate={assertion}
             readOnly={readOnly}

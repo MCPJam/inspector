@@ -6,7 +6,7 @@ import { EvalAddDrawer } from "../case-spine/assertion-drawer";
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
 
 describe("EvalAddDrawer optional props", () => {
-  it("keeps today's heading and label when the props are absent", async () => {
+  it("uses the default heading and label when the props are absent", async () => {
     const user = userEvent.setup();
     render(<EvalAddDrawer onSelect={() => {}} triggerLabel="Add" />);
     await user.click(screen.getByRole("button", { name: "Add" }));
