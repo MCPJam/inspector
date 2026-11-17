@@ -2,6 +2,7 @@
  * After-run assertions: the route rule, the suite's defaults, then the case's
  * own predicates, in the order `afterRunSection` gives them.
  */
+import { useRef } from "react";
 import { Ban, ListOrdered, ShieldCheck } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { CheckRow } from "@/components/evals/checks-section";
@@ -15,7 +16,7 @@ import {
   ADD_SMALL,
   InheritedLock,
   NonBlockingChip,
-  ProvenanceChip,
+  ScopeChip,
   RoleControl,
   StepMenu,
   StepRow,
@@ -39,6 +40,8 @@ const ROUTE_BODY = {
     "Calls must follow this order, with no extra calls. The order comes from the “Tool was called with” assertions; edit arguments there.",
 } as const;
 
+let rowSeq = 0;
+
 function rowSummary(row: ScorecardRow) {
   return row.predicate
     ? assertionSummary(row.predicate, false)
@@ -53,6 +56,7 @@ export function CaseAfterRun({
   suiteDefaultMatchOptions,
   availableTools,
   readOnly,
+  checkPolicy,
   openKey,
   onToggle,
   onOpen,
@@ -66,6 +70,8 @@ export function CaseAfterRun({
   suiteDefaultMatchOptions: CaseStepsDraft["matchOptions"];
   availableTools: AvailableTool[];
   readOnly: boolean;
+  /** The deployment grades a check's own role; without it, no role control. */
+  checkPolicy: boolean;
   openKey: string | null;
   onToggle: (key: string) => void;
   onOpen: (key: string | null) => void;
@@ -79,6 +85,22 @@ export function CaseAfterRun({
     items: Parameters<typeof StepMenu>[0]["items"],
   ) => (readOnly ? null : <StepMenu label={label} items={items} />);
   const replaced = section.replacedSuiteCount;
+  // Case predicates have no id: each row gets one, spliced on remove, so its
+  // open state and field drafts stay with its predicate.
+  const rowIds = useRef<string[]>([]);
+  const caseCount = nextCasePredicateIndex(draft);
+  while (rowIds.current.length < caseCount)
+    rowIds.current.push(`case-row-${rowSeq++}`);
+  rowIds.current.length = caseCount;
+  const removeCase = (index: number) => {
+    rowIds.current.splice(index, 1);
+    const open = openKey?.startsWith("case:") ? Number(openKey.slice(5)) : -1;
+    if (open === index) onOpen(null);
+    else if (open > index) onOpen(`case:${open - 1}`);
+    onEdit((current) =>
+      setCasePredicates(current, (list) => list.filter((_, i) => i !== index)),
+    );
+  };
   return (
     <StepSection
       marker={ordinal}
@@ -123,7 +145,7 @@ export function CaseAfterRun({
                   ? route.toolNames.join(" → ")
                   : undefined
               }
-              chips={<ProvenanceChip />}
+              chips={<ScopeChip />}
               menu={menu(ROUTE_CHECK_LABELS[route.kind], [
                 {
                   label: "Remove",
@@ -162,7 +184,7 @@ export function CaseAfterRun({
                 chips={
                   <>
                     {row.role === "advisory" ? <NonBlockingChip /> : null}
-                    <ProvenanceChip suite />
+                    <ScopeChip suite />
                     <InheritedLock />
                   </>
                 }
@@ -205,7 +227,7 @@ export function CaseAfterRun({
               );
             return (
               <StepRow
-                key={key}
+                key={rowIds.current[index] ?? key}
                 anchor={key}
                 open={openKey === key}
                 onToggle={() => onToggle(key)}
@@ -217,28 +239,22 @@ export function CaseAfterRun({
                 chips={
                   <>
                     {row.role === "advisory" ? <NonBlockingChip /> : null}
-                    <ProvenanceChip />
+                    <ScopeChip />
                   </>
                 }
                 menu={menu(s.label, [
-                  {
-                    label: "Remove",
-                    onSelect: () =>
-                      onEdit((current) =>
-                        setCasePredicates(current, (list) =>
-                          list.filter((_, i) => i !== index),
-                        ),
-                      ),
-                  },
+                  { label: "Remove", onSelect: () => removeCase(index) },
                 ])}
               >
                 {predicate ? (
                   <fieldset disabled={readOnly} className="min-w-0 space-y-3">
-                    <RoleControl
-                      predicate={predicate}
-                      readOnly={readOnly}
-                      onChange={setPredicate}
-                    />
+                    {checkPolicy ? (
+                      <RoleControl
+                        predicate={predicate}
+                        readOnly={readOnly}
+                        onChange={setPredicate}
+                      />
+                    ) : null}
                     <CheckRow
                       noun="assertion"
                       embedded

@@ -137,7 +137,12 @@ describe("CaseOutcome", () => {
 });
 
 describe("CaseAfterRun", () => {
-  function renderAfterRun(draft: CaseStepsDraft) {
+  function renderAfterRun(
+    draft: CaseStepsDraft,
+    openKey: string | null = null,
+  ) {
+    const onOpen = vi.fn();
+    const onEdit = vi.fn();
     renderWithProviders(
       <CaseAfterRun
         ordinal={3}
@@ -147,14 +152,46 @@ describe("CaseAfterRun", () => {
         suiteDefaultMatchOptions={undefined}
         availableTools={[]}
         readOnly={false}
-        openKey={null}
+        checkPolicy
+        openKey={openKey}
         onToggle={vi.fn()}
-        onOpen={vi.fn()}
-        onEdit={vi.fn()}
+        onOpen={onOpen}
+        onEdit={onEdit}
         onOpenSuiteSettings={vi.fn()}
       />,
     );
+    return { onOpen, onEdit };
   }
+
+  const twoCase = () =>
+    draftOf({
+      predicates: {
+        mode: "extend",
+        list: [
+          { type: "responseContains", needle: "One" },
+          { type: "responseContains", needle: "Two" },
+        ],
+      },
+    });
+
+  it.each([
+    ["case:0", null],
+    ["case:1", "case:0"],
+  ])(
+    "removing the first case row with %s open opens %s",
+    async (open, next) => {
+      const { onOpen, onEdit } = renderAfterRun(twoCase(), open);
+      const user = userEvent.setup();
+      const [first] = screen.getAllByLabelText(/Options for Response contains/);
+      await user.click(first!);
+      await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+      expect(onOpen).toHaveBeenCalledWith(next);
+      const removed = onEdit.mock.lastCall![0](twoCase());
+      expect(removed.predicates.list).toEqual([
+        { type: "responseContains", needle: "Two" },
+      ]);
+    },
+  );
 
   it("lists the suite's defaults under its heading", () => {
     renderAfterRun(draftOf());

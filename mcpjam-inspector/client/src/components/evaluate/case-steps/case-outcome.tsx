@@ -19,7 +19,7 @@ import {
   withFailOnToolError,
 } from "@/shared/tool-error-policy";
 import { ToolErrorSwitch } from "../tool-error-switch";
-import { ProvenanceChip, StepSection } from "./case-step-parts";
+import { ScopeChip, StepSection } from "./case-step-parts";
 import type { CaseStepsDraft, DraftEdit } from "./case-step-edits";
 
 /** "<model> · threshold <t> · <n> suite criteria · <mode> · <role>", or null when off. */
@@ -91,7 +91,7 @@ export function CaseOutcome({
           <span className="text-[13px] font-medium text-card-foreground">
             Judge
           </span>
-          <ProvenanceChip suite />
+          <ScopeChip suite />
           <span className="min-w-0 text-xs text-muted-foreground">
             {judgeOff ? "Judge is off for this suite." : judgeFactsLine(card)}
           </span>
