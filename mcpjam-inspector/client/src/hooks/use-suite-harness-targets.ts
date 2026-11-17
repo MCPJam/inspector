@@ -9,6 +9,7 @@
  */
 import { useMemo } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
+import { makeFunctionReference } from "convex/server";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
@@ -19,6 +20,12 @@ type SuiteClients = {
   environmentIds?: string[];
   hostAttachments?: { namedHostId: string }[];
 };
+
+const getTestSuiteQuery = makeFunctionReference<
+  "query",
+  { suiteId: string },
+  SuiteClients | null
+>("testSuites:getTestSuite");
 
 /** The client ids a suite runs on, from its attachments or environments. */
 export function suiteClientHostIds(
@@ -41,11 +48,11 @@ export function useSuiteHarnessTargets(
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const suite = useQuery(
-    "testSuites:getTestSuite" as any,
+    getTestSuiteQuery,
     isAuthenticated && isUserReady && shouldQueryProjectId(projectId) && suiteId
-      ? ({ suiteId } as any)
+      ? { suiteId }
       : "skip",
-  ) as SuiteClients | null | undefined;
+  );
   const environments = useProjectEnvironments(
     suite?.environmentIds?.length ? projectId : null,
     { includeAdhoc: true },
