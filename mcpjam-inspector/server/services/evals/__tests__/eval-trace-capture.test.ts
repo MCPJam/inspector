@@ -136,6 +136,24 @@ describe("eval-trace-capture", () => {
     expect(llm[0]).not.toHaveProperty("cost");
   });
 
+  it.each([
+    ["output tokens", { outputTokens: 4 }],
+    ["total tokens", { totalTokens: 14 }],
+  ])(
+    "backend LLM failure reporting only %s keeps an llm span",
+    (_label, meta) => {
+      const spans: EvalTraceSpan[] = [];
+      pushBackendStepLlmFailureSpans(
+        spans, runAt, 0, 0, runAt, runAt, runAt + 5, meta,
+      );
+      expect(spans.map((span) => span.category)).toEqual([
+        "step",
+        "llm",
+        "error",
+      ]);
+    },
+  );
+
   it("backend LLM failure with neither usage nor cost adds no llm span", () => {
     const spans: EvalTraceSpan[] = [];
     const meta = { modelId: "gpt-test" };
