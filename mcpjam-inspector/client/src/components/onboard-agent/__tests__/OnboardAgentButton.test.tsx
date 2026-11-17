@@ -14,8 +14,6 @@ vi.mock("@/lib/clipboard", () => ({
 
 import { OnboardAgentButton } from "../OnboardAgentButton";
 
-const originalMatchMedia = window.matchMedia;
-
 describe("OnboardAgentButton", () => {
   beforeEach(() => {
     trackMock.mockReset();
@@ -23,7 +21,6 @@ describe("OnboardAgentButton", () => {
   });
 
   afterEach(() => {
-    window.matchMedia = originalMatchMedia;
     vi.useRealTimers();
   });
 
@@ -36,6 +33,7 @@ describe("OnboardAgentButton", () => {
       img.getAttribute("alt"),
     );
     expect(logos).toEqual(["Claude", "Codex", "Cursor"]);
+    expect(trigger).not.toHaveClass("hidden");
   });
 
   it("shows the short label at 2xl and the full name in a tooltip", async () => {
@@ -122,33 +120,6 @@ describe("OnboardAgentButton", () => {
       }),
     );
     expect(copy).toHaveTextContent("Copy");
-  });
-
-  it("closes when the viewport drops below the trigger's breakpoint", async () => {
-    let onChange: (() => void) | undefined;
-    const mql = {
-      matches: true,
-      addEventListener: (_: string, cb: () => void) => {
-        onChange = cb;
-      },
-      removeEventListener: vi.fn(),
-    };
-    window.matchMedia = vi
-      .fn()
-      .mockReturnValue(mql as unknown as MediaQueryList);
-    const user = userEvent.setup();
-    render(<OnboardAgentButton />);
-    await user.click(
-      screen.getByRole("button", { name: /Onboard your agent to MCPJam/ }),
-    );
-    expect(screen.getByText("mcpjam cloud login")).toBeInTheDocument();
-
-    mql.matches = false;
-    act(() => onChange?.());
-
-    await waitFor(() =>
-      expect(screen.queryByText("mcpjam cloud login")).toBeNull(),
-    );
   });
 
   it("restarts the Copied timer on a repeat copy", async () => {

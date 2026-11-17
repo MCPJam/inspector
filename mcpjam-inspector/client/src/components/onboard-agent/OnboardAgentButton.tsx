@@ -40,8 +40,6 @@ const CLI_LINKS = [
   },
 ] as const;
 
-// Matches the trigger's `lg:inline-flex`; below it the trigger is hidden.
-const TRIGGER_VISIBLE_QUERY = "(min-width: 1024px)";
 const TRIGGER_LABEL = "Onboard your agent to MCPJam";
 const TRIGGER_SHORT_LABEL = "Connect your agent";
 const COPIED_RESET_MS = 1500;
@@ -91,16 +89,6 @@ function CommandRow({ id, command }: { id: string; command: string }) {
 export function OnboardAgentButton() {
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    const mql = window.matchMedia(TRIGGER_VISIBLE_QUERY);
-    const onChange = () => {
-      if (!mql.matches) setOpen(false);
-    };
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, [open]);
-
   const onOpenChange = (next: boolean) => {
     setOpen(next);
     if (next) track("onboard_agent_opened", { location: "header" });
@@ -117,7 +105,7 @@ export function OnboardAgentButton() {
               aria-label={TRIGGER_LABEL}
               // Below 2xl only the logos show, so the server selector keeps room.
               className={cn(
-                "hidden gap-2 px-1.5 lg:inline-flex 2xl:pl-2.5",
+                "gap-2 px-1.5 2xl:pl-2.5",
                 open && "bg-chrome-button-hover",
               )}
             >
@@ -141,7 +129,7 @@ export function OnboardAgentButton() {
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-[400px] overflow-hidden rounded-xl p-0"
+        className="w-[min(400px,calc(100vw-16px))] overflow-hidden rounded-xl p-0"
       >
         <div className="flex flex-col gap-2.5 px-3.5 py-3">
           <p className="text-sm font-medium text-card-foreground">
