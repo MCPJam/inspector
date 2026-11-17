@@ -2312,7 +2312,7 @@ export async function createAuthorizedManager(
   const credentialBindings = new Map<string, CredentialHeaderBinding>();
   // Tokens the backend delivered, by connection key. In local mode they stay
   // in this process: held to their bound origins and never replayed.
-  const deliveredTokens = new Map<string, { token: string; bound: unknown }>();
+  const deliveredTokens = new Map<string, { token: string; bound: unknown; accountKind?: string; accountUploaded?: boolean }>();
 
   // PASS 2 — connect/mint concurrently. Every server reaching this point has
   // already cleared the batch-wide validation above.
@@ -2776,6 +2776,8 @@ export async function createAuthorizedManager(
           deliveredTokens.set(serverId, {
             token: connectToken,
             bound: auth.oauthBoundOrigins,
+            accountKind: auth.oauthAccountKind,
+            accountUploaded: auth.oauthAccountUploaded,
           });
         }
 
@@ -2832,6 +2834,8 @@ export async function createAuthorizedManager(
           deliveredTokens.set(connection.key, {
             token: credential.accessToken,
             bound: credential.boundOrigins,
+            accountKind: credential.accountKind,
+            accountUploaded: credential.accountUploaded,
           });
         }
         return [
