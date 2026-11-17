@@ -459,8 +459,9 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report|resume))?)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
   // The /readiness page's reviewer sign-in: a submission's attempts, one
-  // attempt, and resuming or cancelling it.
-  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel))?)?$/,
+  // attempt, resuming or cancelling it, and the handoff link a person
+  // finishes the sign-in with.
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel|handoff))?)?$/,
   // The /readiness page: the flows it copies, and a project's directory
   // submissions with their runs, results, handoff summary, findings (one
   // check's under its id), export, events and snapshots.
