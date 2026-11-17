@@ -153,6 +153,7 @@ import type { ConnectionDefaults } from "@/shared/connection-defaults";
 export interface HostedServerWriteTarget {
   projectId: string;
   serverId: string;
+  publishedPluginId?: string | null;
 }
 
 function extractRequestHeaders(
@@ -1959,6 +1960,7 @@ export function useServerState({
         projectId: string;
         serverId?: string | null;
         exactServerId?: boolean;
+        publishedPluginId?: string | null;
       },
     ): Promise<ServerSyncResult> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
@@ -2300,6 +2302,12 @@ export function useServerState({
           const updatePayload = {
             serverId: serverIdToUpdate,
             ...payload,
+            ...(target?.publishedPluginId !== undefined
+              ? {
+                  projectId: latestProjectId,
+                  publishedPluginId: target.publishedPluginId,
+                }
+              : {}),
             ...(hasClientSecretValue ? { clientSecret } : {}),
             ...(clearClientSecret ? { clearClientSecret: true } : {}),
             ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
@@ -6833,6 +6841,21 @@ export function useServerState({
       const renameTarget = isRename
         ? resolveRenameWriteTarget(originalServerName)
         : undefined;
+      let editTarget = renameTarget;
+      if (formData.publishedPluginId !== undefined) {
+        const savedTarget =
+          renameTarget ?? resolveRenameWriteTarget(originalServerName);
+        if (!savedTarget) {
+          toast.error(
+            "Save this server in a project before setting a published plugin ID.",
+          );
+          return { ok: false, serverName: originalServerName };
+        }
+        editTarget = {
+          ...savedTarget,
+          publishedPluginId: formData.publishedPluginId,
+        };
+      }
 
       if (skipAutoConnect) {
         const mcpConfig = toMCPConfig(formData);
@@ -6907,7 +6930,7 @@ export function useServerState({
             nextServerName,
             updatedServer,
             undefined,
-            renameTarget ? { ...renameTarget, exactServerId: true } : undefined,
+            editTarget ? { ...editTarget, exactServerId: true } : undefined,
           );
           // Nothing was written, so the success toast below would be a lie.
           if (!synced.ok) {
@@ -6957,6 +6980,7 @@ export function useServerState({
 
       const shouldPreserveOAuth =
         hadOAuthTokens &&
+        formData.publishedPluginId === undefined &&
         !pathScopedIssuerChanged &&
         formData.useOAuth &&
         nextServerName === originalServerName &&
@@ -7010,7 +7034,7 @@ export function useServerState({
       }
       let configSaved = false;
       await handleConnect(formData, {
-        hostedWriteTarget: renameTarget,
+        hostedWriteTarget: editTarget,
         onConfigSaved: () => {
           configSaved = true;
           if (renameTarget) {
