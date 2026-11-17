@@ -550,25 +550,34 @@ tbody tr:hover td {
   color: var(--mcj-ink-strong);
 }
 
-/* Keep the install selector distinct from navigation and code-group tabs. */
+/* Mirror design-system Tabs without replacing Mintlify's tab behavior. */
 .mcp-client-setup[data-component-part="tabs-list"] {
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  min-width: 0;
+  width: 100%;
+  gap: 0.125rem;
   overflow: visible;
   padding: 0.25rem;
-  border: none;
+  border: 1px solid var(--mcj-rule);
+  border-radius: calc(var(--mcj-radius) + 0.25rem);
+  background: var(--mcj-paper-2);
 }
 
 .mcp-client-setup[data-component-part="tabs-list"] > [role="tab"] {
   display: flex;
   align-items: center;
-  min-height: 2.75rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--mcj-ink-muted);
+  justify-content: center;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid transparent;
   border-radius: var(--mcj-radius);
-  background: var(--mcj-paper-2);
-  color: var(--mcj-ink-strong);
+  background: transparent;
+  color: var(--mcj-ink);
+  font-weight: 500;
   cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
 .mcp-client-setup [data-component-part="tab-button"] {
@@ -576,22 +585,41 @@ tbody tr:hover td {
   margin: 0;
   border: none;
   color: inherit;
+  font-weight: inherit;
+  line-height: 1.25rem;
 }
 
-.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"]:hover {
-  border-color: var(--mcj-ink-strong);
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"]:not([aria-selected="true"]):hover {
   background: var(--mcj-paper-3);
+  color: var(--mcj-ink-strong);
 }
 
 .mcp-client-setup[data-component-part="tabs-list"] > [role="tab"][aria-selected="true"] {
-  border-color: var(--mcj-ink-strong);
-  background: var(--mcj-ink-strong);
-  color: var(--mcj-paper);
+  border-color: var(--mcj-rule-strong);
+  background: var(--mcj-paper);
+  color: var(--mcj-ink-strong);
+  font-weight: 600;
 }
 
 .mcp-client-setup[data-component-part="tabs-list"] > [role="tab"]:focus-visible {
   outline: 2px solid var(--mcj-orange-edge);
   outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .mcp-client-setup[data-component-part="tabs-list"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mcp-client-setup[data-component-part="tabs-list"] > [role="tab"] {
+    min-height: 2.75rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .mcp-client-setup[data-component-part="tabs-list"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* SDK version pill — visible interim signal that the docs describe v1.x of
