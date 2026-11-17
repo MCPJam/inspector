@@ -211,20 +211,29 @@ export function ModelRatesPanel({
   const [editing, setEditing] = useState<ModelRateRow | "new">();
   const [retiring, setRetiring] = useState<ModelRateRow>();
   const [historyOf, setHistoryOf] = useState<ModelRateRow>();
+  const [retireBusy, setRetireBusy] = useState(false);
 
   const retire = async () => {
-    if (!retiring) return;
+    if (!retiring || retireBusy) return;
+    setRetireBusy(true);
     try {
       await onRetire(retiring);
       toast.success("Price retired.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
+      setRetireBusy(false);
       setRetiring(undefined);
     }
   };
-  const action = (label: string, run: () => void) => (
-    <Button key={label} size="sm" variant="ghost" onClick={run}>
+  const action = (label: string, rate: ModelRateRow, run: () => void) => (
+    <Button
+      key={label}
+      size="sm"
+      variant="ghost"
+      aria-label={`${label} ${rate.modelId}`}
+      onClick={run}
+    >
       {label}
     </Button>
   );
@@ -258,9 +267,9 @@ export function ModelRatesPanel({
           defaultAuthor={defaultAuthor}
           inForce={inForce}
           actions={(rate) => [
-            renderHistory && action("History", () => setHistoryOf(rate)),
-            canEdit && action("Edit", () => setEditing(rate)),
-            canEdit && action("Retire", () => setRetiring(rate)),
+            renderHistory && action("History", rate, () => setHistoryOf(rate)),
+            canEdit && action("Edit", rate, () => setEditing(rate)),
+            canEdit && action("Retire", rate, () => setRetiring(rate)),
           ]}
         />
       )}
@@ -296,12 +305,13 @@ export function ModelRatesPanel({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              disabled={retireBusy}
               onClick={(event) => {
                 event.preventDefault();
                 void retire();
               }}
             >
-              Retire
+              {retireBusy ? "Retiring..." : "Retire"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

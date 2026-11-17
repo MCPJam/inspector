@@ -187,6 +187,31 @@ describe("LocalModelRates", () => {
     ).toBeTruthy();
   });
 
+  it("keeps the list when a scheduled rate's history fails to load", async () => {
+    server.rates = [scheduled, { ...llama, rateId: "r3", modelId: "qwen3" }];
+    server.authFetch.mockImplementation(async (url: string) =>
+      url.includes("?")
+        ? Response.json({ ok: false, message: "Read failed." }, { status: 500 })
+        : Response.json({ ok: true, rates: server.rates }),
+    );
+    render(<LocalModelRates />);
+    expect(await screen.findByText("qwen3")).toBeTruthy();
+    expect(screen.getByText("llama3.2")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/In force until|No price in force/)).toBeNull();
+  });
+
+  it("names the model on each row action for screen readers", async () => {
+    render(<LocalModelRates />);
+    await screen.findByText("llama3.2");
+    expect(
+      screen.getByRole("button", { name: "Edit llama3.2" }),
+    ).toHaveTextContent("Edit");
+    expect(
+      screen.getByRole("button", { name: "Retire llama3.2" }),
+    ).toHaveTextContent("Retire");
+  });
+
   it("keeps a raw network error out of the load failure", async () => {
     server.authFetch.mockRejectedValue(new TypeError("Failed to fetch"));
     render(<LocalModelRates />);

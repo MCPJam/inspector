@@ -134,7 +134,7 @@ describe("OrganizationModelRates", () => {
     mount(false);
     expect(screen.queryByRole("button", { name: /Add price/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Edit/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Retire" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Retire/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /History/ }));
     expect(
       screen.getByText("Price history for anthropic/claude-sonnet-4.5"),
@@ -155,7 +155,11 @@ describe("OrganizationModelRates", () => {
       rates: { currency: "USD", input: 2.4, output: 10, cacheRead: 0.24 },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Retire" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Retire anthropic/claude-sonnet-4.5",
+      }),
+    );
     fireEvent.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
         name: "Retire",
@@ -167,6 +171,30 @@ describe("OrganizationModelRates", () => {
         rateId: "r1",
       }),
     );
+  });
+
+  it("retires once when the confirm button is pressed twice", async () => {
+    let finish!: () => void;
+    convex.retire.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ rateId: "r1", retiredAt: 1 });
+        }),
+    );
+    mount(true);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Retire anthropic/claude-sonnet-4.5",
+      }),
+    );
+    const dialog = within(screen.getByRole("alertdialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "Retire" }));
+    const busy = await dialog.findByRole("button", { name: "Retiring..." });
+    expect(busy).toBeDisabled();
+    fireEvent.click(busy);
+    finish();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(convex.retire).toHaveBeenCalledTimes(1);
   });
 
   it("shows the price in force today beside a scheduled one", () => {

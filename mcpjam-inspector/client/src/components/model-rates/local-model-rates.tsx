@@ -76,6 +76,8 @@ function LocalModelRatesPanel() {
       // The list gives each series' newest revision, which can start later.
       // For those, the price in force today comes from the series' history.
       const now = Date.now();
+      // A history that fails to load leaves only that rate without today's
+      // price, as on the organization panel, not the whole list.
       const current = await Promise.all(
         loaded
           .filter((rate) => rate.effectiveAt > now)
@@ -84,13 +86,17 @@ function LocalModelRatesPanel() {
               providerKey: rate.providerKey ?? "",
               modelId: rate.modelId,
             });
-            const { revisions } = await request(`?${series}`);
-            const row = revisionInForce(rowsOf(revisions), now) ?? null;
-            return [rate.rateId, row] as const;
+            try {
+              const { revisions } = await request(`?${series}`);
+              const row = revisionInForce(rowsOf(revisions), now) ?? null;
+              return [[rate.rateId, row] as const];
+            } catch {
+              return [];
+            }
           }),
       );
       setRates(loaded);
-      setInForce(new Map(current));
+      setInForce(new Map(current.flat()));
       setLoadError(undefined);
     } catch (error) {
       // Show the server's own message, such as a storage failure. A raw
