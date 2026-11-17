@@ -10,10 +10,7 @@ import { checkRole } from "@mcpjam/sdk/predicates";
 import type { SuiteSettingsTab } from "@/lib/eval-route-types";
 import type { RemoteServer } from "@/hooks/useProjects";
 import { CheckDraftBoundary } from "@/components/evals/checks-section";
-import {
-  invokableTools,
-  type AvailableTool,
-} from "@/components/evals/step-fields";
+import type { AvailableTool } from "@/components/evals/step-fields";
 import type { EvalJudgeConfig } from "@/components/evals/types";
 import type { Predicate } from "@/shared/eval-matching";
 import {
@@ -75,6 +72,8 @@ export interface CaseStepsEditorProps {
     defaultPredicates: Predicate[];
     servers: string[];
     defaultMatchOptions?: CaseStepsDraft["matchOptions"];
+    /** The deployment grades a check's own role (scorers.checkPolicy). */
+    checkPolicy?: boolean;
   };
   availableTools: AvailableTool[];
   projectServers?: RemoteServer[];
@@ -87,6 +86,10 @@ export interface CaseStepsEditorProps {
 }
 
 type PendingRemove = DeleteActionPlan & { stepId: string };
+
+/** A widget check added after an Interact step checks its view; else pick one. */
+const viewOf = (step: TestStep | undefined) =>
+  step?.kind === "interact" ? step.toolName : "";
 
 export function CaseStepsEditor({
   draft,
@@ -112,7 +115,6 @@ export function CaseStepsEditor({
   const setSteps = (update: (steps: TestStep[]) => TestStep[]) =>
     edit((current) => ({ ...current, steps: update(current.steps) }));
   const toggle = (key: string) => onOpenKeyChange(openKey === key ? null : key);
-  const viewTool = invokableTools(availableTools)[0]?.name ?? "";
   const lastActionId = groups.steps.at(-1)?.step.id ?? null;
   const openSettings = () => onOpenSuiteSettings("evaluators");
   const routeMatching = safeResolveMatchOptions(
@@ -166,6 +168,7 @@ export function CaseStepsEditor({
           actions={groups.steps}
           availableTools={availableTools}
           readOnly={readOnly}
+          checkPolicy={suite.checkPolicy === true}
           onChange={(next) => edit((current) => updateStep(current, next))}
           onMove={(target) =>
             setSteps((steps) => moveAssertionTo(steps, step.id, target))
@@ -200,7 +203,8 @@ export function CaseStepsEditor({
           {groups.steps.map((action) => {
             const step = action.step;
             const key = `action:${step.id}`;
-            const copy = STEP_COPY[step.kind as keyof typeof STEP_COPY];
+            if (step.kind === "assert") return null; // never an action
+            const copy = STEP_COPY[step.kind];
             const n = action.ordinal;
             const menuItems = [
               {
@@ -242,7 +246,7 @@ export function CaseStepsEditor({
                       edit((current) => updateStep(current, next))
                     }
                   />
-                ) : step.kind === "assert" ? null : (
+                ) : (
                   <ActionCard
                     step={step}
                     open={openKey === key}
@@ -289,7 +293,7 @@ export function CaseStepsEditor({
                         const result = addAssertionAt(
                           step.id,
                           choice,
-                          viewTool,
+                          viewOf(step),
                         );
                         if (!result) return;
                         edit(result.edit);
@@ -316,7 +320,7 @@ export function CaseStepsEditor({
                   const result = addAnything(choice, {
                     lastActionId,
                     suiteServers: suite.servers,
-                    viewTool,
+                    viewTool: viewOf(groups.steps.at(-1)?.step),
                     suiteDefaultMatchOptions: suite.defaultMatchOptions,
                     nextCaseIndex: nextCasePredicateIndex(draft),
                   });
@@ -343,6 +347,7 @@ export function CaseStepsEditor({
             suiteDefaultMatchOptions={suite.defaultMatchOptions}
             availableTools={availableTools}
             readOnly={readOnly}
+            checkPolicy={suite.checkPolicy === true}
             openKey={openKey}
             onToggle={toggle}
             onOpen={onOpenKeyChange}

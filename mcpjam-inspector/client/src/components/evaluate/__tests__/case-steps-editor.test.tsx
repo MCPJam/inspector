@@ -158,6 +158,36 @@ describe("CaseStepsEditor structure", () => {
     expect(screen.getByText("1 argument, exact match")).toBeTruthy();
   });
 
+  it.each([
+    ["an Interact step uses its view", "Step 2", "show_board"],
+    ["a prompt leaves the view to pick", "Step 1", ""],
+  ])("a widget check added after %s", async (_, after, view) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const interact: TestStep = {
+      id: "i1",
+      kind: "interact",
+      toolName: "show_board",
+      action: { kind: "key", key: "Enter" },
+    };
+    render(
+      <Harness
+        initial={base({ steps: [sketch[0]!, interact] })}
+        onChange={onChange}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: `Add assertion after ${after.toLowerCase()}`,
+      }),
+    );
+    await user.click(await screen.findByText("Text visible"));
+    const added = onChange.mock.lastCall![0].steps.find(
+      (step: TestStep) => step.kind === "assert" && "kind" in step.assertion,
+    );
+    expect(added.assertion.toolName).toBe(view);
+  });
+
   it("a blank draft has no assertions heading", () => {
     render(
       <Harness
