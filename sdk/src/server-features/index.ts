@@ -56,6 +56,14 @@ export {
   boundedProbeValues,
 } from "./probe-value-keys.js";
 export {
+  OBSERVABLE_FEATURE_IDS,
+  classifyFrame,
+  requestContextOf,
+  type FrameDirection,
+  type FrameEra,
+  type FrameRequestContext,
+} from "./classify-frame.js";
+export {
   checkEvidenceFromDigest,
   isConformanceCheckRef,
   isConformanceSuiteKey,

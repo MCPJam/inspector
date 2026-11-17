@@ -45,6 +45,14 @@ export type {
   RpcLogEvent,
   HttpExchangeLogEvent,
   HttpExchangeLogger,
+  FeatureObserver,
+  FeatureObservationEvent,
+} from "./mcp-client-manager/index.js";
+// MCPJam's own traffic on a connection is not observed use.
+export {
+  isFeatureObservationPaused,
+  pauseFeatureObservation,
+  suppressFeatureObservation,
 } from "./mcp-client-manager/index.js";
 
 // SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
