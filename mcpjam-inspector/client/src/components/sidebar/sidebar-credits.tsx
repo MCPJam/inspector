@@ -41,6 +41,8 @@ import { getEvalIterationQuotaLabel } from "@/lib/eval-iteration-quota";
 interface SidebarCreditsProps {
   organizationId: string;
   /** Opens the organization's billing settings. */
+  onOpenBilling: () => void;
+  /** Opens the organization's Plans page. */
   onExplorePlans: () => void;
 }
 
@@ -60,6 +62,7 @@ interface SidebarCreditsProps {
  */
 export function SidebarCredits({
   organizationId,
+  onOpenBilling,
   onExplorePlans,
 }: SidebarCreditsProps) {
   const { balance, isLoading } = useCreditBalance({ organizationId });
@@ -136,7 +139,7 @@ export function SidebarCredits({
               // decorative, which would otherwise leave the button nameless
               // there. No tooltip: see the comment above.
               aria-label="See credits"
-              onClick={onExplorePlans}
+              onClick={onOpenBilling}
             >
               <CoinStackIcon aria-hidden="true" className="size-4" />
               <span className="group-data-[collapsible=icon]:hidden">

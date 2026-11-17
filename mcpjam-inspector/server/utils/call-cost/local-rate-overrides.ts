@@ -10,36 +10,28 @@ import { readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import {
-  parseModelRates,
-  type ModelRates,
-  type RateEvidence,
-} from "@mcpjam/sdk";
+import type { RateEvidence } from "@mcpjam/sdk";
 import {
   normalizeModelRateInput,
   type ModelRateInput,
 } from "@/shared/model-rate-input";
 import {
+  modelRateRevisionZ,
+  parseModelRateRevision,
+  revisionInForce,
+  type ParsedModelRateRevision,
+} from "@/shared/model-rate-revision";
+import {
   createCapabilityMutationLock,
   persistCapabilityState,
 } from "../local-capability.js";
 
-const storedRevisionZ = z.object({
-  rateId: z.string().min(1),
+const storedRevisionZ = modelRateRevisionZ.extend({
   providerKey: z.string().min(1),
-  modelId: z.string().min(1),
-  rates: z.unknown(),
-  effectiveAt: z.number(),
-  revision: z.number(),
   createdAt: z.number(),
-  note: z.string().optional(),
-  retiredAt: z.number().optional(), // On a series' newest revision only.
 });
 
-export type LocalRateRevision = Omit<
-  z.infer<typeof storedRevisionZ>,
-  "rates"
-> & { rates: ModelRates };
+export type LocalRateRevision = ParsedModelRateRevision<typeof storedRevisionZ>;
 
 export class LocalRateOverrideError extends Error {
   constructor(
@@ -58,12 +50,6 @@ export function localRateOverridesFilePath(): string {
   );
 }
 
-function parseRevision(value: unknown): LocalRateRevision | undefined {
-  const parsed = storedRevisionZ.safeParse(value);
-  const rates = parsed.success ? parseModelRates(parsed.data.rates) : undefined;
-  return parsed.success && rates ? { ...parsed.data, rates } : undefined;
-}
-
 /** One provider + model series, newest revision first. */
 function seriesOf(
   revisions: LocalRateRevision[],
@@ -73,22 +59,6 @@ function seriesOf(
   return revisions
     .filter((row) => row.providerKey === providerKey && row.modelId === modelId)
     .sort((a, b) => b.revision - a.revision);
-}
-
-/**
- * The first revision already in effect at `at`, unless it or a newer one was
- * retired by then. A series saved again after a retirement starts over.
- */
-function revisionInForce(
-  series: LocalRateRevision[],
-  at: number,
-): LocalRateRevision | undefined {
-  let retiredFrom = Number.POSITIVE_INFINITY;
-  for (const row of series) {
-    retiredFrom = Math.min(retiredFrom, row.retiredAt ?? retiredFrom);
-    if (row.effectiveAt <= at) return retiredFrom <= at ? undefined : row;
-  }
-  return undefined;
 }
 
 export function createLocalRateOverrideStore(filePath: () => string) {
@@ -119,7 +89,9 @@ export function createLocalRateOverrideStore(filePath: () => string) {
       if (strict) await rename(filePath(), `${filePath()}.unreadable`);
       return [];
     }
-    return revisions.flatMap((row) => parseRevision(row) ?? []);
+    return revisions.flatMap(
+      (row) => parseModelRateRevision(storedRevisionZ, row) ?? [],
+    );
   }
 
   function mutate<T>(

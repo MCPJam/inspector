@@ -126,7 +126,7 @@ describe("reviewerPathRows", () => {
     ]);
   });
 
-  it("labels a stage read off another provider's page as approximated, without the prefix", () => {
+  it("reads an earlier rehearsal's approximated stage without its prefix or a label", () => {
     const consent = stage(
       "consent",
       "passed",
@@ -139,10 +139,27 @@ describe("reviewerPathRows", () => {
     ).rows;
     expect(row).toMatchObject({
       label: "Consent screen",
-      approximated: true,
       detail: 'MCPJam approved access on the consent page ("Authorize").',
     });
-    expect(reviewerPathRows(PASSED, []).rows[2].approximated).toBe(false);
+    expect(row).not.toHaveProperty("approximated");
+  });
+
+  it("says why a stage has no picture, and names a stored one", () => {
+    const signedIn = {
+      ...SIGNED_IN,
+      evidence: { screenshotStatus: "suppressed" as const },
+    };
+    const consent = {
+      ...stage("consent", "passed", "MCPJam approved the access the server requested.", 12),
+      evidence: { screenshotArtifactId: "shot_9", screenshotStatus: "captured" as const },
+    };
+    const [, signIn, approved] = reviewerPathRows(
+      attemptIn("passed", { stages: [OPENED, signedIn, consent, CONNECTED] }),
+      [],
+    ).rows;
+    expect(signIn.pictureNote).toMatch(/credential was typed/);
+    expect(approved).toMatchObject({ frame: { screenshotId: "shot_9" } });
+    expect(approved.pictureNote).toBeUndefined();
   });
 
   it("shows the run working now, and nothing of a resumed attempt's old run before its new one joins", () => {
@@ -277,14 +294,15 @@ describe("identityRow", () => {
 });
 
 describe("frameOf", () => {
-  it("reads the rehearsal's frame names, and nothing else", () => {
+  it("reads earlier rehearsals' frame names, and screenshot ids", () => {
     expect(frameOf("res_1#t=12.5")).toEqual({
       recordingId: "res_1",
       seconds: 12.5,
     });
     expect(frameOf("res_1#t=3")).toEqual({ recordingId: "res_1", seconds: 3 });
-    expect(frameOf("res_1")).toBeUndefined();
-    expect(frameOf("res_1#t=")).toBeUndefined();
+    // Anything else is a stored screenshot's id.
+    expect(frameOf("res_1")).toEqual({ screenshotId: "res_1" });
+    expect(frameOf("res_1#t=")).toEqual({ screenshotId: "res_1#t=" });
     expect(frameOf(undefined)).toBeUndefined();
   });
 });
@@ -309,7 +327,6 @@ describe("handoverOf", () => {
   it("a verification stop: the account must sign in without one, and whoever manages it removes it", () => {
     expect(handoverOf(WAITING)).toEqual({
       asked: ASKED,
-      approximated: false,
       frame: { recordingId: "res_1", seconds: 11.2 },
       finisher: "The person who started this sign-in.",
       action:
@@ -341,7 +358,6 @@ describe("handoverOf", () => {
     expect(handover).toMatchObject({
       asked:
         "MCPJam could not tell which control on the consent page approves access, so it clicked none.",
-      approximated: true,
       finisher: "The person who started this sign-in.",
       action:
         "Open Finish reviewer sign-in, approve access, then resume this attempt.",

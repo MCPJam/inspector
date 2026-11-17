@@ -113,6 +113,7 @@ import {
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
   DEFAULT_TURN_MAX_STEPS,
@@ -4622,7 +4623,7 @@ async function processOneStep(ctx: StepContext): Promise<{
             toolName: part.toolName,
             output: {
               type: "error-text",
-              value: "approval-denied (synthetic session)",
+              value: SYNTHETIC_SESSION_APPROVAL_DENIAL,
             },
           };
           const bucket = deniedByAssistantIdx.get(i) ?? [];

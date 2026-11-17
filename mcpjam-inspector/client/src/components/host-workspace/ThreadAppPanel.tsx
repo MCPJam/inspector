@@ -1174,6 +1174,7 @@ export function useThreadAppWorkspace(
           openFile: (server, entry) => options.routeLaunch?.(server, entry, true) ?? launch(server, entry, undefined, true),
           chooseViewer,
           renderOutcome,
+          profile: () => profileRef.current,
           approve: (...args) => current.current.approve(...args),
           signal: controller.signal,
           revalidate: (rowKey) => {
@@ -1327,6 +1328,8 @@ export interface RetainedAppPorts {
   revalidate?: (rowKey: string) => void;
   /** Hands a global App that can't go fullscreen to its owner. */
   fullscreenUnsupported?: (rowKey: string) => void;
+  /** Which client profile App messages are counted under. */
+  profile?: () => ExtensionLaunchProfile;
 }
 
 export function AppRegistration({
@@ -1351,7 +1354,9 @@ export function AppRegistration({
   renderOutcome,
   revalidate,
   fullscreenUnsupported,
+  profile,
 }: {
+  profile?: () => ExtensionLaunchProfile;
   /** An App request said its binding changed: re-check that App now. */
   revalidate?: (rowKey: string) => void;
   fullscreenUnsupported?: (rowKey: string) => void;
@@ -1622,6 +1627,7 @@ export function AppRegistration({
         threadId: () =>
           presentationCallbacks.current.currentThreadId?.() ?? scope.threadId,
         isLive: () => !liveSignal.aborted,
+        profile: () => profile?.() ?? "unknown",
         send: (...args) => {
           const send = presentationCallbacks.current.sendMessage;
           if (!send) throw new Error("This App can't send messages here.");
@@ -1798,6 +1804,7 @@ function RetainedAppsBody({
           renderOutcome={ports.renderOutcome}
           revalidate={ports.revalidate}
           fullscreenUnsupported={ports.fullscreenUnsupported}
+          profile={ports.profile}
           // A reopened App is a new activation: mount it fresh.
           key={`${row.key}:${row.handle!.instanceId}`}
           row={row}

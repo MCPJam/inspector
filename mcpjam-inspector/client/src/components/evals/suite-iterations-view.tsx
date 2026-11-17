@@ -678,9 +678,8 @@ export function SuiteIterationsView({
    * {@link EvaluateRunPage} instead of the SuiteResultsSplit rail on run
    * detail.
    *
-   * OFF by default on purpose. This is a shared component: the shipped
-   * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
-   * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
+   * Only `EvaluateTab` enables this layout. Other callers retain the shared
+   * dashboard layout until their component trees are retired.
    */
   suiteDetailOverview?: boolean;
   /**
@@ -1837,7 +1836,10 @@ export function SuiteIterationsView({
       return `test-edit-${selectedTestId}`;
     if (viewMode === "test-detail" && selectedTestId)
       return `test-detail-${selectedTestId}`;
-    if (viewMode === "overview") return `overview-${runsViewMode}`;
+    // Evaluate's Runs | Test cases tabs switch in place: a remount would drop
+    // a Generate dialog opened from an empty suite.
+    if (viewMode === "overview")
+      return suiteDetailOverview ? "overview" : `overview-${runsViewMode}`;
     if (viewMode === "run-detail" && selectedRunId)
       return selectedCompareBaseRunId
         ? `run-diff-${selectedCompareBaseRunId}-${selectedRunId}`
@@ -1850,6 +1852,7 @@ export function SuiteIterationsView({
     selectedRunTestCaseId,
     selectedCompareBaseRunId,
     runsViewMode,
+    suiteDetailOverview,
   ]);
 
   // Evaluate (New) suite overview uses the checkout-flow identity + run
@@ -2582,6 +2585,10 @@ export function SuiteIterationsView({
                   runHistoryStatus={runHistoryStatus}
                   onLoadMoreRuns={onLoadMoreRuns}
                   metricsByRun={metricsByRun ?? NO_METRICS}
+                  view={runsViewMode === "test-cases" ? "test-cases" : "runs"}
+                  onViewChange={(next) =>
+                    navigation.toSuiteOverview(suite._id, next)
+                  }
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
                   importJobId={

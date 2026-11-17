@@ -2,6 +2,8 @@
 // Deterministic: the scenario is chosen from the LAST user text in `input`.
 //   "SHELL <cmd>"  -> function_call exec_command {cmd}       (Codex's shell tool)
 //   "MCPPROBE"     -> function_call mcp__mcpjam / probe__echo (MCPJam's relay)
+//   "MCPWRITE <n>" -> function_call to the offered tool named `*record_write`
+//                     (a server the runtime's own MCP client dials)
 //   "COUNT"        -> text: the user turns in this request, counted and listed
 //                     by scenario, oldest first (continuity)
 //   anything else  -> text echo
@@ -133,7 +135,7 @@ function userText(item) {
     .join("\n");
 }
 
-const SCENARIO = /^(SHELL|MCPPROBE|HOSTWRITE|COUNT|HELLO)\b\s*(.*)$/s;
+const SCENARIO = /^(SHELL|MCPPROBE|MCPWRITE|HOSTWRITE|COUNT|HELLO)\b\s*(.*)$/s;
 
 const server = http.createServer((req, res) => {
   requestCount += 1;
@@ -192,6 +194,12 @@ const server = http.createServer((req, res) => {
       if (kind === "SHELL") return reply({ calls: [{ name: "exec_command", arguments: { cmd: arg.trim(), yield_time_ms: 15_000 } }] });
       if (kind === "MCPPROBE") return reply({ calls: [{ ...(RELAY_NAMESPACE ? { namespace: RELAY_NAMESPACE } : {}), name: PROBE_TOOL, arguments: { message: "conformance" } }] });
       if (kind === "HOSTWRITE") return reply({ calls: [{ name: "probe__record_write", arguments: {} }] });
+      if (kind === "MCPWRITE") {
+        // The runtime names a server's tool its own way; match the suffix.
+        const name = tools.find((tool) => typeof tool === "string" && tool.endsWith("record_write") && !tool.startsWith("probe__"));
+        if (!name) return reply({ text: `NO MCP TOOL OFFERED: ${JSON.stringify(tools).slice(0, 200)}` });
+        return reply({ calls: [{ name, arguments: { note: arg.trim() || "conformance" } }] });
+      }
       // Which turns, not only how many: a lost turn shows even when a
       // duplicated one keeps the count.
       if (kind === "COUNT") return reply({ text: `USER_TURNS=${userTurns} SCENARIOS=${turnScenarios.join(",")}` });

@@ -17,6 +17,10 @@ import {
 } from "./composer-form-store";
 import { ComposerFormCard, type ComposerFormAction } from "./ComposerFormCard";
 import {
+  formChoice,
+  observeExtensionOperation,
+} from "@/lib/extension-operation-health";
+import {
   compileComposerForm,
   logComposerFormDiagnostics,
 } from "./form-diagnostics";
@@ -195,7 +199,12 @@ export function HostedMrtrHost() {
     // KEEPS the round mounted so the user can retry. Owned plugin editors handle
     // rejection themselves; ordinary dialogs keep their existing error path.
     try {
-      await submit(activeRound.key, next);
+      await (activeRound.pluginFormProfile
+        ? observeExtensionOperation(
+            { operation: "form_response", choice: formChoice(answer.action) },
+            () => submit(activeRound.key, next),
+          )
+        : submit(activeRound.key, next));
     } catch (err) {
       if (activeRound.pluginFormProfile) throw err;
       console.error(
@@ -399,7 +408,10 @@ function ComposerMrtrRound({ round }: { round: HostedMrtrRound }) {
       }
     }
     // A rejected submit keeps the round (and the card) for a retry.
-    await useHostedMrtrStore.getState().submit(round.key, next);
+    await observeExtensionOperation(
+      { operation: "form_response", choice: formChoice(action) },
+      () => useHostedMrtrStore.getState().submit(round.key, next),
+    );
   };
   const profile: PluginFormProfile = {
     ...round.pluginFormProfile!,

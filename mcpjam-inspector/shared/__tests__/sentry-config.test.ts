@@ -240,6 +240,23 @@ describe("surface builders", () => {
     expect(matches("TypeError: Failed to fetch")).toBe(true);
   });
 
+  it("ignores network failures after the SDK appends the request host", () => {
+    // Sentry's fetch instrumentation rewrites the message before
+    // `ignoreErrors` runs; these are the spellings it produces.
+    const ignored = (message: string) =>
+      BROWSER_IGNORE_ERRORS.some((entry) =>
+        entry instanceof RegExp ? entry.test(message) : message.includes(entry),
+      );
+    for (const message of [
+      "Failed to fetch (127.0.0.1:11434)",
+      "TypeError: Failed to fetch (127.0.0.1:6274)",
+      "TypeError: Load failed (127.0.0.1:6274)",
+      "TypeError: NetworkError when attempting to fetch resource. (127.0.0.1:6274)",
+    ]) {
+      expect(ignored(message), message).toBe(true);
+    }
+  });
+
   it("keeps reporting stale code-split chunk loads", () => {
     // Sentry matches string entries by substring, so a bare "Failed to fetch"
     // would also swallow this — the client's only signal that a deploy

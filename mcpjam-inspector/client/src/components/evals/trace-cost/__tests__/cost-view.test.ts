@@ -55,6 +55,8 @@ describe("formatModelCost", () => {
     [0.0088, "$0.0088"],
     [0.0126, "$0.0126"],
     [0.9, "$0.9000"],
+    [0.99994, "$0.9999"],
+    [0.99996, "$1.00"],
     [1, "$1.00"],
     [1234.567, "$1,234.57"],
   ])("formats %s as %s", (amount, expected) => {
@@ -166,6 +168,10 @@ describe("describeRowCost for one call", () => {
       completeness: "unavailable",
       note: "No price is on record for this model.",
     });
+    const invalid = { ...unpriced, reason: "invalid_rate" as const };
+    expect(describeRowCost({ kind: "call", cost: invalid }).note).toBe(
+      "The price on record for this model was invalid. An organization admin can set a price under Model prices to price future calls.",
+    );
   });
 
   it("names customer rates and runner reports", () => {
