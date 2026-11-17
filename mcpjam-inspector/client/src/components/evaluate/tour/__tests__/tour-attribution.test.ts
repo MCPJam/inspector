@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isAwaitingFirstRunAfterTour,
   markSuiteCreatedFromTour,
   projectHasNoRuns,
   takeFirstRunAfterTour,
@@ -12,6 +13,15 @@ describe("tour attribution", () => {
     expect(takeFirstRunAfterTour("suite-b")).toBe(false);
     expect(takeFirstRunAfterTour("suite-a")).toBe(true);
     expect(takeFirstRunAfterTour("suite-a")).toBe(false);
+  });
+
+  it("keeps the credit when it's only checked, not taken", () => {
+    markSuiteCreatedFromTour("suite-c");
+
+    expect(isAwaitingFirstRunAfterTour("suite-c")).toBe(true);
+    expect(isAwaitingFirstRunAfterTour("suite-c")).toBe(true);
+    expect(takeFirstRunAfterTour("suite-c")).toBe(true);
+    expect(isAwaitingFirstRunAfterTour("suite-c")).toBe(false);
   });
 
   it("offers the tour replay only once suites load and none has a run", () => {

@@ -5,6 +5,11 @@ export function markSuiteCreatedFromTour(suiteId: string): void {
   awaitingFirstRun.add(suiteId);
 }
 
+/** Whether the suite was created from the tour and hasn't started a run yet. */
+export function isAwaitingFirstRunAfterTour(suiteId: string): boolean {
+  return awaitingFirstRun.has(suiteId);
+}
+
 /** True once: for the first run of a suite created from the tour. */
 export function takeFirstRunAfterTour(suiteId: string): boolean {
   return awaitingFirstRun.delete(suiteId);
