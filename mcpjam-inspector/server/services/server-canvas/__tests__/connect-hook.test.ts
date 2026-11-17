@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   setAuth: vi.fn(),
   exportV2: vi.fn(),
   captureV3: vi.fn(),
+  startProbes: vi.fn(),
 }));
 
 vi.mock("convex/browser", () => ({
@@ -22,10 +23,12 @@ vi.mock("../../../utils/export-helpers.js", () => ({
   exportSingleServerForInspection: mocks.exportV2,
 }));
 vi.mock("../capture.js", () => ({ captureServerFeatures: mocks.captureV3 }));
+vi.mock("../canvas-probes.js", () => ({ startCanvasProbes: mocks.startProbes }));
 
 import type { MCPClientManager, OAuthFlowSummary } from "@mcpjam/sdk";
 import { setManagerConnections } from "../../../utils/mcp-connections.js";
 import { recordConnectInspection } from "../connect-hook.js";
+import { doctorState } from "./probe-fixtures.js";
 
 const V2_SNAPSHOT = {
   version: 2,
@@ -70,6 +73,10 @@ beforeEach(() => {
   mocks.exportV2.mockResolvedValue(V2_SNAPSHOT);
   mocks.captureV3.mockResolvedValue(CAPTURE);
   mocks.mutation.mockResolvedValue({ status: "ok" });
+  mocks.startProbes.mockReturnValue({
+    connectionReleased: Promise.resolve(),
+    done: Promise.resolve(),
+  });
 });
 
 afterEach(() => {
@@ -121,6 +128,84 @@ describe("recordConnectInspection", () => {
       captureContext: CAPTURE.context,
       captureContextHash: CAPTURE.contextHash,
     });
+  });
+
+  it("starts the background probes after a v3 capture, and none when the rollout is off", async () => {
+    await recordConnectInspection(input(false));
+    expect(mocks.startProbes).not.toHaveBeenCalled();
+
+    await recordConnectInspection(input(true));
+    expect(mocks.startProbes).toHaveBeenCalledTimes(1);
+    expect(mocks.startProbes.mock.calls[0]?.[0]).toMatchObject({
+      hosted: false,
+      projectId: "prj_1",
+      serverId: "srv_1",
+      managerKey: "Fixture",
+      capture: CAPTURE,
+      oauthFlow: SUMMARY,
+    });
+  });
+
+  it("holds a hosted connect until the probes release the connection", async () => {
+    // UI resources to read, named in the tools' `_meta` the capture keeps apart.
+    mocks.captureV3.mockResolvedValue({ ...CAPTURE, doctor: doctorState() });
+    let release: () => void = () => undefined;
+    mocks.startProbes.mockReturnValue({
+      connectionReleased: new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+      done: Promise.resolve(),
+    });
+    let settled = false;
+    const pending = recordConnectInspection({ ...input(true), hosted: true }).then(
+      (result) => {
+        settled = true;
+        return result;
+      },
+    );
+    await flushWrites();
+    expect(settled).toBe(false);
+    release();
+    await expect(pending).resolves.toEqual({ canvas: true });
+  });
+
+  it("does not hold a hosted connect with nothing to read on the connection", async () => {
+    mocks.startProbes.mockReturnValue({
+      connectionReleased: new Promise<void>(() => undefined),
+      done: Promise.resolve(),
+    });
+    const ok = { status: "ok" as const, detail: "" };
+    mocks.captureV3.mockResolvedValue({
+      ...CAPTURE,
+      doctor: {
+        initInfo: null,
+        capabilities: null,
+        tools: [{ name: "search", inputSchema: { type: "object" } }],
+        toolsMetadata: {},
+        resources: [],
+        resourceTemplates: [],
+        prompts: [],
+        skills: [],
+        checks: {
+          initialization: ok,
+          capabilities: ok,
+          tools: ok,
+          resources: ok,
+          resourceTemplates: ok,
+          prompts: ok,
+          skills: { status: "skipped", detail: "" },
+        },
+        errors: [],
+      },
+    });
+    const partial: Partial<MCPClientManager> = {
+      getEventsSupport: () => ({ handshakeObserved: true, declared: false, listChanged: false }),
+    };
+    const manager = partial as MCPClientManager;
+    await expect(
+      recordConnectInspection({ ...input(true, manager), hosted: true }),
+    ).resolves.toEqual({ canvas: true });
+    expect(mocks.startProbes).toHaveBeenCalledTimes(1);
   });
 
   it("takes the off path when the rollout answer does not arrive in time", async () => {
