@@ -23,4 +23,18 @@ describe("GitHubStarButton", () => {
     ).toBeGreaterThan(0);
     vi.unstubAllGlobals();
   });
+
+  it("hides the Star label below the sm breakpoint", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }),
+    );
+    render(
+      <TooltipProvider delayDuration={0}>
+        <GitHubStarButton />
+      </TooltipProvider>,
+    );
+    expect(screen.getByText("Star")).toHaveClass("hidden", "sm:inline");
+    vi.unstubAllGlobals();
+  });
 });
