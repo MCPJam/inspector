@@ -48,9 +48,10 @@ export function selectRowCost(
   if (!row || row.kind === "interaction") return undefined;
   if (row.kind === "span") {
     const { span } = row;
-    return span.category === "llm" && span.cost
-      ? { kind: "call", cost: span.cost }
-      : undefined;
+    if (span.category !== "llm") return undefined;
+    // `spans` may carry a matched harness call's cost the row's span lacks.
+    const cost = span.cost ?? spans?.find(({ id }) => id === span.id)?.cost;
+    return cost ? { kind: "call", cost } : undefined;
   }
   // Same grouping as the timeline: a span without a prompt index is prompt 0.
   const rollup = rollupLlmSpanCosts(

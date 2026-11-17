@@ -69,6 +69,7 @@ import {
   TraceCostHoverBlock,
   TraceCostInline,
   TraceCostSummary,
+  useTraceCostSpans,
 } from "./trace-cost/trace-cost-display";
 
 const ALL_AXIS_TICK_PERCENTS = [0, 25, 50, 75, 100] as const;
@@ -1952,6 +1953,9 @@ export function TraceTimeline({
     [projectedMessages, sourceSpans, transcriptMessages],
   );
   const recordedSpans = projected?.spans ?? sourceSpans;
+  // Cost reads these: a harness llm span carries its matched call's cost.
+  const traceCost = useTraceCostSpans(recordedSpans, iterationCost);
+  const costSpans = traceCost.spans;
   const shouldReduceMotion = useReducedMotion();
   const spanAccount = useSpanAccountName();
   const mode =
@@ -2382,9 +2386,9 @@ export function TraceTimeline({
       rowEndTimestamp:
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
       glyphCategory,
-      cost: selectRowCost(hoveredRow, recordedSpans),
+      cost: selectRowCost(hoveredRow, costSpans),
     };
-  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount]);
+  }, [hoveredRow, recordedSpans, costSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount]);
 
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -2551,7 +2555,12 @@ export function TraceTimeline({
           </div>
         </div>
       ) : null}
-      <TraceCostSummary spans={recordedSpans} iteration={iterationCost} />
+      {traceCost.loader}
+      <TraceCostSummary
+        spans={costSpans}
+        iteration={iterationCost}
+        unmatched={traceCost.unmatched}
+      />
 
       <div
         ref={containerRef}
@@ -2969,7 +2978,7 @@ export function TraceTimeline({
               <TimelineDetailPane
                 projectedMessages={projectedMessages}
                 row={selectedRow}
-                recordedSpans={recordedSpans}
+                recordedSpans={costSpans}
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
