@@ -241,9 +241,21 @@ describe("resolveTurnRuntime — runtime shape", () => {
   );
 
   it.each([
-    ["the v1 chat-session API", "direct", "Use it there, or choose a different client."],
-    ["an MCP Events run", "event", "Use it there, or choose a different client."],
-    ["User Testing session simulation", "scenario", "Choose a different client for this study."],
+    [
+      "the v1 chat-session API",
+      "direct",
+      "Use it there, or choose a different client.",
+    ],
+    [
+      "an MCP Events run",
+      "event",
+      "Use it there, or choose a different client.",
+    ],
+    [
+      "User Testing session simulation",
+      "scenario",
+      "Choose a different client for this study.",
+    ],
   ] as const)(
     "a Cursor client is refused on %s, whatever the model, before anything resolves",
     async (_label, sourceType, next) => {
@@ -750,11 +762,11 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
     await rt.finalizeUsage(result);
 
     expect(
-      result.turnTrace!.spans.map((s) => [s.id, s.cost?.amountUsd]),
+      result.turnTrace!.spans.map((s) => [s.id, s.callId, s.cost?.amountUsd]),
     ).toEqual([
-      ["step-0", undefined],
-      ["llm-0", 0.01],
-      ["llm-1", 0.5],
+      ["step-0", undefined, undefined],
+      ["llm-0", "turn-1:0", 0.01],
+      ["llm-1", "turn-1:1", 0.5],
     ]);
   });
 

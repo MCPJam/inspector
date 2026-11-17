@@ -109,13 +109,16 @@ describe("withLocalUsageCost", () => {
       }),
     );
 
-    expect(result.spans.map((s) => [s.id, s.cost?.amountUsd])).toEqual([
-      ["step-0", undefined],
-      ["llm-0", 0.165],
-      ["tool", undefined],
-      ["llm-1", 1.5225],
+    expect(
+      result.spans.map((s) => [s.id, s.callId, s.cost?.amountUsd]),
+    ).toEqual([
+      ["step-0", undefined, undefined],
+      ["llm-0", "turn-1:0", 0.165],
+      ["tool", undefined, undefined],
+      ["llm-1", "turn-1:1", 1.5225],
     ]);
     expect(turn.spans[1]).not.toHaveProperty("cost");
+    expect(turn.spans[1]).not.toHaveProperty("callId");
   });
 
   it("leaves a call the backend did not price without cost", async () => {
@@ -133,14 +136,24 @@ describe("withLocalUsageCost", () => {
     ]);
   });
 
-  it("keeps the trace as it was without calls, or when the writeback fails or never answers", async () => {
+  it("keeps the trace as it was without calls", async () => {
     const turn = trace([span("llm", "llm", 0)]);
     expect(
       await withLocalUsageCost(turn, [], Promise.resolve({ x: priced(1) })),
     ).toBe(turn);
+  });
+
+  // The backend prices the usage row later and matches it to the span by id.
+  it("puts the call id on the llm span when the writeback fails or never answers", async () => {
+    const turn = trace([span("llm-0", "llm", 0), span("llm-9", "llm", 9)]);
+    const unpriced = [
+      { ...span("llm-0", "llm", 0), callId: "turn-1:0" },
+      span("llm-9", "llm", 9),
+    ];
     expect(
-      await withLocalUsageCost(turn, [call(0, 5)], Promise.resolve(undefined)),
-    ).toBe(turn);
+      (await withLocalUsageCost(turn, [call(0, 5)], Promise.resolve(undefined)))
+        .spans,
+    ).toEqual(unpriced);
 
     vi.useFakeTimers();
     const pending = withLocalUsageCost(
@@ -149,6 +162,6 @@ describe("withLocalUsageCost", () => {
       new Promise(() => {}),
     );
     await vi.advanceTimersByTimeAsync(2_000);
-    await expect(pending).resolves.toBe(turn);
+    expect((await pending).spans).toEqual(unpriced);
   });
 });

@@ -56,11 +56,13 @@ export function readLocalUsageCosts(
 }
 
 /**
- * Put the backend's price for each call of a local org turn on that call's
- * llm span. The Inspector never prices these calls itself: the
+ * Put each call's writeback id, and the backend's price for it, on that
+ * call's llm span. The Inspector never prices these calls itself: the
  * organization's rates live in the backend, which prices each provider
- * request on its own usage, so a context tier is crossed per call. Step
- * spans keep none: they repeat the call's tokens.
+ * request on its own usage, so a context tier is crossed per call. The id
+ * goes on even when the writeback fails or is slow, so the backend can still
+ * match the span to the usage row it prices later. Step spans keep neither:
+ * they repeat the call's tokens.
  */
 export async function withCallCosts(
   spans: EvalTraceSpan[],
@@ -68,19 +70,17 @@ export async function withCallCosts(
   costs: Promise<Record<string, ModelCallCostEvidence> | undefined>,
 ): Promise<EvalTraceSpan[]> {
   if (!calls.length) return spans;
-  const priced = await waitAtMost(
-    costs,
-    WRITEBACK_COST_WAIT_MS,
-    "usage writeback",
-  );
-  if (!priced) return spans;
+  const priced =
+    (await waitAtMost(costs, WRITEBACK_COST_WAIT_MS, "usage writeback")) ?? {};
   const callIdByStep = new Map(
     calls.map((call) => [call.stepIndex, call.callId]),
   );
   return spans.map((span) => {
     if (span.category !== "llm" || span.stepIndex === undefined) return span;
-    const cost = priced[callIdByStep.get(span.stepIndex) ?? ""];
-    return cost ? { ...span, cost } : span;
+    const callId = callIdByStep.get(span.stepIndex);
+    if (!callId) return span;
+    const cost = priced[callId];
+    return { ...span, callId, ...(cost ? { cost } : {}) };
   });
 }
 

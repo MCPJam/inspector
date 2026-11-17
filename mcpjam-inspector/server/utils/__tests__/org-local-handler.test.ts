@@ -85,9 +85,7 @@ function defaultStreamTextReturn(
     consumeStream: async () => {},
     response: Promise.resolve({
       modelId: "mock-model",
-      messages: overrides.messages ?? [
-        { role: "assistant", content: "Hi" },
-      ],
+      messages: overrides.messages ?? [{ role: "assistant", content: "Hi" }],
     }),
     steps: Promise.resolve(overrides.steps ?? []),
     totalUsage: Promise.resolve(
@@ -735,8 +733,9 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // Yield so the queued microtask + the in-flight fetch settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const usageCall = fetchMock.mock.calls.find(([url]) =>
-      typeof url === "string" && url.includes("/stream/org/local-usage"),
+    const usageCall = fetchMock.mock.calls.find(
+      ([url]) =>
+        typeof url === "string" && url.includes("/stream/org/local-usage"),
     );
     expect(usageCall).toBeDefined();
     const body = JSON.parse((usageCall![1] as any).body as string);
@@ -792,8 +791,9 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const usageCall = fetchMock.mock.calls.find(([url]) =>
-      typeof url === "string" && url.includes("/stream/org/local-usage"),
+    const usageCall = fetchMock.mock.calls.find(
+      ([url]) =>
+        typeof url === "string" && url.includes("/stream/org/local-usage"),
     );
     expect(usageCall).toBeUndefined();
   });
@@ -1055,15 +1055,21 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     expect(sentCalls.map((call) => call.usage)).toEqual(steps);
     expect(new Set(sentCalls.map((call) => call.requestId)).size).toBe(2);
     const turnTrace = onConversationComplete.mock.calls[0]![1] as {
-      spans: Array<{ category: string; stepIndex?: number; cost?: any }>;
+      spans: Array<{
+        category: string;
+        stepIndex?: number;
+        callId?: string;
+        cost?: any;
+      }>;
     };
+    // Each llm span names the writeback entry the backend priced it from.
     expect(
       turnTrace.spans
         .filter((span) => span.category === "llm")
-        .map((span) => [span.stepIndex, span.cost?.amountUsd]),
+        .map((span) => [span.stepIndex, span.callId, span.cost?.amountUsd]),
     ).toEqual([
-      [0, 0.01],
-      [1, 0.5],
+      [0, sentCalls[0]!.requestId, 0.01],
+      [1, sentCalls[1]!.requestId, 0.5],
     ]);
   });
 });

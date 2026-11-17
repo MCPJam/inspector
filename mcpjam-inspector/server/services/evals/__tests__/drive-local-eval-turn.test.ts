@@ -251,19 +251,51 @@ describe("driveLocalEvalTurn through the unified turn", () => {
 
     await driveLocalEvalTurn(turnParams);
 
-    expect(onModelCallSettled.mock.calls[0]![0].calls).toHaveLength(2);
+    const calls = onModelCallSettled.mock.calls[0]![0].calls!;
+    expect(calls).toHaveLength(2);
     const spans = turnParams.acc.capturedSpans;
     expect(
       spans
         .filter((span) => span.category === "llm")
-        .map((span) => [span.stepIndex, span.cost?.amountUsd]),
+        .map((span) => [span.stepIndex, span.callId, span.cost?.amountUsd]),
     ).toEqual([
-      [0, 0.01],
-      [1, 0.5],
+      [0, calls[0]!.callId, 0.01],
+      [1, calls[1]!.callId, 0.5],
     ]);
     expect(spans.filter((span) => span.category === "step")).not.toEqual([]);
     expect(
       spans.filter((span) => span.category !== "llm" && span.cost),
     ).toEqual([]);
+  });
+
+  it("puts each call's writeback id on its llm span when the writeback fails", async () => {
+    streamTextMock.mockImplementationOnce((options: any) =>
+      streamResult({
+        async *[Symbol.asyncIterator]() {
+          await options.prepareStep({ stepNumber: 0, messages: [] });
+          await options.onStepFinish({
+            usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+            response: { messages: [] },
+            finishReason: "stop",
+            toolCalls: [],
+          });
+        },
+      }),
+    );
+    const onModelCallSettled = vi.fn(async () => undefined);
+    const turnParams = params({
+      onModelCallSettled,
+      beforeModelCall: async () => turnParams.llmModel!,
+    });
+
+    await driveLocalEvalTurn(turnParams);
+
+    const [call] = (onModelCallSettled.mock.calls[0] as any)[0].calls;
+    expect(call.callId).toMatch(/^.+:0$/);
+    expect(
+      turnParams.acc.capturedSpans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.callId, span.cost]),
+    ).toEqual([[call.callId, undefined]]);
   });
 });
