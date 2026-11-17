@@ -32,6 +32,9 @@ export type AssertionSummary = {
 };
 
 const FILL_IN = "Fill in the assertion";
+const NAMED_IN_LABEL: ReadonlySet<Predicate["type"]> = new Set<
+  Predicate["type"]
+>(["widgetRendered", "toolInputMatches", "toolResultMatches"]);
 const PICK_VIEW = "Pick a view";
 
 const ICON_BY_KEY = new Map(
@@ -54,7 +57,9 @@ function argsExtra(
 ): string {
   const count = Object.keys(predicate.args?.args ?? {}).length;
   const mode = predicate.args?.argumentMatching ?? "partial";
-  if (mode === "ignore" || count === 0) return "any arguments";
+  if (mode === "ignore") return "any arguments";
+  // Exact matching compares the whole object: no arguments means none allowed.
+  if (count === 0) return mode === "exact" ? "no arguments" : "any arguments";
   return `${count} argument${count === 1 ? "" : "s"}, ${mode} match`;
 }
 
@@ -116,6 +121,10 @@ function predicateSummary(
     };
   }
   if (/ N\b/.test(base)) {
+    return { label: formatCriterion({ predicate }), Icon };
+  }
+  // These name their tool and patterns in the label itself.
+  if (!inline && NAMED_IN_LABEL.has(predicate.type)) {
     return { label: formatCriterion({ predicate }), Icon };
   }
   const label =

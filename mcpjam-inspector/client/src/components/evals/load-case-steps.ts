@@ -17,6 +17,8 @@ export function loadCaseSteps(testCase: unknown): TestStep[] {
   if (Array.isArray(steps) && steps.length > 0) {
     return normalizeSteps(steps);
   }
+  // An iteration with no case snapshot passes nothing; the resolver reads it.
+  if (testCase == null) return [];
   return promptTurnsToSteps(
     resolvePromptTurnsWithLegacyProbe(
       testCase as Parameters<typeof resolvePromptTurnsWithLegacyProbe>[0],

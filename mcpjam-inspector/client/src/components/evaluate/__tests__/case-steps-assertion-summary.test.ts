@@ -33,6 +33,19 @@ describe("assertionSummary", () => {
       },
     ],
     [
+      "toolCalledWith, exact with no arguments",
+      {
+        type: "toolCalledWith",
+        toolName: "read_me",
+        args: { args: {}, argumentMatching: "exact" },
+      },
+      {
+        label: "Tool was called with",
+        value: "read_me",
+        extra: "no arguments",
+      },
+    ],
+    [
       "toolCalledWith blank",
       { type: "toolCalledWith", toolName: "", args: { args: {} } },
       {
@@ -107,5 +120,29 @@ describe("assertionSummary", () => {
     expect(
       summary({ kind: "widgetToolCalled", toolName: "", calledToolName: "x" }),
     ).toMatchObject({ missing: "Pick a view" });
+  });
+});
+
+describe("assertionSummary outside a step", () => {
+  it.each<[string, Predicate]>([
+    ["widgetRendered", { type: "widgetRendered", toolName: "cart_view" }],
+    [
+      "toolInputMatches",
+      { type: "toolInputMatches", toolName: "search", patterns: ["q="] },
+    ],
+    [
+      "toolResultMatches",
+      { type: "toolResultMatches", toolName: "search", patterns: ["ok"] },
+    ],
+  ])("%s names its tool in the label", (_kind, predicate) => {
+    expect(summary(predicate, false).label).toContain(
+      (predicate as { toolName: string }).toolName,
+    );
+  });
+
+  it("a blank view check keeps its plain label", () => {
+    expect(summary({ type: "widgetRendered" }, false).label).toBe(
+      summary({ type: "widgetRendered" }, true).label,
+    );
   });
 });

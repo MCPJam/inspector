@@ -48,6 +48,26 @@ describe("route rule edits", () => {
     expect(ids(restored.steps)).toEqual(["p1", "a1"]);
   });
 
+  it("No tools then tools puts each assert back in its own turn, as it was", () => {
+    const twoTurns: TestStep[] = [
+      ...sketch,
+      { id: "p2", kind: "prompt", prompt: "Now share it" },
+      {
+        id: "a2",
+        kind: "assert",
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "export_to_excalidraw",
+          args: { args: { id: "x" }, argumentMatching: "exact" },
+        },
+      },
+    ];
+    const negative = chooseNoTool(draft({ steps: twoTurns }));
+    expect(ids(negative.steps)).toEqual(["p1", "p2"]);
+    const restored = chooseTools(negative);
+    expect(restored.steps).toEqual(twoTurns);
+  });
+
   it("exact order sets the regression kind and strict match options", () => {
     const result = addAfterRun(
       { kind: "route-check", routeKind: "exactOrder" },

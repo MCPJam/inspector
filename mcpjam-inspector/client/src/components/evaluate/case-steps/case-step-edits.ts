@@ -22,6 +22,7 @@ import {
   type TestStep,
 } from "@/shared/steps";
 import {
+  isToolCalledWithAssert,
   matchOptionsForKind,
   readSimpleCase,
   writeSimpleCase,
@@ -35,8 +36,51 @@ export type CaseStepsDraft = CaseSaveForm & {
   /** Seeds isNegativeTest on save. */
   toolsChoice: ToolsChoice;
   /** Tool asserts parked while "No tools" is on. */
-  stashedTools: SimpleCaseTool[];
+  stashedTools: ParkedTool[];
 };
+
+/**
+ * A tool assert parked by No tools: the assert itself and the step it
+ * followed, so turning tools back on returns it to the same turn.
+ */
+export type ParkedTool = SimpleCaseTool & {
+  afterStepId?: string;
+  step?: TestStep;
+};
+
+function parkTools(steps: TestStep[], tools: SimpleCaseTool[]): ParkedTool[] {
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const after = new Map<string, string | undefined>();
+  let last: string | undefined;
+  for (const step of steps) {
+    if (isToolCalledWithAssert(step)) after.set(step.id, last);
+    else last = step.id;
+  }
+  return tools.map((tool) => ({
+    ...tool,
+    afterStepId: after.get(tool.id),
+    step: byId.get(tool.id),
+  }));
+}
+
+/** Each parked assert back after the step it followed, or null if one is gone. */
+function unparkTools(
+  steps: TestStep[],
+  parked: ParkedTool[],
+): TestStep[] | null {
+  const ids = new Set(steps.map((step) => step.id));
+  const after = new Map<string, TestStep[]>();
+  for (const tool of parked) {
+    if (!tool.step || !tool.afterStepId || !ids.has(tool.afterStepId)) {
+      return null;
+    }
+    after.set(tool.afterStepId, [
+      ...(after.get(tool.afterStepId) ?? []),
+      tool.step,
+    ]);
+  }
+  return steps.flatMap((step) => [step, ...(after.get(step.id) ?? [])]);
+}
 
 export type DraftEdit = (draft: CaseStepsDraft) => CaseStepsDraft;
 
@@ -49,7 +93,9 @@ export const chooseNoTool: DraftEdit = (draft) => {
     ...draft,
     toolsChoice: "noTool",
     stashedTools:
-      draft.toolsChoice === "noTool" ? draft.stashedTools : view.tools,
+      draft.toolsChoice === "noTool"
+        ? draft.stashedTools
+        : parkTools(draft.steps, view.tools),
     steps: writeSimpleCase(draft.steps, {
       prompt: view.prompt,
       tools: view.tools,
@@ -67,11 +113,13 @@ export const chooseTools: DraftEdit = (draft) => {
   return {
     ...draft,
     toolsChoice: "tools",
-    steps: writeSimpleCase(draft.steps, {
-      prompt: view.prompt,
-      tools: draft.stashedTools,
-      noTool: false,
-    }),
+    steps:
+      unparkTools(draft.steps, draft.stashedTools) ??
+      writeSimpleCase(draft.steps, {
+        prompt: view.prompt,
+        tools: draft.stashedTools,
+        noTool: false,
+      }),
   };
 };
 
