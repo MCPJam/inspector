@@ -313,11 +313,20 @@ describe("how a connected attempt ends", () => {
   const automated = { kind: "connected", reviewerAccountId: "acct_1" } as const;
 
   it("passes with a confirmed identity, and says so", () => {
-    expect(attemptEnding(automated, { outcome: "verified" })).toEqual({
+    expect(attemptEnding(automated, { outcome: "verified", expected: { identity: "reviewer@example.com" } })).toEqual({
       outcome: "passed",
       detail: expect.stringMatching(
         /^MCPJam signed in .*identity check confirmed the reviewer\.$/,
       ),
+    });
+  });
+
+  it("distinguishes an organization check from an account identity check", () => {
+    expect(attemptEnding(automated, {
+      outcome: "verified", expected: { organization: "Example Org" },
+    })).toMatchObject({
+      outcome: "passed",
+      detail: expect.stringContaining("organization check passed; account identity was not checked"),
     });
   });
 

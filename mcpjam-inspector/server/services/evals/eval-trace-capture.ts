@@ -3,6 +3,7 @@ import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
 import type { EvalTraceSpan, EvalTraceSpanStatus } from "@/shared/eval-trace";
+import type { ModelCallCostEvidence } from "@mcpjam/sdk";
 import {
   appendDedupedModelMessages,
   createOffsetInterval,
@@ -52,6 +53,8 @@ type StepSpanMeta = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
+  /** The step's one provider call; applied to the llm span alone, never the step. */
+  cost?: ModelCallCostEvidence;
 };
 
 /** Mutable state for `generateText` eval tracing (prepareStep + wrapped tools + onStepFinish). */
@@ -399,6 +402,7 @@ export function emitAiSdkOnStepFinish(
     stepIndex: sn,
     status: spanMeta?.status ?? "ok",
     ...createOffsetInterval(ctx.runStartedAt, stepMeta.startAt, llmEnd),
+    ...(spanMeta?.cost ? { cost: spanMeta.cost } : {}),
   };
   applyStepMeta(llmSpan, {
     modelId: spanMeta?.modelId ?? stepMeta.modelId,
@@ -662,6 +666,7 @@ export function pushBackendStepSuccessSpans(
     stepIndex,
     status: meta?.status ?? "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
+    ...(meta?.cost ? { cost: meta.cost } : {}),
   };
   applyStepMeta(llmSpan, meta);
   spans.push(llmSpan);
@@ -703,6 +708,25 @@ export function pushBackendStepLlmFailureSpans(
   };
   applyStepMeta(stepSpan, { ...meta, status: "error" });
   spans.push(stepSpan);
+  // Reported usage or cost means the provider answered, even with no content.
+  // Model-call counts, llm token totals and cost rollups read llm spans only,
+  // so that call keeps one, as on the success path. Totals never read the
+  // step span, so its tokens are not counted twice, and it never carries cost.
+  if (meta?.cost || typeof meta?.inputTokens === "number") {
+    const llmSpan: EvalTraceSpan = {
+      id: `${stepParentId}-llm`,
+      parentId: stepParentId,
+      name: formatRecordedLlmSpanName(meta.modelId),
+      category: "llm",
+      promptIndex,
+      stepIndex,
+      status: "error",
+      ...createOffsetInterval(runStartedAt, llmPhaseStartAbs, failAbs),
+      ...(meta.cost ? { cost: meta.cost } : {}),
+    };
+    applyStepMeta(llmSpan, { ...meta, status: "error" });
+    spans.push(llmSpan);
+  }
   spans.push({
     id: `${stepParentId}-err`,
     parentId: stepParentId,
@@ -749,6 +773,7 @@ export function pushBackendStepToolFailureSpans(
     stepIndex,
     status: "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
+    ...(meta?.cost ? { cost: meta.cost } : {}),
   };
   applyStepMeta(llmSpan, meta);
   spans.push(llmSpan);

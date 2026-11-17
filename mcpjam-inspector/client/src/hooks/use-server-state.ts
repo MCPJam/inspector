@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "@/lib/credential-refusal";
 import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   cancelPendingChatScopeStepUpForCallback,
@@ -732,6 +733,7 @@ export type EnsureServerConnectionStatus =
 export interface EnsureServerConnectionResult {
   status: EnsureServerConnectionStatus;
   error?: string;
+  credentialFailure?: string;
 }
 
 interface ReconnectServerInternalOptions {
@@ -858,6 +860,7 @@ export interface EnsureServersReadyResult {
   readyServerNames: string[];
   missingServerNames: string[];
   failedServerNames: string[];
+  failedServerErrors?: Record<string, string>;
   reauthServerNames: string[];
 }
 
@@ -5594,10 +5597,14 @@ export function useServerState({
       serverName: string,
       options?: ReconnectServerInternalOptions,
     ): Promise<EnsureServerConnectionResult> => {
-      const reconnectForAttempt = (
+      let credentialFailure: string | undefined;
+      const reconnectForAttempt = async (
         ...args: Parameters<typeof guardedReconnectServer>
-      ) =>
-        guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
+      ) => {
+        const result = await guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
+        credentialFailure = credentialFailureMessage(result);
+        return result;
+      };
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
       // Snapshot before anything awaits. `reportError` runs at the END of a
@@ -5642,6 +5649,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -5692,6 +5700,7 @@ export function useServerState({
         return {
           status: "missing",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -5997,6 +6006,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -6113,6 +6123,7 @@ export function useServerState({
             return {
               status: "failed",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6159,6 +6170,7 @@ export function useServerState({
             return {
               status: "failed",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6168,6 +6180,7 @@ export function useServerState({
             return {
               status: "superseded",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6311,6 +6324,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       } catch (error) {
         if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
@@ -6337,6 +6351,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
     },
@@ -6675,6 +6690,7 @@ export function useServerState({
       const readyServerNames: string[] = [];
       const missingServerNames: string[] = [];
       const failedServerNames: string[] = [];
+      const failedServerErrors: Record<string, string> = {};
       const reauthServerNames: string[] = [];
 
       for (const [serverName, outcome] of outcomes) {
@@ -6697,6 +6713,7 @@ export function useServerState({
           case "failed":
           default:
             failedServerNames.push(serverName);
+            if (outcome.credentialFailure) failedServerErrors[serverName] = outcome.credentialFailure;
             break;
         }
       }
@@ -6705,6 +6722,7 @@ export function useServerState({
         readyServerNames,
         missingServerNames,
         failedServerNames,
+        ...(Object.keys(failedServerErrors).length ? { failedServerErrors } : {}),
         reauthServerNames,
       };
     },

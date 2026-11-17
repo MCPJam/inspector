@@ -423,6 +423,12 @@ export { buildRunCompareReport } from "./run-compare.js";
 // compare command computes latency the SAME way rather than growing a second
 // percentile implementation next to it.
 export { calculateLatencyStats, calculatePercentile } from "./percentiles.js";
+/**
+ * Per-call model cost: normalize one request's usage, price it from a
+ * provider-reported amount or a recorded rate, and sum calls into a rollup
+ * that says how much of the total is known. Pure and browser-safe.
+ */
+export * from "./usage-cost/index.js";
 
 // Hosted corpus: materialize eval cases into local EvalTests, and lock what was
 // materialized. Pure — the file I/O half lives in @mcpjam/cli.

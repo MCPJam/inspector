@@ -18,6 +18,7 @@ import elicitation from "./elicitation";
 import mrtr from "./mrtr";
 import models from "./models";
 import byokModels from "./byok-models";
+import modelRateOverrides from "./model-rate-overrides";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
@@ -124,6 +125,9 @@ mcp.route("/models", models);
 
 // BYOK model discovery through the provider adapters (local mode only)
 mcp.route("/byok-models", byokModels);
+
+// Rates for personal-key models, stored on this machine (local mode only)
+mcp.route("/model-rate-overrides", modelRateOverrides);
 
 // Tokenizer endpoints - count tokens for MCP tools
 mcp.route("/tokenizer", tokenizer);

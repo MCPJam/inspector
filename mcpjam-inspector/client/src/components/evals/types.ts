@@ -1,5 +1,8 @@
 import type { JudgeRubric } from "@mcpjam/sdk/contract";
-import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  ModelCostRollup,
+  RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
@@ -576,6 +579,8 @@ export type EvalIterationUsage = {
   estimatedCostUsd?: number;
   cacheHit?: boolean;
   costBasis?: EvalIterationCostBasis;
+  /** Sum of the iteration's per-call cost evidence, beside the estimate above. */
+  costRollup?: ModelCostRollup;
 };
 export type EvalIteration = {
   _id: string;
