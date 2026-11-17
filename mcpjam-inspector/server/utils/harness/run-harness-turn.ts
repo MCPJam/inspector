@@ -39,7 +39,7 @@ import { withHarnessElicitation } from "./with-harness-elicitation.js";
 import { isNativeElicitationProfile } from "./forwarding/native-elicitation-profile.js";
 import { hostedWarmAgentEligible, qualifiedForwardingRuntime } from "./forwarding/runtime-contract.js";
 import { warmApprovalBindings, isWarmChatManager } from "./warm-approval-binding.js";
-import { assertPendingPolicy, stampNativeForwardingPolicy, nativePolicyDigest,
+import { assertPendingPolicy, stampNativeForwardingPolicy, stampSessionEnvelopes, startedOnSessionEnvelopes, nativePolicyDigest,
   forwardingToolPolicy,
 } from "./forwarding/native-policy.js";
 import { localHarnessEvidence } from "./local/evidence.js";
@@ -2318,6 +2318,12 @@ export async function runHarnessTurn(
         });
         sessionGrantOrigin = undefined;
       };
+      // A paused process keeps the MCP configuration it started with: it
+      // stays on the lane's session envelopes only when it started on them
+      // and this turn's grant reaches the same proxy.
+      const sessionStable = () => sessionGrantOrigin !== undefined &&
+        startedOnSessionEnvelopes(continuity?.state?.resumeState);
+      const pausedState = <T,>(state: T): T => sessionGrantOrigin !== undefined ? stampSessionEnvelopes(state) : state;
       tClaim = turnEvent.claimed(continuity?.stateVersion ?? 0);
 
       // 3. Get the box this turn runs on. TWO paths, and the choice is made by
@@ -2963,12 +2969,12 @@ export async function runHarnessTurn(
         : nativeForwarding?.policyDigest;
       if (approvalPolicyStamp && nativeMcpDelivery && !nativeForwarding && forwardingRuntime) {
         harnessRuntime = forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, approvalPolicyStamp,
-          { sessionStable: sessionGrantOrigin !== undefined });
+          { sessionStable: sessionStable() });
       }
       if (nativeForwarding) {
         if (!forwardingRuntime) throw new Error("The runtime forwarding contract is not qualified.");
         const refreshed = forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, approvalPolicyStamp ?? nativeForwarding.policyDigest,
-          { sessionStable: sessionGrantOrigin !== undefined });
+          { sessionStable: sessionStable() });
         // A runtime that binds approvals asks the user itself; the others leave asking to the forwarder.
         harnessRuntime = forwardingRuntime.boundApprovals ? nativeForwarding.approvals.voidOnCallEnd(refreshed)
           : withAnsweredNativeRequests(refreshed, APPROVE_NATIVE_REQUEST, { covers: nativeForwarding.isForwardedTool });
@@ -4691,7 +4697,7 @@ export async function runHarnessTurn(
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
               harnessSessionId: session.sessionId,
-              resumeState: org.commitState(approvalPolicyStamp ? stampNativeForwardingPolicy(continueState, approvalPolicyStamp) : continueState),
+              resumeState: org.commitState(pausedState(approvalPolicyStamp ? stampNativeForwardingPolicy(continueState, approvalPolicyStamp) : continueState)),
               computerId,
               runtimeFingerprint,
               awaitingApproval: true,

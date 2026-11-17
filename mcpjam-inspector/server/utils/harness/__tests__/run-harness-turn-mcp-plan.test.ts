@@ -49,7 +49,12 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
 }));
 
+const forwardingRefresh = vi.hoisted(() =>
+  vi.fn((runtime: object, ..._rest: unknown[]) => runtime),
+);
+
 vi.mock("../registry.js", () => ({
+  harnessConversationState: vi.fn(() => null),
   buildBrokerDummyAuth: vi.fn(() => ({
     anthropic: {
       apiKey: "",
@@ -63,7 +68,7 @@ vi.mock("../registry.js", () => ({
     forwardingRuntime: {
       runtimeVersion: "2.1.245",
       configurationVersion: "config-v1",
-      refresh: (runtime: object) => runtime,
+      refresh: forwardingRefresh,
     },
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
@@ -575,13 +580,13 @@ describe("the route receipt on the persisted turn trace", () => {
 
 describe("a forwarded chat turn on its lane", () => {
   /** The lane this chat's turns share, as the backend claims it. */
-  const onLane = async () => {
+  const onLane = async (state: unknown = null) => {
     const { claimHarnessSessionState } = await import("../harness-session-state.js");
     vi.mocked(claimHarnessSessionState).mockResolvedValueOnce({
       ok: true,
       leaseId: "lease-1",
       stateVersion: 1,
-      state: null,
+      state,
       fingerprintChanged: false,
       laneId: "lane-1",
     } as never);
@@ -627,5 +632,27 @@ describe("a forwarded chat turn on its lane", () => {
     const args = forwarding.prepare.mock.calls.at(-1)![0];
     expect(args).not.toHaveProperty("session");
     expect(args).not.toHaveProperty("toolCatalog");
+  });
+
+  // A paused process keeps the configuration it started with, so only one
+  // that started on the lane's session envelopes may be kept.
+  it.each([
+    ["started on per-turn contexts", {}, "https://inspector.test", false],
+    ["started on session envelopes", { mcpjamSessionEnvelopes: true }, "https://inspector.test", true],
+    ["started on session envelopes, granted on another origin", { mcpjamSessionEnvelopes: true }, "https://preview.example", false],
+  ])("decides whether to keep a paused process %s", async (_case, data, grantOrigin, stable) => {
+    const start = await onLane({ resumeState: { type: "continue", data } });
+    start.mockResolvedValueOnce({
+      ok: true,
+      proxyBaseUrl: "https://broker.example",
+      forwarding: {},
+      expiresAt: Date.now() + 60_000,
+      sessionGrantOrigin: grantOrigin,
+    } as never);
+    forwardingRefresh.mockClear();
+    await runHarnessTurn(admit("forwarded-native") as never, "none");
+    expect(loggerSpy.error).not.toHaveBeenCalled();
+    expect(forwardingRefresh).toHaveBeenCalled();
+    expect(forwardingRefresh.mock.calls.at(-1)![3]).toEqual({ sessionStable: stable });
   });
 });
