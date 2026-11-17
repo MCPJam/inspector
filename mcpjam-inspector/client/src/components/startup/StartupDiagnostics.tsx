@@ -49,15 +49,16 @@ export function StartupDiagnostics({ status }: { status: StartupStatus }) {
     failureKind: status.failureKind,
     localServer,
   });
-  const showDetails = open || copied === "failed";
 
   const copy = async () => {
     const ok = await copyToClipboard(diagnosticsText(diagnostics));
     setCopied(ok ? "copied" : "failed");
+    // Open the details on the text to copy by hand; Hide details still works.
+    if (!ok) setOpen(true);
   };
 
   return (
-    <Collapsible open={showDetails} onOpenChange={setOpen}>
+    <Collapsible open={open} onOpenChange={setOpen}>
       <CardFooter className="flex-col items-stretch gap-3 border-t pt-4 [.border-t]:pt-4">
         <div className="flex items-center justify-between gap-2">
           <Button variant="ghost" size="sm" onClick={() => void copy()}>
@@ -70,12 +71,9 @@ export function StartupDiagnostics({ status }: { status: StartupStatus }) {
           </Button>
           <CollapsibleTrigger asChild>
             <Button variant="ghost" size="sm" className="text-muted-foreground">
-              {showDetails ? "Hide details" : "Show details"}
+              {open ? "Hide details" : "Show details"}
               <ChevronDown
-                className={cn(
-                  "transition-transform",
-                  showDetails && "rotate-180",
-                )}
+                className={cn("transition-transform", open && "rotate-180")}
               />
             </Button>
           </CollapsibleTrigger>

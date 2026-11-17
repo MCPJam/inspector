@@ -89,7 +89,7 @@ function describeLocalServer(check: LocalServerCheck): string {
     case "ok":
       return `reachable, ${check.latencyMs} ms`;
     case "http_error":
-      return `answered ${check.status}, ${check.latencyMs} ms`;
+      return `responded with an error, ${check.latencyMs} ms`;
     case "timeout":
       return "no answer after 3 s";
     case "network":
