@@ -37,7 +37,7 @@ import {
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
 import { withHarnessElicitation } from "./with-harness-elicitation.js";
 import { isNativeElicitationProfile } from "./forwarding/native-elicitation-profile.js";
-import { qualifiedForwardingRuntime } from "./forwarding/runtime-contract.js";
+import { hostedWarmAgentEligible, qualifiedForwardingRuntime } from "./forwarding/runtime-contract.js";
 import { warmApprovalBindings, isWarmChatManager } from "./warm-approval-binding.js";
 import { assertPendingPolicy, stampNativeForwardingPolicy, nativePolicyDigest,
   forwardingToolPolicy,
@@ -934,14 +934,12 @@ export async function runHarnessTurn(
     harnessAdapter.id,
     Boolean(harnessExecutionTarget),
   );
-  const copilotCli = harnessAdapter.id === "copilot-cli";
   // A warm agent exits after its box's idle window (or ceiling, when kept
   // through the box's pause), so it runs only on a box whose window the backend sent.
   const warmRetention = warmRetentionFor(harnessSandboxBinding);
-  const warmAgentPilot = isWarmChatManager(mcpClientManager) && (copilotCli || !!qualifiedForwardingRuntime(harnessAdapter)) &&
+  const warmAgentPilot = isWarmChatManager(mcpClientManager) && hostedWarmAgentEligible(harnessAdapter) &&
     sourceType === "direct" && !harnessExecutionTarget && warmRetention !== undefined && !!chatSessionId &&
-    harnessMcpProxy?.plane === "web-authorized" &&
-    (copilotCli || harness === "claude-code" || harness === "codex");
+    harnessMcpProxy?.plane === "web-authorized";
   // The effort this turn asked for: the typed field, else the saved selection it
   // was forwarded with (`extraBodyFields.modelSelection`). Read once so the
   // refusal below and `createHarness` further down cannot disagree.
@@ -1738,7 +1736,7 @@ export async function runHarnessTurn(
         hostId, scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
         admit: () => forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools || !!options.harnessAppTools?.length, hasTasks: tasks !== undefined,
           elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
-          nativeVersionNegotiation: forwardingRuntime?.nativeVersionNegotiation,
+          nativeClient: forwardingRuntime?.nativeClient,
           modernInputAvailable: options.harnessOwnedInput === true,
           ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
         }),

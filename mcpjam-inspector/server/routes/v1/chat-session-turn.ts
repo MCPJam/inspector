@@ -119,6 +119,7 @@ import {
   isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isBedrockModelId, type ModelProvider } from "@/shared/types";
+import { appliedToolApproval, engineApprovalMode } from "@/shared/tool-approval";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { createManualHostedConnection } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -1365,6 +1366,11 @@ async function handleTurn(c: Context): Promise<Response> {
       );
     }
     const engine: ChatSessionEngine = engineDecision.engine;
+    // `toolMode`, not the host's switch, narrows what an API turn runs.
+    const requireToolApproval = appliedToolApproval(
+      "api",
+      target.host?.runtimeConfig.requireToolApproval,
+    );
     if (engineDecision.warning) {
       logger.warn("[v1 chat-session] harness model not verified", {
         harness: engine.kind === "harness" ? engine.harness : undefined,
@@ -1410,6 +1416,7 @@ async function handleTurn(c: Context): Promise<Response> {
         authHeader,
         projectId,
         chatSessionId: runtimeChatSessionId,
+        requireToolApproval,
         browserApprovalDelivery: {
           kind: "session-policy",
           policy: resolved.policy,
@@ -1628,6 +1635,7 @@ async function handleTurn(c: Context): Promise<Response> {
     const activeServerIds = selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id));
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
+      requireToolApproval,
       ...(builtInTools ? { builtInTools } : {}),
       selectedServers: activeServerIds,
       isolatedServers: activeServerIds,
@@ -1738,7 +1746,7 @@ async function handleTurn(c: Context): Promise<Response> {
       systemPrompt: prepared.enhancedSystemPrompt,
       temperature: prepared.resolvedTemperature,
       reasoningEffort: turnReasoningEffort,
-      requireToolApproval: false,
+      requireToolApproval,
       serverIds: selectedServerIds.filter((id) => !unavailable[id]),
       tools,
       builtInIds: Object.keys(builtInTools ?? {}),
@@ -1854,7 +1862,7 @@ async function handleTurn(c: Context): Promise<Response> {
       runtime: runtime.runtime as never,
       streamSink: "none",
       persistMode: "caller",
-      approvalMode: "auto-deny",
+      approvalMode: engineApprovalMode("api"),
       turnTiming: timing,
       messages: inputMessages,
       modelDefinition,

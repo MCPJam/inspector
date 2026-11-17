@@ -14,6 +14,12 @@ import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
  * adapter is a COMPILE error.
  */
 import type { ForwardingRuntimeContract } from "./forwarding/runtime-contract.js";
+import {
+  CLAUDE_CODE_NATIVE_CLIENT,
+  CODEX_NATIVE_CLIENT,
+  COPILOT_CLI_NATIVE_CLIENT,
+  CURSOR_CLI_NATIVE_CLIENT,
+} from "./forwarding/native-clients.js";
 import { withForwardingResume } from "./forwarding/bridge-refresh.js";
 import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
@@ -390,6 +396,16 @@ type HarnessRuntimeAdapterBase = {
   /** The runtime refuses to resume when its MCP config changes, so each lane
    *  gets session handles in place of per-turn tokens. */
   sessionStableMcpConfig?: boolean;
+  /** Booting and bootstrapping this runtime's hosted box may start before
+   *  Send (`prepare-conversation-box.ts`). */
+  preparesBeforeSend?: true;
+  /**
+   * How an agent kept running in a hosted box between messages takes each
+   * message's MCP configuration: `refresh` applies it to the live agent
+   * through the qualified forwarding contract, `restart` resumes the runtime's
+   * session with it. Absent: every message starts the agent cold.
+   */
+  hostedWarmAgent?: "refresh" | "restart";
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
@@ -817,6 +833,8 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
+  preparesBeforeSend: true,
+  hostedWarmAgent: "refresh",
   promptImageInput: true,
   displayName: HARNESS_DESCRIPTORS["claude-code"].displayName,
   // Nothing verified yet: an effort on this harness is refused, not dropped.
@@ -880,6 +898,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     runtimeVersion: "2.1.290",
     configurationVersion: "tool-search-auto-v1",
     ownedInput: true,
+    nativeClient: CLAUDE_CODE_NATIVE_CLIENT,
     refresh: withClaudeForwardingResume,
   },
   liveApprovalRuntime: true,
@@ -1006,6 +1025,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
  */
 const codexAdapter: HarnessRuntimeAdapter = {
   id: "codex",
+  preparesBeforeSend: true,
+  hostedWarmAgent: "refresh",
   promptImageInput: true,
   // Folded into the runtime fingerprint, so a lane saved under the retired
   // exec transport forks (with a visible "runtime-changed" reset) instead of
@@ -1057,6 +1078,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
     configurationVersion: "native-mcp-v1",
     correlationKey: "callId",
     ownedInput: true,
+    nativeClient: CODEX_NATIVE_CLIENT,
     refresh: withForwardingResume,
   },
   // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
@@ -1176,9 +1198,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     ownedInput: false,
     passThroughOnly: true,
     boundApprovals: true,
-    // Measured on this runtime: `initialize` at 2025-11-25 on every server,
-    // and `server/discover` at 2026-07-28 only after a `-32022` naming it.
-    nativeVersionNegotiation: "legacy-first",
+    nativeClient: CURSOR_CLI_NATIVE_CLIENT,
     refresh: (runtime) => runtime,
   },
   // The ACP adapter writes each turn's skills to the CLI's private home
@@ -1234,6 +1254,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
 
 const copilotCliAdapter: HarnessRuntimeAdapter = {
   id: "copilot-cli",
+  hostedWarmAgent: "restart",
   promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   modelAccess: "broker",
@@ -1260,6 +1281,7 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     // Stamped by the bridge's pre-call hook with the stream's tool call id.
     correlationKey: COPILOT_CORRELATION_KEY,
     passThroughOnly: true,
+    nativeClient: COPILOT_CLI_NATIVE_CLIENT,
     refresh: (runtime) => refuseForwardedContinuation(runtime),
   },
   supportsSkills: true,

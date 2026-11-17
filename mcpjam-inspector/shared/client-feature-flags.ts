@@ -39,6 +39,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "mcpjam-compatibility",
   "mcpjam-directory-readiness",
   "mcpjam-learning",
+  "opencode-host-enabled",
   "org-model-gateways",
   "platform-post-launch",
   "plugin-extensions-enabled",

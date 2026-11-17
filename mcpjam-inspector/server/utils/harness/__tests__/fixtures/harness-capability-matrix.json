@@ -6,15 +6,39 @@
       "displayName": "Claude Code",
       "forwardingRuntime": {
         "configurationVersion": "tool-search-auto-v1",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {}
+            },
+            "roots": {
+              "listChanged": true
+            }
+          },
+          "clientInfo": {
+            "description": "Anthropic's agentic coding tool",
+            "name": "claude-code",
+            "title": "Claude Code",
+            "version": "2.1.290",
+            "websiteUrl": "https://claude.com/claude-code"
+          },
+          "supportedProtocolVersions": [
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25"
+          ]
+        },
         "ownedInput": true,
         "runtimeVersion": "2.1.290"
       },
+      "hostedWarmAgent": "refresh",
       "id": "claude-code",
       "liveApprovalRuntime": true,
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "2.1.290",
+      "preparesBeforeSend": true,
       "promptImageInput": true,
       "requiresComputer": true,
       "skills": {
@@ -76,14 +100,33 @@
       "forwardingRuntime": {
         "configurationVersion": "native-mcp-v1",
         "correlationKey": "callId",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {},
+              "url": {}
+            }
+          },
+          "clientInfo": {
+            "name": "codex-mcp-client",
+            "title": "Codex",
+            "version": "0.163.0"
+          },
+          "mcpProtocolVersion": "2025-06-18",
+          "supportedProtocolVersions": [
+            "2025-06-18"
+          ]
+        },
         "ownedInput": true,
         "runtimeVersion": "0.163.0"
       },
+      "hostedWarmAgent": "refresh",
       "id": "codex",
       "liveApprovalRuntime": true,
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "0.163.0",
+      "preparesBeforeSend": true,
       "promptImageInput": true,
       "requiresComputer": true,
       "skills": {
@@ -158,9 +201,19 @@
       "forwardingRuntime": {
         "configurationVersion": "copilot-native-mcp-v1",
         "correlationKey": "mcpjam/toolCallId",
+        "nativeClient": {
+          "capabilities": {
+            "sampling": {}
+          },
+          "clientInfo": {
+            "name": "copilot-cli",
+            "version": "1.0.92"
+          }
+        },
         "passThroughOnly": true,
         "runtimeVersion": "1.0.92"
       },
+      "hostedWarmAgent": "restart",
       "id": "copilot-cli",
       "liveApprovalRuntime": true,
       "mcpDelivery": "harness",
@@ -230,7 +283,18 @@
       "forwardingRuntime": {
         "boundApprovals": true,
         "configurationVersion": "acp-forward-v1",
-        "nativeVersionNegotiation": "legacy-first",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {}
+            }
+          },
+          "clientInfo": {
+            "name": "Cursor",
+            "version": "1.0.0"
+          },
+          "versionNegotiation": "legacy-first"
+        },
         "ownedInput": false,
         "passThroughOnly": true,
         "runtimeVersion": "2026.11.05-86047df"
