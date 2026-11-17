@@ -244,6 +244,31 @@ describe("trace cost, flag on", () => {
     ).toBe(false);
   });
 
+  it("keeps a short harness call selectable when its matched call has cost", () => {
+    query.useQuery.mockReturnValue([
+      {
+        generationId: "g-route",
+        modelId: "anthropic/claude-haiku-4.5",
+        createdAt: 3,
+        cost: reported,
+        matchedSpanId: "p0-s1-route",
+      },
+    ]);
+    render(
+      <TraceTimeline
+        recordedSpans={[...spans(false), shortCall(false)]}
+        transcriptMessages={[]}
+        iterationCost={harness}
+      />,
+    );
+    expect(
+      screen
+        .getAllByTestId("trace-row")
+        .some((row) => row.textContent?.includes("Routing call")),
+    ).toBe(true);
+    expect(screen.queryByTestId("trace-cost-unmatched-calls")).toBeNull();
+  });
+
   it("shows nothing for a trace recorded without costs", () => {
     render(
       <TraceTimeline recordedSpans={spans(false)} transcriptMessages={[]} />,

@@ -1961,6 +1961,16 @@ export function TraceTimeline({
   const shouldReduceMotion = useReducedMotion();
   const spanAccount = useSpanAccountName();
   const costEnabled = useTraceCostEnabled();
+  // Spans with cost evidence, their own or a matched harness call's.
+  const costedSpanIds = useMemo(
+    () =>
+      new Set(
+        costEnabled
+          ? (costSpans ?? []).filter((span) => span.cost).map((span) => span.id)
+          : [],
+      ),
+    [costEnabled, costSpans],
+  );
   const mode =
     recordedSpans && recordedSpans.length > 0
       ? "recorded"
@@ -2158,7 +2168,7 @@ export function TraceTimeline({
       // selectable while the totals count it.
       const isOverheadLlm =
         node.span.category === "llm" &&
-        !(costEnabled && node.span.cost) &&
+        !costedSpanIds.has(node.span.id) &&
         typeof node.span.totalTokens !== "number" &&
         typeof node.span.inputTokens !== "number" &&
         typeof node.span.outputTokens !== "number" &&
@@ -2288,7 +2298,7 @@ export function TraceTimeline({
     mode,
     transcriptMessages,
     projectedMessages,
-    costEnabled,
+    costedSpanIds,
   ]);
 
   const fullyExpandedStepIds = useMemo(
