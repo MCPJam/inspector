@@ -2,6 +2,7 @@ import * as React from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { X } from "lucide-react";
 
+import { Badge } from "./badge";
 import { cn } from "../cn";
 
 /**
@@ -10,7 +11,7 @@ import { cn } from "../cn";
  * focus and never traps it. Built on Radix Popover: Escape and an outside
  * click both close it, and the caller decides what closing means. Title and
  * description wrap balanced and pretty so no line strands a single word.
- * Mark it new with a `secondary` design-system `Badge` above the title.
+ * Mark it new with `FeatureSpotlightBadge` above the title.
  */
 
 const SpotlightTitleContext = React.createContext<string | undefined>(
@@ -132,6 +133,24 @@ function FeatureSpotlightContent({
   );
 }
 
+/** The "New" label above the title. A primary tint, so it doesn't compete with the primary action. */
+function FeatureSpotlightBadge({
+  className,
+  children = "New",
+  ...props
+}: React.ComponentProps<typeof Badge>) {
+  return (
+    <Badge
+      variant="outline"
+      data-slot="feature-spotlight-badge"
+      className={cn("border-primary/30 bg-primary/10 text-primary", className)}
+      {...props}
+    >
+      {children}
+    </Badge>
+  );
+}
+
 function FeatureSpotlightTitle({
   className,
   ...props
@@ -219,6 +238,7 @@ export {
   FeatureSpotlightDescription,
   FeatureSpotlightActions,
   FeatureSpotlightClose,
+  FeatureSpotlightBadge,
   FeatureSpotlightCard,
   FeatureSpotlightPointer,
   FeatureSpotlightCloseButton,

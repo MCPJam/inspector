@@ -7,6 +7,7 @@ import {
   FeatureSpotlight,
   FeatureSpotlightActions,
   FeatureSpotlightAnchor,
+  FeatureSpotlightBadge,
   FeatureSpotlightCard,
   FeatureSpotlightClose,
   FeatureSpotlightContent,
@@ -58,7 +59,7 @@ function Spotlit({
 }
 
 function ConformanceCopy({
-  badge = <Badge variant="secondary">New</Badge>,
+  badge = <FeatureSpotlightBadge />,
 }: {
   badge?: ReactNode;
 }) {
@@ -176,7 +177,7 @@ export const LightAndDark: Story = {
 
 const NEW_BADGES: { caption: string; badge: ReactNode }[] = [
   {
-    caption: "A. Secondary (ships)",
+    caption: "A. Secondary (before)",
     badge: <Badge variant="secondary">New</Badge>,
   },
   { caption: "B. Primary fill", badge: <Badge>New</Badge> },
@@ -190,15 +191,8 @@ const NEW_BADGES: { caption: string; badge: ReactNode }[] = [
     ),
   },
   {
-    caption: "D. Primary tint",
-    badge: (
-      <Badge
-        variant="outline"
-        className="border-primary/30 bg-primary/10 text-primary"
-      >
-        New
-      </Badge>
-    ),
+    caption: "D. Primary tint (ships)",
+    badge: <FeatureSpotlightBadge />,
   },
   {
     caption: "E. Outline with a primary dot",
