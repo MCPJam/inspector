@@ -82,6 +82,21 @@ function spans(withCost: boolean): EvalTraceSpan[] {
   return [...step(0, 0), ...step(1, 900)];
 }
 
+/** A short llm span with no tokens, as framework routing records one. */
+function shortCall(withCost: boolean): EvalTraceSpan {
+  return {
+    id: "p0-s1-route",
+    parentId: "p0-s1",
+    name: "Routing call",
+    category: "llm",
+    startMs: 900,
+    endMs: 920,
+    promptIndex: 0,
+    stepIndex: 1,
+    ...(withCost ? { cost: reported } : {}),
+  };
+}
+
 const user = userEvent.setup();
 
 async function openSecondCall() {
@@ -141,6 +156,37 @@ describe("trace cost, flag on", () => {
     expect(block).toHaveTextContent("SourceEstimated at list price");
   });
 
+  it("keeps a short call with cost selectable, as the total counts it", () => {
+    render(
+      <TraceTimeline
+        recordedSpans={[...spans(true), shortCall(true)]}
+        transcriptMessages={[]}
+      />,
+    );
+    expect(
+      screen
+        .getAllByTestId("trace-row")
+        .some((row) => row.textContent?.includes("Routing call")),
+    ).toBe(true);
+    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent(
+      "3 of 3 calls priced",
+    );
+  });
+
+  it("still hides a short call with no tokens and no cost", () => {
+    render(
+      <TraceTimeline
+        recordedSpans={[...spans(true), shortCall(false)]}
+        transcriptMessages={[]}
+      />,
+    );
+    expect(
+      screen
+        .getAllByTestId("trace-row")
+        .some((row) => row.textContent?.includes("Routing call")),
+    ).toBe(false);
+  });
+
   it("shows nothing for a trace recorded without costs", () => {
     render(<TraceTimeline recordedSpans={spans(false)} transcriptMessages={[]} />);
     expect(screen.queryByTestId("trace-cost-summary")).toBeNull();
@@ -150,7 +196,10 @@ describe("trace cost, flag on", () => {
 describe("trace cost, flag off", () => {
   async function renderSelectedAndHovered(withCost: boolean) {
     render(
-      <TraceTimeline recordedSpans={spans(withCost)} transcriptMessages={[]} />,
+      <TraceTimeline
+        recordedSpans={[...spans(withCost), shortCall(withCost)]}
+        transcriptMessages={[]}
+      />,
     );
     await openSecondCall();
     await hoverSecondCall();
