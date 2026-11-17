@@ -1197,6 +1197,7 @@ export * from "./standard-checks.js";
 export * from "./goal-completion.js";
 export * from "./judge-settings.js";
 export * from "./swarm-session-verdict.js";
+export * from "./platform-gates.js";
 export * from "./swarm-report.js";
 export * from "./eval-authoring.js";
 export * from "./eval-authoring-review.js";

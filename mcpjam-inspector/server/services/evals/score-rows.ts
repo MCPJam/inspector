@@ -30,6 +30,10 @@ import { evaluateToolCalls } from "@mcpjam/sdk/matchers";
 import { resolveExtrasCap } from "@/shared/eval-matching";
 import type { AgentActivityAssessment } from "./agent-activity.js";
 import {
+  hostedPlatformGateRows,
+  type PlatformGateEvidence,
+} from "./platform-gate-rows.js";
+import {
   HOSTED_AGENT_ACTIVITY_SCORER_ID,
   HOSTED_JUDGE_SCORER_ID,
   HOSTED_TOOL_ARGUMENTS_SCORER_ID,
@@ -143,6 +147,8 @@ export type HostedScoreRowInputs = {
   agentActivity?: AgentActivityAssessment;
   /** Absent on the first pass; present on the judge second pass. */
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
+  /** First pass only: what the platform rows are graded from. */
+  platformGates?: PlatformGateEvidence;
 };
 
 const RUBRIC_CHECK_KINDS = new Set(["boolean", "choice", "score"]);
@@ -355,6 +361,13 @@ export function hostedScoreDefinitionInputs(
     ...(inputs.agentActivity?.status === "no_agent_activity"
       ? { agentActivityFired: true }
       : {}),
+    ...(inputs.platformGates
+      ? {
+          platformGates: {
+            failOnToolError: inputs.platformGates.failOnToolError,
+          },
+        }
+      : {}),
     ...(rubricChecks.length > 0
       ? {
           rubricChecks: rubricChecks.map(
@@ -489,6 +502,10 @@ export function buildHostedScoreRows(
         `no_agent_activity: ${inputs.agentActivity.detail}`,
       ),
     );
+  }
+
+  if (inputs.platformGates) {
+    rows.push(...hostedPlatformGateRows(byId, inputs.platformGates));
   }
 
   const judgeDefinition = byId.get(HOSTED_JUDGE_SCORER_ID);

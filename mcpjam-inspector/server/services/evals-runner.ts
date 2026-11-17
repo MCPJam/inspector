@@ -5768,7 +5768,7 @@ const runLocalIteration = async ({
       selectedServers,
     );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
-    const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+    const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
       ...collectToolDeclarations(mcpClientManager, selectedServers),
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5871,6 +5871,7 @@ const runLocalIteration = async ({
         );
     const finishParams = buildIterationFinishParams({
       iterationId,
+      platformGates,
       // The layer that failed, when this driver could tell — the local twin of
       // the hosted path's `stepError`. Without it a local-BYOK trial that died
       // on the model call finalizes uncategorised, which is the very failure
@@ -6190,6 +6191,15 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      // The same platform rows a finished iteration declares, so this case's
+      // evaluation config does not change between iterations of one run.
+      platformGates: {
+        failOnToolError: failsOnToolError(advancedConfig),
+        trace: { messages: failMessages, spans: acc.capturedSpans },
+        pinnedToolErrors: acc.pinnedToolErrors,
+        iterationError: errorMessage ?? acc.iterationError ?? "iteration failed",
+        scriptedCheckFailures: [],
+      },
       // Same as the success path: carry the layer when the driver could tell.
       // This branch is the one a model-call failure most often ends on, so
       // omitting it here would leave the fix half-applied.
@@ -7632,7 +7642,7 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     selectedServers,
   );
-  const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+  const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
     ...collectToolDeclarations(mcpClientManager, selectedServers),
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -7707,6 +7717,7 @@ const runHostedIterationWithBrowser = async (
   // transcript).
   const finishParams = buildIterationFinishParams({
     iterationId,
+    platformGates,
     ...(runId !== null ? { runId: String(runId) } : {}),
     ...(gradingMode ? { gradingMode } : {}),
     scoreMatchOptions: scoreMatchOptionsFor(test),
