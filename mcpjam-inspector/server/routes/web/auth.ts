@@ -3396,6 +3396,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       serverId: string,
       organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
+    mrtrInputOptionsForServer?: (
+      serverId: string,
+    ) => Parameters<MCPClientManager["setMrtrInputCollector"]>[2];
     /** See `createAuthorizedManager`'s option of the same name. */
     advertiseSkillsExtension?: boolean;
     /**
@@ -3625,6 +3628,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       ...(options?.mrtrInputCollectorForServer
         ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
         : {}),
+      mrtrInputOptionsForServer: options?.mrtrInputOptionsForServer,
       ...(options?.tolerateServerRefusals
         ? { tolerateServerRefusals: true }
         : {}),
