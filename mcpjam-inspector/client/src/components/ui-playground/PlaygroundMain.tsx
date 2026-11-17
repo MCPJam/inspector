@@ -4084,6 +4084,12 @@ export function PlaygroundMain({
     compareActive: isCompareMode,
     generation: multiModelSessionGeneration,
     liveColumnKeys: compareLanes.map((lane) => lane.id),
+    configuredColumnKeys: isMultiHostMode
+      ? clientResolutions.map(
+          (client) =>
+            `host:${client.status === "ready" ? client.column.compareId : client.compareId}`,
+        )
+      : compareLanes.map((lane) => lane.id),
     applyRestore: restoreMultiModelSession,
     branchFromThread,
     detachForBranch: () => {
@@ -4111,6 +4117,7 @@ export function PlaygroundMain({
         : sendMessage(message),
     [multiModelSessions.sendInColumn, sendMessage],
   );
+  const { clearOpenedColumn } = multiModelSessions;
   const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
   // What a compare column needs to restore its chat and to save its place.
   const multiModelColumnProps = (columnKey: string) => ({
@@ -6014,6 +6021,9 @@ export function PlaygroundMain({
           // id — so a branch says so here, the way New Chat does through
           // `onReset("reset")`.
           onBeforeBranch: () => {
+            // The edit is a new chat, so a column opened alone is left behind;
+            // otherwise the next send would branch it again.
+            clearOpenedColumn();
             resumedThreadSendBaselineRef.current = null;
             cancelPendingHistorySelection();
             syncResumedVersion(null);
@@ -6045,6 +6055,7 @@ export function PlaygroundMain({
       sendBlocked,
       ensureSelectedServerReadyForChat,
       cancelPendingHistorySelection,
+      clearOpenedColumn,
       syncResumedVersion,
       rewindToMessage,
       outgoingSenderMetadata,

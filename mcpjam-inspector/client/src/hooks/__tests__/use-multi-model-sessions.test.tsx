@@ -82,6 +82,7 @@ function setup(
         compareActive: false,
         generation: 0,
         liveColumnKeys: [],
+        configuredColumnKeys: [],
         applyRestore: (record) => {
           applyRestore(record);
           setGroupId(record.id);

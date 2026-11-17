@@ -52,6 +52,11 @@ export function useMultiModelSessions(deps: {
   compareActive: boolean;
   generation: number;
   liveColumnKeys: readonly string[];
+  /**
+   * The columns the lineup asks for, ready or not. Removal is read from this,
+   * so a client that is briefly unavailable is not saved as removed.
+   */
+  configuredColumnKeys: readonly string[];
   /** Puts the restored record in place; the layout and columns follow it. */
   applyRestore: (record: ComparisonAuthRecovery) => void;
   branchFromThread: UseChatSessionReturn["branchFromThread"];
@@ -339,16 +344,17 @@ export function useMultiModelSessions(deps: {
 }
 
 /**
- * A column that disappears while compare stays on (removed, or replaced by a
- * new effort or model) is marked removed, so reopening the session does not
- * bring it back. Turning compare off or starting a new chat removes nothing.
+ * A column that leaves the lineup while compare stays on (removed, or replaced
+ * by a new effort or model) is marked removed, so reopening the session does
+ * not bring it back. Turning compare off or starting a new chat removes
+ * nothing, and neither does a client that is only briefly unavailable.
  */
 function useMarkRemovedColumns(args: {
   enabled: boolean;
   groupId: string;
   compareActive: boolean;
   generation: number;
-  liveColumnKeys: readonly string[];
+  configuredColumnKeys: readonly string[];
 }) {
   const previous = useRef<{
     groupId: string;
@@ -357,7 +363,8 @@ function useMarkRemovedColumns(args: {
     keys: readonly string[];
     sessions: Map<string, string>;
   } | null>(null);
-  const { enabled, groupId, compareActive, generation, liveColumnKeys } = args;
+  const { enabled, groupId, compareActive, generation, configuredColumnKeys } =
+    args;
   useEffect(() => {
     const before = previous.current;
     if (
@@ -369,7 +376,7 @@ function useMarkRemovedColumns(args: {
       before.generation === generation
     ) {
       for (const key of before.keys) {
-        if (liveColumnKeys.includes(key)) continue;
+        if (configuredColumnKeys.includes(key)) continue;
         const chatSessionId = before.sessions.get(key);
         if (!chatSessionId) continue;
         markMultiModelColumnRemoved(chatSessionId).catch((error: unknown) => {
@@ -379,12 +386,23 @@ function useMarkRemovedColumns(args: {
         });
       }
     }
+    // A column that unmounts while it stays in the lineup (its client went
+    // unavailable) keeps its saved chat here, so a later removal still marks it.
+    const sessions = new Map(
+      before && before.groupId === groupId && before.generation === generation
+        ? [...before.sessions].filter(([key]) =>
+            configuredColumnKeys.includes(key),
+          )
+        : [],
+    );
+    for (const [key, chatSessionId] of comparisonColumnSessions(groupId))
+      sessions.set(key, chatSessionId);
     previous.current = {
       groupId,
       generation,
       active: compareActive,
-      keys: [...liveColumnKeys],
-      sessions: comparisonColumnSessions(groupId),
+      keys: [...configuredColumnKeys],
+      sessions,
     };
   });
 }

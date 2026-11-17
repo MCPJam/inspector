@@ -67,7 +67,7 @@ export function MultiModelMissingColumnsNotice({
           <p className="min-w-0 flex-1">
             {column.reason === "model"
               ? `${column.label} isn't available anymore, so its column didn't reopen.`
-              : `The ${column.label} column did not reopen because its client is no longer in this project. Remove the column and add it again.`}
+              : `${column.label}'s client isn't in this project anymore, so its column didn't reopen. Open it alone, or pick another client.`}
           </p>
           <Button
             type="button"
