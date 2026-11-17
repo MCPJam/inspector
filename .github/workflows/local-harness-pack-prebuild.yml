@@ -170,7 +170,9 @@ jobs:
         run: |
           set -euo pipefail
           # No branch yet (404) means nothing newer; any other failure stops.
-          if ! base="$(gh api "repos/$GITHUB_REPOSITORY/commits/bot/local-harness-pack-pins" --jq '.parents[0].sha' 2>"$RUNNER_TEMP/branch.err")"; then
+          # The branches endpoint, because commits/<ref> answers a missing
+          # branch with 422 "No commit found", not 404.
+          if ! base="$(gh api "repos/$GITHUB_REPOSITORY/branches/bot/local-harness-pack-pins" --jq '.commit.parents[0].sha' 2>"$RUNNER_TEMP/branch.err")"; then
             grep -q "HTTP 404" "$RUNNER_TEMP/branch.err" || { cat "$RUNNER_TEMP/branch.err" >&2; exit 1; }
             base=""
           fi
