@@ -580,7 +580,10 @@ export function SuiteIterationsView({
    * page cancel a whole client-model fan-out in one click.
    */
   onCancelRun: (runId: string | readonly string[]) => void;
-  onDelete: (suite: EvalSuite) => void;
+  onDelete: (
+    suite: EvalSuite,
+    options?: { hasUnsavedEdits?: boolean },
+  ) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
   connectedServerNames: Set<string>;
@@ -2190,9 +2193,11 @@ export function SuiteIterationsView({
                     Save settings
                   </Button>
                 )}
+                {/* Not gated on `configLocked`: deleting a CI-owned suite edits
+                    nothing, and the dialog says the next sync brings it back. */}
                 {evaluateSettingsDelete &&
                 canDeleteSuite &&
-                !editingDisabled &&
+                !readOnlyConfig &&
                 !(
                   capabilitiesReady &&
                   capabilities.permissions?.["suite.delete"] === false
@@ -2200,7 +2205,9 @@ export function SuiteIterationsView({
                   <SuiteSettingsDeleteButton
                     // Any delete in flight: `handleDelete` ignores a second one.
                     disabled={deletingSuiteId !== null || isCommitting}
-                    onDelete={() => onDelete(suite)}
+                    onDelete={() =>
+                      onDelete(suite, { hasUnsavedEdits: hasUnsavedSettings })
+                    }
                   />
                 ) : null}
               </div>

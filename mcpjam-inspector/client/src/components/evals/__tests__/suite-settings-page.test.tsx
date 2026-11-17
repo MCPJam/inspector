@@ -332,6 +332,24 @@ describe("suite settings delete button", () => {
     fireEvent.click(button!);
     expect(onDelete).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "suite-1" }),
+      { hasUnsavedEdits: false },
+    );
+  });
+
+  it("tells the delete there are unsaved edits", () => {
+    const onDelete = vi.fn();
+    const { container } = renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      onDelete,
+    });
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    fireEvent.click(deleteButton()!);
+    expect(onDelete).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "suite-1" }),
+      { hasUnsavedEdits: true },
     );
   });
 
@@ -363,12 +381,11 @@ describe("suite settings delete button", () => {
     expect(deleteButton()).toBeNull();
   });
 
-  it("hides it on a CI-owned suite, whose settings are read-only", () => {
-    // The real read-only gate: a read-only VIEWER never reaches the settings
-    // header at all, so only a CI-owned suite proves `!editingDisabled`.
+  it("offers it on a CI-owned suite, whose settings are read-only", () => {
+    // Deleting edits nothing a sync would undo, so the CI lock doesn't apply.
     renderSettingsSheet({ evaluateSettingsDelete: true, suite: ciOwnedSuite });
-    expect(screen.getByRole("button", { name: "Back to suite" })).toBeVisible();
-    expect(deleteButton()).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
+    expect(deleteButton()).toBeEnabled();
   });
 
   it("is disabled while this suite is being deleted", () => {

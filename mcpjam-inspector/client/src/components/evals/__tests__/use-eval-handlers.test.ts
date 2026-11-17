@@ -241,6 +241,24 @@ describe("useEvalHandlers", () => {
     },
   );
 
+  it("remembers whether a delete was asked with unsaved edits", () => {
+    const suite: EvalSuite = {
+      _id: "suite-1",
+      createdBy: "u",
+      name: "Suite 1",
+      description: "",
+      configRevision: "r",
+      environment: { servers: [] },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const { result } = renderHook(() => useEvalHandlers(defaultProps));
+    act(() => result.current.handleDelete(suite, { hasUnsavedEdits: true }));
+    expect(result.current.suiteToDeleteHasUnsavedEdits).toBe(true);
+    act(() => result.current.handleDelete(suite));
+    expect(result.current.suiteToDeleteHasUnsavedEdits).toBe(false);
+  });
+
   it("stays on the suite and reports the error when its delete fails", async () => {
     const suite: EvalSuite = {
       _id: "suite-1",

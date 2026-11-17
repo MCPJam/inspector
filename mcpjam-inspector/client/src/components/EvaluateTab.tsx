@@ -1851,6 +1851,7 @@ function EvaluateTabContent({
 
         <ConfirmationDialogs
           suiteToDelete={handlers.suiteToDelete}
+          suiteToDeleteHasUnsavedEdits={handlers.suiteToDeleteHasUnsavedEdits}
           setSuiteToDelete={handlers.setSuiteToDelete}
           deletingSuiteId={handlers.deletingSuiteId}
           onConfirmDeleteSuite={handlers.confirmDelete}
