@@ -353,6 +353,7 @@ export {
 export { isNonRetryableMarkedError } from "./mcp-client-manager/error-utils.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
+export { parseBearerAuthenticateParameters } from "./oauth/state-machines/shared/challenges.js";
 export { discoverAuthorizationMetadata } from "./oauth/metadata-discovery.js";
 export type {
   AuthorizationMetadataDiscoveryConfig,
