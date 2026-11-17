@@ -82,7 +82,9 @@ export function GenericBootstrapError() {
  *   network): show `NetworkAccessError`, and do NOT report — these 403s were the
  *   bulk of the Sentry noise this feature set out to remove.
  * - Anything else (transport error, 5xx, malformed response): show the generic
- *   screen AND report, so a real regression isn't invisible.
+ *   screen AND report, so a real regression isn't invisible. A
+ *   `SessionTokenError` reports its status and content type as `extra`, the
+ *   facts Sentry's strict boundary keeps, so the event names what answered.
  *
  * Extracted from `main.tsx` (which self-executes on import and so can't be
  * unit-tested) so this branch — the actual claim of BB-118 — is covered.
@@ -90,6 +92,7 @@ export function GenericBootstrapError() {
 export function resolveBootstrapErrorScreen(error: unknown): {
   report: boolean;
   element: ReactElement;
+  extra?: { httpStatus: number; contentType?: string };
 } {
   if (
     error instanceof SessionTokenError &&
@@ -103,5 +106,14 @@ export function resolveBootstrapErrorScreen(error: unknown): {
   if (isSessionTokenHostDenied(error)) {
     return { report: false, element: <NetworkAccessError /> };
   }
-  return { report: true, element: <GenericBootstrapError /> };
+  return {
+    report: true,
+    element: <GenericBootstrapError />,
+    ...(error instanceof SessionTokenError && {
+      extra: {
+        httpStatus: error.status,
+        ...(error.contentType && { contentType: error.contentType }),
+      },
+    }),
+  };
 }

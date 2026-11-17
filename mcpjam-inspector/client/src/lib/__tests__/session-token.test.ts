@@ -247,6 +247,83 @@ describe("session-token module", () => {
       expect(await sessionToken.initializeSessionToken()).toBe(token);
       expect(fetch).toHaveBeenCalledTimes(1);
     });
+    // PLB-523: something other than the Inspector (a proxy's error page,
+    // another program on the port) can answer this request.
+    const htmlPage =
+      "<!doctype html><html><body><h1>502 Bad Gateway</h1></body></html>";
+    const answer = (status: number, body: BodyInit, contentType?: string) =>
+      new Response(body, {
+        status,
+        headers: contentType ? { "content-type": contentType } : {},
+      });
+
+    it("reports a non-OK HTML page by status and content type without parsing it", async () => {
+      localStorage.setItem("mcpjam.local-access", token);
+      const json = vi.spyOn(Response.prototype, "json");
+      const parse = vi.spyOn(JSON, "parse");
+      vi.mocked(fetch).mockResolvedValue(
+        answer(502, htmlPage, "text/html; charset=utf-8"),
+      );
+      await expect(sessionToken.initializeSessionToken()).rejects.toMatchObject(
+        {
+          name: "SessionTokenError",
+          status: 502,
+          contentType: "text/html",
+          code: undefined,
+        },
+      );
+      expect(json).not.toHaveBeenCalled();
+      expect(parse).not.toHaveBeenCalledWith(htmlPage);
+    });
+    it("reports a 200 HTML page as SessionTokenError, not SyntaxError", async () => {
+      localStorage.setItem("mcpjam.local-access", token);
+      const json = vi.spyOn(Response.prototype, "json");
+      const parse = vi.spyOn(JSON, "parse");
+      vi.mocked(fetch).mockResolvedValue(
+        answer(200, htmlPage, "text/html; charset=utf-8"),
+      );
+      await expect(sessionToken.initializeSessionToken()).rejects.toMatchObject(
+        { name: "SessionTokenError", status: 200, contentType: "text/html" },
+      );
+      expect(json).not.toHaveBeenCalled();
+      expect(parse).not.toHaveBeenCalledWith(htmlPage);
+    });
+    it("records the media type without parameters", async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        answer(500, "Internal Server Error", "Text/Plain; charset=UTF-8"),
+      );
+      await expect(sessionToken.initializeSessionToken()).rejects.toMatchObject(
+        { status: 500, contentType: "text/plain" },
+      );
+    });
+    it("keeps only a string error code", async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        answer(401, JSON.stringify({ code: 500 }), "application/json"),
+      );
+      const error = await sessionToken
+        .initializeSessionToken()
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ name: "SessionTokenError", status: 401 });
+      expect((error as { code?: unknown }).code).toBeUndefined();
+    });
+    it("reports the status when the body cannot be read", async () => {
+      const broken = new ReadableStream({
+        start(controller) {
+          controller.error(new TypeError("connection reset"));
+        },
+      });
+      vi.mocked(fetch).mockResolvedValue(answer(503, broken, "text/html"));
+      await expect(sessionToken.initializeSessionToken()).rejects.toMatchObject(
+        { name: "SessionTokenError", status: 503 },
+      );
+    });
+    it("accepts the Inspector's JSON answer after leading whitespace", async () => {
+      localStorage.setItem("mcpjam.local-access", token);
+      vi.mocked(fetch).mockResolvedValue(
+        answer(200, '  \n{"ok":true}', "application/json"),
+      );
+      expect(await sessionToken.initializeSessionToken()).toBe(token);
+    });
     it("can retry a transient failure", async () => {
       localStorage.setItem("mcpjam.local-access", token);
       vi.mocked(fetch)
