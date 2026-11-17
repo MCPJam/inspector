@@ -1,4 +1,5 @@
 import { runOpenAIProfileChecks } from "./checks/profile.js";
+import { openAIPackageSubmissionAnswers, openAIPackageCountries } from "./package/submission-answers.js";
 import { gradeOpenAISubmissionAnswers } from "./checks/submission-answers.js";
 /**
  * The composite readiness run, split into two halves that do not resemble each
@@ -456,7 +457,7 @@ export function gradeOpenAIReadiness(
   // down the "no input" branch would hide a caller's mistake behind a status
   // that reads like our limitation.
   const parsedProfile =
-    evidence.submissionProfile === undefined
+    evidence.submissionAnswers !== undefined || evidence.submissionProfile === undefined
       ? {
           profile: undefined as OpenAISubmissionProfile | undefined,
           issues: [],
@@ -471,7 +472,18 @@ export function gradeOpenAIReadiness(
     evidence.hasPublishedVersion ??
     false;
 
-  const answerToken = evidence.submissionAnswers?.find(
+  const packageAnswers = openAIPackageSubmissionAnswers(evidence.package, evidence.submissionAnswers);
+  const packageKeys = new Set(packageAnswers.map((answer) => answer.key));
+  const submissionAnswers = evidence.submissionAnswers === undefined
+    ? undefined
+    : [...evidence.submissionAnswers.filter((answer) => !packageKeys.has(answer.key)), ...packageAnswers];
+  const listingKeys = ["listing.displayName", "listing.shortDescription", "listing.description"];
+  const listingCopy = submissionAnswers?.flatMap((answer) =>
+    listingKeys.includes(answer.key) && typeof answer.value === "string" && answer.value.trim()
+      ? [{ field: answer.key, text: answer.value }] : []
+  );
+
+  const answerToken = submissionAnswers?.find(
     (answer) => answer.key === "mcp.verificationToken"
   )?.value;
 
@@ -497,6 +509,7 @@ export function gradeOpenAIReadiness(
         ...runOpenAIDomainVerificationChecks(
           {
             evidence: evidence.domainVerification,
+            declaredTokenInput: evidence.submissionAnswers ? "mcp.verificationToken" : undefined,
             declaredToken: evidence.submissionAnswers
               ? typeof answerToken === "string"
                 ? answerToken
@@ -571,6 +584,7 @@ export function gradeOpenAIReadiness(
       ...runOpenAIPolicyChecks(
         {
           profile: parsedProfile.profile,
+          listingMetadata: submissionAnswers ? listingCopy : undefined,
           packageMetadata: packageSelfDescription(evidence.package),
           hasCommerce: evidence.hasCommerce,
         },
@@ -607,8 +621,9 @@ export function gradeOpenAIReadiness(
               },
               stamp
             ),
-            evidence.submissionAnswers,
-            stamp
+            submissionAnswers ?? [],
+            stamp,
+            { hasPublishedVersion, countries: openAIPackageCountries(evidence.package), annotatedTools: evidence.toolListingComplete === false ? undefined : annotatedTools, frameDomains: evidence.frameDomains }
           )
         : runOpenAISubmissionChecks(
             {
@@ -632,7 +647,12 @@ export function gradeOpenAIReadiness(
       ),
     ],
     evidence.capabilities
-  ).map(withPortalCode);
+  ).map(withPortalCode).map((finding) => {
+    const reads = CHATGPT_PLUGIN_FLOW.placements.find((placement) => placement.checkId === finding.id)?.reads ?? [];
+    return submissionAnswers && (reads.some((key) => packageKeys.has(key)) || (finding.id === "openai.submission.geography" && openAIPackageCountries(evidence.package) !== undefined))
+      ? { ...finding, details: { ...finding.details, packageDerived: true } }
+      : finding;
+  });
   const findings = holdToReviewerAccount(
     graded,
     CHATGPT_PLUGIN_FLOW,
