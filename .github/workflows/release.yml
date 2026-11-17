@@ -386,7 +386,7 @@ jobs:
     needs: preflight
     if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 40
+    timeout-minutes: 160
     permissions:
       contents: read
       actions: read
@@ -422,11 +422,15 @@ jobs:
               core.setOutput("run_id", "");
               return;
             }
-            // Under the job's timeout, so a stuck evidence run still leaves
-            // time to run the gate here.
+            // An evidence run that is still going is almost always waiting
+            // for the same few macOS runners a second copy would need, so
+            // the release waits for it rather than doubling the queue. Every
+            // leg has its own timeout, so the run always ends; cancelling it
+            // ends the wait at once. The cap is under the job's timeout, so a
+            // run that somehow never ends still leaves the gate to run here.
             const found = await findReleaseEvidence({
               github, ...context.repo, name, sha: context.sha,
-              timeoutMs: 30 * 60 * 1000, log: (line) => core.info(line),
+              timeoutMs: 150 * 60 * 1000, log: (line) => core.info(line),
             });
             core.info(found.reason);
             core.setOutput("run_id", found.runId === null ? "" : String(found.runId));

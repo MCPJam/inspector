@@ -111,6 +111,26 @@ test("waits for the evidence run producing this commit's evidence, then uses it"
   assert.equal(found.runId, 20);
 });
 
+test("stops waiting as soon as the evidence run is cancelled, and lets the release run the gate", async () => {
+  const state = { markers: [], runs: {}, evidence: {}, active: [{ id: 22, status: "queued", head_sha: "abc" }] };
+  const lines = [];
+  const found = await findReleaseEvidence({
+    github: fakeGitHub(state),
+    owner: "MCPJam",
+    repo: "inspector",
+    name: NAME,
+    sha: "abc",
+    timeoutMs: 150 * 60 * 1000,
+    log: (line) => lines.push(line),
+    sleep: async () => {
+      state.active = [];
+    },
+  });
+  assert.equal(found.runId, null);
+  assert.match(found.reason, /none is producing it/);
+  assert.match(lines[0], /Cancel that run to run the gate in this release instead/);
+});
+
 test("stops waiting at the deadline and lets the release run the gate", async () => {
   const state = { markers: [], runs: {}, evidence: {}, active: [{ id: 21, status: "queued", head_sha: "abc" }] };
   let clock = 0;
