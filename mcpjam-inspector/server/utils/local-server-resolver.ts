@@ -2096,6 +2096,7 @@ async function executeLocalServerConnectAttempt(
   registerLocalConnectionScope(mcpClientManager, serverDisplayName, {
     serverId,
     projectId,
+    accountKey: resolved.authorizeResult.oauthCredentialId,
   });
   // Tolerate "nothing to disconnect" — first-time connects have nothing in
   // the manager yet, and stale-or-already-disconnected entries on reconnect
