@@ -2,8 +2,10 @@ import type { HarnessV1 } from "@ai-sdk/harness";
 
 import type { HarnessMcpJson } from "../mcp-config.js";
 import { withForwardingResume } from "./bridge-refresh.js";
-import { MAX_SEALED_PLAINTEXT_BYTES } from "../harness-proxy-limits.js";
-import { HARNESS_TOOL_CATALOG_QUERY } from "../session-mcp-config.js";
+import {
+  HARNESS_TOOL_CATALOG_QUERY,
+  MAX_SEALED_PLAINTEXT_BYTES,
+} from "../harness-proxy-limits.js";
 const marker = "mcpjamRefreshNativeMcp";
 
 /** Refresh the paused query without changing its prompt, replay cursor or tools. */
