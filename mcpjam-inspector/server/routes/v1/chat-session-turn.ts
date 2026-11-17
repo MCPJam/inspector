@@ -1409,6 +1409,7 @@ async function handleTurn(c: Context): Promise<Response> {
         harnessId: engine.harness,
         bearer: authHeader,
         projectId,
+        modelId: pins.modelId,
         signal: abortController.signal,
       });
       if (credentialRefusal) {
