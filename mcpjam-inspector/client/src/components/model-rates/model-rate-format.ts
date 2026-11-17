@@ -1,5 +1,4 @@
-import { z } from "zod";
-import { parseModelRates, type ModelRates } from "@mcpjam/sdk/browser";
+import type { ModelRates } from "@mcpjam/sdk/browser";
 
 /**
  * One saved revision of a model price, as both the organization's rates and
@@ -16,41 +15,6 @@ export type ModelRateRow = {
   note?: string;
   retiredAt?: number;
 };
-
-const rowZ = z.object({
-  rateId: z.string().min(1),
-  modelId: z.string().min(1),
-  providerKey: z.string().optional(),
-  rates: z.unknown(),
-  effectiveAt: z.number(),
-  revision: z.number(),
-  note: z.string().optional(),
-  retiredAt: z.number().optional(),
-});
-
-/** One revision from an unchecked response, or undefined when it is malformed. */
-export function parseModelRateRow(value: unknown): ModelRateRow | undefined {
-  const parsed = rowZ.safeParse(value);
-  const rates = parsed.success ? parseModelRates(parsed.data.rates) : undefined;
-  return parsed.success && rates ? { ...parsed.data, rates } : undefined;
-}
-
-/**
- * The revision in force at `at`, from one series' revisions newest first:
- * the newest one already effective, unless it or a newer one was retired by
- * then. The same rule the server prices a call with.
- */
-export function revisionInForce(
-  revisions: readonly ModelRateRow[],
-  at: number,
-): ModelRateRow | undefined {
-  let retiredFrom = Number.POSITIVE_INFINITY;
-  for (const row of revisions) {
-    retiredFrom = Math.min(retiredFrom, row.retiredAt ?? retiredFrom);
-    if (row.effectiveAt <= at) return retiredFrom <= at ? undefined : row;
-  }
-  return undefined;
-}
 
 /** A price per million tokens, as entered: `$3`, `$0.3`, `$3.75`. */
 export function formatRate(usdPerMillion: number | undefined): string {

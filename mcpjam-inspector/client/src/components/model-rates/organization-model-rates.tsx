@@ -6,7 +6,8 @@ import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { convexErrMessage, isConvexQueryNotServed } from "@/lib/convex-error";
 import type { SavedModelRate } from "./model-rate-dialog";
-import { revisionInForce, type ModelRateRow } from "./model-rate-format";
+import { revisionInForce } from "@/shared/model-rate-revision";
+import type { ModelRateRow } from "./model-rate-format";
 import { ModelRatesPanel, ModelRatesTable } from "./model-rates-panel";
 
 export const ORG_MODEL_RATES_QUERY = "organizationModelRates:list";

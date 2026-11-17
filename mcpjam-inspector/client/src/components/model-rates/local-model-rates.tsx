@@ -3,10 +3,11 @@ import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 import { authFetch } from "@/lib/session-token";
 import {
-  parseModelRateRow,
+  modelRateRevisionZ,
+  parseModelRateRevision,
   revisionInForce,
-  type ModelRateRow,
-} from "./model-rate-format";
+} from "@/shared/model-rate-revision";
+import type { ModelRateRow } from "./model-rate-format";
 import { ModelRatesPanel, type InForceRates } from "./model-rates-panel";
 
 const BASE = "/api/mcp/model-rate-overrides";
@@ -23,7 +24,9 @@ class ServerMessage extends Error {}
 /** Rows the panel can show; a malformed one is dropped, not thrown on. */
 const rowsOf = (value: unknown): ModelRateRow[] =>
   Array.isArray(value)
-    ? value.flatMap((row) => parseModelRateRow(row) ?? [])
+    ? value.flatMap(
+        (row) => parseModelRateRevision(modelRateRevisionZ, row) ?? [],
+      )
     : [];
 
 /** The local server's answer, or an error carrying its message. */
