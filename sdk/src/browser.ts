@@ -1394,3 +1394,6 @@ export {
   mergeTasksConformanceResults,
   taskGroupFailure,
 } from "./tasks-conformance/report.js";
+
+// Server feature model for the server canvas (KES-886). Browser-safe.
+export * from "./server-features/index.js";
