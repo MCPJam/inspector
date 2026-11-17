@@ -19,8 +19,13 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-const PLATFORM_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SDK_SRC = join(PLATFORM_DIR, "..");
+const SDK_SRC = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "src"
+);
+const PLATFORM_DIR = join(SDK_SRC, "platform");
 
 /** Methods no operation calls, each with why. Remove an entry when an
  * operation starts calling the method; the test fails until you do. */
