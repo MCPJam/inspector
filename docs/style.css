@@ -550,6 +550,19 @@ tbody tr:hover td {
   color: var(--mcj-ink-strong);
 }
 
+.mcp-client-setup-panel {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid var(--mcj-rule-strong);
+  border-radius: calc(var(--mcj-radius) + 0.25rem);
+  background: var(--mcj-paper);
+  color: var(--mcj-ink);
+}
+
+.mcp-client-setup-panel > :first-child {
+  margin: 0;
+}
+
 /* Mirror design-system Tabs without replacing Mintlify's tab behavior. */
 .mcp-client-setup[data-component-part="tabs-list"] {
   display: flex;
