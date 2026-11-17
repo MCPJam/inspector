@@ -13,53 +13,12 @@ account, and ask your agent to work with them in a conversation.
 Your client must support **remote MCP servers over Streamable HTTP** and
 **OAuth sign-in**. No local MCPJam installation or API key is needed.
 
-| | |
-| --- | --- |
-| Server URL | `https://mcp.mcpjam.com/mcp` |
-| Transport | Streamable HTTP |
-| Sign-in | OAuth with your MCPJam account (`login.mcpjam.com`) |
-| Acts as | You. Every call uses your own MCPJam identity and your own project access |
-
-<Note>
-  This server connects your agent to your MCPJam account. To inspect MCP
-  servers locally through an agent instead, see the [CLI MCP server](/cli/mcp-server).
-</Note>
-
-## Before you start
-
-- **An MCPJam account.** Sign up at [app.mcpjam.com](https://app.mcpjam.com).
-  The free plan works.
-- **A project.** Your agent can list your projects and create a new one, and every
-  project tool falls back to your most recently updated project when you don't
-  name one.
-- **MCP servers to work with** (optional). Servers you already saved in the
-  MCPJam app are available right away. Your agent can also connect a new server by
-  URL; when that server needs OAuth, it gives you a sign-in link to open.
-- **Plan and feature access.** Some features depend on your plan, your project
-  role, or features enabled for your account. Ask your agent what you can do in a
-  project. It reads that from your account, and a tool you can't use is
-  refused with a clear error.
-
 ## Connect your client
 
 Use the same server URL in every client. Setup menus, custom-server access,
 and tool approvals depend on your client, plan, and workspace policies.
 
-<Tabs>
-  <Tab title="Claude">
-    In Claude on the web or desktop:
-
-    1. Open [**Customize → Connectors**](https://claude.ai/customize/connectors)
-       and add a custom connector.
-    2. Name it **MCPJam** and enter `https://mcp.mcpjam.com/mcp`.
-    3. Click **Connect** and sign in with your MCPJam account. The connector shows
-       **Connected** under **Your connectors** when sign-in finishes.
-    4. In a chat, turn it on from **+ → Connectors**.
-
-    On Team and Enterprise plans, an owner may need to add the connector for the
-    organization first. See Anthropic's
-    [connector setup guide](https://claude.com/docs/connectors/custom/add-unlisted#add-a-connector-by-url).
-  </Tab>
+<Tabs className="mcp-client-setup">
   <Tab title="Claude Code">
     Add the remote server:
 
@@ -119,6 +78,20 @@ and tool approvals depend on your client, plan, and workspace policies.
 
     See [VS Code's MCP setup guide](https://code.visualstudio.com/docs/copilot/customization/mcp-servers).
   </Tab>
+  <Tab title="Claude">
+    In Claude on the web or desktop:
+
+    1. Open [**Customize → Connectors**](https://claude.ai/customize/connectors)
+       and add a custom connector.
+    2. Name it **MCPJam** and enter `https://mcp.mcpjam.com/mcp`.
+    3. Click **Connect** and sign in with your MCPJam account. The connector shows
+       **Connected** under **Your connectors** when sign-in finishes.
+    4. In a chat, turn it on from **+ → Connectors**.
+
+    On Team and Enterprise plans, an owner may need to add the connector for the
+    organization first. See Anthropic's
+    [connector setup guide](https://claude.com/docs/connectors/custom/add-unlisted#add-a-connector-by-url).
+  </Tab>
   <Tab title="ChatGPT">
     Custom MCP server access depends on your ChatGPT plan and workspace
     permissions. A workspace admin may need to enable or publish the connection.
@@ -144,7 +117,34 @@ Add a remote MCP server named **MCPJam** with the URL
 a transport, and complete OAuth sign-in in your browser. Clients that only
 support local stdio servers cannot connect directly to this hosted endpoint.
 
-### Verify the connection
+## Before you start
+
+- **An MCPJam account.** Sign up at [app.mcpjam.com](https://app.mcpjam.com).
+  The free plan works.
+- **A project.** Your agent can list your projects and create a new one, and every
+  project tool falls back to your most recently updated project when you don't
+  name one.
+- **MCP servers to work with** (optional). Servers you already saved in the
+  MCPJam app are available right away. Your agent can also connect a new server by
+  URL; when that server needs OAuth, it gives you a sign-in link to open.
+- **Plan and feature access.** Some features depend on your plan, your project
+  role, or features enabled for your account. Ask your agent what you can do in a
+  project. It reads that from your account, and a tool you can't use is
+  refused with a clear error.
+
+| | |
+| --- | --- |
+| Server URL | `https://mcp.mcpjam.com/mcp` |
+| Transport | Streamable HTTP |
+| Sign-in | OAuth with your MCPJam account (`login.mcpjam.com`) |
+| Acts as | You. Every call uses your own MCPJam identity and your own project access |
+
+<Note>
+  This server connects your agent to your MCPJam account. To inspect MCP
+  servers locally through an agent instead, see the [CLI MCP server](/cli/mcp-server).
+</Note>
+
+## Verify the connection
 
 Ask your agent:
 
