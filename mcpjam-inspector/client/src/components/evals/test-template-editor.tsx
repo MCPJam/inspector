@@ -4412,9 +4412,7 @@ export function TestTemplateEditor({
                 stashedTools={simpleStashedTools}
                 onStashedToolsChange={setSimpleStashedTools}
                 suite={suite}
-                judgePolicy={
-                  caseCapabilities.capabilities?.judges?.goalCompletion.policy
-                }
+                capabilities={caseCapabilities.capabilities}
                 availableTools={assertableTools}
                 projectServers={projectServers}
                 onOpenSuiteSettings={() => onOpenSuiteSettings?.()}

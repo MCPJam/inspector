@@ -6,13 +6,16 @@
  * - A generated draft under review. The generation store keeps it until Add
  *   to suite.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import type { CaseSaveForm } from "@/components/evals/case-save-payload";
 import type { AvailableTool } from "@/components/evals/step-fields";
 import type { EvalSuite } from "@/components/evals/types";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
-import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  useSuiteCapabilities,
+  type SuiteCapabilities,
+} from "@/hooks/use-suite-capabilities";
 import type { RemoteServer } from "@/hooks/useProjects";
 import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { SuiteSettingsTab } from "@/lib/eval-route-types";
@@ -27,11 +30,7 @@ import type {
 } from "../simple-case/simple-case-model";
 import type { CaseStepsDraft, DraftEdit } from "./case-step-edits";
 import { CaseStepsEditor } from "./case-steps-editor";
-import {
-  caseStepsScorecard,
-  caseStepsSuiteFacts,
-  type JudgePolicy,
-} from "./case-steps-suite";
+import { caseStepsScorecard, caseStepsSuiteFacts } from "./case-steps-suite";
 import {
   generatedDraftPatch,
   generatedDraftToSteps,
@@ -42,7 +41,7 @@ type DraftStepsProps = {
   draft: CaseStepsDraft;
   onDraftChange: (edit: DraftEdit) => void;
   suite: EvalSuite;
-  judgePolicy: JudgePolicy;
+  capabilities: SuiteCapabilities | null | undefined;
   availableTools: AvailableTool[];
   projectServers?: RemoteServer[];
   readOnly: boolean;
@@ -51,13 +50,18 @@ type DraftStepsProps = {
   onDraftValidityChange?: (invalid: boolean) => void;
 };
 
-function DraftSteps({ suite, judgePolicy, ...props }: DraftStepsProps) {
+function DraftSteps({ suite, capabilities, ...props }: DraftStepsProps) {
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const judgePolicy = capabilities?.judges?.goalCompletion.policy;
+  const card = useMemo(
+    () => caseStepsScorecard(props.draft, suite, judgePolicy),
+    [props.draft, suite, judgePolicy],
+  );
   return (
     <CaseStepsEditor
       {...props}
-      card={caseStepsScorecard(props.draft, suite, judgePolicy)}
-      suite={caseStepsSuiteFacts(suite)}
+      card={card}
+      suite={caseStepsSuiteFacts(suite, capabilities)}
       openKey={openKey}
       onOpenKeyChange={setOpenKey}
     />
@@ -73,7 +77,7 @@ export type DescribeCaseStepsProps = {
   stashedTools: SimpleCaseTool[];
   onStashedToolsChange: (tools: SimpleCaseTool[]) => void;
   suite: EvalSuite | null | undefined;
-  judgePolicy: JudgePolicy;
+  capabilities: SuiteCapabilities | null | undefined;
   availableTools: AvailableTool[];
   projectServers?: RemoteServer[];
   onOpenSuiteSettings: (tab: SuiteSettingsTab) => void;
@@ -90,12 +94,15 @@ export function DescribeCaseSteps({
   suite,
   ...props
 }: DescribeCaseStepsProps) {
-  const draft: CaseStepsDraft = {
-    ...form,
-    expectedOutput: form.expectedOutput ?? "",
-    toolsChoice,
-    stashedTools,
-  };
+  const draft = useMemo<CaseStepsDraft>(
+    () => ({
+      ...form,
+      expectedOutput: form.expectedOutput ?? "",
+      toolsChoice,
+      stashedTools,
+    }),
+    [form, toolsChoice, stashedTools],
+  );
   // Edits in one event chain off each other, not off the last render.
   const latest = useRef(draft);
   latest.current = draft;
@@ -141,9 +148,7 @@ export function useGeneratedDraftSteps(
     setDraft(next);
   }, [generated.revision, generated.input]);
   const onDraftChange = (edit: DraftEdit) => {
-    const next = edit(latest.current);
-    latest.current = next;
-    setDraft(next);
+    let next = edit(latest.current);
     try {
       revision.current = editGeneratedDraft(
         scope,
@@ -152,8 +157,12 @@ export function useGeneratedDraftSteps(
         generatedDraftPatch(next),
       ).revision;
     } catch {
-      // Changed elsewhere or saving: the effect reloads it from the store.
+      // Changed elsewhere or saving: show the store's draft, not an edit it
+      // never took; the effect brings any newer revision.
+      next = generatedDraftToSteps(generated.input);
     }
+    latest.current = next;
+    setDraft(next);
   };
   return { draft, onDraftChange };
 }
@@ -174,8 +183,7 @@ export function GeneratedDraftSteps({
     "testSuites:getTestSuite" as never,
     canQuery ? ({ suiteId: scope.suiteId } as never) : "skip",
   ) as EvalSuite | null | undefined;
-  const judgePolicy = useSuiteCapabilities(scope.suiteId).capabilities?.judges
-    ?.goalCompletion.policy;
+  const capabilities = useSuiteCapabilities(scope.suiteId).capabilities;
   const { draft, onDraftChange } = useGeneratedDraftSteps(scope, generated);
   if (!suite) return null;
   return (
@@ -183,7 +191,7 @@ export function GeneratedDraftSteps({
       draft={draft}
       onDraftChange={onDraftChange}
       suite={suite}
-      judgePolicy={judgePolicy}
+      capabilities={capabilities}
       availableTools={availableTools}
       readOnly={readOnly}
       caseOverrides={false}

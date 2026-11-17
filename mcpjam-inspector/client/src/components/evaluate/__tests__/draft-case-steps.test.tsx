@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderWithProviders, screen, userEvent } from "@/test";
 import type { CaseSaveForm } from "@/components/evals/case-save-payload";
@@ -10,7 +11,10 @@ import {
   useEvalGeneration,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import type { TestStep } from "@/shared/steps";
-import { DescribeCaseSteps } from "../case-steps/draft-case-steps";
+import {
+  DescribeCaseSteps,
+  useGeneratedDraftSteps,
+} from "../case-steps/draft-case-steps";
 import type { ToolsChoice } from "../simple-case/simple-case-model";
 import { EvalGeneratedDrafts } from "../eval-generated-drafts";
 
@@ -63,7 +67,7 @@ describe("DescribeCaseSteps", () => {
           stashedTools={[]}
           onStashedToolsChange={vi.fn()}
           suite={suite}
-          judgePolicy={undefined}
+          capabilities={undefined}
           availableTools={[]}
           onOpenSuiteSettings={vi.fn()}
           onDraftValidityChange={vi.fn()}
@@ -176,6 +180,26 @@ describe("Review case in the steps editor", () => {
       });
     });
     expect(promptBox()).toHaveValue("Draw two boxes");
+  });
+
+  it("shows the store's draft when the store refuses an edit", () => {
+    // The store moved on (Ask MCPJam) before this editor saw the new revision.
+    editGeneratedDraft(scope as never, "d1", "r1", { title: "Renamed" });
+    const { result } = renderHook(() =>
+      useGeneratedDraftSteps(
+        scope as never,
+        {
+          id: "d1",
+          revision: "r1",
+          input,
+        } as never,
+      ),
+    );
+    act(() =>
+      result.current.onDraftChange((draft) => ({ ...draft, title: "Mine" })),
+    );
+    expect(result.current.draft.title).toBe("Draw a box");
+    expect(storedDraft().input.title).toBe("Renamed");
   });
 
   it("opens an imported case as steps without a click", () => {

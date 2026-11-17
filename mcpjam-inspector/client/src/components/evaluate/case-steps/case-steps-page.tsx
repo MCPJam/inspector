@@ -211,10 +211,7 @@ export function CaseStepsPage({
             draft={draft}
             onDraftChange={data.setDraft}
             card={card}
-            suite={{
-              ...caseStepsSuiteFacts(suite),
-              checkPolicy: data.capabilities?.scorers?.checkPolicy === true,
-            }}
+            suite={caseStepsSuiteFacts(suite, data.capabilities)}
             availableTools={tools}
             projectServers={projectServers}
             readOnly={locked}

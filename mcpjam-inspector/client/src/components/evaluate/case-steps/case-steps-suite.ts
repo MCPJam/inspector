@@ -6,6 +6,7 @@
 import { getEffectiveSuiteServers } from "@/components/evals/helpers";
 import { stripTimestampSuffix } from "@/components/evals/suite-overview-presentation";
 import type { EvalSuite } from "@/components/evals/types";
+import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { Predicate } from "@/shared/eval-matching";
 import {
   buildCaseScorecard,
@@ -42,8 +43,10 @@ export function caseStepsScorecard(
 
 export function caseStepsSuiteFacts(
   suite: EvalSuite,
+  capabilities: SuiteCapabilities | null | undefined,
 ): CaseStepsEditorProps["suite"] {
   return {
+    checkPolicy: capabilities?.scorers?.checkPolicy === true,
     name: stripTimestampSuffix(suite.name),
     judgeConfig: suite.judgeConfig,
     defaultPredicates: (suite.defaultPredicates ?? []) as Predicate[],
