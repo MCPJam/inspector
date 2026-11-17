@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import { ListChecks, Play, Save, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { DisabledReasonTooltip } from "@mcpjam/design-system/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -12,12 +13,17 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "@/components/evals/constants";
 
-/** Editable title, then Delete, Save, Test Case Evaluators and Run. Delete and Run show only when the page can do them. */
+/**
+ * The title, then Delete, Save, Test Case Evaluators and Run. Locked
+ * (`readOnly`): no rename, Delete, Save or Evaluators. Save shows only with
+ * unsaved edits; Delete, Evaluators and Run only when the page passes them.
+ */
 export function CaseHeader({
   title,
   savedTitle,
   onTitleChange,
   dirty,
+  saving,
   readOnly,
   runDisabledReason,
   onDelete,
@@ -29,11 +35,12 @@ export function CaseHeader({
   savedTitle: string;
   onTitleChange: (title: string) => void;
   dirty: boolean;
+  saving: boolean;
   readOnly: boolean;
   runDisabledReason: string | null;
   onDelete?: () => void;
   onSave: () => void;
-  onOpenEvaluators: () => void;
+  onOpenEvaluators?: () => void;
   onRun?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -64,19 +71,24 @@ export function CaseHeader({
               className="w-full min-w-0 bg-transparent px-0 py-0 text-base font-semibold tracking-tight focus:outline-none"
             />
           ) : (
-            <button
-              type="button"
-              className="min-w-0 text-left"
-              disabled={readOnly}
-              onClick={() => {
-                before.current = title;
-                setEditing(true);
-              }}
-            >
-              <h2 className="text-base font-semibold tracking-tight transition-opacity hover:opacity-80">
-                {title || savedTitle}
-              </h2>
-            </button>
+            <h2 className="min-w-0 text-base font-semibold tracking-tight">
+              {readOnly ? (
+                title || savedTitle
+              ) : (
+                // The title stays the heading's name; the hint is its description.
+                <button
+                  type="button"
+                  title="Rename test case"
+                  className="text-left transition-opacity hover:opacity-80"
+                  onClick={() => {
+                    before.current = title;
+                    setEditing(true);
+                  }}
+                >
+                  {title || savedTitle}
+                </button>
+              )}
+            </h2>
           )}
         </div>
         <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
@@ -99,33 +111,37 @@ export function CaseHeader({
               variant="outline"
               size="sm"
               className="h-8"
+              disabled={saving}
               onClick={onSave}
             >
               <Save className="mr-2 h-3.5 w-3.5" aria-hidden />
               Save
             </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onOpenEvaluators}
-          >
-            <ListChecks className="size-3.5" aria-hidden />
-            Test Case Evaluators
-          </Button>
-          {onRun ? (
+          {onOpenEvaluators ? (
             <Button
               type="button"
+              variant="outline"
               size="sm"
-              className="h-8"
-              disabled={runDisabledReason !== null}
-              title={runDisabledReason ?? undefined}
-              onClick={onRun}
+              onClick={onOpenEvaluators}
             >
-              <Play className="size-3.5 fill-current" aria-hidden />
-              Run
+              <ListChecks className="size-3.5" aria-hidden />
+              Test Case Evaluators
             </Button>
+          ) : null}
+          {onRun ? (
+            <DisabledReasonTooltip reason={runDisabledReason} variant="muted">
+              <Button
+                type="button"
+                size="sm"
+                className="h-8"
+                disabled={runDisabledReason !== null}
+                onClick={onRun}
+              >
+                <Play className="size-3.5 fill-current" aria-hidden />
+                Run
+              </Button>
+            </DisabledReasonTooltip>
           ) : null}
         </div>
       </div>

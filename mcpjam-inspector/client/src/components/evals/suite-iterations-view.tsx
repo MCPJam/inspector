@@ -892,6 +892,14 @@ export function SuiteIterationsView({
           : route.type === "test-edit"
             ? "test-detail"
             : "overview";
+  // Evaluate's saved case: steps editor with the flag on; waits while it loads.
+  const stepsEditorFlag = useTestCaseStepsEditorEnabled();
+  const stepsEditorRoute =
+    evaluateCaseEditor &&
+    viewMode === "test-edit" &&
+    opensInStepsEditor(route) &&
+    stepsEditorFlag !== false;
+  const showStepsEditor = stepsEditorRoute && stepsEditorFlag === true;
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
@@ -1253,7 +1261,10 @@ export function SuiteIterationsView({
   // A draft case has no row yet, so it has no history to read — and its
   // `draft:` id would fail the query's `v.id("testCase")` check.
   const historyTestCaseId =
-    perRunMode && selectedTestId && !isDraftTestCaseId(selectedTestId)
+    !stepsEditorRoute &&
+    perRunMode &&
+    selectedTestId &&
+    !isDraftTestCaseId(selectedTestId)
       ? selectedTestId
       : null;
   const caseRows = useQuery(
@@ -1585,10 +1596,6 @@ export function SuiteIterationsView({
     route.type === "run-detail" ? (route.testCaseId ?? null) : null;
   // Old `?case=` and `?iteration=` links open their page once this is on.
   const resultPagesEnabled = useRunResultPagesEnabled();
-  const showStepsEditor =
-    useTestCaseStepsEditorEnabled() === true &&
-    viewMode === "test-edit" &&
-    opensInStepsEditor(route);
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -2248,7 +2255,9 @@ export function SuiteIterationsView({
       {!isEditMode && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
-            {showStepsEditor && selectedTestId ? (
+            {stepsEditorRoute && !showStepsEditor ? (
+              <RowsLoading key={contentKey} label="Loading test case..." />
+            ) : showStepsEditor && selectedTestId ? (
               <motion.div
                 key={contentKey}
                 initial={shouldReduceMotion ? false : { opacity: 0 }}
@@ -2275,6 +2284,7 @@ export function SuiteIterationsView({
                       (rerunningSuiteId ? "A run is already starting." : null),
                   }}
                   onRunCase={isDirectGuest ? undefined : onRunCase}
+                  runOutOfCreditsReason={caseRunOutOfCreditsReason}
                   onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                   navigation={navigation}
                 />

@@ -5,13 +5,19 @@
  * suite view's own routes and handlers.
  */
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import type { RemoteServer } from "@/hooks/useProjects";
 import { isDraftTestCaseId } from "@/components/evals/draft-test-case";
 import { getEffectiveSuiteServers } from "@/components/evals/helpers";
 import { stripTimestampSuffix } from "@/components/evals/suite-overview-presentation";
-import type { CaseRunLaunchOptions, EvalSuite } from "@/components/evals/types";
+import { getStepsBlockReason } from "@/components/evals/test-template-editor";
+import type {
+  CaseRunLaunchOptions,
+  EvalCase,
+  EvalSuite,
+} from "@/components/evals/types";
 import type { Predicate } from "@/shared/eval-matching";
 import { SuiteRunReview, type SuiteRunReviewProps } from "../suite-run-review";
 import { CaseStepsEditor } from "./case-steps-editor";
@@ -70,16 +76,28 @@ export type CaseStepsPageProps = {
     caseId: string,
     opts?: CaseRunLaunchOptions,
   ) => void | Promise<void>;
+  /** Why this case's run would be refused for credits, as the suite view says. */
+  runOutOfCreditsReason?: (testCase: EvalCase) => string | null;
   /** Deletes cases; absent hides Delete. */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   navigation: CaseStepsPageNavigation;
 };
 
-/** "This test case no longer exists." with a way back to the list. */
-function MissingCase({ onOpen }: { onOpen: () => void }) {
+/** A case, or its suite, that is gone, with a way back to the list. */
+function MissingCase({
+  suiteGone,
+  onOpen,
+}: {
+  suiteGone: boolean;
+  onOpen: () => void;
+}) {
   return (
     <div className="mx-auto max-w-4xl px-6 py-10 text-sm text-muted-foreground">
-      <p>This test case no longer exists.</p>
+      <p>
+        {suiteGone
+          ? "This suite no longer exists."
+          : "This test case no longer exists."}
+      </p>
       <Button
         type="button"
         variant="link"
@@ -100,6 +118,7 @@ export function CaseStepsPage({
   projectServers,
   launchReview,
   onRunCase,
+  runOutOfCreditsReason,
   onDeleteTestCasesBatch,
   navigation,
 }: CaseStepsPageProps) {
@@ -111,16 +130,34 @@ export function CaseStepsPage({
   const [deleting, setDeleting] = useState(false);
 
   const openTestCases = () => navigation.toSuiteOverview(suiteId, "test-cases");
-  if (data.status === "missing") return <MissingCase onOpen={openTestCases} />;
+  if (data.status === "missing")
+    return <MissingCase suiteGone={!data.suite} onOpen={openTestCases} />;
   const { draft, card, suite, testCase } = data;
   if (!draft || !card || !suite || !testCase) {
-    return <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" />;
+    return (
+      <div
+        className="flex min-h-0 flex-1 items-center justify-center"
+        aria-busy="true"
+      >
+        <Loader2
+          className="h-6 w-6 animate-spin text-primary"
+          aria-label="Loading test case"
+        />
+      </div>
+    );
   }
+  // Nothing saves while locked: Save, Evaluators and Run's save step all stop.
   const locked = readOnly || data.readOnly;
+  const unsaved = !locked && data.dirty;
+  const runDisabledReason =
+    launchReview.disabledReason ??
+    getStepsBlockReason(draft.steps) ??
+    runOutOfCreditsReason?.(testCase) ??
+    null;
 
   // Today's evaluators page reads the stored case, so pending edits save first.
   const openEvaluators = async () => {
-    if (data.dirty && !(await data.save()).ok) return;
+    if (unsaved && !(await data.save()).ok) return;
     navigation.toTestEdit(suiteId, testCaseId, { checks: true });
   };
 
@@ -139,15 +176,16 @@ export function CaseStepsPage({
     setDeleting(true);
     try {
       await onDeleteTestCasesBatch([testCase._id]);
-      toast.success("Test case deleted");
-      setDeleteOpen(false);
-      openTestCases();
     } catch {
       // The batch delete logs the failure; the toast says what to retry.
       toast.error("Could not delete the test case. Try again.");
+      return;
     } finally {
       setDeleting(false);
     }
+    toast.success("Test case deleted");
+    setDeleteOpen(false);
+    openTestCases();
   };
 
   return (
@@ -159,13 +197,14 @@ export function CaseStepsPage({
           data.setDraft((current) => ({ ...current, title }))
         }
         dirty={data.dirty}
+        saving={data.saving}
         readOnly={locked}
-        runDisabledReason={launchReview.disabledReason ?? null}
+        runDisabledReason={runDisabledReason}
         onDelete={
           onDeleteTestCasesBatch ? () => setDeleteOpen(true) : undefined
         }
         onSave={() => void data.save()}
-        onOpenEvaluators={() => void openEvaluators()}
+        onOpenEvaluators={locked ? undefined : () => void openEvaluators()}
         onRun={onRunCase ? () => setRunOpen(true) : undefined}
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -180,6 +219,7 @@ export function CaseStepsPage({
               defaultPredicates: (suite.defaultPredicates ?? []) as Predicate[],
               servers: getEffectiveSuiteServers(suite),
               defaultMatchOptions: suite.defaultMatchOptions,
+              checkPolicy: data.capabilities?.scorers?.checkPolicy === true,
             }}
             availableTools={tools}
             projectServers={projectServers}
@@ -196,13 +236,14 @@ export function CaseStepsPage({
       {runOpen && onRunCase ? (
         <SuiteRunReview
           {...launchReview}
+          disabledReason={runDisabledReason}
           cases={[testCase]}
           caseTitle={draft.title || testCase.title}
           initialIterations={draft.runs}
           onClose={() => setRunOpen(false)}
           onStart={startRun}
           saveBeforeRun={
-            data.dirty
+            unsaved
               ? async () => (await data.save({ quiet: true })).ok
               : undefined
           }
