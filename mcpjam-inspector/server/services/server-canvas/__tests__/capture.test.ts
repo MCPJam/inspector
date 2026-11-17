@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { collectState } = vi.hoisted(() => ({ collectState: vi.fn() }));
 
@@ -12,7 +12,11 @@ import {
   SERVER_FEATURE_SNAPSHOT_VERSION,
   computeCaptureContextHash,
 } from "@mcpjam/sdk";
-import { buildCaptureContext, captureServerFeatures } from "../capture.js";
+import {
+  LOCAL_CAPTURE_BUDGET_MS,
+  buildCaptureContext,
+  captureServerFeatures,
+} from "../capture.js";
 
 const initInfo = {
   protocolVersion: "2025-11-25",
@@ -37,6 +41,10 @@ function fakeManager(): MCPClientManager {
 
 beforeEach(() => {
   collectState.mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("buildCaptureContext", () => {
@@ -118,6 +126,7 @@ describe("captureServerFeatures", () => {
     // Lists only: no skill file is read, so nothing can ask the user for input.
     expect(collectState).toHaveBeenCalledWith(manager, "Fixture", {
       verifySkills: false,
+      signal: expect.any(AbortSignal),
     });
     expect(capture.snapshot.version).toBe(SERVER_FEATURE_SNAPSHOT_VERSION);
     expect(capture.snapshot.servers).toHaveLength(1);
@@ -172,6 +181,56 @@ describe("captureServerFeatures", () => {
       coverage: { tools: "complete", prompts: "not-captured" },
     });
     expect(capture.snapshot.servers[0]?.captureError).toBeUndefined();
+  });
+
+  it("ends a local capture at its budget when a list never answers", async () => {
+    const actual = await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+    collectState.mockImplementation(actual.collectConnectedServerDoctorState);
+    const manager = fakeManager();
+    vi.spyOn(manager, "listTools").mockResolvedValue({
+      tools: [{ name: "search", inputSchema: { type: "object" } }],
+    });
+    vi.spyOn(manager, "listResources").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(manager, "listPrompts").mockResolvedValue({ prompts: [] });
+    vi.spyOn(manager, "listResourceTemplates").mockResolvedValue({
+      resourceTemplates: [],
+    });
+    // The budget's deadline, ended by hand so the test does not wait for it.
+    const deadline = new AbortController();
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(deadline.signal);
+
+    const capturing = captureServerFeatures(manager, "Fixture", "srv_1");
+    expect(timeout).toHaveBeenCalledWith(LOCAL_CAPTURE_BUDGET_MS);
+    // Every list but resources/list answers before the budget runs out.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    deadline.abort();
+    const capture = await capturing;
+
+    expect(capture.snapshot.servers[0]).toMatchObject({
+      tools: [{ name: "search" }],
+      coverage: { tools: "complete", resources: "not-captured" },
+    });
+    expect(capture.snapshot.servers[0]?.captureError).toBeUndefined();
+  });
+
+  it("stops listing when the connect's own signal aborts", async () => {
+    let listing: AbortSignal | undefined;
+    collectState.mockImplementation(
+      async (_manager: unknown, _key: string, options: { signal?: AbortSignal }) => {
+        listing = options.signal;
+        throw new Error("not connected");
+      },
+    );
+    const connect = new AbortController();
+
+    await captureServerFeatures(fakeManager(), "Fixture", "srv_1", {
+      signal: connect.signal,
+    });
+    expect(listing?.aborted).toBe(false);
+    connect.abort();
+    expect(listing?.aborted).toBe(true);
   });
 
   it("records a failed capture instead of throwing", async () => {

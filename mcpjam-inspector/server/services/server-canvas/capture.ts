@@ -8,9 +8,10 @@
  * the server ask the user for input. The raw handshake comes from the client
  * manager's logging tap, so nothing is sent beyond those lists.
  *
- * Hosted, the capture has its own budget inside the Connect deadline: a list
- * still running when it ends is left out with its coverage not captured, and
- * the connect goes on with what was listed.
+ * The capture has its own budget inside the connect's deadline, hosted and
+ * local, and stops early when the connect is cancelled: a list still running
+ * then is left out with its coverage not captured, and the connect goes on
+ * with what was listed.
  */
 import {
   SERVER_FEATURE_SNAPSHOT_VERSION,
@@ -51,6 +52,13 @@ export interface CaptureContextOptions {
  * that also covers connecting and the first tool listing.
  */
 export const HOSTED_CAPTURE_BUDGET_MS = 10_000;
+
+/**
+ * How long a local capture may list. The local connect's 20 s deadline also
+ * covers connecting and authorization, and a capture that ran into it would
+ * turn a connect that worked into a timeout.
+ */
+export const LOCAL_CAPTURE_BUDGET_MS = 5_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -100,6 +108,12 @@ function skillsSupport(
   }
 }
 
+/** Ends listing at the budget, or sooner when the caller's signal aborts. */
+function listingSignal(budgetMs: number, signal?: AbortSignal): AbortSignal {
+  const deadline = AbortSignal.timeout(budgetMs);
+  return signal ? AbortSignal.any([deadline, signal]) : deadline;
+}
+
 /**
  * Captures the v3 snapshot of `managerKey` and its context. Never throws: a
  * failure lands in the server's `captureError` with nothing marked captured.
@@ -111,18 +125,24 @@ export async function captureServerFeatures(
   snapshotServerId: string,
   options: CaptureContextOptions & {
     logPrefix?: string;
-    /** Listing budget; hosted defaults to {@link HOSTED_CAPTURE_BUDGET_MS}. */
+    /**
+     * Listing budget; defaults to {@link HOSTED_CAPTURE_BUDGET_MS} hosted and
+     * {@link LOCAL_CAPTURE_BUDGET_MS} locally.
+     */
     budgetMs?: number;
+    /** The connect's own signal: a cancelled connect stops listing. */
+    signal?: AbortSignal;
   } = {},
 ): Promise<ServerFeatureCapture> {
   const budgetMs =
-    options.budgetMs ?? (HOSTED_MODE ? HOSTED_CAPTURE_BUDGET_MS : undefined);
+    options.budgetMs ??
+    (HOSTED_MODE ? HOSTED_CAPTURE_BUDGET_MS : LOCAL_CAPTURE_BUDGET_MS);
   let initInfo: unknown;
   let server: ServerFeatureSnapshotServerV3;
   try {
     const state = await collectConnectedServerDoctorState(manager, managerKey, {
       verifySkills: false,
-      ...(budgetMs !== undefined ? { signal: AbortSignal.timeout(budgetMs) } : {}),
+      signal: listingSignal(budgetMs, options.signal),
     });
     initInfo = state.initInfo;
     server = buildSnapshotServerV3({

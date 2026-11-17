@@ -17,6 +17,7 @@ vi.mock("@/lib/session-token", () => ({
 }));
 
 import { BootstrapNotReadyError } from "@/lib/app-ready";
+import { rememberOAuthFlowSummary } from "@/lib/oauth/flow-summary";
 import { reconnectServer, testConnection } from "../mcp-api";
 
 describe("mcp-api hosted-mode reconnect hardening", () => {
@@ -189,6 +190,34 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
         supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
       })
     );
+  });
+
+  it("sends a finished OAuth flow's summary with the server's next connect only", async () => {
+    validateHostedServerMock.mockResolvedValue({ success: true, status: "ok" });
+    const summary = {
+      completedAt: 1,
+      resourceIndicatorSent: false,
+      scopesRequested: [],
+      scopesGranted: [],
+      issReturned: false,
+      issValidated: false,
+      refreshTokenIssued: false,
+    };
+    rememberOAuthFlowSummary("Linear", summary);
+    const config = { url: "https://mcp.linear.test/mcp" } as unknown as MCPServerConfig;
+
+    await testConnection(config, "server-doc-id", {
+      projectId: "project-1",
+      serverName: "Linear",
+    });
+    await reconnectServer("server-doc-id", config, {
+      projectId: "project-1",
+      serverName: "Linear",
+    });
+
+    const contexts = validateHostedServerMock.mock.calls.map((call) => call[3]);
+    expect(contexts[0]).toMatchObject({ oauthFlowSummary: summary });
+    expect(contexts[1]).not.toHaveProperty("oauthFlowSummary");
   });
 
   // Empty/missing pins must remain absent on the wire — the backend

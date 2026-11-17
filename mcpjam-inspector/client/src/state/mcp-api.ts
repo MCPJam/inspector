@@ -9,6 +9,7 @@ import type {
 import type { LoggingLevel } from "@modelcontextprotocol/client";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { takeOAuthFlowSummary } from "@/lib/oauth/flow-summary";
 import { WebApiError } from "@/lib/apis/web/base";
 import {
   validateHostedServer,
@@ -132,7 +133,14 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.toolCallCancellation
       ? { toolCallCancellation: options.connectionDefaults.toolCallCancellation }
       : {}),
+    ...oauthFlowSummaryField(options.serverName),
   };
+}
+
+/** A just-finished OAuth flow's summary rides on the server's next connect. */
+function oauthFlowSummaryField(serverName: string | undefined) {
+  const oauthFlowSummary = takeOAuthFlowSummary(serverName);
+  return oauthFlowSummary ? { oauthFlowSummary } : {};
 }
 
 async function safeValidateHostedServer(
@@ -231,6 +239,7 @@ function buildResolverBody(
     ...(options.connectionDefaults
       ? { connectionDefaults: options.connectionDefaults }
       : {}),
+    ...oauthFlowSummaryField(options.serverName),
   };
 }
 

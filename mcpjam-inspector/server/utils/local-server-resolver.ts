@@ -61,13 +61,15 @@ import {
   xaaPolicyRequiresConfiguration,
   type EffectiveAuthMethod,
 } from "./effective-auth.js";
-import type { XaaEnterprisePolicy } from "@mcpjam/sdk";
-import { exportSingleServerForInspection } from "./export-helpers.js";
+import type { OAuthFlowSummary, XaaEnterprisePolicy } from "@mcpjam/sdk";
 import {
   captureHostedOnlyAccountProfiles,
   isHostedOnlyAccount,
 } from "./account-profile-capture.js";
 import { ConvexHttpClient } from "convex/browser";
+import { recordConnectInspection } from "../services/server-canvas/connect-hook.js";
+import { parseOAuthFlowSummary } from "../services/server-canvas/oauth-flow-summary.js";
+import { resolveServerCanvasRollout } from "./server-canvas-rollout.js";
 import { getInspectorClientRuntimeConfig } from "../env.js";
 import { setRequestLogContext } from "./request-logger.js";
 import {
@@ -1763,6 +1765,8 @@ export interface LocalConnectRequestParams {
   bearer: string;
   clientCapabilities?: Record<string, unknown>;
   defaults?: ConnectionDefaults;
+  /** Non-secret summary of the OAuth flow that preceded this connect. */
+  oauthFlowSummary?: OAuthFlowSummary;
 }
 
 /**
@@ -1837,6 +1841,7 @@ export function parseLocalConnectRequestBody(
     raw.clientCapabilities !== null
       ? (raw.clientCapabilities as Record<string, unknown>)
       : undefined;
+  const oauthFlowSummary = parseOAuthFlowSummary(raw.oauthFlowSummary);
 
   return {
     ok: true,
@@ -1848,6 +1853,7 @@ export function parseLocalConnectRequestBody(
       clientCapabilities,
       defaults: parseConnectionDefaults(raw.connectionDefaults),
       check: localCheckMetadata(raw._serverCheck),
+      ...(oauthFlowSummary ? { oauthFlowSummary } : {}),
     },
   };
 }
@@ -2049,6 +2055,8 @@ async function executeLocalServerConnectAttempt(
   const mcpClientManager = c.mcpClientManager;
   const signal = localCheckScope.getStore()!;
   signal.throwIfAborted();
+  // Asked now so the answer is ready when the connect finishes.
+  const canvasRollout = resolveServerCanvasRollout(bearer);
 
   let resolved: Awaited<ReturnType<typeof resolveLocalServerForConnect>>;
   try {
@@ -2352,29 +2360,29 @@ async function executeLocalServerConnectAttempt(
     resolved.authorizeResult.authorizedTaskOwnerScope,
   );
 
-  // Capture the inspection snapshot synchronously so a fast follow-up
+  // Capture the inspection before answering so a fast follow-up
   // disconnect/reconnect on the same server can't tear down the manager
-  // mid-`listTools`. Only the Convex write is fire-and-forget — failures
-  // there never affect the connect response (the connect succeeded
-  // regardless). Port of PR #1731's `use-inspection-coordinator`; mirrors
-  // the hosted `/web/servers/validate` path.
-  const inspectionSnapshot = await exportSingleServerForInspection(
-    mcpClientManager,
-    serverDisplayName,
-    serverId,
-    { logPrefix: "connect-inspection" }
-  );
-  signal.throwIfAborted();
-  void persistConnectInspection({
-    convexBearer: bearer,
+  // mid-list. This waits for the rollout answer (at most 1 s), then for the
+  // lists: the canvas capture's, which stop at LOCAL_CAPTURE_BUDGET_MS or when
+  // this connect is cancelled, or with the canvas off the v2 tool listing. It
+  // never waits for Convex: the write runs in the background and its failures
+  // never affect the connect response. Mirrors the hosted
+  // `/web/servers/validate` path.
+  await recordConnectInspection({
+    hosted: false,
     projectId,
-    snapshot: inspectionSnapshot,
-  }).catch((error) => {
-    logger.debug("Failed to persist connect-time inspection", {
-      serverId: serverDisplayName,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    serverId,
+    managerKey: serverDisplayName,
+    manager: mcpClientManager,
+    convexBearer: bearer,
+    serverUrl: "url" in connectConfig ? String(connectConfig.url) : undefined,
+    canvasRollout,
+    accountKey: resolved.authorizeResult.oauthCredentialId,
+    oauthFlow: params.oauthFlowSummary,
+    signal,
+    logPrefix: "connect-inspection",
   });
+  signal.throwIfAborted();
   // A shared or uploaded account's identity, for eval runs to show. This
   // manager outlives the request, so the connect does not wait for it.
   const { oauthCredentialId, oauthAccountKind, oauthAccountUploaded } =
@@ -2421,24 +2429,4 @@ export function createPluginRuntimeConvexClient(
   const client = new ConvexHttpClient(convexUrl);
   client.setAuth(bearerToken);
   return client;
-}
-
-async function persistConnectInspection(args: {
-  convexBearer: string | undefined;
-  projectId: string;
-  snapshot: Awaited<ReturnType<typeof exportSingleServerForInspection>>;
-}): Promise<void> {
-  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
-  // derived from it (suffix swap) by the runtime config helper so that
-  // production env (which sets only CONVEX_HTTP_URL) works.
-  const { convexUrl } = getInspectorClientRuntimeConfig();
-  if (!convexUrl || !args.convexBearer) {
-    return;
-  }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(args.convexBearer);
-  await client.mutation("serverInspections:recordFromConnect" as any, {
-    projectId: args.projectId,
-    snapshot: args.snapshot,
-  });
 }
