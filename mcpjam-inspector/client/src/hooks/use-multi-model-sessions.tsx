@@ -16,13 +16,21 @@ export function useMultiModelSessions(deps: {
   groupId: string;
   projectId: string;
   selectedServers: string[];
+  /** Maps saved server names or ids to the project's server ids. */
+  toServerIds: (saved: readonly string[]) => string[];
   /** The keys of the columns on screen; a column that leaves frees its key. */
   liveColumnKeys: readonly string[];
   /** Puts the restored record in place; the layout and columns follow it. */
   applyRestore: (record: ComparisonAuthRecovery) => void;
 }) {
-  const { groupId, projectId, selectedServers, liveColumnKeys, applyRestore } =
-    deps;
+  const {
+    groupId,
+    projectId,
+    selectedServers,
+    toServerIds,
+    liveColumnKeys,
+    applyRestore,
+  } = deps;
   const enabled = useMultiModelSessionsEnabled();
   const positions = useMultiModelPositions(groupId);
   const { seed, syncLiveColumns } = positions;
@@ -57,13 +65,14 @@ export function useMultiModelSessions(deps: {
         projectId,
         selectedServers,
         loadedSessions: siblings,
+        toServerIds,
       });
       if (!isCurrent()) return "stale";
       if (!restored) return null;
       restore(restored);
       return "restored";
     },
-    [enabled, projectId, restore, selectedServers],
+    [enabled, projectId, restore, selectedServers, toServerIds],
   );
 
   return {

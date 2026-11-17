@@ -41,6 +41,7 @@ function setup() {
       groupId: "live",
       projectId: "p1",
       selectedServers: ["linear"],
+      toServerIds: (saved) => [...saved],
       liveColumnKeys: [],
       applyRestore,
     }),

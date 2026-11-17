@@ -4060,10 +4060,22 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
+  // Read at mapping time, after the restore's reads, so the catalog is current.
+  const serverCatalogRef = useRef({ serversById, serversByName });
+  serverCatalogRef.current = { serversById, serversByName };
+  const toServerIds = useCallback((saved: readonly string[]) => {
+    const { serversById: byId, serversByName: byName } =
+      serverCatalogRef.current;
+    return saved.flatMap((value) => {
+      const id = byId.has(value) ? value : byName.get(value);
+      return id ? [id] : [];
+    });
+  }, []);
   const multiModelSessions = useMultiModelSessions({
     groupId: comparisonRecoveryGroupId,
     projectId: convexProjectId ?? "local",
     selectedServers,
+    toServerIds,
     liveColumnKeys: compareLanes.map((lane) => lane.id),
     applyRestore: restoreMultiModelSession,
   });

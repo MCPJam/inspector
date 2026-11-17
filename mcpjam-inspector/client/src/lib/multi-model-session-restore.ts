@@ -162,6 +162,8 @@ export async function fetchMultiModelRestore(args: {
   /** Used only when the session saved no servers of its own. */
   selectedServers: string[];
   loadedSessions: readonly ChatHistorySession[];
+  /** Saved values are names or ids; a pane's `serverIds` must be ids. */
+  toServerIds: (saved: readonly string[]) => string[];
 }): Promise<MultiModelRestore | null> {
   let sessions: readonly ChatHistorySession[] = args.loadedSessions;
   try {
@@ -177,23 +179,26 @@ export async function fetchMultiModelRestore(args: {
   }
   const restore = buildMultiModelRestore({ ...args, sessions });
   if (!restore) return null;
-  const savedServers = await readSavedServers(
-    restore.columnSessions[0],
-    args.projectId,
+  // Each column loads its detail when it mounts, so these reads warm its cache.
+  const saved = await Promise.all(
+    restore.columnSessions.map((column) =>
+      readSavedServers(column, args.projectId),
+    ),
   );
-  return savedServers
-    ? {
-        ...restore,
-        record: { ...restore.record, selectedServers: savedServers },
-      }
-    : restore;
+  // Model columns share one selection, so the first column's is the session's.
+  const shared = saved[0]?.length ? saved[0] : args.selectedServers;
+  const record = { ...restore.record, selectedServers: shared };
+  if (record.version === 2) {
+    // A client pane can narrow its servers, so each gets its own saved list.
+    record.panes = record.panes.map((pane, index) => {
+      const own = saved[index];
+      return own ? { ...pane, serverIds: args.toServerIds(own) } : pane;
+    });
+  }
+  return { ...restore, record };
 }
 
-/**
- * The servers the session was saved with. Its columns share one selection, so
- * the first column's is the session's. The column loads this same detail when
- * it mounts, so the read also warms its cache.
- */
+/** The servers a column was saved with, or null when they can't be read. */
 async function readSavedServers(
   column: ChatHistorySession,
   projectId: string,
@@ -204,8 +209,7 @@ async function readSavedServers(
       chatSessionId: column.chatSessionId,
       projectId: projectId === "local" ? undefined : projectId,
     });
-    const saved = detail.session.resumeConfig?.selectedServers;
-    return saved && saved.length > 0 ? saved : null;
+    return detail.session.resumeConfig?.selectedServers ?? null;
   } catch (error) {
     // The column reports its own load failure when it mounts; without the
     // saved servers the session still reopens with the current ones.
