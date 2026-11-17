@@ -7,8 +7,7 @@ import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
 /**
- * Public Evaluate experience. Reuses the shared eval data and mutation layer;
- * legacy Evaluate remains available separately behind evaluate-enabled.
+ * Public Evaluate experience. Reuses the shared eval data and mutation layer.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";

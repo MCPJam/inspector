@@ -680,9 +680,8 @@ export function SuiteIterationsView({
    * {@link EvaluateRunPage} instead of the SuiteResultsSplit rail on run
    * detail.
    *
-   * OFF by default on purpose. This is a shared component: the shipped
-   * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
-   * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
+   * Only `EvaluateTab` enables this layout. Other callers retain the shared
+   * dashboard layout until their component trees are retired.
    */
   suiteDetailOverview?: boolean;
   /**

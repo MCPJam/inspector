@@ -206,7 +206,42 @@ describe("useEvalHandlers", () => {
     setApiContext(null);
   });
 
-  describe("confirmDelete navigation", () => {
+  it.each(["duplicate", "delete"] as const)(
+    "opens Evaluate after suite %s",
+    async (action) => {
+      const suite: EvalSuite = {
+        _id: "suite-123",
+        createdBy: "user-1",
+        name: "Suite",
+        description: "",
+        configRevision: "revision-1",
+        environment: { servers: [] },
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, selectedSuiteId: suite._id }),
+      );
+      if (action === "duplicate") {
+        mockMutations.duplicateSuiteMutation.mockResolvedValue({
+          _id: "suite-copy",
+        });
+        await act(async () => {
+          await result.current.handleDuplicateSuite(suite);
+        });
+      } else {
+        act(() => result.current.handleDelete(suite));
+        await act(async () => {
+          await result.current.confirmDelete();
+        });
+      }
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        action === "duplicate" ? "/evaluate/suite/suite-copy" : "/evaluate",
+      );
+    },
+  );
+
+  it("stays on the suite and reports the error when its delete fails", async () => {
     const suite: EvalSuite = {
       _id: "suite-1",
       createdBy: "u",
@@ -217,47 +252,20 @@ describe("useEvalHandlers", () => {
       createdAt: 1,
       updatedAt: 1,
     };
-
-    async function deleteSelectedSuite(
-      evalsNavigationContext?: "evals" | "evaluate",
-    ) {
-      const { result } = renderHook(() =>
-        useEvalHandlers({
-          ...defaultProps,
-          selectedSuiteId: "suite-1",
-          evalsNavigationContext,
-        }),
-      );
-      act(() => result.current.handleDelete(suite));
-      let deleted = false;
-      await act(async () => {
-        deleted = await result.current.confirmDelete();
-      });
-      return deleted;
-    }
-
-    it("returns an Evaluate delete to the Evaluate suite list", async () => {
-      mockMutations.deleteSuiteMutation.mockResolvedValue(undefined);
-      expect(await deleteSelectedSuite("evaluate")).toBe(true);
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate");
+    mockMutations.deleteSuiteMutation.mockRejectedValue(new Error("boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderHook(() =>
+      useEvalHandlers({ ...defaultProps, selectedSuiteId: suite._id }),
+    );
+    act(() => result.current.handleDelete(suite));
+    let deleted = true;
+    await act(async () => {
+      deleted = await result.current.confirmDelete();
     });
-
-    it("keeps a legacy Evals delete on the Evals list", async () => {
-      mockMutations.deleteSuiteMutation.mockResolvedValue(undefined);
-      expect(await deleteSelectedSuite()).toBe(true);
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals");
-    });
-
-    it("stays put and reports the error when the delete fails", async () => {
-      mockMutations.deleteSuiteMutation.mockRejectedValue(new Error("boom"));
-      const consoleError = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
-      expect(await deleteSelectedSuite("evaluate")).toBe(false);
-      expect(mockNavigateApp).not.toHaveBeenCalled();
-      expect(toast.error).toHaveBeenCalled();
-      consoleError.mockRestore();
-    });
+    expect(deleted).toBe(false);
+    expect(mockNavigateApp).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   describe("handleRerun", () => {
@@ -1035,7 +1043,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
+        "/evaluate/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -1095,7 +1103,7 @@ describe("useEvalHandlers", () => {
       });
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
+        "/evaluate/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -2986,7 +2994,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-456/runs/run-new?insights=1",
+        "/evaluate/suite/suite-456/runs/run-new?insights=1",
       );
     });
   });
