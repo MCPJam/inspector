@@ -98,7 +98,7 @@ export const swarmFixture: AppFixture = {
   ...memberFixture,
   responses: {
     ...memberFixture.responses,
-    "/api/web/flags": { flags: { "sandboxes-enabled": true } },
+    "/api/web/flags": { flags: {} },
   },
   queries: {
     ...memberFixture.queries,

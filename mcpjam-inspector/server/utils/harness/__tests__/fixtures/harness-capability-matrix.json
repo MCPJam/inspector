@@ -2,19 +2,54 @@
   "claude-code": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": ".claude/projects",
+        "idKey": "claudeSessionId",
+        "named": {
+          "depth": 2,
+          "names": [
+            "{id}.jsonl",
+            "{id}"
+          ]
+        }
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "Claude Code",
       "forwardingRuntime": {
         "configurationVersion": "tool-search-auto-v1",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {}
+            },
+            "roots": {
+              "listChanged": true
+            }
+          },
+          "clientInfo": {
+            "description": "Anthropic's agentic coding tool",
+            "name": "claude-code",
+            "title": "Claude Code",
+            "version": "2.1.290",
+            "websiteUrl": "https://claude.com/claude-code"
+          },
+          "supportedProtocolVersions": [
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25"
+          ]
+        },
         "ownedInput": true,
         "runtimeVersion": "2.1.290"
       },
+      "hostedWarmAgent": "refresh",
       "id": "claude-code",
       "liveApprovalRuntime": true,
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "2.1.290",
+      "preparesBeforeSend": true,
       "promptImageInput": true,
       "requiresComputer": true,
       "skills": {
@@ -26,7 +61,7 @@
         "readFolders": [
           ".claude/skills"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": true,
         "writeFolder": ".claude/skills"
       },
@@ -61,6 +96,7 @@
       "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
+      "runtimeName": "Claude Agent SDK",
       "runtimeVersion": "2.1.290",
       "unavailableOn": {}
     },
@@ -70,19 +106,41 @@
     "adapter": {
       "acceptsSandboxPolicy": true,
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": "{sessionData}/codex-home/sessions"
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "Codex",
       "forwardingRuntime": {
         "configurationVersion": "native-mcp-v1",
         "correlationKey": "callId",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {},
+              "url": {}
+            }
+          },
+          "clientInfo": {
+            "name": "codex-mcp-client",
+            "title": "Codex",
+            "version": "0.163.0"
+          },
+          "mcpProtocolVersion": "2025-06-18",
+          "supportedProtocolVersions": [
+            "2025-06-18"
+          ]
+        },
         "ownedInput": true,
         "runtimeVersion": "0.163.0"
       },
+      "hostedWarmAgent": "refresh",
       "id": "codex",
       "liveApprovalRuntime": true,
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "0.163.0",
+      "preparesBeforeSend": true,
       "promptImageInput": true,
       "requiresComputer": true,
       "skills": {
@@ -94,7 +152,7 @@
         "readFolders": [
           ".agents/skills"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": false,
         "writeFolder": ".agents/skills"
       },
@@ -140,6 +198,7 @@
         "high",
         "xhigh"
       ],
+      "runtimeName": "Codex App Server",
       "runtimeVersion": "0.163.0",
       "unavailableOn": {}
     },
@@ -151,21 +210,34 @@
   "copilot-cli": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": "{sessionData}/copilot-home/session-state/{id}",
+        "idKey": "threadId"
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "GitHub Copilot CLI",
       "forwardingRuntime": {
         "configurationVersion": "copilot-native-mcp-v1",
         "correlationKey": "mcpjam/toolCallId",
-        "passThroughOnly": true,
+        "nativeClient": {
+          "capabilities": {
+            "sampling": {}
+          },
+          "clientInfo": {
+            "name": "copilot-cli",
+            "version": "1.0.92"
+          }
+        },
         "runtimeVersion": "1.0.92"
       },
+      "hostedWarmAgent": "restart",
       "id": "copilot-cli",
       "liveApprovalRuntime": true,
-      "mcpDelivery": "mcpjam",
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "1.0.92",
       "promptImageInput": false,
-      "requiredForwarding": "pass-through",
       "requiresComputer": true,
       "skills": {
         "frontmatter": {
@@ -185,7 +257,7 @@
       "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
-      "supportsSkills": false
+      "supportsSkills": true
     },
     "descriptor": {
       "controls": {
@@ -206,11 +278,12 @@
       },
       "credential": null,
       "displayName": "GitHub Copilot CLI",
-      "mcpClient": "mcpjam",
+      "mcpClient": "harness",
       "modelAccess": "broker",
       "orgKeys": true,
       "protocol": "openai-responses",
       "reasoningEfforts": [],
+      "runtimeName": "GitHub Copilot CLI",
       "runtimeVersion": "1.0.92",
       "unavailableOn": {}
     },
@@ -219,6 +292,7 @@
   "cursor": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": null,
       "defaultPermissionMode": "allow-all",
       "displayName": "Cursor CLI",
       "externalAccountCredentialEnv": [
@@ -227,9 +301,19 @@
       "forwardingRuntime": {
         "boundApprovals": true,
         "configurationVersion": "acp-forward-v1",
-        "nativeVersionNegotiation": "legacy-first",
+        "nativeClient": {
+          "capabilities": {
+            "elicitation": {
+              "form": {}
+            }
+          },
+          "clientInfo": {
+            "name": "Cursor",
+            "version": "1.0.0"
+          },
+          "versionNegotiation": "legacy-first"
+        },
         "ownedInput": false,
-        "passThroughOnly": true,
         "runtimeVersion": "2026.11.05-86047df"
       },
       "hostToolApprovalAtRuntime": true,
@@ -265,7 +349,7 @@
       "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
-      "supportsSkills": false
+      "supportsSkills": true
     },
     "descriptor": {
       "controls": {
@@ -301,12 +385,12 @@
       "orgKeys": false,
       "protocol": null,
       "reasoningEfforts": [],
+      "runtimeName": "Cursor CLI",
       "runtimeVersion": "2026.11.05-86047df",
       "unavailableOn": {
         "api": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
         "events": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
         "guests": "Cursor CLI runs on the organization's own Cursor account, so guests can't use it.",
-        "local": "Cursor CLI can't run on your computer yet. Run it in the cloud instead.",
         "user-testing": "Cursor CLI runs only in the Playground, evals and swarms. Choose a different client for this study."
       }
     },
@@ -315,6 +399,7 @@
   "opencode": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": null,
       "defaultPermissionMode": "allow-all",
       "displayName": "OpenCode",
       "id": "opencode",
@@ -332,7 +417,6 @@
         "headlessLoading": "native",
         "readFolders": [
           ".agents/skills",
-          ".claude/skills",
           ".config/opencode/skills",
           ".config/opencode/skill"
         ],
@@ -345,7 +429,7 @@
       "supportsMcpToolApproval": false,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
-      "supportsSkills": false
+      "supportsSkills": true
     },
     "descriptor": {
       "controls": {
@@ -371,10 +455,10 @@
       "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
+      "runtimeName": "OpenCode",
       "runtimeVersion": "1.18.34",
       "unavailableOn": {
-        "guests": "OpenCode isn't available to guests until it's tested with them.",
-        "local": "OpenCode can't run on your computer yet. Run it in the cloud instead."
+        "guests": "OpenCode isn't available to guests until it's tested with them."
       }
     },
     "qualifiedDiscovery": []

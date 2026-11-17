@@ -8,7 +8,6 @@ import { renderHook, act } from "@testing-library/react";
 const state = vi.hoisted(() => ({
   environment: false,
   hosted: false,
-  flag: true,
   hostedFlag: false,
   member: true,
   granted: false,
@@ -34,7 +33,6 @@ vi.mock("@/lib/config", () => ({
   },
 }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
-  useLocalBrowserEnabled: () => state.flag,
   useHostedBrowserEnabled: () => state.hostedFlag,
 }));
 vi.mock("@/hooks/useProjectComputer", () => ({
@@ -68,7 +66,6 @@ beforeEach(() => {
     browserLocation: null,
   });
   state.hosted = false;
-  state.flag = true;
   state.hostedFlag = false;
   state.member = true;
   state.granted = false;
@@ -123,20 +120,13 @@ it("hosted always selects Cloud and never offers local", () => {
   expect(result.current.engine).toBe("cloud");
   expect(result.current.localAvailable).toBe(false);
 });
-it("the rollout flag does not misreport server availability", () => {
-  state.flag = false;
-  const { result } = renderHook(() => useBrowserEngine("p"));
-  expect(result.current.localAvailable).toBe(true);
-});
-
-it("defaults to Cloud outside the cohort but allows explicit local onboarding", () => {
-  state.flag = false;
+it("defaults to Cloud when local Browser is not ready but allows explicit local onboarding", () => {
+  state.browserAvailable = false;
   state.hostedFlag = true;
   const { result } = renderHook(() => useBrowserEngine("p"));
   expect(result.current.engine).toBe("cloud");
   act(() => result.current.setEngine("local"));
   expect(result.current.engine).toBe("local");
-  expect(result.current.localAvailable).toBe(true);
 });
 // A Cloud fallback outside the hosted-browser rollout can only mint a token
 // the backend refuses.
@@ -156,7 +146,6 @@ it("keeps checking while sign-in loads instead of ruling Cloud out", () => {
   expect(result.current.resolved).toBe(false);
 });
 it("never falls back to Cloud outside the hosted-browser rollout", () => {
-  state.flag = false;
   const { result } = renderHook(() => useBrowserEngine("p"));
   expect(result.current.cloudAvailable).toBe(false);
   expect(result.current.selectedEngine).toBe("local");

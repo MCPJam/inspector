@@ -13,7 +13,7 @@
 //                  called run is the caller's.
 //   push / dispatch with no version
 //                  Packs built from source on every platform, as before.
-//                  A push that changed no conformance input (a version PR's
+//                  A push that changed no conformance input (a version commit's
 //                  lockfile bump, say) runs no legs: its parent's run already
 //                  proved the same thing, and the legs would compete for the
 //                  macOS runners the release's own evidence run needs. A run
@@ -30,7 +30,8 @@
 // three times as long and GitHub retires them in 2027.
 //
 // Claude Code and Codex have drivers and legs of their own. Every other local
-// runtime runs `run-gateway-turn.ts <harnessId>` on each target its definition
+// runtime runs `run-runtime-conformance.ts <harnessId>` (a gateway turn, or the
+// lifecycle of a runtime on its vendor's login) on each target its definition
 // advertises (`runtime_matrix`), so a runtime made local is covered with no
 // change here. A workflow_call that names no version for one runs nothing for
 // it: a release needs evidence only for the packs it may select.

@@ -2065,6 +2065,11 @@ describe("tier derives from operation.risk", () => {
       tier: "gated",
       reason: "The same as create_reviewer_attempt: it starts the next run that signs in.",
     },
+    create_reviewer_handoff: {
+      tier: "excluded",
+      reason:
+        "The result carries a single-use browser sign-in link. Even a gated call would put it in the agent transcript.",
+    },
     generate_eval_cases: {
       tier: "gated",
       reason:

@@ -2776,6 +2776,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  create_reviewer_handoff:
+    "The response contains a single-use browser sign-in link for the requester. Create it from Readiness or a direct API or CLI call so it does not enter the agent transcript.",
   // Swarms operations the agent may not even PROPOSE. All three are
   // `risk: destructive` in the SDK catalog, and the rule this surface applies
   // is the one the gated block above states: a proposal makes spend

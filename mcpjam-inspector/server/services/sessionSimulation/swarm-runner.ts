@@ -5,6 +5,7 @@ import { readTasksPolicy } from "@mcpjam/sdk";
 import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import { orgKeyHarnessName } from "@/shared/org-key-surfaces";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
 import {
@@ -1014,10 +1015,9 @@ async function runJourneyFanOut(
         //     policy out of it for the MCP manager — this feeds the same value to
         //     the harness gate.
         //   - APPROVAL vs MCP TOOLS. Whether a harness can pause on the surface
-        //     its MCP tools actually run on. Claude Code now can, on all three
-        //     (`supportsMcpToolApproval: true`, via the bridge's `canUseTool`
-        //     under "allow-reads"); Codex cannot pause at all, so
-        //     `requireToolApproval` still refuses a Codex target outright.
+        //     its MCP tools actually run on. A swarm keeps the target's switch
+        //     and MCPJam denies each request the runtime pauses on, so a
+        //     runtime that cannot pause there is refused.
         //
         // Deliberately NOT re-derived as a local subset: a rule added to the chat
         // preflight later must apply here too, and the only way to guarantee that
@@ -1028,9 +1028,11 @@ async function runJourneyFanOut(
             : checkHarnessRuntimeAvailable({
                 harnessId: dispatch.harnessId!,
                 surface: "swarms",
-                agentLoop: target.agentLoop !== undefined,
                 localExecution: localHarness,
-                requireToolApproval: target.requireToolApproval,
+                requireToolApproval: appliedToolApproval(
+                  "synthetic",
+                  target.requireToolApproval,
+                ),
                 // PLUGIN servers count. A target whose MCP servers come solely
                 // from a plugin has an empty `serverIds` and would otherwise slip
                 // the approval gate this exists to close. The snapshot's pinned
@@ -1084,7 +1086,6 @@ async function runJourneyFanOut(
                 // A swarm's results are compared, so an unverified harness ×
                 // model pair is refused, not run with a warning.
                 purpose: "swarm",
-                unattended: true,
                 // The target's saved selection: an org connection on the
                 // harness's own vendor runs on the organization's key.
                 ...(modelSelection ? { selection: modelSelection } : {}),
@@ -1169,9 +1170,17 @@ async function runJourneyFanOut(
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
-        const releaseLocalSlot = runsLocally(opts, (target.agentLoop ?? target.harness))
-          ? await acquireLocalHarnessSlot(attemptSignal)
-          : undefined;
+        let releaseLocalSlot: (() => void) | undefined;
+        if (runsLocally(opts, (target.agentLoop ?? target.harness))) {
+          try {
+            releaseLocalSlot = await acquireLocalHarnessSlot(attemptSignal);
+          } catch (err) {
+            // A stop scoped to credit-funded conversations ends this wait: go
+            // on to the target's sponsored conversations, not fail the target.
+            if (attemptSignal.aborted && creditStop.signal.aborted && !stopScheduling()) continue;
+            throw err;
+          }
+        }
         try {
         // Per-SESSION re-resolution — the granularity that actually bounds
         // staleness. Everything constructed below bakes this value in for the
@@ -1417,6 +1426,9 @@ async function runJourneyFanOut(
                   targetId,
                   sessionIdx,
                 });
+                // A stop scoped to credit-funded conversations still lets this
+                // target's sponsored ones run; `canStart` skips the rest.
+                if (creditStop.signal.aborted && !stopScheduling()) continue;
                 return;
               }
               // Otherwise the target asked for a REPRODUCIBLE shell and we
@@ -1478,6 +1490,24 @@ async function runJourneyFanOut(
                 durationMs: Date.now() - attemptStartedAt,
                 modelSource: modelId,
               });
+              // The organization's own limit (the native harness trial): no
+              // other target escapes it, so the run stops as it does when the
+              // same refusal reaches a turn.
+              if (isAccountLimit(undefined, provisioned.code)) {
+                spendCapTripped = true;
+                spendCapMessage = failure.errorMessage;
+                if (runHasSponsored) creditStop.abort();
+                else runStop.abort();
+                logEvent("run.spend_cap_short_circuit", {
+                  stopReason: "organization_usage_limit",
+                  scopedToCredits: runHasSponsored,
+                  runId,
+                  hostId,
+                  targetId,
+                  sessionIdx,
+                });
+                if (!runHasSponsored) return;
+              }
               continue;
             }
           }

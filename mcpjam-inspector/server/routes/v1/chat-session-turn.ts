@@ -119,6 +119,7 @@ import {
   isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isBedrockModelId, type ModelProvider } from "@/shared/types";
+import { appliedToolApproval, engineApprovalMode } from "@/shared/tool-approval";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { createManualHostedConnection } from "../web/auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -162,9 +163,11 @@ import {
   hostRoutingSelectionForModel,
   hostSelectionForModel,
   resolveChatSessionEngine,
+  toolModeHarnessPolicy,
   type ChatSessionEngine,
 } from "./chat-session-host-target.js";
 import { v1Error, v1Resource } from "./envelope.js";
+import { nativeHarnessRefusalDetails } from "./native-harness-refusal.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
   chatSessionClient,
@@ -589,21 +592,28 @@ async function computeExcludedToolNames(
     excludeAll?: true;
     onUnavailable?: (serverId: string, error: unknown) => void;
   },
-): Promise<{ excluded: string[]; advertised: number }> {
-  let tools: Array<{ name?: string; annotations?: { readOnlyHint?: unknown } }>;
+): Promise<{
+  excluded: string[];
+  advertised: number;
+  /** Each server's listing, when the servers were listed one by one. */
+  listed?: Array<{ serverId: string; tools: ListedTool[] }>;
+}> {
+  let tools: ListedTool[];
+  let listed: Array<{ serverId: string; tools: ListedTool[] }> | undefined;
   try {
-    tools = policy.onUnavailable
-      ? (await Promise.all(serverIds.map(async (id) => {
-          try {
-            return await listToolsWithinBudget(manager, [id]);
-          } catch (error) {
-            // Omit this server; the response reports its failure below.
-            if (error instanceof WebRouteError && error.code === ErrorCode.INTERNAL_ERROR) throw error;
-            policy.onUnavailable?.(id, error);
-            return [];
-          }
-        }))).flat() as typeof tools
-      : (await listToolsWithinBudget(manager, serverIds)) as typeof tools;
+    if (policy.onUnavailable) {
+      listed = await Promise.all(serverIds.map(async (serverId) => {
+        try {
+          return { serverId, tools: (await listToolsWithinBudget(manager, [serverId])) as ListedTool[] };
+        } catch (error) {
+          // Omit this server; the response reports its failure below.
+          if (error instanceof WebRouteError && error.code === ErrorCode.INTERNAL_ERROR) throw error;
+          policy.onUnavailable?.(serverId, error);
+          return { serverId, tools: [] };
+        }
+      }));
+      tools = listed.flatMap((entry) => entry.tools);
+    } else tools = (await listToolsWithinBudget(manager, serverIds)) as ListedTool[];
   } catch (error) {
     if (error instanceof WebRouteError && error.code === ErrorCode.INTERNAL_ERROR) throw error;
     // A target we cannot enumerate is a target we cannot apply a tool policy
@@ -641,8 +651,10 @@ async function computeExcludedToolNames(
     if (blockedByMode || blockedByAllowlist) excluded.push(name);
     else advertised += 1;
   }
-  return { excluded, advertised };
+  return { excluded, advertised, ...(listed ? { listed } : {}) };
 }
+
+type ListedTool = { name?: string; annotations?: { readOnlyHint?: unknown } };
 
 /**
  * Narrow a resolved target by `allowedServerIds`, keeping names paired.
@@ -1364,6 +1376,11 @@ async function handleTurn(c: Context): Promise<Response> {
       );
     }
     const engine: ChatSessionEngine = engineDecision.engine;
+    // `toolMode`, not the host's switch, narrows what an API turn runs.
+    const requireToolApproval = appliedToolApproval(
+      "api",
+      target.host?.runtimeConfig.requireToolApproval,
+    );
     if (engineDecision.warning) {
       logger.warn("[v1 chat-session] harness model not verified", {
         harness: engine.kind === "harness" ? engine.harness : undefined,
@@ -1409,6 +1426,7 @@ async function handleTurn(c: Context): Promise<Response> {
         authHeader,
         projectId,
         chatSessionId: runtimeChatSessionId,
+        requireToolApproval,
         browserApprovalDelivery: {
           kind: "session-policy",
           policy: resolved.policy,
@@ -1592,7 +1610,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // The policy read below and `prepareChatV2` share one `tools/list` per
     // server, so the policy is decided on the tools the model is handed.
     toolListing = shareToolListing(manager);
-    const { excluded } = await computeExcludedToolNames(
+    const { excluded, listed } = await computeExcludedToolNames(
       manager,
       selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id)),
       {
@@ -1627,6 +1645,7 @@ async function handleTurn(c: Context): Promise<Response> {
     const activeServerIds = selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id));
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
+      requireToolApproval,
       ...(builtInTools ? { builtInTools } : {}),
       selectedServers: activeServerIds,
       isolatedServers: activeServerIds,
@@ -1737,7 +1756,7 @@ async function handleTurn(c: Context): Promise<Response> {
       systemPrompt: prepared.enhancedSystemPrompt,
       temperature: prepared.resolvedTemperature,
       reasoningEffort: turnReasoningEffort,
-      requireToolApproval: false,
+      requireToolApproval,
       serverIds: selectedServerIds.filter((id) => !unavailable[id]),
       tools,
       builtInIds: Object.keys(builtInTools ?? {}),
@@ -1760,7 +1779,13 @@ async function handleTurn(c: Context): Promise<Response> {
     const inputMessages = [...priorMessages, userMessage];
 
     let lastEngineError:
-      { message: string; code?: string; httpStatus?: number } | undefined;
+      | {
+          message: string;
+          code?: string;
+          httpStatus?: number;
+          infra?: { code?: string };
+        }
+      | undefined;
 
     // A cloud harness turn runs on this conversation's THROWAWAY box, the same
     // box the Playground gives it (keyed by the runtime chat session id), and
@@ -1783,6 +1808,13 @@ async function handleTurn(c: Context): Promise<Response> {
         ? await takeEarly(earlyBox)
         : await acquireOwnedPlaygroundHarnessBox(resources, boxArgs);
       if (!acquired.ok) {
+        const trialRefusal = nativeHarnessRefusalDetails(
+          acquired.refusal.code,
+          c.get("mcpjamOrganizationId"),
+        );
+        if (trialRefusal) {
+          return v1Error(c, "FORBIDDEN", acquired.refusal.error, trialRefusal);
+        }
         const described = describePlaygroundBoxRefusal(
           engine.harness,
           "conversation",
@@ -1840,7 +1872,7 @@ async function handleTurn(c: Context): Promise<Response> {
       runtime: runtime.runtime as never,
       streamSink: "none",
       persistMode: "caller",
-      approvalMode: "auto-deny",
+      approvalMode: engineApprovalMode("api"),
       turnTiming: timing,
       messages: inputMessages,
       modelDefinition,
@@ -1867,7 +1899,17 @@ async function handleTurn(c: Context): Promise<Response> {
       // authorized manager exactly as they do, and deriving a different
       // strategy is how a sandbox ends up pointed at the wrong manager.
       ...(engine.kind === "harness"
-        ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
+        ? {
+            harnessMcpProxy: resolveWebAuthorizedHarnessStrategy(),
+            // The switch as this surface applies it, so the harness reads the
+            // same policy the emulated engine's tools were built with.
+            requireToolApproval,
+            // The tools `read_only` kept from the emulated engine, refused
+            // where the harness's own calls run.
+            ...(pins.toolMode === "read_only"
+              ? { harnessToolPolicy: toolModeHarnessPolicy(selectedServerIds, listed, excluded) }
+              : {}),
+          }
         : {}),
       ...(engine.kind === "harness" && conversationBox
         ? { harnessSandboxBinding: conversationBox.binding }
@@ -1900,6 +1942,7 @@ async function handleTurn(c: Context): Promise<Response> {
         message: string;
         code?: string;
         httpStatus?: number;
+        infra?: { code?: string };
       }) => {
         lastEngineError = event;
       },
@@ -2029,6 +2072,13 @@ async function handleTurn(c: Context): Promise<Response> {
         toolCallCount: result.toolCalls.length,
         engine: engineLabel(engine),
       });
+      // A native harness the organization's trial no longer covers. Refused
+      // before the turn started, so nothing ran and nothing was charged.
+      const trialRefusal = nativeHarnessRefusalDetails(
+        lastEngineError?.infra?.code,
+        c.get("mcpjamOrganizationId"),
+      );
+      if (trialRefusal) return v1Error(c, "FORBIDDEN", message, trialRefusal);
       return v1Error(
         c,
         rateLimited ? "RATE_LIMITED" : "INTERNAL_ERROR",

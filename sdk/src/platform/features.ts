@@ -125,6 +125,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   start_directory_submission_run: "directory-readiness",
   // A reviewer sign-in starts a run, as a submission's run does.
   create_reviewer_attempt: "directory-readiness",
+  create_reviewer_handoff: "directory-readiness",
   resume_reviewer_attempt: "directory-readiness",
   record_directory_submission_status: "directory-readiness",
   record_directory_submission_snapshot: "directory-readiness",

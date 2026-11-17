@@ -19,7 +19,7 @@ describe("harness descriptors", () => {
       "claude-code": "harness",
       codex: "mcpjam",
       cursor: "harness",
-      "copilot-cli": "mcpjam",
+      "copilot-cli": "harness",
       opencode: "mcpjam",
     });
     expect(HARNESS_PINNED_VERSIONS).toEqual({
@@ -31,7 +31,7 @@ describe("harness descriptors", () => {
     });
     expect(HARNESS_DESCRIPTORS.cursor.orgKeys).toBe(false);
     expect(HARNESS_DESCRIPTORS.opencode.orgKeys).toBe(true);
-    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "copilot-cli"]);
+    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "cursor", "copilot-cli", "opencode"]);
   });
   it("grants MCPJam extensions by client ownership", () => {
     expect(usesMcpjamClient({})).toBe(true);
@@ -68,10 +68,8 @@ describe("harness surface support", () => {
       "cursor api",
       "cursor events",
       "cursor guests",
-      "cursor local",
       "cursor user-testing",
       "opencode guests",
-      "opencode local",
     ]);
   });
   it("names the surface each turn source runs on", () => {

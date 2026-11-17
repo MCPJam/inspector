@@ -40,6 +40,7 @@ import {
   resolveTurnRuntime,
   classifyTurnFailure,
 } from "../resolve-turn-runtime.js";
+import { getEffectiveSkillToolsAndPrompt } from "../computers/effective-skill-tools.js";
 import type { UnifiedTurnResult } from "../turn-execution.js";
 
 const MCPJAM_MODEL: ModelDefinition = {
@@ -241,9 +242,21 @@ describe("resolveTurnRuntime — runtime shape", () => {
   );
 
   it.each([
-    ["the v1 chat-session API", "direct", "Use it there, or choose a different client."],
-    ["an MCP Events run", "event", "Use it there, or choose a different client."],
-    ["User Testing session simulation", "scenario", "Choose a different client for this study."],
+    [
+      "the v1 chat-session API",
+      "direct",
+      "Use it there, or choose a different client.",
+    ],
+    [
+      "an MCP Events run",
+      "event",
+      "Use it there, or choose a different client.",
+    ],
+    [
+      "User Testing session simulation",
+      "scenario",
+      "Choose a different client for this study.",
+    ],
   ] as const)(
     "a Cursor client is refused on %s, whatever the model, before anything resolves",
     async (_label, sourceType, next) => {
@@ -383,7 +396,7 @@ describe("resolveTurnRuntime — runtime shape", () => {
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
   });
 
-  it("local BYOK + requireToolApproval=true with non-empty tools throws before building the model", async () => {
+  it("local BYOK + requireToolApproval=true with a tool that asks throws before building the model", async () => {
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "local_byok",
       orgRuntime: {
@@ -397,12 +410,69 @@ describe("resolveTurnRuntime — runtime shape", () => {
         baseArgs({
           modelDefinition: LOCAL_MODEL,
           requireToolApproval: true,
-          tools: { search: { description: "noop" } } as never,
+          tools: {
+            search: {
+              description: "noop",
+              needsApproval: true,
+              execute: async () => ({}),
+            },
+            loadSkill: {
+              description: "load",
+              needsApproval: false,
+              execute: async () => "",
+            },
+          } as never,
         }),
       ),
     ).rejects.toThrow(/approval-required tool calls.*Disable tool approval/i);
 
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("local BYOK + requireToolApproval=true runs when only skill tools are advertised", async () => {
+    // Skill tools never ask, so a scenario with approval on and nothing else
+    // to call has no approval for this runtime to fail on.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "local_byok",
+      orgRuntime: {
+        runtimeLocation: "local",
+        provider: { providerKey: "openai" } as never,
+      },
+    });
+    const skills = getEffectiveSkillToolsAndPrompt({
+      explicitServerIds: [],
+      pluginServerIds: [],
+      effectiveServerIds: [],
+      servers: [],
+      pluginSkills: [],
+      standaloneSkills: [
+        {
+          ref: "pdf-processing",
+          skillId: "sk_library",
+          name: "pdf-processing",
+          description: "Process PDFs",
+          content: "BODY",
+          aggregateHash: "agg",
+          files: [],
+          channels: [],
+        },
+      ],
+      serverSkills: [],
+      localSkills: [],
+      pluginVersions: [],
+      problems: [],
+    });
+
+    const rt = await resolveTurnRuntime(
+      baseArgs({
+        modelDefinition: LOCAL_MODEL,
+        requireToolApproval: true,
+        tools: skills.tools,
+      }),
+    );
+
+    expect(rt.runtime.kind).toBe("direct");
+    expect(buildOrgModelFromResolvedConfigMock).toHaveBeenCalled();
   });
 });
 
@@ -709,6 +779,53 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
       eventRunId: "event-run-1",
     });
     expect(body).not.toHaveProperty("journeyRunId");
+  });
+
+  it("puts each call's returned price on that call's llm span of the turn", async () => {
+    const cost = (amountUsd: number) => ({
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd,
+      source: "customer_rate",
+      funding: "customer",
+    });
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        costs: { "turn-1:0": cost(0.01), "turn-1:1": cost(0.5) },
+      }),
+    );
+    const span = (id: string, category: "step" | "llm", stepIndex: number) => ({
+      id,
+      name: id,
+      category,
+      stepIndex,
+      startMs: 0,
+      endMs: 1,
+    });
+    const result = successResult();
+    result.turnTrace!.spans = [
+      span("step-0", "step", 0),
+      span("llm-0", "llm", 0),
+      span("llm-1", "llm", 1),
+    ];
+    result.modelCalls = [0, 1].map((stepIndex) => ({
+      callId: `turn-1:${stepIndex}`,
+      stepIndex,
+      usage: { totalTokens: 5 },
+      finishedAt: 1,
+    }));
+    const rt = await resolveTurnRuntime(localArgs());
+
+    await rt.finalizeUsage(result);
+
+    expect(
+      result.turnTrace!.spans.map((s) => [s.id, s.callId, s.cost?.amountUsd]),
+    ).toEqual([
+      ["step-0", undefined, undefined],
+      ["llm-0", "turn-1:0", 0.01],
+      ["llm-1", "turn-1:1", 0.5],
+    ]);
   });
 
   it("does NOT fire on an aborted result", async () => {

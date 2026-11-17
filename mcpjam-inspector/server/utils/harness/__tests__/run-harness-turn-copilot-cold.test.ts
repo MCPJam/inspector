@@ -136,6 +136,12 @@ vi.mock("../harness-box-reservation.js", () => ({
   reserveHarnessBox: vi.fn(async () => ({ ok: true })),
   releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
+vi.mock("../harness-proxy-token-client.js", () => ({
+  fetchHarnessProxyTokens: vi.fn(async () => ({
+    ok: true,
+    tokens: { orders: "minted-proxy-token" },
+  })),
+}));
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { getHarnessAdapter } from "../registry.js";
@@ -299,22 +305,28 @@ describe("GitHub Copilot CLI outside the warm Playground chat", () => {
     expect(agent.settings[0]!.harness).toMatchObject({ harnessId: "copilot-cli" });
   });
 
-  it("refuses the dedicated client with servers before its runtime starts", async () => {
-    // It reaches servers only through its own MCP client, which a journey
-    // never forwards.
-    const onEngineError = vi.fn();
+  it("gives the dedicated client's own MCP client MCPJam's proxy where a journey cannot forward", async () => {
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "x".repeat(48));
+    const createHarness = vi.spyOn(getHarnessAdapter("copilot-cli"), "createHarness");
+    agent.script = [
+      { type: "text-delta", delta: "Order 42 shipped on Monday." },
+      { type: "finish", finishReason: "stop" },
+    ];
 
-    await run("Where is order 42?", { agentLoop: undefined, onEngineError });
+    const result = await run("Where is order 42?", {
+      agentLoop: undefined,
+      harnessMcpProxy: { plane: "web-authorized", mode: "direct", publicBaseUrl: "https://app.example" },
+    });
 
-    expect(onEngineError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        phase: "setup",
-        message: expect.stringContaining(
-          "GitHub Copilot CLI calls MCP servers only through its own client",
-        ),
-      }),
-    );
-    expect(agent.settings).toHaveLength(0);
+    expect(result.aborted).toBe(false);
+    const args = createHarness.mock.calls[0]![0] as {
+      mcpJson: { mcpServers: Record<string, { url: string; headers?: Record<string, string> }> };
+    };
+    const [entry] = Object.values(args.mcpJson.mcpServers);
+    expect(entry?.url).toMatch(/^https:\/\/app\.example\/api\/web\/harness-mcp\/orders\?/);
+    expect(entry?.headers?.["X-MCPJam-Proxy-Token"]).toBeTruthy();
+    // Not forwarded, so no forwarder correlation; and no host tool either.
+    expect(args).not.toHaveProperty("forwardingMcpJson");
     expect(lookupOrder).not.toHaveBeenCalled();
   });
 

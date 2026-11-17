@@ -27,6 +27,7 @@ import {
   type EventsProfileId,
 } from "../events/profiles.js";
 import type { EventsConformanceReceiver } from "./receiver.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   EVENTS_CHECK_IDS,
   type EventsCheckId,
@@ -51,6 +52,8 @@ export interface EventsConformanceConfig {
   checkIds?: EventsCheckId[];
   /** `events-push-heartbeat` wait window. Default 65 s. */
   pushHeartbeatWaitMs?: number;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
 }
 
 const TITLES: Record<EventsCheckId, string> = {
@@ -112,6 +115,8 @@ function errorCode(error: unknown): number | undefined {
 export async function runEventsConformance(
   config: EventsConformanceConfig
 ): Promise<EventsConformanceResult> {
+  if (!config.__suppressTelemetry)
+    void captureConformanceRun("sdk", { suite: "events", mode: "single" });
   const started = Date.now();
   const selected = new Set(config.checkIds ?? DEFAULT_CHECKS);
   const results = new Map<EventsCheckId, EventsCheckResult>();

@@ -22,6 +22,7 @@ import {
   directoryTestCaseDigest,
   resolveDirectoryTestArguments,
   resumeDirectoryTestCall,
+  validateDirectoryTestPlan,
   type DirectoryTestCallRecord,
   type DirectoryTestCase,
   type DirectoryTestPlan,
@@ -94,6 +95,16 @@ export async function executeDirectoryTestPlan(
   input: ExecuteTestPlanInput,
 ): Promise<TestPlanExecution> {
   const { plan, signal } = input;
+  const unsafe = validateDirectoryTestPlan(plan, input.tools).find(
+    (issue) => issue.code === "writeScope" || issue.code === "cleanup",
+  );
+  if (unsafe) {
+    return {
+      calls: [...input.ledger],
+      cleanup: [],
+      stopped: { by: "setup", detail: unsafe.message },
+    };
+  }
   const now = input.now ?? Date.now;
   const records = new Map(input.ledger.map((call) => [call.callKey, call]));
   const entries = new Map(plan.tools.map((entry) => [entry.tool, entry]));

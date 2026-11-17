@@ -56,7 +56,8 @@ export class MCPConformanceSuite {
   }
 
   async run(): Promise<MCPConformanceSuiteResult> {
-    if (!this.config.__suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.config.__suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "protocol", mode: "suite" });
     const startedAt = Date.now();
     const results: Array<MCPConformanceResult & { label: string }> = [];
 

@@ -135,6 +135,18 @@
           }
         }
       }
+    },
+    "cursor": {
+      "conformance": {
+        "version": ""
+      },
+      "targets": {}
+    },
+    "opencode": {
+      "conformance": {
+        "version": ""
+      },
+      "targets": {}
     }
   }
 }

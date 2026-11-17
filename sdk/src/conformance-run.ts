@@ -285,7 +285,10 @@ export async function runConformance(
   }
   // One event for the whole run; every inner suite is told to stay quiet.
   if (!config.__suppressTelemetry) {
-    void captureConformanceRun(config.__telemetryRunSource ?? "sdk");
+    void captureConformanceRun(config.__telemetryRunSource ?? "sdk", {
+      suite: "run",
+      mode: "suite",
+    });
   }
   const startedAt = Date.now();
   const reports: Partial<Record<ConformanceSuiteKind, ConformanceReport>> = {};

@@ -41,7 +41,6 @@ import {
 } from "../mcpjam-stream-handler";
 import { mcpToolOptionsFor } from "../mcp-tool-options";
 import {
-  applySkillToolApproval,
   buildAppTools,
   buildPageTools,
   buildUiTools,
@@ -59,6 +58,9 @@ import {
 import {
   buildLiveEffectiveCapabilities,
   withLiveServerSkills,
+  type RuntimePluginSkill,
+  type RuntimeServerSkill,
+  type RuntimeStandaloneSkill,
 } from "../../services/environments/effective-capabilities";
 import { handleLocalOrgChatModel } from "../org-model-stream-handler";
 import { applyActingServerSkillGate } from "../server-skill-acting-gate";
@@ -169,7 +171,8 @@ type Verdict = "gate" | "free";
 
 /**
  * Drive ONE tool call through the MCPJam emulated loop and report whether the
- * user would see a pill.
+ * user would see a pill. `messages` is the history the call is made after, and
+ * `approvalMode: "auto-deny"` drives the loop the way eval and swarm runs do.
  */
 async function mcpjamVerdict(args: {
   name: string;
@@ -177,6 +180,8 @@ async function mcpjamVerdict(args: {
   tools: ToolSet;
   requireToolApproval: boolean;
   progressivePlan?: unknown;
+  messages?: unknown[];
+  approvalMode?: "auto-deny";
 }): Promise<Verdict> {
   writtenChunks = [];
   global.fetch = vi.fn().mockResolvedValue(
@@ -191,7 +196,7 @@ async function mcpjamVerdict(args: {
     ]),
   );
   await handleMCPJamFreeChatModel({
-    messages: [{ role: "user", content: "go" }] as any,
+    messages: (args.messages ?? [{ role: "user", content: "go" }]) as any,
     modelId: "gpt-4.1-mini",
     systemPrompt: "You are helpful",
     tools: args.tools as any,
@@ -202,6 +207,7 @@ async function mcpjamVerdict(args: {
     ...(args.progressivePlan
       ? { progressivePlan: args.progressivePlan as any }
       : {}),
+    ...(args.approvalMode ? { approvalMode: args.approvalMode } : {}),
   });
   await lastExecution;
   return writtenChunks.some(
@@ -213,12 +219,14 @@ async function mcpjamVerdict(args: {
 
 /**
  * Read the declaration `streamText` reads. A function form is invoked with the
- * row's representative input, exactly as the AI SDK invokes it.
+ * row's representative input and the step's `messages`, exactly as the AI SDK
+ * invokes it.
  */
 async function byokVerdict(args: {
   name: string;
   input: Record<string, unknown>;
   tools: ToolSet;
+  messages?: unknown[];
 }): Promise<Verdict> {
   const declared = (args.tools as Record<string, any>)[args.name]
     ?.needsApproval;
@@ -226,7 +234,7 @@ async function byokVerdict(args: {
     typeof declared === "function"
       ? await declared(args.input, {
           toolCallId: "call-1",
-          messages: [],
+          messages: args.messages ?? [],
         })
       : declared;
   return value === true ? "gate" : "free";
@@ -286,32 +294,53 @@ const PROGRESSIVE_PLAN = {
   totalTokenEstimate: 0,
 };
 
-const SERVER_SKILL_REF = "acme/refunds";
+const LIBRARY_SKILL: RuntimeStandaloneSkill = {
+  ref: "pdf-processing",
+  skillId: "sk_library",
+  name: "pdf-processing",
+  description: "PDFs",
+  content: "BODY",
+  aggregateHash: "agg_library",
+  files: [],
+  channels: [],
+};
+const PLUGIN_SKILL: RuntimePluginSkill = {
+  ref: "alpha/summarize",
+  skillId: "sk_plugin",
+  name: "summarize",
+  description: "Summaries",
+  content: "BODY",
+  aggregateHash: "agg_plugin",
+  files: [],
+  plugin: {
+    pluginId: "p_alpha",
+    pluginVersionId: "pv_alpha",
+    name: "alpha",
+    bundleHash: "aaaa1111bbbb",
+  },
+};
+const SERVER_SKILL: RuntimeServerSkill = {
+  ref: "acme/refunds",
+  skillId: "sk_server",
+  name: "refunds",
+  description: "Refunds",
+  content: "BODY",
+  aggregateHash: "agg_server",
+  files: [{ path: "scripts/run.py", size: 8, url: "https://blob/run" }],
+  serverId: "srv_1",
+  serverLabel: "Acme",
+  skillUri: "skill://acme/refunds",
+  versionId: "v1",
+  versionNumber: 1,
+  capturedAt: 1,
+};
 
-function effectiveSkillTools(opts: { serverOrigin: boolean }) {
+/** One skill of each origin in one set, as an environment turn has them. */
+function effectiveSkillTools(): ToolSet {
   return createEffectiveSkillTools({
-    skills: [
-      {
-        ref: SERVER_SKILL_REF,
-        skillId: "sk_1",
-        name: "refunds",
-        description: "Refunds",
-        content: "BODY",
-        aggregateHash: "agg_1",
-        files: [],
-        serverId: "srv_1",
-        serverLabel: "Acme",
-        skillUri: "skill://acme/refunds",
-        versionId: "v1",
-        versionNumber: 1,
-        capturedAt: 1,
-      } as never,
-    ],
-    pluginRefs: new Set<string>(),
-    serverRefs: opts.serverOrigin
-      ? new Set([SERVER_SKILL_REF])
-      : new Set<string>(),
-  }) as unknown as ToolSet;
+    skills: [LIBRARY_SKILL, PLUGIN_SKILL, SERVER_SKILL],
+    pluginRefs: new Set([PLUGIN_SKILL.ref]),
+  });
 }
 
 /**
@@ -720,77 +749,61 @@ const MATRIX: MatrixRow[] = [
       byok: { on: "free", off: "free" },
     },
   },
+  // Floor: never, for every skill tool whatever the skill's origin. Reading a
+  // skill acts on nothing; acting on a server's skill is gated where it acts
+  // ("a server skill in use", below). A run's pinned skills get these same
+  // tools, so the rows below cover them too.
   {
-    // Floor: never. Pure reads of frozen content under an auto-deny eval run,
-    // where a prompt is a hang rather than a question.
-    family: "pinned skill tool",
+    family: "Library skill tool",
     name: "loadSkill",
-    input: { name: SERVER_SKILL_REF },
-    tools: (flag) =>
-      applySkillToolApproval(
-        effectiveSkillTools({ serverOrigin: false }) as unknown as Record<
-          string,
-          unknown
-        >,
-        { pinned: true, requireToolApproval: flag },
-      ) as unknown as ToolSet,
+    input: { name: LIBRARY_SKILL.ref },
+    tools: effectiveSkillTools,
     expected: {
       mcpjam: { on: "free", off: "free" },
       byok: { on: "free", off: "free" },
     },
   },
   {
-    // Floor: setting.
-    family: "computer skill tool",
+    family: "plugin skill tool",
     name: "loadSkill",
-    input: { name: SERVER_SKILL_REF },
-    tools: (flag) =>
-      applySkillToolApproval(
-        effectiveSkillTools({ serverOrigin: false }) as unknown as Record<
-          string,
-          unknown
-        >,
-        { pinned: false, requireToolApproval: flag },
-      ) as unknown as ToolSet,
+    input: { name: PLUGIN_SKILL.ref },
+    tools: effectiveSkillTools,
     expected: {
-      mcpjam: { on: "gate", off: "free" },
-      byok: { on: "gate", off: "free" },
+      mcpjam: { on: "free", off: "free" },
+      byok: { on: "free", off: "free" },
     },
   },
   {
-    // Floor: always, and a FUNCTION rather than `true` — SEP-2640 binds host
-    // trust to a digest set that has to be resolved before the prompt.
     family: "server-origin skill ref",
     name: "loadSkill",
-    input: { name: SERVER_SKILL_REF },
-    tools: (flag) =>
-      applySkillToolApproval(
-        effectiveSkillTools({ serverOrigin: true }) as unknown as Record<
-          string,
-          unknown
-        >,
-        { pinned: false, requireToolApproval: flag },
-      ) as unknown as ToolSet,
+    input: { name: SERVER_SKILL.ref },
+    tools: effectiveSkillTools,
     expected: {
-      mcpjam: { on: "gate", off: "gate" },
-      byok: { on: "gate", off: "gate" },
+      mcpjam: { on: "free", off: "free" },
+      byok: { on: "free", off: "free" },
     },
   },
   {
-    // Floor: setting. A connected server's own skill on a live turn: SEP-2640
-    // asks for origin tagging on a load (the banner), not a prompt, so its
-    // load follows the switch like a Library skill's.
+    family: "server-origin skill file",
+    name: "readSkillFile",
+    input: { name: SERVER_SKILL.ref, path: "scripts/run.py" },
+    tools: effectiveSkillTools,
+    expected: {
+      mcpjam: { on: "free", off: "free" },
+      byok: { on: "free", off: "free" },
+    },
+  },
+  {
+    // A connected server's own skill on a live turn: SEP-2640 asks for origin
+    // tagging on a load (the banner), not a prompt, so its load is free like a
+    // Library skill's.
     family: "live server skill ref",
     name: "loadSkill",
     input: { name: LIVE_SERVER_SKILL_REF },
-    tools: (flag) =>
-      applySkillToolApproval(
-        liveServerSkillTools() as unknown as Record<string, unknown>,
-        { pinned: false, requireToolApproval: flag },
-      ) as unknown as ToolSet,
+    tools: liveServerSkillTools,
     expected: {
-      mcpjam: { on: "gate", off: "free" },
-      byok: { on: "gate", off: "free" },
+      mcpjam: { on: "free", off: "free" },
+      byok: { on: "free", off: "free" },
     },
   },
   {
@@ -935,6 +948,124 @@ describe("one mechanism", () => {
         `${row.family} stops asking when the switch is turned on`,
       ).toBe(true);
     }
+  });
+});
+
+/**
+ * Loading a server's skill is free (the rows above); what it can lead to is
+ * not. While its SKILL.md is in the conversation a command asks whatever the
+ * switch says, and an eval or swarm run, which denies every approval, refuses
+ * the command instead.
+ */
+describe("a server skill in use", () => {
+  const SKILL_LOADED = [
+    { role: "user", content: "load the refunds skill" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-load",
+          toolName: "loadSkill",
+          input: { name: "acme/refunds" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-load",
+          toolName: "loadSkill",
+          output: {
+            type: "text",
+            value: `${buildServerSkillBanner({
+              ref: "acme/refunds",
+              serverLabel: "Acme",
+              skillUri: "skill://acme/refunds/SKILL.md",
+            })}body`,
+          },
+        },
+      ],
+    },
+    { role: "user", content: "now run it" },
+  ];
+  const gatedBash = (flag: boolean) =>
+    applyActingServerSkillGate({
+      bash: buildBashTool(
+        {
+          authHeader: "Bearer u",
+          projectId: "proj_1",
+          engine: "e2b",
+          requireToolApproval: flag,
+        },
+        noopRunner,
+      ),
+    }) as ToolSet;
+
+  for (const flag of [true, false]) {
+    const label = flag ? "on" : "off";
+
+    it(`a command asks · switch ${label}`, async () => {
+      const call = {
+        name: "bash",
+        input: { command: "ls" },
+        tools: gatedBash(flag),
+        requireToolApproval: flag,
+      };
+      expect(await mcpjamVerdict({ ...call, messages: SKILL_LOADED })).toBe(
+        "gate",
+      );
+      expect(await byokVerdict({ ...call, messages: SKILL_LOADED })).toBe(
+        "gate",
+      );
+    });
+
+    it(`an eval or swarm run refuses the command · switch ${label}`, async () => {
+      // The step left the call without a result, which is what sends the loop
+      // to its approval handling (stubbed `false` for the rows above).
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValueOnce(true);
+      await mcpjamVerdict({
+        name: "bash",
+        input: { command: "ls" },
+        tools: gatedBash(flag),
+        requireToolApproval: flag,
+        messages: SKILL_LOADED,
+        approvalMode: "auto-deny",
+      });
+      // Nobody can answer, so the call's result is a denial, and a call with
+      // a result is not run.
+      const denial = writtenChunks.find(
+        (chunk: any) =>
+          chunk?.type === "tool-output-available" &&
+          chunk.toolCallId === "call-1",
+      );
+      expect(denial?.output).toMatchObject({
+        type: "error-text",
+        value: "approval-denied (synthetic session)",
+      });
+    });
+  }
+
+  it("without the skill, a command follows the switch alone", async () => {
+    // The control for both cases above: same tools, no SKILL.md in history.
+    const call = {
+      name: "bash",
+      input: { command: "ls" },
+      tools: gatedBash(false),
+      requireToolApproval: false,
+    };
+    expect(await mcpjamVerdict(call)).toBe("free");
+    vi.mocked(hasUnresolvedToolCalls).mockReturnValueOnce(true);
+    await mcpjamVerdict({ ...call, approvalMode: "auto-deny" });
+    expect(
+      writtenChunks.some(
+        (chunk: any) =>
+          chunk?.type === "tool-output-available" &&
+          chunk.toolCallId === "call-1",
+      ),
+    ).toBe(false);
   });
 });
 

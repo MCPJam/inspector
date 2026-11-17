@@ -80,6 +80,7 @@ export function PreparedEvalServerPage({
   const availableClients = hosts.map((host) => ({
     id: host.hostId,
     name: host.name,
+    hostStyle: host.hostStyle,
   }));
 
   useEffect(() => {

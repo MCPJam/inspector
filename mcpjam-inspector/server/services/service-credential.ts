@@ -80,6 +80,21 @@ export function hostedCredentialDeliveryHeaders(
 }
 
 /**
+ * A local Inspector's credential requests say that this release keeps the
+ * tokens the backend delivers inside its own process. The backend refuses
+ * shared and uploaded accounts to local releases without it, because older
+ * ones leak them (the server list, replay configs, tunnels). It is not
+ * authentication: it only keeps those releases from receiving the tokens.
+ */
+export const DELIVERY_CONTRACT_HEADER = "x-mcpjam-delivery-contract";
+
+export function deliveryContractHeaders(
+  hosted: boolean,
+): Record<string, string> {
+  return hosted ? {} : { [DELIVERY_CONTRACT_HEADER]: "1" };
+}
+
+/**
  * Human name of the `sk_…` API-key bearer path, shared by every site that
  * needs the credential to act for a key (validation, delegated-token mint,
  * acting-as calls) so the hosted-only answer reads the same everywhere.
