@@ -1,0 +1,42 @@
+import { useEffect } from "react";
+import { track } from "./analytics";
+import type { StartupStatus } from "./startup-status";
+
+// Once per page load each. StrictMode remounts and reconnects re-run the
+// effects below, and neither is a new launch or a new block.
+let startedSent = false;
+let blockedSent = false;
+
+/**
+ * Count launches before any actor is known. `app_startup_started` goes out on
+ * the first render inside `PostHogProvider`; `app_startup_blocked` goes out
+ * the first time the recovery card replaces the spinner, with the stage it is
+ * stuck on and whether a reported failure or the deadline put it there.
+ * Their ratio, by version and platform, is the share of stuck launches.
+ */
+export function useStartupTracking(status: StartupStatus): void {
+  useEffect(() => {
+    if (startedSent) return;
+    startedSent = true;
+    track("app_startup_started", { location: "app" });
+  }, []);
+
+  const { escalated, stage, failureKind } = status;
+  useEffect(() => {
+    if (!escalated || blockedSent) return;
+    blockedSent = true;
+    track("app_startup_blocked", {
+      location: "app",
+      stage,
+      trigger: failureKind ? "failure" : "deadline",
+      elapsed_ms:
+        typeof performance === "undefined" ? 0 : Math.round(performance.now()),
+    });
+  }, [escalated, stage, failureKind]);
+}
+
+/** Test seam: each test is its own page load. */
+export function resetStartupTrackingForTests(): void {
+  startedSent = false;
+  blockedSent = false;
+}

@@ -17,6 +17,7 @@ vi.mock("@/hooks/use-inspector-auth", () => ({
 }));
 const reportCaught = vi.hoisted(() => vi.fn());
 vi.mock("../error-reporting", () => ({ reportCaught }));
+vi.mock("../analytics", () => ({ track: vi.fn() }));
 vi.mock("../guest-session", () => ({
   getGuestSessionRefusal: () => null,
   subscribeGuestSessionChanges: () => () => {},
