@@ -2760,6 +2760,7 @@ function postEvalOrgLocalUsage(args: {
     providerKey: context.providerKey,
     model: args.modelId,
     ...(event.usage ? { usage: event.usage } : {}),
+    ...(event.calls ? { calls: event.calls } : {}),
     ...(event.finishReason ? { finishReason: event.finishReason } : {}),
     sourceType: "eval",
     ...(args.convexAuthToken

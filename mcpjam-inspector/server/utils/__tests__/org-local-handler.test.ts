@@ -983,31 +983,49 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     expect(fullHistory[1]).toEqual(distinctResponse);
   });
 
-  it("saves the backend's price for a one-call local turn on its llm span, and never prices it here", async () => {
+  it("writes a two-call local turn back per call and saves each call's backend price on its llm span", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
-    const orgCost = {
+    const priced = (amountUsd: number) => ({
       calculationVersion: 1,
       currency: "USD",
       completeness: "complete",
-      amountUsd: 0.0042,
+      amountUsd,
       source: "customer_rate",
       funding: "customer",
-    };
+    });
+    let sentCalls: Array<{ requestId: string; usage: unknown }> = [];
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => Response.json({ ok: true, cost: orgCost }));
+      .mockImplementation(async (_url, init) => {
+        sentCalls = JSON.parse(String(init?.body)).calls;
+        return Response.json({
+          ok: true,
+          costs: {
+            [sentCalls[0]!.requestId]: priced(0.01),
+            [sentCalls[1]!.requestId]: priced(0.5),
+          },
+        });
+      });
+    const steps = [
+      { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+      { inputTokens: 40, outputTokens: 6, totalTokens: 46 },
+    ];
     streamTextMock.mockImplementationOnce((options: any) => {
       queueMicrotask(async () => {
-        await options.prepareStep({ stepNumber: 0, messages: [] });
-        await options.onStepFinish({
-          usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
-          response: { messages: [{ role: "assistant", content: "Hi" }] },
-          finishReason: "stop",
-          toolCalls: [],
-        });
+        for (const [stepNumber, usage] of steps.entries()) {
+          await options.prepareStep({ stepNumber, messages: [] });
+          await options.onStepFinish({
+            usage,
+            response: { messages: [{ role: "assistant", content: "Hi" }] },
+            finishReason: stepNumber === 0 ? "tool-calls" : "stop",
+            toolCalls: [],
+          });
+        }
         await options.onFinish({
-          steps: [{ response: { messages: [{ role: "assistant", content: "Hi" }] } }],
-          totalUsage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+          steps: [
+            { response: { messages: [{ role: "assistant", content: "Hi" }] } },
+          ],
+          totalUsage: { inputTokens: 44, outputTokens: 12, totalTokens: 56 },
           finishReason: "stop",
           text: "Hi",
         });
@@ -1030,15 +1048,22 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     if (reader) while (!(await reader.read()).done);
     await vi.waitFor(() => expect(onConversationComplete).toHaveBeenCalled());
 
-    const turnTrace = onConversationComplete.mock.calls[0]![1] as {
-      spans: Array<{ category: string; cost?: unknown }>;
-    };
-    expect(turnTrace.spans.filter((span) => span.cost)).toEqual([
-      expect.objectContaining({ category: "llm", cost: orgCost }),
-    ]);
-    // Only the writeback went out: no list-price lookup for an org call.
+    // One writeback, one entry per provider request, each with its own usage.
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
       "https://convex.example/stream/org/local-usage",
+    ]);
+    expect(sentCalls.map((call) => call.usage)).toEqual(steps);
+    expect(new Set(sentCalls.map((call) => call.requestId)).size).toBe(2);
+    const turnTrace = onConversationComplete.mock.calls[0]![1] as {
+      spans: Array<{ category: string; stepIndex?: number; cost?: any }>;
+    };
+    expect(
+      turnTrace.spans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.stepIndex, span.cost?.amountUsd]),
+    ).toEqual([
+      [0, 0.01],
+      [1, 0.5],
     ]);
   });
 });

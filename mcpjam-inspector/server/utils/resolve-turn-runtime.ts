@@ -354,6 +354,7 @@ export async function resolveTurnRuntime(
         providerKey,
         model: modelId,
         usage: result.usage,
+        calls: result.modelCalls,
         finishReason: result.finishReason,
         chatSessionId: args.chatSessionId,
         sourceType: args.sourceType,

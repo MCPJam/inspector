@@ -39,6 +39,7 @@ import {
   type DirectChatTurnFullStreamResult,
   type DirectFullStreamPart,
 } from "./direct-chat-turn-full-stream";
+import type { TurnModelCall } from "./call-cost/local-usage-cost.js";
 
 /** Hosted engine: where/how to execute + auth-adjacent routing, made explicit. */
 export type HostedRuntime = {
@@ -93,6 +94,8 @@ export type UnifiedTurnResult = RunAssistantTurnResult & {
     DirectChatTurnFullStreamResult,
     "steps" | "totalUsage" | "upstreamModel"
   >;
+  /** A direct turn's provider requests, for the per-call usage writeback. */
+  modelCalls?: TurnModelCall[];
 };
 
 /** Hosted options = `runAssistantTurn`'s, with routing lifted into `runtime`. */
@@ -291,6 +294,9 @@ export async function runUnifiedAssistantTurn(
     // Surface the cancellation signal (don't throw) so callers keep the existing
     // "check flag → return cancelled" pattern instead of try/catch.
     aborted: headless.aborted,
+    ...(handle.traceTurn?.turnCalls
+      ? { modelCalls: [...handle.traceTurn.turnCalls] }
+      : {}),
     ...(full
       ? {
           direct: {

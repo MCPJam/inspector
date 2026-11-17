@@ -34,6 +34,7 @@ import {
 } from "../../utils/turn-execution.js";
 import type { createLlmModel } from "../../utils/chat-helpers.js";
 import { createDirectCallPricer } from "../../utils/call-cost/direct-call-pricer.js";
+import type { TurnModelCall } from "../../utils/call-cost/local-usage-cost.js";
 import type { PrepareChatV2Result } from "../../utils/chat-v2-orchestration.js";
 import { buildPinnedTurnAccounting, runPinnedTurn } from "./pinned-turn.js";
 import type { PinnedTurnSsePayload } from "./pinned-turn-sse.js";
@@ -171,6 +172,8 @@ export type LocalModelCallSettled = {
   code?: string;
   /** This turn's token usage, with the reasoning / cached-input breakdown. */
   usage?: UsageTotals;
+  /** Each provider request of the turn, written back one row per call. */
+  calls?: TurnModelCall[];
   finishReason?: string;
   /** The model id the provider reported serving, when it reported one. */
   upstreamModel?: string;
@@ -512,6 +515,7 @@ export async function driveLocalEvalTurn(
       outcome,
       ...(code ? { code } : {}),
       ...(turnUsage ? { usage: turnUsage } : {}),
+      ...(turn.modelCalls ? { calls: turn.modelCalls } : {}),
       ...(typeof turn.finishReason === "string"
         ? { finishReason: turn.finishReason }
         : {}),

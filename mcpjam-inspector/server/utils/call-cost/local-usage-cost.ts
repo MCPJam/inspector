@@ -2,47 +2,85 @@ import {
   parseModelCallCostEvidence,
   type ModelCallCostEvidence,
 } from "@mcpjam/sdk";
+import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type { PersistedTurnTrace } from "../chat-ingestion.js";
 import { waitAtMost } from "./wait-at-most.js";
 
-/** How long saving the transcript waits for the writeback's price. */
+/** How long saving the transcript waits for the writeback's prices. */
 const WRITEBACK_COST_WAIT_MS = 2_000;
 
-/** The backend's priced record from a `/stream/org/local-usage` response. */
-export function readLocalUsageCost(
-  body: unknown,
-): ModelCallCostEvidence | undefined {
-  return body && typeof body === "object" && "cost" in body
-    ? parseModelCallCostEvidence(body.cost)
-    : undefined;
+/** The most calls the backend takes in one writeback. */
+export const MAX_WRITEBACK_CALLS = 100;
+
+/** One provider request of a turn, as the usage writeback reports it. */
+export type TurnModelCall = {
+  /** `<turnId>:<stepIndex>`: stable, so a retried writeback stores it once. */
+  callId: string;
+  stepIndex: number;
+  usage?: LiveChatTraceUsage;
+  finishReason?: string;
+  /** When the step finished, ms since epoch. */
+  finishedAt: number;
+};
+
+/**
+ * The writeback body's `calls`: one entry per provider request. A call the
+ * provider reported no usage for is sent with none, rather than left out.
+ */
+export function localUsageCallsBody(calls: TurnModelCall[]) {
+  return calls.map((call) => ({
+    requestId: call.callId,
+    usage: call.usage ?? {},
+    ...(call.finishReason ? { finishReason: call.finishReason } : {}),
+    finishedAt: call.finishedAt,
+  }));
 }
 
 /**
- * Put the backend's price for a local org turn on the turn's llm span. The
- * Inspector never prices these calls itself: the organization's rates live in
- * the backend.
- *
- * The local runtime writes usage back once per turn, with the turn's tokens
- * summed. That price is one call's cost only when the turn made one call. A
- * turn of several calls was priced as if it were one request, which can cross
- * a context tier none of its calls crossed, so its spans keep no cost.
+ * The backend's price for each call, keyed by call id, from a
+ * `/stream/org/local-usage` response. Malformed entries are skipped.
+ */
+export function readLocalUsageCosts(
+  body: unknown,
+): Record<string, ModelCallCostEvidence> {
+  const costs =
+    body && typeof body === "object" && "costs" in body ? body.costs : null;
+  const priced: Record<string, ModelCallCostEvidence> = {};
+  if (!costs || typeof costs !== "object") return priced;
+  for (const [callId, raw] of Object.entries(costs)) {
+    const cost = parseModelCallCostEvidence(raw);
+    if (cost) priced[callId] = cost;
+  }
+  return priced;
+}
+
+/**
+ * Put the backend's price for each call of a local org turn on that call's
+ * llm span. The Inspector never prices these calls itself: the
+ * organization's rates live in the backend, which prices each provider
+ * request on its own usage, so a context tier is crossed per call.
  */
 export async function withLocalUsageCost(
   turnTrace: PersistedTurnTrace,
-  cost: Promise<ModelCallCostEvidence | undefined>,
+  calls: TurnModelCall[],
+  costs: Promise<Record<string, ModelCallCostEvidence> | undefined>,
 ): Promise<PersistedTurnTrace> {
-  const calls = turnTrace.spans.filter((span) => span.category === "llm");
-  if (calls.length !== 1) return turnTrace;
+  if (!calls.length) return turnTrace;
   const priced = await waitAtMost(
-    cost,
+    costs,
     WRITEBACK_COST_WAIT_MS,
     "usage writeback",
   );
   if (!priced) return turnTrace;
+  const callIdByStep = new Map(
+    calls.map((call) => [call.stepIndex, call.callId]),
+  );
   return {
     ...turnTrace,
-    spans: turnTrace.spans.map((span) =>
-      span === calls[0] ? { ...span, cost: priced } : span,
-    ),
+    spans: turnTrace.spans.map((span) => {
+      if (span.category !== "llm" || span.stepIndex === undefined) return span;
+      const cost = priced[callIdByStep.get(span.stepIndex) ?? ""];
+      return cost ? { ...span, cost } : span;
+    }),
   };
 }
