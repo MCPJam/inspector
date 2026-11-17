@@ -1,6 +1,8 @@
 import type { FeatureDefinition } from "../../types.js";
 import { APPS_FEATURES } from "./apps.js";
 import { AUTHORIZATION_EXTENSION_FEATURES } from "./authorization.js";
+import { EVENTS_FEATURES } from "./events.js";
+import { TASKS_FEATURES } from "./tasks.js";
 
 export {
   KNOWN_EXPERIMENTAL_KEYS,
@@ -13,4 +15,6 @@ export {
 export const EXTENSION_FEATURES: readonly FeatureDefinition[] = [
   ...AUTHORIZATION_EXTENSION_FEATURES,
   ...APPS_FEATURES,
+  ...TASKS_FEATURES,
+  ...EVENTS_FEATURES,
 ];
