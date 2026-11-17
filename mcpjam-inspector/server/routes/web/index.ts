@@ -147,7 +147,12 @@ for (const startsWork of [
 }
 web.post("/servers/checks/promote", promoteServerCheck);
 // All hosted checks share ten active slots per verified user across replicas.
-for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
+// A canvas refresh connects, captures and probes, so it takes a slot too.
+for (const spendsEgress of [
+  "/servers/doctor",
+  "/servers/validate",
+  "/servers/canvas/refresh",
+]) {
   web.use(spendsEgress, mcpEgressRateLimitMiddleware);
 }
 // Connector Bench. Listed path-by-path rather than as `/bench/*` because

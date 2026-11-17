@@ -18,6 +18,9 @@ import {
   parseWithSchema,
   toHttpConfig,
   callerOAuthTokenUnlessRefused,
+  runEphemeralConnection,
+  mapEphemeralServerFailure,
+  projectRouteFailure,
 } from "./auth.js";
 import {
   attachHostedRpcLogs,
@@ -28,6 +31,10 @@ import { recordConnectInspection } from "../../services/server-canvas/connect-ho
 import { optionalOAuthFlowSummarySchema } from "../../services/server-canvas/oauth-flow-summary.js";
 import { widenHostedInitInfoForCanvas } from "../../utils/hosted-canvas-projection.js";
 import { resolveServerCanvasRollout } from "../../utils/server-canvas-rollout.js";
+import {
+  claimCanvasRefresh,
+  runCanvasRefresh,
+} from "../../services/server-canvas/refresh.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
@@ -226,6 +233,91 @@ servers.post("/doctor", async (c) => {
       routeError,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
+  }
+});
+
+/**
+ * Refresh the server canvas: a fresh capture and every background probe for
+ * one project server, on an ephemeral connection, behind `server-canvas`.
+ * Answers 202 `accepted` once the probes are stored; the page watches Convex
+ * for results. Answers 409 `disabled` when the rollout is off, at the gate or
+ * when the refresh rechecks it, and an error when the refresh fails. The route
+ * holds its server-check slot (the egress limiter in `routes/web/index.ts`)
+ * until then. The connection is `runEphemeralConnection`'s: it closes as soon
+ * as the probes no longer need it, or when the server-check scope aborts. A
+ * second refresh from the same verified caller for the same server while one
+ * runs is authorized, then answers 202 and joins it. The body may carry the
+ * same client pins as /validate, so the capture lands in the same context as
+ * the connect's.
+ */
+servers.post("/canvas/refresh", async (c) => {
+  const claim: { release?: () => void } = {};
+  try {
+    const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    const body = parseWithSchema(projectServerSchema, rawBody);
+    const bearer: string | undefined = c.req.header("authorization");
+    assertBearerToken(c);
+    if (!(await resolveServerCanvasRollout(bearer))) {
+      return c.json({ status: "disabled" }, 409);
+    }
+    // An unverified passthrough bearer names no principal, so its refresh is
+    // not deduped: a shared key would let one member's run swallow another's.
+    const caller = c.get("guestId") ?? c.get("workosUserId");
+    const run = await runEphemeralConnection(
+      c,
+      rawBody,
+      projectServerSchema,
+      async (manager) => {
+        const config = manager.getServerConfig(body.serverId);
+        if (config && "url" in config && config.url) {
+          await assertHostedServerTarget(String(config.url));
+        }
+        // Claimed once authorized, so only a caller with access joins a run.
+        if (caller) {
+          claim.release = claimCanvasRefresh({
+            caller,
+            projectId: body.projectId,
+            serverId: body.serverId,
+          });
+          if (!claim.release) return undefined;
+        }
+        return runCanvasRefresh({
+          hosted: true,
+          projectId: body.projectId,
+          serverId: body.serverId,
+          manager,
+          managerKey: body.serverId,
+          convexBearer: bearer ?? "",
+        });
+      },
+      { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
+    );
+    if (!run) return c.json({ status: "accepted" }, 202);
+    // The connection is closed by now; the HTTP probes may still be running.
+    await run.done;
+    if (run.outcome === "rollout-off") {
+      return c.json({ status: "disabled" }, 409);
+    }
+    if (run.outcome === "failed") {
+      return webErrorFromRoute(
+        c,
+        new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "The refresh failed. Try again in a moment.",
+        ),
+      );
+    }
+    return c.json({ status: "accepted" }, 202);
+  } catch (error) {
+    const { routeError } = projectRouteFailure(
+      mapEphemeralServerFailure(error),
+      error,
+      undefined,
+    );
+    return webErrorFromRoute(c, routeError);
+  } finally {
+    claim.release?.();
   }
 });
 
