@@ -63,6 +63,10 @@ import {
   canShowSubscriptionNotices,
   getAnnualDiscountPercent,
 } from "@/lib/billing-entitlements";
+import {
+  getDisplayedCurrentPlan,
+  isStaffSetPlan,
+} from "@/lib/billing-staff-plan";
 import { consumeUrlFlag } from "@/lib/url-flag";
 import { track } from "@/lib/analytics";
 import { navigateToSupport } from "@/lib/support-navigation";
@@ -1006,7 +1010,9 @@ export function OrganizationBillingSection({
     planCatalog,
   ]);
 
-  const currentPlan = billingStatus?.plan ?? "free";
+  const currentPlan = getDisplayedCurrentPlan(billingStatus);
+  // A staff plan changes only through MCPJam, so no column offers self-serve.
+  const isStaffPlan = isStaffSetPlan(billingStatus);
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingPlanChange || isOpeningPortal;
@@ -1369,14 +1375,21 @@ export function OrganizationBillingSection({
                                     : ""
                                   : null;
                               const cta = getPlanColumnCta({
-                                contractManaged: (billingStatus?.unlimitedCreditsUntil ?? 0) > Date.now(),
+                                contractManaged:
+                                  isStaffPlan ||
+                                  (billingStatus?.unlimitedCreditsUntil ?? 0) >
+                                    Date.now(),
                                 plan,
                                 currentPlan,
-                                currentCatalogPlanId:
-                                  billingStatus?.catalogPlanId,
+                                // A staff plan holds its tier whichever bundle
+                                // this catalog sells (v1 entries name none).
+                                currentCatalogPlanId: isStaffPlan
+                                  ? entry.catalogPlanId
+                                  : billingStatus?.catalogPlanId,
                                 currentPriceModel: billingStatus?.priceModel,
-                                currentBillingInterval:
-                                  billingStatus?.billingInterval ?? null,
+                                currentBillingInterval: isStaffPlan
+                                  ? null
+                                  : (billingStatus?.billingInterval ?? null),
                                 entry,
                                 billingConfigured,
                                 canManageBilling,
