@@ -30,7 +30,9 @@ describe("durable finding input fingerprints", () => {
     const derived = { ...finding, id: "openai.submission.urls", details: { packageDerived: true } };
     const context = { flow: CHATGPT_PLUGIN_FLOW, answers: [], pluginVersionId: "a" };
     const stored = { ...derived, inputs: submissionFindingInputs(derived, context) };
-    expect(changedFindingInputs(stored, { ...context, pluginVersionId: "b" })).toEqual(["pluginVersionId"]);
+    const { details: _details, ...compact } = stored;
+    expect(changedFindingInputs(compact, context)).toEqual([]);
+    expect(changedFindingInputs(compact, { ...context, pluginVersionId: "b" })).toEqual(["pluginVersionId"]);
   });
   it("invalidates a package finding when the selected version changes", () => {
     const context = {
