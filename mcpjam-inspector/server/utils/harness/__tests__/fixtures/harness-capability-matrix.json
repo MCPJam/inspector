@@ -49,7 +49,6 @@
       "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "2.1.290",
-      "preparesBeforeSend": true,
       "promptImageInput": true,
       "requiresComputer": true,
       "skills": {
@@ -140,7 +139,6 @@
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "0.163.0",
-      "preparesBeforeSend": true,
       "promptImageInput": true,
       "requiresComputer": true,
       "skills": {

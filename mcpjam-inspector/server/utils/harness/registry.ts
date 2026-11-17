@@ -401,9 +401,6 @@ type HarnessRuntimeAdapterBase = {
    *  header values included, so its lane's configuration carries nothing that
    *  varies between turns: no tool-catalog version, no added headers. */
   fingerprintsMcpConfig?: true;
-  /** Booting and bootstrapping this runtime's hosted box may start before
-   *  Send (`prepare-conversation-box.ts`). */
-  preparesBeforeSend?: true;
   /**
    * How an agent kept running in a hosted box between messages takes each
    * message's MCP configuration: `refresh` applies it to the live agent
@@ -841,7 +838,6 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
-  preparesBeforeSend: true,
   hostedWarmAgent: "refresh",
   promptImageInput: true,
   displayName: HARNESS_DESCRIPTORS["claude-code"].displayName,
@@ -1034,7 +1030,6 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
  */
 const codexAdapter: HarnessRuntimeAdapter = {
   id: "codex",
-  preparesBeforeSend: true,
   hostedWarmAgent: "refresh",
   promptImageInput: true,
   // Folded into the runtime fingerprint, so a lane saved under the retired
@@ -1146,6 +1141,8 @@ const codexAdapter: HarnessRuntimeAdapter = {
 
 const cursorAdapter: HarnessRuntimeAdapter = {
   id: "cursor",
+  // No `hostedWarmAgent`: a CLI kept running between messages would hold the
+  // turn's Cursor login after the turn removed it from the box.
   promptImageInput: true,
   // "Cursor CLI", not "Cursor" — the emulated `cursor` host style (the IDE's
   // chat panel) keeps that name, and the two are different products with
@@ -1318,6 +1315,9 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
 
 const opencodeAdapter: HarnessRuntimeAdapter = {
   id: "opencode",
+  // No `hostedWarmAgent`: its bridge keeps the OpenCode server it started
+  // until `openCodeConfig` changes, so an agent kept between messages would
+  // answer with the previous message's tools and MCP servers.
   promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS.opencode.displayName,
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
