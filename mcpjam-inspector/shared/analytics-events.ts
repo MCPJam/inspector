@@ -318,6 +318,7 @@ export const ANALYTICS_EVENTS = {
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
   evaluate_tour_completed: { source: "client" },
+  evaluate_tour_handoff_ended: { source: "client" },
   evaluate_tour_opened: { source: "client" },
   evaluate_tour_skipped: { source: "client" },
   evaluate_tour_step_viewed: { source: "client" },

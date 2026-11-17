@@ -22,8 +22,8 @@ export type TourDriver = {
   settle: () => Promise<void>;
 };
 
-const MOVE_MS = 650;
-const TYPE_MS = 45;
+const MOVE_MS = 900;
+const TYPE_MS = 55;
 
 function frame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -69,6 +69,9 @@ export function createTourDriver({
       if (reducedMotion) return;
       const el = findAnchor(root, anchor);
       if (!el) return;
+      // The previous stop may have scrolled the target out of its pane.
+      el.scrollIntoView?.({ block: "nearest" });
+      await frame();
       await cursor.moveTo(rectCenter(rectWithin(root, el)), MOVE_MS);
       guard();
     },
