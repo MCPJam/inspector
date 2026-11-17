@@ -134,6 +134,30 @@ describe("CaseStepsEditor structure", () => {
     expect(screen.getByText("Token budget under 250000")).toBeTruthy();
   });
 
+  it("a gating tool assert reads the case's argument matching", () => {
+    const withArgs: TestStep[] = [
+      sketch[0],
+      {
+        id: "a1",
+        kind: "assert",
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "read_me",
+          args: { args: { mode: "quick" } },
+        },
+      },
+    ];
+    render(
+      <Harness
+        initial={base({
+          steps: withArgs,
+          matchOptions: { argumentMatching: "exact" },
+        })}
+      />,
+    );
+    expect(screen.getByText("1 argument, exact match")).toBeTruthy();
+  });
+
   it("a blank draft has no assertions heading", () => {
     render(
       <Harness

@@ -21,7 +21,10 @@ import {
   type SpineChild,
   type TestStep,
 } from "@/shared/steps";
-import type { CaseScorecard } from "../case-scorecard/case-scorecard-model";
+import {
+  safeResolveMatchOptions,
+  type CaseScorecard,
+} from "../case-scorecard/case-scorecard-model";
 import { EvalAddDrawer } from "../case-spine/assertion-drawer";
 import {
   canRemoveAction,
@@ -112,11 +115,19 @@ export function CaseStepsEditor({
   const viewTool = invokableTools(availableTools)[0]?.name ?? "";
   const lastActionId = groups.steps.at(-1)?.step.id ?? null;
   const openSettings = () => onOpenSuiteSettings("evaluators");
+  const routeMatching = safeResolveMatchOptions(
+    suite.defaultMatchOptions,
+    draft.matchOptions,
+  ).argumentMatching;
 
   const renderAssertion = (child: SpineChild, actionId: string | null) => {
     const step = child.step;
     if (step.kind !== "assert") return null;
-    const s = assertionSummary(step.assertion, actionId !== null);
+    const s = assertionSummary(
+      step.assertion,
+      actionId !== null,
+      routeMatching,
+    );
     const key = `check:${step.id}`;
     const advisory =
       !isWidgetAssertion(step.assertion) &&
