@@ -22,13 +22,10 @@ import {
 } from "@/components/evals/case-save-feedback";
 import { getStepsBlockReason } from "@/components/evals/test-template-editor";
 import type { EvalCase, EvalSuite } from "@/components/evals/types";
-import type { Predicate } from "@/shared/eval-matching";
-import {
-  buildCaseScorecard,
-  type CaseScorecard,
-} from "../case-scorecard/case-scorecard-model";
+import type { CaseScorecard } from "../case-scorecard/case-scorecard-model";
 import type { CaseStepsDraft, DraftEdit } from "./case-step-edits";
 import { isCaseStepsDirty, seedCaseStepsDraft } from "./case-steps-seed";
+import { caseStepsScorecard } from "./case-steps-suite";
 
 const LOCATION = "case_steps_editor";
 
@@ -88,24 +85,11 @@ export function useCaseStepsDraft({
   const card = useMemo<CaseScorecard | null>(
     () =>
       draft && suite
-        ? buildCaseScorecard({
-            steps: draft.steps,
-            toolsChoice: draft.toolsChoice,
-            kind: draft.kind,
-            matchOptions: draft.matchOptions,
-            suiteDefaultMatchOptions: suite.defaultMatchOptions,
-            predicates: draft.predicates,
-            suiteDefaultPredicates: (suite.defaultPredicates ??
-              []) as Predicate[],
-            suppressedSuiteStandardCheckIds:
-              draft.suppressedSuiteStandardCheckIds,
-            expectedOutput: draft.expectedOutput,
-            judgeConfigOverride: draft.judgeConfigOverride,
-            suiteJudgeConfig: suite.judgeConfig,
-            judgePolicy: capabilities?.judges?.goalCompletion.policy,
-            suiteJudgeRubric: suite.judgeRubric,
-            numbering: "action",
-          })
+        ? caseStepsScorecard(
+            draft,
+            suite,
+            capabilities?.judges?.goalCompletion.policy,
+          )
         : null,
     [draft, suite, capabilities],
   );

@@ -83,6 +83,11 @@ export interface CaseStepsEditorProps {
   onOpenKeyChange: (key: string | null) => void;
   onOpenSuiteSettings: (tab: SuiteSettingsTab) => void;
   onDraftValidityChange?: (invalid: boolean) => void;
+  /**
+   * False for a draft not in the suite yet: it stores no judge opt-out or tool
+   * error policy, so their switches are hidden.
+   */
+  caseOverrides?: boolean;
 }
 
 type PendingRemove = DeleteActionPlan & { stepId: string };
@@ -103,6 +108,7 @@ export function CaseStepsEditor({
   onOpenKeyChange,
   onOpenSuiteSettings,
   onDraftValidityChange,
+  caseOverrides = true,
 }: CaseStepsEditorProps) {
   const groups = useMemo(() => groupCaseSteps(draft.steps), [draft.steps]);
   const section = useMemo(() => afterRunSection(card), [card]);
@@ -336,6 +342,7 @@ export function CaseStepsEditor({
             draft={draft}
             card={card}
             readOnly={readOnly}
+            caseOverrides={caseOverrides}
             onEdit={edit}
             onOpenSuiteSettings={openSettings}
           />
