@@ -75,6 +75,12 @@ function withOwnSkillsOnly<T extends HarnessV1>(harness: T): T {
  * stands in front of an empty object rather than the session: a local
  * session's restricted view is frozen, and a proxy over a frozen object may
  * not answer a property with anything but the object's own value.
+ *
+ * That makes this a view for named reads and calls only. The pinned adapter
+ * reads `id`, `ports`, `getPortEndpoint` and `addRequestTransformations` by
+ * name and uses `spawn` and `restricted`; it never spreads the session, lists
+ * its keys or checks its prototype, and the proxy would answer each of those
+ * as an empty object. Re-check this when the adapter version changes.
  */
 function withSpawnEnv<S extends object>(session: S): S {
   return new Proxy(Object.create(null) as S, {
