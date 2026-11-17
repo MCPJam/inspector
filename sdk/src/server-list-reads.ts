@@ -87,11 +87,12 @@ export type ServerSkillsRead =
 /**
  * Drain `skills/list` through {@link listServerSkillCatalog} when the Skills
  * extension is active on this connection. `support` is undefined when the
- * manager could not report it.
+ * manager could not report it. `options.signal` cancels the drain.
  */
 export async function readServerSkillCatalog(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  options: { signal?: AbortSignal } = {}
 ): Promise<ServerSkillsRead> {
   let support: SkillsSupport | undefined;
   try {
@@ -103,7 +104,7 @@ export async function readServerSkillCatalog(
   if (!support?.active) return { status: "inactive", support };
 
   try {
-    const listing = await listServerSkillCatalog(manager, serverId);
+    const listing = await listServerSkillCatalog(manager, serverId, options);
     return {
       status: "listed",
       support,

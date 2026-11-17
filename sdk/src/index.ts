@@ -400,6 +400,7 @@ export type {
   ServerDoctorSkillsCheck,
   ServerDoctorSkillsFindings,
   ConnectedServerDoctorState,
+  CollectConnectedServerDoctorStateOptions,
   RunServerDoctorInput,
   ServerDoctorDependencies,
 } from "./server-doctor.js";
