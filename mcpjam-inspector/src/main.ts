@@ -246,6 +246,11 @@ function shouldForceElectronOAuthFallback(): boolean {
   );
 }
 
+/** Packaged builds bind IPv4 loopback; dev binds `localhost`, often `::1`. */
+function serverBindHost(): string {
+  return app.isPackaged ? "127.0.0.1" : "localhost";
+}
+
 function getServerUrl(): string {
   return `http://127.0.0.1:${serverPort}`;
 }
@@ -474,7 +479,7 @@ async function startHonoServer(): Promise<number> {
     }
 
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
-    const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
+    const hostname = serverBindHost();
 
     let port: number;
     if (cachedProbedPort !== null) {
@@ -980,7 +985,9 @@ function createAppMenu(): void {
     },
     buildHelpMenu({
       snapshot: desktopDiagnostics.snapshot,
-      serverUrl: () => (serverPort > 0 ? getServerUrl() : null),
+      // Probe the host the server is bound to, not getServerUrl's 127.0.0.1.
+      serverUrl: () =>
+        serverPort > 0 ? `http://${serverBindHost()}:${serverPort}` : null,
       appVersion: () => app.getVersion(),
       electronVersion: process.versions.electron,
       os: `${process.platform}-${release()}`,

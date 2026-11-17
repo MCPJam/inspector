@@ -96,15 +96,25 @@ export function StartupStatusTracker(): null {
   useAppLoadStallReport(userReady || publicPage, status.stage);
   useStartupTracking(status, userReady);
 
-  // The desktop Help menu copies this stage from the main process, which still
-  // works when this window is stuck. A no-op outside the desktop app.
+  // The desktop Help menu reads this from the main process, which still works
+  // when this window is stuck. While startup is blocked, App (and its own
+  // heartbeat) never mounts, so this one keeps the window marked as alive.
+  const { user, isLoading: workOsLoading } = useInspectorAuth();
+  const signedIn = Boolean(user);
   useEffect(() => {
-    recordDesktopActivity({
-      kind: "startup",
-      phase: "state",
-      stage: userReady ? "ready" : status.stage,
-    });
-  }, [userReady, status.stage]);
+    if (!window.electronAPI?.diagnostics) return;
+    const report = () =>
+      recordDesktopActivity({
+        kind: "startup",
+        phase: "state",
+        stage: userReady ? "ready" : status.stage,
+        auth: workOsLoading ? "loading" : signedIn ? "signed_in" : "guest",
+        version: __APP_VERSION__,
+      });
+    report();
+    const timer = setInterval(report, 15_000);
+    return () => clearInterval(timer);
+  }, [userReady, status.stage, signedIn, workOsLoading]);
 
   useEffect(() => {
     if (startupSettled) return;
