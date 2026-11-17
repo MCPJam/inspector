@@ -173,10 +173,12 @@ export function TraceCostSummary({
 }: {
   spans: readonly EvalTraceSpan[] | null | undefined;
 }) {
+  const enabled = useTraceCostEnabled();
   const cost = useMemo<RowCost | undefined>(() => {
+    if (!enabled) return undefined;
     const rollup = rollupLlmSpanCosts(spans ?? []);
     return rollup && { kind: "rollup", rollup };
-  }, [spans]);
+  }, [enabled, spans]);
   const view = useCostView(cost);
   if (!view) return null;
   return (
