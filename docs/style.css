@@ -551,7 +551,7 @@ tbody tr:hover td {
 }
 
 /* Keep the install selector distinct from navigation and code-group tabs. */
-.mcp-client-setup > [data-component-part="tabs-list"] {
+.mcp-client-setup[data-component-part="tabs-list"] {
   flex-wrap: wrap;
   gap: 0.5rem;
   overflow: visible;
@@ -559,7 +559,7 @@ tbody tr:hover td {
   border: none;
 }
 
-.mcp-client-setup > [data-component-part="tabs-list"] > [role="tab"] {
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"] {
   display: flex;
   align-items: center;
   min-height: 2.75rem;
@@ -578,18 +578,18 @@ tbody tr:hover td {
   color: inherit;
 }
 
-.mcp-client-setup > [data-component-part="tabs-list"] > [role="tab"]:hover {
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"]:hover {
   border-color: var(--mcj-ink-strong);
   background: var(--mcj-paper-3);
 }
 
-.mcp-client-setup > [data-component-part="tabs-list"] > [role="tab"][aria-selected="true"] {
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"][aria-selected="true"] {
   border-color: var(--mcj-ink-strong);
   background: var(--mcj-ink-strong);
   color: var(--mcj-paper);
 }
 
-.mcp-client-setup > [data-component-part="tabs-list"] > [role="tab"]:focus-visible {
+.mcp-client-setup[data-component-part="tabs-list"] > [role="tab"]:focus-visible {
   outline: 2px solid var(--mcj-orange-edge);
   outline-offset: 2px;
 }
