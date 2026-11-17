@@ -141,8 +141,8 @@ describe("joinModelCalls", () => {
     const joined = joinModelCalls(spans, [
       call("g0", { matchedSpanId: "s0-llm" }),
       call("g1", { matchedSpanId: "s1-llm" }),
-      // A second call on the same span adds nothing.
-      call("g0-again", { matchedSpanId: "s0-llm", cost: own }),
+      // The same generation reported again is the same call.
+      call("g0", { matchedSpanId: "s0-llm", cost: own }),
     ]);
     expect(joined.spans.map((span) => span.cost)).toEqual([
       reported,
@@ -151,6 +151,22 @@ describe("joinModelCalls", () => {
     ]);
     expect(joined.spans[1]).toBe(spans[1]);
     expect(joined.unmatched).toEqual([]);
+  });
+
+  it("lists a second billed call on an already joined span, so it still counts once", () => {
+    const own = { ...reported, amountUsd: 0.5 };
+    const joined = joinModelCalls(
+      [llm("s0-llm")],
+      [
+        call("g0", { matchedSpanId: "s0-llm" }),
+        call("g1", { matchedSpanId: "s0-llm", cost: own }),
+        call("g1", { matchedSpanId: "s0-llm", cost: own }),
+      ],
+    );
+    expect(joined.spans.map((span) => span.cost)).toEqual([reported]);
+    expect(joined.unmatched).toEqual([
+      { generationId: "g1", modelId: "model-g1", cost: own },
+    ]);
   });
 });
 

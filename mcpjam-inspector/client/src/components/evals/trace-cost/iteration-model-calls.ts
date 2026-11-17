@@ -103,8 +103,9 @@ export type JoinedModelCalls = {
  * Join calls to llm spans by the backend's `matchedSpanId` alone, never by
  * model or time, which could put one call's cost on another call's step. A
  * span keeps its own cost; one without it (a harness span) takes its matched
- * call's evidence. A call whose span is not in this trace is unmatched, so
- * summing the spans and the unmatched calls counts every call once.
+ * call's evidence. A call whose span is not in this trace, or whose span
+ * already stands for another call, is unmatched, so summing the spans and the
+ * unmatched calls counts every call once.
  */
 export function joinModelCalls(
   spans: readonly EvalTraceSpan[],
@@ -115,11 +116,15 @@ export function joinModelCalls(
   );
   const matchedCost = new Map<string, ModelCallCostEvidence | undefined>();
   const unmatched: UnmatchedModelCall[] = [];
+  const seen = new Set<string>();
   for (const call of calls ?? []) {
+    // The same generation reported twice is one call.
+    if (seen.has(call.generationId)) continue;
+    seen.add(call.generationId);
     const cost = parseModelCallCostEvidence(call.cost);
     const spanId = call.matchedSpanId;
-    if (spanId && llmSpanIds.has(spanId)) {
-      if (!matchedCost.has(spanId)) matchedCost.set(spanId, cost);
+    if (spanId && llmSpanIds.has(spanId) && !matchedCost.has(spanId)) {
+      matchedCost.set(spanId, cost);
     } else {
       unmatched.push({
         generationId: call.generationId,
