@@ -6,6 +6,7 @@ import {
   ReactFlow,
   type Edge,
   type EdgeTypes,
+  type FitViewOptions,
   type Node,
   type NodeTypes,
 } from "@xyflow/react";
@@ -15,6 +16,10 @@ import "@xyflow/react/dist/style.css";
 export const DECORATIVE_HANDLE_CLASS = "!opacity-0 !w-2 !h-2";
 
 const FIT_VIEW_PADDING = 0.18;
+/** Space above the content when the first view is aligned to the top. */
+const TOP_ALIGN_INSET = 24;
+/** Reveal a top-aligned canvas even if its first fit never settles. */
+const TOP_ALIGN_REVEAL_FALLBACK_MS = 400;
 
 export interface CanvasShellProps<N extends Node, E extends Edge> {
   nodes: N[];
@@ -31,6 +36,16 @@ export interface CanvasShellProps<N extends Node, E extends Edge> {
    * place land before the lines that join them appear.
    */
   edgeRevealDelayMs?: number;
+  /**
+   * Narrows the first fit, e.g. to the top of a tall tree at a readable
+   * zoom. By default every node is fitted.
+   */
+  fitViewOptions?: Pick<FitViewOptions<N>, "nodes" | "minZoom" | "maxZoom">;
+  /**
+   * Keep the first fit's zoom and horizontal position but put the content
+   * at the top of the frame, so a tall tree opens on its root.
+   */
+  alignTopAfterFit?: boolean;
   onNodeClick: (node: N) => void;
   onPaneClick: () => void;
 }
@@ -54,6 +69,8 @@ export function CanvasShell<N extends Node, E extends Edge>({
   style,
   elementsSelectable = true,
   edgeRevealDelayMs = 0,
+  fitViewOptions,
+  alignTopAfterFit = false,
   onNodeClick,
   onPaneClick,
 }: CanvasShellProps<N, E>) {
@@ -100,13 +117,34 @@ export function CanvasShell<N extends Node, E extends Edge>({
           nodesConnectable={false}
           elementsSelectable={elementsSelectable}
           fitView
-          fitViewOptions={{ padding: FIT_VIEW_PADDING, duration: 0 }}
+          fitViewOptions={{
+            ...fitViewOptions,
+            padding: FIT_VIEW_PADDING,
+            duration: 0,
+          }}
           onInit={(instance) => {
             // Fit again and flip visibility a few frames later: a single
             // requestAnimationFrame fires before ReactFlow's first
             // measurement pass.
-            instance.fitView({ padding: FIT_VIEW_PADDING, duration: 0 });
-            window.setTimeout(() => setViewportReady(true), 60);
+            const fitted = instance.fitView({
+              ...fitViewOptions,
+              padding: FIT_VIEW_PADDING,
+              duration: 0,
+            });
+            if (!alignTopAfterFit) {
+              window.setTimeout(() => setViewportReady(true), 60);
+              return;
+            }
+            const reveal = window.setTimeout(
+              () => setViewportReady(true),
+              TOP_ALIGN_REVEAL_FALLBACK_MS,
+            );
+            void fitted.then(() => {
+              const { x, zoom } = instance.getViewport();
+              void instance.setViewport({ x, y: TOP_ALIGN_INSET, zoom });
+              window.clearTimeout(reveal);
+              setViewportReady(true);
+            });
           }}
           onNodeClick={(_, node) => onNodeClick(node)}
           onPaneClick={onPaneClick}
