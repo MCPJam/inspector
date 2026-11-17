@@ -1,4 +1,5 @@
 import type { FeatureDefinition } from "../../types.js";
+import { AUTHORIZATION_FEATURES } from "./authorization.js";
 import { CLIENT_FEATURES } from "./client-features.js";
 import {
   LIFECYCLE_FEATURES,
@@ -44,4 +45,5 @@ export const CORE_FEATURES: readonly FeatureDefinition[] = [
   ...PAGINATION_CACHING_FEATURES,
   ...REQUEST_CONTROL_FEATURES,
   ...CLIENT_FEATURES,
+  ...AUTHORIZATION_FEATURES,
 ];
