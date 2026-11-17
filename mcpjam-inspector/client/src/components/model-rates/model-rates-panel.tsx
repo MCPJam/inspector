@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Plus } from "lucide-react";
 import {
   AlertDialog,
@@ -66,6 +66,19 @@ export function ModelRatesTable({
 }) {
   const listPrices = useListPrices(rates.length > 0);
   const now = Date.now();
+  // Re-render when the next scheduled price starts, so an idle page drops its
+  // "In force until" row and "Scheduled" badge on time.
+  const [tick, setTick] = useState(0);
+  const nextStart = Math.min(
+    ...rates.map((rate) => rate.effectiveAt).filter((at) => at > now),
+  );
+  useEffect(() => {
+    if (!Number.isFinite(nextStart)) return;
+    // setTimeout holds at most about 24 days; a later start re-arms on wake.
+    const delay = Math.min(nextStart - Date.now() + 1, 2 ** 31 - 1);
+    const timer = setTimeout(() => setTick((value) => value + 1), delay);
+    return () => clearTimeout(timer);
+  }, [nextStart, tick]);
   /** The price, date, author and revision cells of one revision. */
   const revisionCells = (rate: ModelRateRow) => {
     const status =
@@ -112,7 +125,9 @@ export function ModelRatesTable({
         <TableBody>
           {rates.map((rate) => {
             const listPrice = listPrices.get(rate.modelId);
-            const current = inForce?.get(rate.rateId);
+            // The row beside a scheduled price applies only until it starts.
+            const current =
+              rate.effectiveAt > now ? inForce?.get(rate.rateId) : undefined;
             const until = formatDay(rate.effectiveAt);
             const provider = rate.providerKey
               ? (providers.find((p) => p.key === rate.providerKey)?.name ??

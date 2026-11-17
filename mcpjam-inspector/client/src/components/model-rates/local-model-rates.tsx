@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 import { authFetch } from "@/lib/session-token";
@@ -70,7 +70,11 @@ function LocalModelRatesPanel() {
   const [rates, setRates] = useState<ModelRateRow[]>();
   const [inForce, setInForce] = useState<InForceRates>();
   const [loadError, setLoadError] = useState<string>();
+  // Only the newest reload may show its result: the first load can finish
+  // after a save's reload and would put back the list from before the save.
+  const generation = useRef(0);
   const reload = useCallback(async () => {
+    const mine = ++generation.current;
     try {
       const loaded = rowsOf((await request("")).rates);
       // The list gives each series' newest revision, which can start later.
@@ -95,10 +99,12 @@ function LocalModelRatesPanel() {
             }
           }),
       );
+      if (mine !== generation.current) return;
       setRates(loaded);
       setInForce(new Map(current.flat()));
       setLoadError(undefined);
     } catch (error) {
+      if (mine !== generation.current) return;
       // Show the server's own message, such as a storage failure. A raw
       // fetch error tells the user nothing they can act on.
       setLoadError(
