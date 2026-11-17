@@ -1,6 +1,6 @@
+import { pluginRuntimeProfile } from "@/shared/plugin-runtime-profile";
 import { createInlineMrtrCollector } from "./inline-mrtr.js";
 import { appResourcesEnabled } from "@/shared/app-resource-capability";
-import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import type { ElicitResult } from "@modelcontextprotocol/client";
 import { pluginLocalFormFilesOptInSchema } from "../../../shared/plugin-form-services.js";
 import { pluginFormFileGrants } from "./form-file-grants.js";
@@ -18,7 +18,8 @@ import {
   ownedLegacyFormCapabilities,
 } from "./owned-legacy.js";
 import { pluginFormSources } from "./form-sources.js";
-import { pluginInstances } from "./instances.js";
+import type { PluginFormOwnerRef } from "./form-source-control.js";
+import { assertPluginFormOwnerCurrent } from "./form-owner.js";
 import type {
   ResolvedInvocationContext,
   PluginToolCallParams,
@@ -42,6 +43,7 @@ import {
   disabledPluginFeatures,
 } from "@mcpjam/sdk/internal/plugin-host";
 import {
+  resolvePluginExtensionBehavior,
   resolvePluginExtensions,
   type PluginExtensionCapabilities,
   type ResolvedPluginExtensions,
@@ -242,6 +244,11 @@ export function createPluginRequestRuntime(
     /** The extension governing a retained owner that has no activation
      * (a mention lease). An App's own kind decides it otherwise. */
     extension?: keyof PluginExtensionCapabilities;
+    /** The owner's stored row, so MRTR form sources are stored too. Every
+     * form step reads it again after admission unless `fenceOwner` is false
+     * (a model call whose row is not written yet). */
+    ownerRef?: PluginFormOwnerRef;
+    fenceOwner?: boolean;
   } = {},
 ) {
   const currentBearer = () => admission.getAuthorization?.() ?? Promise.resolve(bearer);
@@ -368,7 +375,7 @@ export function createPluginRequestRuntime(
     mrtrWire = version === "2026-07-28";
     const capabilities = createPluginCapabilityRegistry({
       profile: {
-        runtime: (config.agentLoop && usesMcpjamClient(config) || config.harness === "codex") ? "codex" : "chatgpt-emulated",
+        runtime: pluginRuntimeProfile(config) === "codex" ? "codex" : "chatgpt-emulated",
         transport: version === "2026-07-28" ? "mrtr" : "legacy",
         // The client's own per-extension toggles are the only source of
         // extension support, enforced here too, not only in the browser.
@@ -386,11 +393,14 @@ export function createPluginRequestRuntime(
       humanInput();
       signal.throwIfAborted();
       if (!expected) throw denied();
-      pluginInstances.getFormOwner(expected.owner, {
-        ...expected.owner,
-        subject: expected.subject,
+      await assertPluginFormOwnerCurrent({
+        owner: expected.owner,
+        identity: { ...expected.owner, subject: expected.subject },
+        ownerRef: options.ownerRef,
+        fenceOwner: options.fenceOwner,
+        admit: () => admission.revalidate({ signal }),
+        signal,
       });
-      await admission.revalidate({ signal });
       const fresh = await readPluginExecutionContext({
         projectId: admission.projectId,
         expectedActorId: admission.actorId,
@@ -518,7 +528,7 @@ export function createPluginRequestRuntime(
                     .fileResources,
                   ...(uploadTarget() ? { uploadTarget: uploadTarget() } : {}),
                 };
-                const handle = pluginFormSources.bind(source);
+                const handle = pluginFormSources.bind(source, expected.subject);
                 return {
                   ...handle,
                   deliver: async (result) => {
@@ -526,7 +536,7 @@ export function createPluginRequestRuntime(
                     input.signal.throwIfAborted();
                     pluginFormSources.get(
                       handle.token,
-                      source.owner,
+                      { ...source.owner, subject: expected.subject },
                       source.parent,
                     );
                     // The client's CURRENT Forms toggle decides delivery.
@@ -596,6 +606,8 @@ export function createPluginRequestRuntime(
               fileResources: extensions.capabilities.fileResources,
               fileResourcesEnabled: () => latest?.capabilities.fileResources === true,
               formsEnabled,
+              identity: { ...expected.owner, subject: expected.subject },
+              ownerRef: options.ownerRef,
             })
           : undefined;
     }
@@ -888,8 +900,10 @@ export function createPluginRequestRuntime(
       messageEnabled:
         pluginMessageEnabled(config) && extensions.capabilities.messages,
       extensions,
+      /** How the client's entry points are listed and opened. */
+      behavior: resolvePluginExtensionBehavior(config),
       runtime:
-        (config.agentLoop && usesMcpjamClient(config) || config.harness === "codex") ? ("codex" as const) : ("chatgpt" as const),
+        pluginRuntimeProfile(config),
       transport:
         negotiatedVersion === "2026-07-28"
           ? ("mrtr" as const)
@@ -1165,6 +1179,7 @@ export function createPluginRequestRuntime(
       params: PluginToolCallParams,
       submission: PluginContinuationSubmission,
       signal: AbortSignal,
+      pending?: PluginInvocationSuspension,
     ) => {
       const mrtr = ownedMrtr();
       if (!mrtr) {
@@ -1186,6 +1201,7 @@ export function createPluginRequestRuntime(
         params,
         submission,
         signal,
+        pending,
       );
     },
     /** Logs entries for the client, returned with this request's response. */

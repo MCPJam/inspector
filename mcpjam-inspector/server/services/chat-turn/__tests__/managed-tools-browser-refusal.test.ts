@@ -20,7 +20,7 @@ vi.mock("../../../utils/computers/control-plane-client.js", async (original) => 
   >()),
   provisionPlaygroundTerminalSandbox: m.provision,
   isComputersDataPlaneConfigured: () => true,
-  touchSandbox: vi.fn(async () => "touched"),
+  touchSandbox: vi.fn(async () => ({ outcome: "touched" })),
 }));
 vi.mock("../../../utils/computers/runtime-config.js", async (original) => ({
   ...(await original<
@@ -53,6 +53,7 @@ vi.mock("../../../routes/web/mcpjam-platform-client.js", () => ({
 
 import { prepareManagedTools } from "../managed-tools.js";
 import { TurnResources } from "../resources.js";
+import { TurnTiming } from "../../../utils/turn-timing.js";
 import { BROWSER_REFUSAL_MODEL_CONTEXT } from "../../../utils/built-in-tools/browser-refusal.js";
 
 type Setup = Parameters<typeof prepareManagedTools>[0]["setup"];
@@ -110,6 +111,7 @@ async function runTurn(args: {
       bearerToken: "test-only",
       localIngress: false,
       resources: new TurnResources(() => {}),
+      timing: new TurnTiming(),
       setup,
       connections: { validatedPageTools: [] },
     });

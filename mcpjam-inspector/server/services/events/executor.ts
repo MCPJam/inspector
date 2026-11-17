@@ -49,6 +49,7 @@ import {
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
 import { logger } from "../../utils/logger.js";
+import { resolveProcessRole } from "../lifecycle/process-role.js";
 import {
   EventsBackendClient,
   StaleLeaseError,
@@ -240,7 +241,6 @@ export async function executeClaimedEventRun(
       modelDefinition,
       systemPrompt: built.systemPrompt,
       requireToolApproval: false,
-      skillsSource: { kind: "none" },
       // The host's tool-visibility policy, as a chat with it would apply.
       // Approval stays the trigger's (unattended runs auto-deny), and Tasks
       // stay off: no event run opts into them.
@@ -494,6 +494,9 @@ export function startEventsExecutor(options?: {
   deps?: EventExecutorDeps;
   intervalMs?: number;
 }): EventsExecutorHandle {
+  // Web replicas leave every claim loop to the worker deployment.
+  if (resolveProcessRole() === "web")
+    return { stop: async () => {}, kick: () => {} };
   if (!options?.deps && !isEventsBackendConfigured()) {
     logger.debug(
       "[events-executor] CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",

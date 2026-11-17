@@ -47,12 +47,12 @@ export function ComputerTab({
   // A harness runtime runs inside this computer, so it can't be detached while
   // one is selected (the backend enforces `harness ⇒ computer`). Remove the
   // harness first (e.g. on the Behavior tab) to free the toggle.
-  const lockedByHarness =
-    draft.harness !== undefined && draft.computer !== undefined;
+  const runtime = draft.agentLoop ?? draft.harness;
+  const lockedByHarness = runtime !== undefined && draft.computer !== undefined;
   // Named, not hardcoded: this copy said "Claude Code" for every harness, which
   // was already wrong on a Codex host.
-  const harnessName = draft.harness
-    ? HARNESS_DISPLAY_NAME[draft.harness]
+  const harnessName = runtime
+    ? HARNESS_DISPLAY_NAME[runtime]
     : undefined;
 
   // Working directory (COMP-16). Locally-buffered text so keystrokes don't

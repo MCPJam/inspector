@@ -13,7 +13,7 @@ import {
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
-import { buildLiveEffectiveCapabilities } from "../environments/effective-capabilities.js";
+import { resolveTurnSkills } from "../environments/turn-skills.js";
 import {
   validateAppToolEntries,
   validatePageToolEntries,
@@ -193,8 +193,17 @@ export async function runStandaloneTurn(
         widgetModelContext: validateWidgetModelContextEntries(
           body.widgetModelContext,
         ),
-        liveSkillSurface: true,
-        effectiveCapabilities: buildLiveEffectiveCapabilities({ localSkills }),
+        // No project: this machine's skills, and the connected servers' own.
+        skills: resolveTurnSkills({
+          source: {
+            kind: "live",
+            projectSkills: [],
+            liveExtras: { localSkills },
+          },
+          runtime: { kind: "agent" },
+          modelContextTokens: model.contextLength,
+        }),
+        skillsSurface: "playground",
         ...(execution.progressiveToolDiscovery !== undefined
           ? {
               progressiveToolDiscovery: {

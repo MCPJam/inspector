@@ -1,43 +1,32 @@
 /**
  * Hosted OpenCode adapter: published `@ai-sdk/harness-opencode` with MCPJam
- * host-executed tools and a platform-brokered Anthropic lease.
+ * host-executed tools and a brokered Anthropic Messages lease, paid by MCPJam
+ * or by the organization (its Anthropic key, or a gateway that serves
+ * Anthropic Messages).
  *
- * Title and compaction agents are pinned to the same model the turn leases, so
- * OpenCode cannot reach for a second Anthropic model the broker will refuse.
- *
- * OpenCode stays on 1.0.119 (image input is a later pin). That adapter's
- * `doStart` still resolves `.harness-bootstrap/opencode` against the session
- * working directory, while harness 1.0.158 applies the recipe under
- * `$HOME/.ai-sdk-harness`. Pointing `defaultWorkingDirectory` at that state
- * directory is the remap: the CLI launch and `.agent-runs` land where the
- * bake wrote them, and `sessionWorkDir` stays the project.
+ * The provider is `anthropic` on every lease: it names the wire API, pointed
+ * at MCPJam's model proxy, which holds whichever key pays. An org lease runs
+ * the id it admits (`toOpenCodeNativeModel`: the vendor's native id, or the
+ * gateway's own name as is). Title and compaction agents use that same model
+ * so the broker never needs to admit a second model.
  */
-import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import { harnessStateDirectoryPath } from "@ai-sdk/harness";
-import { resolveSandboxHomeDir } from "@ai-sdk/harness/utils";
+import type { HarnessV1 } from "@ai-sdk/harness";
 import { createOpenCode } from "@ai-sdk/harness-opencode";
 import type { HarnessCreateArgs } from "./registry.js";
 import { toOpenCodeNativeModel } from "./runtime-model-ids.js";
 
-function withDefaultWorkingDirectory<T extends object>(
-  session: T,
-  defaultWorkingDirectory: string,
-): T {
-  return new Proxy(session, {
-    get(target, prop, receiver) {
-      if (prop === "defaultWorkingDirectory") return defaultWorkingDirectory;
-      const value = Reflect.get(target, prop, receiver);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-    has(target, prop) {
-      return prop === "defaultWorkingDirectory" || Reflect.has(target, prop);
-    },
-  });
-}
-
 // Host-tool MCP requests stay open across a human approval. The runtime's
 // default timeout otherwise resumes its model loop after our lease is revoked.
 const HOST_TOOL_APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * OpenCode also loads skills from `~/.claude/skills`, `~/.agents/skills` and
+ * those folders in its working directory and every parent, where other
+ * clients' turns on the same box leave theirs. With this set it reads only
+ * the folder the bridge names in `skills.paths` (the adapter's write folder)
+ * and its own config folders: the read folders its skills descriptor lists.
+ */
+const OWN_SKILLS_ONLY = { OPENCODE_DISABLE_EXTERNAL_SKILLS: "1" };
 
 export function createOpenCodeHarness(
   args: Pick<
@@ -46,7 +35,7 @@ export function createOpenCodeHarness(
   >,
 ) {
   const nativeModel = toOpenCodeNativeModel(args.modelId, args.upstream);
-  const inner = createOpenCode({
+  const harness = createOpenCode({
     provider: "anthropic",
     auth: args.auth,
     ...(args.startupTimeoutMs
@@ -63,28 +52,37 @@ export function createOpenCodeHarness(
           }
         : {}),
     },
-  }) as HarnessAgentAdapter;
-  return new Proxy(inner, {
-    get(target, key, receiver) {
-      if (key !== "doStart") {
-        const value = Reflect.get(target, key, receiver);
-        return typeof value === "function" ? value.bind(target) : value;
-      }
-      return async (startOpts: Parameters<HarnessAgentAdapter["doStart"]>[0]) => {
-        const sandboxHomeDir = await resolveSandboxHomeDir({
-          sandbox: startOpts.sandboxSession,
-          ...(startOpts.abortSignal
-            ? { abortSignal: startOpts.abortSignal }
-            : {}),
-        });
-        return target.doStart({
-          ...startOpts,
-          sandboxSession: withDefaultWorkingDirectory(
-            startOpts.sandboxSession,
-            harnessStateDirectoryPath({ sandboxHomeDir }),
-          ),
-        });
-      };
+  });
+  return withOwnSkillsOnly(harness);
+}
+
+/** Every process the adapter spawns starts with {@link OWN_SKILLS_ONLY}: the
+ *  bridge, which passes its environment on to the OpenCode server it starts. */
+function withOwnSkillsOnly<T extends HarnessV1>(harness: T): T {
+  return {
+    ...harness,
+    doStart(options) {
+      return harness.doStart({
+        ...options,
+        sandboxSession: withSpawnEnv(options.sandboxSession),
+      });
+    },
+  };
+}
+
+function withSpawnEnv<S extends object>(session: S): S {
+  return new Proxy(session, {
+    get(target, key) {
+      const value = Reflect.get(target, key);
+      if (key === "restricted" && typeof value === "function")
+        return () => withSpawnEnv(value.call(target));
+      if (key === "spawn" && typeof value === "function")
+        return (request: { env?: Record<string, string> }) =>
+          value.call(target, {
+            ...request,
+            env: { ...request.env, ...OWN_SKILLS_ONLY },
+          });
+      return typeof value === "function" ? value.bind(target) : value;
     },
   });
 }

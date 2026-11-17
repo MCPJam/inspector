@@ -889,3 +889,100 @@ describe("persistEvalTraceFanout — routing records", () => {
     expect(turns.filter((turn) => "harnessMcpAtTurn" in turn)).toEqual([]);
   });
 });
+
+describe("persistEvalTraceFanout — skill records", () => {
+  const SKILLS = [
+    { name: "release-notes", description: "d", contentHash: "h", sharing: "project" },
+  ];
+
+  /** A client whose backend predates eval skill records, the way Convex
+   *  rejects an argument its validator does not list. */
+  function olderBackend() {
+    const turns: Record<string, unknown>[] = [];
+    const action = vi.fn(async (ref: string, args: Record<string, unknown>) => {
+      if (ref !== "testSuites:appendEvalTurnTrace") return undefined;
+      const turn = args.turn as Record<string, unknown>;
+      if ("skillsAtTurn" in turn) {
+        throw new Error(
+          "ArgumentValidationError: Object contains extra field `skillsAtTurn` that is not in the validator.",
+        );
+      }
+      turns.push(turn);
+      return { skipped: false };
+    });
+    return { client: { action } as unknown as ConvexHttpClient, action, turns };
+  }
+
+  async function fanout(
+    client: ConvexHttpClient,
+    skillsAtTurn?: Array<Record<string, unknown>>,
+  ) {
+    return persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [0, 1].flatMap((i) => [
+        { role: "user", content: `q${i}` } as ModelMessage,
+        { role: "assistant", content: `a${i}` } as ModelMessage,
+      ]),
+      spans: [0, 1].map((promptIndex) => ({
+        id: `s${promptIndex}`,
+        name: "step",
+        category: "step" as const,
+        startMs: 0,
+        endMs: 1,
+        promptIndex,
+      })),
+      prompts: undefined,
+      ...(skillsAtTurn ? { skillsAtTurn } : {}),
+    });
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("sends the iteration's skills with every turn, an empty list included", async () => {
+    for (const skills of [SKILLS, []]) {
+      const { client, calls } = makeMockClient();
+      await fanout(client, skills);
+      const turns = calls.map((c) => c.args.turn as Record<string, unknown>);
+      expect(turns.map((turn) => turn.skillsAtTurn)).toEqual([skills, skills]);
+    }
+  });
+
+  test("sends none when the run froze no skills", async () => {
+    const { client, calls } = makeMockClient();
+    await fanout(client);
+    expect(calls.filter((c) => "skillsAtTurn" in (c.args.turn as object))).toEqual(
+      [],
+    );
+  });
+
+  test("writes every turn without the field on a backend that refuses it, then stops asking", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const backend = olderBackend();
+
+    const result = await fanout(backend.client, SKILLS);
+
+    expect(result).toEqual({ persisted: true, turnsWritten: 2 });
+    expect(backend.turns.map((turn) => turn.promptIndex)).toEqual([0, 1]);
+    // One refused write for the first turn; the second turn never sends it.
+    expect(backend.action).toHaveBeenCalledTimes(3);
+
+    const later = olderBackend();
+    await fanout(later.client, SKILLS);
+    expect(later.action).toHaveBeenCalledTimes(2);
+
+    // After a while it asks again, in case the backend has caught up.
+    vi.setSystemTime(10 * 60_000);
+    const retried = olderBackend();
+    await fanout(retried.client, SKILLS);
+    expect(retried.action).toHaveBeenCalledTimes(3);
+  });
+
+  test("still fails on any other refusal", async () => {
+    const { client } = makeMockClient({ appendThrows: new Error("boom") });
+    const result = await fanout(client, SKILLS);
+    expect(result).toMatchObject({ persisted: false, turnsWritten: 0 });
+  });
+});

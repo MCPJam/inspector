@@ -1,6 +1,5 @@
 import {
   validateModelSelection,
-  type ModelSelection,
   type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type { HostDetail, HostListItem } from "@/hooks/useClients";
@@ -14,10 +13,8 @@ import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { resolveCompareSelectionRow } from "@/lib/compare-cards";
 import { paneTargetKey } from "@/lib/compare-panes";
-import { runtimeChosenModelRow } from "@/lib/runtime-chosen-model";
 import {
   effectiveHarnessId,
-  harnessAccountChoosesModel,
 } from "@/shared/harness-descriptors";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 
@@ -91,16 +88,23 @@ export function resolvePlaygroundClientColumn({
   models,
   orgConfig,
   pickedSelection,
+  modelsSettling = false,
 }: {
   /** The pane this column renders. */
   paneId: string;
   /** The model picked in this pane, which wins over the client's saved one. */
-  pickedSelection?: ModelSelection;
+  pickedSelection?: RequestedModelSelection;
   hostId: string;
   slot: HostSlot | undefined;
   hosts: readonly HostListItem[];
   models: readonly ModelDefinition[];
   orgConfig?: OrgVisibleConfig;
+  /**
+   * Sign-in, the session or the model catalog is still loading, as it is just
+   * after a page load such as the return from a sign-in redirect. A model
+   * missing from `models` then is not yet known to be unavailable.
+   */
+  modelsSettling?: boolean;
 }): PlaygroundClientResolution {
   const host = slot?.host?.hostId === hostId ? slot.host : null;
   const listed = hosts.find((item) => item.hostId === hostId);
@@ -130,23 +134,11 @@ export function resolvePlaygroundClientColumn({
     return { ...identity, status: "invalid", reason: INVALID_CHOICE_REASON };
   }
   const harnessId = effectiveHarnessId(config);
-  // The account picks the model (Cursor Auto): the sentinel is what runs.
-  // Any other saved id is a setup the server refuses, so the column blocks
-  // instead of showing a model the account never runs.
-  const accountChosen = harnessAccountChoosesModel(harnessId)
-    ? runtimeChosenModelRow(config.modelId)
-    : undefined;
-  if (harnessAccountChoosesModel(harnessId) && !accountChosen)
-    return { ...identity, status: "invalid", reason: INVALID_CHOICE_REASON };
-  const modelRows = accountChosen
-    ? []
-    : harnessPickerModels([...models], harnessId ? { harnessId } : null, {
+  const modelRows = harnessPickerModels([...models], harnessId ? { harnessId } : null, {
         requireOrgKeys: orgRequiresOwnKeys(orgConfig),
       });
-  // The account picks Cursor's model, so a pick there means nothing.
-  const picked = accountChosen ? undefined : pickedSelection;
+  const picked = pickedSelection;
   const model =
-    accountChosen ??
     (picked
       ? resolveCompareSelectionRow(picked, modelRows, orgConfig)
       : findModelForStoredChoice(
@@ -155,7 +147,15 @@ export function resolvePlaygroundClientColumn({
           orgConfig,
           { exactSelection: !!selection && selection.source !== "legacy" },
         ));
-  if (!model || (model.disabled && !accountChosen))
+  if ((!model || model.disabled) && modelsSettling)
+    return {
+      ...identity,
+      status: "loading",
+      reason: "Loading saved configuration…",
+      hostConfig: config,
+      modelRows,
+    };
+  if (!model || model.disabled)
     return {
       ...identity,
       status: "unavailable",

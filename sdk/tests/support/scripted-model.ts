@@ -32,6 +32,8 @@ export type ScriptContext = {
   afterToolResult: boolean;
   /** Tool-result texts after the latest user message. */
   toolResults: string[];
+  /** Tool names available to this generation, including discovery tools. */
+  toolNames: string[];
   /** The model id the factory was asked for. */
   modelId: string;
   /** How many generations this model instance has served before this one. */
@@ -84,6 +86,7 @@ export function scriptedModel(
           .map(textOf),
         afterToolResult: toolResults.length > 0,
         toolResults,
+        toolNames: (options.tools ?? []).map((tool) => tool.name),
         modelId,
         callIndex: callIndex++,
       });

@@ -81,6 +81,8 @@ export interface E2BHarnessSandboxProviderOptions {
   bridgePort?: number;
   /** Request timeout for read-only sandbox discovery. */
   connectTimeoutMs?: number;
+  /** Attach without the pnpm guard: a box preparation runs it under its fence. */
+  skipPnpmGuard?: boolean;
   /** Per-command exec timeout for `run`. E2B commands default to ~60s — too
    *  short for the harness bootstrap (`pnpm install`) on a larger dep tree.
    *  `spawn` does not use it: a bridge runs with no timeout at all. */
@@ -298,8 +300,13 @@ export function createE2BHarnessSandboxProvider(
   const mergeEnv = (
     env: Record<string, string> | undefined,
   ): Record<string, string> | undefined => {
-    if (!sessionEnv) return env;
-    return { ...sessionEnv, ...(env ?? {}) };
+    // E2B installs its egress proxy CA in the system trust store. Node uses
+    // its bundled roots, so Node-based CLIs need that CA explicitly too.
+    return {
+      NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      ...sessionEnv,
+      ...env,
+    };
   };
 
   // Connect to the host's persistent computer and build a session bound to it.
@@ -356,10 +363,14 @@ export function createE2BHarnessSandboxProvider(
       // Both checks must finish before exposing the session. Socket cleanup
       // targets only the model proxy and is independent of the package guard.
       const preparation = await Promise.allSettled([
-        sandbox.commands.run(harnessPnpmGuardCommand(), {
-          timeoutMs: commandTimeoutMs,
-          ...(connectSignal ? { signal: connectSignal } : {}),
-        }),
+        ...(opts.skipPnpmGuard
+          ? []
+          : [
+              sandbox.commands.run(harnessPnpmGuardCommand(), {
+                timeoutMs: commandTimeoutMs,
+                ...(connectSignal ? { signal: connectSignal } : {}),
+              }),
+            ]),
         ...(resuming
           ? [closeModelProxyConnections(sandbox, opts.proxyUrl?.(), connectSignal)]
           : []),

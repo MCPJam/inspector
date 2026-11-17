@@ -1,15 +1,23 @@
 /**
  * The model id each brokered harness puts on the wire: the Gateway spelling
  * of a host model id, or, on the organization's own key, the native id its
- * lease admits — plus the Claude Code env pins that keep the CLI's own model
- * choices inside that lease.
+ * lease admits (on its gateway, the gateway's own name:
+ * `org-gateway-model-ids.ts`) — plus the Claude Code env pins that keep the
+ * CLI's own model choices inside that lease.
  */
 import type { HarnessUpstreamProfile } from "@/shared/harness-model-support";
+import {
+  claudeCodeOrgGatewayModel,
+  openCodeOrgGatewayModel,
+} from "./org-gateway-model-ids.js";
 
-/** The native upstream a turn's lease was minted for (non-secret). */
+/** The org upstream a turn's lease was minted for (non-secret). */
 export type HarnessNativeUpstream = {
   profile: HarnessUpstreamProfile;
-  /** The native model id the lease admits (`claude-sonnet-4-5`, `gpt-5`). */
+  /**
+   * The model id the lease admits: native (`claude-sonnet-4-5`, `gpt-5`), or
+   * the gateway's own name on `org-gateway`.
+   */
   nativeModelId: string;
 };
 
@@ -68,12 +76,16 @@ export function toClaudeCodeModel(modelId: string): string | undefined {
  * Claude Code's main model. On the organization's own Anthropic key `haiku`
  * stays the alias (the CLI refuses the native Haiku id as a main model) and
  * is pinned to the leased id by the turn env; any other family runs the
- * leased native id itself, dated or not.
+ * leased native id itself, dated or not. On its gateway the leased name runs
+ * as is (`claudeCodeOrgGatewayModel`).
  */
 export function toClaudeCodeNativeModel(
   modelId: string,
   upstream?: HarnessNativeUpstream,
 ): string | undefined {
+  if (upstream?.profile === "org-gateway") {
+    return claudeCodeOrgGatewayModel(upstream.nativeModelId);
+  }
   const gateway = toClaudeCodeModel(modelId);
   return upstream?.profile === "anthropic-native" && gateway !== "haiku"
     ? upstream.nativeModelId
@@ -96,15 +108,16 @@ export function toCodexModel(modelId: string): string | undefined {
 
 
 /**
- * The model Codex runs: on the organization's own OpenAI key the leased native
- * id (the custom provider still points at MCPJam's proxy, with a placeholder
- * credential); otherwise the gpt-5 slug of the canonical id.
+ * The model Codex runs: on the organization's own OpenAI key or gateway the
+ * leased id as is (the custom provider still points at MCPJam's proxy, with a
+ * placeholder credential); otherwise the gpt-5 slug of the canonical id.
  */
 export function toCodexNativeModel(
   modelId: string,
   upstream?: HarnessNativeUpstream,
 ): string | undefined {
-  return upstream?.profile === "openai-native"
+  return upstream?.profile === "openai-native" ||
+    upstream?.profile === "org-gateway"
     ? upstream.nativeModelId
     : toCodexModel(modelId);
 }
@@ -146,13 +159,17 @@ export function toOpenCodeModel(modelId: string): string | undefined {
 
 /**
  * The model OpenCode runs: on the organization's own Anthropic key the leased
- * native id (prefixed `anthropic/` when the lease omitted the vendor); otherwise
- * the Gateway spelling with OpenCode's hyphenated version.
+ * native id (prefixed `anthropic/` when the lease omitted the vendor); on its
+ * gateway the leased name as is (`openCodeOrgGatewayModel`); otherwise the
+ * Gateway spelling with OpenCode's hyphenated version.
  */
 export function toOpenCodeNativeModel(
   modelId: string,
   upstream?: HarnessNativeUpstream,
 ): string | undefined {
+  if (upstream?.profile === "org-gateway") {
+    return openCodeOrgGatewayModel(upstream.nativeModelId);
+  }
   if (upstream?.profile === "anthropic-native") {
     const id = upstream.nativeModelId.replace(/(\d)\.(\d)/g, "$1-$2");
     return id.includes("/") ? id : `anthropic/${id}`;

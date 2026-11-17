@@ -59,9 +59,10 @@ describe("useAppLoadStallReport", () => {
 
   it("reports once, naming the stuck step, when the app never becomes usable", () => {
     state.refreshStatus = "failed";
-    const { rerender } = renderHook(({ ready }) => useAppLoadStallReport(ready), {
-      initialProps: { ready: false },
-    });
+    const { rerender } = renderHook(
+      ({ ready }) => useAppLoadStallReport(ready, true),
+      { initialProps: { ready: false } },
+    );
 
     vi.advanceTimersByTime(APP_LOAD_STALL_MS - 1);
     expect(state.reportCaught).not.toHaveBeenCalled();
@@ -81,17 +82,35 @@ describe("useAppLoadStallReport", () => {
     expect(state.reportCaught).toHaveBeenCalledTimes(1);
   });
 
+  it("tells an actor that never resolved from a user record still being set up", () => {
+    state.authenticated = true;
+    renderHook(() => useAppLoadStallReport(false, false));
+    vi.advanceTimersByTime(APP_LOAD_STALL_MS);
+    expect(state.reportCaught.mock.calls[0]![1].extra).toEqual({
+      code: "app_load/actor_pending",
+    });
+
+    resetAppLoadStallForTests();
+    state.reportCaught.mockReset();
+    renderHook(() => useAppLoadStallReport(false, true));
+    vi.advanceTimersByTime(APP_LOAD_STALL_MS);
+    expect(state.reportCaught.mock.calls[0]![1].extra).toEqual({
+      code: "app_load/user_setup_pending",
+    });
+  });
+
   it("counts from page start, not from when the hook mounted", () => {
     vi.spyOn(performance, "now").mockReturnValue(APP_LOAD_STALL_MS - 100);
-    renderHook(() => useAppLoadStallReport(false));
+    renderHook(() => useAppLoadStallReport(false, true));
     vi.advanceTimersByTime(100);
     expect(state.reportCaught).toHaveBeenCalledTimes(1);
   });
 
   it("stays quiet when the app becomes usable in time", () => {
-    const { rerender } = renderHook(({ ready }) => useAppLoadStallReport(ready), {
-      initialProps: { ready: false },
-    });
+    const { rerender } = renderHook(
+      ({ ready }) => useAppLoadStallReport(ready, true),
+      { initialProps: { ready: false } },
+    );
     vi.advanceTimersByTime(APP_LOAD_STALL_MS / 2);
     rerender({ ready: true });
     vi.advanceTimersByTime(APP_LOAD_STALL_MS * 2);
@@ -99,9 +118,10 @@ describe("useAppLoadStallReport", () => {
   });
 
   it("does not treat a later sign-out as a failed load", () => {
-    const { rerender } = renderHook(({ ready }) => useAppLoadStallReport(ready), {
-      initialProps: { ready: true },
-    });
+    const { rerender } = renderHook(
+      ({ ready }) => useAppLoadStallReport(ready, true),
+      { initialProps: { ready: true } },
+    );
     rerender({ ready: false });
     vi.advanceTimersByTime(APP_LOAD_STALL_MS * 2);
     expect(state.reportCaught).not.toHaveBeenCalled();
@@ -109,7 +129,7 @@ describe("useAppLoadStallReport", () => {
 
   it("does nothing on the hosted app", () => {
     state.hosted = true;
-    renderHook(() => useAppLoadStallReport(false));
+    renderHook(() => useAppLoadStallReport(false, true));
     vi.advanceTimersByTime(APP_LOAD_STALL_MS * 2);
     expect(state.reportCaught).not.toHaveBeenCalled();
   });

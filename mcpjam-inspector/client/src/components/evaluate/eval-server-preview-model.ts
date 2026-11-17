@@ -63,6 +63,7 @@ export const ADDABLE_FIRST_RUN_CLIENTS = [
 export type FirstRunClient = {
   id: string;
   name: string;
+  hostStyle?: string | null;
 };
 
 export function createDraftPreviewSuite(): PreviewSuite {

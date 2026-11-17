@@ -190,6 +190,10 @@ export const RUNTIME_CHOSEN_MODEL_SENTINELS: Readonly<Record<string, string>> =
  * Blank- and nullish-safe, and trim-tolerant like {@link classifyModelIdProvider}
  * — a provider-resolution site often holds a value it has not validated yet.
  */
+export function isRuntimeAccountModel(modelId: string | null | undefined): boolean {
+  return typeof modelId === "string" && /^cursor\/[^\s]+$/.test(modelId);
+}
+
 export function isRuntimeChosenModelSentinel(
   modelId: string | undefined | null,
 ): boolean {

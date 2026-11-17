@@ -38,6 +38,7 @@ function gate(overrides: Record<string, unknown> = {}): GateArgs {
     plane: "web-authorized",
     localExecution: false,
     brokeredEndpoint: "platform",
+    upstreamProfile: "gateway",
     ...overrides,
   } as never;
 }
@@ -123,6 +124,10 @@ describe("required native discovery", () => {
     [{ sourceType: "eval" }, { surface: "eval" }],
     [{ sourceType: "swarm" }, { surface: "swarm" }],
     [{ brokeredEndpoint: "byok_hosted" }, { funding: "organization" }],
+    [
+      { brokeredEndpoint: "customer_hosted", upstreamProfile: "org-gateway" },
+      { funding: "organization", upstreamProfile: "org-gateway" },
+    ],
     [
       { pinnedRuntimeVersion: undefined, adapterVersion: undefined },
       { runtimeVersion: "", adapterVersion: "" },

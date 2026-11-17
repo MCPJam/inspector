@@ -161,6 +161,42 @@ describe("pinned-skill cache", () => {
     expect(__pinnedSkillCacheSizeForTest()).toBe(1); // cache populated despite A
   });
 
+  it("keys a captured server skill by its server and URI too: two servers' identical skills are two entries", async () => {
+    const fetched: string[] = [];
+    const fetcherFor = (serverId: string) => async () => {
+      fetched.push(serverId);
+      return artifact("h1");
+    };
+    const docsA = { serverId: "srv_a", skillUri: "skill://search" };
+    const docsB = { serverId: "srv_b", skillUri: "skill://search" };
+    await resolvePinnedSkillCached({
+      projectId: "p1",
+      contentHash: "h1",
+      serverSkill: docsA,
+      fetcher: fetcherFor("srv_a"),
+    });
+    await resolvePinnedSkillCached({
+      projectId: "p1",
+      contentHash: "h1",
+      serverSkill: docsB,
+      fetcher: fetcherFor("srv_b"),
+    });
+    // The same pin again, and the hash with no server, are their own entries.
+    await resolvePinnedSkillCached({
+      projectId: "p1",
+      contentHash: "h1",
+      serverSkill: docsA,
+      fetcher: fetcherFor("srv_a"),
+    });
+    await resolvePinnedSkillCached({
+      projectId: "p1",
+      contentHash: "h1",
+      fetcher: fetcherFor("none"),
+    });
+    expect(fetched).toEqual(["srv_a", "srv_b", "none"]);
+    expect(__pinnedSkillCacheSizeForTest()).toBe(3);
+  });
+
   it("keys by project too — same hash in two projects is two entries", async () => {
     let calls = 0;
     const fetcher = async () => {

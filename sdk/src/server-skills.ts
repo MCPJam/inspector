@@ -203,8 +203,8 @@ export function serverSkillsActive(
  * A skill `description` is server-authored and lands in the discovery listing
  * the model reads. Control characters, zero-width characters, and
  * bidi-override runs are the cheap prompt-shaping tricks; stripping them is
- * not a defence against a determined injection (the banner in
- * `server-skill-tools.ts` handles that), but it stops a description from
+ * not a defence against a determined injection (the origin banner on a
+ * loaded skill handles that), but it stops a description from
  * silently rewriting the surrounding listing's structure.
  */
 export function normalizeCatalogText(raw: unknown, maxLength = 500): string {

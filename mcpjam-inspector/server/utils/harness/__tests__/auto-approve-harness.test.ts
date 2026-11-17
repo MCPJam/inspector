@@ -124,3 +124,22 @@ it("auto-answers only registered forwarded MCP names, leaving built-ins and unkn
   expect(f.submitToolApproval).toHaveBeenCalledExactlyOnceWith({ approvalId: "approval", approved: true });
   expect(emit.mock.calls.flat().filter(part => part.type === "tool-approval-request").map(part => part.approvalId)).toEqual(["builtin-approval", "unknown-approval"]);
 });
+
+it("reads a call's JSON-text input for runtimes that name the server only there", async () => {
+  const f = fixture(); const emit = vi.fn();
+  const seen: unknown[] = [];
+  const session = await withAutoApprovedNativeRequests(f.harness, undefined, new Set(), (_name, input) => {
+    seen.push(input);
+    return (input as { providerIdentifier?: string } | undefined)?.providerIdentifier === "server";
+  }).doStart({} as never);
+  const control = await session.doPromptTurn({ emit } as never);
+  // The ACP adapter streams every MCP call under an opaque name, input as JSON text.
+  f.send({ type: "tool-call", toolCallId: "call", toolName: "acp_tool_1", input: JSON.stringify({ providerIdentifier: "server", toolName: "read", args: {} }) });
+  f.send(request);
+  f.send({ type: "tool-call", toolCallId: "shell", toolName: "acp_tool_2", input: JSON.stringify({ command: "ls" }) });
+  f.send({ type: "tool-approval-request", toolCallId: "shell", approvalId: "shell-approval" });
+  f.finish(); await control.done;
+  expect(seen).toEqual([{ providerIdentifier: "server", toolName: "read", args: {} }, { command: "ls" }]);
+  expect(f.submitToolApproval).toHaveBeenCalledExactlyOnceWith({ approvalId: "approval", approved: true });
+  expect(emit.mock.calls.flat().filter(part => part.type === "tool-approval-request").map(part => part.approvalId)).toEqual(["shell-approval"]);
+});

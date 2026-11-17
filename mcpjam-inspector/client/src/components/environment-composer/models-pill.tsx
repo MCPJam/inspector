@@ -126,7 +126,7 @@ export function ModelsPill({
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
-  } = useAvailableModels({ projectId });
+  } = useAvailableModels({ projectId, harnessTargets });
   const availableModels = useMemo(
     () => orgSavableModels(listedModels, requireOrgKeys),
     [listedModels, requireOrgKeys],
@@ -134,7 +134,7 @@ export function ModelsPill({
   // Per ROW, not per id: the hosted row and an org-connection row of one id
   // run on different keys, and a harness may run one and refuse the other.
   // Under the organization's key policy a harness runs only on an
-  // organization connection to its own vendor.
+  // organization connection that serves its API.
   const harnessLockReasons = useMemo(
     () =>
       harnessModelLockReasonsByRow(

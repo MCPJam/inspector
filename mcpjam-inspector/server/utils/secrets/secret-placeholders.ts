@@ -67,9 +67,16 @@ export type SecretPlaceholderRefusal =
   /** Shorter than the scrubber's minimum, so an echo could not be hidden. */
   | "secret_too_short";
 
+/** A secret as a turn holds it; `origins` limit the pages it is typed on. */
+export interface PlaceholderSecret {
+  name: string;
+  value: string;
+  origins?: readonly string[];
+}
+
 export interface SecretPlan {
-  /** The `{name, value}` pairs to send beside the command. */
-  deliver: Array<{ name: string; value: string }>;
+  /** The `{name, value}` pairs to send beside the command, with their origins. */
+  deliver: Array<PlaceholderSecret>;
   /** The first refusal, when the plan cannot go ahead. */
   refusal?: {
     code: SecretPlaceholderRefusal;
@@ -91,7 +98,7 @@ export function planSecretPlaceholders(args: {
   value?: string;
   fields?: ReadonlyArray<{ value?: string }>;
   /** Materialized secrets this turn actually has. */
-  available: ReadonlyArray<{ name: string; value: string }>;
+  available: ReadonlyArray<PlaceholderSecret>;
   /**
    * Names that exist but are brokered, so the refusal can say which problem it
    * is. Omitted means every unusable name reads as unknown (the safe side).
@@ -126,6 +133,7 @@ export function planSecretPlaceholders(args: {
   }
 
   const byName = new Map(args.available.map((s) => [s.name, s.value]));
+  const origins = new Map(args.available.map((s) => [s.name, s.origins]));
   const brokered = new Set(args.brokered ?? []);
   for (const name of referenced) {
     if (byName.has(name)) continue;
@@ -171,6 +179,13 @@ export function planSecretPlaceholders(args: {
   // Only referenced secrets go on the wire; the daemon registers and scrubs
   // everything it is sent.
   return {
-    deliver: referenced.map((name) => ({ name, value: byName.get(name)! })),
+    deliver: referenced.map((name) => {
+      const limited = origins.get(name);
+      return {
+        name,
+        value: byName.get(name)!,
+        ...(limited ? { origins: limited } : {}),
+      };
+    }),
   };
 }

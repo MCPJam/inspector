@@ -891,6 +891,92 @@ describe("adaptTraceToUiMessages", () => {
     });
   });
 
+  it("rebuilds toolMetadata for eval snapshots that only carry protocol + resourceUri", () => {
+    // Eval trace envelopes (backend getEvalTraceFromChatSession) send no
+    // `toolMetadata`. Without rebuilding it, the saved App is not seen as a
+    // widget and the Chat tab shows only the plain tool card.
+    const { toolMetadata: _omit, ...evalSnapshot } = makeWidgetSnapshot({
+      toolName: "show-squad",
+      resourceUri: "ui://squad/show.html",
+      widgetHtmlUrl: "https://storage.example.com/squad.html",
+    });
+    const trace = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "show-squad",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "show-squad",
+              output: { type: "json", value: { ok: true } },
+            },
+          ],
+        },
+      ],
+      widgetSnapshots: [evalSnapshot],
+    } as unknown as TraceEnvelope;
+
+    // No toolsMetadata and no connected servers, like the Evaluate run page.
+    const result = adaptTraceToUiMessages({ trace });
+
+    expect(result.toolRenderOverrides["call-1"]).toMatchObject({
+      cachedWidgetHtmlUrl: "https://storage.example.com/squad.html",
+      toolMetadata: { ui: { resourceUri: "ui://squad/show.html" } },
+    });
+  });
+
+  it("keeps the tool's live metadata when an eval snapshot has no resourceUri", () => {
+    const {
+      toolMetadata: _omit,
+      resourceUri: _noUri,
+      ...evalSnapshot
+    } = makeWidgetSnapshot({
+      toolName: "show-squad",
+      widgetHtmlUrl: "https://storage.example.com/squad.html",
+    });
+    const trace = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "tool-call", toolCallId: "call-1", toolName: "show-squad", input: {} },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "show-squad",
+              output: { type: "json", value: { ok: true } },
+            },
+          ],
+        },
+      ],
+      widgetSnapshots: [evalSnapshot],
+    } as unknown as TraceEnvelope;
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      toolsMetadata: { "show-squad": { ui: { resourceUri: "ui://real/show.html" } } },
+    });
+
+    expect(result.toolRenderOverrides["call-1"]?.toolMetadata).not.toEqual({});
+  });
+
   it("preserves widget metadata from tool output when result is simplified", () => {
     const trace: TraceEnvelope = {
       messages: [

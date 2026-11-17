@@ -126,9 +126,12 @@ export type CacheEventLogger = (event: CacheHitEvent) => void;
  *  - `"auto"` — unconfigured connection (always probed);
  *  - `"modern-pin"` — an explicit modern (`2026-07-28`) pin;
  *  - `"legacy"` — the exact legacy `initialize` handshake, from an explicit
- *    legacy pin.
+ *    legacy pin;
+ *  - `"legacy-first"` — an unpinned connection set to Cursor CLI's handshake
+ *    (`HttpServerConfig.versionNegotiation`).
  */
-export type ConfiguredNegotiationMode = "auto" | "modern-pin" | "legacy";
+export type ConfiguredNegotiationMode =
+  "auto" | "modern-pin" | "legacy" | "legacy-first";
 
 /**
  * One connection-attempt outcome, emitted by the manager for Phase 5
@@ -439,6 +442,14 @@ export type BaseServerConfig = {
    * byte-identical to the behavior before this field.
    */
   baseFetch?: typeof fetch;
+  /**
+   * Where this connection's credential came from, when not from the config's
+   * own author. `"mcpjam-backend"`: the MCPJam backend delivered it to this
+   * process (a person's sign-in, a project-shared or uploaded account). Such a
+   * credential stays in the process, so the connection is never written into a
+   * replay config.
+   */
+  credentialSource?: "mcpjam-backend";
 };
 
 /**
@@ -471,6 +482,7 @@ export type StdioServerConfig = BaseServerConfig & {
   clientSecret?: never;
   onTokensRotated?: never;
   onUnauthorized?: never;
+  credentialHeaderNames?: never;
 };
 
 export type UnauthorizedRefreshResult = {
@@ -495,6 +507,12 @@ export type HttpServerConfig = BaseServerConfig & {
   accessToken?: string;
   /** Additional request initialization options */
   requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
+  /**
+   * Request headers that carry a credential, beyond the ones always treated
+   * as secret (`Authorization`, `Cookie`, `X-API-Key`, …). Names only; their
+   * values never reach the HTTP exchange log.
+   */
+  credentialHeaderNames?: readonly string[];
   /** SSE-specific event source options */
   eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
   /** OAuth auth provider */
@@ -561,6 +579,13 @@ export type HttpServerConfig = BaseServerConfig & {
    * passed to `MCPClientManager`.
    */
   mcpProtocolVersion?: import("./mcp-protocol-version.js").McpProtocolVersion;
+  /**
+   * How an UNPINNED connection negotiates, in place of Auto. `"legacy-first"`
+   * reproduces Cursor CLI: the 2025 `initialize` first, and 2026-07-28 only
+   * when the server refuses it with `-32022` naming that revision. Inert while
+   * `mcpProtocolVersion` is set. See `version-negotiation.ts`.
+   */
+  versionNegotiation?: import("./version-negotiation.js").VersionNegotiationPreference;
 
   // Discriminator fields - these should never be set for HTTP
   command?: never;

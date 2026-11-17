@@ -434,6 +434,29 @@ describe("useChatSession hosted mode", () => {
     expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
   });
 
+  it("keeps a remembered pick after a remount, for that target only", () => {
+    localStorage.removeItem("mcp-inspector-playground-picked-target");
+    const options = { ...selectionOptions(), selectionIntent: "inherit" as const, rememberPickedTarget: true };
+    const first = renderHook(() => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId: "host-1" },
+    }));
+    expect(first.result.current.hasPickedModel).toBe(false);
+    act(() => first.result.current.setTemperature(0.9, true));
+    expect(first.result.current.hasPickedModel).toBe(true);
+    first.unmount();
+
+    const again = renderHook(({ hostId }) => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId },
+    }), { initialProps: { hostId: "host-1" } });
+    expect(again.result.current.hasPickedModel).toBe(true);
+    expect(lastTransportOptions.body()).toHaveProperty("modelSelection");
+    again.rerender({ hostId: "host-other" });
+    expect(again.result.current.hasPickedModel).toBe(false);
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    again.unmount();
+    localStorage.removeItem("mcp-inspector-playground-picked-target");
+  });
+
   it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
     const options = { ...selectionOptions(), selectionIntent: "inherit" as const };
     const { result, rerender, unmount } = renderHook(({ hostId }) => useChatSession({
@@ -949,9 +972,17 @@ describe("useChatSession hosted mode", () => {
     await waitFor(() => {
       expect(result.current.availableModels.length).toBeGreaterThan(0);
     });
-    const offered = result.current.availableModels.map((model) => String(model.id));
+    const offered = result.current.availableModels
+      .filter((model) => !model.disabled)
+      .map((model) => String(model.id));
     expect(offered.every((id) => id.startsWith("openai/gpt-5"))).toBe(true);
     expect(offered).not.toContain("anthropic/claude-haiku-4.5");
+    // Listed, but not pickable, with the reason Codex refuses it.
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      ),
+    ).toMatchObject({ disabled: true, disabledReason: expect.stringMatching(/Codex/) });
     expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     // Unresolved: the shown fallback is never mirrored over the saved lead.
     expect(result.current.isSelectedModelResolved).toBe(false);
@@ -2250,6 +2281,29 @@ describe("useChatSession — environment execution target", () => {
 
     expect(info).toHaveBeenCalledWith(
       "Started a new session — this conversation's computer was replaced, so earlier context isn't available.",
+    );
+    info.mockRestore();
+    unmount();
+  });
+
+  it("says a restored session kept the conversation but not the files", () => {
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "toast-id");
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: environmentContext,
+      }),
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-harness-reset",
+        data: { reason: "sandbox-restored" },
+      });
+    });
+
+    expect(info).toHaveBeenCalledWith(
+      "This conversation's computer was replaced. The agent still has the conversation, but files from earlier turns are gone.",
     );
     info.mockRestore();
     unmount();

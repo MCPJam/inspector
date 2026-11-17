@@ -845,6 +845,7 @@ it("refuses an awake sandbox with an unhealthy or different daemon", async () =>
             ownerUserId: CLAIMS.userId,
             projectId: CLAIMS.projectId,
             providerComputerId: "box",
+            status: "live",
           },
         }) as never,
       lookupSession: async () =>
@@ -862,6 +863,48 @@ it("refuses an awake sandbox with an unhealthy or different daemon", async () =>
     expect(response.status).toBe(503);
     expect(attachSession).not.toHaveBeenCalled();
   }
+});
+
+it("answers a paused sandbox as asleep without asking its daemon", async () => {
+  // The daemon is not running, so asking it would fail. A paused pane reads
+  // this answer to notice a desktop something else woke.
+  const status = vi.fn(async () => ({ kind: "unreachable" }));
+  const lease = vi.fn();
+  const { call } = build({
+    verifyToken: async () =>
+      ({
+        userId: CLAIMS.userId,
+        projectId: CLAIMS.projectId,
+        sandboxRowId: "box-row",
+      }) as never,
+    sandboxInfo: async () =>
+      ({
+        ok: true,
+        value: {
+          ownerUserId: CLAIMS.userId,
+          projectId: CLAIMS.projectId,
+          providerComputerId: "box",
+          status: "sleeping",
+        },
+      }) as never,
+    lookupSession: async () =>
+      ({
+        reachable: true,
+        session: { ...SESSION, computerId: undefined, sandboxRowId: "box-row" },
+      }) as never,
+    createClient: () => ({ status, lease }) as never,
+  });
+  const response = await call("/session");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    ok: true,
+    bootId: "boot-1",
+    asleep: true,
+    lease: { state: "unknown" },
+    yours: false,
+  });
+  expect(status).not.toHaveBeenCalled();
+  expect(lease).not.toHaveBeenCalled();
 });
 
 /**
@@ -925,6 +968,38 @@ describe("browser panel — ensure wakes a sleeping box", () => {
     await panel.call("/session");
 
     expect(panel.wakeComputer).not.toHaveBeenCalled();
+  });
+
+  it("says a parked box is asleep, without reaching its daemon or waking it", async () => {
+    const panel = withStatuses(["hibernating"]);
+
+    const res = await panel.call("/session");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      asleep: true,
+      lease: { state: "unknown" },
+      yours: false,
+    });
+    expect(panel.lease).not.toHaveBeenCalled();
+    expect(panel.wakeComputer).not.toHaveBeenCalled();
+    expect(panel.attachSession).not.toHaveBeenCalled();
+  });
+
+  it("says an awake box is not asleep, read with or without ensure", async () => {
+    for (const path of ["/session", "/session?ensure=1"]) {
+      const panel = withStatuses(["ready"]);
+      const res = await panel.call(path);
+      expect(await res.json()).toMatchObject({
+        asleep: false,
+        lease: { state: "free" },
+      });
+    }
+    // A box ensure just woke is awake, whatever authorize read before it.
+    const woken = withStatuses(["hibernating", "ready"]);
+    expect(await (await woken.call("/session?ensure=1")).json()).toMatchObject({
+      asleep: false,
+    });
   });
 
   it("waits for a wake already in flight rather than asking twice", async () => {

@@ -221,6 +221,15 @@ describe("the pnpm guard", () => {
     });
   });
 
+  it("leaves the guard to a caller that runs it fenced (a box preparation)", async () => {
+    await createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      skipPnpmGuard: true,
+    }).createSession();
+    expect(sandboxState.connect).toHaveBeenCalledTimes(1);
+    expect(sandboxState.run).not.toHaveBeenCalled();
+  });
+
   it("installs the template's pinned pnpm, never whatever is current", async () => {
     // A custom image or an old template has no pnpm, and the fallback used to
     // be a bare `npm install -g pnpm` — which is how pnpm 11 reached hosted
@@ -250,6 +259,27 @@ describe("abort plumbing", () => {
     expect(sandboxState.run).toHaveBeenCalledWith(
       expect.stringContaining("pnpm"),
       expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it("trusts the E2B proxy CA while preserving explicit certificate configuration", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+    await session.run({ command: "node client.mjs" });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node client.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      }) }),
+    );
+    await session.run({ command: "node custom.mjs", env: {
+      NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+    } });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node custom.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+      }) }),
     );
   });
 

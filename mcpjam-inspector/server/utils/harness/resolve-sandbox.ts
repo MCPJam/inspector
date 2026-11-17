@@ -60,6 +60,16 @@ export interface TrustedHarnessSandboxBinding {
   sandboxId: string;
   /** Working directory the session's Shell is rooted at. */
   workdir?: string;
+  /**
+   * A conversation box's idle window, from the backend's reserve reply: the
+   * turn heartbeats within it, and a warm agent exits after it.
+   */
+  idleMs?: number;
+  /**
+   * Epoch milliseconds a box that pauses keeps its processes until, from the
+   * same reply. A warm agent may be kept until then (`warm-retention.ts`).
+   */
+  retainUntil?: number;
 }
 
 export async function resolveHarnessSandbox(args: {

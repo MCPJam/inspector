@@ -47,7 +47,9 @@ import {
   focusBackendNodeId,
   pointForBackendNodeId,
   pointForRefAcrossFrames,
+  insertSecretInNode,
   replaceTextInNode,
+  SecretNotTypedError,
   resolveRefNode,
   selectOptionOnNode,
   type ResolvedRefNode,
@@ -72,7 +74,16 @@ import {
   createBrowserSecretRegistry,
   type BrowserSecretRegistry,
 } from "./secret-registry";
-import { resolveActSecrets } from "./secret-substitution";
+import {
+  receivingFrameRefusal,
+  resolveActSecrets,
+  secretReceivingOrigins,
+} from "./secret-substitution";
+import {
+  armNavigationStop,
+  isStopTarget,
+  type NavigationStop,
+} from "./navigation-stop";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -140,7 +151,10 @@ const DEFAULT_TAB = DEFAULT_QUEUE_KEY;
  * outer one wrong.
  */
 class ActError extends Error {
-  constructor(readonly code: BrowserdErrorCode, message: string) {
+  constructor(
+    readonly code: BrowserdErrorCode,
+    message: string,
+  ) {
     super(message);
     this.name = "ActError";
   }
@@ -329,6 +343,11 @@ export interface ChromiumDriverOptions {
   /** Opt-in behaviour; absent means the previous release's. @see BrowserdFeatures */
   features?: BrowserdFeatures;
   /**
+   * Open http(s) pages only. Set with the public-only network, whose proxy
+   * never sees a `file:` or `chrome:` page.
+   */
+  webOnly?: boolean;
+  /**
    * Where typed secrets are remembered, so observations can be scrubbed.
    * Constructed when absent; injectable for tests.
    */
@@ -497,6 +516,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly pageTextMaxBytes: number;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   private readonly features: BrowserdFeatures;
+  private readonly webOnly: boolean;
   /** Values this boot has typed into a page, and what to show instead. */
   private readonly secrets: BrowserSecretRegistry;
   private readonly lease:
@@ -509,6 +529,10 @@ export class ChromiumDriver implements BrowserDriver {
       >
     | undefined;
   private readonly tabs = new Map<string, TabEntry>();
+  private readonly navigationStops = new Map<
+    string,
+    { target: string; stop: NavigationStop }
+  >();
   /**
    * Which tab is on screen.
    *
@@ -661,6 +685,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.pageTextMaxBytes =
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.features = options.features ?? {};
+    this.webOnly = options.webOnly === true;
     this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
@@ -865,7 +890,77 @@ export class ChromiumDriver implements BrowserDriver {
     command: BrowserCommand,
     context?: CommandContext,
   ): Promise<BrowserCommandResult> {
-    return this.barrier.run(() => this.executeInBarrier(command, context));
+    return this.barrier.run(() => this.executeStopping(command, context));
+  }
+
+  /**
+   * Stop a top-level navigation to the command's `stopAt` page while it runs
+   * (`navigation-stop`). A stop that cannot be armed fails the command before
+   * it acts, rather than letting that page load.
+   */
+  private async executeStopping(
+    command: BrowserCommand,
+    context?: CommandContext,
+  ): Promise<BrowserCommandResult> {
+    const target = command.stopAt;
+    const kind = command.action.kind;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    if (command.stopAtPersistent) {
+      if (!isStopTarget(target)) {
+        return { ok: false, error: "invalid navigation stop target" };
+      }
+      const entry =
+        kind === "navigate"
+          ? await this.getOrCreateTab(tabId)
+          : this.tabs.get(tabId);
+      if (!entry || entry.page.isClosed()) {
+        return { ok: false, error: "navigation stop tab unavailable" };
+      }
+      let watch = this.navigationStops.get(tabId);
+      if (watch && watch.target !== target) {
+        await watch.stop.disarm();
+        this.navigationStops.delete(tabId);
+        watch = undefined;
+      }
+      if (!watch) {
+        const cdp = await entry.page.cdp();
+        if (!cdp) return { ok: false, error: "navigation stop unavailable" };
+        watch = { target, stop: await armNavigationStop(cdp, target) };
+        this.navigationStops.set(tabId, watch);
+      }
+      const before = watch.stop.stopped();
+      let result: BrowserCommandResult = { ok: true };
+      try {
+        if (!before) result = await this.executeInBarrier(command, context);
+      } catch (error) {
+        // A stopped navigation can reject the page's own `goto`; the stop is
+        // the answer, so only a failure without one is rethrown.
+        if (!watch.stop.stopped()) throw error;
+      }
+      const stoppedAt = before ?? watch.stop.stopped();
+      if (stoppedAt) {
+        this.navigationStops.delete(tabId);
+        await watch.stop.disarm();
+        return { ...result, stoppedAt };
+      }
+      return result;
+    }
+    const page =
+      (kind === "navigate" || kind === "act") && isStopTarget(target)
+        ? this.tabs.get(tabId)?.page
+        : undefined;
+    const cdp = page ? await page.cdp() : null;
+    if (!cdp || !isStopTarget(target)) {
+      return this.executeInBarrier(command, context);
+    }
+    const stop = await armNavigationStop(cdp, target);
+    try {
+      const result = await this.executeInBarrier(command, context);
+      const stoppedAt = stop.stopped();
+      return stoppedAt ? { ...result, stoppedAt } : result;
+    } finally {
+      await stop.disarm();
+    }
   }
 
   private async executeInBarrier(
@@ -914,6 +1009,19 @@ export class ChromiumDriver implements BrowserDriver {
     if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
+        if (
+          this.webOnly &&
+          action.url !== "about:blank" &&
+          !/^https?:\/\//i.test(action.url)
+        ) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "browser_policy_refused",
+              "this browser opens http and https pages only; nothing was opened",
+            ),
+          };
+        }
         // `navigate` is the only verb that may CREATE a tab (P2).
         if (action.newTab) {
           // A new tab needs a NAME the caller chose, because the tabId is the
@@ -987,8 +1095,8 @@ export class ChromiumDriver implements BrowserDriver {
             kind === "back"
               ? page.goBack()
               : kind === "forward"
-              ? page.goForward()
-              : page.reload(),
+                ? page.goForward()
+                : page.reload(),
           permit,
           action.observe,
         );
@@ -1000,8 +1108,13 @@ export class ChromiumDriver implements BrowserDriver {
         // placeholders. Throws on a missing value, so a literal
         // `{{secret:NAME}}` is never typed, even via the `/v1` routes.
         let resolved = action;
+        const page = this.tabs.get(tabId)?.page;
         try {
-          resolved = resolveActSecrets(action, context?.secrets);
+          resolved = resolveActSecrets(
+            action,
+            context?.secrets,
+            page && safeUrl(page),
+          );
         } catch (error) {
           return {
             ok: false,
@@ -1170,8 +1283,8 @@ export class ChromiumDriver implements BrowserDriver {
         error instanceof ActError
           ? error.code
           : /timeout|not found|no element|strict mode/i.test(message)
-          ? "target_not_found"
-          : "act_failed";
+            ? "target_not_found"
+            : "act_failed";
       // Same rule as the success path: the act may have failed, but the page
       // it failed on can still be someone's now. `afterAct` asks `permit()`
       // before it reads anything, and `observation` asks again on the way out,
@@ -1531,9 +1644,60 @@ export class ChromiumDriver implements BrowserDriver {
         );
       case "type": {
         const text = action.value ?? "";
+        // A limited credential goes only into a field named by a ref, in a
+        // frame on its origins: focus or a selector can reach another site's frame.
+        const limited = secretReceivingOrigins(action);
+        if (limited && !refNode) {
+          throw new ActError(
+            "secret_origin_refused",
+            "a credential limited to a sign-in origin is typed only into a field named by a ref; nothing was typed",
+          );
+        }
+        // The node the agent observed, never one recovered by role and name,
+        // which may sit in a frame other than the one checked below.
+        if (limited && refNode?.recovered) {
+          throw new ActError(
+            "stale_ref",
+            `${refLabel} is no longer on the page, and a credential limited to a sign-in origin goes only into the field that was observed; nothing was typed. Observe again and use the new ref.`,
+          );
+        }
+        const frameId =
+          refs?.entries.get(refLabel)?.frameId ?? refNode?.sessionFrameId;
+        const refusal =
+          refNode && limited
+            ? await receivingFrameRefusal(
+                await needOwnerCdp(),
+                frameId,
+                limited,
+              )
+            : undefined;
+        if (refusal) throw new ActError("secret_origin_refused", refusal);
         // With a ref or a selector, REPLACE the field's value; without either,
-        // type into whatever has focus (the model's previous click).
-        if (refNode) {
+        // type into whatever has focus (the model's previous click). A limited
+        // credential goes in by the field itself, never by focus.
+        if (refNode && limited) {
+          try {
+            await insertSecretInNode(
+              await needOwnerCdp(),
+              refNode.backendNodeId,
+              text,
+              { ...(frameId ? { frameId } : {}), origins: limited },
+              stillOurs,
+            );
+          } catch (error) {
+            // Kept as its code, so the caller can tell nothing was typed.
+            if (error instanceof SecretNotTypedError) {
+              throw new ActError(error.code, error.message);
+            }
+            if (error instanceof LeaseTakenMidAct) throw error;
+            // Anything else may have typed: never left to the prose match
+            // below, which reads a "timeout" as a target that was not found.
+            throw new ActError(
+              "act_failed",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        } else if (refNode) {
           await replaceTextInNode(
             await needOwnerCdp(),
             refNode.backendNodeId,
@@ -1562,6 +1726,12 @@ export class ChromiumDriver implements BrowserDriver {
         // the envelope and passes the action through untouched, so a
         // `fill_form` with no fields would otherwise reach `for (const field
         // of undefined)`.
+        if (secretReceivingOrigins(action)) {
+          throw new ActError(
+            "secret_origin_refused",
+            "fill_form cannot carry a credential limited to a sign-in origin; type it into the field's ref",
+          );
+        }
         const fields = action.fields;
         if (
           !Array.isArray(fields) ||
@@ -2585,7 +2755,7 @@ export class ChromiumDriver implements BrowserDriver {
     const activeTabId =
       this.activeTabId && read.some(({ id }) => id === this.activeTabId)
         ? this.activeTabId
-        : read[0]?.id ?? null;
+        : (read[0]?.id ?? null);
     const active = read.find(({ id }) => id === activeTabId);
     this.stateSeq += 1;
     return {
@@ -2776,6 +2946,7 @@ export class ChromiumDriver implements BrowserDriver {
     // or page.close(). Start cleanup together and bound the whole group so one
     // stuck page cannot prevent the owning context from closing every target.
     const rendererCleanup = Promise.allSettled([
+      ...[...this.navigationStops.values()].map(({ stop }) => stop.disarm()),
       ...[...this.viewports.values()].map((viewport) =>
         viewport.then((v) => v?.dispose()),
       ),
@@ -2794,6 +2965,7 @@ export class ChromiumDriver implements BrowserDriver {
     } finally {
       clearTimeout(timer);
       this.viewports.clear();
+      this.navigationStops.clear();
       this.tabs.clear();
     }
     await this.context.close().catch(() => {});
@@ -3749,6 +3921,9 @@ export class ChromiumDriver implements BrowserDriver {
 
   /** Forget a tab and everything attached to it. */
   private async dropTab(tabId: string): Promise<void> {
+    const watch = this.navigationStops.get(tabId);
+    this.navigationStops.delete(tabId);
+    if (watch) await watch.stop.disarm();
     const going = this.tabs.get(tabId);
     // The subscription holds a closure over THIS entry; left attached to a
     // bridge whose page is being replaced, it would keep bumping a revision

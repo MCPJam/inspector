@@ -14,4 +14,6 @@ export type ChatOrigin =
   | "api"
   // MCP Events trigger run (`services/events/executor.ts`): an unattended
   // turn fired by an event. Mirrors the backend validator's `event`.
-  | "event";
+  | "event"
+  // A readiness run's reviewer sign-in agent: unattended, on MCPJam's lane.
+  | "readiness";

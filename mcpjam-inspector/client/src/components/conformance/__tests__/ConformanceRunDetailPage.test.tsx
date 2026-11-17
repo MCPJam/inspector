@@ -447,14 +447,32 @@ describe("ConformanceRunDetailPage", () => {
     expect(
       screen.getByText("Incomplete. No check finished, so there is no score."),
     ).toBeInTheDocument();
+    // Inside the score card, under the verdict it explains, not floating
+    // between the card and the suites.
+    const scoreCard = screen.getByText(/^OVERALL SCORE/).parentElement!;
     expect(
-      screen.getByText(
+      within(scoreCard).getByText(
         "Run lease expired before every requested suite settled",
       ),
     ).toBeInTheDocument();
   });
 
-  it("shows absent Apps without an explanation or percentage", () => {
+  it("keeps a run's reason off the page when a suite already says it", () => {
+    const reason = "Run stopped before every requested suite settled";
+    useArtifactQueryMock.mockReturnValue(
+      run([report({ incompleteReason: reason })], {
+        status: "completed",
+        outcome: "incomplete",
+        incompleteReason: reason,
+      }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    const scoreCard = screen.getByText(/^OVERALL SCORE/).parentElement!;
+    expect(within(scoreCard).queryByText(reason)).toBeNull();
+  });
+
+  it("shows absent Apps as not applying, without a percentage", () => {
     useArtifactQueryMock.mockReturnValue(run([
       report({ suiteKind: "apps", score: null, applicable: 0, passed: 0 }),
     ]));
@@ -462,7 +480,9 @@ describe("ConformanceRunDetailPage", () => {
     const header = screen.getByText("Apps").closest("button")!;
     expect(within(header).getByText("NOT APPLICABLE")).toBeInTheDocument();
     expect(within(header).queryByText("%")).toBeNull();
-    expect(screen.queryByText("Nothing here applied to this server, so it was not scored.")).toBeNull();
+    expect(
+      within(header).getByText("Apps doesn't apply to this server."),
+    ).toBeInTheDocument();
     fireEvent.click(header);
     expect(header).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/^7 checks in this suite\.$/)).toBeInTheDocument();
@@ -497,6 +517,21 @@ describe("ConformanceRunDetailPage", () => {
       screen.getByText(/checks in this suite\. None apply to this server\./),
     ).toBeInTheDocument();
     expect(fetchArtifactMock).toHaveBeenCalledTimes(fetchesOnLoad);
+  });
+
+  it("says a saved OAuth suite with no login doesn't apply, as the live run does", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([
+        report(),
+        report({ suiteKind: "oauth", score: null, applicable: 0, passed: 0 }),
+      ]),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    const oauth = screen
+      .getByText("OAuth doesn't apply: this server needs no login.")
+      .closest("button")!;
+    expect(within(oauth).getByText("NOT APPLICABLE")).toBeInTheDocument();
   });
 
   it.each(["oauth", "apps"])("keeps the skipped %s reason and not-run note", (suiteKind) => {

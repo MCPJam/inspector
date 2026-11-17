@@ -44,7 +44,7 @@ export async function prepareMobileApp(
       convexOrigin: "wss://visual.invalid",
       responses: {
         ...memberFixture.responses,
-        "/api/web/flags": { flags: { "local-browser-enabled": true } },
+        "/api/web/flags": { flags: {} },
         "/api/mcp/servers": {
           success: true,
           servers: [
@@ -54,6 +54,23 @@ export async function prepareMobileApp(
               config: { url: server.url },
             },
           ],
+        },
+        // Startup reads the handshake details of every server listed above
+        // as connected, so the card and Overview survive a page reload.
+        [`/api/mcp/servers/init-info/${server.name}`]: {
+          success: true,
+          serverId: server.name,
+          initInfo: {
+            protocolVersion: "2025-11-25",
+            transport: "streamable-http",
+            serverVersion: { name: server.name, version: "1.0.0" },
+            serverCapabilities: {
+              tools: {},
+              resources: {},
+              prompts: {},
+              tasks: {},
+            },
+          },
         },
         "/api/mcp/resources/list": {
           resources: [

@@ -22,9 +22,12 @@
  */
 import type {
   ProjectEnvironmentSecretSelection,
+  ProjectEnvironmentServerSkillSelection,
+  ProjectEnvironmentSkillScope,
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+import { sameServerSkillSelection } from "@/components/environment-composer/server-skill-selection";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import {
   harnessChoiceRefusalReason,
@@ -135,6 +138,13 @@ export type EnvironmentStack = {
   /** Optional; null/empty = each client's own server picks. */
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
+  /**
+   * Set by the create-suite page's Skills field, and seeded from a saved
+   * environment that holds them. The Skills pill shows them from there
+   * (`stack-skills.ts`).
+   */
+  serverSkillSelection?: ProjectEnvironmentServerSkillSelection | null;
+  skillScope?: ProjectEnvironmentSkillScope | null;
   computerEnvironmentId: string | null;
   /**
    * Model-choice axis. Default is "one inherit cell per client" — exactly
@@ -260,7 +270,8 @@ export function expandModelChoices(
   for (const target of dedupeModelTargets(resolved.explicitTargets)) {
     const { modelId } = target;
     // The saved selection says whose key the choice runs on: a local key never
-    // runs on a brokered harness, an org connection only on its own vendor.
+    // runs on a brokered harness, an org connection only where it serves the
+    // harness's API (a gateway's is judged at lease start).
     const reason = harnessChoiceRefusalReason(
       { modelId, selection: target.selection },
       options?.harness,
@@ -381,6 +392,8 @@ export function stackFromEnvironment(
     hostIds: env.hostId ? [env.hostId] : [],
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
+    serverSkillSelection: env.serverSkillSelection ?? null,
+    skillScope: env.skillScope ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
     modelSelection: {
       includeClientDefaults: !env.modelId,
@@ -419,7 +432,12 @@ function enabledSlotsEqual(
       (a.computerEnvironmentId ?? null) ===
         (b.computerEnvironmentId ?? null)) &&
     (!enabled.skillsEnabled ||
-      sameSkillSelection(a.skillSelection, b.skillSelection))
+      (sameSkillSelection(a.skillSelection, b.skillSelection) &&
+        sameServerSkillSelection(
+          a.serverSkillSelection,
+          b.serverSkillSelection,
+        ) &&
+        (a.skillScope ?? null) === (b.skillScope ?? null)))
   );
 }
 
@@ -609,6 +627,14 @@ export function composerStateFromEnvironments(
       skillSelection: sharedSlot(
         (env) => env.skillSelection ?? null,
         sameSkillSelection,
+      ),
+      serverSkillSelection: sharedSlot(
+        (env) => env.serverSkillSelection ?? null,
+        sameServerSkillSelection,
+      ),
+      skillScope: sharedSlot(
+        (env) => env.skillScope ?? null,
+        (a, b) => a === b,
       ),
       computerEnvironmentId: sharedSlot(
         (env) => env.computerEnvironmentId ?? null,

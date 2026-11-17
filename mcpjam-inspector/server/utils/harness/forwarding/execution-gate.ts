@@ -141,7 +141,12 @@ export async function executeForwardedOperation<T>(args: {
         throw new ExecutionControlError("blocked_by_policy");
       }
     }
-    if (intent.method === "tools/call" && prepared.requireToolApproval) {
+    // A bound approval was given at the runtime's own prompt: ask nothing more.
+    if (
+      intent.method === "tools/call" &&
+      prepared.requireToolApproval &&
+      !prepared.approved
+    ) {
       if (!args.approval) {
         await control.settle(prepared.executionId, undefined, {
           outcome: "refused",

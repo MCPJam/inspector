@@ -52,7 +52,6 @@ vi.mock("@/hooks/use-conformance-run", () => ({
       appsScore: undefined,
       tasksScore: undefined,
       oauthScore: undefined,
-      oauthNotScored: true,
       protocol: { status: "idle", result: mockScoreState.protocolResult },
       apps: { status: "idle" },
       tasks: { status: "idle" },

@@ -4,6 +4,17 @@ export interface ResourceDisplayHints {
   preferredDisplayMode?: ResourceDisplayMode;
   availableDisplayModes?: ResourceDisplayMode[];
 }
+
+/**
+ * How a host picks an App's display mode, from the client's plugin extension
+ * behavior: which resource metadata holds the hints (`_meta["openai/ui"]` or
+ * `_meta.ui`), and whether they pick the starting mode (OpenAI's rules) or
+ * the App starts inline and moves once to a side panel (`inline-then-move`).
+ */
+export interface DisplayBehavior {
+  hints: "openai/ui" | "ui";
+  start: "hint-first" | "inline-then-move";
+}
 const isMode = (value: unknown): value is ResourceDisplayMode =>
   value === "inline" || value === "fullscreen";
 

@@ -15,6 +15,7 @@ import {
   useEvalHandlers,
 } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
+import type { EvalSuite } from "../types";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setApiContext } from "@/lib/apis/web/context";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
@@ -204,6 +205,41 @@ describe("useEvalHandlers", () => {
     vi.restoreAllMocks();
     setApiContext(null);
   });
+
+  it.each(["duplicate", "delete"] as const)(
+    "opens Evaluate after suite %s",
+    async (action) => {
+      const suite: EvalSuite = {
+        _id: "suite-123",
+        createdBy: "user-1",
+        name: "Suite",
+        description: "",
+        configRevision: "revision-1",
+        environment: { servers: [] },
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, selectedSuiteId: suite._id }),
+      );
+      if (action === "duplicate") {
+        mockMutations.duplicateSuiteMutation.mockResolvedValue({
+          _id: "suite-copy",
+        });
+        await act(async () => {
+          await result.current.handleDuplicateSuite(suite);
+        });
+      } else {
+        act(() => result.current.handleDelete(suite));
+        await act(async () => {
+          await result.current.confirmDelete();
+        });
+      }
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        action === "duplicate" ? "/evaluate/suite/suite-copy" : "/evaluate",
+      );
+    },
+  );
 
   describe("handleRerun", () => {
     it.each([false, true])("opens the first accepted environment run without waiting for siblings (later failure: %s)", async (failSibling) => {
@@ -980,7 +1016,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
+        "/evaluate/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -1040,7 +1076,7 @@ describe("useEvalHandlers", () => {
       });
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
+        "/evaluate/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -2931,7 +2967,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-456/runs/run-new?insights=1",
+        "/evaluate/suite/suite-456/runs/run-new?insights=1",
       );
     });
   });

@@ -22,7 +22,7 @@ import type { PrepareChatV2Result } from "../../../utils/chat-v2-orchestration.j
 import {
   createDiscoveryState,
   DEFAULT_TOOL_DISCOVERY_POLICY,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 
 const manager = { id: "manager" };
 const selection = {

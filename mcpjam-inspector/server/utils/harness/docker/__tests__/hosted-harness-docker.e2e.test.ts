@@ -75,9 +75,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: mocks.revoke,
   // The lease would be installed into E2B's egress transform; here the box
   // reaches the mock upstream directly, so the "proxy" IS the upstream.
@@ -95,6 +92,11 @@ vi.mock("../../harness-model-broker.js", () => ({
       delivery: "e2b-network-transform",
     };
   }),
+}));
+vi.mock("../../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../../harness-session-state.js", async (importOriginal) => ({
@@ -570,6 +572,9 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
               sandboxRowId: "sbxrow-e2e",
               sandboxId: container,
               workdir: "/home/user",
+              // The backend's idle window, as its reserve reply sends it: a
+              // warm agent runs only on a box that has one.
+              idleMs: 5 * 60_000,
             },
             harnessMcpProxy: {
               plane: "web-authorized",

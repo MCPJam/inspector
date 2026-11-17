@@ -13,6 +13,7 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 
 vi.mock("@/lib/scenario-client-style", () => ({
   resolveHostLogoByDisplayName: () => "logo.png",
+  getScenarioHostLogo: (styleId: string) => `style:${styleId}`,
 }));
 
 vi.mock("date-fns", async (importOriginal) => {
@@ -229,7 +230,7 @@ describe("SuitesOverview", () => {
     expect(screen.getByText("3 minutes ago")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Setup Run Excalidraw Draw Small House",
+        name: "Run Excalidraw Draw Small House",
       }),
     ).toBeInTheDocument();
   });
@@ -316,7 +317,7 @@ describe("SuitesOverview", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Setup Run Excalidraw Draw Small House",
+        name: "Run Excalidraw Draw Small House",
       }),
     );
     expect(onRerun).toHaveBeenCalledWith(suiteWithServers);
@@ -347,7 +348,7 @@ describe("SuitesOverview", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Setup Run Excalidraw Draw Small House",
+        name: "Run Excalidraw Draw Small House",
       }),
     );
     expect(onRerun).toHaveBeenCalledWith(attachmentOnly);
@@ -553,4 +554,30 @@ it("combines client and server filters, including secondary attachments, and cle
   await user.keyboard("{Escape}");
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(screen.getAllByTestId("evals-suites-overview-row")).toHaveLength(2);
+});
+
+it("draws a renamed client's logo from its saved style", () => {
+  render(
+    <SuitesOverview
+      overview={[
+        entry({
+          suite: suite({
+            hostAttachments: [
+              {
+                namedHostId: "host-codex",
+                hostName: "Codex QA",
+                enabledOptionalServerIds: [],
+              },
+            ],
+          } as Partial<EvalSuite>),
+        }),
+      ]}
+      hostNamesById={new Map([["host-codex", "Codex QA"]])}
+      hostStylesById={new Map([["host-codex", "codex"]])}
+      onSelectSuite={vi.fn()}
+      {...idleActions}
+    />,
+  );
+  const row = screen.getByTestId("evals-suites-overview-row");
+  expect(row.querySelector("img")).toHaveAttribute("src", "style:codex");
 });

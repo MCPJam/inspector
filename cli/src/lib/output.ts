@@ -8,6 +8,7 @@ import {
   type McpjamDeploymentError,
 } from "@mcpjam/sdk/internal/deployment";
 import { isPlatformApiError } from "@mcpjam/sdk/platform";
+import { recordCommandOutcome } from "./command-outcome.js";
 
 export type OutputFormat = "json" | "human";
 
@@ -342,6 +343,14 @@ function parseLooseOutputFormat(value: string | undefined): OutputFormat {
   return value === "human" ? "human" : DEFAULT_OUTPUT_FORMAT;
 }
 
+/**
+ * End a command that finished and reported a failing result. Telemetry counts
+ * a non-zero code set here as `check_failed`, not as an error. A command that
+ * reports an error it caught itself also calls `recordCommandOutcome("error")`.
+ */
 export function setProcessExitCode(code: number): void {
   process.exitCode = code;
+  if (code !== 0) {
+    recordCommandOutcome("check_failed");
+  }
 }

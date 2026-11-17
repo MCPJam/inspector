@@ -9,6 +9,7 @@
 import { z } from "zod";
 import type { PlatformApiClient } from "./client.js";
 import type { PlatformOperationContext } from "./operations.js";
+import type { PlatformResourceRef } from "./permalinks.js";
 import { resolveByIdOrName, resolutionError } from "./resource-selectors.js";
 import {
   projectResolutionError,
@@ -102,6 +103,28 @@ export type ServerScopedInput = z.infer<typeof serverScopedInput>;
 export type ResolvedServerInfo = { id: string; name: string };
 
 /**
+ * Resolve a server selector (id or name) to a saved server. Reads of stored
+ * server data use this directly; they work for any transport.
+ */
+export async function resolveSavedServer(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformProjectServer> {
+  const page = await client.listProjectServers(
+    { projectId: project.id },
+    { signal }
+  );
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Server",
+    `project "${project.name}"`
+  );
+}
+
+/**
  * Resolve a server selector and require it to be hosted-operable: live ops
  * connect from the hosted runtime, which can never spawn stdio servers.
  * Failing here is deterministic and names the reason, instead of a
@@ -113,16 +136,7 @@ export async function resolveLiveServer(
   selector: string,
   signal: AbortSignal | undefined
 ): Promise<PlatformProjectServer> {
-  const page = await client.listProjectServers(
-    { projectId: project.id },
-    { signal }
-  );
-  const server = resolveByIdOrName(
-    page.items,
-    selector,
-    "Server",
-    `project "${project.name}"`
-  );
+  const server = await resolveSavedServer(client, project, selector, signal);
   if (server.transportType === "stdio" || !server.url) {
     throw resolutionError(
       `Server "${selector.trim()}" can't run hosted operations: ${
@@ -139,4 +153,52 @@ export function toServerInfo(
   server: PlatformProjectServer
 ): ResolvedServerInfo {
   return { id: server.id, name: server.name };
+}
+
+export type ServerResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+};
+
+/** Resolve the project and saved server an operation on stored data reads. */
+export async function resolveServerScope(
+  input: { project?: string; server: string },
+  context: PlatformOperationContext
+): Promise<{
+  client: PlatformApiClient;
+  scope: { projectId: string; serverId: string };
+  result: ServerResult;
+}> {
+  const { client, signal, onScopeResolved } = context;
+  const { project } = await resolveProjectOrThrow(
+    { client, signal, onScopeResolved },
+    input.project
+  );
+  // Stored data exists for every transport, stdio included, so this does not
+  // require a hosted-operable server the way live operations do.
+  const server = await resolveSavedServer(
+    client,
+    project,
+    input.server,
+    signal
+  );
+  return {
+    client,
+    scope: { projectId: project.id, serverId: server.id },
+    result: {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+    },
+  };
+}
+
+export function serverPermalink(result: ServerResult): PlatformResourceRef[] {
+  return [
+    {
+      type: "project_server",
+      id: result.server.id,
+      projectId: result.project?.id,
+      label: `Open ${result.server.name}`,
+    },
+  ];
 }

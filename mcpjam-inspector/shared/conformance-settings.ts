@@ -204,6 +204,24 @@ function isProtocolProbe(key: ConformanceProbeKey): key is ProtocolProbeKey {
 export const TASK_ANSWERS_CHECK =
   "tasks-update-ack-shape" satisfies MCPTasksCheckId;
 
+/**
+ * The picks without the update check, which stays hidden until its answers get
+ * a real form: today they are raw JSON keyed by questions the server has not
+ * asked yet. Hosted runs always leave it out; the app keeps it only under
+ * `conformance-tasks-update-check`. A saved pick under its old id goes too.
+ */
+export function withoutTaskAnswersCheck(
+  selection: ConformanceSelection | undefined,
+): ConformanceSelection {
+  const renamed: Record<string, string> = RENAMED_MCP_TASKS_CHECK_IDS;
+  return {
+    ...selection,
+    tasks: (selection?.tasks ?? MCP_TASKS_CHECK_IDS).filter(
+      (id) => (renamed[id] ?? id) !== TASK_ANSWERS_CHECK,
+    ),
+  };
+}
+
 /** The advice that asks for a log level, so its row shows the level field. */
 export const LOG_LEVEL_ADVICE: MCPReadinessId = "readiness-log-level-filtering";
 
@@ -568,7 +586,10 @@ export function conformanceSuiteConfigs(
   settings: { selection?: ConformanceSelection; probes: ConformanceProbes },
   pin: ProtocolVersionPin,
 ) {
-  const selection = runnableSelection(settings.selection, pin);
+  const selection = runnableSelection(
+    withoutTaskAnswersCheck(settings.selection),
+    pin,
+  );
   const { checkIds, readinessIds, probes } = protocolRunOptions(
     settings.probes,
     selection,

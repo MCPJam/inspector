@@ -16,8 +16,23 @@ var BROWSERD_WEBMCP_FEATURES = [
    * not a protocol bump, so deploys don't kill live browsers. Without it the
    * server must refuse placeholders: an old daemon would type them literally.
    */
-  "secret-placeholders"
+  "secret-placeholders",
+  /**
+   * A `secrets` entry may carry `origins`, and is then typed only on a page at
+   * one of them. Without it the server must not send such an entry: an old
+   * daemon ignores `origins` and would type the value on any page.
+   */
+  "secret-origins",
+  /**
+   * A command's `stopAt` stops a top-level navigation to that page before it
+   * is sent, and returns its URL as `stoppedAt`. Without it the server must
+   * not rely on one: an old daemon ignores `stopAt` and lets the page load.
+   */
+  "navigation-stop",
+  /** A callback stop can remain armed between commands on the same tab. */
+  "navigation-stop-persistent"
 ];
+var BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -79,6 +94,11 @@ var BROWSERD_ERROR_CODES = [
   "secret_unresolved",
   /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
   "secret_too_short",
+  /**
+   * A secret limited to some origins was typed on a page outside them, or a
+   * reviewer credential arrived with no origins; nothing was typed.
+   */
+  "secret_origin_refused",
   /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.
@@ -1092,6 +1112,113 @@ function computeStateToken(inputs) {
 // server/services/browserd/daemon/request-handler.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 
+// server/utils/secrets/reviewer-secrets.ts
+var REVIEWER_SECRET_PREFIX = "MCPJAM_REVIEWER_";
+function isReviewerSecretName(name) {
+  return name.startsWith(REVIEWER_SECRET_PREFIX);
+}
+
+// server/services/browserd/daemon/secret-substitution.ts
+function originOf(url) {
+  try {
+    const { origin, protocol } = new URL(url ?? "");
+    return /^https?:$/.test(protocol) ? origin : void 0;
+  } catch {
+    return void 0;
+  }
+}
+var isWebOrigin = (value) => originOf(value) === value;
+var allowedOrigins = (secret) => secret.origins ?? (isReviewerSecretName(secret.name) ? [] : void 0);
+var receivingOrigins = /* @__PURE__ */ new WeakMap();
+var secretReceivingOrigins = (action) => receivingOrigins.get(action);
+function requireAllowedOrigin(secret, pageUrl) {
+  const allowed = allowedOrigins(secret);
+  const origin = originOf(pageUrl);
+  if (!allowed || origin && allowed.includes(origin)) return;
+  const detail = allowed.length ? `"${secret.name}" can be typed only on ${allowed.join(", ")}, and this page is ${origin ?? "not on a web origin"}, so nothing was typed. Open the sign-in page on that origin, then type it there.` : `"${secret.name}" is a reviewer credential sent with no sign-in origin, so nothing was typed. Only MCPJam's reviewer sign-in can type it.`;
+  throw new Error(formatBrowserdError("secret_origin_refused", detail));
+}
+function resolveActSecrets(action, secrets, pageUrl) {
+  const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
+  const sent = new Map((secrets ?? []).map((s) => [s.name, s]));
+  const texts = [
+    ...action.value === void 0 ? [] : [action.value],
+    ...(action.fields ?? []).flatMap(
+      (field) => typeof field.value === "string" ? [field.value] : []
+    )
+  ];
+  let limit;
+  for (const name of new Set(texts.flatMap(secretNamesIn))) {
+    const secret = values.get(name);
+    if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
+      throw new Error(
+        formatBrowserdError(
+          "secret_too_short",
+          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too short to hide reliably in what the page shows back; nothing was typed. Ask the user to type it themselves.`
+        )
+      );
+    }
+    const limited = sent.get(name);
+    if (!limited) continue;
+    requireAllowedOrigin(limited, pageUrl);
+    const allowed = allowedOrigins(limited);
+    if (allowed) {
+      limit = limit ? limit.filter((entry) => allowed.includes(entry)) : allowed;
+    }
+  }
+  const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
+  const fields = action.fields?.map(
+    (field) => typeof field.value === "string" ? { ...field, value: substituteSecrets(field.value, values) } : field
+  );
+  if (value === null || fields?.some((field) => field.value === null)) {
+    throw new Error(
+      formatBrowserdError(
+        "secret_unresolved",
+        "this act referenced a {{secret:NAME}} the browser was not given a value for; nothing was typed. Check the name, and that the secret is set for this environment."
+      )
+    );
+  }
+  if (limit && (action.verb !== "type" || !action.target || !("a11yRef" in action.target))) {
+    throw new Error(
+      formatBrowserdError(
+        "secret_origin_refused",
+        "a credential limited to a sign-in origin is typed only with `type` into a field named by a ref; nothing was typed"
+      )
+    );
+  }
+  const valueChanged = value !== void 0 && value !== action.value;
+  const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
+  if (!valueChanged && !fieldsChanged) return action;
+  const resolved = {
+    ...action,
+    ...value === void 0 ? {} : { value },
+    ...fields === void 0 ? {} : { fields }
+  };
+  if (limit) receivingOrigins.set(resolved, limit);
+  return resolved;
+}
+function findFrame(tree, frameId) {
+  if (!tree?.frame) return void 0;
+  if (frameId === void 0 || tree.frame.id === frameId) return tree.frame;
+  for (const child of tree.childFrames ?? []) {
+    const found = findFrame(child, frameId);
+    if (found) return found;
+  }
+  return void 0;
+}
+async function receivingFrameRefusal(cdp, frameId, origins) {
+  let origin;
+  try {
+    const answer2 = await cdp.send("Page.getFrameTree");
+    origin = findFrame(answer2?.frameTree, frameId)?.securityOrigin;
+  } catch {
+    origin = void 0;
+  }
+  if (origin && origins.includes(origin)) return void 0;
+  const where = origin || "an origin the browser could not read";
+  return `this field is in a document on ${where}, and the credential can be typed only on ${origins.join(", ") || "no page"}, so nothing was typed. Observe again and type it into the form on that origin.`;
+}
+
 // server/services/browserd/daemon/auth.ts
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 function presentedBearer(headerValue2) {
@@ -1306,11 +1433,11 @@ var WorkspacePreviewRelay = class {
             headers: req.headers,
             setHost: false
           },
-          (answer) => {
-            res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
-            answer.pipe(res);
-            answer.once("close", () => {
-              if (!answer.complete) res.destroy();
+          (answer2) => {
+            res.writeHead(answer2.statusCode ?? 502, answer2.rawHeaders);
+            answer2.pipe(res);
+            answer2.once("close", () => {
+              if (!answer2.complete) res.destroy();
             });
           }
         );
@@ -1846,16 +1973,22 @@ var MOTION_ACTIONS = /* @__PURE__ */ new Set([
   "act"
 ]);
 var MAX_COMMAND_SECRETS = 32;
+var MAX_SECRET_ORIGINS = 8;
 var SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
+function readSecretOrigins(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, MAX_SECRET_ORIGINS).filter((origin) => typeof origin === "string" && isWebOrigin(origin));
+}
 function readCommandSecrets(raw) {
   if (!Array.isArray(raw)) return void 0;
   const secrets = [];
   for (const entry of raw.slice(0, MAX_COMMAND_SECRETS)) {
     if (typeof entry !== "object" || entry === null) continue;
-    const { name, value } = entry;
+    const { name, value, origins } = entry;
     if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
     if (typeof value !== "string" || value.length === 0) continue;
-    secrets.push({ name, value });
+    const limit = origins === void 0 ? {} : { origins: readSecretOrigins(origins) };
+    secrets.push({ name, value, ...limit });
   }
   return secrets.length > 0 ? secrets : void 0;
 }
@@ -5296,6 +5429,83 @@ async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
   }
   await input.send("Input.insertText", { text });
 }
+var SecretNotTypedError = class extends Error {
+  constructor(code, detail) {
+    super(detail);
+    this.code = code;
+    this.name = "SecretNotTypedError";
+  }
+  code;
+};
+var REFUSED_BEFORE_TYPING = /* @__PURE__ */ new Set([
+  "wrong_origin",
+  "not_focused",
+  "not_inserted"
+]);
+async function insertSecretInNode(cdp, backendNodeId, text, limit, guard) {
+  const objectId = await isolatedObjectId(cdp, backendNodeId, limit.frameId);
+  if (!objectId) {
+    throw new SecretNotTypedError(
+      "target_not_found",
+      "the field could not be resolved; nothing was typed"
+    );
+  }
+  guard();
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value: text }, { value: [...limit.origins] }],
+    functionDeclaration: `function (value, origins) {
+        const view = this.ownerDocument && this.ownerDocument.defaultView;
+        if (!view || !origins.includes(view.origin)) return "wrong_origin";
+        this.focus();
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        if (typeof this.select === "function") this.select();
+        else {
+          // A contenteditable field: select its contents, so the value replaces them.
+          const range = this.ownerDocument.createRange();
+          range.selectNodeContents(this);
+          const selection = view.getSelection();
+          if (selection) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        }
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        return this.ownerDocument.execCommand("insertText", false, value)
+          ? "typed"
+          : "not_inserted";
+      }`
+  });
+  const answer2 = outcome?.result?.value;
+  if (answer2 === "typed") return;
+  if (typeof answer2 === "string" && REFUSED_BEFORE_TYPING.has(answer2)) {
+    throw new SecretNotTypedError(
+      "unsupported_target",
+      "the field did not take the credential in its own document; nothing was typed"
+    );
+  }
+  throw new Error(
+    "the credential's field answered nothing MCPJam could read, so it may have been typed"
+  );
+}
+async function isolatedObjectId(cdp, backendNodeId, frameId) {
+  try {
+    const frame = frameId ?? (await cdp.send("Page.getFrameTree")).frameTree?.frame?.id;
+    if (!frame) return void 0;
+    const world = await cdp.send("Page.createIsolatedWorld", {
+      frameId: frame,
+      worldName: "mcpjam-secret"
+    });
+    const resolved = await cdp.send("DOM.resolveNode", {
+      backendNodeId,
+      executionContextId: world.executionContextId
+    });
+    return resolved.object?.objectId;
+  } catch {
+    return void 0;
+  }
+}
 async function selectOptionOnNode(cdp, backendNodeId, value, label) {
   const objectId = await resolveObjectId(cdp, backendNodeId);
   if (!objectId) {
@@ -5325,14 +5535,14 @@ async function selectOptionOnNode(cdp, backendNodeId, value, label) {
       return "ok";
     }`
   });
-  const answer = outcome?.result?.value ?? "";
-  if (answer === "ok") return;
-  if (answer === "not_select") {
+  const answer2 = outcome?.result?.value ?? "";
+  if (answer2 === "ok") return;
+  if (answer2 === "not_select") {
     throw new Error(
       `target_not_found: ${label} is not a <select>; use click or type instead`
     );
   }
-  const offered = answer.startsWith("no_option:") ? answer.slice(10) : "";
+  const offered = answer2.startsWith("no_option:") ? answer2.slice(10) : "";
   throw new Error(
     `target_not_found: ${label} has no option matching "${value}"` + (offered ? `; it offers: ${offered}` : "")
   );
@@ -5452,7 +5662,10 @@ async function pointForRefAcrossFrames(args) {
         `${args.label} is scrolled out of view inside its frame; scroll the frame first, then observe again`
       );
     }
-    point = { x: Math.round(point.x + host2.x), y: Math.round(point.y + host2.y) };
+    point = {
+      x: Math.round(point.x + host2.x),
+      y: Math.round(point.y + host2.y)
+    };
     current = frame.parentSessionFrameId;
   }
   if (current !== void 0) {
@@ -5758,45 +5971,63 @@ function createBrowserSecretRegistry() {
   };
 }
 
-// server/services/browserd/daemon/secret-substitution.ts
-function resolveActSecrets(action, secrets) {
-  const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
-  const texts = [
-    ...action.value === void 0 ? [] : [action.value],
-    ...(action.fields ?? []).flatMap(
-      (field) => typeof field.value === "string" ? [field.value] : []
-    )
-  ];
-  for (const name of new Set(texts.flatMap(secretNamesIn))) {
-    const secret = values.get(name);
-    if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
-      throw new Error(
-        formatBrowserdError(
-          "secret_too_short",
-          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too short to hide reliably in what the page shows back; nothing was typed. Ask the user to type it themselves.`
-        )
-      );
-    }
+// server/services/browserd/daemon/navigation-stop.ts
+function isStopTarget(value) {
+  if (typeof value !== "string" || /[*?\\#]/.test(value)) return false;
+  try {
+    return /^https?:$/.test(new URL(value).protocol);
+  } catch {
+    return false;
   }
-  const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
-  const fields = action.fields?.map(
-    (field) => typeof field.value === "string" ? { ...field, value: substituteSecrets(field.value, values) } : field
-  );
-  if (value === null || fields?.some((field) => field.value === null)) {
-    throw new Error(
-      formatBrowserdError(
-        "secret_unresolved",
-        "this act referenced a {{secret:NAME}} the browser was not given a value for; nothing was typed. Check the name, and that the secret is set for this environment."
-      )
+}
+var isAt = (url, target) => url === target || url.startsWith(`${target}?`) || url.startsWith(`${target}#`);
+var watches = /* @__PURE__ */ new WeakMap();
+async function answer(cdp, slot, payload) {
+  const paused = payload;
+  const watch = slot.current;
+  const url = paused.request?.url ?? "";
+  const stop = watch !== void 0 && watch.stopped === void 0 && paused.frameId === watch.mainFrame && isAt(url, watch.target);
+  if (stop) watch.stopped = url;
+  try {
+    await cdp.send(
+      stop ? "Fetch.failRequest" : "Fetch.continueRequest",
+      stop ? { requestId: paused.requestId, errorReason: "Aborted" } : { requestId: paused.requestId }
     );
+  } catch {
   }
-  const valueChanged = value !== void 0 && value !== action.value;
-  const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
-  if (!valueChanged && !fieldsChanged) return action;
+}
+async function armNavigationStop(cdp, target) {
+  let slot = watches.get(cdp);
+  if (!slot) {
+    const created = {};
+    cdp.on("Fetch.requestPaused", (payload) => {
+      void answer(cdp, created, payload);
+    });
+    watches.set(cdp, created);
+    slot = created;
+  }
+  const tree = await cdp.send("Page.getFrameTree");
+  const watch = { target, mainFrame: tree.frameTree?.frame?.id };
+  const owner = slot;
+  owner.current = watch;
+  await cdp.send("Fetch.enable", {
+    patterns: [
+      {
+        urlPattern: `${target}*`,
+        resourceType: "Document",
+        requestStage: "Request"
+      }
+    ]
+  });
   return {
-    ...action,
-    ...value === void 0 ? {} : { value },
-    ...fields === void 0 ? {} : { fields }
+    stopped: () => watch.stopped,
+    disarm: async () => {
+      if (owner.current === watch) owner.current = void 0;
+      try {
+        await cdp.send("Fetch.disable");
+      } catch {
+      }
+    }
   };
 }
 
@@ -6168,7 +6399,7 @@ var MAX_EARLY_RESPONSES = 16;
 var MAX_SETTLED_IDS = 32;
 var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
 var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
-function originOf(url) {
+function originOf2(url) {
   try {
     return new URL(url).origin;
   } catch {
@@ -6786,7 +7017,7 @@ var WebMcpBridge = class {
       description: tool.description ?? "",
       ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
       ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
-      origin: originOf(this.frames.get(tool.frameId) ?? ""),
+      origin: originOf2(this.frames.get(tool.frameId) ?? ""),
       isMainFrame: tool.frameId === this.mainFrameId,
       registrationSeq,
       registrationKind: tool.backendNodeId !== void 0 ? "declarative" : tool.stackTrace ? "imperative" : "unknown"
@@ -7718,10 +7949,12 @@ var ChromiumDriver = class {
   pageTextMaxBytes;
   /** Behaviour this build has but does not do by default. @see BrowserdFeatures */
   features;
+  webOnly;
   /** Values this boot has typed into a page, and what to show instead. */
   secrets;
   lease;
   tabs = /* @__PURE__ */ new Map();
+  navigationStops = /* @__PURE__ */ new Map();
   /**
    * Which tab is on screen.
    *
@@ -7858,6 +8091,7 @@ var ChromiumDriver = class {
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.features = options.features ?? {};
+    this.webOnly = options.webOnly === true;
     this.secrets = options.secrets ?? createBrowserSecretRegistry();
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
@@ -8010,7 +8244,65 @@ var ChromiumDriver = class {
    * true for all of them at once — including the ones added later.
    */
   async execute(command, context) {
-    return this.barrier.run(() => this.executeInBarrier(command, context));
+    return this.barrier.run(() => this.executeStopping(command, context));
+  }
+  /**
+   * Stop a top-level navigation to the command's `stopAt` page while it runs
+   * (`navigation-stop`). A stop that cannot be armed fails the command before
+   * it acts, rather than letting that page load.
+   */
+  async executeStopping(command, context) {
+    const target = command.stopAt;
+    const kind = command.action.kind;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    if (command.stopAtPersistent) {
+      if (!isStopTarget(target)) {
+        return { ok: false, error: "invalid navigation stop target" };
+      }
+      const entry = kind === "navigate" ? await this.getOrCreateTab(tabId) : this.tabs.get(tabId);
+      if (!entry || entry.page.isClosed()) {
+        return { ok: false, error: "navigation stop tab unavailable" };
+      }
+      let watch = this.navigationStops.get(tabId);
+      if (watch && watch.target !== target) {
+        await watch.stop.disarm();
+        this.navigationStops.delete(tabId);
+        watch = void 0;
+      }
+      if (!watch) {
+        const cdp2 = await entry.page.cdp();
+        if (!cdp2) return { ok: false, error: "navigation stop unavailable" };
+        watch = { target, stop: await armNavigationStop(cdp2, target) };
+        this.navigationStops.set(tabId, watch);
+      }
+      const before = watch.stop.stopped();
+      let result = { ok: true };
+      try {
+        if (!before) result = await this.executeInBarrier(command, context);
+      } catch (error) {
+        if (!watch.stop.stopped()) throw error;
+      }
+      const stoppedAt = before ?? watch.stop.stopped();
+      if (stoppedAt) {
+        this.navigationStops.delete(tabId);
+        await watch.stop.disarm();
+        return { ...result, stoppedAt };
+      }
+      return result;
+    }
+    const page = (kind === "navigate" || kind === "act") && isStopTarget(target) ? this.tabs.get(tabId)?.page : void 0;
+    const cdp = page ? await page.cdp() : null;
+    if (!cdp || !isStopTarget(target)) {
+      return this.executeInBarrier(command, context);
+    }
+    const stop = await armNavigationStop(cdp, target);
+    try {
+      const result = await this.executeInBarrier(command, context);
+      const stoppedAt = stop.stopped();
+      return stoppedAt ? { ...result, stoppedAt } : result;
+    } finally {
+      await stop.disarm();
+    }
   }
   async executeInBarrier(command, context) {
     if (command.source !== "manual" && command.action.kind !== "webmcp_cancel" && !negotiateViewport(this.viewportPolicy, command).ok) {
@@ -8037,6 +8329,15 @@ var ChromiumDriver = class {
     if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
+        if (this.webOnly && action.url !== "about:blank" && !/^https?:\/\//i.test(action.url)) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "browser_policy_refused",
+              "this browser opens http and https pages only; nothing was opened"
+            )
+          };
+        }
         if (action.newTab) {
           if (command.tabId === void 0) {
             return {
@@ -8095,8 +8396,13 @@ var ChromiumDriver = class {
         return this.observe(tabId, action, permit);
       case "act": {
         let resolved = action;
+        const page = this.tabs.get(tabId)?.page;
         try {
-          resolved = resolveActSecrets(action, context?.secrets);
+          resolved = resolveActSecrets(
+            action,
+            context?.secrets,
+            page && safeUrl(page)
+          );
         } catch (error) {
           return {
             ok: false,
@@ -8445,7 +8751,46 @@ var ChromiumDriver = class {
         );
       case "type": {
         const text = action.value ?? "";
-        if (refNode) {
+        const limited = secretReceivingOrigins(action);
+        if (limited && !refNode) {
+          throw new ActError2(
+            "secret_origin_refused",
+            "a credential limited to a sign-in origin is typed only into a field named by a ref; nothing was typed"
+          );
+        }
+        if (limited && refNode?.recovered) {
+          throw new ActError2(
+            "stale_ref",
+            `${refLabel} is no longer on the page, and a credential limited to a sign-in origin goes only into the field that was observed; nothing was typed. Observe again and use the new ref.`
+          );
+        }
+        const frameId = refs?.entries.get(refLabel)?.frameId ?? refNode?.sessionFrameId;
+        const refusal = refNode && limited ? await receivingFrameRefusal(
+          await needOwnerCdp(),
+          frameId,
+          limited
+        ) : void 0;
+        if (refusal) throw new ActError2("secret_origin_refused", refusal);
+        if (refNode && limited) {
+          try {
+            await insertSecretInNode(
+              await needOwnerCdp(),
+              refNode.backendNodeId,
+              text,
+              { ...frameId ? { frameId } : {}, origins: limited },
+              stillOurs
+            );
+          } catch (error) {
+            if (error instanceof SecretNotTypedError) {
+              throw new ActError2(error.code, error.message);
+            }
+            if (error instanceof LeaseTakenMidAct) throw error;
+            throw new ActError2(
+              "act_failed",
+              error instanceof Error ? error.message : String(error)
+            );
+          }
+        } else if (refNode) {
           await replaceTextInNode(
             await needOwnerCdp(),
             refNode.backendNodeId,
@@ -8467,6 +8812,12 @@ var ChromiumDriver = class {
         return;
       }
       case "fill_form": {
+        if (secretReceivingOrigins(action)) {
+          throw new ActError2(
+            "secret_origin_refused",
+            "fill_form cannot carry a credential limited to a sign-in origin; type it into the field's ref"
+          );
+        }
         const fields = action.fields;
         if (!Array.isArray(fields) || fields.length === 0 || fields.some(
           (field) => typeof field?.selector !== "string" || !field.selector || typeof field?.value !== "string"
@@ -9281,6 +9632,7 @@ var ChromiumDriver = class {
       })
     ]);
     const rendererCleanup = Promise.allSettled([
+      ...[...this.navigationStops.values()].map(({ stop }) => stop.disarm()),
       ...[...this.viewports.values()].map(
         (viewport) => viewport.then((v) => v?.dispose())
       ),
@@ -9299,6 +9651,7 @@ var ChromiumDriver = class {
     } finally {
       clearTimeout(timer);
       this.viewports.clear();
+      this.navigationStops.clear();
       this.tabs.clear();
     }
     await this.context.close().catch(() => {
@@ -9940,6 +10293,9 @@ var ChromiumDriver = class {
   }
   /** Forget a tab and everything attached to it. */
   async dropTab(tabId) {
+    const watch = this.navigationStops.get(tabId);
+    this.navigationStops.delete(tabId);
+    if (watch) await watch.stop.disarm();
     const going = this.tabs.get(tabId);
     going?.webmcp.unsubscribe?.();
     const next = tabAfterClose(
@@ -10204,12 +10560,12 @@ function secureDriverContext(context, policy) {
 
 // server/services/browserd/local/egress-proxy.ts
 function pinnedAddressOptions(addresses) {
-  const lookup = (_hostname, options, callback) => {
+  const lookup2 = (_hostname, options, callback) => {
     if (options.all) callback(null, addresses);
     else callback(null, addresses[0].address, addresses[0].family);
   };
   return {
-    lookup,
+    lookup: lookup2,
     autoSelectFamily: true,
     autoSelectFamilyAttemptTimeout: 250
   };
@@ -10615,6 +10971,7 @@ function defaultIsAlive(pid) {
 }
 
 // server/services/browserd/daemon/chromium-launch.ts
+var DISABLE_NON_PROXIED_UDP = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 var NAV_TIMEOUT_MS = 3e4;
 var DOM_SIGNAL_FN = `() => {
@@ -10995,7 +11352,8 @@ async function launchBrowserdContext(options) {
     }
   }
   const { chromium } = await import("playwright");
-  const proxy = policy ? await startLocalBrowserProxy(policy) : void 0;
+  const egress = policy ?? options.egressPolicy;
+  const proxy = egress ? await startLocalBrowserProxy(egress) : void 0;
   const finish = async (context, onClose) => {
     try {
       if (policy) {
@@ -11040,10 +11398,16 @@ async function launchBrowserdContext(options) {
       // Chromium cannot start its renderer sandbox as uid 0 (the image builds
       // as root), so it is disabled only in that case.
       chromiumSandbox: process.getuid?.() !== 0,
-      args: buildBrowserdLaunchArgs(options.extraArgs, {
-        surface,
-        ...userAgent ? { userAgent } : {}
-      })
+      args: buildBrowserdLaunchArgs(
+        options.egressPolicy ? (
+          // WebRTC's UDP would otherwise reach addresses the proxy never sees.
+          [...options.extraArgs ?? [], DISABLE_NON_PROXIED_UDP]
+        ) : options.extraArgs,
+        {
+          surface,
+          ...userAgent ? { userAgent } : {}
+        }
+      )
     };
     const launchProfileContext = async (contextMode) => {
       const cleared = await clearStaleSingletonLock(options.userDataDir);
@@ -11150,6 +11514,178 @@ function adaptContext(context, options = {}) {
       } finally {
         await options.onClose?.();
       }
+    }
+  };
+}
+
+// server/services/browserd/daemon/public-network.ts
+import { lookup } from "node:dns/promises";
+import { BlockList, isIP } from "node:net";
+
+// server/utils/private-egress-allowlist.ts
+import { isIPv6 } from "node:net";
+function normalizeEgressHost(host2) {
+  let normalized = host2.trim().toLowerCase();
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    normalized = normalized.slice(1, -1);
+  }
+  return normalized.replace(/\.+$/, "");
+}
+function ipv4Bytes(text) {
+  if (!/^(?:0|[1-9]\d{0,2})(?:\.(?:0|[1-9]\d{0,2})){3}$/.test(text)) {
+    return null;
+  }
+  const octets = text.split(".").map(Number);
+  return octets.every((octet) => octet <= 255) ? octets : null;
+}
+function ipv6Bytes(text) {
+  if (text.includes("%") || !isIPv6(text)) return null;
+  let hex = text;
+  const dotted = /^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (dotted) {
+    const v4 = ipv4Bytes(dotted[2]);
+    if (!v4) return null;
+    hex = `${dotted[1]}${(v4[0] << 8 | v4[1]).toString(16)}:${(v4[2] << 8 | v4[3]).toString(16)}`;
+  }
+  const groups = (part) => part === "" ? [] : part.split(":").map((group) => parseInt(group, 16));
+  const halves = hex.split("::");
+  const hextets = halves.length === 2 ? (() => {
+    const left = groups(halves[0]);
+    const right = groups(halves[1]);
+    return [
+      ...left,
+      ...new Array(8 - left.length - right.length).fill(0),
+      ...right
+    ];
+  })() : groups(hex);
+  if (hextets.length !== 8) return null;
+  return hextets.flatMap((hextet) => [hextet >> 8, hextet & 255]);
+}
+
+// server/utils/egress-tier.ts
+function parseIpv4Octets(host2) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host2);
+  if (!m) return null;
+  const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+  if (o.some((n) => n > 255)) return null;
+  return [o[0], o[1], o[2], o[3]];
+}
+var METADATA_NAMES = /* @__PURE__ */ new Set([
+  "metadata",
+  "metadata.google.internal",
+  "metadata.goog"
+]);
+var MACHINE_LOCAL_NAMES = /* @__PURE__ */ new Set([
+  "ip6-localhost",
+  "ip6-loopback",
+  "host.docker.internal",
+  "gateway.docker.internal"
+]);
+var AWS_IPV6_METADATA = ipv6Bytes("fd00:ec2::254");
+function egressTier(hostname2) {
+  const host2 = normalizeEgressHost(hostname2);
+  if (!host2) return "never";
+  if (METADATA_NAMES.has(host2)) return "never";
+  if (host2 === "localhost" || host2.endsWith(".localhost") || MACHINE_LOCAL_NAMES.has(host2)) {
+    return "private";
+  }
+  const v4 = parseIpv4Octets(host2);
+  if (v4) {
+    const [a, b, c, d] = v4;
+    if (a === 169 && b === 254) return "never";
+    if (a === 0) return "never";
+    if (a >= 224) return "never";
+    if (a === 100 && b === 100 && c === 100 && d === 200) return "never";
+    if (a === 127) return "private";
+    if (a === 10) return "private";
+    if (a === 192 && b === 168) return "private";
+    if (a === 172 && b >= 16 && b <= 31) return "private";
+    if (a === 100 && b >= 64 && b <= 127) return "private";
+    return "public";
+  }
+  if (host2.includes(":")) {
+    const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host2);
+    if (mapped) return egressTier(mapped[1]);
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host2);
+    if (mappedHex) {
+      const high = parseInt(mappedHex[1], 16);
+      const low = parseInt(mappedHex[2], 16);
+      return egressTier(
+        `${high >> 8 & 255}.${high & 255}.${low >> 8 & 255}.${low & 255}`
+      );
+    }
+    if (host2 === "::") return "never";
+    if (/^fe[89ab]/.test(host2)) return "never";
+    if (/^ff[0-9a-f]{2}:/.test(host2)) return "never";
+    const bytes = ipv6Bytes(host2);
+    if (bytes && AWS_IPV6_METADATA && bytes.every((byte, i) => byte === AWS_IPV6_METADATA[i])) {
+      return "never";
+    }
+    if (host2 === "::1") return "private";
+    if (/^f[cd]/.test(host2)) return "private";
+    return "public";
+  }
+  return "public";
+}
+
+// server/services/browserd/daemon/public-network.ts
+var WEB_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:", "ws:", "wss:"]);
+var NOT_GLOBAL = new BlockList();
+NOT_GLOBAL.addSubnet("192.0.0.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("192.0.2.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("198.18.0.0", 15, "ipv4");
+NOT_GLOBAL.addSubnet("198.51.100.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("203.0.113.0", 24, "ipv4");
+NOT_GLOBAL.addSubnet("2001:db8::", 32, "ipv6");
+NOT_GLOBAL.addSubnet("2001::", 32, "ipv6");
+NOT_GLOBAL.addSubnet("2001:2::", 48, "ipv6");
+NOT_GLOBAL.addSubnet("2002::", 16, "ipv6");
+NOT_GLOBAL.addSubnet("3fff::", 20, "ipv6");
+NOT_GLOBAL.addSubnet("64:ff9b:1::", 48, "ipv6");
+var NAT64 = new BlockList();
+NAT64.addSubnet("64:ff9b::", 96, "ipv6");
+function embeddedIpv4(address) {
+  if (isIP(address) !== 6 || !NAT64.check(address, "ipv6")) return void 0;
+  const tail = address.split(":").slice(-2);
+  if (tail.length === 1 || tail[1]?.includes(".")) return tail.at(-1);
+  const [high, low] = tail.map((part) => parseInt(part || "0", 16));
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+function isPublicHost(host2) {
+  if (egressTier(host2) !== "public") return false;
+  const address = host2.replace(/^\[|\]$/g, "");
+  const family = isIP(address);
+  if (family === 0) return true;
+  if (NOT_GLOBAL.check(address, family === 6 ? "ipv6" : "ipv4")) return false;
+  const translated = embeddedIpv4(address);
+  return translated === void 0 || isPublicHost(translated);
+}
+var REFUSED = "this browser reaches public internet addresses only, and this destination is not one.";
+function isPublicWebUrl(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  return WEB_PROTOCOLS.has(url.protocol) && isPublicHost(url.hostname);
+}
+function createPublicNetworkPolicy(resolve2 = lookup) {
+  return {
+    isActive: () => true,
+    onRevoked: () => () => {
+    },
+    allowsRequest: isPublicWebUrl,
+    async resolveDestination(hostname2, port) {
+      const name = hostname2.replace(/^\[|\]$/g, "");
+      if (!Number.isInteger(port) || port < 1 || port > 65535 || !isPublicHost(name)) {
+        throw new BrowserPolicyError(REFUSED);
+      }
+      const addresses = isIP(name) ? [{ address: name, family: isIP(name) }] : await resolve2(name, { all: true, verbatim: true });
+      if (addresses.length === 0 || addresses.some(({ address }) => !isPublicHost(address))) {
+        throw new BrowserPolicyError(REFUSED);
+      }
+      return addresses;
     }
   };
 }
@@ -11614,9 +12150,7 @@ var DEFAULT_ON_FEATURES = [
   "a11yFrames",
   "scrollableMarkers"
 ];
-var OPT_IN_FEATURES = [
-  "keystrokeTyping"
-];
+var OPT_IN_FEATURES = ["keystrokeTyping"];
 function namedIn(raw) {
   return new Set(
     (raw ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
@@ -11666,6 +12200,7 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // persistent profile — the mode a human's logins depend on — rather than
     // silently wiping state because a typo read as "ephemeral".
     contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
+    networkPolicy: env.MCPJAM_BROWSERD_NETWORK === "public" ? "public" : "open",
     // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
     // for the video encoder, and a headless Chromium draws on no display at
     // all — so the daemon would advertise `h264`, spawn a grab of an empty X
@@ -11714,6 +12249,9 @@ function announcedFeatures(config, env = process.env) {
     features.push("h264");
   }
   if (config.recordingEnabled) features.push("record");
+  if (config.networkPolicy === "public") {
+    features.push(BROWSERD_PUBLIC_NETWORK_FEATURE);
+  }
   return features;
 }
 function extraArgsFor(config) {
@@ -11792,7 +12330,8 @@ async function main() {
     headless: config.headless,
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode,
-    deviceScaleFactor: config.deviceScaleFactor
+    deviceScaleFactor: config.deviceScaleFactor,
+    ...config.networkPolicy === "public" ? { egressPolicy: createPublicNetworkPolicy() } : {}
   });
   const lease = new HandoffLease();
   let encoder;
@@ -11802,6 +12341,7 @@ async function main() {
   const driver = new ChromiumDriver(context, {
     lease,
     features: parseBrowserdFeatures(),
+    webOnly: config.networkPolicy === "public",
     viewport: {
       /**
        * The DAEMON's default is `fixed`, and the door widens it.

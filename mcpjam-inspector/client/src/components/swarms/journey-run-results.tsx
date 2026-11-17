@@ -676,12 +676,11 @@ export function SwarmLiveStreamPane({
 
       {providerRateLimit ? (
         <div data-testid="swarm-live-pane-rate-limit">
-          <ErrorCard error={providerRateLimit} variant="inline" />
+          <ErrorCard error={providerRateLimit} />
         </div>
       ) : failureInfo || live?.errorMessage ? (
         <div data-testid="swarm-live-pane-failure">
           <ErrorCard
-            variant="inline"
             error={describeSwarmAttemptFailure(
               attempt?.errorMessage ?? live?.errorMessage,
               errorCode,
@@ -823,7 +822,6 @@ export function SwarmLiveStreamPane({
             ) : (persisted.error ?? persisted.spanError) ? (
               <ErrorCard
                 error={persisted.error ?? persisted.spanError}
-                variant="inline"
               />
             ) : showLoading ||
               (displayTrace && resolvedHost.status === "loading") ? (

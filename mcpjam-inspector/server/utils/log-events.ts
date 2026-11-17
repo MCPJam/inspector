@@ -547,23 +547,8 @@ export type SystemEventMap = {
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";
   };
-  "harness.timing": {
-    harnessId?: "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode";
-    harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
-    harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
-    harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";
-    harnessTurn?: "failed";
-    /**
-     * `TurnTiming` (`turn-timing.ts`), in whole milliseconds: each route stage
-     * before the model stream, and the request's time to its first text.
-     */
-    setupMs?: number;
-    turnAuthorizationMs?: number;
-    connectionsMs?: number;
-    toolsMs?: number;
-    streamPreparationMs?: number;
-    firstTextMs?: number;
-  };
+  "mcp_app.resource_read.failed": import("./log-events/mcp-app-resource-read.js").McpAppResourceReadFailedEvent;
+  "harness.timing": import("./log-events/harness-timing.js").HarnessTimingEvent;
   "harness.bootstrap": Record<string, never>;
   "harness.turn.failed": Record<string, never>;
   /**
@@ -594,7 +579,7 @@ export type SystemEventMap = {
     surface: string;
     serverId: string;
     transport: "http" | "stdio";
-    configuredMode: "auto" | "modern-pin" | "legacy";
+    configuredMode: "auto" | "modern-pin" | "legacy" | "legacy-first";
     outcome: "connected" | "failed";
     negotiatedEra?: "legacy" | "modern";
     negotiatedProtocolVersion?: string;
@@ -602,36 +587,7 @@ export type SystemEventMap = {
   };
   "process.unhandled_rejection": { errorCode: string };
   "process.uncaught_exception": { errorCode: string };
-  /**
-   * Heap and retained-buffer gauge, one line per sample that says something
-   * (see utils/process-vitals.ts). Emitted on startup, on a heap step, and on a
-   * slow heartbeat — never once per interval unconditionally, so a quiet
-   * session costs almost nothing.
-   *
-   * Exists because INSPECTOR-ELECTRON-W3 crashed after 21 minutes with ZERO
-   * breadcrumbs for the whole session: nothing recorded whether the heap ramped
-   * or spiked, and the difference is the entire diagnosis. Every field is a
-   * number or a three-valued reason, so cardinality is fixed.
-   */
-  "process.vitals": {
-    reason: "startup" | "heap_step" | "heartbeat";
-    uptimeSeconds: number;
-    heapUsedBytes: number;
-    heapTotalBytes: number;
-    heapLimitBytes: number;
-    oldSpaceUsedBytes: number;
-    oldSpaceSizeBytes: number;
-    externalBytes: number;
-    rssBytes: number;
-    peakHeapUsedBytes: number;
-    rpcLogBufferBytes: number;
-    rpcLogBufferEvents: number;
-    rpcLogBufferServers: number;
-    rpcLogTruncatedFrames: number;
-    peakRpcLogBufferBytes: number;
-    tokenizerPeakChars: number;
-    tokenizerOversizeSkips: number;
-  };
+  "process.vitals": import("./log-events/process-vitals.js").ProcessVitalsEvent;
   /**
    * Aggregated socket-level failure counters, one line per flush interval
    * (see utils/socket-diagnostics.ts). These are connections that died before

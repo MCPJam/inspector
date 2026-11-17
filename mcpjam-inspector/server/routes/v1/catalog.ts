@@ -48,6 +48,46 @@ catalog.get("/projects/:projectId/servers", (c) =>
   ),
 );
 
+/** The project and server a revision read is scoped to, from the path. */
+function setServerScope(target: URL, projectId: string, serverId: string) {
+  target.searchParams.set("projectId", projectId);
+  target.searchParams.set("serverId", serverId);
+}
+
+// GET /v1/projects/:projectId/servers/:serverId/revisions?limit=&cursor=
+// A saved server's stored revisions (captures of its tools and server info),
+// newest first.
+catalog.get("/projects/:projectId/servers/:serverId/revisions", (c) =>
+  proxyConvexV1Read(c, "/v1/project-server-revisions", (target) => {
+    setServerScope(target, c.req.param("projectId"), c.req.param("serverId"));
+    forwardQueryParams(c, target, ["limit", "cursor"]);
+  }),
+);
+
+// GET /v1/projects/:projectId/servers/:serverId/revisions/:revisionNumber
+catalog.get(
+  "/projects/:projectId/servers/:serverId/revisions/:revisionNumber",
+  (c) =>
+    proxyConvexV1Read(c, "/v1/project-server-revision", (target) => {
+      setServerScope(target, c.req.param("projectId"), c.req.param("serverId"));
+      target.searchParams.set("revisionNumber", c.req.param("revisionNumber"));
+    }),
+);
+
+// GET /v1/projects/:projectId/servers/:serverId/revisions/:revisionNumber/diff?from=
+// Compares `from` (default: the revision before) with `revisionNumber`.
+catalog.get(
+  "/projects/:projectId/servers/:serverId/revisions/:revisionNumber/diff",
+  (c) =>
+    proxyConvexV1Read(c, "/v1/project-server-revision-diff", (target) => {
+      setServerScope(target, c.req.param("projectId"), c.req.param("serverId"));
+      target.searchParams.set("revisionNumber", c.req.param("revisionNumber"));
+      const from = c.req.query("from");
+      if (from !== undefined)
+        target.searchParams.set("fromRevisionNumber", from);
+    }),
+);
+
 // GET /v1/projects/:projectId/eval-suites
 // Eval suites in the project, with latest-run summaries.
 catalog.get("/projects/:projectId/eval-suites", (c) =>
@@ -107,8 +147,7 @@ catalog.get("/projects/:projectId/sessions", async (c) => {
       // only, which is the opposite of the population it exists to measure.
       // Same fill-in the v1 agent surface does (`agent.ts::captureTurnEvent`).
       const logContext = c.var.requestLogContext as
-        | { userExternalId?: string | null }
-        | undefined;
+        { userExternalId?: string | null } | undefined;
       const workosUserId = c.get("workosUserId");
       if (logContext && !logContext.userExternalId && workosUserId) {
         c.set("requestLogContext", {
