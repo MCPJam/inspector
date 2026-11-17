@@ -330,7 +330,8 @@ const mockUseChatSession = {
   dismissUrlElicitationRequired: vi.fn(),
   messages: [],
   setMessages: vi.fn(),
-  sendMessage: vi.fn(),
+  // Resolves true like the real hook once the turn is dispatched.
+  sendMessage: vi.fn().mockResolvedValue(true),
   stop: vi.fn(),
   status: "ready",
   error: null,
@@ -3926,6 +3927,28 @@ describe("PlaygroundMain", () => {
           "0"
         );
       });
+    });
+
+    it("keeps the starter prompt and staged skills when the send is refused", async () => {
+      // A column branch the client can't run resolves false with no turn.
+      mockUseChatSession.sendMessage.mockResolvedValueOnce(false);
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(
+          (screen.getByTestId("chat-input-field") as HTMLInputElement).value
+        ).not.toBe("");
+      });
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-skill-count",
+        "1"
+      );
     });
 
     it("does not replay a single-model send into compare cards mounted later", async () => {

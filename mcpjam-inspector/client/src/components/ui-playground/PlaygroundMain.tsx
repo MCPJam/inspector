@@ -106,7 +106,10 @@ import {
   findModelForStoredChoice,
   modelRowKey,
 } from "@/components/chat-v2/shared/model-selection";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import {
+  comparisonKey,
+  type ModelReasoningEffort,
+} from "@mcpjam/sdk/browser";
 import { useCompareSelections } from "@/hooks/use-compare-selections";
 import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
 import {
@@ -4089,7 +4092,11 @@ export function PlaygroundMain({
           (client) =>
             `host:${client.status === "ready" ? client.column.compareId : client.compareId}`,
         )
-      : compareLanes.map((lane) => lane.id),
+      : // The saved lineup, not the cards: a card drops out while its model
+        // is unavailable, and that is not a removal.
+        compareSelections
+        ? compareSelections.map((selection) => `model:${comparisonKey(selection)}`)
+        : compareLanes.map((lane) => lane.id),
     applyRestore: restoreMultiModelSession,
     branchFromThread,
     detachForBranch: () => {
@@ -5132,21 +5139,24 @@ export function PlaygroundMain({
           // preparation. The study block has to be read again at dispatch.
           isCurrent: () => !conversationSendBlockedRef.current,
         });
-        // A refusal keeps the queue. A success drops only the objects this
-        // request carried: a widget can replace or add entries during the
-        // preparation above, and those were not sent.
-        if (sent) {
-          setModelContextQueue((current) =>
-            current.filter(
-              (entry) =>
-                !sentContext.some(
-                  (sentEntry) =>
-                    sentEntry.toolCallId === entry.toolCallId &&
-                    sentEntry === entry,
-                ),
-            ),
-          );
+        // A refused send runs no turn: keep the text, and the queue as it is.
+        if (!sent) {
+          composer.setInput(text);
+          return;
         }
+        // A success drops only the objects this request carried: a widget can
+        // replace or add entries during the preparation above, and those were
+        // not sent.
+        setModelContextQueue((current) =>
+          current.filter(
+            (entry) =>
+              !sentContext.some(
+                (sentEntry) =>
+                  sentEntry.toolCallId === entry.toolCallId &&
+                  sentEntry === entry,
+              ),
+          ),
+        );
       })();
     },
     [
@@ -6232,6 +6242,7 @@ export function PlaygroundMain({
           trackSendMessage({ single_model_send: true });
           // Held until dispatch: the chips stay on screen through the hosted
           // preflight inside sendMessage, and a second click there would send.
+          // A refused send runs no turn: keep the draft, context and attachments.
           const sent = await sendOrBranch({
             text: prompt,
             metadata: outgoingSenderMetadata,
@@ -6315,11 +6326,16 @@ export function PlaygroundMain({
         setModelContextQueue([]);
       } else {
         trackSendMessage({ single_model_send: true });
-        void sendOrBranch({
+        const sent = await sendOrBranch({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
         });
+        // A refused column branch runs no turn: leave the prompt as a draft.
+        if (!sent) {
+          composer.setInput(text);
+          return;
+        }
         setModelContextQueue([]);
       }
       onFirstMessageSent?.();

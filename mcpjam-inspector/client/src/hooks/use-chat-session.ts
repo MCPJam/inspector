@@ -6135,6 +6135,8 @@ export function useChatSession(
       reason: ChatRewind["reason"],
       options: BranchSendOptions &
         Parameters<UseChatSessionReturn["branchFromThread"]>[0],
+      /** Restored Apps data for tool calls the branch copies. */
+      toolRenderOverrides?: Record<string, ToolRenderOverride>,
     ): Promise<{ previousChatSessionId: string } | null> => {
       const previousChatSessionId = chatSessionIdRef.current;
 
@@ -6143,6 +6145,7 @@ export function useChatSession(
 
       const branchSessionId = await startChatWithMessages(prefix, {
         resetReason: "fork",
+        toolRenderOverrides,
       });
 
       // An awaited resolve is not proof of commit: clearPendingSessionHydration
@@ -6273,11 +6276,14 @@ export function useChatSession(
       const transcript = messagesRef.current;
       const last = transcript[transcript.length - 1];
       if (!last) return null;
+      // The branch copies the whole transcript, so its Apps keep the raw
+      // results and widget snapshots the column restored.
       return forkAndSend(
         [...transcript, ...(options.prependMessages ?? [])],
         last.id,
         "multi_model_column",
         options,
+        restoredToolRenderOverridesRef.current,
       );
     },
     [forkAndSend],

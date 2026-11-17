@@ -1067,6 +1067,45 @@ describe("useChatSession fork preservation", () => {
     expect(mockState.sendsBySession.has(columnChatSessionId)).toBe(false);
   });
 
+  it("keeps a restored column's Apps data in its branch", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    const transcript = [
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "compare" }] },
+      { id: "assistant-1", role: "assistant", parts: [{ type: "text", text: "answer" }] },
+    ] as UIMessage[];
+    const overrides = {
+      "call-1": { rawOutput: { ok: true } },
+    } as unknown as Parameters<
+      typeof result.current.startChatWithMessages
+    >[1] extends infer O
+      ? O extends { toolRenderOverrides?: infer T }
+        ? NonNullable<T>
+        : never
+      : never;
+    const initialChatSessionId = result.current.chatSessionId;
+    act(() => {
+      void result.current.startChatWithMessages(transcript, {
+        toolRenderOverrides: overrides,
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.chatSessionId).not.toBe(initialChatSessionId);
+    });
+    expect(result.current.restoredToolRenderOverrides).toEqual(overrides);
+    const columnChatSessionId = result.current.chatSessionId;
+
+    const outcome = await result.current.branchFromThread({ text: "follow up" });
+
+    expect(outcome).toEqual({ previousChatSessionId: columnChatSessionId });
+    expect(result.current.chatSessionId).not.toBe(columnChatSessionId);
+    expect(result.current.restoredToolRenderOverrides).toEqual(overrides);
+  });
+
   it("copies attached prompt messages into a column branch after the transcript", async () => {
     const { result } = renderHook(() =>
       useChatSession({
