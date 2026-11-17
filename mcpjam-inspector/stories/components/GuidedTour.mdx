@@ -14,16 +14,20 @@ together, when each step only makes sense next to the others. A tour costs the
 user a minute, so save it for that.
 
 **Don't use it** to point at one new feature the user can try now (use
-[Feature Spotlight](?path=/docs/components-feature-spotlight--overview)), to
+[Spotlight](?path=/docs/components-spotlight--overview)), to
 explain a page that has no data yet (use an empty state), or for errors (use an
 alert or ErrorCard).
 
 <Canvas of={Stories.TwoStopTour} />
 
+In light and dark:
+
+<Canvas of={Stories.LightAndDark} />
+
 ## The parts
 
 Everything lives in `client/src/components/guided-tour`. The card is the
-Feature Spotlight card from `@mcpjam/design-system/feature-spotlight`, so a
+Spotlight card from `@mcpjam/design-system/feature-spotlight`, so a
 tour and a one-time spotlight always look the same. Change the card there,
 not in a tour.
 
@@ -79,7 +83,7 @@ not in a tour.
 
 **Don't**
 
-- Don't build a card of your own. Change the Feature Spotlight card in the design
+- Don't build a card of your own. Change the Spotlight card in the design
   system, so tours and spotlights stay the same.
 - Don't tour live data or let the stage take input. Users click through a tour,
   and a click must never change their project.

@@ -1,9 +1,9 @@
 import { Canvas, Meta } from "@storybook/addon-docs/blocks";
-import * as Stories from "./feature-spotlight.stories";
+import * as Stories from "./spotlight.stories";
 
 <Meta of={Stories} name="Overview" />
 
-# Feature Spotlight
+# Spotlight
 
 A one-time card pinned to the control it introduces.
 
@@ -18,6 +18,10 @@ focus, and Escape or an outside click closes it. The product decides when it
 opens; the component only draws it.
 
 <Canvas of={Stories.WithServer} />
+
+In light and dark:
+
+<Canvas of={Stories.LightAndDark} />
 
 ## Do's and Don'ts
 

@@ -22,6 +22,7 @@ import {
 } from "@/components/guided-tour/ghost-cursor";
 import { TourSpotlight } from "@/components/guided-tour/spotlight";
 import { useTourPlayer } from "@/components/guided-tour/use-tour-player";
+import { ThemePair } from "../_support/theme-pair";
 
 /**
  * Guided tour stories. When to use a tour, and how to build one, is on the
@@ -305,4 +306,24 @@ export const TwoStopTour: Story = {
       </div>
     );
   },
+};
+
+/** One stop in both themes. */
+export const LightAndDark: Story = {
+  ...Coachmark,
+  globals: { theme: "light" },
+  render: () => (
+    <ThemePair>
+      <Stage anchors={["run"]} placement="right">
+        <TourStepContent
+          labels={LABELS}
+          index={1}
+          title="Run every check in one click"
+          body="Conformance runs the spec's checks on your server and explains each failure."
+          onNext={noop}
+          onSkip={noop}
+        />
+      </Stage>
+    </ThemePair>
+  ),
 };
