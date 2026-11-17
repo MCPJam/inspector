@@ -54,17 +54,15 @@ describe("OnboardAgentButton", () => {
     expect(tooltip).toHaveTextContent("Onboard your agent to MCPJam");
   });
 
-  it("opens on the CLI tab with the install and sign-in commands", async () => {
+  it("opens a single CLI panel with the install and sign-in commands", async () => {
     const user = userEvent.setup();
     render(<OnboardAgentButton />);
     await user.click(
       screen.getByRole("button", { name: /Onboard your agent to MCPJam/ }),
     );
 
-    expect(screen.getByRole("tab", { name: "MCPJam CLI" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(screen.queryByText("MCPJam CLI")).toBeNull();
     expect(screen.getByText("npm i -g @mcpjam/cli")).toBeInTheDocument();
     expect(screen.getByText("mcpjam cloud login")).toBeInTheDocument();
     expect(
@@ -143,13 +141,13 @@ describe("OnboardAgentButton", () => {
     await user.click(
       screen.getByRole("button", { name: /Onboard your agent to MCPJam/ }),
     );
-    expect(screen.getByRole("tab", { name: "MCPJam CLI" })).toBeInTheDocument();
+    expect(screen.getByText("mcpjam cloud login")).toBeInTheDocument();
 
     mql.matches = false;
     act(() => onChange?.());
 
     await waitFor(() =>
-      expect(screen.queryByRole("tab", { name: "MCPJam CLI" })).toBeNull(),
+      expect(screen.queryByText("mcpjam cloud login")).toBeNull(),
     );
   });
 
