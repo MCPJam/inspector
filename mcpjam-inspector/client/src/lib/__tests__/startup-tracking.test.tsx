@@ -1,4 +1,4 @@
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { StrictMode, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,15 +30,26 @@ const sent = (event: string) =>
 describe("useStartupTracking", () => {
   beforeEach(() => {
     resetStartupTrackingForTests();
+    vi.useFakeTimers();
     vi.spyOn(performance, "now").mockReturnValue(21_400);
   });
   afterEach(() => {
     state.track.mockReset();
+    vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("waits a task before counting the launch, so PostHog has initialized", () => {
+    renderHook(() => useStartupTracking(waiting));
+    // PostHogProvider initializes in its own effect, after this child's.
+    expect(sent("app_startup_started")).toHaveLength(0);
+    act(() => vi.runAllTimers());
+    expect(sent("app_startup_started")).toHaveLength(1);
   });
 
   it("counts a launch once, even when StrictMode mounts it twice", () => {
     renderHook(() => useStartupTracking(waiting), { wrapper: strict });
+    act(() => vi.runAllTimers());
     expect(sent("app_startup_started")).toEqual([
       ["app_startup_started", { location: "app" }],
     ]);

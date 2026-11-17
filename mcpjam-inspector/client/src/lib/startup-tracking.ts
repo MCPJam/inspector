@@ -17,8 +17,15 @@ let blockedSent = false;
 export function useStartupTracking(status: StartupStatus): void {
   useEffect(() => {
     if (startedSent) return;
-    startedSent = true;
-    track("app_startup_started", { location: "app" });
+    // PostHogProvider calls posthog.init in its own effect, and React runs a
+    // child's effects before its parent's: a capture from here would reach an
+    // uninitialized client and be dropped. Send on the next task instead.
+    const timer = setTimeout(() => {
+      if (startedSent) return;
+      startedSent = true;
+      track("app_startup_started", { location: "app" });
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const { escalated, stage, failureKind } = status;
