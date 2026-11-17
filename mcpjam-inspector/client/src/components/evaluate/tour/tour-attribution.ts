@@ -9,3 +9,11 @@ export function markSuiteCreatedFromTour(suiteId: string): void {
 export function takeFirstRunAfterTour(suiteId: string): boolean {
   return awaitingFirstRun.delete(suiteId);
 }
+
+/** "Take the tour" stays offered until the project's first run. */
+export function projectHasNoRuns(
+  isLoading: boolean,
+  suites: readonly { latestRun?: unknown }[],
+): boolean {
+  return !isLoading && !suites.some((entry) => entry.latestRun);
+}

@@ -109,7 +109,10 @@ import {
 import { agentRunIterations } from "./evaluate/suite-run-iterations";
 import { EvaluateTour } from "./evaluate/tour/evaluate-tour";
 import { useEvaluateTour } from "./evaluate/tour/use-evaluate-tour";
-import { markSuiteCreatedFromTour } from "./evaluate/tour/tour-attribution";
+import {
+  markSuiteCreatedFromTour,
+  projectHasNoRuns,
+} from "./evaluate/tour/tour-attribution";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -624,9 +627,10 @@ function EvaluateTabContent({
   // opening the picker on an empty list. A tap while suites load waits.
   const hasNoSuites =
     !overviewQueries.isOverviewLoading && visibleSuites.length === 0;
-  const hasNoRuns =
-    !overviewQueries.isOverviewLoading &&
-    !visibleSuites.some((entry) => entry.latestRun);
+  const hasNoRuns = projectHasNoRuns(
+    overviewQueries.isOverviewLoading,
+    visibleSuites,
+  );
   // Auto-opens once on an empty landing, and only past the sign-in and
   // project gates, where the overlay can actually render.
   const evaluateTour = useEvaluateTour({
