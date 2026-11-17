@@ -3000,6 +3000,214 @@ describe("PlaygroundMain", () => {
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
     });
 
+    const transcript = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+    ];
+    it.each([
+      {
+        sender: "a starter chip",
+        messages: [],
+        retryable: false,
+        trigger: () =>
+          fireEvent.click(screen.getByRole("button", { name: "Starter chip" })),
+      },
+      {
+        sender: "the error banner's Retry",
+        messages: transcript,
+        retryable: true,
+        trigger: () => fireEvent.click(screen.getByTestId("error-box-retry")),
+      },
+      {
+        sender: "an App message",
+        messages: transcript,
+        retryable: false,
+        trigger: () =>
+          void mockThread.mock.calls
+            .at(-1)![0]
+            .sendFollowUpMessage("Message from the App"),
+      },
+      {
+        sender: '"Ask agent to run"',
+        messages: transcript,
+        retryable: false,
+        trigger: () =>
+          useAgentToolPromptBridge.getState().requestRun("Run the tool for me"),
+      },
+    ])(
+      "drops $sender when New chat is clicked while the server connects, and leaves the composer empty",
+      async ({ messages, retryable, trigger }) => {
+        const readiness = holdServerReadiness();
+        mockUseChatSession.messages = messages as never;
+        if (retryable) {
+          mockUseChatSession.error = Object.assign(
+            new Error("The organization's AI provider is unavailable."),
+            { formatted: { code: "provider_unavailable" } },
+          ) as never;
+        }
+        render(
+          <PlaygroundMain
+            {...defaultProps}
+            ensureServersReady={readiness.ensureServersReady}
+          />,
+        );
+        await waitFor(() => expect(bridge()).not.toBe(null));
+        await act(async () => {
+          trigger();
+        });
+        expect(readiness.ensureServersReady).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+          void bridge()?.onNewChat();
+        });
+        await act(async () => readiness.release());
+        await settle();
+
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(screen.getByTestId("chat-input-field")).toHaveValue("");
+      },
+    );
+
+    it.each([
+      ["a composer send", true],
+      ["a starter chip", false],
+    ])(
+      "queues nothing to the comparison when New chat is clicked while %s prepares",
+      async (_label, fromComposer) => {
+        mockUseChatSession.availableModels = [
+          { id: "openai/gpt-5-mini", name: "Mini", provider: "openai" },
+          {
+            id: "anthropic/claude-sonnet-4.5",
+            name: "Sonnet",
+            provider: "anthropic",
+          },
+        ] as never;
+        mockUseChatSession.multiModelEnabled = true;
+        try {
+          const readiness = holdServerReadiness();
+          render(
+            <PlaygroundMain
+              {...defaultProps}
+              enableMultiModelChat
+              ensureServersReady={readiness.ensureServersReady}
+            />,
+          );
+          await waitFor(() => expect(bridge()).not.toBe(null));
+          const broadcast = () =>
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0]
+              .broadcastRequest;
+          const before = broadcast();
+          const composer = () =>
+            mockChatInputProps.mock.calls.at(-1)?.[0] as {
+              onChange: (text: string) => void;
+              onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+            };
+          if (fromComposer) {
+            await act(async () => composer().onChange("draft for the panes"));
+            await act(async () => {
+              void composer().onSubmit({ preventDefault: () => {} });
+            });
+          } else {
+            await act(async () => {
+              fireEvent.click(
+                screen.getByRole("button", { name: "Starter chip" }),
+              );
+            });
+          }
+          expect(readiness.ensureServersReady).toHaveBeenCalledTimes(1);
+
+          await act(async () => {
+            void bridge()?.onNewChat();
+          });
+          if (fromComposer) {
+            await act(async () => {
+              fireEvent.click(screen.getByText("Discard and continue"));
+            });
+          }
+          await act(async () => readiness.release());
+          await settle();
+
+          expect(broadcast()).toBe(before);
+        } finally {
+          mockUseChatSession.availableModels = [];
+          mockUseChatSession.multiModelEnabled = false;
+        }
+      },
+    );
+
+    it("cancels a fullscreen composer send the same way, and keeps its draft", async () => {
+      const deviceType = mockUIPlaygroundStore.deviceType;
+      mockUIPlaygroundStore.deviceType = "fill";
+      useHostContextStore.setState({
+        draftHostContext: { displayMode: "fullscreen" },
+      });
+      try {
+        const readiness = holdServerReadiness();
+        await renderWithThreadA({
+          ensureServersReady: readiness.ensureServersReady,
+        });
+        await act(async () => {
+          mockThread.mock.calls.at(-1)?.[0].onFullscreenChange(true);
+        });
+        expect(screen.getByTestId("fullscreen-overlay")).toBeInTheDocument();
+        fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+          target: { value: "draft from fullscreen" },
+        });
+        await act(async () => {
+          fireEvent.click(screen.getByTestId("fullscreen-overlay-send"));
+        });
+        expect(readiness.ensureServersReady).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+          void bridge()?.onSelectThread(sessionB);
+        });
+        await act(async () => readiness.release());
+        await settle();
+        await act(async () => {
+          fireEvent.click(screen.getByText("Cancel"));
+        });
+        await settle();
+
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(screen.getByTestId("fullscreen-overlay-input")).toHaveValue(
+          "draft from fullscreen",
+        );
+      } finally {
+        mockUIPlaygroundStore.deviceType = deviceType;
+      }
+    });
+
+    it("still sends Quick Run's prompt once, into the chat its reset opened", async () => {
+      const view = render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(bridge()).not.toBe(null));
+      view.rerender(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Quick run prompt"
+          runPreviewRequest={1}
+        />,
+      );
+      await settle();
+
+      expect(mockUseChatSession.resetChat).toHaveBeenCalled();
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.sendMessage.mock.calls[0]![0]).toMatchObject({
+        text: "Quick run prompt",
+      });
+    });
+
+    it("still sends the eval preview's auto-run prompt once", async () => {
+      render(
+        <PlaygroundMain {...defaultProps} autoRunInput="Auto-run prompt" />,
+      );
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.sendMessage.mock.calls[0]![0]).toMatchObject({
+        text: "Auto-run prompt",
+      });
+    });
+
     it("sends once with no switch, and the send's isCurrent turns false once another thread opens", async () => {
       vi.mocked(mockUseChatSession.sendMessage).mockResolvedValueOnce(
         true as never,
