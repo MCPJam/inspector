@@ -4,30 +4,39 @@ import { resolveChatTurn } from "../../services/chat-turn/resolve-chat-turn.js";
 import {
   runtimeServerIds,
   runtimeServerNames,
-  runtimeSkills,
 } from "../../services/environments/runtime.js";
-import { resolveEffectiveCapabilities } from "../../services/environments/effective-capabilities.js";
-import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  fetchPluginRuntimeAttribution,
+  type PluginRuntimeAttribution,
+} from "../../services/environments/plugin-attribution.js";
 import { assertHostPointerAgreement } from "./chat-session-host-target.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { type EarlyStart, takeEarly } from "../../utils/early-start.js";
 import type { ResolvedEnvironmentRuntime } from "../../services/environments/runtime.js";
-import type { EffectiveCapabilitySet } from "../../services/environments/effective-capabilities.js";
-import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import type { ChatSessionHostTarget } from "./chat-session-host-target.js";
 
 export interface ResolvedTarget {
   serverIds: string[];
   serverNames?: string[];
   environmentId?: string;
-  resolvedEnvironment?: ResolvedEnvironmentRuntime;
-  /** Named environments own their capability set; bare server lists use the live pool. */
-  environmentCapabilities?: EffectiveCapabilitySet;
-  /** Absence permits the live skill fallback; an explicit empty array does not. */
-  environmentSkills?: RuntimeSkill[];
+  resolvedEnvironment: ResolvedEnvironmentRuntime;
+  /** Plugin origins for the environment's skills. */
+  attribution: PluginRuntimeAttribution | null;
+  /**
+   * A client's turn (a host or a bare server list), resolved in the client's
+   * skill selection, all visible by default. A named environment keeps
+   * exactly its own skills.
+   */
+  clientTurn: boolean;
   /** Bare server lists retain the emulated rail and carry no host. */
   host?: ChatSessionHostTarget;
   unappliedCapabilities?: string[];
   unavailableServerIds?: string[];
+  /**
+   * The project's organization, as the backend's capabilities read returned
+   * it for this caller (whose token is scoped to that organization).
+   */
+  organizationId?: string;
 }
 
 /** v1 reports client built-ins that this surface does not execute. */
@@ -45,14 +54,36 @@ export function unappliedBuiltInToolIds(
     : [];
 }
 
+type ChatCapabilities = {
+  chatEnvironmentVersion?: number;
+  organizationId?: string | null;
+} | null;
 const capabilitiesRef = makeFunctionReference<
   "query",
   { projectId: string },
-  { chatEnvironmentVersion?: number } | null
+  ChatCapabilities
 >("projects:getProjectCapabilities");
+const environmentCapabilitiesRef = makeFunctionReference<
+  "query",
+  { projectId: string },
+  { visibleSkillScope?: boolean }
+>("projectEnvironments:getCapabilities");
+
+/** The project's chat capabilities, the first thing the environment step reads. */
+export function readChatCapabilities(
+  client: ConvexHttpClient,
+  projectId: string,
+): Promise<ChatCapabilities> {
+  return client.query(capabilitiesRef, { projectId });
+}
 
 type Target = { environmentId?: string; serverIds?: string[]; hostId?: string };
-type Context = { authHeader: string; signal?: AbortSignal };
+type Context = {
+  authHeader: string;
+  signal?: AbortSignal;
+  /** {@link readChatCapabilities}, when the caller started it earlier. */
+  capabilities?: EarlyStart<ChatCapabilities>;
+};
 /** Require the shared resolver before choosing any runtime or billing policy. */
 export async function resolveChatSessionEnvironment(
   client: ConvexHttpClient,
@@ -60,7 +91,9 @@ export async function resolveChatSessionEnvironment(
   input: Target,
   context: Context,
 ): Promise<ResolvedTarget> {
-  const capabilities = await client.query(capabilitiesRef, { projectId });
+  const capabilities = context.capabilities
+    ? await takeEarly(context.capabilities)
+    : await readChatCapabilities(client, projectId);
   if (capabilities === null)
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found.");
   if (capabilities?.chatEnvironmentVersion !== 1)
@@ -69,6 +102,12 @@ export async function resolveChatSessionEnvironment(
       ErrorCode.FEATURE_NOT_SUPPORTED,
       "Chat requires a backend with saved setup support. Upgrade the backend before sending messages.",
     );
+  // Older backends reject unknown query arguments and redact the validation
+  // detail in production. Check support before sending the optional scope.
+  const visibleSkillScope =
+    !input.environmentId &&
+    (await client.query(environmentCapabilitiesRef, { projectId }))
+      ?.visibleSkillScope === true;
   const args: Parameters<typeof resolveChatTurn>[0] = {
     target: input.environmentId
       ? { kind: "environment", environmentId: input.environmentId }
@@ -79,6 +118,7 @@ export async function resolveChatSessionEnvironment(
     client,
     bearer: context.authHeader,
     signal: context.signal,
+    ...(visibleSkillScope ? { skillScope: "visible" } : {}),
     selection: input.environmentId
       ? { kind: "environment-default" }
       : input.serverIds !== undefined
@@ -155,18 +195,12 @@ export async function resolveChatSessionEnvironment(
     ...(serverNames.length === serverIds.length ? { serverNames } : {}),
     environmentId: input.environmentId,
     resolvedEnvironment: spec,
+    attribution,
+    clientTurn: !input.environmentId,
     ...(unavailableServerIds.length ? { unavailableServerIds } : {}),
     ...(unappliedCapabilities.length ? { unappliedCapabilities } : {}),
-    ...(input.environmentId
-      ? {
-          environmentCapabilities: resolveEffectiveCapabilities(
-            spec,
-            attribution,
-          ),
-        }
-      : {}),
-    ...(input.environmentId && Array.isArray(spec.skills)
-      ? { environmentSkills: runtimeSkills(spec) }
+    ...(capabilities.organizationId
+      ? { organizationId: capabilities.organizationId }
       : {}),
     // Bare server lists retain the emulated API rail and the caller's model policy.
     ...(input.environmentId || input.hostId

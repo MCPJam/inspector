@@ -1,5 +1,4 @@
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
-import { useLocalBrowserEnabled } from "@/hooks/useComputersEnabled";
 import { useLocalBrowserOnboarding } from "@/hooks/useLocalBrowserOnboarding";
 import { HOSTED_MODE } from "@/lib/config";
 import { LocalBrowserConsentGate } from "./LocalBrowserConsentGate";
@@ -12,13 +11,11 @@ export function LocalBrowserOnboarding({
   projectId: string | null;
   authReady: boolean;
 }) {
-  const enabled = useLocalBrowserEnabled();
   const engine = useBrowserEngine(projectId);
   const onboarding = useLocalBrowserOnboarding();
   if (
     HOSTED_MODE ||
     !authReady ||
-    !enabled ||
     !engine.resolved ||
     !engine.localAvailable ||
     engine.environmentMode ||

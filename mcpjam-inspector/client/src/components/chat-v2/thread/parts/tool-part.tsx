@@ -38,6 +38,7 @@ import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
 import { resolvePageToolAttribution } from "@/lib/webmcp-page-tools/attribution";
+import { ToolCallAccountTag, useToolCallAccountName } from "../tool-call-account";
 import {
   getToolNameFromType,
   getToolStateMeta,
@@ -119,6 +120,7 @@ export function ToolPart({
   mcpToolResultImageRendering,
   rawOutput,
   recordedWidgetDiagnostics,
+  keepLiveWidgetDiagnostics = false,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -173,6 +175,9 @@ export function ToolPart({
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
   recordedWidgetDiagnostics?: RecordedWidgetPolicy;
+  /** A live App (not a picture): its own diagnostics win, and the recorded
+   *  errors are shown next to them. */
+  keepLiveWidgetDiagnostics?: boolean;
 }) {
   const hasTrackedSkillLoad = useRef(false);
 
@@ -195,6 +200,7 @@ export function ToolPart({
     pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
+  const accountName = useToolCallAccountName(toolCallId);
   const recoveryFailures = useChatAuthRecoveryFailures();
   const recoveryFailure =
     toolCallId !== undefined
@@ -355,16 +361,18 @@ export function ToolPart({
   // A completed eval can retain live store data from the streaming phase.
   // Once its widget becomes a frozen screenshot, the recorded snapshot is the
   // source of truth and stale live diagnostics must not leak into the card.
-  const widgetDebugInfo = recordedWidgetDiagnostics
-    ? undefined
-    : storedWidgetDebugInfo;
+  const widgetDebugInfo =
+    recordedWidgetDiagnostics && !keepLiveWidgetDiagnostics
+      ? undefined
+      : storedWidgetDebugInfo;
   const hostContext = useEffectiveHostContext();
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
     [hostContext],
   );
   const hasWidgetDebug = !!widgetDebugInfo;
-  const hasRecordedWidgetDebug = !!recordedWidgetDiagnostics;
+  const hasRecordedWidgetDebug =
+    !!recordedWidgetDiagnostics && !widgetDebugInfo;
   const hasWidgetDebugData = hasWidgetDebug || hasRecordedWidgetDebug;
   const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebugData;
 
@@ -1075,6 +1083,7 @@ export function ToolPart({
                 from {appToolAttribution.appName}
               </span>
             )}
+            <ToolCallAccountTag name={accountName} />
             {pageToolAttribution?.origin && (
               <span
                 data-testid="page-tool-origin"
@@ -1231,6 +1240,7 @@ export function ToolPart({
                       : undefined
                   }
                   protocol={widgetDebugInfo.protocol}
+                  recordedErrors={recordedWidgetDiagnostics}
                 />
               )}
               {!hasWidgetDebug &&

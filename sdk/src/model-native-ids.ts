@@ -86,6 +86,11 @@ export const ANTHROPIC_NATIVE_MODEL_IDS: readonly NativeModelIdMapping[] =
       evidence: `${HOSTED}; snapshot id from Anthropic's models overview`,
     },
     {
+      canonicalId: "anthropic/claude-haiku-5.5",
+      nativeId: "claude-haiku-5-5",
+      evidence: HOSTED,
+    },
+    {
       canonicalId: "anthropic/claude-haiku-4.5",
       nativeId: "claude-haiku-4-5",
       nativeAliases: ["claude-haiku-4-5-20251001"],

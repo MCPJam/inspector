@@ -13,6 +13,7 @@ import { Input } from "./input";
 import { Label } from "./label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
+import { CHIP, fitChips } from "./server-chips";
 import { cn } from "../cn";
 
 /** Which tab the panel is showing. Structurally identical to the app's own. */
@@ -102,25 +103,6 @@ const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
 
 /** The wrapper a row shares with its trailing actions, which reveal on hover. */
 const ROW_WRAP = "group flex items-center gap-1 rounded pr-1 hover:bg-accent";
-
-/** `muted`, not the Badge's `secondary`: the lighter of two near-whites. */
-const CHIP =
-  "rounded-full border-transparent bg-muted px-2 py-0 text-[11px] font-normal text-muted-foreground";
-
-/**
- * Roughly what a chip occupies, in pixels. Measured in the app at 11px: the
- * flat 22 is padding plus gap, then 5.2px a latin character and 11.5px a wide
- * one. Counting characters alone cut a two-chip row with 42px free; charging
- * them equally let two CJK names in and wrapped it.
- *
- * `[...text]` so a surrogate pair counts once. A formula, not a measurement —
- * swap in a real one only if a font change makes it wrong enough to wrap.
- */
-const WIDE =
-  /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|[\u{1F300}-\u{1FAFF}]|[\u{20000}-\u{3FFFD}]/u;
-
-const chipWidth = (text: string) =>
-  22 + [...text].reduce((w, ch) => w + (WIDE.test(ch) ? 11.5 : 5.2), 0);
 
 /**
  * Tabs as the design draws them: no strip, split evenly, active one filled
@@ -474,25 +456,13 @@ export function ServerPickerPanel({
           : groups.map((group) => {
               const selected = group.id === selectedGroupId;
               // As many as FIT, per the design: two `excalidraw` chips and
-              // `+4`, but three short names all show. A fixed count wrapped
-              // the row. No ResizeObserver — the row is one line either way.
-              const shown: string[] = [];
-              let used = 0;
-              for (const [i, name] of group.serverNames.entries()) {
-                // `+N` takes room too, so each candidate has to leave space for
-                // the summary that would follow it.
-                const hidden = group.serverNames.length - i - 1;
-                const next = used + chipWidth(name);
-                if (
-                  shown.length > 0 &&
-                  next + (hidden > 0 ? chipWidth(`+${hidden}`) : 0) > chipRoomPx
-                ) {
-                  break;
-                }
-                shown.push(name);
-                used = next;
-              }
-              const hidden = group.serverNames.length - shown.length;
+              // `+4`, but three short names all show. No ResizeObserver — the
+              // row is one line either way.
+              const { shown, hidden: rest } = fitChips(
+                group.serverNames,
+                chipRoomPx,
+              );
+              const hidden = rest.length;
               return (
                 <div key={group.id} className={ROW_WRAP}>
                   <button

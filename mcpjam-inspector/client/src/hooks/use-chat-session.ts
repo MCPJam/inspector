@@ -141,6 +141,8 @@ import {
   saveSelectedModelSelections,
   type LeadModelProviderHint,
 } from "@/lib/selected-model-storage";
+import { loadPickedTarget, savePickedTarget } from "@/lib/playground-picked-target-storage";
+import { withReasoningEffort } from "@/lib/reasoning-effort-selection";
 import { resolveModelSelection } from "@/lib/model-selection";
 import {
   harnessDefaultModel,
@@ -186,6 +188,7 @@ import {
 } from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { authFetch } from "@/lib/session-token";
+import type { HarnessBoxPreparationRequest } from "@/hooks/use-harness-box-preparation";
 import {
   classifyScenarioAccessResponse,
   patchBodyAccessVersion,
@@ -211,6 +214,7 @@ import {
 } from "@/lib/chat-send-request";
 import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
 import {
+  buildRawToolResultOverrides,
   preserveHydratedMessageIds,
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
@@ -392,6 +396,8 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
   "runtime-changed":
     "Started a new session because this client's runtime changed, so earlier context isn't available.",
+  "sandbox-restored":
+    "This conversation's computer was replaced. The agent still has the conversation, but files from earlier turns are gone.",
   "legacy-cold-resume": null,
 };
 
@@ -510,6 +516,8 @@ export interface UseChatSessionOptions {
   /** A card's saved choice; its connection and settings remain authoritative. */
   pickedModelSelection?: RequestedModelSelection;
   selectionIntent?: "picked" | "inherit";
+  /** Keep the target's "picked" state across reloads (the Playground's lead chat). */
+  rememberPickedTarget?: boolean;
   /** Display the named setup's exact choice without turning it into a wire override. */
   inheritedEnvironmentModel?: { modelId: string | null; modelSelection?: RequestedModelSelection | null };
   pluginContextReferences?: string[] | ((workspaceId: string) => string[]);
@@ -730,6 +738,8 @@ export interface SetSelectedModelOptions {
 
 export interface UseChatSessionReturn {
   harnessStartupPhase: HarnessStartupPhase | null;
+  /** A new hosted Claude Code or Codex chat whose computer can be set up early. */
+  harnessBoxPreparation: HarnessBoxPreparationRequest | null;
   /**
    * Elicitation requests whose tool call is blocked on this user right now.
    * Turn-scoped: they arrive as transient stream parts and are dropped when the
@@ -887,6 +897,8 @@ export interface UseChatSessionReturn {
   ) => void;
   /** Levels `model` supports here (the model menu's per-row efforts). */
   reasoningEffortLevelsFor: (model: ModelDefinition) => ModelReasoningEffort[];
+  /** The user picked this target's model or settings, so a reload keeps them. */
+  hasPickedModel: boolean;
   /**
    * User pick for `model` (picked with its effort in the model menu), before
    * it is the selected model. Remembered for it, like `setReasoningEffort`.
@@ -2086,6 +2098,7 @@ export function useChatSession(
     pinnedModelProvider,
     pickedModelSelection,
     selectionIntent = "picked",
+    rememberPickedTarget = false,
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
   // there. Consent-gated `engine`, device-scoped token — both from the caller.
@@ -2161,7 +2174,12 @@ export function useChatSession(
   const [restoredChoice, setRestoredChoice] = useState<{
     target: string; selection: RequestedModelSelection;
   } | null>(null);
-  const [pickedTarget, setPickedTarget] = useState<string | null>(null);
+  const [pickedTarget, setPickedTargetState] = useState<string | null>(() =>
+    rememberPickedTarget ? loadPickedTarget() : null);
+  const setPickedTarget = useCallback((target: string, remember = true) => {
+    setPickedTargetState(target);
+    if (rememberPickedTarget && remember) savePickedTarget(target);
+  }, [rememberPickedTarget]);
   const effectiveSelectionIntent = hostedScenarioId
     ? "inherit"
     : pickedTarget === hostedTargetKeyValue ? "picked" : selectionIntent;
@@ -3455,11 +3473,22 @@ export function useChatSession(
       : undefined;
   const setReasoningEffort = useCallback(
     (effort: ModelReasoningEffort | undefined, userInitiated = false) => {
-      if (userInitiated) setPickedTarget(hostedTargetKeyValue);
+      if (userInitiated) {
+        setPickedTarget(hostedTargetKeyValue);
+        // The saved lead carries its own effort, which outranks the per-model
+        // memory on reload, so a pick must reach it too.
+        const saved = loadSelectedModelSelections() ?? [];
+        const lead = saved[0];
+        if (!initialModelId && lead && lead.source !== "legacy" &&
+            resolveCompareSelectionRow(lead, [selectedModel], hostedOrgModelConfig)) {
+          saveSelectedModelSelections(
+            replaceLeadCompareSelection(saved, withReasoningEffort(lead, effort)));
+        }
+      }
       setEffortByModel((prev) => ({ ...prev, [effortKey]: effort }));
       saveRememberedReasoningEffort(effortKey, effort);
     },
-    [effortKey, hostedTargetKeyValue],
+    [effortKey, hostedTargetKeyValue, setPickedTarget, initialModelId, selectedModel, hostedOrgModelConfig],
   );
   const setTemperature = useCallback((value: number, userInitiated = false) => {
     setTemperatureOverride(value);
@@ -3468,7 +3497,7 @@ export function useChatSession(
       setEffortByModel((prev) => ({ ...prev, [effortKey]: undefined }));
       saveRememberedReasoningEffort(effortKey, undefined);
     }
-  }, [effortKey, hostedTargetKeyValue]);
+  }, [effortKey, hostedTargetKeyValue, setPickedTarget]);
   const setReasoningEffortForModel = useCallback(
     (model: ModelDefinition, effort: ModelReasoningEffort | undefined) => {
       const key = reasoningEffortMemoryKey(model);
@@ -3582,7 +3611,7 @@ export function useChatSession(
           ? existing : compareSelectionForRow(model, hostedOrgModelConfig));
       if (selection && options?.persist === false) {
         setRestoredChoice({ target: hostedTargetKeyValue, selection });
-        setPickedTarget(hostedTargetKeyValue);
+        setPickedTarget(hostedTargetKeyValue, false);
         return;
       }
       // An explicit pick on a named setup stays with that target. A setting
@@ -3597,7 +3626,7 @@ export function useChatSession(
       setLeadProviderHint(hint);
       setSelectedModelId(modelId);
     },
-    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue, hostedEnvironmentId],
+    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue, hostedEnvironmentId, setPickedTarget],
   );
 
   const setSelectedModelIds = useCallback(
@@ -6250,6 +6279,9 @@ export function useChatSession(
         }
       }
       let uiMessages: UIMessage[] = [];
+      // Raw tool results for reopened Apps. A local chat saves no widget
+      // snapshot, so without these an App gets the model's copy of its result.
+      let rawResultOverrides: Record<string, ToolRenderOverride> = {};
 
       if (session.messagesBlobUrl) {
         // Goes through the dedup cache so a hover-prefetched blob is reused
@@ -6258,10 +6290,12 @@ export function useChatSession(
           session.messagesBlobUrl,
         )) as unknown[];
         uiMessages = transcriptToUIMessages(transcript);
+        rawResultOverrides = buildRawToolResultOverrides(transcript);
       }
 
-      // Build toolRenderOverrides from widget snapshots if available
-      let overrides: Record<string, ToolRenderOverride> = {};
+      // Build toolRenderOverrides from widget snapshots if available. A
+      // snapshot wins over the raw result for the same tool call.
+      let overrides: Record<string, ToolRenderOverride> = rawResultOverrides;
       const hydratedWidgetSnapshots = await resolveHydratedWidgetSnapshots(
         session.widgetSnapshots,
       );
@@ -6275,9 +6309,25 @@ export function useChatSession(
         // cached snapshot HTML so the widget re-renders against the active
         // host's current CSP / bridge state. The cached path is kept for
         // OpenAI Apps and degenerate mcp-apps snapshots that can't live-fetch.
-        overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots, {
-          preferLiveWhenPossible: true,
-        });
+        const snapshotOverrides = buildToolRenderOverridesFromSnapshots(
+          traceSnapshots,
+          { preferLiveWhenPossible: true },
+        );
+        overrides = { ...rawResultOverrides };
+        for (const [toolCallId, snapshotOverride] of Object.entries(
+          snapshotOverrides,
+        )) {
+          // A snapshot whose saved output could not be fetched keeps its
+          // settings but still gives the App the raw result.
+          overrides[toolCallId] =
+            snapshotOverride.toolOutput === undefined &&
+            rawResultOverrides[toolCallId]
+              ? {
+                  ...snapshotOverride,
+                  toolOutput: rawResultOverrides[toolCallId].toolOutput,
+                }
+              : snapshotOverride;
+        }
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
@@ -6389,6 +6439,24 @@ export function useChatSession(
     setRespectToolVisibility(executionRespectToolVisibility ?? true);
   }, [isExecutionConfigControlled, executionRespectToolVisibility]);
 
+  // Only auth and scope rerun this effect. The id, not the user object, since
+  // AuthKit hands back a new object for the same member on refresh; and the
+  // reset helpers through a ref, since opening a conversation swaps the chat
+  // and with it their identities. Each rerun briefly clears the bootstrap and
+  // unmounts what it gates, Sessions included.
+  const workOsUserId = workOsUser?.id;
+  const bootstrapResetRef = useRef({
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  });
+  bootstrapResetRef.current = {
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  };
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
     let active = true;
@@ -6461,7 +6529,7 @@ export function useChatSession(
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const resolvedMemberId =
           resolvedAuthHeaders && authIsMemberRef.current
-            ? workOsUser?.id
+            ? workOsUserId
             : undefined;
         // Token rotation updates transport headers, but must not discard the
         // same member's transcript or detach its pending authorization call.
@@ -6491,12 +6559,13 @@ export function useChatSession(
         ) {
           invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
-          clearPendingSessionHydration();
+          const reset = bootstrapResetRef.current;
+          reset.clearPendingSessionHydration();
           setChatSessionId(generateId());
-          setMessages([]);
+          reset.setMessages([]);
           setPersistedSnapshotToolCallIds([]);
-          syncResumedVersion(null);
-          syncRestoredToolRenderOverrides({});
+          reset.syncResumedVersion(null);
+          reset.syncRestoredToolRenderOverrides({});
           onResetRef.current?.("auth-bootstrap");
         }
 
@@ -6534,11 +6603,7 @@ export function useChatSession(
     hostedProjectId,
     isAuthenticated,
     isHostedGuest,
-    workOsUser,
-    clearPendingSessionHydration,
-    setMessages,
-    syncResumedVersion,
-    syncRestoredToolRenderOverrides,
+    workOsUserId,
   ]);
 
   // Fetch tools metadata
@@ -6886,7 +6951,37 @@ export function useChatSession(
       harnessStartupRequestRef.current = null;
   }, [chatSessionId]);
 
+  // What the Send would run against (`buildHostedBody`), for a hosted chat on
+  // a client or an environment. A plugin chat's hidden environment is left out.
+  const harnessBoxPreparation: HarnessBoxPreparationRequest | null =
+    HOSTED_MODE && isAuthenticated && hostedProjectId && !hostedScenarioId &&
+    isHarness(harnessId) &&
+    messages.length === 0 && !options.comparePane && !hiddenEnvironmentActive &&
+    (hostedExecutionTarget || hostedHostId)
+      ? {
+          chatSessionId,
+          body: {
+            projectId: hostedProjectId,
+            chatSessionId,
+            selectedServerIds: hostedSelectedServerIds,
+            model: selectedModel,
+            ...(requestChoice.kind === "picked"
+              ? { modelSelection: requestChoice.selection }
+              : {}),
+            ...(hostedExecutionTarget
+              ? {
+                  executionTarget: hostedExecutionTarget,
+                  ...(hostedEnvironmentId && hostedEnvironmentOverrides
+                    ? { environmentOverrides: hostedEnvironmentOverrides }
+                    : {}),
+                }
+              : { hostId: hostedHostId }),
+          },
+        }
+      : null;
+
   return {
+    harnessBoxPreparation,
     harnessStartupPhase: status === "submitted" || status === "streaming" ? harnessStartupPhase : null,
     // Chat state
     messages,
@@ -6940,6 +7035,7 @@ export function useChatSession(
     seedReasoningEffort,
     reasoningEffortLevelsFor,
     setReasoningEffortForModel,
+    hasPickedModel: pickedTarget === hostedTargetKeyValue,
 
     // Tools metadata
     toolsMetadata,

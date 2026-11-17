@@ -176,12 +176,25 @@ describe("hosted tab policy stays consistent with the manifests", () => {
 });
 
 describe("buildAppAtlas", () => {
+  it("advertises current Evaluate instead of retired eval links", () => {
+    const atlas = buildAppAtlas();
+    expect(atlas).toContain("### Evaluate (evaluate)");
+    expect(atlas).not.toContain("(evals)");
+    expect(atlas).not.toContain("Evaluate (New)");
+  });
+
   it("names every atlas surface with a navigable target", () => {
     const atlas = buildAppAtlas();
     for (const surface of APP_SURFACES.filter((s) => s.showInAtlas)) {
       expect(atlas, surface.id).toContain(surface.title);
       expect(atlas, surface.id).toContain(`(${surface.navSegments[0]})`);
     }
+  });
+
+  it("leaves the flag-gated Readiness page out", () => {
+    // The atlas cannot read the flag, and the page redirects without it.
+    expect(buildAppAtlas()).not.toContain("### Readiness");
+    expect(buildAppAtlas()).not.toContain("(readiness)");
   });
 
   it("omits hosted-blocked surfaces when built for a hosted deployment", () => {

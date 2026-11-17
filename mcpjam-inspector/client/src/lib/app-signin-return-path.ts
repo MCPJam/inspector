@@ -20,6 +20,7 @@
  *   - it expires, so a path stored days ago in a long-lived tab cannot
  *     hijack an unrelated sign-in later.
  */
+import { readPromoCampaign, redeemPath } from "./promo-intent";
 import { projectTransitionRecovery } from "./auth/project-transition-recovery";
 import { normalizeReturnTargetPath, routePaths } from "./app-navigation";
 import { isAppRelativeTarget, readProjectPathSegment } from "./project-route";
@@ -116,7 +117,13 @@ export function readAppSignInReturnPath(
     }
     if (!isStorableReturnPath(parsed.path)) return null;
     // The card entry is standalone and has no app navigation tab.
-    if (parsed.path === "/redeem") return parsed.path;
+    if (parsed.path.split(/[?#]/)[0] === "/redeem") {
+      const url = new URL(parsed.path, "https://app.mcpjam.com");
+      return redeemPath(
+        readPromoCampaign(url.search),
+        url.searchParams.get("manual") === "1",
+      );
+    }
     // Re-normalized on the way out, not just on the way in: this value has
     // been sitting in storage where anything on the origin could rewrite it.
     const normalized = normalizeReturnTargetPath(parsed.path, routePaths.root);

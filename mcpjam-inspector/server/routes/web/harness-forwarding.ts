@@ -21,7 +21,10 @@ import {
 } from "../../utils/harness/forwarding/approval.js";
 import { forwardNativeMcp } from "../../utils/harness/forwarding/native-transport.js";
 import { createNativeRpcLogger } from "../../utils/harness/forwarding/native-rpc-logs.js";
-import { nativeToolCallId } from "../../utils/harness/forwarding/native-results.js";
+import {
+  nativeToolCallId,
+  withoutHostCorrelation,
+} from "../../utils/harness/forwarding/native-results.js";
 import { nativeApprovalResponse } from "../../utils/harness/forwarding/native-approval-response.js";
 import {
   cancelledRequestId,
@@ -235,6 +238,15 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
               },
             });
           };
+          // MCPJam stamped its own correlation key on the request; the server
+          // gets it without that key, whichever route carries it.
+          const forwarded =
+            raw === undefined
+              ? { body: raw, message }
+              : withoutHostCorrelation(
+                  { body: raw, message },
+                  context.correlationKey,
+                );
           const send = (
             settle?: Parameters<typeof forwardNativeMcp>[0]["settle"],
           ) =>
@@ -242,7 +254,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
               ? enhancedMcpResponse({
                   manager: authorized.manager,
                   serverId,
-                  message,
+                  message: forwarded.message,
                   signal,
                   respectVisibility:
                     sealed.profile?.respectToolVisibility !== false,
@@ -270,8 +282,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
                   serverId,
                   request: c.req.raw,
                   signal,
-                  body: raw,
-                  message,
+                  ...forwarded,
                   trustedHeaders: config.requestInit?.headers,
                   fetch: config.baseFetch!,
                   onUnauthorized: config.onUnauthorized,

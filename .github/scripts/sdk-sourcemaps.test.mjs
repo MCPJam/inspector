@@ -15,6 +15,28 @@ import test from "node:test";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const sdk = JSON.parse(readFileSync(join(root, "sdk/package.json"), "utf8"));
 
+// sentry-release-parser's rule, which sentry-cli applies to --release and
+// Sentry's ingest applies to an event's release.
+const SENTRY_RELEASE = /^[^\\/\r\n\t\x7f\x00-\x1f]{1,200}$/;
+
+test("SDK maps upload under the release the SDK reports, in a name Sentry accepts", () => {
+  const sentry = readFileSync(join(root, "sdk/src/sentry.ts"), "utf8");
+  const reported = /const SDK_RELEASE = `([^`$]*)\$\{SDK_VERSION\}`;/.exec(
+    sentry,
+  )?.[1];
+  const step = readFileSync(join(root, ".github/workflows/release.yml"), "utf8")
+    .split("- name: Upload SDK sourcemaps\n")[1]
+    ?.split(/\n\s+- name: |\n {2}\S/)[0];
+  const uploaded = /--release="([^"$]*)\$\{version\}"/.exec(step ?? "")?.[1];
+  const script = /--release=([^\s$]*)\$\(node -p/.exec(
+    sdk.scripts["sentry:sourcemaps"],
+  )?.[1];
+  assert.equal(typeof reported, "string");
+  assert.equal(uploaded, reported);
+  assert.equal(script, reported);
+  assert.match(`${reported}${sdk.version}`, SENTRY_RELEASE);
+});
+
 test("SDK packing injects map IDs after a rebuild and ships the upload bytes", () => {
   assert.equal(sdk.scripts.prepublishOnly, "npm run build");
   assert.equal(sdk.scripts.prepack, "npm run sentry:inject --silent 1>&2");

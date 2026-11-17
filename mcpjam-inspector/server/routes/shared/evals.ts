@@ -3,11 +3,11 @@ import { localHarnessCapabilities } from "../../services/evals/runner-capabiliti
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
 import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
-import { listBaseServers } from "../../utils/mcp-connections.js";
+import { listBaseServers, managerAccountsAtRun } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
-import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
+import type { MCPClientManager, MCPServerConfig, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
 import {
   caseIntentSchema,
@@ -51,7 +51,6 @@ import {
   runFrozenSkillOptions,
   streamTestCase,
   throwIfEvalToolSnapshotFailed,
-  type EvalPinnedSkillSource,
   type EvalTestCase,
 } from "../../services/evals-runner";
 import {
@@ -83,6 +82,7 @@ import {
 } from "./eval-case-batch.js";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { convexReadFetch } from "../v1/convex-read-errors.js";
 import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
@@ -115,6 +115,7 @@ import {
   buildPinnedSkillSource,
   type BuiltPinnedSkillSource,
 } from "../../services/evals/pinned-skill-source.js";
+import type { PinnedSkillSource } from "../../services/environments/turn-skills.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
@@ -1324,7 +1325,9 @@ export function createConvexClients(convexAuthToken: string) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
 
-  const convexClient = new ConvexHttpClient(convexUrl);
+  const convexClient = new ConvexHttpClient(convexUrl, {
+    fetch: convexReadFetch,
+  });
   convexClient.setAuth(convexAuthToken);
 
   return { convexClient, convexHttpUrl };
@@ -1377,6 +1380,7 @@ export function filterAndRemapReplayConfigs(
   replayConfigs: MCPServerReplayConfig[],
   resolvedServerIds: string[],
   persistedServerIds: string[],
+  serverConfig?: (serverId: string) => MCPServerConfig | undefined,
 ): MCPServerReplayConfig[] {
   const persistedIdByResolvedId = new Map<string, string>();
 
@@ -1390,7 +1394,12 @@ export function filterAndRemapReplayConfigs(
 
   return replayConfigs.flatMap((config) => {
     const persistedServerId = persistedIdByResolvedId.get(config.serverId);
-    if (!persistedServerId) {
+    // A credential the backend delivered stays in this process, so its
+    // connection is never stored for replay.
+    if (
+      !persistedServerId ||
+      serverConfig?.(config.serverId)?.credentialSource === "mcpjam-backend"
+    ) {
       return [];
     }
 
@@ -2791,6 +2800,7 @@ export async function prepareEvalRun(
     // and an approval that never arrives is reported to the caller as the
     // backend refusing a run they did approve.
     ...(importApprovals?.length ? { importApprovals } : {}),
+    accountsAtRun: managerAccountsAtRun(clientManager),
     // Same rule, same reason. Spread apart rather than as one `launchContext`
     // object because the recorder's parameter list is the mutation's argument
     // list, and the backend takes the two as siblings of `source`.
@@ -3062,6 +3072,7 @@ export async function prepareEvalRun(
     clientManager.getServerReplayConfigs(),
     resolvedServerIds,
     persistedServerRefs,
+    (serverId) => clientManager.getServerConfig(serverId),
   );
   if (replayConfigsToStore.length > 0) {
     try {
@@ -3130,7 +3141,7 @@ export async function prepareEvalRun(
   // Everything here happens BEFORE `execute()`, which is the whole point: a
   // setup failure must precede model execution and name the component that
   // caused it.
-  let pinnedSkillSource: EvalPinnedSkillSource | undefined;
+  let pinnedSkillSource: PinnedSkillSource | undefined;
   /**
    * The run's frozen skills in HARNESS shape (materialized on box), built here
    * rather than per iteration because the supporting-file download is I/O that
@@ -3139,9 +3150,9 @@ export async function prepareEvalRun(
    *
    * Set for EVERY runId-bearing run, empty included. The harness selects its
    * pinned source by PRESENCE, so `[]` says "this run delivers no skills" while
-   * `undefined` falls through to a live project-wide fetch of whatever the
-   * project holds right now — which would unfreeze a frozen run, and would hand
-   * the `skillsOverride: "exclude"` arm every skill in the project.
+   * `undefined` leaves the box with whatever skills it already holds — which
+   * would unfreeze a frozen run, and would hand the `skillsOverride: "exclude"`
+   * arm an earlier turn's skills.
    */
   let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
   /** The run's pinned plugin servers, re-gated just before execution. */
@@ -3903,7 +3914,7 @@ function isTerminalIteration(iteration: unknown): boolean {
 function environmentExecutionOptions(prepared: PreparedSingleCaseExecution): {
   committedQuickRunIterationIds?: string[];
   projectEnvironmentId?: string;
-  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedSkillSource?: PinnedSkillSource;
   pinnedHarnessSkills?: PinnedSkillArtifact[];
 } {
   const environment = prepared.environment;

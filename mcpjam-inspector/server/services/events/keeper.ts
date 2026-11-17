@@ -41,6 +41,7 @@ import {
 } from "@mcpjam/sdk/events";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { logger } from "../../utils/logger.js";
+import { resolveProcessRole } from "../lifecycle/process-role.js";
 import {
   EventsBackendClient,
   StaleLeaseError,
@@ -500,6 +501,9 @@ export function startEventsKeeper(options?: {
   deps?: KeeperDeps;
   intervalMs?: number;
 }): EventsKeeperHandle {
+  // Web replicas leave every claim loop to the worker deployment.
+  if (resolveProcessRole() === "web")
+    return { stop: async () => {}, kick: () => {} };
   const holder = options?.claimedBy ?? defaultEventsHolder("inspector-events-keeper");
   if (!options?.deps && !isEventsBackendConfigured()) {
     logger.debug(

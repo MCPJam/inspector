@@ -5,7 +5,7 @@ icon: "rocket"
 ---
 
 <Note>
-The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+SDK 10, CLI 6, Vitest 0.3, and later versions require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. Earlier versions keep their existing behavior.
 </Note>
 
 ## 1. Choose how to open Inspector
@@ -40,8 +40,8 @@ See [Installation](/installation#which-one-do-i-need) for the full comparison.
 
 On first launch, MCPJam shows a **Welcome** overlay that guides you through connecting your first server. You can:
 
-- **Enter your own server** — paste an HTTPS URL (e.g. `https://your-server.example/mcp`) or a STDIO command (Terminal, Desktop, and Docker only).
-- **Try the Excalidraw demo** — a hosted diagramming MCP app, no setup required.
+- **Enter your own server**: paste an HTTPS URL (e.g. `https://your-server.example/mcp`) or a STDIO command (Terminal, Desktop, and Docker only).
+- **Try the Excalidraw demo**: a hosted diagramming MCP app, no setup required.
 
 After connecting, MCPJam shows the server name and tool count, then offers an **Open Playground** button that seeds the chat with the prompt:
 
@@ -93,7 +93,7 @@ You should see your server show **Connected** with a green dot in the **Connect*
 
 <AccordionGroup>
   <Accordion title="Does MCPJam need a database?" icon="database">
-    No. MCPJam Inspector runs as a hosted web app, a desktop app, or via `npx` — none of them require you to install or configure a database. Accounts, sharing, and OAuth token storage on [app.mcpjam.com](https://app.mcpjam.com) are handled by the hosted backend; the Terminal and Desktop apps store config locally on disk.
+    No. MCPJam Inspector runs as a hosted web app, a desktop app, or via `npx`; none of them require you to install or configure a database. Accounts, sharing, and OAuth token storage on [app.mcpjam.com](https://app.mcpjam.com) are handled by the hosted backend; the Terminal and Desktop apps store config locally on disk.
   </Accordion>
   <Accordion title="How do I check which version of Inspector I'm running?" icon="tag">
     All three installs (Web, Desktop, Terminal) show the running version in the **Settings** tab under **About**.
@@ -123,4 +123,4 @@ You should see your server show **Connected** with a green dot in the **Connect*
 
 ## Eval authentication
 
-For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.
+For these versions, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

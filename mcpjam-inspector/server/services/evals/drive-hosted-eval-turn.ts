@@ -39,6 +39,7 @@ import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
+import { appliedToolApproval, engineApprovalMode } from "@/shared/tool-approval";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
 import {
@@ -187,10 +188,10 @@ export interface DriveHostedEvalTurnParams {
   agentLoop?: Harness;
   /** The case's saved selection, read by the harness turn only. */
   modelSelection?: RunAssistantTurnOptions["modelSelection"];
-  /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
-   *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
-   *  an interactive approval flow; a gated call can fail during streaming.
-   *  The emulated eval path is unchanged (it doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
+  /** Host approval intent (resolvedExecution.requireToolApproval). A harness
+   *  turn receives it as the eval policy applies it (off), so it runs as an
+   *  approval-off client and MCPJam denies only `always` tools; the run still
+   *  records how many calls would have asked (`approvals_would_require`). */
   requireToolApproval?: boolean;
   toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
@@ -261,18 +262,19 @@ export interface DriveHostedEvalTurnParams {
   /** Reports what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: RunAssistantTurnOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
+  onBoxSkillsWritten?: RunAssistantTurnOptions["onBoxSkillsWritten"];
   /**
    * The run's PINNED skills, delivered to the harness verbatim.
    *
-   * Present (even empty) ⇒ the harness turn delivers exactly these and skips
-   * the live project-wide fetch, which is what keeps a frozen run frozen. An
-   * empty set is how `skillsOverride: "exclude"` reaches the harness — the A/B
-   * arm has to be deliberately skill-free, not accidentally so.
+   * Present (even empty) ⇒ the harness turn delivers exactly these, which is
+   * what keeps a frozen run frozen. An empty set is how
+   * `skillsOverride: "exclude"` reaches the harness — the A/B arm has to be
+   * deliberately skill-free, not accidentally so.
    *
    * The FROZEN-RUN channel (`pinnedHarnessSkills`), not the live-environment
-   * one (`runtimeSkillsOverride`). `selectHarnessSkillSource` ranks
-   * pinned → environment → live, and only the top rank promises that nothing
-   * live is consulted; `runtimeSkillsOverride` is for a turn whose environment
+   * one (`runtimeSkillsOverride`). `selectHarnessSkillSource` ranks pinned
+   * above environment, and only the top rank promises that nothing live is
+   * consulted; `runtimeSkillsOverride` is for a turn whose environment
    * re-resolves each time, which is the opposite of what a pinned run wants.
    */
   pinnedHarnessSkills?: RunAssistantTurnOptions["pinnedHarnessSkills"];
@@ -823,17 +825,21 @@ export async function driveHostedEvalTurn(
       origin: "eval",
       streamSink: "none",
       persistMode: "caller",
-      approvalMode: "auto-deny",
-      // Harness eval (host harness === "claude-code"): forward the host's real
-      // approval intent. Evals cannot approve a gated native call interactively,
-      // and non-approval hosts still run under allow-all.
+      approvalMode: engineApprovalMode("eval"),
+      // A harness eval reads the same policy as the emulated one: the host's
+      // switch does not apply, and `approvalMode` makes MCPJam deny the rest.
       ...(params.harness
         ? {
             agentLoop: params.agentLoop,
             harnessTurnContext: EVAL_WIDGET_MODEL_CONTEXT ? buildEvalWidgetContextSystemPrompt(browser.browserInteractionSteps) : undefined,
             ...(params.harnessExecutionTarget ? { harnessExecutionTarget: params.harnessExecutionTarget } : {}),
             ...(params.requireToolApproval !== undefined
-              ? { requireToolApproval: params.requireToolApproval }
+              ? {
+                  requireToolApproval: appliedToolApproval(
+                    "eval",
+                    params.requireToolApproval,
+                  ),
+                }
               : {}),
             // runHarnessTurn needs projectId to resolve the host's computer
             // (authHeader already rides authContext.token). Harness-gated so
@@ -871,9 +877,12 @@ export async function driveHostedEvalTurn(
             ...(params.onHarnessPolicyBlocks
               ? { onHarnessPolicyBlocks: params.onHarnessPolicyBlocks }
               : {}),
+            ...(params.onBoxSkillsWritten
+              ? { onBoxSkillsWritten: params.onBoxSkillsWritten }
+              : {}),
             // Present-but-empty is meaningful (the "without skills" arm), so
             // this checks for undefined rather than truthiness. Absent would
-            // fall through to the harness's LIVE project-wide fetch, which is
+            // leave the box with whatever skills it already holds, which is
             // what unfreezes a frozen run.
             ...(params.pinnedHarnessSkills !== undefined
               ? { pinnedHarnessSkills: params.pinnedHarnessSkills }

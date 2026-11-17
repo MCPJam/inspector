@@ -96,6 +96,7 @@ import { toast } from "@/lib/toast";
 import { MCP_TASKS_CHECK_IDS, TASKS_CHECK_CATALOG } from "@mcpjam/sdk/browser";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
+import { useConformanceRunRequest } from "../conformance-run-request";
 import {
   ConformanceServerPicker,
   ProtocolVersionSelect,
@@ -3407,6 +3408,37 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
   });
 
+  it("lets History start a run with no server picked, as the header does", async () => {
+    // History's empty states read the page's run request; without a picked
+    // server the page must still provide it, or they lose their Run.
+    function HistoryRun() {
+      const request = useConformanceRunRequest();
+      return request ? (
+        <button type="button" onClick={request.run}>
+          History run
+        </button>
+      ) : null;
+    }
+    const alpha = createHttpServer({ name: "alpha" });
+    window.history.replaceState(null, "", "/conformance?view=history");
+    render(
+      <ConformanceTab
+        server={null}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        history={<HistoryRun />}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "History run" }));
+
+    // The same setup steps the header's Run opens.
+    expect(
+      await screen.findByRole("button", { name: "Continue" }),
+    ).toBeInTheDocument();
+    window.history.replaceState(null, "", "/");
+  });
+
   it("connects the page's server when it arrives after step 1 opened", async () => {
     const onConnectServer = vi.fn(async () => "ready" as const);
     const props = { onSelectServer: vi.fn(), onConnectServer };
@@ -3750,45 +3782,6 @@ describe("ConformanceTab", () => {
         within(suiteHeader(suite)).getByText(SUITE_COPY[suite].title),
       ).toBeInTheDocument();
     }
-  });
-
-  it("hides the readiness sections unless mcpjam-directory-readiness is on", () => {
-    // Directory submissions are a later phase than protocol conformance, so
-    // the sections stay out of the page until the flag says otherwise.
-    render(<ConformanceTab server={createHttpServer()} />);
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Claude Directory Readiness")).toBeNull();
-    expect(screen.queryByText("OpenAI Directory Readiness")).toBeNull();
-    expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
-  });
-
-  it("shows the readiness sections when mcpjam-directory-readiness is on", () => {
-    enabledFlags.add("mcpjam-directory-readiness");
-    render(<ConformanceTab server={createHttpServer()} />);
-
-    // Before any run, too: readiness has its own run control and recovers an
-    // in-flight run on mount, so hiding it until the suites run would strand
-    // both behind the full run, OAuth browser flow included.
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
-    expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
-  });
-
-  it("keeps the readiness sections mounted when the first run starts", async () => {
-    enabledFlags.add("mcpjam-directory-readiness");
-    setupSuccessfulRunMocks();
-    render(<ConformanceTab server={createHttpServer()} />);
-    const before = screen.getByText("OpenAI Directory Readiness");
-
-    await runToCompletion();
-
-    // A remount would reset choices made before the run, such as the OpenAI
-    // submission mode; the same node means the same component instance.
-    expect(screen.getByText("OpenAI Directory Readiness")).toBe(before);
   });
 
   it("falls back to Overview when ?view=history has no History tab", () => {

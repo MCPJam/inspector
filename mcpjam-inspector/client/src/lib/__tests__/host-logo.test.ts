@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { resolveHostLogoByName, UNKNOWN_HOST_LOGO } from "@/lib/host-logo";
+import {
+  resolveHostLogo,
+  resolveHostLogoByName,
+  resolveHostStyleByName,
+  UNKNOWN_HOST_LOGO,
+} from "@/lib/host-logo";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
 // Hosts don't persist the catalog template they came from, so both single-select
@@ -24,10 +29,14 @@ describe("resolveHostLogoByName", () => {
     expect(resolveHostLogoByName("Copilot two")).toContain("copilot");
   });
 
-  it("places a style id the hint table does not list", () => {
-    // `codex` is a real style id but absent from the regex hints, so this only
-    // resolves through the exact-name pass.
-    expect(resolveHostLogoByName("Codex")).toContain("codex");
+  it("places renamed Codex, AgentCore and n8n clients", () => {
+    expect(resolveHostLogoByName("Codex")).toBe(getHostLogoSrc("codex"));
+    expect(resolveHostLogoByName("Codex QA")).toBe(getHostLogoSrc("codex"));
+    expect(resolveHostLogoByName("AgentCore QA")).toBe(
+      getHostLogoSrc("agentcore"),
+    );
+    expect(resolveHostLogoByName("n8n QA")).toBe(getHostLogoSrc("n8n"));
+    expect(resolveHostStyleByName("Codex QA")).toBe("codex");
   });
 
   it("places a plain known name", () => {
@@ -50,5 +59,42 @@ describe("resolveHostLogoByName", () => {
     expect(resolveHostLogoByName("Claude Code")).toBe(
       getHostLogoSrc("claude-code"),
     );
+  });
+
+  it("routes each variant client's name to its own id, not its family's", () => {
+    // Same ordering trap as Claude Desktop: the bare /claude code/ and
+    // /chatgpt/ hints would swallow these names.
+    expect(resolveHostStyleByName("Claude Code Desktop")).toBe(
+      "claude-code-desktop",
+    );
+    expect(resolveHostStyleByName("Claude Code Web")).toBe("claude-code-web");
+    expect(resolveHostStyleByName("ChatGPT Desktop")).toBe("chatgpt-desktop");
+    expect(resolveHostStyleByName("ChatGPT Work")).toBe("chatgpt-work");
+    expect(resolveHostStyleByName("ChatGPT Work Desktop")).toBe(
+      "chatgpt-work-desktop",
+    );
+    expect(resolveHostStyleByName("Codex CLI")).toBe("codex-cli");
+    expect(resolveHostStyleByName("Grokbot")).toBe("grokbot");
+    expect(resolveHostStyleByName("Muse")).toBe("muse");
+    // The families themselves are unaffected.
+    expect(resolveHostStyleByName("ChatGPT")).toBe("chatgpt");
+    expect(resolveHostStyleByName("Claude Code")).toBe("claude-code");
+  });
+});
+
+describe("resolveHostLogo", () => {
+  it("uses the saved style over a name it cannot place", () => {
+    expect(resolveHostLogo({ name: "Codex QA", hostStyle: "codex" })).toBe(
+      getHostLogoSrc("codex"),
+    );
+  });
+
+  it("falls back to the name when the style is absent or unregistered", () => {
+    expect(resolveHostLogo({ name: "Cursor (staging)" })).toBe(
+      resolveHostLogoByName("Cursor (staging)"),
+    );
+    expect(
+      resolveHostLogo({ name: "Acme Internal Bot", hostStyle: "not-a-style" }),
+    ).toBe(UNKNOWN_HOST_LOGO);
   });
 });

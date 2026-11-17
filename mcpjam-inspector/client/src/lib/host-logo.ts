@@ -1,5 +1,9 @@
-import type { HostThemeMode } from "@/lib/client-styles";
 import {
+  isKnownHostStyleId,
+  type HostThemeMode,
+} from "@/lib/client-styles";
+import {
+  getScenarioHostLogo,
   resolveHostLogoByDisplayName,
   resolveHostStyleByDisplayName,
 } from "@/lib/scenario-client-style";
@@ -17,8 +21,8 @@ export { UNKNOWN_HOST_LOGO };
  *
  * - The hint table places DECORATED names (`Cursor (staging)`), which an exact
  *   match cannot.
- * - The exact style-name pass places ids the hint table never listed (`codex`,
- *   `agentcore`, `n8n`).
+ * - The exact style-name pass places custom registered styles the hint table
+ *   cannot list.
  *
  * So this runs hints first — preserving what the canvas selector already
  * rendered for every name it covered — then the exact pass, then the generic MCP
@@ -26,12 +30,24 @@ export { UNKNOWN_HOST_LOGO };
  */
 const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/mcpjam/i, "mcpjam"],
+  // BEFORE the bare /claude[ -]?code/i: "Claude Code Desktop" and "Claude
+  // Code Web" are their own hosts.
+  [/claude[ -]?code[ -]?desktop/i, "claude-code-desktop"],
+  [/claude[ -]?code[ -]?web/i, "claude-code-web"],
   [/claude[ -]?code/i, "claude-code"],
   // BEFORE the bare /claude/i below, same ordering trap as claude-code: a host
   // named "Claude Desktop" would otherwise resolve to the web app's mark.
   [/claude[ -]?desktop/i, "claude-desktop"],
   [/claude/i, "claude"],
+  // BEFORE the bare /chatgpt|openai/i, most specific first.
+  [/chatgpt[ -]?work[ -]?desktop/i, "chatgpt-work-desktop"],
+  [/chatgpt[ -]?work/i, "chatgpt-work"],
+  [/chatgpt[ -]?desktop/i, "chatgpt-desktop"],
   [/chatgpt|openai/i, "chatgpt"],
+  [/codex[ -]?cli/i, "codex-cli"],
+  [/codex/i, "codex"],
+  [/agent[ -]?core/i, "agentcore"],
+  [/n8n/i, "n8n"],
   [/opencode/i, "opencode"],
   [/copilot[ -]cli/i, "copilot-cli"],
   [/copilot/i, "copilot"],
@@ -49,6 +65,8 @@ const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/gemini|google[ -]?adk/i, "gemini"],
   [/perplexity/i, "perplexity"],
   [/notion/i, "notion"],
+  [/grok/i, "grokbot"],
+  [/\bmuse\b/i, "muse"],
   [/slack/i, "slack"],
   [/mistral/i, "mistral"],
 ];
@@ -72,8 +90,7 @@ export function resolveHostStyleByName(name: string): string | null {
     if (pattern.test(name)) return hostId;
   }
   // BOTH passes, in the same order the logo resolver runs them. The hint table
-  // alone misses every id it never listed — `codex`, `agentcore`, `n8n` — so a
-  // host named exactly "Codex" resolved to null and matched nothing.
+  // alone misses every custom registered style.
   return resolveHostStyleByDisplayName(name);
 }
 
@@ -92,4 +109,19 @@ export function resolveHostLogoByName(
     if (pattern.test(name)) return getHostLogoSrc(hostId, themeMode);
   }
   return resolveHostLogoByDisplayName(name, themeMode) ?? UNKNOWN_HOST_LOGO;
+}
+
+/**
+ * A saved client's logo. Prefers the style it emulates, which the client list
+ * carries, so a renamed client ("Codex QA") keeps its mark; falls back to the
+ * name for rows from older backends or with an unregistered style.
+ */
+export function resolveHostLogo(
+  host: { name: string; hostStyle?: string | null },
+  themeMode?: HostThemeMode | null,
+): string {
+  if (isKnownHostStyleId(host.hostStyle)) {
+    return getScenarioHostLogo(host.hostStyle, undefined, themeMode);
+  }
+  return resolveHostLogoByName(host.name, themeMode);
 }

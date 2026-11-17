@@ -131,6 +131,8 @@ export type NewSwarmFlowDraft = {
   reusedIds: string[];
   proposed: ProposedPersona[];
   launchedRuns: SwarmLaunchedRun[];
+  /** Startup belongs to the mounted flow and cannot resume after a reload. */
+  launching?: boolean;
   /** `launchedRunLabelsRef` as entries — a Map is not JSON. */
   runLabels: [string, string][];
   /**
@@ -381,6 +383,7 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     reusedIds: value.reusedIds,
     proposed: value.proposed,
     launchedRuns: value.launchedRuns,
+    ...(typeof value.launching === "boolean" ? { launching: value.launching } : {}),
     runLabels: value.runLabels,
     generatingSince: value.generatingSince,
     attachingFile:

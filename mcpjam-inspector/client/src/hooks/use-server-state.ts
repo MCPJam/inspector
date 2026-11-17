@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "@/lib/credential-refusal";
 import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   cancelPendingChatScopeStepUpForCallback,
@@ -732,6 +733,7 @@ export type EnsureServerConnectionStatus =
 export interface EnsureServerConnectionResult {
   status: EnsureServerConnectionStatus;
   error?: string;
+  credentialFailure?: string;
 }
 
 interface ReconnectServerInternalOptions {
@@ -858,6 +860,7 @@ export interface EnsureServersReadyResult {
   readyServerNames: string[];
   missingServerNames: string[];
   failedServerNames: string[];
+  failedServerErrors?: Record<string, string>;
   reauthServerNames: string[];
 }
 
@@ -3871,6 +3874,7 @@ export function useServerState({
         // project-server snapshot yet, and a name lookup would fall through
         // to create-if-missing, which returns the row without the edit.
         hostedWriteTarget?: HostedServerWriteTarget;
+        onConfigSaved?: () => void;
         requestOAuthAuthorization?: (
           serverName: string,
         ) => Promise<
@@ -4060,18 +4064,14 @@ export function useServerState({
         showConnectionError(errorMessage);
         return;
       }
-      if (!isAuthenticated) {
+      if (!isAuthenticated || useLocalFallback) {
         const project = appState.projects[appState.activeProjectId];
         if (project) {
           dispatch({
-            type: "UPDATE_PROJECT",
+            type: "UPDATE_PROJECT_SERVER",
             projectId: appState.activeProjectId,
-            updates: {
-              servers: {
-                ...project.servers,
-                [formData.name]: serverEntryForSave,
-              },
-            },
+            name: formData.name,
+            server: serverEntryForSave,
           });
         }
       }
@@ -4080,6 +4080,8 @@ export function useServerState({
       // the server URL first, so reading it afterward would make a stale
       // resource indicator look like it belonged to the edited endpoint.
       const storedOAuthConfigBeforeSave = readStoredOAuthConfig(formData.name);
+      if (!isAuthenticated || useLocalFallback || hostedServerId)
+        options?.onConfigSaved?.();
       const storedServerUrlBeforeSave = HOSTED_MODE
         ? undefined
         : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
@@ -5595,10 +5597,14 @@ export function useServerState({
       serverName: string,
       options?: ReconnectServerInternalOptions,
     ): Promise<EnsureServerConnectionResult> => {
-      const reconnectForAttempt = (
+      let credentialFailure: string | undefined;
+      const reconnectForAttempt = async (
         ...args: Parameters<typeof guardedReconnectServer>
-      ) =>
-        guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
+      ) => {
+        const result = await guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
+        credentialFailure = credentialFailureMessage(result);
+        return result;
+      };
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
       // Snapshot before anything awaits. `reportError` runs at the END of a
@@ -5643,6 +5649,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -5693,6 +5700,7 @@ export function useServerState({
         return {
           status: "missing",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -5998,6 +6006,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -6114,6 +6123,7 @@ export function useServerState({
             return {
               status: "failed",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6160,6 +6170,7 @@ export function useServerState({
             return {
               status: "failed",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6169,6 +6180,7 @@ export function useServerState({
             return {
               status: "superseded",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6312,6 +6324,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       } catch (error) {
         if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
@@ -6338,6 +6351,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
     },
@@ -6676,6 +6690,7 @@ export function useServerState({
       const readyServerNames: string[] = [];
       const missingServerNames: string[] = [];
       const failedServerNames: string[] = [];
+      const failedServerErrors: Record<string, string> = {};
       const reauthServerNames: string[] = [];
 
       for (const [serverName, outcome] of outcomes) {
@@ -6698,6 +6713,7 @@ export function useServerState({
           case "failed":
           default:
             failedServerNames.push(serverName);
+            if (outcome.credentialFailure) failedServerErrors[serverName] = outcome.credentialFailure;
             break;
         }
       }
@@ -6706,6 +6722,7 @@ export function useServerState({
         readyServerNames,
         missingServerNames,
         failedServerNames,
+        ...(Object.keys(failedServerErrors).length ? { failedServerErrors } : {}),
         reauthServerNames,
       };
     },
@@ -6881,12 +6898,6 @@ export function useServerState({
         if (!formData.useOAuth && !formData.useXaa) {
           clearOAuthData(nextServerName);
         }
-        dispatch({
-          type: "UPSERT_SERVER",
-          name: nextServerName,
-          server: updatedServer,
-        });
-
         if (!isAuthenticated || useLocalFallback) {
           persistServerToLocalProject(nextServerName, updatedServer, {
             originalServerName: isRename ? originalServerName : undefined,
@@ -6908,6 +6919,11 @@ export function useServerState({
             return { ok: false, serverName: originalServerName };
           }
         }
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: nextServerName,
+          server: updatedServer,
+        });
         // The row now has the new name; only the old name's local state goes.
         if (renameTarget) {
           cleanupServerLocalArtifacts(originalServerName);
@@ -6989,18 +7005,24 @@ export function useServerState({
       saveOAuthConfigToLocalStorage(formData);
 
       await handleDisconnect(originalServerName);
-      if (renameTarget) {
-        // handleConnect saves to this row by id; only the old name's local
-        // state goes.
-        cleanupServerLocalArtifacts(originalServerName);
-        dispatch({ type: "REMOVE_SERVER", name: originalServerName });
-      } else if (isRename) {
+      if (isRename && !renameTarget) {
         await removeServerFromStateAndCloud(originalServerName);
       }
-      await handleConnect(
-        formData,
-        renameTarget ? { hostedWriteTarget: renameTarget } : undefined,
-      );
+      let configSaved = false;
+      await handleConnect(formData, {
+        hostedWriteTarget: renameTarget,
+        onConfigSaved: () => {
+          configSaved = true;
+          if (renameTarget) {
+            cleanupServerLocalArtifacts(originalServerName);
+            dispatch({ type: "REMOVE_SERVER", name: originalServerName });
+          }
+        },
+      });
+      if (!configSaved) {
+        if (isRename) dispatch({ type: "REMOVE_SERVER", name: nextServerName });
+        return { ok: false, serverName: originalServerName };
+      }
       if (
         appState.selectedServer === originalServerName &&
         nextServerName !== originalServerName

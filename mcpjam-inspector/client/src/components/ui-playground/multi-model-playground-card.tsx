@@ -4,9 +4,13 @@ import { paneModelDriftReason } from "@/lib/compare-pane-model";
 import type { RenderComparePaneHeader } from "./compare-pane-settings";
 import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import { SavedClientProvider } from "@/contexts/saved-client-context";
+import { PaneDisplayProvider } from "@/contexts/pane-display-context";
+import type { PaneDisplay } from "@/stores/compare-pane-display-store";
+import { paneDeviceWidth } from "./compare-pane-display";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
 import { OwnedModelAppPortsProvider } from "@/components/host-workspace/OwnedModelApp";
 import { useCompareLaneModelApps } from "@/components/host-workspace/use-compare-lane-model-apps";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import {
   useThreadAppWorkspace,
   type WorkspaceServer,
@@ -57,10 +61,15 @@ import {
   type MultiModelCardSummary,
   ModelCompareCardHeader,
 } from "@/components/chat-v2/model-compare-card-header";
+import { useLatestTurnCost } from "@/components/chat-v2/compare-cost";
+import { useCompareCardStatus } from "@/components/chat-v2/compare-card-status";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
-import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
+import {
+  getChatComposerInteractivity,
+  useCompareStopRequest,
+} from "@/hooks/use-chat-stop-controls";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
@@ -92,6 +101,7 @@ import {
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
   getScenarioChatBackground,
+  getScenarioShellStyle,
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
@@ -170,6 +180,7 @@ interface MultiModelPlaygroundCardProps {
     identity: ExtensionOwnerIdentity;
     servers: WorkspaceServer[];
     capabilities: ExtensionCapabilities;
+    displayBehavior?: DisplayBehavior;
     profile: "chatgpt" | "codex";
   } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
@@ -244,6 +255,8 @@ interface MultiModelPlaygroundCardProps {
   hostStyle: ScenarioHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
+  /** The pane's own Device and Theme, from its settings. */
+  displayOverrides?: PaneDisplay;
   hideInlineEdit?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
@@ -355,6 +368,7 @@ export function MultiModelPlaygroundCard({
   hostStyle,
   effectiveThreadTheme,
   deviceType,
+  displayOverrides,
   hideInlineEdit = false,
   onWidgetStateChange,
   toolRenderOverrides = {},
@@ -425,6 +439,9 @@ export function MultiModelPlaygroundCard({
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
   const lastExecutionRequestIdRef = useRef<number | null>(null);
+  // The broadcast this card's latest prompt answers. A follow-up sent to this
+  // card alone, or a reset thread, answers none, so it never ranks on cost.
+  const [broadcastId, setBroadcastId] = useState<number>();
   // Read when a restore fails, after the props it closed over may have moved.
   // Set at commit, so a render React discards never counts as received.
   const broadcastRequestRef = useRef(broadcastRequest);
@@ -555,6 +572,7 @@ export function MultiModelPlaygroundCard({
     harnessStartupPhase,
     loadChatSession,
     selectedModel,
+    consumeTurnAborted,
   } = useChatSession({
     pickedModelSelection: selection,
     inheritedEnvironmentModel,
@@ -595,6 +613,7 @@ export function MultiModelPlaygroundCard({
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
       setInjectedToolRenderOverrides({});
+      setBroadcastId(undefined);
     },
   });
 
@@ -681,6 +700,7 @@ export function MultiModelPlaygroundCard({
   const canInvoke = useCallback(() => !readinessRef.current, []);
   const laneApps = useThreadAppWorkspace(laneScope, laneServers, {
     capabilities: extensionBinding?.capabilities,
+    displayBehavior: extensionBinding?.displayBehavior,
     launchProfile: extensionBinding?.profile,
     canInvoke,
   });
@@ -689,6 +709,7 @@ export function MultiModelPlaygroundCard({
     extensionBinding?.capabilities,
     extensionBinding?.profile,
     canInvoke,
+    extensionBinding?.displayBehavior,
   );
   laneContextRefs.current = laneScope
     ? {
@@ -922,6 +943,14 @@ export function MultiModelPlaygroundCard({
   const latestTurnDurationMs = latestTurn?.durationMs ?? null;
   const latestTurnTokens = latestTurn?.usage?.totalTokens ?? 0;
   const latestTurnToolCount = latestTurn?.actualToolCalls?.length ?? 0;
+  const latestTurnCost = useLatestTurnCost(effectiveLiveTraceEnvelope);
+  const cardStatus = useCompareCardStatus({
+    failed: Boolean(error),
+    isStreaming,
+    isBusy: isExecuting,
+    isThreadEmpty,
+    consumeTurnAborted,
+  });
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       // `MultiModelCardSummary.modelId` is the legacy field name; in
@@ -932,21 +961,17 @@ export function MultiModelPlaygroundCard({
       durationMs: latestTurnDurationMs,
       tokens: latestTurnTokens,
       toolCount: latestTurnToolCount,
-      status: error
-        ? "error"
-        : isStreaming || isExecuting
-          ? "running"
-          : isThreadEmpty
-            ? "idle"
-            : "ready",
+      broadcastId,
+      ...(latestTurnCost ? { cost: latestTurnCost } : {}),
+      status: cardStatus,
       hasMessages: !isThreadEmpty,
     }),
     [
+      broadcastId,
+      cardStatus,
       compareId,
-      error,
-      isExecuting,
-      isStreaming,
       isThreadEmpty,
+      latestTurnCost,
       latestTurnDurationMs,
       latestTurnTokens,
       latestTurnToolCount,
@@ -969,7 +994,11 @@ export function MultiModelPlaygroundCard({
     [injectedToolRenderOverrides, toolRenderOverrides],
   );
   const hostBackgroundColor =
-    getScenarioChatBackground(hostStyle, effectiveThreadTheme) ?? "transparent";
+    getScenarioChatBackground(
+      hostStyle,
+      effectiveThreadTheme,
+      effectiveChatUiOverride,
+    ) ?? "transparent";
   const isMobileFullTakeover =
     deviceType === "mobile" &&
     (displayMode === "fullscreen" || displayMode === "pip");
@@ -977,6 +1006,7 @@ export function MultiModelPlaygroundCard({
     deviceType === "tablet" && displayMode === "fullscreen";
   const shellHeightClass =
     isMobileFullTakeover || isTabletFullscreenTakeover ? "min-h-[34rem]" : "";
+  const shellMaxWidth = paneDeviceWidth(displayOverrides?.deviceType);
 
   useEffect(() => {
     onSummaryChangeRef.current = onSummaryChange;
@@ -1026,6 +1056,7 @@ export function MultiModelPlaygroundCard({
     if (!claimBroadcastDelivery?.(broadcastRequest)) return;
     // A column whose restore failed runs the next turn as a fresh column.
     if (recoveryStatus === "failed") setRecoveryStatus("ready");
+    setBroadcastId(broadcastRequest.id);
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -1178,17 +1209,12 @@ export function MultiModelPlaygroundCard({
     }
   }, [hasTraceSnapshot]);
 
-  useEffect(() => {
-    if (stopRequestId <= 0) {
-      return;
-    }
-
-    stop();
-  }, [stop, stopRequestId]);
+  useCompareStopRequest(stopRequestId, stop);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
       if (!canInvoke()) return;
+      setBroadcastId(undefined);
       sendMessage({
         text,
         metadata: outgoingSenderMetadata,
@@ -1214,10 +1240,21 @@ export function MultiModelPlaygroundCard({
   const cardBody = (
     <div
       data-testid="multi-model-playground-card-root"
+      data-host-style={hostStyle}
+      data-thread-theme={effectiveThreadTheme}
       className={cn(
-        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40",
+        "app-theme-scope flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-background text-foreground",
+        effectiveThreadTheme === "dark" && "dark",
         className,
       )}
+      style={{
+        ...getScenarioShellStyle(
+          hostStyle,
+          effectiveThreadTheme,
+          effectiveChatUiOverride,
+        ),
+        colorScheme: effectiveThreadTheme,
+      }}
     >
       {readinessNotice ? <p role="status" className="px-3 py-2 text-sm text-muted-foreground">{readinessNotice}</p> : null}
       <ModelCompareCardHeader
@@ -1349,14 +1386,15 @@ export function MultiModelPlaygroundCard({
         >
           <div
             className={cn(
-              "scenario-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
+              "scenario-host-shell relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
               shellHeightClass,
-              effectiveThreadTheme === "dark" && "dark",
+              shellMaxWidth && "mx-auto w-[calc(100%-1.5rem)]",
             )}
             data-host-style={hostStyle}
             data-thread-theme={effectiveThreadTheme}
             style={{
               backgroundColor: hostBackgroundColor,
+              maxWidth: shellMaxWidth,
             }}
           >
             {isThreadEmpty ? (
@@ -1426,7 +1464,9 @@ export function MultiModelPlaygroundCard({
       >
         <ScenarioChatUiOverrideProvider value={effectiveChatUiOverride}>
           <ScenarioHostThemeProvider value={effectiveThreadTheme}>
-            {cardBody}
+            <PaneDisplayProvider value={displayOverrides ?? null}>
+              {cardBody}
+            </PaneDisplayProvider>
           </ScenarioHostThemeProvider>
         </ScenarioChatUiOverrideProvider>
       </ScenarioHostCapabilitiesOverrideProvider>

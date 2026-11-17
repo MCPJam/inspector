@@ -9,9 +9,10 @@ function candidate(
     url: "https://mcp.example/mcp",
     clientCapabilities: {},
   },
+  landedOn = "2025-11-25",
   initialized = {
     transport: "streamable-http",
-    protocolVersion: "2025-11-25",
+    protocolVersion: landedOn,
     serverCapabilities: {},
     serverVersion: { name: "fixture", version: "1" },
     instructions: "",
@@ -55,7 +56,7 @@ describe("native profile admission", () => {
       expect(nativeForwardingGaps({ ...candidate({ ...config, capabilities: overlay, eraCapabilities: { modern: overlay } }), elicitationRuntimeVersion: "2.1.245" })).toEqual([]);
     }
     const effective = candidate(config).manager.getInitializationInfo();
-    expect(nativeForwardingGaps({ ...candidate({ url: config.url, capabilities: config.clientCapabilities }, effective), elicitationRuntimeVersion: "2.1.245" })).toContain("capability-overrides");
+    expect(nativeForwardingGaps({ ...candidate({ url: config.url, capabilities: config.clientCapabilities }, "2025-11-25", effective), elicitationRuntimeVersion: "2.1.245" })).toContain("capability-overrides");
   });
   it.each([
     { elicitation: { form: {}, url: {} } },
@@ -133,6 +134,115 @@ describe("native profile admission", () => {
         ),
       ),
     ).toContain(gap);
+  });
+  describe("pins equal to the runtime's measured handshake", () => {
+    const nativeClient = {
+      clientInfo: { name: "fixture-cli", title: "Fixture", version: "1.2.3" },
+      capabilities: { sampling: {}, roots: { listChanged: true } },
+      supportedProtocolVersions: ["2025-06-18"],
+      mcpProtocolVersion: "2025-06-18" as const,
+    };
+    // As `toHttpConfig` builds a pinned connection: the exact declaration,
+    // repeated as the overlay the SDK then ignores.
+    const pinned = (overrides: Record<string, unknown> = {}) =>
+      candidate(
+        Object.assign(
+          {
+            url: "https://mcp.example/mcp",
+            clientInfo: { version: "1.2.3", name: "fixture-cli", title: "Fixture" },
+            clientCapabilities: { roots: { listChanged: true }, sampling: {} },
+            capabilities: { roots: { listChanged: true }, sampling: {} },
+            supportedProtocolVersions: ["2025-06-18"],
+            mcpProtocolVersion: "2025-06-18",
+          },
+          overrides,
+        ),
+        // A connection pinned to the runtime's versions lands on one of them.
+        "2025-06-18",
+      );
+
+    it("add no gap, in any key order", () => {
+      expect(nativeForwardingGaps(pinned())).toEqual(
+        expect.arrayContaining(["client-capabilities", "client-identity", "protocol-pins"]),
+      );
+      expect(nativeForwardingGaps({ ...pinned(), nativeClient })).toEqual([]);
+    });
+
+    it.each([
+      ["client-identity", { clientInfo: { name: "fixture-cli", version: "1.2.4" } }],
+      ["client-identity", { version: "1.2.3" }],
+      ["client-capabilities", { clientCapabilities: { sampling: {} } }],
+      ["protocol-pins", { supportedProtocolVersions: ["2025-06-18", "2025-11-25"] }],
+      ["protocol-pins", { mcpProtocolVersion: "2025-11-25" }],
+      ["protocol-pins", { versionNegotiation: "legacy-first" }],
+    ])("still count %s where a pin differs", (gap, override) => {
+      expect(nativeForwardingGaps({ ...pinned(override), nativeClient })).toContain(gap);
+    });
+
+    it("leaves a setting the profile does not pin to the runtime", () => {
+      expect(
+        nativeForwardingGaps({
+          ...candidate(
+            { url: "https://mcp.example/mcp", clientCapabilities: {} },
+            "2025-06-18",
+          ),
+          nativeClient,
+        }),
+      ).toEqual([]);
+    });
+
+    it("keeps the configured route where the connection landed on a version the runtime's own client does not offer", () => {
+      // On pass-through the runtime's client speaks to the server itself.
+      expect(
+        nativeForwardingGaps({
+          ...candidate({ url: "https://mcp.example/mcp", clientCapabilities: {} }),
+          nativeClient,
+        }),
+      ).toEqual(["unqualified-protocol"]);
+    });
+
+    it("keeps the configured route for elicitation the turn would not hand to its handler", () => {
+      const elicitation = {
+        ...nativeClient,
+        capabilities: { elicitation: { form: {} } },
+        supportedProtocolVersions: ["2025-06-18", "2025-11-25"],
+      };
+      const config = {
+        url: "https://mcp.example/mcp",
+        clientCapabilities: { elicitation: { form: {} } },
+      };
+      // With or without a live handler, on either landing: the turn routes
+      // elicitation only for the measured Claude Code profile, so the
+      // runtime's client would answer the server itself.
+      for (const landedOn of ["2025-06-18", "2025-11-25"])
+        for (const elicitationRuntimeVersion of [undefined, "1.2.3"])
+          expect(
+            nativeForwardingGaps({
+              ...candidate(config, landedOn),
+              nativeClient: elicitation,
+              elicitationRuntimeVersion,
+            }),
+          ).toContain("client-capabilities");
+    });
+
+    it("admits elicitation the runtime's client declares where the turn routes it to its handler", () => {
+      const claudeCode = {
+        clientInfo: { name: "claude-code", version: "2.1.290" },
+        capabilities: { elicitation: { form: {} }, roots: { listChanged: true } },
+      };
+      const config = {
+        url: "https://mcp.example/mcp",
+        clientCapabilities: claudeCode.capabilities,
+        clientInfo: claudeCode.clientInfo,
+      };
+      expect(
+        nativeForwardingGaps({
+          ...candidate(config),
+          nativeClient: claudeCode,
+          elicitationRuntimeVersion: "2.1.290",
+        }),
+      ).toEqual([]);
+    });
   });
   it("keeps host-only promises and client-fulfilled tools", () => {
     expect(

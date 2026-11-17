@@ -1,6 +1,11 @@
 import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
-import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
+import {
+  ITERATION_TABS,
+  type EvalRoute,
+  type IterationTab,
+  type SuiteOverviewView,
+} from "./eval-route-types";
 import { stripProjectFromPath } from "./project-route";
 
 /**
@@ -9,9 +14,8 @@ import { stripProjectFromPath } from "./project-route";
  * Suites prefix returns null rather than a bare list route, so a mode never
  * silently renders the other mode's URL.
  *
- * `/evaluate` is the flag-gated Evaluate (New) tab. It is a SIBLING of
- * `/evals`, not a sub-tree: it does not start with `/evals/`, so the guards
- * below already keep the two from parsing each other's URLs.
+ * `/evaluate` is the current Evaluate route. The retired `/evals` prefixes
+ * remain separate so saved links can be parsed and redirected.
  */
 export type EvalRoutePrefix = "/evals" | "/evals/runs" | "/evaluate";
 
@@ -56,7 +60,7 @@ export function parseEvalRouteFromUrl(
     return { type: "create" };
   }
 
-  // Evaluate (New) only. The v1 `/evals` tab has no first-run preview.
+  // The first-run preview belongs only to the current `/evaluate` route.
   if (prefix === "/evaluate" && tail[0] === "eval-server" && tail[1]) {
     return {
       type: "eval-server",
@@ -94,10 +98,19 @@ export function parseEvalRouteFromUrl(
     };
   }
 
-  if (rest.length === 1 && rest[0] === "edit") {
+  // `edit` is the old address; the router redirects it to `settings`.
+  if (
+    (rest.length === 1 && (rest[0] === "edit" || rest[0] === "settings")) ||
+    (rest.length === 2 && rest[0] === "settings" && rest[1] === "evaluators")
+  ) {
     return {
       type: "suite-edit",
       suiteId,
+      // An old `edit` link with `fromCaseChecks` came from a case's evaluators.
+      ...(rest[1] === "evaluators" ||
+      (rest[0] === "edit" && params.get("fromCaseChecks"))
+        ? { tab: "evaluators" as const }
+        : {}),
       ...(params.get("fromCaseChecks")
         ? { fromCaseChecks: params.get("fromCaseChecks")! }
         : {}),
@@ -121,6 +134,31 @@ export function parseEvalRouteFromUrl(
       ...(params.get("compareTo")
         ? { compareToRunId: params.get("compareTo") || undefined }
         : {}),
+    };
+  }
+
+  // Evaluate only: `runs/R/cases/C` and `runs/R/cases/C/iterations/I`.
+  if (
+    prefix === "/evaluate" &&
+    rest[0] === "runs" &&
+    rest[1] &&
+    rest[2] === "cases" &&
+    rest[3] &&
+    (rest.length === 4 ||
+      (rest.length === 6 && rest[4] === "iterations" && rest[5]))
+  ) {
+    const tab = params.get("tab");
+    const target = params.get("target");
+    return {
+      type: "run-detail",
+      suiteId,
+      runId: decodePathSegment(rest[1]),
+      resultPage: {
+        caseKey: decodePathSegment(rest[3]),
+        ...(target ? { target } : {}),
+        ...(rest[5] ? { iterationId: decodePathSegment(rest[5]) } : {}),
+        ...(isIterationTab(tab) ? { tab } : {}),
+      },
     };
   }
 
@@ -198,7 +236,7 @@ export function useEvalsRunsRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evals/runs");
 }
 
-/** Evaluate (New): same typed routes, parsed under the `/evaluate` prefix. */
+/** Current Evaluate routes, parsed under the `/evaluate` prefix. */
 export function useEvaluateRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evaluate");
 }
@@ -209,6 +247,10 @@ function parseSuiteOverviewView(value: string | null): SuiteOverviewView {
     value === "cross-host"
     ? value
     : "runs";
+}
+
+function isIterationTab(value: string | null): value is IterationTab {
+  return ITERATION_TABS.some((tab) => tab === value);
 }
 
 function parseTruthyParam(value: string | null): boolean {

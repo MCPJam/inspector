@@ -21,6 +21,12 @@ export interface WidgetFullscreenPlacement {
    * opposed to the host ending it (another tab chosen, the panel hidden).
    */
   onExit?: () => void;
+  /**
+   * Bring the panel holding the placed App back into view (open it, or widen
+   * it from a sliver): the conversation's card for an App that is only full
+   * screen calls it.
+   */
+  reveal?: () => void;
 }
 
 export const WidgetFullscreenPlacementContext =

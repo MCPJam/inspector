@@ -1,14 +1,6 @@
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
 
-/**
- * Where a harness that runs on the organization's vendor key (Cursor) may run:
- * the Playground, evals and swarms. Their boxes receive the key, and their
- * turns check it before a box is reserved. User Testing, the v1 APIs and MCP
- * Events runs refuse it before anything is reserved, each with this copy.
- */
-export type OrgKeyRefusedSurface = "study" | "elsewhere";
-
 /** What a member reads when the org has no usable Cursor key. */
 export const ORG_KEY_MISSING_MESSAGE =
   "Ask an org admin to add a Cursor key in Organization → AI providers.";
@@ -26,14 +18,15 @@ export function orgKeyHarnessName(
     : undefined;
 }
 
-export function orgKeySurfaceRefusal(
-  displayName: string,
-  surface: OrgKeyRefusedSurface,
-): string {
+/**
+ * Why a harness that runs on the organization's vendor key (Cursor) is refused
+ * in User Testing, whose participants control the box. The Playground, evals,
+ * swarms and the API give their boxes the key and check it before a box is
+ * reserved; a study refuses it before anything is reserved, with this copy.
+ */
+export function orgKeySurfaceRefusal(displayName: string): string {
   return (
-    `${displayName} runs only in the Playground, evals and swarms. ` +
-    (surface === "study"
-      ? "Choose a different client for this study."
-      : "Use it there, or choose a different client.")
+    `${displayName} runs only in the Playground, evals, swarms and the API. ` +
+    "Choose a different client for this study."
   );
 }

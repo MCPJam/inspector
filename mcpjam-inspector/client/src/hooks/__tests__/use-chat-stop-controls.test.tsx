@@ -5,6 +5,7 @@ import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-c
 import {
   getChatComposerInteractivity,
   useChatStopControls,
+  useCompareStopRequest,
 } from "../use-chat-stop-controls";
 
 function createSummary(
@@ -152,5 +153,67 @@ describe("useChatStopControls", () => {
       composerDisabled: true,
       sendBlocked: true,
     });
+  });
+});
+
+describe("useCompareStopRequest", () => {
+  function renderStopRequest(stopRequestId: number, stop: () => void) {
+    return renderHook(
+      ({ stopRequestId, stop }) => useCompareStopRequest(stopRequestId, stop),
+      { initialProps: { stopRequestId, stop } },
+    );
+  }
+
+  it("stops once for each Stop press", () => {
+    const stop = vi.fn();
+    const { rerender } = renderStopRequest(0, stop);
+    expect(stop).not.toHaveBeenCalled();
+
+    rerender({ stopRequestId: 1, stop });
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    rerender({ stopRequestId: 1, stop });
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not stop again when only the stop function changes", () => {
+    const firstStop = vi.fn();
+    const { rerender } = renderStopRequest(0, firstStop);
+    rerender({ stopRequestId: 1, stop: firstStop });
+    expect(firstStop).toHaveBeenCalledTimes(1);
+
+    // The chat session hands the card a new `stop` on every status or
+    // message change, such as the next turn starting after the Stop.
+    const nextTurnStop = vi.fn();
+    rerender({ stopRequestId: 1, stop: nextTurnStop });
+    expect(nextTurnStop).not.toHaveBeenCalled();
+
+    const latestStop = vi.fn();
+    rerender({ stopRequestId: 2, stop: latestStop });
+    expect(latestStop).toHaveBeenCalledTimes(1);
+    expect(firstStop).toHaveBeenCalledTimes(1);
+    expect(nextTurnStop).not.toHaveBeenCalled();
+  });
+
+  it("does not stop when a new chat resets the counter, then stops on the next press", () => {
+    const stop = vi.fn();
+    const { rerender } = renderStopRequest(0, stop);
+    rerender({ stopRequestId: 2, stop });
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    rerender({ stopRequestId: 0, stop });
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    rerender({ stopRequestId: 1, stop });
+    expect(stop).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not stop a card that mounts after an earlier Stop", () => {
+    const stop = vi.fn();
+    const { rerender } = renderStopRequest(3, stop);
+    expect(stop).not.toHaveBeenCalled();
+
+    rerender({ stopRequestId: 4, stop });
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 });

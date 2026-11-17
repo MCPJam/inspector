@@ -18,7 +18,7 @@ import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import {
   CHOOSE_ORG_JUDGE_MODEL,
-  orgKeyProblemsOf,
+  orgConfigProblemsOf,
   hostsForPreflight,
   type PreflightHost,
   preflightJudgeOf,
@@ -28,6 +28,7 @@ import {
   type PreflightSelection,
 } from "./suite-run-preflight-org-keys";
 import { useOrgHarnessKeys } from "./use-org-harness-keys";
+import { AccountPreflightNotices, useSuiteAccountPreflight, type AccountPreflight } from "./suite-run-account-preflight";
 import { ORG_KEY_MISSING_MESSAGE } from "@/shared/org-key-surfaces";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
@@ -65,12 +66,13 @@ export type RunPreflight = {
    * dependency that cannot run on its providers (an MCPJam-provided or
    * personal target model, a hosted judge, a judge nobody chose, a harness
    * client's model that is not an organization model on the harness's own
-   * vendor, a Cursor client without a ready org key). The run cannot start;
+   * vendor, a Cursor client without a ready org key). With or without the
+   * policy, an Azure model saved without a deployment. The run cannot start;
    * the backend refuses the same launch.
    * Absent when there are none.
    */
-  orgKeyProblems?: string[];
-};
+  orgConfigProblems?: string[];
+} & AccountPreflight;
 
 export type RunPreflightState = RunPreflight & {
   /** Every model the launch runs is out of MCPJam credits: why it cannot start. */
@@ -80,7 +82,7 @@ export type RunPreflightState = RunPreflight & {
     environmentIds: readonly string[],
   ) => string | null;
   /** Organization-key problems for only the environments picked in the sheet. */
-  orgKeyProblemsForEnvironments?: (
+  orgConfigProblemsForEnvironments?: (
     environmentIds: readonly string[],
   ) => string[];
   serverName: (ref: string) => string;
@@ -133,7 +135,7 @@ export function runPreflight(input: {
   if (orgConfig && orgRequiresOwnKeys(orgConfig)) {
     // Under the policy the organization's own connections are the only
     // source; "is the provider enabled" is subsumed by these problems.
-    const problems = orgKeyProblemsOf(orgConfig, input.models, input.judge);
+    const problems = orgConfigProblemsOf(orgConfig, input.models, input.judge);
     return {
       disconnected,
       removed,
@@ -142,7 +144,7 @@ export function runPreflight(input: {
         ? { refusalByEnvironment: input.refusalByEnvironment }
         : {}),
       disabledProviders: [],
-      ...(problems.length > 0 ? { orgKeyProblems: problems } : {}),
+      ...(problems.length > 0 ? { orgConfigProblems: problems } : {}),
     };
   }
   const disabledProviders = new Set<string>();
@@ -162,6 +164,7 @@ export function runPreflight(input: {
     )
       disabledProviders.add(provider);
   }
+  const problems = orgConfigProblemsOf(orgConfig, input.models, input.judge);
   return {
     disconnected,
     removed,
@@ -170,6 +173,7 @@ export function runPreflight(input: {
       ? { refusalByEnvironment: input.refusalByEnvironment }
       : {}),
     disabledProviders: [...disabledProviders],
+    ...(problems.length > 0 ? { orgConfigProblems: problems } : {}),
   };
 }
 
@@ -265,13 +269,14 @@ export function preflightTargets({
       cell.modelId ? cell.modelSelection : host?.modelSelection,
       model,
     );
+    const harness = effectiveHarnessId(client);
     return [
       {
         model,
         provider: provider.provider,
         ...(selection ? { selection } : {}),
         ...(host?.selectionKnown === false ? { selectionKnown: false } : {}),
-        ...(client?.harness ? { harness: client.harness } : {}),
+        ...(harness ? { harness } : {}),
       },
     ];
   });
@@ -457,6 +462,7 @@ export function useSuiteRunPreflight({
   });
   const orgConfig = useHostedOrgModelConfig({ projectId, organizationId });
   const harnessKeys = useOrgHarnessKeys(projectId, orgConfig, hosts);
+  const accounts = useSuiteAccountPreflight({ suite, projectServers, planned });
   const manageModels = useOrgModelsHandoff(organizationId);
   const environment = useEnvironmentResolutions(
     projectId,
@@ -513,6 +519,7 @@ export function useSuiteRunPreflight({
     }).models;
   return {
     ...preflight,
+    ...accounts,
     outOfCreditsReason: creditsReasonFor(targets.models),
     // Planned cells are already what launches; otherwise the sheet picks
     // environments, and only theirs count.
@@ -521,14 +528,12 @@ export function useSuiteRunPreflight({
       : {
           outOfCreditsReasonForEnvironments: (environmentIds) =>
             creditsReasonFor(modelsForEnvironments(environmentIds)),
-          orgKeyProblemsForEnvironments: (environmentIds) =>
-            visibleOrgConfig && orgRequiresOwnKeys(visibleOrgConfig)
-              ? orgKeyProblemsOf(
-                  visibleOrgConfig,
-                  modelsForEnvironments(environmentIds),
-                  preflightJudgeOf(suite),
-                )
-              : [],
+          orgConfigProblemsForEnvironments: (environmentIds) =>
+            orgConfigProblemsOf(
+              visibleOrgConfig,
+              modelsForEnvironments(environmentIds),
+              preflightJudgeOf(suite),
+            ),
         }),
     serverName: (ref) =>
       getMcpServerDisplayName(ref, { remoteServers: projectServers }),
@@ -557,7 +562,7 @@ export function scopePreflightToEnvironments<
   T extends RunPreflight &
     Pick<
       RunPreflightState,
-      "outOfCreditsReasonForEnvironments" | "orgKeyProblemsForEnvironments"
+      "outOfCreditsReasonForEnvironments" | "orgConfigProblemsForEnvironments"
     >,
 >(preflight: T, selectedEnvironmentIds: readonly string[]): T {
   const credits = preflight.outOfCreditsReasonForEnvironments
@@ -567,19 +572,19 @@ export function scopePreflightToEnvironments<
         ),
       }
     : {};
-  const orgKeyProblems = preflight.orgKeyProblemsForEnvironments
+  const orgConfigProblems = preflight.orgConfigProblemsForEnvironments
     ? {
-        orgKeyProblems: preflight.orgKeyProblemsForEnvironments(
+        orgConfigProblems: preflight.orgConfigProblemsForEnvironments(
           selectedEnvironmentIds,
         ),
       }
     : {};
   const byEnvironment = preflight.refusalByEnvironment;
-  if (!byEnvironment) return { ...preflight, ...credits, ...orgKeyProblems };
+  if (!byEnvironment) return { ...preflight, ...credits, ...orgConfigProblems };
   return {
     ...preflight,
     ...credits,
-    ...orgKeyProblems,
+    ...orgConfigProblems,
     refused: [
       ...new Set(
         selectedEnvironmentIds.flatMap((id) =>
@@ -628,7 +633,7 @@ export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
   return Boolean(
     preflight?.removed.length ||
     preflight?.refused.length ||
-    preflight?.orgKeyProblems?.length,
+    preflight?.orgConfigProblems?.length || preflight?.accountProblems?.length,
   );
 }
 
@@ -654,9 +659,9 @@ export function RunPreflightNotices({
   } | null>(null);
   const { disconnected, removed, refused, disabledProviders, serverName } =
     preflight;
-  const orgKeyProblems = preflight.orgKeyProblems ?? [];
+  const orgConfigProblems = preflight.orgConfigProblems ?? [];
   // A missing Cursor key's sentence already says who adds it, and where.
-  const modelProblem = orgKeyProblems.some(
+  const modelProblem = orgConfigProblems.some(
     (message) => message !== ORG_KEY_MISSING_MESSAGE,
   );
   if (
@@ -664,7 +669,7 @@ export function RunPreflightNotices({
     !removed.length &&
     !refused.length &&
     !disabledProviders.length &&
-    !orgKeyProblems.length
+    !orgConfigProblems.length && !preflight.accountProblems?.length
   )
     return null;
   const openServers = (
@@ -698,10 +703,11 @@ export function RunPreflightNotices({
       aria-label="Before you run"
       className="space-y-2 rounded-lg border border-warning/45 bg-warning/10 p-3 text-xs"
     >
-      {orgKeyProblems.length > 0 && (
+      <AccountPreflightNotices {...{ preflight, disabled, onEditSettings }} />
+      {orgConfigProblems.length > 0 && (
         <div className="space-y-1" data-testid="preflight-org-key-problems">
-          {orgKeyProblems.map((message) => (
-            <p key={`org-keys:${message}`} className="text-destructive">
+          {orgConfigProblems.map((message) => (
+            <p key={`org-config:${message}`} className="text-destructive">
               {message}
             </p>
           ))}

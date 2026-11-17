@@ -1,4 +1,5 @@
 import { probeMcpServer } from "./server-probe.js";
+import { startSdkRunTelemetry } from "./telemetry.js";
 import { withSkillsExtensionCapability } from "./mcp-client-manager/index.js";
 import {
   getVerifiedServerSkill,
@@ -62,6 +63,8 @@ export interface RunServerDoctorInput<TTarget = unknown> {
   retryPolicy?: RetryPolicy;
   /** Transport for the probe's requests. See `buildDoctorProbeConfig`. */
   fetchFn?: typeof fetch;
+  /** @internal set by a host that counts the run itself. See `startSdkRunTelemetry`. */
+  __suppressTelemetry?: boolean;
 }
 
 type WithConnectedManager = <T>(
@@ -79,9 +82,26 @@ export interface ServerDoctorDependencies {
   withManager?: WithConnectedManager;
 }
 
+/** One `sdk_run_completed` per call: `passed` only when the server is ready. */
 export async function runServerDoctor<TTarget = unknown>(
   input: RunServerDoctorInput<TTarget>,
   dependencies: ServerDoctorDependencies = {}
+): Promise<ServerDoctorResult<TTarget>> {
+  const telemetry = input.__suppressTelemetry
+    ? undefined
+    : startSdkRunTelemetry("server_doctor");
+  try {
+    const result = await diagnoseServer(input, dependencies);
+    void telemetry?.finish(result.status === "ready" ? "passed" : "failed");
+    return result;
+  } finally {
+    void telemetry?.finish("errored");
+  }
+}
+
+async function diagnoseServer<TTarget>(
+  input: RunServerDoctorInput<TTarget>,
+  dependencies: ServerDoctorDependencies
 ): Promise<ServerDoctorResult<TTarget>> {
   const probeServer = dependencies.probeServer ?? probeMcpServer;
   const withManager =

@@ -63,6 +63,9 @@ export async function resolveChatTurn(args: {
   signal?: AbortSignal;
   prepareChatTurn?: boolean;
   preparedChatTurn?: unknown;
+  /** A client's turn (`resolveEnvironmentForRuntime`). The backend's own
+   *  preparation always asks for it. */
+  skillScope?: "visible";
 }): Promise<ResolvedChatTurn> {
   if (
     !args.client ||
@@ -191,6 +194,7 @@ export async function resolveChatTurn(args: {
     ...(args.selection.kind === "explicit"
       ? { overrides: { serverIds: args.selection.serverIds } }
       : {}),
+    ...(args.skillScope ? { skillScope: args.skillScope } : {}),
   });
   if (
     composition &&

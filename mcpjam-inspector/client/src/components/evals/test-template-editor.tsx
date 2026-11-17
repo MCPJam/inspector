@@ -13,6 +13,14 @@ import {
 } from "@/lib/mcpjam-agent/eval-tool-metadata";
 import { DEFAULTS, EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
 import {
+  advancedConfigForUpdate,
+  buildCaseSavePayload,
+  buildDraftTestCase,
+  normalizeAdvancedConfig,
+  useCaseSaveMutations,
+  type CaseSaveForm,
+} from "./case-save-payload";
+import {
   caseViewModel,
   capturedCaseChanged,
 } from "../evaluate/case-workspace/case-view-model";
@@ -28,7 +36,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
@@ -141,14 +149,9 @@ import {
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { ServerPicker } from "@/components/hosts/server-picker";
-import {
-  resolvePromptTurnsWithLegacyProbe,
-  stripPromptTurnsFromAdvancedConfig,
-} from "@/shared/steps";
 import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
 import {
   deriveExpectedToolCalls,
-  deriveQuery,
   isAssertStep,
   isInteractStep,
   isModelFree,
@@ -172,30 +175,15 @@ import {
   type WidgetAssertion,
 } from "@/shared/steps";
 import { appendScenarioPredicatesAsAssertSteps } from "@/shared/predicate-migration";
+import {
+  failsOnToolError,
+  withFailOnToolError,
+} from "@/shared/tool-error-policy";
 
-/**
- * Seed the editor's `editForm.steps` from a test case. The backend stores
- * `steps` natively; prefer them directly. Old `widget_probe`/pre-steps blobs
- * (no `steps`) are bridged once through the legacy resolver — the ONE remaining
- * use of the prompt-turns adapter on the load path, deletable in Phase E once
- * no un-migrated rows remain.
- */
-function loadSteps(testCase: unknown): TestStep[] {
-  const steps = (testCase as { steps?: unknown })?.steps;
-  if (Array.isArray(steps) && steps.length > 0) {
-    return normalizeSteps(steps);
-  }
-  return promptTurnsToSteps(
-    resolvePromptTurnsWithLegacyProbe(
-      testCase as Parameters<typeof resolvePromptTurnsWithLegacyProbe>[0],
-    ),
-  );
-}
-import { normalizeToolChoice } from "@/shared/tool-choice";
+import { loadCaseSteps as loadSteps } from "./load-case-steps";
 import {
   resolveCasePredicates,
   resolveMatchOptions,
-  type EvalMatchOptions,
   type CasePredicates,
   type Predicate,
 } from "@/shared/eval-matching";
@@ -225,7 +213,6 @@ import {
   type CaseModelEntry,
 } from "@/components/chat-v2/shared/model-selection";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
-import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
 import {
   ScenarioHostStyleProvider,
@@ -258,7 +245,6 @@ import type {
   EvalIteration,
   EvalSuiteRun,
   RunColumnTab,
-  EvalJudgeConfigOverride,
 } from "./types";
 import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
@@ -296,11 +282,12 @@ import {
   getScenarioShellStyle,
   normalizeScenarioHostStyleId,
 } from "@/lib/scenario-client-style";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSpine } from "../evaluate/case-spine/case-spine";
+import { ToolErrorSwitch } from "../evaluate/tool-error-switch";
 import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
 import {
   buildCaseScorecard,
@@ -351,25 +338,7 @@ import type { ToolCatalogStatus } from "../evaluate/case-scorecard/route-row";
 import { IterationReportScorecard } from "../evaluate/case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
 
-interface TestTemplate {
-  title: string;
-  runs: number;
-  scenario?: string;
-  steps: TestStep[];
-  advancedConfig?: Record<string, unknown>;
-  matchOptions?: EvalMatchOptions;
-  /** Case-level predicate gate override; undefined ⇒ inherit suite defaults. */
-  predicates?: CasePredicates;
-  suppressedSuiteStandardCheckIds?: string[];
-  /** Authored rubric for the model judge. Empty string clears it. */
-  expectedOutput?: string;
-  /**
-   * The one per-case judge override the backend admits: opt out. No per-case
-   * model, threshold or role exists to write.
-   */
-  judgeConfigOverride?: EvalJudgeConfigOverride;
-  kind?: "capability" | "regression";
-}
+type TestTemplate = CaseSaveForm;
 
 interface TestTemplateEditorProps {
   /** View a code-owned case without enabling authoring. */
@@ -547,31 +516,6 @@ function CaptureModeToggle({
       })}
     </div>
   );
-}
-
-/**
- * In-memory shape for an unsaved ("draft") case, so the editor can render it
- * before anything is written to Convex. Mirrors the fields the old eager-create
- * handlers inserted. `_id` is the route sentinel (`draft:<kind>`), not a real
- * Convex id — Save swaps the eager update for a `createTestCase` insert.
- */
-function buildDraftTestCase(
-  id: string,
-  suiteTestCases: any[] | undefined,
-): any {
-  const collected = collectUniqueModelsFromTestCases(suiteTestCases ?? []);
-  const models =
-    collected.length > 0
-      ? collected
-      : [{ provider: "anthropic", model: "anthropic/claude-haiku-4.5" }];
-  return {
-    _id: id,
-    title: "Untitled test case",
-    query: "",
-    runs: DEFAULTS.RUNS_PER_TEST,
-    models,
-    caseType: "prompt",
-  };
 }
 
 const validateExpectedToolCalls = (
@@ -954,36 +898,6 @@ const normalizeForComparison = (value: any): any => {
   return value;
 };
 
-function normalizeAdvancedConfig(
-  advancedConfig: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  const stripped = stripPromptTurnsFromAdvancedConfig(advancedConfig);
-  if (!stripped) {
-    return undefined;
-  }
-
-  const next = { ...stripped };
-
-  if (typeof next.system === "string" && next.system.trim() === "") {
-    delete next.system;
-  }
-  const normalizedToolChoice = normalizeToolChoice(next.toolChoice);
-  if (!normalizedToolChoice) {
-    delete next.toolChoice;
-  } else {
-    next.toolChoice = normalizedToolChoice;
-  }
-  if (
-    next.temperature === null ||
-    next.temperature === undefined ||
-    next.temperature === ""
-  ) {
-    delete next.temperature;
-  }
-
-  return Object.keys(next).length > 0 ? next : undefined;
-}
-
 function readCompareRunIdFromIteration(
   iteration: Pick<EvalIteration, "metadata"> | null | undefined,
 ) {
@@ -1272,15 +1186,10 @@ export function TestTemplateEditor({
   // deep-link effect so it opens the snapshot once per anchor — without it,
   // "Back to editing" would immediately snap back into the replay.
   const appliedReplayAnchorRef = useRef<string | null>(null);
-  const updateTestCaseMutation = useMutation(
-    "testSuites:updateTestCase" as any,
-  ) as unknown as (args: {
-    testCaseId: string;
-    [key: string]: unknown;
-  }) => Promise<unknown>;
-  const createTestCaseMutation = useMutation(
-    "testSuites:createTestCase" as any,
-  ) as unknown as (args: Record<string, unknown>) => Promise<string>;
+  const {
+    updateTestCase: updateTestCaseMutation,
+    createTestCase: createTestCaseMutation,
+  } = useCaseSaveMutations();
 
   // A draft (`draft:<kind>` sentinel) is a brand-new case the user is
   // configuring but has not saved. It is NOT in Convex yet, so we synthesize it
@@ -1589,7 +1498,12 @@ export function TestTemplateEditor({
   // config, surfaced read-only below rather than as a selectable option. An
   // environment suite lists its environments' clients instead.
   const quickRunHostOptions = useMemo<
-    Array<{ value: string; label: string; namedHostId: string }>
+    Array<{
+      value: string;
+      label: string;
+      namedHostId: string;
+      hostStyle?: string | null;
+    }>
   >(() => {
     if (isEnvironmentSuite) {
       return (
@@ -1602,6 +1516,7 @@ export function TestTemplateEditor({
           value: hostId,
           label: host?.displayName ?? host?.name ?? hostId,
           namedHostId: hostId,
+          hostStyle: host?.hostStyle,
         };
       });
     }
@@ -1611,6 +1526,9 @@ export function TestTemplateEditor({
         value: attachment.namedHostId,
         label: attachment.hostName ?? attachment.namedHostId,
         namedHostId: attachment.namedHostId,
+        hostStyle: projectHosts.find(
+          (host) => host.hostId === attachment.namedHostId,
+        )?.hostStyle,
       }),
     );
   }, [
@@ -1748,7 +1666,10 @@ export function TestTemplateEditor({
     ) ?? quickRunHostOptions[0];
   const selectedQuickRunHostLogoSrc =
     selectedQuickRunHostOption?.namedHostId != null
-      ? resolveHostLogoByName(selectedQuickRunHostOption.label)
+      ? resolveHostLogo({
+          name: selectedQuickRunHostOption.label,
+          hostStyle: selectedQuickRunHostOption.hostStyle,
+        })
       : null;
   // Effective host for an attachment-less suite — its own configured host
   // style, defaulting to MCPJam. Mirrors the server's `loadSuiteHostConfig`
@@ -2015,6 +1936,8 @@ export function TestTemplateEditor({
     () => normalizeAdvancedConfig(currentTestCase?.advancedConfig),
     [currentTestCase],
   );
+  const explicitAdvancedConfig = (next: Record<string, unknown> | undefined) =>
+    advancedConfigForUpdate(next, currentAdvancedConfig);
 
   // True when today's case scenario differs from the snapshot of the run being
   // replayed — drives the "edited since this run" banner on the read-only
@@ -2484,6 +2407,17 @@ export function TestTemplateEditor({
     setEditForm((current) => (current ? { ...current, steps: next } : current));
   }, []);
 
+  const setFailOnToolError = useCallback((next: boolean) => {
+    setEditForm((current) =>
+      current
+        ? {
+            ...current,
+            advancedConfig: withFailOnToolError(current.advancedConfig, next),
+          }
+        : current,
+    );
+  }, []);
+
   // Latest `steps` mirrored into a ref so the recorder's append (a stable
   // callback) can read the current step list without putting `editForm` in its
   // deps — that would churn `previewRecorder`'s identity on every keystroke and
@@ -2692,61 +2626,16 @@ export function TestTemplateEditor({
     [editForm?.steps],
   );
 
-  const buildSavePayload = (form: TestTemplate) => {
+  const buildSavePayload = (form: TestTemplate) =>
     // On the workspace the author answers the tool question outright. Only the
     // legacy /evals editor, which has no such control, still infers the flag
     // from step shape — an inference that reads every `firstToolWas`-only case
     // as "expects no tools".
-    const isNegativeTest = useWorkspace
-      ? workspaceIsNegative
-      : deriveIsNegativeTestFromSteps(form.steps);
-    // `query`/`expectedToolCalls`/`expectedOutput` are denormalized display
-    // projections of `steps` (the runner reads `steps`, never these). A
-    // negative test expects no model tool calls, so its flattened display list
-    // is empty.
-    const steps = form.steps;
-    const query = deriveQuery(steps);
-    const expectedToolCalls = isNegativeTest
-      ? []
-      : deriveExpectedToolCalls(steps);
-
-    // Normalize the predicate envelope before it crosses the wire. The
-    // in-memory editForm keeps a draft `list` in `inherit` mode so the
-    // user can flip back to `replace`/`extend` without losing their work,
-    // but the persisted envelope must carry an empty list there — the
-    // runner ignores it AND `casePredicatesSchema` still validates each
-    // row with `predicateSchema` regardless of mode, so a stale invalid
-    // row would be rejected downstream even though the case is "safe".
-    const normalizedPredicates = form.predicates
-      ? form.predicates.mode === "inherit"
-        ? { ...form.predicates, list: [] }
-        : form.predicates
-      : form.predicates;
-
-    return {
-      title: form.title,
-      runs: form.runs,
-      scenario: form.scenario?.trim() ? form.scenario.trim() : undefined,
-      query,
-      expectedToolCalls,
-      // Authored rubric for the model judge. Send "" to clear — the backend
-      // preserves the field on omit, and the judge trims "" to absent.
-      expectedOutput: form.expectedOutput?.trim() ?? "",
-      steps,
-      isNegativeTest,
-      advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
-      matchOptions: form.matchOptions,
-      predicates: normalizedPredicates,
-      suppressedSuiteStandardCheckIds:
-        form.suppressedSuiteStandardCheckIds ?? [],
-      // Omitted when undefined: `createTestCase` admits no `null` for this
-      // field, and `handleSave` supplies the null-clear on the update path.
-      ...(form.judgeConfigOverride !== undefined
-        ? { judgeConfigOverride: form.judgeConfigOverride }
-        : {}),
-      ...(form.kind !== undefined ? { kind: form.kind } : {}),
-    };
-  };
+    buildCaseSavePayload(form, {
+      isNegativeTest: useWorkspace
+        ? workspaceIsNegative
+        : deriveIsNegativeTestFromSteps(form.steps),
+    });
 
   const handleExport = () => {
     if (!editForm || !currentTestCase || !onExportDraft) {
@@ -2883,6 +2772,7 @@ export function TestTemplateEditor({
         // And for the judge opt-out, so turning the switch back off actually
         // removes the stored override rather than leaving it in place.
         judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
+        advancedConfig: explicitAdvancedConfig(savePayload.advancedConfig),
       });
       track("eval_test_case_edited", {
         location: "test_template_editor",
@@ -3065,6 +2955,7 @@ export function TestTemplateEditor({
             matchOptions: savePayload.matchOptions ?? null,
             predicates: savePayload.predicates ?? null,
             judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
+            advancedConfig: explicitAdvancedConfig(savePayload.advancedConfig),
           }
         : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
@@ -3525,10 +3416,12 @@ export function TestTemplateEditor({
           modelValue,
           compareLabelByValue,
         );
-        const advancedConfig = mergeAdvancedConfigWithOverride({
-          baseAdvancedConfig: savePayload.advancedConfig,
-          override: undefined,
-        });
+        const advancedConfig = explicitAdvancedConfig(
+          mergeAdvancedConfigWithOverride({
+            baseAdvancedConfig: savePayload.advancedConfig,
+            override: undefined,
+          }),
+        );
 
         const testCaseOverrides = {
           query: savePayload.query,
@@ -5010,7 +4903,7 @@ export function TestTemplateEditor({
                               <>
                                 <Play className="size-3.5 fill-current" />
                                 {useWorkspace
-                                  ? "Setup Run"
+                                  ? "Run"
                                   : selectedModelValues.length > 1
                                     ? "Run compare"
                                     : "Quick Run"}
@@ -5058,7 +4951,7 @@ export function TestTemplateEditor({
                           <>
                             <Play className="size-3.5 fill-current" />
                             {useWorkspace
-                              ? "Setup Run"
+                              ? "Run"
                               : selectedModelValues.length > 1
                                 ? "Run compare"
                                 : "Quick Run"}
@@ -5302,6 +5195,10 @@ export function TestTemplateEditor({
                       }
                       suiteJudgeConfig={suite?.judgeConfig}
                       suiteJudgeRubric={suite?.judgeRubric}
+                      failOnToolError={failsOnToolError(
+                        editForm.advancedConfig,
+                      )}
+                      onFailOnToolErrorChange={setFailOnToolError}
                       capabilities={caseCapabilities.capabilities}
                       evalValidationBorderClass={evalValidationBorderClass}
                       autoFocusPrompt={draftKind === "record"}
@@ -5887,6 +5784,12 @@ export function TestTemplateEditor({
                           stepStatusById={liveStepStatusById}
                           syncedStepId={syncedStepId}
                           onHoverStep={setSyncedStepId}
+                        />
+                      ) : null}
+                      {editForm && !readOnly ? (
+                        <ToolErrorSwitch
+                          checked={failsOnToolError(editForm.advancedConfig)}
+                          onCheckedChange={setFailOnToolError}
                         />
                       ) : null}
                     </div>

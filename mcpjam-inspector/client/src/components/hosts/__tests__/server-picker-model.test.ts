@@ -17,7 +17,6 @@ import { describe, expect, it } from "vitest";
 import {
   findSoloGroup,
   isServerStandIn,
-  initialPickerTab,
   listGroupsForTab,
   resolvePickerSelection,
   resolveServerConnection,
@@ -327,13 +326,6 @@ describe("resolvePickerSelection", () => {
     });
   });
 
-  it("opens the Groups tab for a user-named one-server group", () => {
-    const named = group("g_a", "group A", ["srv_1"], ["alpha"]);
-    expect(initialPickerTab(resolvePickerSelection([named], "g_a"))).toBe(
-      "groups",
-    );
-  });
-
   it("reports a selection whose row is gone as dangling, not as absent", () => {
     // Today the trigger renders these identically to "nothing picked", so a
     // suite pointing at a deleted group reads as one that was never set up.
@@ -358,31 +350,6 @@ describe("resolvePickerSelection", () => {
       label: "orphan",
       serverCount: 1,
     });
-  });
-});
-
-describe("initialPickerTab", () => {
-  it("opens on Servers with nothing selected", () => {
-    expect(initialPickerTab(null)).toBe("servers");
-  });
-
-  it("opens on Servers when a bare server is selected", () => {
-    expect(
-      initialPickerTab(resolvePickerSelection([SOLO_ALPHA], "g_alpha")),
-    ).toBe("servers");
-  });
-
-  it("opens on Groups when a group is selected", () => {
-    // Matches the third artboard: a selected group shows the Groups tab.
-    expect(initialPickerTab(resolvePickerSelection([PAIR], "g_pair"))).toBe(
-      "groups",
-    );
-  });
-
-  it("opens on Servers for a dangling selection — the tab it can be fixed on", () => {
-    expect(initialPickerTab(resolvePickerSelection([], "g_gone"))).toBe(
-      "servers",
-    );
   });
 });
 

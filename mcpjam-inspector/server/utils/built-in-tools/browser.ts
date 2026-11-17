@@ -77,6 +77,7 @@ import {
   type BrowserActTarget,
   type BrowserCommand,
   type BrowserCommandCorrelation,
+  type BrowserCommandSecret,
   type ObservationStateToken,
   type WebMcpToolsRevision,
 } from "../../services/browserd/protocol.js";
@@ -114,6 +115,17 @@ import {
   wakePlaygroundSandbox,
 } from "../computers/control-plane-client.js";
 import { planSecretPlaceholders } from "../secrets/secret-placeholders.js";
+import {
+  createFeatureCheck,
+  navigationStopFields,
+  requiredDaemonFeatures,
+  SECRET_TARGET_REQUIRED,
+  takeNavigationStop,
+  secretDeliveryOutcome,
+  type BrowserNavigationStop,
+  type BrowserSecretGate,
+  type BrowserSecretReport,
+} from "./browser-caller-options.js";
 import {
   createSecretScrubber,
   MIN_SCRUBBABLE_LENGTH,
@@ -245,8 +257,11 @@ export interface BrowserToolsOptions {
    * means every placeholder is refused.
    */
   secrets?: {
-    /** Materialized `{name, value}` pairs, already resolved for this turn. */
-    available: ReadonlyArray<{ name: string; value: string }>;
+    /**
+     * Materialized `{name, value}` pairs, already resolved for this turn.
+     * `origins`, when set, are the only pages the daemon types the value on.
+     */
+    available: ReadonlyArray<BrowserCommandSecret>;
     /**
      * Brokered names: injected at egress, so never typeable. Kept separate so
      * the refusal can say why.
@@ -254,7 +269,13 @@ export interface BrowserToolsOptions {
     brokered?: readonly string[];
     /** Fired with the NAMES (never values) that actually reached a browser. */
     onDelivered?: (names: readonly string[]) => void;
+    /** Awaited before a value leaves this process; a string refuses. */
+    beforeDeliver?: BrowserSecretGate;
+    /** Awaited once the daemon answers a command that carried values. */
+    afterDeliver?: BrowserSecretReport;
   };
+  /** Stop every navigation to this page before it loads; caller-only. */
+  navigationStop?: BrowserNavigationStop;
   /**
    * The host's Tool Approval switch.
    *
@@ -524,11 +545,12 @@ interface CommandSender {
     options?: {
       timeoutMs?: number;
       signal?: AbortSignal;
-      secrets?: ReadonlyArray<{ name: string; value: string }>;
+      secrets?: ReadonlyArray<BrowserCommandSecret>;
     },
   ): Promise<{
     status: string;
     result?: {
+      stoppedAt?: string;
       ok: boolean;
       output?: unknown;
       error?: string;
@@ -1144,6 +1166,7 @@ export function buildBrowserTools(
     });
     return undefined;
   }
+  const checkFeatures = createFeatureCheck();
   const state = new BrowserTurnState(
     opts,
     opts.ensureSession ?? defaultEnsureSession(engine, opts),
@@ -1335,6 +1358,7 @@ export function buildBrowserTools(
     const command: BrowserCommand = {
       commandId,
       source: unattended ? "eval" : "chat",
+      ...navigationStopFields(opts.navigationStop),
       ...(correlation ? { correlation } : {}),
       ...(args.tabId ? { tabId: args.tabId } : {}),
       action:
@@ -1442,34 +1466,32 @@ export function buildBrowserTools(
               command.source,
             )
           : undefined;
-      // An older daemon would type the literal placeholder and report
-      // success, so check its features first.
-      if (args.secrets?.length) {
-        try {
-          const status = await handle.client.status({
-            ...(args.signal ? { signal: args.signal } : {}),
-          });
-          if (
-            status.kind !== "ok" ||
-            !status.features?.includes("secret-placeholders")
-          )
-            return {
-              ok: false,
-              error:
-                "secret_unsupported_daemon: this browser is running an older " +
-                "build that cannot fill in a {{secret:...}} placeholder, so " +
-                "nothing was typed. Ask the user to restart the browser " +
-                "session, or have them type the credential themselves.",
-              tabId,
-            };
-        } catch (error) {
-          return {
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-            tabId,
-          };
-        }
-      }
+      // An older daemon would type the literal placeholder, or let the page
+      // the run ends on load, and report success: check its features first.
+      const refusal =
+        (await checkFeatures(
+          handle,
+          requiredDaemonFeatures({
+            secrets: args.secrets,
+            navigationStop: opts.navigationStop,
+          }),
+          args.signal,
+        )) ??
+        (args.secrets?.length
+          ? await opts.secrets?.beforeDeliver?.(
+              args.secrets.map((secret) => secret.name),
+              { commandId },
+            )
+          : undefined);
+      if (refusal) return { ok: false, error: refusal, tabId };
+      const reportDelivery = async (
+        answer: Parameters<typeof secretDeliveryOutcome>[0],
+      ) => {
+        if (!args.secrets?.length || !opts.secrets?.afterDeliver) return;
+        const names = args.secrets.map((secret) => secret.name);
+        const outcome = secretDeliveryOutcome(answer);
+        await opts.secrets.afterDeliver(names, { commandId, outcome });
+      };
       let response;
       try {
         // Approval, handoff and queue waits may outlive the grant checked at
@@ -1497,6 +1519,7 @@ export function buildBrowserTools(
         );
       } catch (error) {
         disarm?.();
+        await reportDelivery(undefined);
         if (args.signal?.aborted) {
           // Reported as a CANCELLATION, not as a transport failure: the model
           // (and the person reading the card) should see that the tool was
@@ -1512,6 +1535,10 @@ export function buildBrowserTools(
         throw error;
       }
       disarm?.();
+      await reportDelivery(response);
+      // The run reached its last page: the caller takes the URL, the model a note.
+      const stopped = takeNavigationStop(opts.navigationStop, response.result);
+      if (stopped) return { ...stopped, tabId };
       // A PERSON HAS THE BROWSER. Park instead of refusing, and come back with
       // a fresh look rather than with this command's result — which does not
       // exist, because the command was never run. @see browser-handoff.ts
@@ -1861,6 +1888,10 @@ export function buildBrowserTools(
           : selector
           ? { selector }
           : undefined;
+        const limited = secretPlan.deliver.some((secret) => secret.origins);
+        if (limited && (verb === "fill_form" || !ref)) {
+          return { error: SECRET_TARGET_REQUIRED };
+        }
         return presented(
           await send(
             {

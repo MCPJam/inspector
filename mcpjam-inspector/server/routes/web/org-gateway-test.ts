@@ -42,7 +42,7 @@ const canTestProviderConnection = makeFunctionReference<
 >("organizationModelProviderTest:canTestProviderConnection");
 
 const GATEWAY_TEST_ADMINS_ONLY =
-  "Only organization admins and owners can test a gateway. Ask an admin to add it.";
+  "Only organization admins and owners can test a custom provider. Ask an admin to add it.";
 const GATEWAY_TEST_ROLE_UNCHECKED =
   "Couldn't check your role in this organization. Try again.";
 

@@ -212,7 +212,7 @@ function CompareModelLane({ lane, enabled = true }: { lane: string; enabled?: bo
   const workspace = useCompareLaneModelApps(scope, {
     ...ALL_EXTENSION_CAPABILITIES,
     modelContext: enabled,
-  }, "codex");
+  }, "codex", undefined, { hints: "openai/ui", start: "hint-first" });
   return <OwnedModelAppPortsProvider value={workspace.value}>
     <output data-testid={`references-${lane}`}>{JSON.stringify(workspace.references)}</output>
     <OwnedModelApp
@@ -243,7 +243,10 @@ it("owns two Compare model App contexts independently and closes only the remove
   await waitFor(() => expect(mocks.hosts.size).toBe(2));
   const first = mocks.hosts.get("c")!;
   const second = mocks.hosts.get("d")!;
-  expect(first.surface.openAIDisplayModes).toBe(true);
+  expect(first.surface.displayBehavior).toEqual({
+    hints: "openai/ui",
+    start: "hint-first",
+  });
   expect(first.services.sendMessage).toBeUndefined();
   await act(async () => {
     await first.services.updateModelContext!(params);

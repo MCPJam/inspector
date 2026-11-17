@@ -28,6 +28,18 @@ const FIXTURE_PATH = join(here, "fixtures", "fake-stdio-mcp-server.mjs");
 
 const TOKEN = "shim-test-token-0123456789abcdefghij";
 
+/**
+ * The shortest request deadline a test gives the shim. It also bounds
+ * `initialize`, whose answer waits on a cold Node start of the fixture, and on a
+ * loaded runner that start takes several hundred milliseconds. A handshake that
+ * misses the deadline is refused without a session, so a tighter value would
+ * measure the runner's load instead of the shim.
+ */
+const SHORT_REQUEST_TIMEOUT_MS = 2_000;
+
+/** Long enough past that deadline that, had it not been paused, it would have fired. */
+const HOLD_PAST_DEADLINE_MS = SHORT_REQUEST_TIMEOUT_MS + 500;
+
 /** Spawned with `stdio: ["ignore", "pipe", "pipe"]`: no stdin, both readers. */
 type ShimProcess = ChildProcessByStdio<null, Readable, Readable>;
 
@@ -503,12 +515,12 @@ describe("plugin vm shim: handshake and calls", () => {
     } finally { await client.close(); await shim.stop(); await rm(folder, { recursive: true, force: true }); }
   });
   it("relays input and keeps its sole parent alive beyond the ordinary deadline", async () => {
-    const shim = await startShim({ env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "100" } });
+    const shim = await startShim({ env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: String(SHORT_REQUEST_TIMEOUT_MS) } });
     const { sessionId } = await openSession(shim);
     const stream = await openInputStream(shim, sessionId);
     const parent = post(shim, toolCall("provoke"), { sessionId });
     const request = await stream.read();
-    await new Promise(resolve => setTimeout(resolve, 180));
+    await new Promise(resolve => setTimeout(resolve, HOLD_PAST_DEADLINE_MS));
     const reply = { jsonrpc: "2.0", id: request.id, result: {} };
     expect((await post(shim, reply, { sessionId })).status).toBe(202);
     expect(await (await parent).text()).toContain("host answered with a result");
@@ -516,7 +528,7 @@ describe("plugin vm shim: handshake and calls", () => {
     stream.close();
   });
   it("queues overlapping form calls without assigning an input to the wrong parent", async () => {
-    const shim = await startShim({ env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "100" } });
+    const shim = await startShim({ env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: String(SHORT_REQUEST_TIMEOUT_MS) } });
     const { sessionId } = await openSession(shim);
     const stream = await openInputStream(shim, sessionId);
     const firstCall = toolCall("provoke");
@@ -524,7 +536,7 @@ describe("plugin vm shim: handshake and calls", () => {
     const firstInput = await stream.read();
     const secondCall = toolCall("provoke");
     const second = post(shim, secondCall, { sessionId });
-    await new Promise(resolve => setTimeout(resolve, 180));
+    await new Promise(resolve => setTimeout(resolve, HOLD_PAST_DEADLINE_MS));
     expect((await post(shim, { jsonrpc: "2.0", id: firstInput.id, result: {} }, { sessionId })).status).toBe(202);
     const firstReply = await (await first).json();
     expect(firstReply.id).toBe(firstCall.id);
@@ -831,7 +843,7 @@ describe("plugin vm shim: failure handling", () => {
 
   it("fails a request the child never answers rather than hanging", async () => {
     const shim = await startShim({
-      env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "300" },
+      env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: String(SHORT_REQUEST_TIMEOUT_MS) },
     });
     const { sessionId } = await openSession(shim);
 

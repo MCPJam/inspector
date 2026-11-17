@@ -25,10 +25,7 @@ vi.mock("@/hooks/use-available-models", () => ({
 }));
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
-  // Flag-aware: ProtocolTab's enterprise-managed policy toggle is gated on
-  // `xaa` (same flag as the per-server XAA auth option). Other tabs' flags
-  // stay off, as before.
-  useFeatureFlagEnabled: (flag: string) => flag === "xaa",
+  useFeatureFlagEnabled: () => false,
 }));
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: ({ provider }: { provider: string }) => (

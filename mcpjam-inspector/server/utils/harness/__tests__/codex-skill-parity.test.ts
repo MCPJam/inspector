@@ -10,168 +10,31 @@
  * apart from their root.
  *
  * They pin the three facts MCPJam's own skill passes depend on:
- *   1. WHERE the skills land — `skillsBaseDir` must equal the adapter's real
- *      target, or the supporting-file / frontmatter / reconcile passes would
- *      operate on directories the runtime never reads.
+ *   1. WHERE the skills land — the descriptor's write folder must equal the
+ *      adapter's real target, or the box writer's supporting-file, SKILL.md
+ *      and reconcile steps would operate on folders the runtime never reads.
  *   2. That the delivered SKILL.md is valid frontmatter for our descriptions
- *      (both runtimes interpolate `description: ${value}` raw, hence
- *      `frontmatterSafeSkills`).
+ *      (both runtimes interpolate `description: ${value}` raw, hence the
+ *      plan's YAML-quoted descriptions).
  *   3. That a name MCPJam accepts is a name the adapters accept — the shared
  *      writer's validator THROWS mid-turn, which would fail the whole turn.
  *
- * HOW THE DRIVE WORKS on the `1.0.x` stable line. The canary adapters wrote
- * skills during `doStart` (so the old version of this file stopped `doStart`
- * at `spawn`); stable writes them at PROMPT time, inside `doPromptTurn`,
- * re-synced every turn. Reaching `doPromptTurn` requires a live session, so
- * each test runs a minimal fake bridge: a real WebSocket server standing in
- * for the in-sandbox bridge process, a `bridge-meta.json` read that reports it
- * ready, and a spawn that returns an inert process handle. The skill writes
- * land BEFORE the adapter sends its start message, so the fake bridge never
- * has to answer anything (beyond claude-code's `bridge-hello` greeting).
+ * The adapters are driven the way they run on a box (`promptWithSkills` in
+ * `server/test/support/fake-harness-bridge.ts`): skills are written at
+ * prompt time, so each test reaches `doPromptTurn` against a fake bridge.
  */
 import { describe, expect, it } from "vitest";
 import matter from "gray-matter";
-import { WebSocketServer } from "ws";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodexAppServer } from "../codex-appserver/index.js";
+import { boxSkillsFolder, planBoxSkills } from "../box-skills-writer";
 import { getHarnessAdapter } from "../registry";
+import type { RuntimeSkill } from "../runtime-skills";
+import { BOX_HOME } from "../../../test/support/fake-skill-box";
 import {
-  prepareCodexSkills,
-  toHarnessSkills,
-  type RuntimeSkill,
-} from "../runtime-skills";
-
-/** `$HOME` on the E2B harness box (see `e2b-sandbox-provider`). */
-const BOX_HOME = "/home/user";
-
-type Write = { path: string; content: string };
-
-type HarnessSkillPayload = Array<{
-  name: string;
-  description: string;
-  content: string;
-  files?: Array<{ path: string; content: string }>;
-}>;
-
-/**
- * Minimal fake of the sandbox session the harness drives — the same surface
- * MCPJam's `e2b-sandbox-provider` exposes. `bridge-meta.json` always reads as
- * "waiting" so `waitForBridgeReady` resolves on its first metadata poll, and
- * `getPortEndpoint` points the adapter's bridge WebSocket at the test server.
- */
-function fakeSandboxSession(bridgeType: "codex" | "claude-code", port: number) {
-  const writes: Write[] = [];
-  const commands: string[] = [];
-  const restricted = {
-    run: async ({ command }: { command: string }) => {
-      commands.push(command);
-      // The adapters resolve the box's real $HOME before choosing a skills root.
-      if (command.includes("$HOME")) {
-        return { exitCode: 0, stdout: BOX_HOME, stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    },
-    readTextFile: async ({ path }: { path: string }) =>
-      path.endsWith("/bridge-meta.json")
-        ? JSON.stringify({ type: bridgeType, state: "waiting", port })
-        : null,
-    writeTextFile: async (write: Write) => {
-      writes.push(write);
-    },
-    // An inert bridge process: the real bridge is the test's WebSocket server,
-    // so the handle only has to satisfy stream readers and teardown.
-    spawn: async () => ({
-      stdout: new ReadableStream<Uint8Array>({ start() {} }),
-      stderr: new ReadableStream<Uint8Array>({ start() {} }),
-      kill: async () => {},
-      wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-    }),
-  };
-  return {
-    writes,
-    commands,
-    session: {
-      id: "sandbox-1",
-      defaultWorkingDirectory: `${BOX_HOME}/work`,
-      ports: [port],
-      restricted: () => restricted,
-      getPortEndpoint: async () => ({ url: `ws://127.0.0.1:${port}` }),
-    },
-  };
-}
-
-/**
- * Drive the adapter's real `doStart` to a live session, then its real
- * `doPromptTurn` — the point where the stable adapters write skills — and
- * capture everything written to the box. The turn itself is never answered;
- * skills land before the start message goes out.
- */
-async function promptWithSkills(
-  harness: {
-    harnessId: string;
-    doStart: (opts: unknown) => Promise<{
-      doPromptTurn: (opts: unknown) => Promise<{ done: Promise<unknown> }>;
-      doDestroy: () => Promise<unknown>;
-    }>;
-  },
-  skills: HarnessSkillPayload
-): Promise<{ writes: Write[]; commands: string[]; error: unknown }> {
-  const bridgeType = harness.harnessId as "codex" | "claude-code";
-  const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-  await new Promise((resolve) => wss.once("listening", resolve));
-  const port = (wss.address() as { port: number }).port;
-  wss.on("connection", (socket) => {
-    // claude-code's connect handshake waits for the bridge's greeting; codex
-    // opens the socket and moves on.
-    if (bridgeType === "claude-code") {
-      socket.send(JSON.stringify({ type: "bridge-hello" }));
-    }
-  });
-
-  const box = fakeSandboxSession(bridgeType, port);
-  let session:
-    | Awaited<ReturnType<(typeof harness)["doStart"]>>
-    | undefined;
-  let error: unknown;
-  try {
-    session = await harness.doStart({
-      sessionId: "session-1",
-      sessionWorkDir: `${BOX_HOME}/work`,
-      sandboxSession: box.session,
-      permissionMode: "allow-all",
-    });
-    const control = await session.doPromptTurn({
-      prompt: "hello",
-      tools: [],
-      skills,
-      emit: () => {},
-    });
-    // The fake bridge never finishes the turn; teardown rejects `done`.
-    control.done.catch(() => {});
-  } catch (err) {
-    error = err;
-  } finally {
-    try {
-      await session?.doDestroy();
-    } catch {
-      /* teardown only */
-    }
-    for (const client of wss.clients) client.terminate();
-    await new Promise((resolve) => wss.close(() => resolve(undefined)));
-  }
-  return { writes: box.writes, commands: box.commands, error };
-}
-
-/** Skill-content writes under a skills root, excluding the shared writer's own
- *  `.ai-sdk-harness-skills.json` sync manifest (an adapter implementation
- *  detail, not a delivered skill). */
-function skillWrites(writes: Write[], skillsBaseDir: string): Write[] {
-  return writes.filter(
-    (w) =>
-      w.path.startsWith(`${skillsBaseDir}/`) &&
-      !w.path.includes("/.ai-sdk-harness-skills.json")
-  );
-}
+  promptWithSkills,
+  skillWrites,
+} from "../../../test/support/fake-harness-bridge";
 
 /** Writes are "expected to have happened" only if the whole turn setup ran. */
 function expectReachedPrompt(error: unknown): void {
@@ -189,29 +52,29 @@ function skill(p: Partial<RuntimeSkill> & { skillId: string }): RuntimeSkill {
 }
 
 describe("codex skill parity (real adapter)", () => {
-  it("writes each delivered skill under the adapter's advertised skillsBaseDir", async () => {
+  it("writes each delivered skill under the descriptor's write folder", async () => {
     const adapter = getHarnessAdapter("codex");
-    const prepared = prepareCodexSkills([
+    const plan = planBoxSkills(adapter.skills, [
       skill({ skillId: "s1", name: "pdf-tools" }),
       skill({ skillId: "s2", name: "csv-tools", description: "Read CSVs" }),
     ]);
 
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
-      prepared.payload
+      plan.payload
     );
 
     expectReachedPrompt(error);
     // The load-bearing assertion: the registry's root IS where codex writes.
     // If the adapter ever moves its root, every MCPJam skill pass would silently
     // target a directory the CLI does not read — this fails first.
-    expect(adapter.skillsBaseDir).toBe(`${BOX_HOME}/.agents/skills`);
+    expect(boxSkillsFolder(adapter.skills, BOX_HOME)).toBe(`${BOX_HOME}/.agents/skills`);
     // (The stable writer syncs skills sorted by name, so csv-tools lands first.)
     expect(
-      skillWrites(writes, adapter.skillsBaseDir).map((w) => w.path)
+      skillWrites(writes, boxSkillsFolder(adapter.skills, BOX_HOME)).map((w) => w.path)
     ).toEqual([
-      `${adapter.skillsBaseDir}/csv-tools/SKILL.md`,
-      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/csv-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`,
     ]);
     // Nothing lands anywhere else under $HOME's skill roots — in particular not
     // Claude Code's, which MCPJam's passes would then also have to reconcile.
@@ -236,31 +99,31 @@ describe("codex skill parity (real adapter)", () => {
     expectReachedPrompt(error);
     // Within a skill the writer orders files by locale, so compare as a set.
     expect(
-      skillWrites(writes, adapter.skillsBaseDir)
+      skillWrites(writes, boxSkillsFolder(adapter.skills, BOX_HOME))
         .map((w) => w.path)
         .sort()
     ).toEqual([
-      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
-      `${adapter.skillsBaseDir}/pdf-tools/scripts/run.py`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/scripts/run.py`,
     ]);
   });
 
   it("produces PARSEABLE frontmatter for MCPJam-encoded descriptions", async () => {
     // codex builds `description: ${value}` by string interpolation, so a raw
     // description containing a quote or colon would emit broken YAML. This is
-    // why the payload goes through `frontmatterSafeSkills` — assert on the file
-    // the adapter actually wrote, not on our own encoder.
+    // why the plan quotes each description — assert on the file the adapter
+    // actually wrote, not on our own encoder.
     const runtime = [
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ];
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
-      prepareCodexSkills(runtime).payload
+      planBoxSkills(getHarnessAdapter("codex").skills, runtime).payload
     );
 
     expectReachedPrompt(error);
     const parsed = matter(
-      skillWrites(writes, getHarnessAdapter("codex").skillsBaseDir)[0]!.content
+      skillWrites(writes, boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME))[0]!.content
     );
     expect(parsed.data.name).toBe("pdf-tools");
     expect(parsed.data.description).toBe('Process: PDFs "safely"');
@@ -273,15 +136,19 @@ describe("codex skill parity (real adapter)", () => {
     // round-trip through codex's raw interpolation.
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
-      toHarnessSkills([
-        skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
-      ])
+      [
+        {
+          name: "pdf-tools",
+          description: 'Process: PDFs "safely"',
+          content: "# Body",
+        },
+      ]
     );
 
     expectReachedPrompt(error);
     const written = skillWrites(
       writes,
-      getHarnessAdapter("codex").skillsBaseDir
+      boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME)
     )[0]!;
     let parsedDescription: unknown;
     try {
@@ -293,7 +160,7 @@ describe("codex skill parity (real adapter)", () => {
   });
 
   it("accepts every name MCPJam's validator accepts", async () => {
-    // `prepareCodexSkills` filters on MCPJam's `isValidSkillName`; that is only
+    // The descriptor's name rule is MCPJam's `isValidSkillName`; that is only
     // safe if it is a SUBSET of codex's own rule. Names at the edges of the
     // shared spec (digits, hyphens, length) must all survive `doStart`.
     const names = [
@@ -304,24 +171,25 @@ describe("codex skill parity (real adapter)", () => {
       "a-b-c-d",
       "z".repeat(64),
     ];
-    const prepared = prepareCodexSkills(
+    const plan = planBoxSkills(
+      getHarnessAdapter("codex").skills,
       names.map((name, i) => skill({ skillId: `s${i}`, name }))
     );
-    expect(prepared.skipped).toEqual([]);
+    expect(plan.skipped).toEqual([]);
 
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
-      prepared.payload
+      plan.payload
     );
 
     expectReachedPrompt(error);
     expect(
-      skillWrites(writes, getHarnessAdapter("codex").skillsBaseDir)
+      skillWrites(writes, boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME))
     ).toHaveLength(names.length);
   });
 
   it("THROWS on a name MCPJam filters out — which is why it filters", async () => {
-    // Demonstrates the failure mode `prepareCodexSkills` exists to prevent: on
+    // Demonstrates the failure mode the name rule exists to prevent: on
     // the stable line the rejection happens inside `doPromptTurn` (skills are
     // synced per turn), so an unfiltered bad name takes down the entire turn
     // (not just that skill).
@@ -337,7 +205,7 @@ describe("codex skill parity (real adapter)", () => {
     // differs, and each adapter's root is the one the registry advertises.
     const codexAdapter = getHarnessAdapter("codex");
     const claudeAdapter = getHarnessAdapter("claude-code");
-    const payload = prepareCodexSkills([
+    const payload = planBoxSkills(codexAdapter.skills, [
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ]).payload;
 
@@ -356,12 +224,12 @@ describe("codex skill parity (real adapter)", () => {
       w.path.endsWith("/SKILL.md")
     )!;
     expect(codexWrite.path).toBe(
-      `${codexAdapter.skillsBaseDir}/pdf-tools/SKILL.md`
+      `${boxSkillsFolder(codexAdapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`
     );
     expect(claudeWrite.path).toBe(
-      `${claudeAdapter.skillsBaseDir}/pdf-tools/SKILL.md`
+      `${boxSkillsFolder(claudeAdapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`
     );
-    expect(claudeAdapter.skillsBaseDir).toBe(`${BOX_HOME}/.claude/skills`);
+    expect(boxSkillsFolder(claudeAdapter.skills, BOX_HOME)).toBe(`${BOX_HOME}/.claude/skills`);
     // Same frontmatter + body (claude-code appends a trailing newline).
     const codexParsed = matter(codexWrite.content);
     const claudeParsed = matter(claudeWrite.content);
@@ -372,12 +240,12 @@ describe("codex skill parity (real adapter)", () => {
 
 /** Supporting files, the absence of a Claude Code root, and the name rule. */
 describe("codex skill delivery details", () => {
-  it("writes delivered skills and supporting files under the advertised skillsBaseDir", async () => {
+  it("writes delivered skills and supporting files under the descriptor's write folder", async () => {
     const adapter = getHarnessAdapter("codex");
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
       [
-        ...prepareCodexSkills([
+        ...planBoxSkills(adapter.skills, [
           skill({ skillId: "s1", name: "pdf-tools" }),
           skill({ skillId: "s2", name: "csv-tools", description: "Read CSVs" }),
         ]).payload,
@@ -390,13 +258,13 @@ describe("codex skill delivery details", () => {
 
     expectReachedPrompt(error);
     expect(
-      skillWrites(writes, adapter.skillsBaseDir)
+      skillWrites(writes, boxSkillsFolder(adapter.skills, BOX_HOME))
         .map((w) => w.path)
         .sort()
     ).toEqual([
-      `${adapter.skillsBaseDir}/csv-tools/SKILL.md`,
-      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
-      `${adapter.skillsBaseDir}/pdf-tools/scripts/run.py`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/csv-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/scripts/run.py`,
     ]);
     expect(writes.filter((w) => w.path.includes("/.claude/skills/"))).toEqual(
       []
@@ -405,16 +273,17 @@ describe("codex skill delivery details", () => {
 
   it("accepts every name MCPJam accepts and refuses what MCPJam filters", async () => {
     const names = ["a", "pdf-tools", "skill-2", "z".repeat(64)];
-    const prepared = prepareCodexSkills(
+    const plan = planBoxSkills(
+      getHarnessAdapter("codex").skills,
       names.map((name, i) => skill({ skillId: `s${i}`, name }))
     );
     const ok = await promptWithSkills(
       createCodexAppServer() as never,
-      prepared.payload
+      plan.payload
     );
     expectReachedPrompt(ok.error);
     expect(
-      skillWrites(ok.writes, getHarnessAdapter("codex").skillsBaseDir)
+      skillWrites(ok.writes, boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME))
     ).toHaveLength(names.length);
 
     const bad = await promptWithSkills(createCodexAppServer() as never, [

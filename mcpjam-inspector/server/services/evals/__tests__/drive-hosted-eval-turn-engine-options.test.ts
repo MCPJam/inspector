@@ -22,7 +22,7 @@ import type { PrepareChatV2Result } from "../../../utils/chat-v2-orchestration.j
 import {
   createDiscoveryState,
   DEFAULT_TOOL_DISCOVERY_POLICY,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 
 const manager = { id: "manager" };
 const selection = {
@@ -216,6 +216,8 @@ describe("hosted eval turn engine options", () => {
     expect(options).toEqual({
       ...COMMON,
       ...harnessFields,
+      // An eval runs a harness as approval off, as it does MCPJam's engine.
+      requireToolApproval: false,
       endpointPath: "/stream",
       extraBodyFields: { maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS },
       harness: "claude-code",

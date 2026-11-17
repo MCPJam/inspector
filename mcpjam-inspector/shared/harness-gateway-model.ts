@@ -128,12 +128,12 @@ export function gatewayHarnessModel(
   if (!connectionServesHarnessApi(gateway, api)) {
     const name = GATEWAY_API_LABELS[api];
     return {
-      refusal: `This gateway doesn't serve ${name}, which ${label} needs. Turn on ${name} for it in Organization models, or choose another connection.`,
+      refusal: `This provider doesn't serve ${name}, which ${label} needs. Turn on ${name} for it in Organization models, or choose another connection.`,
     };
   }
   if (!gateway.modelId) {
     return {
-      refusal: `Map this gateway model to a model in Organization models to use it with ${label}.`,
+      refusal: `Map this provider model to a model in Organization models to use it with ${label}.`,
     };
   }
   const verdict = harnessModelSupport({
