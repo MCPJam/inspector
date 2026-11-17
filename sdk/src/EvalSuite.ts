@@ -268,7 +268,10 @@ export class EvalSuite {
     return this.lastSelection ? structuredClone(this.lastSelection) : undefined;
   }
 
-  private freezeSelection(iterations: number): EvalSelectionManifest {
+  private freezeSelection(
+    iterations: number,
+    failOnToolError: boolean | undefined
+  ): EvalSelectionManifest {
     const source = this.sourceCases ?? this.getAll();
     const selected = new Set(this.getAll().map((test) => test.getId()));
     const fingerprint = (tests: EvalTest[]) =>
@@ -278,7 +281,9 @@ export class EvalSuite {
             .map((test) => ({
               id: test.getId(),
               name: test.getName(),
-              evaluationConfig: test.getEvaluationConfigSnapshot().hash,
+              evaluationConfig: test.getEvaluationConfigSnapshot({
+                failOnToolError,
+              }).hash,
               expectedToolCalls: test.getConfig().expectedToolCalls ?? null,
               expectedOutput: test.getConfig().expectedOutput ?? null,
               intent: test.getConfig().intent ?? null,
@@ -499,7 +504,10 @@ export class EvalSuite {
 
       const iterations = options.iterations ?? this.defaults.iterations!;
       this.lastReportingReceipt = notRequestedReceipt("disabled");
-      this.lastSelection = this.freezeSelection(iterations);
+      this.lastSelection = this.freezeSelection(
+        iterations,
+        (options.mcpjam ?? this.mcpjamConfig)?.failOnToolError
+      );
       const selectionManifest = this.lastSelection;
       const base = options.mcpjam ?? this.mcpjamConfig;
       const runGroupId = base?.runGroupId ?? randomUUID();
@@ -687,7 +695,10 @@ export class EvalSuite {
   ): Promise<EvalSuiteResult> {
     this.lastReportingReceipt = notRequestedReceipt("disabled");
     const iterations = options.iterations ?? this.defaults.iterations;
-    this.lastSelection = this.freezeSelection(iterations!);
+    this.lastSelection = this.freezeSelection(
+      iterations!,
+      (options.mcpjam ?? this.mcpjamConfig)?.failOnToolError
+    );
     const scope: RunScope = {
       tests: this.tests,
       selection: this.lastSelection,

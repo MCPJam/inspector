@@ -106,6 +106,11 @@ import {
   traceMessagesFromPrompts,
   variantFromExecutor,
 } from "./eval-result-mapping.js";
+import {
+  PLATFORM_GATE_SCORER_IDS,
+  platformGateDefinitions,
+  platformGateScores,
+} from "./platform-gate-scores.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 import { canonicalizeCheckRole } from "./predicates/policy.js";
@@ -941,7 +946,9 @@ export class EvalTest {
         // One snapshot per run: scorer definitions are configuration, not per-
         // iteration state, and the hash must be stable across every iteration of
         // the run so the backend can fold ONE value into the run fingerprint.
-        const evaluationConfig = this.buildEvaluationConfig();
+        const evaluationConfig = this.buildEvaluationConfig(
+          options.mcpjam?.failOnToolError
+        );
         this.lastEvaluationConfig = evaluationConfig;
 
         const runSingleIteration = async (
@@ -1046,6 +1053,10 @@ export class EvalTest {
                   promptResults,
                   tokens: promptMetrics.tokens,
                   legacy: { kind: "returned", passed },
+                  iterationError:
+                    timeoutTriggered && !passed
+                      ? timeoutError.message
+                      : undefined,
                   reportedEvidence,
                   evaluationConfig,
                   options,
@@ -1191,6 +1202,7 @@ export class EvalTest {
               promptResults: failedPromptResults,
               tokens: promptMetrics.tokens,
               legacy: { kind: "threw", error: lastError ?? "iteration failed" },
+              iterationError: lastError ?? "iteration failed",
               reportedEvidence,
               evaluationConfig,
               options,
@@ -1585,8 +1597,11 @@ export class EvalTest {
    * factory: the lock would claim a hash the run never produces, and every
    * `--frozen` check would report a config change that never happened.
    */
-  getEvaluationConfigSnapshot(): EvaluationConfigSnapshot {
-    return this.buildEvaluationConfig();
+  getEvaluationConfigSnapshot(options?: {
+    /** The run's `failOnToolError`; it sets the platform rows' roles. */
+    failOnToolError?: boolean;
+  }): EvaluationConfigSnapshot {
+    return this.buildEvaluationConfig(options?.failOnToolError);
   }
 
   /**
@@ -1601,7 +1616,9 @@ export class EvalTest {
    * join to would be unrenderable and — per the gate engine's fail-closed join
    * — indistinguishable from tampering.
    */
-  private buildEvaluationConfig(): EvaluationConfigSnapshot {
+  private buildEvaluationConfig(
+    failOnToolError?: boolean
+  ): EvaluationConfigSnapshot {
     // Built-in projections own these ids. A custom scorer that reuses one would
     // shadow the built-in in the id→definition map, so the built-in's row would
     // be minted against the WRONG definition — carrying a definitionHash that
@@ -1617,6 +1634,7 @@ export class EvalTest {
       ...this.effectiveAssertions
         .filter((value) => value.definition.idSource === "generated")
         .map((value) => value.definition.scorerId),
+      ...PLATFORM_GATE_SCORER_IDS,
     ]);
     for (const evaluator of [
       ...this.effectiveEvaluators,
@@ -1647,6 +1665,7 @@ export class EvalTest {
         matchOptions: resolveMatchOptions(this.config.matchOptions),
         isNegativeTest: this.config.isNegativeTest,
       }),
+      ...platformGateDefinitions(failOnToolError),
       ...this.effectiveAssertions.map((value) => value.definition),
       ...this.effectiveEvaluators.map((value) => value.definition),
       ...reportedDefinitions(this.config.reported ?? []),
@@ -1680,6 +1699,8 @@ export class EvalTest {
     tokens: { input: number; output: number; total: number };
     legacy:
       { kind: "returned"; passed: boolean } | { kind: "threw"; error: unknown };
+    /** The error that stopped the iteration, as the upload reports it. */
+    iterationError?: string;
     evaluationConfig: EvaluationConfigSnapshot;
     options: EvalTestRunOptions;
     skipNonDeterministic?: string;
@@ -1741,6 +1762,18 @@ export class EvalTest {
             toolMatchDefinition,
             "no expected tool calls were configured"
           )
+    );
+
+    // Platform checks (tool errors, iteration error), read from the trace and
+    // error the upload sends.
+    scores.push(
+      ...platformGateScores(definitionFor, {
+        trace: iterationTraceFromPrompts(
+          params.promptResults,
+          traceMessagesFromPrompts(params.promptResults)
+        ),
+        iterationError: params.iterationError,
+      })
     );
 
     // 3. predicates — ONE evaluation, two projections.

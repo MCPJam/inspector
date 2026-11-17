@@ -326,13 +326,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
   }
 
   addFromRun(run: EvalRunResult, options: RunToEvalResultsOptions): void {
-    const results = runToEvalResults(run, {
-      ...options,
-      failOnToolError:
-        options.failOnToolError !== undefined
-          ? options.failOnToolError
-          : this.input.failOnToolError,
-    });
+    const results = runToEvalResults(run, options);
     for (const result of results) {
       this.add(result);
     }
@@ -342,13 +336,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
     run: EvalRunResult,
     options: RunToEvalResultsOptions
   ): Promise<void> {
-    const results = runToEvalResults(run, {
-      ...options,
-      failOnToolError:
-        options.failOnToolError !== undefined
-          ? options.failOnToolError
-          : this.input.failOnToolError,
-    });
+    const results = runToEvalResults(run, options);
     for (const result of results) {
       await this.record(result);
     }
@@ -358,13 +346,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
     suiteRun: Map<string, EvalRunResult>,
     options: SuiteRunToEvalResultsOptions
   ): void {
-    const results = suiteRunToEvalResults(suiteRun, {
-      ...options,
-      failOnToolError:
-        options.failOnToolError !== undefined
-          ? options.failOnToolError
-          : this.input.failOnToolError,
-    });
+    const results = suiteRunToEvalResults(suiteRun, options);
     for (const result of results) {
       this.add(result);
     }
@@ -374,13 +356,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
     suiteRun: Map<string, EvalRunResult>,
     options: SuiteRunToEvalResultsOptions
   ): Promise<void> {
-    const results = suiteRunToEvalResults(suiteRun, {
-      ...options,
-      failOnToolError:
-        options.failOnToolError !== undefined
-          ? options.failOnToolError
-          : this.input.failOnToolError,
-    });
+    const results = suiteRunToEvalResults(suiteRun, options);
     for (const result of results) {
       await this.record(result);
     }

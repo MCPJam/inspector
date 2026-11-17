@@ -309,7 +309,9 @@ describe("iterationToEvalResult", () => {
     ]);
   });
 
-  it("marks passed false when merged trace has errored tool span", () => {
+  // The run graded the iteration from its score rows, tool errors included;
+  // the mapper must not grade it a second time from the trace.
+  it("sends the iteration's own verdict even when the trace has an errored tool span", () => {
     const p = makePrompt({
       spans: [
         {
@@ -324,7 +326,7 @@ describe("iterationToEvalResult", () => {
     });
     const iteration = makeIteration({ passed: true, prompts: [p] });
     const result = iterationToEvalResult(iteration, 0, { caseTitle: "x" });
-    expect(result.passed).toBe(false);
+    expect(result.passed).toBe(true);
   });
 
   it("keeps passed true for tool error span when failOnToolError is false", () => {
@@ -1263,7 +1265,7 @@ describe("iterationsToEvalResultInputs", () => {
     expect(results[0].passed).toBe(false);
   });
 
-  it("fails passed when trace has tool error span despite iteration.passed", () => {
+  it("sends iteration.passed rather than re-deriving it from a tool error span", () => {
     const iteration = makeIteration({
       passed: true,
       prompts: [
@@ -1283,7 +1285,7 @@ describe("iterationsToEvalResultInputs", () => {
     });
 
     const results = iterationsToEvalResultInputs("t", [iteration]);
-    expect(results[0].passed).toBe(false);
+    expect(results[0].passed).toBe(true);
   });
 
   it("preserves passed when failOnToolError is false", () => {

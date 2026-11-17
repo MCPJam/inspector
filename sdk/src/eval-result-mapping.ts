@@ -14,7 +14,7 @@ import type { Predicate } from "./predicates/types.js";
 import type { IterationStatus } from "./contract/chain.js";
 import type { EvaluationConfigSnapshot } from "./contract/types.js";
 import type { PromptResult } from "./PromptResult.js";
-import { finalizePassedForEval } from "./eval-tool-execution.js";
+import { gradeCallerVerdict } from "./platform-gate-scores.js";
 import {
   evaluateToolCalls,
   resolveMatchOptions,
@@ -285,7 +285,8 @@ function evaluatePromptSummary(params: {
 
 /**
  * Options for {@link promptsToEvalResult}. Pass/fail from your test assertion
- * (`passed`) is combined with trace/errors via {@link finalizePassedForEval}.
+ * (`passed`) becomes the `test()` score row; tool errors and the iteration
+ * error add theirs, and the uploaded `passed` is derived from all of them.
  */
 export type PromptsToEvalResultOverrides = Partial<
   Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace" | "passed">
@@ -364,17 +365,18 @@ export function promptsToEvalResult(
     errorParts.length > 0 ? errorParts.join("\n") : undefined;
   const iterationError = overrides.error ?? derivedError;
 
-  const passed = finalizePassedForEval({
-    matchPassed: overrides.passed,
+  const graded = gradeCallerVerdict({
+    passed: overrides.passed,
     trace,
     iterationError,
     failOnToolError: overrides.failOnToolError,
+    metadata: overrides.metadata,
   });
 
   return {
     caseTitle: overrides.caseTitle,
     query: overrides.query ?? first.getPrompt(),
-    passed,
+    passed: graded.passed,
     // A caller-declared status wins; otherwise the same named legacy rule, on
     // the error this mapper already derived from the prompts.
     status:
@@ -397,7 +399,7 @@ export function promptsToEvalResult(
     caseId: overrides.caseId,
     externalCaseId: overrides.externalCaseId,
     intent: overrides.intent,
-    metadata: overrides.metadata,
+    metadata: graded.metadata,
     isNegativeTest: overrides.isNegativeTest,
     advancedConfig: overrides.advancedConfig,
     widgetSnapshots:
@@ -552,8 +554,17 @@ export interface IterationToEvalResultOptions {
   model?: string;
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
-  /** @see MCPJamReportingConfig.failOnToolError */
+  /**
+   * @deprecated No effect. The run that produced the iteration already set
+   * each platform row's role from its own `failOnToolError`; set it there.
+   */
   failOnToolError?: boolean;
+  /**
+   * The run's evaluation config (`EvalRunResult.evaluationConfig`). When given,
+   * the iteration's score rows are uploaded with it, so the backend can check
+   * `passed` against them.
+   */
+  evaluationConfig?: EvaluationConfigSnapshot;
   /**
    * The case's DECLARED identity (`EvalTestConfig.id`), forwarded when given.
    *
@@ -618,12 +629,8 @@ export function iterationToEvalResult(
   const provider = options.provider ?? selectedPrompt?.getProvider();
   const model = options.model ?? selectedPrompt?.getModel();
 
-  const passed = finalizePassedForEval({
-    matchPassed: iteration.passed,
-    trace,
-    iterationError: iteration.error,
-    failOnToolError: options.failOnToolError,
-  });
+  // The run graded this iteration from its score rows; send that verdict.
+  const passed = iteration.passed;
 
   return {
     caseTitle: options.caseTitle,
@@ -651,6 +658,7 @@ export function iterationToEvalResult(
     trace: iteration.captureError ? undefined : trace,
     widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
     metadata: {
+      ...iterationScoreMetadata(iteration, options.evaluationConfig),
       iterationNumber: index + 1,
       retryCount: iteration.retryCount ?? 0,
       ...(iteration.captureError
@@ -672,6 +680,10 @@ export interface RunToEvalResultsOptions {
   model?: string;
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
+  /**
+   * @deprecated No effect. The run that produced the iteration already set
+   * each platform row's role from its own `failOnToolError`; set it there.
+   */
   failOnToolError?: boolean;
   /** @see IterationToEvalResultOptions.caseId */
   caseId?: string;
@@ -705,7 +717,7 @@ export function runToEvalResults(
       model: options.model,
       expectedToolCalls: options.expectedToolCalls,
       promptSelector: options.promptSelector,
-      failOnToolError: options.failOnToolError,
+      evaluationConfig: run.evaluationConfig,
       caseId: options.caseId,
       intent: options.intent,
     })
@@ -721,6 +733,10 @@ export interface SuiteRunToEvalResultsOptions {
   model?: string;
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>;
   promptSelector?: "first" | "last";
+  /**
+   * @deprecated No effect. The run that produced the iteration already set
+   * each platform row's role from its own `failOnToolError`; set it there.
+   */
   failOnToolError?: boolean;
   /**
    * Declared case ids, keyed by test name — the same shape as
@@ -751,7 +767,6 @@ export function suiteRunToEvalResults(
       model: options.model,
       expectedToolCalls,
       promptSelector: options.promptSelector,
-      failOnToolError: options.failOnToolError,
       caseId: options.caseIdByTest?.[testName],
       intent: options.intentByTest?.[testName],
     });
@@ -1264,7 +1279,8 @@ export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
   expectedToolCalls?: EvalExpectedToolCall[],
-  failOnToolError?: boolean,
+  /** Unused: the run decides each platform row's role before this maps it. */
+  _failOnToolError?: boolean,
   hostExtras?: Record<string, string | number | boolean>,
   predicates?: Predicate[],
   matchOptions?: import("./matchers.js").EvalMatchOptions,
@@ -1286,13 +1302,9 @@ export function iterationsToEvalResultInputs(
     );
     const trace = iterationTraceFromPrompts(prompts, traceMessages);
 
-    const passed = finalizePassedForEval({
-      matchPassed: iteration.passed,
-      trace,
-      iterationError: iteration.error,
-      failOnToolError,
-      predicateResults: iteration.predicateResults,
-    });
+    // The run already graded this iteration from its score rows; the upload
+    // sends that verdict rather than deriving a second one.
+    const passed = iteration.passed;
 
     const stageDerivation = deriveSdkStageResults({
       iteration,
