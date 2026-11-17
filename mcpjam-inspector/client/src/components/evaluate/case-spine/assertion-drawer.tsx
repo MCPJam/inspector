@@ -51,9 +51,9 @@ export function EvalAddDrawer({
   onOutcomeFocus?: () => void;
   onPromptFocus?: () => void;
   allowRouteChecks?: boolean;
-  /** Sheet heading. */
+  /** Replaces "Add actions or assertions". */
   title?: string;
-  /** Sheet subheading. */
+  /** Replaces "Choose what happens next or what this test verifies." */
   description?: string;
   /** Trigger aria-label; triggerLabel when absent. */
   ariaLabel?: string;

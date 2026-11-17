@@ -1,11 +1,25 @@
+import type { ComponentProps } from "react";
 import { Wrench } from "lucide-react";
 import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen, userEvent } from "@/test";
+import { act, renderWithProviders, screen, userEvent } from "@/test";
+import type { PinnedToolCallFields } from "@/components/evals/pinned-tool-call-fields";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
-import { ActionCard, PromptBox } from "../case-steps/case-step-body";
+import {
+  ActionCard,
+  AssertionEditor,
+  PromptBox,
+} from "../case-steps/case-step-body";
 import { RoleControl, StepRow } from "../case-steps/case-step-parts";
 import { RemoveStepDialog } from "../case-steps/remove-step-dialog";
+
+let fields: ComponentProps<typeof PinnedToolCallFields>;
+vi.mock("@/components/evals/pinned-tool-call-fields", () => ({
+  PinnedToolCallFields: (props: typeof fields) => {
+    fields = props;
+    return <p>Tool call fields</p>;
+  },
+}));
 
 const prompt: Extract<TestStep, { kind: "prompt" }> = {
   id: "p1",
@@ -94,6 +108,185 @@ describe("ActionCard", () => {
     );
     expect(screen.getByText("Pick a view")).toBeInTheDocument();
   });
+
+  const call = {
+    id: "t1",
+    kind: "toolCall" as const,
+    serverId: "server-id",
+    serverName: "accounts",
+    toolName: "get_me",
+    arguments: {},
+    renderTimeoutMs: 1000,
+  };
+  const mountCall = (readOnly = false, open = false) => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <ActionCard
+        {...common}
+        open={open}
+        readOnly={readOnly}
+        onToggle={vi.fn()}
+        onChange={onChange}
+        step={call}
+      />,
+    );
+    return onChange;
+  };
+
+  it("keeps a closed card's fields mounted, hidden", () => {
+    mountCall();
+    expect(screen.getByText("Tool call fields")).not.toBeVisible();
+  });
+
+  it("ignores mount-time normalization in a frozen view", () => {
+    const onChange = mountCall(true, true);
+    act(() =>
+      fields.onChange({
+        serverName: "accounts",
+        toolName: "get_me",
+        arguments: {},
+      }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("does not write a saved call again when its visible fields normalize", () => {
+    const onChange = mountCall();
+    act(() =>
+      fields.onChange({
+        serverName: "accounts",
+        toolName: "get_me",
+        arguments: {},
+        renderTimeoutMs: 1000,
+      }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("writes a real edit and keeps the stable server id", () => {
+    const onChange = mountCall(false, true);
+    act(() =>
+      fields.onChange({
+        serverName: "accounts",
+        toolName: "get_me",
+        arguments: { id: 1 },
+        renderTimeoutMs: 1000,
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith({ ...call, arguments: { id: 1 } });
+  });
+
+  const interact = {
+    id: "i1",
+    kind: "interact" as const,
+    toolName: "",
+    action: { kind: "key" as const, key: "Enter" },
+  };
+
+  it("lets an open Interact step type a view when no tools are loaded", async () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <ActionCard
+        {...common}
+        open
+        onToggle={vi.fn()}
+        onChange={onChange}
+        step={interact}
+      />,
+    );
+    await userEvent
+      .setup()
+      .type(screen.getByRole("textbox", { name: "View tool" }), "v");
+    expect(onChange).toHaveBeenLastCalledWith({ ...interact, toolName: "v" });
+  });
+
+  it("offers loaded views to pick from, and freezes in a read-only view", () => {
+    renderWithProviders(
+      <ActionCard
+        {...common}
+        open
+        readOnly
+        availableTools={[{ name: "show_board", inputSchema: {} }] as never}
+        onToggle={vi.fn()}
+        step={interact}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "View tool" })).toBeDisabled();
+    expect(screen.queryByRole("textbox", { name: "View tool" })).toBeNull();
+  });
+});
+
+describe("AssertionEditor", () => {
+  const actions = [
+    {
+      step: prompt,
+      index: 0,
+      ordinal: 1,
+      turnIndex: 0,
+      checks: [],
+      lastIndex: 0,
+    },
+  ];
+  const assertStep = (assertion: unknown) =>
+    ({ id: "a1", kind: "assert", assertion }) as Extract<
+      TestStep,
+      { kind: "assert" }
+    >;
+  const mount = (assertion: unknown, checkPolicy = true) => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <AssertionEditor
+        step={assertStep(assertion)}
+        actionId="p1"
+        actions={actions}
+        availableTools={[]}
+        readOnly={false}
+        checkPolicy={checkPolicy}
+        onChange={onChange}
+        onMove={vi.fn()}
+      />,
+    );
+    return onChange;
+  };
+
+  it("names the step it is graded after", () => {
+    mount({ type: "noToolErrors" });
+    expect(
+      screen.getByRole("combobox", { name: "Graded after" }),
+    ).toHaveTextContent("Step 1 · User prompt");
+    expect(
+      screen.getByText("Passes when no tool reports an error."),
+    ).toBeInTheDocument();
+  });
+
+  it("writes a role change back into the whole step", async () => {
+    const onChange = mount({ type: "toolCalledAtLeastOnce", toolName: "x" });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Non-blocking" }));
+    expect(onChange).toHaveBeenCalledWith(
+      assertStep({
+        type: "toolCalledAtLeastOnce",
+        toolName: "x",
+        role: "advisory",
+      }),
+    );
+  });
+
+  it("has no role control for a widget check, or without check policy", () => {
+    mount({ kind: "widgetRendered", toolName: "show_board" });
+    expect(screen.getByText(/Always blocking/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "If this assertion misses" }),
+    ).toBeNull();
+  });
+
+  it("hides the role control when the deployment has no check policy", () => {
+    mount({ type: "toolCalledAtLeastOnce", toolName: "x" }, false);
+    expect(
+      screen.queryByRole("group", { name: "If this assertion misses" }),
+    ).toBeNull();
+  });
 });
 
 describe("StepRow", () => {
@@ -116,9 +309,9 @@ describe("StepRow", () => {
     return onToggle;
   }
 
-  it("shows its fields only while open", () => {
+  it("shows its fields only while open, keeping them mounted", () => {
     renderRow(false);
-    expect(screen.queryByText("Fields")).toBeNull();
+    expect(screen.getByText("Fields")).not.toBeVisible();
     expect(screen.getByText("Pick a tool")).toBeInTheDocument();
   });
 
@@ -192,12 +385,54 @@ describe("RemoveStepDialog", () => {
     );
     expect(
       screen.getByText(
-        "Its 1 assertion will move under step 1 and be graded after it instead.",
+        "1 later assertion in its turn will move to step 1's turn.",
       ),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Remove step and its/ }),
     ).toBeNull();
+  });
+
+  it("names its own assertions and later ones apart, and the button counts its own", () => {
+    renderWithProviders(
+      <RemoveStepDialog
+        pending={{ ...plan, movedChecks: 1, movedFollowers: 2 }}
+        onClose={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Its 1 assertion will move under step 1 and be graded after it instead. 2 later assertions in its turn will move to step 1's turn.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Remove step and its assertion" }),
+    ).toBeInTheDocument();
+  });
+
+  it("closes on Cancel and on Escape without removing", async () => {
+    const onClose = vi.fn();
+    const onRemove = vi.fn();
+    renderWithProviders(
+      <RemoveStepDialog pending={plan} onClose={onClose} onRemove={onRemove} />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("stays closed for a plan that needs no confirmation", () => {
+    renderWithProviders(
+      <RemoveStepDialog
+        pending={{ ...plan, needsConfirm: false, movedChecks: 0 }}
+        onClose={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });
 
@@ -214,10 +449,11 @@ describe("RoleControl", () => {
     renderWithProviders(
       <RoleControl predicate={predicate} readOnly={false} onChange={vi.fn()} />,
     );
-    expect(screen.getByRole("button", { name: selected })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    for (const name of ["Blocking", "Non-blocking"])
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "aria-pressed",
+        String(name === selected),
+      );
   });
 
   it("switches a blocking assertion to non-blocking", async () => {
