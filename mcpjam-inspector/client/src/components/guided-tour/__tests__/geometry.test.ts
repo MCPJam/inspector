@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { placePopover } from "../tour-geometry";
+import { placePopover } from "../geometry";
 
 const bounds = { width: 1000, height: 700 };
 const card = { width: 320, height: 160 };

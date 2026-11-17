@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { cn } from "@mcpjam/design-system/cn";
-import type { TourRect } from "./tour-geometry";
+import type { TourRect } from "./geometry";
 
 const PAD = 4;
 const RADIUS = 10;
@@ -22,7 +22,7 @@ export function TourSpotlight({
     <svg
       className={cn("absolute inset-0 h-full w-full", className)}
       aria-hidden
-      data-testid="evaluate-tour-spotlight"
+      data-testid="guided-tour-spotlight"
     >
       <defs>
         <mask id={maskId}>

@@ -91,7 +91,7 @@ describe("EvaluateTour", () => {
       expect(
         screen.getByText(`${index + 1} of ${TOUR_STOPS.length}`),
       ).toBeInTheDocument();
-      fireEvent.click(screen.getByTestId("evaluate-tour-next"));
+      fireEvent.click(screen.getByTestId("guided-tour-next"));
     }
 
     expect(onComplete).toHaveBeenCalledTimes(1);
@@ -122,7 +122,7 @@ describe("EvaluateTour", () => {
       await waitFor(() =>
         expect(screen.getByText(TOUR_STOPS[0].title)).toBeInTheDocument(),
       );
-      fireEvent.click(screen.getByTestId("evaluate-tour-next"));
+      fireEvent.click(screen.getByTestId("guided-tour-next"));
       await waitFor(() =>
         expect(screen.getByText(TOUR_STOPS[1].title)).toBeInTheDocument(),
       );
@@ -160,7 +160,7 @@ describe("EvaluateTour", () => {
       expect(screen.getByText(TOUR_STOPS[0].title)).toBeInTheDocument(),
     );
 
-    fireEvent.click(screen.getByTestId("evaluate-tour-next"));
+    fireEvent.click(screen.getByTestId("guided-tour-next"));
     await waitFor(() =>
       expect(
         screen.getByTestId(`evaluate-tour-screen-${TOUR_STOPS[1].screen}`),

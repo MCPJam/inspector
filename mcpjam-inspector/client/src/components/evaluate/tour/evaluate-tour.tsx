@@ -1,12 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   TOUR_EXAMPLE_SUITE_NAME,
   TOUR_STOPS,
@@ -15,20 +8,16 @@ import {
 } from "./evaluate-tour-steps";
 import type { EvaluateTourController } from "./use-evaluate-tour";
 import {
-  TourCancelled,
-  createTourDriver,
-  type TourDriver,
-  type TourRun,
-} from "./tour-driver";
-import { TourGhostCursor, type GhostCursorHandle } from "./tour-ghost-cursor";
+  TourGhostCursor,
+  type GhostCursorHandle,
+} from "@/components/guided-tour/ghost-cursor";
+import { findAnchor, useAnchorRects } from "@/components/guided-tour/geometry";
+import { TourSpotlight } from "@/components/guided-tour/spotlight";
 import {
-  findAnchor,
-  rectCenter,
-  rectWithin,
-  useAnchorRects,
-} from "./tour-geometry";
-import { TourSpotlight } from "./tour-spotlight";
-import { StopCoachmarkContent, TourPopover } from "./tour-popover";
+  TourCoachmark,
+  TourStepContent,
+} from "@/components/guided-tour/coachmark";
+import { useTourPlayer } from "@/components/guided-tour/use-tour-player";
 import { TourIntroCard } from "./tour-intro";
 import { TourHandoff } from "./tour-handoff";
 import { TourCreateScreen, TourSetupScreen } from "./tour-screens-setup";
@@ -53,6 +42,7 @@ type StageScreen = "intro" | TourScreen;
 const SCREEN_FADE_MS = 450;
 const COACHMARK_FADE_MS = 250;
 const EASE_IN_OUT = [0.4, 0, 0.2, 1] as const;
+const STOP_LABELS = TOUR_STOPS.map((stop) => stop.label);
 
 function TourScreenView({
   screen,
@@ -78,10 +68,6 @@ function TourScreenView({
 function TourStage({ tour }: { tour: EvaluateTourController }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<GhostCursorHandle>(null);
-  // The transition in flight. Each one gets its own token, so cancelling
-  // one (skip, unmount, StrictMode's dev remount) never poisons the next.
-  const runRef = useRef<TourRun | null>(null);
-  const reducedMotion = useReducedMotion() ?? false;
   const titleId = useId();
   const [screen, setScreen] = useState<StageScreen>("intro");
   const [stopIndex, setStopIndex] = useState<number | null>(null);
@@ -92,42 +78,15 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
   const stop = stopIndex === null ? null : TOUR_STOPS[stopIndex];
   const { rects, bounds } = useAnchorRects(rootRef, stop?.anchors ?? []);
   const { viewStop } = tour;
-
-  const cancelRun = useCallback(() => {
-    if (runRef.current) runRef.current.cancelled = true;
-    runRef.current = null;
-  }, []);
-
-  useEffect(() => cancelRun, [cancelRun]);
+  const {
+    play,
+    cancel: cancelRun,
+    reducedMotion,
+  } = useTourPlayer(rootRef, cursorRef);
 
   useEffect(() => {
     if (stop && stopIndex !== null) viewStop(stop.id, stopIndex);
   }, [stop, stopIndex, viewStop]);
-
-  const play = useCallback(
-    async (
-      origin: HTMLElement,
-      script: (driver: TourDriver) => Promise<void>,
-    ) => {
-      const root = rootRef.current;
-      const cursor = cursorRef.current;
-      if (!root || !cursor) return;
-      cancelRun();
-      const run: TourRun = { cancelled: false };
-      runRef.current = run;
-      const driver = createTourDriver({ root, cursor, run, reducedMotion });
-      if (!reducedMotion) cursor.show(rectCenter(rectWithin(root, origin)));
-      try {
-        await script(driver);
-      } catch (error) {
-        if (!(error instanceof TourCancelled)) throw error;
-        // The tour closed mid-transition; the overlay is already gone.
-      } finally {
-        cursor.hide();
-      }
-    },
-    [reducedMotion, cancelRun],
-  );
 
   const showStop = (index: number) => {
     const root = rootRef.current;
@@ -272,20 +231,20 @@ function TourStage({ tour }: { tour: EvaluateTourController }) {
               >
                 <TourSpotlight rects={rects} />
                 {rects[0] ? (
-                  <TourPopover
+                  <TourCoachmark
                     anchor={rects[0]}
                     bounds={bounds}
                     placement={stop.placement}
-                    labelledBy={titleId}
                   >
-                    <StopCoachmarkContent
-                      stop={stop}
+                    <TourStepContent
+                      labels={STOP_LABELS}
                       index={stopIndex}
-                      titleId={titleId}
+                      title={stop.title}
+                      body={stop.body}
                       onNext={next}
                       onSkip={skip}
                     />
-                  </TourPopover>
+                  </TourCoachmark>
                 ) : null}
               </motion.div>
             ) : null}

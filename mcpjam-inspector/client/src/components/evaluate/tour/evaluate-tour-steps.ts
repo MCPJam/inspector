@@ -1,3 +1,5 @@
+import type { CoachmarkPlacement } from "@/components/guided-tour/geometry";
+
 /**
  * Copy and anchors for the Evaluate tour. The tour walks the eval loop in four
  * stops on example data: Setup, Define, Experiment, Monitor. Each stop shows a
@@ -10,8 +12,6 @@ export type TourStopId = "setup" | "define" | "experiment" | "monitor";
 
 /** The mock screens. `create` is the form the cursor fills in first. */
 export type TourScreen = "create" | "setup" | "case" | "diagnose" | "monitor";
-
-export type CoachmarkPlacement = "bottom" | "right" | "top";
 
 export type TourStop = {
   id: TourStopId;

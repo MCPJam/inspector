@@ -1,11 +1,16 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { TOUR_HANDOFF_COPY } from "./evaluate-tour-steps";
-import type { EvaluateTourHandoffEnd } from "./use-evaluate-tour";
-import { useAnchorRects } from "./tour-geometry";
-import { TourPopover } from "./tour-popover";
-import { TourSpotlight } from "./tour-spotlight";
+import {
+  FeatureSpotlightActions,
+  FeatureSpotlightDescription,
+  FeatureSpotlightTitle,
+} from "@mcpjam/design-system/feature-spotlight";
+import type { GuidedTourHandoffEnd } from "@/components/guided-tour/use-guided-tour";
+import { useAnchorRects } from "@/components/guided-tour/geometry";
+import { TourCoachmark } from "@/components/guided-tour/coachmark";
+import { TourSpotlight } from "@/components/guided-tour/spotlight";
 
 /** `data-tour-anchor` on the real create-suite form. */
 export const CREATE_SUITE_FORM_ANCHOR = "create-suite-form";
@@ -18,10 +23,9 @@ export const CREATE_SUITE_FORM_ANCHOR = "create-suite-form";
 export function TourHandoff({
   onDismiss,
 }: {
-  onDismiss: (reason: EvaluateTourHandoffEnd) => void;
+  onDismiss: (reason: GuidedTourHandoffEnd) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const titleId = useId();
   const { rects, bounds, settled } = useAnchorRects(
     rootRef,
     [CREATE_SUITE_FORM_ANCHOR],
@@ -46,7 +50,7 @@ export function TourHandoff({
       const target = event.target;
       if (
         target instanceof Element &&
-        target.closest('[data-testid="evaluate-tour-popover"]')
+        target.closest('[data-testid="guided-tour-coachmark"]')
       ) {
         return;
       }
@@ -84,36 +88,28 @@ export function TourHandoff({
       {anchor ? (
         <>
           <TourSpotlight rects={[anchor]} />
-          <TourPopover
+          <TourCoachmark
             anchor={anchor}
             bounds={bounds}
             placement="right"
-            labelledBy={titleId}
-            className="pointer-events-auto w-[280px]"
+            className="pointer-events-auto"
           >
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <h2
-                  id={titleId}
-                  className="text-sm font-semibold text-foreground"
-                >
-                  {TOUR_HANDOFF_COPY.title}
-                </h2>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {TOUR_HANDOFF_COPY.body}
-                </p>
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => onDismiss("got_it")}
-                >
-                  {TOUR_HANDOFF_COPY.dismiss}
-                </Button>
-              </div>
-            </div>
-          </TourPopover>
+            <FeatureSpotlightTitle>
+              {TOUR_HANDOFF_COPY.title}
+            </FeatureSpotlightTitle>
+            <FeatureSpotlightDescription>
+              {TOUR_HANDOFF_COPY.body}
+            </FeatureSpotlightDescription>
+            <FeatureSpotlightActions className="justify-end">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => onDismiss("got_it")}
+              >
+                {TOUR_HANDOFF_COPY.dismiss}
+              </Button>
+            </FeatureSpotlightActions>
+          </TourCoachmark>
         </>
       ) : null}
     </div>

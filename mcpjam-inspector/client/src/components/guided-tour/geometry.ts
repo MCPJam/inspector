@@ -5,7 +5,9 @@ import {
   useState,
   type RefObject,
 } from "react";
-import type { CoachmarkPlacement } from "./evaluate-tour-steps";
+
+/** The anchor side a coachmark sits on. */
+export type CoachmarkPlacement = "bottom" | "right" | "top";
 
 export type TourRect = { x: number; y: number; width: number; height: number };
 export type TourPoint = { x: number; y: number };

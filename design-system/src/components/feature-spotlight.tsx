@@ -32,20 +32,62 @@ function FeatureSpotlightAnchor(
   );
 }
 
+/**
+ * The pointer from the card to its anchor, drawn pointing down. The stroke
+ * continues the card's border down both edges; place it 1px into the card so
+ * its base covers the border underneath and the two read as one outline.
+ */
+function FeatureSpotlightPointer({
+  className,
+  ...props
+}: React.ComponentProps<"svg">) {
+  return (
+    <svg
+      viewBox="0 0 14 7"
+      width={14}
+      height={7}
+      data-slot="feature-spotlight-pointer"
+      className={cn("overflow-visible", className)}
+      aria-hidden
+      {...props}
+    >
+      <path d="M0 0L7 7L14 0" className="fill-popover stroke-border" />
+    </svg>
+  );
+}
+
 function FeatureSpotlightArrow() {
-  // Drawn rather than Radix's default triangle so the card's border continues
-  // down both edges. The 1px lift covers the card's own border under the
-  // arrow's base, which is what joins the two into one outline.
   return (
     <PopoverPrimitive.Arrow asChild width={14} height={7}>
-      <svg
-        viewBox="0 0 14 7"
-        className="-translate-y-px overflow-visible"
-        aria-hidden
-      >
-        <path d="M0 0L7 7L14 0" className="fill-popover stroke-border" />
-      </svg>
+      <FeatureSpotlightPointer className="-translate-y-px" />
     </PopoverPrimitive.Arrow>
+  );
+}
+
+/**
+ * The card on its own, for callouts positioned by something other than the
+ * Radix popover (a guided tour's coachmark). Titles inside it label it.
+ */
+function FeatureSpotlightCard({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"div">) {
+  const titleId = React.useId();
+  return (
+    <div
+      data-slot="feature-spotlight-card"
+      aria-labelledby={titleId}
+      className={cn(
+        "bg-popover text-popover-foreground relative flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2 rounded-lg border p-4 shadow-md outline-hidden",
+        className,
+      )}
+      {...props}
+    >
+      <SpotlightTitleContext.Provider value={titleId}>
+        {children}
+      </SpotlightTitleContext.Provider>
+    </div>
   );
 }
 
@@ -59,7 +101,6 @@ function FeatureSpotlightContent({
   children,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
-  const titleId = React.useId();
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
@@ -68,23 +109,24 @@ function FeatureSpotlightContent({
         align={align}
         sideOffset={sideOffset}
         alignOffset={alignOffset}
-        aria-labelledby={titleId}
         onOpenAutoFocus={(event) => {
           onOpenAutoFocus?.(event);
           // Unprompted: moving focus would pull the keyboard out of whatever
           // the user was doing.
           event.preventDefault();
         }}
-        className={cn(
-          "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-50 flex w-80 max-w-[calc(100vw-2rem)] origin-(--radix-popover-content-transform-origin) flex-col gap-2 rounded-lg border p-4 shadow-md outline-hidden",
-          className,
-        )}
+        asChild
         {...props}
       >
-        <SpotlightTitleContext.Provider value={titleId}>
+        <FeatureSpotlightCard
+          className={cn(
+            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 origin-(--radix-popover-content-transform-origin)",
+            className,
+          )}
+        >
           {children}
-        </SpotlightTitleContext.Provider>
-        <FeatureSpotlightArrow />
+          <FeatureSpotlightArrow />
+        </FeatureSpotlightCard>
       </PopoverPrimitive.Content>
     </PopoverPrimitive.Portal>
   );
@@ -137,13 +179,14 @@ function FeatureSpotlightActions({
   );
 }
 
-/** The corner X. Closes through `onOpenChange(false)` like Escape does. */
-function FeatureSpotlightClose({
+/** The corner X, as a plain button for a card outside the Radix popover. */
+function FeatureSpotlightCloseButton({
   className,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Close>) {
+}: React.ComponentProps<"button">) {
   return (
-    <PopoverPrimitive.Close
+    <button
+      type="button"
       data-slot="feature-spotlight-close"
       aria-label="Close"
       className={cn(
@@ -153,6 +196,17 @@ function FeatureSpotlightClose({
       {...props}
     >
       <X className="size-3.5" aria-hidden />
+    </button>
+  );
+}
+
+/** The corner X. Closes through `onOpenChange(false)` like Escape does. */
+function FeatureSpotlightClose(
+  props: React.ComponentProps<typeof PopoverPrimitive.Close>,
+) {
+  return (
+    <PopoverPrimitive.Close asChild>
+      <FeatureSpotlightCloseButton {...props} />
     </PopoverPrimitive.Close>
   );
 }
@@ -165,4 +219,7 @@ export {
   FeatureSpotlightDescription,
   FeatureSpotlightActions,
   FeatureSpotlightClose,
+  FeatureSpotlightCard,
+  FeatureSpotlightPointer,
+  FeatureSpotlightCloseButton,
 };

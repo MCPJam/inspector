@@ -1,10 +1,10 @@
-import type { GhostCursorHandle } from "./tour-ghost-cursor";
-import { findAnchor, rectCenter, rectWithin } from "./tour-geometry";
+import type { GhostCursorHandle } from "./ghost-cursor";
+import { findAnchor, rectCenter, rectWithin } from "./geometry";
 
 /** Thrown out of a script when the tour closes mid-transition. */
 export class TourCancelled extends Error {
   constructor() {
-    super("Evaluate tour transition cancelled");
+    super("Tour transition cancelled");
     this.name = "TourCancelled";
   }
 }
