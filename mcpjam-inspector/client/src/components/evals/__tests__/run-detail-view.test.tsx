@@ -879,10 +879,11 @@ describe("RunDetailView", () => {
     function renderWithQuality(
       run: EvalSuiteRun,
       result: Record<string, unknown> | null,
+      pending = false,
     ) {
       vi.mocked(useServerQuality).mockReturnValue({
         result,
-        pending: false,
+        pending,
         requested: false,
         failedGeneration: false,
         error: null,
@@ -913,6 +914,40 @@ describe("RunDetailView", () => {
       expect(screen.getAllByText("Waiting for analysis…").length).toBeGreaterThan(
         0,
       );
+    });
+
+    const placeholder = {
+      summary:
+        "Server quality analysis was cancelled. Open the run again to generate when you are ready.",
+      generatedAt: 1,
+      modelUsed: "n/a",
+      toolInsights: [],
+      workflowInsights: [],
+    };
+
+    it("is hidden over cancel's placeholder once a findings analysis completed", () => {
+      renderWithQuality(
+        makeRun({ serverQualityStatus: "completed" }),
+        placeholder,
+      );
+      expect(screen.queryByText(/was cancelled/)).toBeNull();
+    });
+
+    it("shows a real legacy result", () => {
+      renderWithQuality(makeRun({ serverQualityStatus: "completed" }), {
+        ...placeholder,
+        summary: "The search tool could handle errors better.",
+        modelUsed: "openai/gpt-5.4-mini",
+      });
+      expect(
+        screen.getAllByText(/The search tool could handle errors better/)
+          .length,
+      ).toBeGreaterThan(0);
+    });
+
+    it("shows a pending analysis", () => {
+      renderWithQuality(makeRun({ serverQualityStatus: "pending" }), null, true);
+      expect(screen.getAllByText("Analyzing…").length).toBeGreaterThan(0);
     });
   });
 });

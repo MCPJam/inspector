@@ -22,12 +22,19 @@
  *   analyze), each call can be reachable while the sequence is not obvious to
  *   an agent. Say so in the operations' descriptions.
  * - Features the Inspector server serves itself, outside the v1 routes.
+ * - REST-only routes. A function a v1 route names counts as reachable even
+ *   when the SDK leaves that route out (`EXCLUDED_FROM_SDK` in
+ *   `sdk-coverage.test.ts`), so MCP and the CLI cannot call it.
  * A passing test does not mean agents can do everything the app does.
  *
  * The repo is public: reasons here are one line, with no internal detail.
  */
 
-/** Strings shaped `prefix:name` that are not backend functions. */
+/**
+ * Strings shaped `prefix:name` that are not backend functions. An entry
+ * exempts every string with that prefix, a whole backend module if one is
+ * ever named the same, so each says what the strings are.
+ */
 export const NOT_BACKEND_PREFIXES: Readonly<Record<string, string>> = {
   about: "`about:blank`, a browser URL",
   auditevents: "WorkOS audit log action names",

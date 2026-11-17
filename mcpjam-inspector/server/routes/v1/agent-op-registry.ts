@@ -2173,7 +2173,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "none",
     },
     promptNotes: [
-      "- `request_eval_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with goal, study and user-testing insights. Most finished runs are analyzed automatically: read `get_eval_run`'s `insights` first, and request only when it is `not_requested` or you need a rerun.",
+      "- `request_eval_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with goal, study and user-testing insights. Most finished runs are analyzed automatically: read `get_eval_run`'s `insights` first. The findings are `currentFindings`, and `unifiedFindings.snapshot.enrichment.status` says whether a model explained them. Request only when there is no explanation or it is `stale`, and never when `unifiedFindings.job.errorCode` is `org_model_unavailable`: that analysis cannot run until the organization's AI key policy changes.",
     ],
   },
   {

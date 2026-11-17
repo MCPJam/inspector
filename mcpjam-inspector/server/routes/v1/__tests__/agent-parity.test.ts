@@ -54,6 +54,7 @@ describe("agent parity", () => {
       reachable,
       covered: COVERED,
       notExposed: NOT_EXPOSED,
+      notBackendPrefixes: NOT_BACKEND_PREFIXES,
       backlog,
       backlogMax: BACKLOG_MAX,
       operationNames: new Set(ALL_OPERATIONS.map((op) => op.name)),
@@ -76,6 +77,7 @@ describe("agent parity rules", () => {
       reachable: new Set(["evals:run"]),
       covered: {},
       notExposed: {},
+      notBackendPrefixes: { check: "eval step picker check ids" },
       backlog: ["evals:cancel"],
       backlogMax: 1,
       operationNames: new Set(["run_eval_suite"]),
@@ -160,6 +162,12 @@ describe("agent parity rules", () => {
     expect(problems).toEqual([
       expect.stringContaining("one-line reason of at most 160 characters"),
     ]);
+  });
+
+  it("refuses a prefix exemption that does not say what it exempts", () => {
+    expect(
+      checkParity(inputs({ notBackendPrefixes: { billing: " " } })),
+    ).toEqual([expect.stringContaining("NOT_BACKEND_PREFIXES billing")]);
   });
 
   it("drops a backlog entry once agents can reach it", () => {

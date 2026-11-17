@@ -1499,13 +1499,18 @@ export function compactJourneyFindings(value: SwarmJourneyFindings) {
  * `findings`, which every client reads, and in `currentFindings`. Sending both
  * spends the model's context on a copy, so the copy is dropped and the drop is
  * stated, so a reader does not take the missing field for missing findings.
+ *
+ * Only when `findings` fits under the cap: past it, compaction keeps the
+ * first MODEL_MAX_FINDINGS, and `currentFindings` is then the only place the
+ * rest are.
  */
 function dropRepeatedCurrentFindings(envelope: EnvelopeLike): EnvelopeLike {
   const current = (envelope as { currentFindings?: unknown }).currentFindings;
   if (
     !Array.isArray(current) ||
     current.length === 0 ||
-    current.length !== envelope.findings.length
+    current.length !== envelope.findings.length ||
+    current.length > MODEL_MAX_FINDINGS
   ) {
     return envelope;
   }

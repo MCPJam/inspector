@@ -120,6 +120,23 @@ describe("compactInsightsForModel", () => {
     expect(out.insights.currentFindingsSameAsFindings).toBe(true);
   });
 
+  it("keeps currentFindings when findings is capped, so no finding is lost", () => {
+    const findings = Array.from({ length: MODEL_MAX_FINDINGS + 2 }, (_, i) =>
+      finding(i)
+    );
+    const out = compactInsightsForModel({
+      insights: envelope({ findings, currentFindings: findings }),
+    }) as {
+      insights: { findings: unknown[]; currentFindings?: unknown[] } & Record<
+        string,
+        unknown
+      >;
+    };
+    expect(out.insights.findings).toHaveLength(MODEL_MAX_FINDINGS);
+    expect(out.insights.currentFindings).toHaveLength(MODEL_MAX_FINDINGS + 2);
+    expect(out.insights.currentFindingsSameAsFindings).toBeUndefined();
+  });
+
   it("keeps currentFindings when it differs from findings", () => {
     const out = compactInsightsForModel({
       insights: envelope({

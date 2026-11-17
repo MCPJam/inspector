@@ -18,6 +18,7 @@ export type ParityInputs = {
   reachable: ReadonlySet<string>;
   covered: Readonly<Record<string, string>>;
   notExposed: Readonly<Record<string, string>>;
+  notBackendPrefixes: Readonly<Record<string, string>>;
   backlog: readonly string[];
   backlogMax: number;
   operationNames: ReadonlySet<string>;
@@ -89,6 +90,14 @@ export function checkParity(inputs: ParityInputs): string[] {
     if (reason.trim().length === 0 || reason.length > MAX_REASON) {
       problems.push(
         `NOT_EXPOSED ${key}: give a one-line reason of at most ${MAX_REASON} characters.`,
+      );
+    }
+  }
+
+  for (const [prefix, what] of Object.entries(inputs.notBackendPrefixes)) {
+    if (what.trim().length === 0 || what.length > MAX_REASON) {
+      problems.push(
+        `NOT_BACKEND_PREFIXES ${prefix}: say what these strings are, in at most ${MAX_REASON} characters.`,
       );
     }
   }
