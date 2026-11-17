@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "../routes/web/errors.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
@@ -1308,6 +1309,8 @@ function throwSetupPhaseError(args: {
   /** The observer's explanation, when it recorded one for this failure. */
   detail?: SetupFailureDetail;
 }): never {
+  const credentialFailure = credentialFailureMessage(args.error);
+  const failureLine = credentialFailure ?? args.detail?.line;
   const serverLabel = getServerLabelForEvalError(
     args.serverId,
     args.environment,
@@ -1319,15 +1322,15 @@ function throwSetupPhaseError(args: {
     const setupError = new EvalSetupPhaseError({
       status: 409,
       code: ErrorCode.SERVER_UNREACHABLE,
-      message: args.detail
-        ? `Could not start eval because "${serverLabel}" is not connected: ${args.detail.line}`
+      message: failureLine
+        ? `Could not start eval because "${serverLabel}" is not connected: ${failureLine}`
         : `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
       serverId: args.serverId,
       phase: args.phase,
       details: {
         serverId: args.serverId,
         serverName: serverLabel,
-        ...(args.detail ? { cause: args.detail.line } : {}),
+        ...(failureLine ? { cause: failureLine } : {}),
       },
     });
     setupError.cause = args.error;
