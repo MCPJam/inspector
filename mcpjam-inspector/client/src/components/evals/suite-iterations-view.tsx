@@ -2147,12 +2147,6 @@ export function SuiteIterationsView({
                 >
                   Back to suite
                 </Button>
-                {evaluateSettingsDelete && canDeleteSuite && !editingDisabled ? (
-                  <SuiteSettingsDeleteButton
-                    disabled={deletingSuiteId === suite._id || isCommitting}
-                    onDelete={() => onDelete(suite)}
-                  />
-                ) : null}
                 {editingDisabled ? null : draftChanges.length > 0 ? (
                   <SuiteSettingsCommitBar
                     layout="inline"
@@ -2190,6 +2184,12 @@ export function SuiteIterationsView({
                     Save settings
                   </Button>
                 )}
+                {evaluateSettingsDelete && canDeleteSuite && !editingDisabled ? (
+                  <SuiteSettingsDeleteButton
+                    disabled={deletingSuiteId === suite._id || isCommitting}
+                    onDelete={() => onDelete(suite)}
+                  />
+                ) : null}
               </div>
             }
             suite={suite}

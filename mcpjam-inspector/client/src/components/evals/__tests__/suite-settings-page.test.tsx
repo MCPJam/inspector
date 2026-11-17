@@ -330,6 +330,24 @@ describe("suite settings delete button", () => {
     );
   });
 
+  it("sits to the right of Save settings, with or without unsaved changes", () => {
+    const { container } = renderSettingsSheet({ evaluateSettingsDelete: true });
+    const followsSave = () =>
+      Boolean(
+        screen
+          .getByRole("button", { name: "Save settings" })
+          .compareDocumentPosition(deleteButton()!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    expect(followsSave()).toBe(true);
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeInTheDocument();
+    expect(followsSave()).toBe(true);
+  });
+
   it("leaves the legacy Evals settings header without it", () => {
     renderSettingsSheet();
     expect(deleteButton()).toBeNull();
