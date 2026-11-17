@@ -26,6 +26,10 @@ import {
 } from "./hosted-rpc-logs.js";
 import { buildConnectSuccessEnvelope } from "../../utils/local-server-resolver.js";
 import {
+  captureHostedOnlyAccountProfiles,
+  connectedAccounts,
+} from "../../utils/account-profile-capture.js";
+import {
   exportSingleServerForInspection,
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
@@ -107,12 +111,24 @@ export async function validateServerCore(
     await assertHostedServerTarget(String(configuredUrl));
   }
   await manager.getToolsForAiSdk([body.serverId]);
-  const snapshot = await exportSingleServerForInspection(
-    manager,
-    body.serverId,
-    body.serverId,
-    { logPrefix: "hosted-connect-inspection" }
-  );
+  // A shared or uploaded account's identity is captured beside the
+  // inspection, while the ephemeral manager is still live.
+  const [snapshot] = await Promise.all([
+    exportSingleServerForInspection(manager, body.serverId, body.serverId, {
+      logPrefix: "hosted-connect-inspection",
+    }),
+    captureHostedOnlyAccountProfiles(
+      manager,
+      connectedAccounts(manager, body.serverId),
+      {
+        bearer: String(c.req?.header?.("authorization") ?? "").replace(
+          /^Bearer\s+/i,
+          "",
+        ),
+        projectId: body.projectId,
+      },
+    ),
+  ]);
   void persistHostedConnectInspection(c, {
     projectId: body.projectId,
     snapshot,

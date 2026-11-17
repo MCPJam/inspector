@@ -936,6 +936,25 @@ export type EvalRunAccount = {
   profileId?: string;
   /** The simulated identity an XAA server ran as. */
   xaaSubject?: string;
+  // The stored token's facts when the run started; absent from older backends.
+  /** Who stored the token, by the name teammates see. */
+  tokenStoredBy?: string;
+  tokenStoredAt?: number;
+  /** Uploaded through the accounts API rather than signed in. */
+  tokenUploaded?: boolean;
+  tokenExpiresAt?: number;
+  identity?: EvalRunAccountIdentity;
+};
+
+/**
+ * Whose an account's token was: from the server's profile tool (`profile`)
+ * or from the token's own unverified claims (`token`). Never an email.
+ */
+export type EvalRunAccountIdentity = {
+  source: "profile" | "token";
+  name?: string;
+  subject?: string;
+  issuer?: string;
 };
 
 export type EvalSuiteRun = {

@@ -63,6 +63,10 @@ import {
 } from "./effective-auth.js";
 import type { XaaEnterprisePolicy } from "@mcpjam/sdk";
 import { exportSingleServerForInspection } from "./export-helpers.js";
+import {
+  captureHostedOnlyAccountProfiles,
+  isHostedOnlyAccount,
+} from "./account-profile-capture.js";
 import { ConvexHttpClient } from "convex/browser";
 import { getInspectorClientRuntimeConfig } from "../env.js";
 import { setRequestLogContext } from "./request-logger.js";
@@ -2371,6 +2375,27 @@ async function executeLocalServerConnectAttempt(
       error: error instanceof Error ? error.message : String(error),
     });
   });
+  // A shared or uploaded account's identity, for eval runs to show. This
+  // manager outlives the request, so the connect does not wait for it.
+  const { oauthCredentialId, oauthAccountKind, oauthAccountUploaded } =
+    resolved.authorizeResult;
+  void captureHostedOnlyAccountProfiles(
+    mcpClientManager,
+    connected.length
+      ? connected.filter((entry) =>
+          isHostedOnlyAccount(
+            accounts.find((a) => a.connectionId === entry.connectionId),
+          ),
+        )
+      : oauthCredentialId &&
+          isHostedOnlyAccount({
+            accountKind: oauthAccountKind,
+            accountUploaded: oauthAccountUploaded,
+          })
+        ? [{ key: serverDisplayName, serverId, connectionId: oauthCredentialId }]
+        : [],
+    { bearer, projectId },
+  );
 
   return c.json(
     buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName)
