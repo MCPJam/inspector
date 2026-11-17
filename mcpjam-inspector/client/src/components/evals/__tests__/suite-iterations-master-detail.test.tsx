@@ -1388,7 +1388,7 @@ describe("SuiteIterationsView behind eval-test-case-steps-editor", () => {
     ["the evaluators page", { checks: true }, {}],
     ["a link into past results", { openCompare: true }, {}],
     ["a link to one iteration", { iteration: "it-1" }, {}],
-    ["a new draft", { testId: "draft:prompt" }, {}],
+    ["a Describe draft", { testId: "draft:describe" }, {}],
     ["the legacy Evals tab", {}, { evaluateCaseEditor: false }],
   ])("keeps today's editor for %s with the flag on", (_name, route, props) => {
     stepsEditor.enabled = true;
@@ -1412,6 +1412,16 @@ describe("SuiteIterationsView behind eval-test-case-steps-editor", () => {
       "data-run",
       "false",
     );
+  });
+
+  it("opens a New case from Add manually in the steps editor with the flag on", () => {
+    stepsEditor.enabled = true;
+    renderCase({ testId: "draft:prompt" });
+    expect(screen.getByTestId("case-steps-page")).toHaveAttribute(
+      "data-case",
+      "draft:prompt",
+    );
+    expect(screen.queryByTestId("case-workspace")).toBeNull();
   });
 
   it("hands the page the suite's delete and navigation", async () => {

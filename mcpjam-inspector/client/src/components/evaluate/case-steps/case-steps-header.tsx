@@ -13,6 +13,36 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "@/components/evals/constants";
 
+/** A New case's title row: its title and Save case. */
+export function NewCaseHeader({
+  title,
+  onTitleChange,
+  onSave,
+}: {
+  title: string;
+  onTitleChange: (title: string) => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="border-b border-border px-4 py-2.5 sm:px-6">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+        <input
+          type="text"
+          value={title}
+          aria-label="Test case title"
+          placeholder="Untitled test case"
+          onChange={(event) => onTitleChange(event.target.value)}
+          className="min-w-0 flex-1 basis-[min(100%,12rem)] bg-transparent px-0 py-0 text-base font-semibold tracking-tight placeholder:text-muted-foreground focus:outline-none"
+        />
+        <Button type="button" size="sm" className="h-8" onClick={onSave}>
+          <Save className="mr-2 h-3.5 w-3.5" aria-hidden />
+          Save case
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * The title, then Delete, Save, Test Case Evaluators and Run. Locked
  * (`readOnly`): no rename, Delete, Save or Evaluators. Save shows only with
