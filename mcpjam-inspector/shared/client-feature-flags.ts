@@ -55,6 +55,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "slack-agent-org-settings",
   "synthetic-monitors",
   "tool-quality-enabled",
+  "trace-cost",
   "trace-destinations",
   "unified-sessions-enabled",
   "unified-share-evals",
