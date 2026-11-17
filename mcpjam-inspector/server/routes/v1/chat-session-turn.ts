@@ -163,6 +163,7 @@ import {
   hostRoutingSelectionForModel,
   hostSelectionForModel,
   resolveChatSessionEngine,
+  toolModeHarnessPolicy,
   type ChatSessionEngine,
 } from "./chat-session-host-target.js";
 import { v1Error, v1Resource } from "./envelope.js";
@@ -591,21 +592,28 @@ async function computeExcludedToolNames(
     excludeAll?: true;
     onUnavailable?: (serverId: string, error: unknown) => void;
   },
-): Promise<{ excluded: string[]; advertised: number }> {
-  let tools: Array<{ name?: string; annotations?: { readOnlyHint?: unknown } }>;
+): Promise<{
+  excluded: string[];
+  advertised: number;
+  /** Each server's listing, when the servers were listed one by one. */
+  listed?: Array<{ serverId: string; tools: ListedTool[] }>;
+}> {
+  let tools: ListedTool[];
+  let listed: Array<{ serverId: string; tools: ListedTool[] }> | undefined;
   try {
-    tools = policy.onUnavailable
-      ? (await Promise.all(serverIds.map(async (id) => {
-          try {
-            return await listToolsWithinBudget(manager, [id]);
-          } catch (error) {
-            // Omit this server; the response reports its failure below.
-            if (error instanceof WebRouteError && error.code === ErrorCode.INTERNAL_ERROR) throw error;
-            policy.onUnavailable?.(id, error);
-            return [];
-          }
-        }))).flat() as typeof tools
-      : (await listToolsWithinBudget(manager, serverIds)) as typeof tools;
+    if (policy.onUnavailable) {
+      listed = await Promise.all(serverIds.map(async (serverId) => {
+        try {
+          return { serverId, tools: (await listToolsWithinBudget(manager, [serverId])) as ListedTool[] };
+        } catch (error) {
+          // Omit this server; the response reports its failure below.
+          if (error instanceof WebRouteError && error.code === ErrorCode.INTERNAL_ERROR) throw error;
+          policy.onUnavailable?.(serverId, error);
+          return { serverId, tools: [] };
+        }
+      }));
+      tools = listed.flatMap((entry) => entry.tools);
+    } else tools = (await listToolsWithinBudget(manager, serverIds)) as ListedTool[];
   } catch (error) {
     if (error instanceof WebRouteError && error.code === ErrorCode.INTERNAL_ERROR) throw error;
     // A target we cannot enumerate is a target we cannot apply a tool policy
@@ -643,8 +651,10 @@ async function computeExcludedToolNames(
     if (blockedByMode || blockedByAllowlist) excluded.push(name);
     else advertised += 1;
   }
-  return { excluded, advertised };
+  return { excluded, advertised, ...(listed ? { listed } : {}) };
 }
+
+type ListedTool = { name?: string; annotations?: { readOnlyHint?: unknown } };
 
 /**
  * Narrow a resolved target by `allowedServerIds`, keeping names paired.
@@ -1600,7 +1610,7 @@ async function handleTurn(c: Context): Promise<Response> {
     // The policy read below and `prepareChatV2` share one `tools/list` per
     // server, so the policy is decided on the tools the model is handed.
     toolListing = shareToolListing(manager);
-    const { excluded } = await computeExcludedToolNames(
+    const { excluded, listed } = await computeExcludedToolNames(
       manager,
       selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id)),
       {
@@ -1889,7 +1899,17 @@ async function handleTurn(c: Context): Promise<Response> {
       // authorized manager exactly as they do, and deriving a different
       // strategy is how a sandbox ends up pointed at the wrong manager.
       ...(engine.kind === "harness"
-        ? { harnessMcpProxy: resolveWebAuthorizedHarnessStrategy() }
+        ? {
+            harnessMcpProxy: resolveWebAuthorizedHarnessStrategy(),
+            // The switch as this surface applies it, so the harness reads the
+            // same policy the emulated engine's tools were built with.
+            requireToolApproval,
+            // The tools `read_only` kept from the emulated engine, refused
+            // where the harness's own calls run.
+            ...(pins.toolMode === "read_only"
+              ? { harnessToolPolicy: toolModeHarnessPolicy(selectedServerIds, listed, excluded) }
+              : {}),
+          }
         : {}),
       ...(engine.kind === "harness" && conversationBox
         ? { harnessSandboxBinding: conversationBox.binding }

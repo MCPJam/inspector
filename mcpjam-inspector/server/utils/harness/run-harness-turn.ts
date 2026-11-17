@@ -34,7 +34,7 @@ import {
   diskResumeState,
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
-import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
+import { APPROVE_NATIVE_REQUEST, DENY_UNANSWERED, withAnsweredNativeRequests, withDeniedGatedHostTools } from "./auto-approve-harness.js";
 import { withHarnessElicitation } from "./with-harness-elicitation.js";
 import { isNativeElicitationProfile } from "./forwarding/native-elicitation-profile.js";
 import { hostedWarmAgentEligible, qualifiedForwardingRuntime } from "./forwarding/runtime-contract.js";
@@ -158,7 +158,7 @@ import {
   emitToolOutputError,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
-import { needsApprovalFor } from "@/shared/tool-approval";
+import { approvalAnswerOf, needsApprovalFor } from "@/shared/tool-approval";
 import { requiresServerVerifiedApproval } from "../tool-approval-token.js";
 import {
   pluginOriginByServerId,
@@ -1747,9 +1747,6 @@ export async function runHarnessTurn(
         mcpClient: mcpPlan.delivery === "host-tools" ? "mcpjam" : "harness",
         requireToolApproval,
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
-        // Every caller with nobody to answer (evals, swarms, synthetic
-        // sessions, API turns) says so this way.
-        unattended: approvalMode === "auto-deny",
       });
       if (approvalRefusal) {
         throw new Error(`Can't run this turn: ${approvalRefusal}.`);
@@ -2938,16 +2935,17 @@ export async function runHarnessTurn(
         const refreshed = forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, approvalPolicyStamp ?? nativeForwarding.policyDigest);
         // A runtime that binds approvals asks the user itself; the others leave asking to the forwarder.
         harnessRuntime = forwardingRuntime.boundApprovals ? nativeForwarding.approvals.voidOnCallEnd(refreshed)
-          : withAutoApprovedNativeRequests(refreshed, undefined, new Set(), nativeForwarding.isForwardedTool);
+          : withAnsweredNativeRequests(refreshed, APPROVE_NATIVE_REQUEST, { covers: nativeForwarding.isForwardedTool });
       }
       if (decided) harnessRuntime = answerOnlyDecidedCalls(harnessRuntime, decided);
       if (nativeForwarding) onHarnessMcpReady?.(nativeForwarding.logScopeIds);
+      const answeredByPerson = new Set(approvalContinuations.map(continuation => continuation.approvalId));
+      const logNativeAnswer = (approvalDecision: string) => (approvalId: string) =>
+        logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision });
       if (localPrepared) {
         harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
         if (!serverSkills?.gated && sourceType !== "eval" && sourceType !== "swarm" && requireToolApproval === false) {
-          harnessRuntime = withAutoApprovedNativeRequests(harnessRuntime, approvalId => {
-            logger.info("[harness] native approval answered", { harness: harnessAdapter.id, turnId, approvalId, approvalDecision: "auto-off" });
-          }, new Set(approvalContinuations.map(continuation => continuation.approvalId)));
+          harnessRuntime = withAnsweredNativeRequests(harnessRuntime, APPROVE_NATIVE_REQUEST, { onAnswer: logNativeAnswer("auto-off"), pendingApprovalIds: answeredByPerson });
         }
       }
       const commandGate = serverSkills?.gated
@@ -2963,6 +2961,12 @@ export async function runHarnessTurn(
           pendingApprovals: approvalContinuations,
           log: { harness: harnessAdapter.id, turnId },
         });
+      }
+      // Nobody answers this turn (`turnApprovalPolicy`): whatever the runtime
+      // still asks gets the engine's denial, and the model carries on.
+      const nobodyAnswers = approvalAnswerOf(approvalMode) === "deny";
+      if (nobodyAnswers) {
+        harnessRuntime = withAnsweredNativeRequests(harnessRuntime, DENY_UNANSWERED, { onAnswer: logNativeAnswer("policy-deny"), pendingApprovalIds: answeredByPerson });
       }
       // MCPJam's server-executed tools. The harness forwards each as a tool spec
       // to the runtime; when the runtime calls one it pauses, the agent runs the
@@ -3009,9 +3013,12 @@ export async function runHarnessTurn(
       const appTools = harness === "codex" && options.harnessAppTools?.length && chatSessionId
         ? harnessAppTools({ entries: options.harnessAppTools, projectId, chatSessionId, turnId, authHeader, getAuthorization: currentAuthorization, getCleanupAuthorization: cleanupAuthorization, signal: effectiveAbortSignal, writer })
         : {};
+      const ownHostTools = { ...appTools, ...hostExecutedMcp.tools, ...offeredBuiltInTools };
       const hostExecutedTools = hostToolCancellation.wrap(
         withServerSkillTools(
-          { ...appTools, ...hostExecutedMcp.tools, ...offeredBuiltInTools },
+          // On a turn nobody answers, a host tool that asks is denied where it
+          // runs rather than pausing for an answer that never comes.
+          nobodyAnswers ? withDeniedGatedHostTools(ownHostTools) : ownHostTools,
           serverSkills,
           commandGate,
         ),

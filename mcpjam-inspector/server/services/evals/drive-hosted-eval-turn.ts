@@ -39,7 +39,7 @@ import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
-import { engineApprovalMode } from "@/shared/tool-approval";
+import { appliedToolApproval, engineApprovalMode } from "@/shared/tool-approval";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
 import {
@@ -188,10 +188,10 @@ export interface DriveHostedEvalTurnParams {
   agentLoop?: Harness;
   /** The case's saved selection, read by the harness turn only. */
   modelSelection?: RunAssistantTurnOptions["modelSelection"];
-  /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
-   *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
-   *  an interactive approval flow; a gated call can fail during streaming.
-   *  The emulated eval path is unchanged (it doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
+  /** Host approval intent (resolvedExecution.requireToolApproval). A harness
+   *  turn receives it as the eval policy applies it (off), so it runs as an
+   *  approval-off client and MCPJam denies only `always` tools; the run still
+   *  records how many calls would have asked (`approvals_would_require`). */
   requireToolApproval?: boolean;
   toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
@@ -826,16 +826,20 @@ export async function driveHostedEvalTurn(
       streamSink: "none",
       persistMode: "caller",
       approvalMode: engineApprovalMode("eval"),
-      // Harness eval (host harness === "claude-code"): forward the host's real
-      // approval intent. Evals cannot approve a gated native call interactively,
-      // and non-approval hosts still run under allow-all.
+      // A harness eval reads the same policy as the emulated one: the host's
+      // switch does not apply, and `approvalMode` makes MCPJam deny the rest.
       ...(params.harness
         ? {
             agentLoop: params.agentLoop,
             harnessTurnContext: EVAL_WIDGET_MODEL_CONTEXT ? buildEvalWidgetContextSystemPrompt(browser.browserInteractionSteps) : undefined,
             ...(params.harnessExecutionTarget ? { harnessExecutionTarget: params.harnessExecutionTarget } : {}),
             ...(params.requireToolApproval !== undefined
-              ? { requireToolApproval: params.requireToolApproval }
+              ? {
+                  requireToolApproval: appliedToolApproval(
+                    "eval",
+                    params.requireToolApproval,
+                  ),
+                }
               : {}),
             // runHarnessTurn needs projectId to resolve the host's computer
             // (authHeader already rides authContext.token). Harness-gated so
