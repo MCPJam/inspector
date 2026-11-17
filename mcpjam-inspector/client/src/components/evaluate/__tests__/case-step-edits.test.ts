@@ -102,6 +102,43 @@ describe("route rule edits", () => {
     expect(ids(chooseTools(withoutP2).steps)).toEqual(["p1", "a1", "a2"]);
   });
 
+  it("deleting a middle prompt leaves the other asserts in their turns", () => {
+    const exact = (id: string, toolName: string): TestStep => ({
+      id,
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName,
+        args: { args: { q: id }, argumentMatching: "exact" },
+      },
+    });
+    const prompt = (id: string): TestStep => ({
+      id,
+      kind: "prompt",
+      prompt: id,
+    });
+    const threeTurns = [
+      prompt("p1"),
+      exact("a1", "search"),
+      prompt("p2"),
+      exact("a2", "book"),
+      prompt("p3"),
+      exact("a3", "pay"),
+    ];
+    const negative = chooseNoTool(draft({ steps: threeTurns }));
+    const withoutP2 = {
+      ...negative,
+      steps: negative.steps.filter((step) => step.id !== "p2"),
+    };
+    expect(chooseTools(withoutP2).steps).toEqual([
+      threeTurns[0],
+      threeTurns[1],
+      threeTurns[3],
+      threeTurns[4],
+      threeTurns[5],
+    ]);
+  });
+
   it("a plain stashed tool still comes back through the first turn", () => {
     const negative = draft({
       steps: [sketch[0]],
