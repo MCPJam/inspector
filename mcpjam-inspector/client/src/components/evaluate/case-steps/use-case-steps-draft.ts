@@ -64,6 +64,8 @@ export function useCaseStepsDraft({
 
   const [draft, setDraftState] = useState<CaseStepsDraft | null>(null);
   const [invalidField, setInvalidField] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const inFlight = useRef(false);
   const seededFor = useRef<string | null>(null);
   // Re-seed only when the case changes, never on a live update mid-edit.
   useEffect(() => {
@@ -78,7 +80,10 @@ export function useCaseStepsDraft({
 
   const readOnly =
     isCiOwnedSuite(suite ?? null) || capabilities?.ownership?.ciOwned === true;
-  const dirty = Boolean(draft && testCase && isCaseStepsDirty(draft, testCase));
+  const dirty = useMemo(
+    () => Boolean(draft && testCase && isCaseStepsDirty(draft, testCase)),
+    [draft, testCase],
+  );
 
   const card = useMemo<CaseScorecard | null>(
     () =>
@@ -105,10 +110,7 @@ export function useCaseStepsDraft({
     [draft, suite, capabilities],
   );
 
-  const save = async (
-    opts: { quiet?: boolean } = {},
-  ): Promise<{ ok: boolean }> => {
-    const quiet = opts.quiet ?? false;
+  const saveDraft = async (quiet: boolean): Promise<{ ok: boolean }> => {
     if (!draft || !testCase || readOnly) return { ok: false };
     if (invalidField) {
       refuseCaseSave("Complete the highlighted fields before saving.", quiet);
@@ -145,6 +147,19 @@ export function useCaseStepsDraft({
     }
   };
 
+  /** One save at a time: a second click while one runs does nothing. */
+  const save = async (opts: { quiet?: boolean } = {}) => {
+    if (inFlight.current) return { ok: false };
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      return await saveDraft(opts.quiet ?? false);
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+    }
+  };
+
   return {
     status,
     suite: suite ?? undefined,
@@ -156,6 +171,7 @@ export function useCaseStepsDraft({
     card,
     capabilities,
     save,
+    saving,
     setInvalidField,
   };
 }

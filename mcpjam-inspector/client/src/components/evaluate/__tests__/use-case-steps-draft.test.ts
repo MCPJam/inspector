@@ -161,6 +161,29 @@ describe("useCaseStepsDraft", () => {
     expect(state.update).not.toHaveBeenCalled();
   });
 
+  it("runs one save at a time and reports it while it runs", async () => {
+    let finish = () => {};
+    state.update = vi.fn(
+      () => new Promise<null>((resolve) => (finish = () => resolve(null))),
+    );
+    const { result } = renderDraft();
+    await waitFor(() => expect(result.current.draft).not.toBeNull());
+    let first: Promise<{ ok: boolean }> = Promise.resolve({ ok: false });
+    let second: Promise<{ ok: boolean }> = first;
+    act(() => {
+      first = result.current.save();
+      second = result.current.save();
+    });
+    expect(result.current.saving).toBe(true);
+    await act(async () => {
+      finish();
+      expect(await first).toEqual({ ok: true });
+      expect(await second).toEqual({ ok: false });
+    });
+    expect(state.update).toHaveBeenCalledOnce();
+    expect(result.current.saving).toBe(false);
+  });
+
   it("says why a failed save did not go through", async () => {
     state.update = vi.fn().mockRejectedValue(new Error("network"));
     const { result } = renderDraft();
